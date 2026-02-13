@@ -395,10 +395,11 @@ function createGitHubSCM(): SCM {
 
     async getAutomatedComments(pr: PRInfo): Promise<AutomatedComment[]> {
       try {
-        // Single paginated API call gets all review comments (including bot review comments)
+        // Fetch all review comments with max page size (100 is GitHub's limit)
         const raw = await gh([
           "api",
-          "--paginate",
+          "-F",
+          "per_page=100",
           `repos/${repoFlag(pr)}/pulls/${pr.number}/comments`,
         ]);
 
