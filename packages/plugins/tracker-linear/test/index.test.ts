@@ -590,10 +590,12 @@ describe("tracker-linear plugin", () => {
       expect(body.variables.assigneeId).toBe("user-1");
     });
 
-    it("updates labels by resolving names to IDs", async () => {
+    it("updates labels additively (merges with existing)", async () => {
       // 1: resolve identifier
       mockLinearAPI({ issue: { id: "uuid-123", team: { id: "team-1" } } });
-      // 2: label lookup
+      // 2: fetch existing labels on the issue
+      mockLinearAPI({ issue: { labels: { nodes: [{ id: "label-existing" }] } } });
+      // 3: team label lookup
       mockLinearAPI({
         issueLabels: {
           nodes: [
@@ -602,15 +604,19 @@ describe("tracker-linear plugin", () => {
           ],
         },
       });
-      // 3: issueUpdate (labels)
+      // 4: issueUpdate (labels)
       mockLinearAPI({ issueUpdate: { success: true } });
 
       await tracker.updateIssue!("INT-123", { labels: ["bug", "urgent"] }, project);
-      expect(requestMock).toHaveBeenCalledTimes(3);
+      expect(requestMock).toHaveBeenCalledTimes(4);
 
-      const writeCall = requestMock.mock.results[2].value.write.mock.calls[0][0];
+      const writeCall = requestMock.mock.results[3].value.write.mock.calls[0][0];
       const body = JSON.parse(writeCall);
-      expect(body.variables.labelIds).toEqual(["label-1", "label-2"]);
+      // Should include existing + new labels
+      expect(body.variables.labelIds).toEqual(
+        expect.arrayContaining(["label-existing", "label-1", "label-2"]),
+      );
+      expect(body.variables.labelIds).toHaveLength(3);
     });
   });
 

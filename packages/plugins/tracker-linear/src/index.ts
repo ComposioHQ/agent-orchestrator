@@ -419,8 +419,22 @@ function createLinearTracker(): Tracker {
         }
       }
 
-      // Handle labels
+      // Handle labels (additive — merge with existing labels to match tracker-github behavior)
       if (update.labels && update.labels.length > 0) {
+        // Fetch existing label IDs on the issue
+        const existingData = await linearQuery<{
+          issue: { labels: { nodes: Array<{ id: string }> } };
+        }>(
+          `query($id: String!) {
+            issue(id: $id) {
+              labels { nodes { id } }
+            }
+          }`,
+          { id: issueUuid },
+        );
+        const existingIds = new Set(existingData.issue.labels.nodes.map((l) => l.id));
+
+        // Resolve new label names to IDs
         const labelsData = await linearQuery<{
           issueLabels: { nodes: Array<{ id: string; name: string }> };
         }>(
@@ -433,20 +447,19 @@ function createLinearTracker(): Tracker {
         );
 
         const labelMap = new Map(labelsData.issueLabels.nodes.map((l) => [l.name, l.id]));
-        const labelIds = update.labels
-          .map((name) => labelMap.get(name))
-          .filter((id): id is string => id !== undefined);
-
-        if (labelIds.length > 0) {
-          await linearQuery(
-            `mutation($id: String!, $labelIds: [String!]!) {
-              issueUpdate(id: $id, input: { labelIds: $labelIds }) {
-                success
-              }
-            }`,
-            { id: issueUuid, labelIds },
-          );
+        for (const name of update.labels) {
+          const id = labelMap.get(name);
+          if (id) existingIds.add(id);
         }
+
+        await linearQuery(
+          `mutation($id: String!, $labelIds: [String!]!) {
+            issueUpdate(id: $id, input: { labelIds: $labelIds }) {
+              success
+            }
+          }`,
+          { id: issueUuid, labelIds: [...existingIds] },
+        );
       }
 
       // Handle comment
