@@ -35,12 +35,12 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # Build non-web packages first (web needs next build which has special handling)
+      # Build all non-web packages
       - run: pnpm -r --filter '!@agent-orchestrator/web' build
-      # Build web separately — Next.js modifies tsconfig and generates types
-      - run: pnpm --filter @agent-orchestrator/web build || true
-      # Typecheck non-web packages (web is typechecked by next build above)
+      # Typecheck all non-web packages
       - run: pnpm -r --filter '!@agent-orchestrator/web' typecheck
+      # Build web (Next.js build includes its own typecheck)
+      - run: pnpm --filter @agent-orchestrator/web build
 
   test:
     name: Test
