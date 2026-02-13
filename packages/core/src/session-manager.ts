@@ -71,6 +71,7 @@ const VALID_STATUSES: ReadonlySet<string> = new Set([
   "approved",
   "mergeable",
   "merged",
+  "cleanup",
   "needs_input",
   "stuck",
   "errored",
