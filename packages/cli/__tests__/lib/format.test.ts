@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { formatAge, statusColor, activityIndicator, header, banner } from "../../src/lib/format.js";
+import { formatAge, statusColor, header, banner } from "../../src/lib/format.js";
 
 describe("formatAge", () => {
   beforeEach(() => {
@@ -54,20 +54,6 @@ describe("statusColor", () => {
 
   it("returns the raw string for unknown statuses", () => {
     expect(statusColor("unknown_state")).toBe("unknown_state");
-  });
-});
-
-describe("activityIndicator", () => {
-  it("returns indicator for each state", () => {
-    expect(activityIndicator("active")).toBeTruthy();
-    expect(activityIndicator("idle")).toBeTruthy();
-    expect(activityIndicator("waiting_input")).toBeTruthy();
-    expect(activityIndicator("blocked")).toBeTruthy();
-    expect(activityIndicator("exited")).toBeTruthy();
-  });
-
-  it("returns fallback for unknown state", () => {
-    expect(activityIndicator("unknown")).toBeTruthy();
   });
 });
 

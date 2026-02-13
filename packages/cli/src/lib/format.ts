@@ -55,20 +55,3 @@ export function statusColor(status: string): string {
       return status;
   }
 }
-
-export function activityIndicator(activity: string): string {
-  switch (activity) {
-    case "active":
-      return chalk.green("●");
-    case "idle":
-      return chalk.yellow("○");
-    case "waiting_input":
-      return chalk.magenta("◉");
-    case "blocked":
-      return chalk.red("✖");
-    case "exited":
-      return chalk.gray("◌");
-    default:
-      return chalk.dim("?");
-  }
-}

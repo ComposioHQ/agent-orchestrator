@@ -126,7 +126,7 @@ export function registerSend(program: Command): void {
               }
             }
           } else {
-            await exec("tmux", ["send-keys", "-t", session, msg]);
+            await exec("tmux", ["send-keys", "-t", session, "-l", msg]);
           }
         }
 
