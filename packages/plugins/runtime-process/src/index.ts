@@ -15,23 +15,35 @@ export const manifest = {
   version: "0.1.0",
 };
 
-/** In-memory store of managed child processes */
-const processes = new Map<
-  string,
-  {
-    process: ChildProcess;
-    outputBuffer: string[];
-    createdAt: number;
+/** Only allow safe characters in session IDs */
+const SAFE_SESSION_ID = /^[a-zA-Z0-9_-]+$/;
+
+function assertValidSessionId(id: string): void {
+  if (!SAFE_SESSION_ID.test(id)) {
+    throw new Error(
+      `Invalid session ID "${id}": must match ${SAFE_SESSION_ID}`,
+    );
   }
->();
+}
+
+interface ProcessEntry {
+  process: ChildProcess;
+  outputBuffer: string[];
+  createdAt: number;
+}
 
 const MAX_OUTPUT_LINES = 1000;
 
 export function create(): Runtime {
+  // Per-instance process map — each create() call gets its own isolated state
+  const processes = new Map<string, ProcessEntry>();
+
   return {
     name: "process",
 
     async create(config: RuntimeCreateConfig): Promise<RuntimeHandle> {
+      assertValidSessionId(config.sessionId);
+
       const child = spawn(config.launchCommand, {
         cwd: config.workspacePath,
         env: { ...process.env, ...config.environment },
@@ -39,9 +51,9 @@ export function create(): Runtime {
         shell: true,
       });
 
-      const entry = {
+      const entry: ProcessEntry = {
         process: child,
-        outputBuffer: [] as string[],
+        outputBuffer: [],
         createdAt: Date.now(),
       };
 
@@ -63,8 +75,8 @@ export function create(): Runtime {
       child.stdout?.on("data", appendOutput);
       child.stderr?.on("data", appendOutput);
 
-      // Clean up on exit
-      child.on("exit", () => {
+      // Log exit — use once() to avoid listener leaks
+      child.once("exit", () => {
         entry.outputBuffer.push(`[process exited with code ${child.exitCode}]`);
       });
 
@@ -90,7 +102,7 @@ export function create(): Runtime {
         // Try graceful SIGTERM first
         child.kill("SIGTERM");
 
-        // Give it 5 seconds, then SIGKILL
+        // Give it 5 seconds, then SIGKILL — use once() to avoid listener leaks
         await new Promise<void>((resolve) => {
           const timeout = setTimeout(() => {
             if (child.exitCode === null) {
@@ -98,7 +110,7 @@ export function create(): Runtime {
             }
             resolve();
           }, 5000);
-          child.on("exit", () => {
+          child.once("exit", () => {
             clearTimeout(timeout);
             resolve();
           });
@@ -119,7 +131,19 @@ export function create(): Runtime {
         throw new Error(`stdin not writable for session ${handle.id}`);
       }
 
-      child.stdin.write(message + "\n");
+      // Wrap write in a promise to handle backpressure and errors
+      await new Promise<void>((resolve, reject) => {
+        const onError = (err: Error) => reject(err);
+        child.stdin!.once("error", onError);
+        const flushed = child.stdin!.write(message + "\n", (err) => {
+          child.stdin!.removeListener("error", onError);
+          if (err) reject(err);
+          else resolve();
+        });
+        if (!flushed) {
+          child.stdin!.once("drain", () => resolve());
+        }
+      });
     },
 
     async getOutput(handle: RuntimeHandle, lines = 50): Promise<string> {
@@ -147,10 +171,16 @@ export function create(): Runtime {
 
     async getAttachInfo(handle: RuntimeHandle): Promise<AttachInfo> {
       const entry = processes.get(handle.id);
-      const pid = entry?.process.pid ?? (handle.data.pid as number);
+      if (!entry || entry.process.exitCode !== null) {
+        return {
+          type: "process",
+          target: "",
+          command: `# process for session ${handle.id} is no longer running`,
+        };
+      }
       return {
         type: "process",
-        target: String(pid),
+        target: String(entry.process.pid),
       };
     },
   };

@@ -76,15 +76,17 @@ export function create(config?: Record<string, unknown>): Workspace {
           worktreePath,
           baseRef,
         );
-      } catch {
-        // Branch may already exist — try without -b
-        await git(repoPath, "worktree", "add", worktreePath, baseRef);
-        // Check out the target branch
-        try {
-          await git(worktreePath, "checkout", cfg.branch);
-        } catch {
-          await git(worktreePath, "checkout", "-b", cfg.branch);
+      } catch (err: unknown) {
+        // Only retry if the error is "branch already exists"
+        const msg = err instanceof Error ? err.message : String(err);
+        if (!msg.includes("already exists")) {
+          throw new Error(
+            `Failed to create worktree for branch "${cfg.branch}": ${msg}`,
+          );
         }
+        // Branch already exists — create worktree and check it out
+        await git(repoPath, "worktree", "add", worktreePath, baseRef);
+        await git(worktreePath, "checkout", cfg.branch);
       }
 
       return {
@@ -97,6 +99,13 @@ export function create(config?: Record<string, unknown>): Workspace {
 
     async destroy(workspacePath: string): Promise<void> {
       // Find the main repo path from the worktree
+      let branch: string | null = null;
+      try {
+        branch = await git(workspacePath, "branch", "--show-current");
+      } catch {
+        // May not be a valid git dir
+      }
+
       try {
         const gitCommonDir = await git(
           workspacePath,
@@ -107,6 +116,15 @@ export function create(config?: Record<string, unknown>): Workspace {
         // git-common-dir returns something like /path/to/repo/.git
         const repoPath = resolve(gitCommonDir, "..");
         await git(repoPath, "worktree", "remove", "--force", workspacePath);
+
+        // Clean up the orphaned branch to prevent stale branch accumulation
+        if (branch) {
+          try {
+            await git(repoPath, "branch", "-D", branch);
+          } catch {
+            // Branch may be checked out elsewhere or already deleted
+          }
+        }
       } catch {
         // If git commands fail, try to clean up the directory
         if (existsSync(workspacePath)) {
@@ -197,6 +215,7 @@ export function create(config?: Record<string, unknown>): Workspace {
       }
 
       // Run postCreate hooks
+      // NOTE: commands run with full shell privileges — they come from trusted YAML config
       if (project.postCreate) {
         for (const command of project.postCreate) {
           await execFileAsync("sh", ["-c", command], { cwd: info.path });

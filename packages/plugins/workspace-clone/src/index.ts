@@ -102,12 +102,16 @@ export function create(config?: Record<string, unknown>): Workspace {
         if (!entry.isDirectory()) continue;
 
         const clonePath = join(projectCloneDir, entry.name);
-        let branch = "unknown";
+        let branch: string;
 
         try {
           branch = await git(clonePath, "branch", "--show-current");
-        } catch {
-          // Not a valid git repo — skip
+        } catch (err: unknown) {
+          // Warn about corrupted clones instead of silently skipping
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn(
+            `[workspace-clone] Skipping "${entry.name}": not a valid git repo (${msg})`,
+          );
           continue;
         }
 
@@ -124,6 +128,7 @@ export function create(config?: Record<string, unknown>): Workspace {
 
     async postCreate(info: WorkspaceInfo, project: ProjectConfig): Promise<void> {
       // Run postCreate hooks
+      // NOTE: commands run with full shell privileges — they come from trusted YAML config
       if (project.postCreate) {
         for (const command of project.postCreate) {
           await execFileAsync("sh", ["-c", command], { cwd: info.path });

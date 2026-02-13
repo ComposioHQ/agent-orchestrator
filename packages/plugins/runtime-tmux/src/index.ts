@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { randomUUID } from "node:crypto";
 import { writeFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,20 +22,21 @@ export const manifest = {
   version: "0.1.0",
 };
 
+/** Only allow safe characters in session IDs */
+const SAFE_SESSION_ID = /^[a-zA-Z0-9_-]+$/;
+
+function assertValidSessionId(id: string): void {
+  if (!SAFE_SESSION_ID.test(id)) {
+    throw new Error(
+      `Invalid session ID "${id}": must match ${SAFE_SESSION_ID}`,
+    );
+  }
+}
+
 /** Run a tmux command and return stdout */
 async function tmux(...args: string[]): Promise<string> {
   const { stdout } = await execFileAsync("tmux", args);
   return stdout.trimEnd();
-}
-
-/** Check if tmux server is running */
-async function isTmuxRunning(): Promise<boolean> {
-  try {
-    await tmux("list-sessions");
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export function create(): Runtime {
@@ -42,6 +44,7 @@ export function create(): Runtime {
     name: "tmux",
 
     async create(config: RuntimeCreateConfig): Promise<RuntimeHandle> {
+      assertValidSessionId(config.sessionId);
       const sessionName = config.sessionId;
 
       // Build environment flags: -e KEY=VALUE for each env var
@@ -86,9 +89,15 @@ export function create(): Runtime {
       // Wait for idle before sending (up to 60s)
       const maxWait = 60;
       const pollInterval = 2;
+      let sentWhileBusy = false;
+      let busy = false;
       for (let waited = 0; waited < maxWait; waited += pollInterval) {
-        if (!(await isBusy(handle.id))) break;
+        busy = await isBusy(handle.id);
+        if (!busy) break;
         await sleep(pollInterval * 1000);
+      }
+      if (busy) {
+        sentWhileBusy = true;
       }
 
       // Clear any partial input
@@ -96,8 +105,9 @@ export function create(): Runtime {
       await sleep(200);
 
       // For long or multiline messages, use load-buffer + paste-buffer
+      // Use randomUUID to avoid temp file collisions on concurrent sends
       if (message.includes("\n") || message.length > 200) {
-        const tmpPath = join(tmpdir(), `ao-send-${handle.id}-${Date.now()}.txt`);
+        const tmpPath = join(tmpdir(), `ao-send-${randomUUID()}.txt`);
         writeFileSync(tmpPath, message, "utf-8");
         try {
           await tmux("load-buffer", tmpPath);
@@ -115,6 +125,12 @@ export function create(): Runtime {
 
       await sleep(300);
       await tmux("send-keys", "-t", handle.id, "Enter");
+
+      if (sentWhileBusy) {
+        throw new Error(
+          `Session ${handle.id} was still busy after ${maxWait}s — message sent but may be lost`,
+        );
+      }
     },
 
     async getOutput(handle: RuntimeHandle, lines = 50): Promise<string> {
@@ -161,6 +177,7 @@ export function create(): Runtime {
 /** Check if a tmux session is currently busy (agent processing) */
 async function isBusy(sessionName: string): Promise<boolean> {
   try {
+    // Single capture-pane call to avoid TOCTOU and redundant subprocess spawns
     const output = await tmux(
       "capture-pane",
       "-t",
@@ -177,16 +194,8 @@ async function isBusy(sessionName: string): Promise<boolean> {
       return false;
     }
 
-    // Active indicators: processing spinners
-    const recentOutput = await tmux(
-      "capture-pane",
-      "-t",
-      sessionName,
-      "-p",
-      "-S",
-      "-3",
-    );
-    if (recentOutput.includes("esc to interrupt")) {
+    // Active indicators: processing spinners (check same output)
+    if (output.includes("esc to interrupt")) {
       return true;
     }
 
