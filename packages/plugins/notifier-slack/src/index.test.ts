@@ -46,15 +46,11 @@ describe("notifier-slack", () => {
     it("warns when no webhookUrl configured", () => {
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
       create();
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("No webhookUrl configured"),
-      );
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("No webhookUrl configured"));
     });
 
     it("throws on invalid URL scheme", () => {
-      expect(() => create({ webhookUrl: "file:///etc/passwd" })).toThrow(
-        "must be http(s)",
-      );
+      expect(() => create({ webhookUrl: "file:///etc/passwd" })).toThrow("must be http(s)");
     });
   });
 
@@ -213,15 +209,12 @@ describe("notifier-slack", () => {
       vi.stubGlobal("fetch", fetchMock);
 
       const notifier = create({ webhookUrl: "https://hooks.slack.com/test" });
-      await notifier.notify(
-        makeEvent({ data: { prUrl: "https://github.com/org/repo/pull/42" } }),
-      );
+      await notifier.notify(makeEvent({ data: { prUrl: "https://github.com/org/repo/pull/42" } }));
 
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
       const prBlock = body.blocks.find(
         (b: Record<string, unknown>) =>
-          b.type === "section" &&
-          (b as any).text?.text?.includes("View Pull Request"),
+          b.type === "section" && (b as any).text?.text?.includes("View Pull Request"),
       );
       expect(prBlock).toBeDefined();
       expect(prBlock.text.text).toContain("https://github.com/org/repo/pull/42");
@@ -237,8 +230,7 @@ describe("notifier-slack", () => {
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
       const prBlock = body.blocks.find(
         (b: Record<string, unknown>) =>
-          b.type === "section" &&
-          (b as any).text?.text?.includes("View Pull Request"),
+          b.type === "section" && (b as any).text?.text?.includes("View Pull Request"),
       );
       expect(prBlock).toBeUndefined();
     });
@@ -253,8 +245,7 @@ describe("notifier-slack", () => {
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
       const ciBlock = body.blocks.find(
         (b: Record<string, unknown>) =>
-          b.type === "context" &&
-          (b as any).elements?.[0]?.text?.includes("CI:"),
+          b.type === "context" && (b as any).elements?.[0]?.text?.includes("CI:"),
       );
       expect(ciBlock).toBeUndefined();
     });
@@ -269,8 +260,7 @@ describe("notifier-slack", () => {
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
       const ciBlock = body.blocks.find(
         (b: Record<string, unknown>) =>
-          b.type === "context" &&
-          (b as any).elements?.[0]?.text?.includes("CI:"),
+          b.type === "context" && (b as any).elements?.[0]?.text?.includes("CI:"),
       );
       expect(ciBlock).toBeDefined();
       expect(ciBlock.elements[0].text).toContain(":white_check_mark:");
@@ -286,8 +276,7 @@ describe("notifier-slack", () => {
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
       const ciBlock = body.blocks.find(
         (b: Record<string, unknown>) =>
-          b.type === "context" &&
-          (b as any).elements?.[0]?.text?.includes("CI:"),
+          b.type === "context" && (b as any).elements?.[0]?.text?.includes("CI:"),
       );
       expect(ciBlock.elements[0].text).toContain(":x:");
     });
@@ -318,9 +307,7 @@ describe("notifier-slack", () => {
       await notifier.notifyWithActions!(makeEvent(), actions);
 
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-      const actionsBlock = body.blocks.find(
-        (b: Record<string, unknown>) => b.type === "actions",
-      );
+      const actionsBlock = body.blocks.find((b: Record<string, unknown>) => b.type === "actions");
       expect(actionsBlock).toBeDefined();
       expect(actionsBlock.elements).toHaveLength(2);
       expect(actionsBlock.elements[0].type).toBe("button");
@@ -338,9 +325,7 @@ describe("notifier-slack", () => {
       await notifier.notifyWithActions!(makeEvent(), actions);
 
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-      const actionsBlock = body.blocks.find(
-        (b: Record<string, unknown>) => b.type === "actions",
-      );
+      const actionsBlock = body.blocks.find((b: Record<string, unknown>) => b.type === "actions");
       expect(actionsBlock.elements[0].action_id).toBe("ao_kill_session");
       expect(actionsBlock.elements[0].value).toBe("/api/sessions/app-1/kill");
     });
@@ -357,9 +342,7 @@ describe("notifier-slack", () => {
       await notifier.notifyWithActions!(makeEvent(), actions);
 
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-      const actionsBlock = body.blocks.find(
-        (b: Record<string, unknown>) => b.type === "actions",
-      );
+      const actionsBlock = body.blocks.find((b: Record<string, unknown>) => b.type === "actions");
       expect(actionsBlock.elements).toHaveLength(1);
       expect(actionsBlock.elements[0].text.text).toBe("Merge");
     });

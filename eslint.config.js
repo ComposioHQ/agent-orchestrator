@@ -13,6 +13,7 @@ export default tseslint.config(
       "packages/web/next-env.d.ts",
       "packages/web/next.config.js",
       "packages/web/postcss.config.mjs",
+      "packages/web/next-env.d.ts",
     ],
   },
 

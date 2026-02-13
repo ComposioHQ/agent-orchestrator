@@ -42,9 +42,7 @@ describe("notifier-webhook", () => {
     it("warns when no url configured", () => {
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
       create();
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("No url configured"),
-      );
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("No url configured"));
     });
 
     it("throws on invalid URL scheme", () => {
@@ -161,7 +159,11 @@ describe("notifier-webhook", () => {
     it("retries on 5xx and succeeds", async () => {
       const fetchMock = vi
         .fn()
-        .mockResolvedValueOnce({ ok: false, status: 503, text: () => Promise.resolve("unavailable") })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 503,
+          text: () => Promise.resolve("unavailable"),
+        })
         .mockResolvedValueOnce({ ok: true });
       vi.stubGlobal("fetch", fetchMock);
 
@@ -177,7 +179,11 @@ describe("notifier-webhook", () => {
     it("retries on 429 Too Many Requests", async () => {
       const fetchMock = vi
         .fn()
-        .mockResolvedValueOnce({ ok: false, status: 429, text: () => Promise.resolve("rate limited") })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 429,
+          text: () => Promise.resolve("rate limited"),
+        })
         .mockResolvedValueOnce({ ok: true });
       vi.stubGlobal("fetch", fetchMock);
 

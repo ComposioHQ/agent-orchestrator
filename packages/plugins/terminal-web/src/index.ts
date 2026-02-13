@@ -1,8 +1,4 @@
-import type {
-  PluginModule,
-  Terminal,
-  Session,
-} from "@agent-orchestrator/core";
+import type { PluginModule, Terminal, Session } from "@agent-orchestrator/core";
 
 export const manifest = {
   name: "web",
@@ -10,11 +6,6 @@ export const manifest = {
   description: "Terminal plugin: xterm.js web terminal",
   version: "0.1.0",
 };
-
-interface WebTerminalConfig {
-  /** Base URL of the web dashboard */
-  dashboardUrl?: string;
-}
 
 /**
  * Web terminal plugin.

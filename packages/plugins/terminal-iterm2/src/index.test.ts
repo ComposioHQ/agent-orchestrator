@@ -201,10 +201,7 @@ describe("terminal-iterm2", () => {
     it("opens tabs for each session", async () => {
       simulateOsascript("NOT_FOUND\n");
       const terminal = create();
-      const sessions = [
-        makeSession({ id: "app-1" }),
-        makeSession({ id: "app-2" }),
-      ];
+      const sessions = [makeSession({ id: "app-1" }), makeSession({ id: "app-2" })];
 
       const promise = terminal.openAll(sessions);
       await vi.advanceTimersByTimeAsync(300);
@@ -218,10 +215,7 @@ describe("terminal-iterm2", () => {
     it("skips opening tabs for existing sessions", async () => {
       simulateOsascriptSequence(["FOUND\n", "NOT_FOUND\n", ""]);
       const terminal = create();
-      const sessions = [
-        makeSession({ id: "existing-1" }),
-        makeSession({ id: "new-1" }),
-      ];
+      const sessions = [makeSession({ id: "existing-1" }), makeSession({ id: "new-1" })];
 
       const promise = terminal.openAll(sessions);
       await vi.advanceTimersByTimeAsync(300);

@@ -218,9 +218,7 @@ describe("notifier-desktop", () => {
       const notifier = create();
       await expect(notifier.notify(makeEvent())).resolves.toBeUndefined();
       expect(mockExecFile).not.toHaveBeenCalled();
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("not supported on win32"),
-      );
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("not supported on win32"));
       warnSpy.mockRestore();
     });
   });
@@ -241,9 +239,7 @@ describe("notifier-desktop", () => {
 
     it("includes sound for urgent with actions", async () => {
       const notifier = create();
-      const actions: NotifyAction[] = [
-        { label: "Fix", url: "https://example.com" },
-      ];
+      const actions: NotifyAction[] = [{ label: "Fix", url: "https://example.com" }];
       await notifier.notifyWithActions!(makeEvent({ priority: "urgent" }), actions);
 
       const script = mockExecFile.mock.calls[0][1][1] as string;

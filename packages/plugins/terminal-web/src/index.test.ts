@@ -63,12 +63,8 @@ describe("terminal-web", () => {
       const terminal = create();
       await terminal.openSession(makeSession({ id: "backend-3" }));
 
-      expect(logSpy).toHaveBeenCalledWith(
-        expect.stringContaining("backend-3"),
-      );
-      expect(logSpy).toHaveBeenCalledWith(
-        expect.stringContaining("/sessions/backend-3/terminal"),
-      );
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("backend-3"));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("/sessions/backend-3/terminal"));
     });
 
     it("uses default dashboard URL", async () => {
@@ -76,9 +72,7 @@ describe("terminal-web", () => {
       const terminal = create();
       await terminal.openSession(makeSession());
 
-      expect(logSpy).toHaveBeenCalledWith(
-        expect.stringContaining("http://localhost:9847"),
-      );
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("http://localhost:9847"));
     });
 
     it("uses custom dashboard URL", async () => {
@@ -86,9 +80,7 @@ describe("terminal-web", () => {
       const terminal = create({ dashboardUrl: "https://my-dashboard.io" });
       await terminal.openSession(makeSession());
 
-      expect(logSpy).toHaveBeenCalledWith(
-        expect.stringContaining("https://my-dashboard.io"),
-      );
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("https://my-dashboard.io"));
     });
   });
 
@@ -113,22 +105,15 @@ describe("terminal-web", () => {
       const terminal = create();
       await terminal.openAll([]);
 
-      expect(logSpy).toHaveBeenCalledWith(
-        expect.stringContaining("0 sessions"),
-      );
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("0 sessions"));
     });
 
     it("logs the count of sessions", async () => {
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
       const terminal = create();
-      await terminal.openAll([
-        makeSession({ id: "a" }),
-        makeSession({ id: "b" }),
-      ]);
+      await terminal.openAll([makeSession({ id: "a" }), makeSession({ id: "b" })]);
 
-      expect(logSpy).toHaveBeenCalledWith(
-        expect.stringContaining("2 sessions"),
-      );
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("2 sessions"));
     });
   });
 

@@ -1,9 +1,5 @@
 import { execFile } from "node:child_process";
-import type {
-  PluginModule,
-  Terminal,
-  Session,
-} from "@agent-orchestrator/core";
+import type { PluginModule, Terminal, Session } from "@agent-orchestrator/core";
 
 export const manifest = {
   name: "iterm2",

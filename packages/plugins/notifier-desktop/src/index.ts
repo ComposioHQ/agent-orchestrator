@@ -56,11 +56,7 @@ function formatActionsMessage(event: OrchestratorEvent, actions: NotifyAction[])
  * On macOS, osascript's `display notification` lacks URL support.
  * Consider `terminal-notifier` for click-to-open if needed in the future.
  */
-function sendNotification(
-  title: string,
-  message: string,
-  sound: boolean,
-): Promise<void> {
+function sendNotification(title: string, message: string, sound: boolean): Promise<void> {
   return new Promise((resolve, reject) => {
     const os = platform();
 

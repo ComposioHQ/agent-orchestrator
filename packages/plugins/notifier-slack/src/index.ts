@@ -21,10 +21,7 @@ const PRIORITY_EMOJI: Record<EventPriority, string> = {
   info: ":information_source:",
 };
 
-function buildBlocks(
-  event: OrchestratorEvent,
-  actions?: NotifyAction[],
-): unknown[] {
+function buildBlocks(event: OrchestratorEvent, actions?: NotifyAction[]): unknown[] {
   const blocks: unknown[] = [
     {
       type: "header",
@@ -94,7 +91,10 @@ function buildBlocks(
         return {
           type: "button",
           text: { type: "plain_text", text: action.label, emoji: true },
-          action_id: `ao_${action.label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "")}`,
+          action_id: `ao_${action.label
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "_")
+            .replace(/^_|_$/g, "")}`,
           value: action.callbackEndpoint,
         };
       });
@@ -112,10 +112,7 @@ function buildBlocks(
   return blocks;
 }
 
-async function postToWebhook(
-  webhookUrl: string,
-  payload: Record<string, unknown>,
-): Promise<void> {
+async function postToWebhook(webhookUrl: string, payload: Record<string, unknown>): Promise<void> {
   const response = await fetch(webhookUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
