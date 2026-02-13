@@ -161,7 +161,7 @@ async function spawnSession(
     writeMetadata(join(sessionDir, sessionName), {
       worktree: worktreePath,
       branch: liveBranch || branch || "detached",
-      status: "starting",
+      status: "spawning",
       project: projectId,
       ...(issueId ? { issue: issueId } : {}),
       createdAt: new Date().toISOString(),

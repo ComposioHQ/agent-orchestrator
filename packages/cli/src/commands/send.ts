@@ -145,7 +145,7 @@ export function registerSend(program: Command): void {
             return;
           }
           if (attempt < 3) {
-            await exec("tmux", ["send-keys", "-t", session, "Enter"]);
+            await tmux("send-keys", "-t", session, "Enter");
             await sleep(1000);
           }
         }

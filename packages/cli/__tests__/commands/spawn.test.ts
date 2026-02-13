@@ -183,7 +183,7 @@ describe("spawn command", () => {
 
     const content = readFileSync(metaFile, "utf-8");
     expect(content).toContain("branch=feat/INT-100");
-    expect(content).toContain("status=starting");
+    expect(content).toContain("status=spawning");
     expect(content).toContain("project=my-app");
     expect(content).toContain("issue=INT-100");
   });

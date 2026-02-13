@@ -16,33 +16,28 @@ async function checkPRReviews(
   repo: string,
   prNumber: string,
 ): Promise<{ pendingComments: number; reviewDecision: string | null }> {
-  // Get review decision
-  const decision = await gh([
-    "pr",
-    "view",
-    prNumber,
-    "--repo",
-    repo,
-    "--json",
-    "reviewDecision",
-    "-q",
-    ".reviewDecision",
-  ]);
+  const [owner, name] = repo.split("/");
 
-  // Get pending review comments count
-  const commentsJson = await gh([
-    "api",
-    `repos/${repo}/pulls/${prNumber}/comments`,
-    "--jq",
-    "length",
-  ]);
+  // Use GraphQL to get review decision and count only unresolved threads
+  const query = `query { repository(owner: "${owner}", name: "${name}") { pullRequest(number: ${prNumber}) { reviewDecision reviewThreads(first: 100) { nodes { isResolved } } } } }`;
+  const result = await gh(["api", "graphql", "-f", `query=${query}`, "--jq", ".data.repository.pullRequest"]);
 
-  const pendingComments = commentsJson ? parseInt(commentsJson, 10) : 0;
+  if (!result) {
+    return { pendingComments: 0, reviewDecision: null };
+  }
 
-  return {
-    pendingComments: isNaN(pendingComments) ? 0 : pendingComments,
-    reviewDecision: decision || null,
-  };
+  try {
+    const data = JSON.parse(result);
+    const unresolvedCount = Array.isArray(data.reviewThreads?.nodes)
+      ? data.reviewThreads.nodes.filter((t: { isResolved: boolean }) => !t.isResolved).length
+      : 0;
+    return {
+      pendingComments: unresolvedCount,
+      reviewDecision: data.reviewDecision || null,
+    };
+  } catch {
+    return { pendingComments: 0, reviewDecision: null };
+  }
 }
 
 export function registerReviewCheck(program: Command): void {

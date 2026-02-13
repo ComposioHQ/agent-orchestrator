@@ -38,12 +38,13 @@ async function getClaudeSessionInfo(
     const tty = ttyOutput.stdout.trim();
     if (!tty) return { summary: null, sessionId: null };
 
-    // Find Claude PID running on that TTY (safe: no shell interpolation)
+    // Find Claude PID running on that TTY (column-based match to avoid pts/1 matching pts/10)
     const psOutput = await exec("ps", ["-eo", "pid,tty,comm"]);
     const ttyShort = tty.replace("/dev/", "");
-    const pidLine = psOutput.stdout
-      .split("\n")
-      .find((line) => line.includes("claude") && line.includes(ttyShort));
+    const pidLine = psOutput.stdout.split("\n").find((line) => {
+      const cols = line.trim().split(/\s+/);
+      return cols.length >= 3 && cols[1] === ttyShort && cols[2].includes("claude");
+    });
     const pid = pidLine?.trim().split(/\s+/)[0];
     if (!pid) return { summary: null, sessionId: null };
 
