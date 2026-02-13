@@ -2,7 +2,6 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "dist",
-    "rootDir": "src",
     "jsx": "preserve",
     "module": "ESNext",
     "moduleResolution": "Bundler",
@@ -11,6 +10,6 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src", "next-env.d.ts"],
+  "include": ["src", "next-env.d.ts", ".next/types/**/*.ts"],
   "exclude": ["node_modules"]
 }
