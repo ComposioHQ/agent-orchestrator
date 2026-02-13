@@ -53,6 +53,12 @@ export function create(): Runtime {
 
       const handleId = config.sessionId;
 
+      // Prevent duplicate session IDs — a second create with the same ID would
+      // orphan the first process by overwriting its map entry.
+      if (processes.has(handleId)) {
+        throw new Error(`Session "${handleId}" already exists — destroy it before re-creating`);
+      }
+
       // Wait for spawn success or error — avoids the race where setImmediate
       // resolves before an async error event fires, which would return a dangling handle.
       await new Promise<void>((resolve, reject) => {
@@ -117,14 +123,14 @@ export function create(): Runtime {
       if (!entry) return;
 
       const child = entry.process;
-      if (child.exitCode === null) {
+      if (child.exitCode === null && child.signalCode === null) {
         // Try graceful SIGTERM first
         child.kill("SIGTERM");
 
         // Give it 5 seconds, then SIGKILL — use once() to avoid listener leaks
         await new Promise<void>((resolve) => {
           const timeout = setTimeout(() => {
-            if (child.exitCode === null) {
+            if (child.exitCode === null && child.signalCode === null) {
               child.kill("SIGKILL");
             }
             resolve();
@@ -187,7 +193,7 @@ export function create(): Runtime {
     async isAlive(handle: RuntimeHandle): Promise<boolean> {
       const entry = processes.get(handle.id);
       if (!entry) return false;
-      return entry.process.exitCode === null;
+      return entry.process.exitCode === null && entry.process.signalCode === null;
     },
 
     async getMetrics(handle: RuntimeHandle): Promise<RuntimeMetrics> {
@@ -200,7 +206,7 @@ export function create(): Runtime {
 
     async getAttachInfo(handle: RuntimeHandle): Promise<AttachInfo> {
       const entry = processes.get(handle.id);
-      if (!entry || entry.process.exitCode !== null) {
+      if (!entry || entry.process.exitCode !== null || entry.process.signalCode !== null) {
         return {
           type: "process",
           target: "",

@@ -97,11 +97,12 @@ export function create(): Runtime {
       // For long or multiline messages, use load-buffer + paste-buffer
       // Use randomUUID to avoid temp file collisions on concurrent sends
       if (message.includes("\n") || message.length > 200) {
+        const bufferName = `ao-${randomUUID()}`;
         const tmpPath = join(tmpdir(), `ao-send-${randomUUID()}.txt`);
         writeFileSync(tmpPath, message, { encoding: "utf-8", mode: 0o600 });
         try {
-          await tmux("load-buffer", tmpPath);
-          await tmux("paste-buffer", "-t", handle.id);
+          await tmux("load-buffer", "-b", bufferName, tmpPath);
+          await tmux("paste-buffer", "-b", bufferName, "-t", handle.id, "-d");
         } finally {
           try {
             unlinkSync(tmpPath);
@@ -165,8 +166,8 @@ async function isBusy(sessionName: string): Promise<boolean> {
     const lines = output.split("\n").filter((l) => l.trim() !== "");
     const lastLine = lines[lines.length - 1] ?? "";
 
-    // Idle indicators: prompt char, permission mode
-    if (/[❯$]|⏵⏵|bypass permissions/.test(lastLine)) {
+    // Idle indicators: prompt char (❯ anywhere, $ only at line start as shell prompt)
+    if (/❯|^\$\s|⏵⏵|bypass permissions/.test(lastLine)) {
       return false;
     }
 

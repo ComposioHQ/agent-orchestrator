@@ -83,10 +83,10 @@ export function create(config?: Record<string, unknown>): Workspace {
 
       // Create and checkout the feature branch
       try {
-        await git(clonePath, "checkout", "-b", "--", cfg.branch);
+        await git(clonePath, "checkout", "-b", cfg.branch);
       } catch {
         // Branch may exist on remote
-        await git(clonePath, "checkout", "--", cfg.branch);
+        await git(clonePath, "checkout", cfg.branch);
       }
 
       return {

@@ -83,7 +83,7 @@ export function create(config?: Record<string, unknown>): Workspace {
         }
         // Branch already exists — create worktree and check it out
         await git(repoPath, "worktree", "add", worktreePath, baseRef);
-        await git(worktreePath, "checkout", "--", cfg.branch);
+        await git(worktreePath, "checkout", cfg.branch);
       }
 
       return {
@@ -175,7 +175,7 @@ export function create(config?: Record<string, unknown>): Workspace {
           }
         }
 
-        if (path && path.startsWith(projectWorktreeDir)) {
+        if (path && (path === projectWorktreeDir || path.startsWith(projectWorktreeDir + "/"))) {
           const sessionId = basename(path);
           infos.push({
             path,
