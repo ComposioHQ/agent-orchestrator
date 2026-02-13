@@ -1,4 +1,6 @@
-// Dashboard home — to be implemented
+import { Dashboard } from "@/components/Dashboard";
+import { mockSessions, getMockStats } from "@/lib/mock-data";
+
 export default function Home() {
-  return <div>Agent Orchestrator Dashboard</div>;
+  return <Dashboard sessions={mockSessions} stats={getMockStats()} />;
 }
