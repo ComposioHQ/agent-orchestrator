@@ -44,23 +44,50 @@ export function create(): Runtime {
 
       const handleId = config.sessionId;
 
-      // Prevent duplicate session IDs — check BEFORE spawning to avoid
-      // leaking an orphan child process that is never stored or killed.
+      // Prevent duplicate session IDs — check and reserve atomically (no await
+      // between check and set) so concurrent create() calls can't both pass.
       if (processes.has(handleId)) {
         throw new Error(`Session "${handleId}" already exists — destroy it before re-creating`);
       }
 
+      const entry: ProcessEntry = {
+        process: null as unknown as ChildProcess, // placeholder until spawn
+        outputBuffer: [],
+        createdAt: Date.now(),
+      };
+      processes.set(handleId, entry);
+
       // NOTE: shell:true is intentional — launchCommand comes from trusted YAML config
       // and may contain pipes, redirects, or other shell syntax.
-      const child = spawn(config.launchCommand, {
-        cwd: config.workspacePath,
-        env: { ...process.env, ...config.environment },
-        stdio: ["pipe", "pipe", "pipe"],
-        shell: true,
+      let child: ChildProcess;
+      try {
+        child = spawn(config.launchCommand, {
+          cwd: config.workspacePath,
+          env: { ...process.env, ...config.environment },
+          stdio: ["pipe", "pipe", "pipe"],
+          shell: true,
+        });
+      } catch (err: unknown) {
+        processes.delete(handleId);
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(`Failed to spawn process for session ${handleId}: ${msg}`, { cause: err });
+      }
+
+      entry.process = child;
+
+      // Attach exit handler immediately — before any await — so fast-exiting
+      // processes can't slip through the gap.
+      child.once("exit", () => {
+        entry.outputBuffer.push(`[process exited with code ${child.exitCode}]`);
+        processes.delete(handleId);
       });
 
-      // Wait for spawn success or error — avoids the race where setImmediate
-      // resolves before an async error event fires, which would return a dangling handle.
+      // Handle late errors (process crashes after spawn)
+      child.on("error", () => {
+        // Already captured via exit handler — prevent unhandled error crash
+      });
+
+      // Wait for spawn success or error
       await new Promise<void>((resolve, reject) => {
         const onError = (err: Error) => {
           child.removeListener("spawn", onSpawn);
@@ -74,12 +101,6 @@ export function create(): Runtime {
         child.once("error", onError);
         child.once("spawn", onSpawn);
       });
-
-      const entry: ProcessEntry = {
-        process: child,
-        outputBuffer: [],
-        createdAt: Date.now(),
-      };
 
       // Capture stdout and stderr into rolling buffer
       const appendOutput = (data: Buffer) => {
@@ -95,22 +116,6 @@ export function create(): Runtime {
 
       child.stdout?.on("data", appendOutput);
       child.stderr?.on("data", appendOutput);
-
-      // Register in map BEFORE attaching exit handler — a fast-exiting process
-      // could fire exit before set(), causing delete() to miss and leaving a
-      // stale entry that blocks future create() calls for this sessionId.
-      processes.set(handleId, entry);
-
-      // Log exit and auto-remove from map so the sessionId can be reused.
-      child.once("exit", () => {
-        entry.outputBuffer.push(`[process exited with code ${child.exitCode}]`);
-        processes.delete(handleId);
-      });
-
-      // Handle late errors (process crashes after spawn)
-      child.on("error", () => {
-        // Already captured via exit handler — prevent unhandled error crash
-      });
 
       return {
         id: handleId,
