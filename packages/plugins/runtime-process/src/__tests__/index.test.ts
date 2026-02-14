@@ -403,11 +403,26 @@ describe("getOutput()", () => {
     const runtime = create();
     await runtime.create(defaultConfig());
 
-    // Simulate stdout data
-    child.stdout.emit("data", Buffer.from("line1\nline2\nline3"));
+    // Simulate stdout data — lines are newline-terminated
+    child.stdout.emit("data", Buffer.from("line1\nline2\nline3\n"));
 
     const output = await runtime.getOutput(makeHandle(), 50);
     expect(output).toBe("line1\nline2\nline3");
+  });
+
+  it("buffers partial lines across chunks", async () => {
+    const child = createMockChild();
+    mockSpawn.mockReturnValue(child);
+
+    const runtime = create();
+    await runtime.create(defaultConfig());
+
+    // Partial line split across two chunks
+    child.stdout.emit("data", Buffer.from("hel"));
+    child.stdout.emit("data", Buffer.from("lo\nworld\n"));
+
+    const output = await runtime.getOutput(makeHandle(), 50);
+    expect(output).toBe("hello\nworld");
   });
 
   it("returns only the requested number of lines", async () => {
@@ -417,7 +432,7 @@ describe("getOutput()", () => {
     const runtime = create();
     await runtime.create(defaultConfig());
 
-    child.stdout.emit("data", Buffer.from("a\nb\nc\nd\ne"));
+    child.stdout.emit("data", Buffer.from("a\nb\nc\nd\ne\n"));
 
     const output = await runtime.getOutput(makeHandle(), 2);
     expect(output).toBe("d\ne");
@@ -436,7 +451,7 @@ describe("getOutput()", () => {
     const runtime = create();
     await runtime.create(defaultConfig());
 
-    child.stderr.emit("data", Buffer.from("error output"));
+    child.stderr.emit("data", Buffer.from("error output\n"));
 
     const output = await runtime.getOutput(makeHandle(), 50);
     expect(output).toBe("error output");
@@ -449,9 +464,9 @@ describe("getOutput()", () => {
     const runtime = create();
     await runtime.create(defaultConfig());
 
-    child.stdout.emit("data", Buffer.from("out1"));
-    child.stderr.emit("data", Buffer.from("err1"));
-    child.stdout.emit("data", Buffer.from("out2"));
+    child.stdout.emit("data", Buffer.from("out1\n"));
+    child.stderr.emit("data", Buffer.from("err1\n"));
+    child.stdout.emit("data", Buffer.from("out2\n"));
 
     const output = await runtime.getOutput(makeHandle(), 50);
     expect(output).toBe("out1\nerr1\nout2");
@@ -639,8 +654,8 @@ describe("output buffer truncation", () => {
     const runtime = create();
     await runtime.create(defaultConfig());
 
-    // Generate 1200 lines
-    const lines = Array.from({ length: 1200 }, (_, i) => `line-${i}`).join("\n");
+    // Generate 1200 newline-terminated lines
+    const lines = Array.from({ length: 1200 }, (_, i) => `line-${i}`).join("\n") + "\n";
     child.stdout.emit("data", Buffer.from(lines));
 
     // Request all lines — should be capped at 1000

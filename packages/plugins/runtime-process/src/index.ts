@@ -103,9 +103,15 @@ export function create(): Runtime {
         child.once("spawn", onSpawn);
       });
 
-      // Capture stdout and stderr into rolling buffer
+      // Capture stdout and stderr into rolling buffer.
+      // Stream chunks are arbitrary so we buffer the trailing partial line
+      // and only push complete (newline-terminated) lines.
+      let partial = "";
       const appendOutput = (data: Buffer) => {
-        const lines = data.toString("utf-8").split("\n");
+        const text = partial + data.toString("utf-8");
+        const lines = text.split("\n");
+        // Last element is either "" (if text ended with \n) or a partial line
+        partial = lines.pop()!;
         for (const line of lines) {
           entry.outputBuffer.push(line);
         }
@@ -117,6 +123,14 @@ export function create(): Runtime {
 
       child.stdout?.on("data", appendOutput);
       child.stderr?.on("data", appendOutput);
+
+      // Flush any trailing partial line when the process exits
+      child.once("exit", () => {
+        if (partial) {
+          entry.outputBuffer.push(partial);
+          partial = "";
+        }
+      });
 
       return {
         id: handleId,
