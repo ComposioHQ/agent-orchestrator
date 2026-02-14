@@ -284,6 +284,38 @@ describe("session cleanup", () => {
     expect(existsSync(join(sessionDir, "app-1"))).toBe(true);
   });
 
+  it("continues cleaning remaining sessions when one kill fails", async () => {
+    const sessionDir = join(tmpDir, "my-app-sessions");
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(
+      join(sessionDir, "app-1"),
+      "branch=feat/a\npr=https://github.com/org/repo/pull/10\n",
+    );
+    writeFileSync(
+      join(sessionDir, "app-2"),
+      "branch=feat/b\npr=https://github.com/org/repo/pull/20\n",
+    );
+
+    mockTmux.mockImplementation(async (...args: string[]) => {
+      if (args[0] === "list-sessions") return "app-1\napp-2";
+      // First kill-session call throws, second succeeds
+      if (args[0] === "kill-session" && args[2] === "app-1") {
+        throw new Error("tmux error");
+      }
+      return "";
+    });
+    mockGh.mockResolvedValue("MERGED");
+    mockGit.mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "session", "cleanup"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    const errOutput = vi.mocked(console.error).mock.calls.map((c) => String(c[0])).join("\n");
+    // First session fails but loop continues to second
+    expect(errOutput).toContain("Failed to kill app-1");
+    expect(output).toContain("Killing app-2");
+  });
+
   it("skips sessions without metadata", async () => {
     // No metadata files exist
     mockTmux.mockImplementation(async (...args: string[]) => {

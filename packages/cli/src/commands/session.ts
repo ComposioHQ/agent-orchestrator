@@ -167,9 +167,13 @@ export function registerSession(program: Command): void {
             if (opts.dryRun) {
               console.log(chalk.yellow(`  Would kill ${sessionName}: ${reason}`));
             } else {
-              console.log(chalk.yellow(`  Killing ${sessionName}: ${reason}`));
-              await killSession(config, projectId, sessionName);
-              cleaned++;
+              try {
+                console.log(chalk.yellow(`  Killing ${sessionName}: ${reason}`));
+                await killSession(config, projectId, sessionName);
+                cleaned++;
+              } catch (err) {
+                console.error(chalk.red(`  Failed to kill ${sessionName}: ${err}`));
+              }
             }
           }
         }
