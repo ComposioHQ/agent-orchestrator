@@ -222,11 +222,11 @@ function createGitHubSCM(): SCM {
             completedAt: c.completedAt ? new Date(c.completedAt) : undefined,
           };
         });
-      } catch {
+      } catch (err) {
         // Propagate so callers (getCISummary) can decide how to handle.
         // Do NOT silently return [] — that causes a fail-open where CI
         // appears healthy when we simply failed to fetch check status.
-        throw new Error("Failed to fetch CI checks");
+        throw new Error("Failed to fetch CI checks", { cause: err });
       }
     },
 
