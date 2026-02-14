@@ -1,7 +1,7 @@
 import {
   shellEscape,
   type Agent,
-  type AgentIntrospection,
+  type AgentSessionInfo,
   type AgentLaunchConfig,
   type ActivityState,
   type PluginModule,
@@ -126,7 +126,12 @@ function createCodexAgent(): Agent {
       }
     },
 
-    async introspect(_session: Session): Promise<AgentIntrospection | null> {
+    async isProcessing(session: Session): Promise<boolean> {
+      if (!session.runtimeHandle) return false;
+      return this.isProcessRunning(session.runtimeHandle);
+    },
+
+    async getSessionInfo(_session: Session): Promise<AgentSessionInfo | null> {
       // Codex doesn't have JSONL session files for introspection yet
       return null;
     },

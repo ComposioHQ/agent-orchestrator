@@ -1,7 +1,7 @@
 import {
   shellEscape,
   type Agent,
-  type AgentIntrospection,
+  type AgentSessionInfo,
   type AgentLaunchConfig,
   type ActivityState,
   type CostEstimate,
@@ -10,7 +10,7 @@ import {
   type Session,
 } from "@agent-orchestrator/core";
 import { execFile } from "node:child_process";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { open, readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
@@ -91,6 +91,56 @@ interface JsonlLine {
   inputTokens?: number;
   outputTokens?: number;
   estimatedCostUsd?: number;
+}
+
+/**
+ * Read only the last chunk of a JSONL file to extract the last entry's type
+ * and the file's modification time. This is optimized for polling — it avoids
+ * reading the entire file (which `getSessionInfo()` does for full cost/summary).
+ */
+const TAIL_READ_BYTES = 4096;
+
+async function readLastJsonlEntry(
+  filePath: string,
+): Promise<{ lastType: string | null; modifiedAt: Date } | null> {
+  let fh;
+  try {
+    fh = await open(filePath, "r");
+    const fileStat = await fh.stat();
+    const size = fileStat.size;
+    if (size === 0) return null;
+
+    const readSize = Math.min(TAIL_READ_BYTES, size);
+    const buffer = Buffer.alloc(readSize);
+    await fh.read(buffer, 0, readSize, size - readSize);
+
+    const chunk = buffer.toString("utf-8");
+    // Walk backwards through lines to find the last valid JSON object with a type
+    const lines = chunk.split("\n");
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i];
+      if (!line) continue;
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const parsed: unknown = JSON.parse(trimmed);
+        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+          const obj = parsed as Record<string, unknown>;
+          if (typeof obj.type === "string") {
+            return { lastType: obj.type, modifiedAt: fileStat.mtime };
+          }
+        }
+      } catch {
+        // Skip malformed lines (possibly truncated first line in our chunk)
+      }
+    }
+
+    return { lastType: null, modifiedAt: fileStat.mtime };
+  } catch {
+    return null;
+  } finally {
+    await fh?.close();
+  }
 }
 
 /** Parse JSONL file into lines (skipping invalid JSON) */
@@ -197,35 +247,6 @@ function extractCost(lines: JsonlLine[]): CostEstimate | undefined {
 
   return { inputTokens, outputTokens, estimatedCostUsd: totalCost };
 }
-
-// =============================================================================
-// Activity Detection Patterns
-// =============================================================================
-
-/**
- * Patterns indicating Claude is actively processing.
- *
- * Stable indicators: "⏺" (the recording dot), "esc to interrupt".
- * The animated thinking words (Thinking, Pondering, etc.) are Claude CLI
- * internal UX that may change between versions — listed here as best-effort
- * but the first two are the most reliable.
- */
-const ACTIVE_PATTERNS = /\u23FA|esc to interrupt|Thinking|Pondering|Analyzing/;
-
-/** Patterns indicating Claude is at the prompt (idle) */
-const IDLE_PATTERNS = /^[❯>]\s*$/m;
-
-/** Patterns indicating Claude is asking for input */
-const INPUT_PATTERNS =
-  /\[y\/N\]|\[Y\/n\]|Continue\?|Proceed\?|Do you want|Allow|Approve|Permission/i;
-
-/**
- * Patterns indicating Claude is blocked or errored.
- * Intentionally specific to avoid false positives from code output the agent
- * is working on (e.g. "Fixed the error in auth.ts" should NOT trigger blocked).
- */
-const BLOCKED_PATTERNS =
-  /^Error:|^✗|ENOENT:|EACCES:|quota exceeded|rate limit exceeded|APIError:|NetworkError:/m;
 
 // =============================================================================
 // Process Detection
@@ -350,47 +371,25 @@ function createClaudeCodeAgent(): Agent {
       const pid = await findClaudeProcess(session.runtimeHandle);
       if (pid === null) return "exited";
 
-      // Try to get terminal output for pattern matching
-      // This requires the runtime plugin to be available, so we check handle data
-      let output: string | null = null;
-      try {
-        if (session.runtimeHandle.runtimeName === "tmux") {
-          const { stdout } = await execFileAsync("tmux", [
-            "capture-pane",
-            "-t",
-            session.runtimeHandle.id,
-            "-p",
-            "-S",
-            "-15",
-          ], { timeout: 30_000 });
-          output = stdout;
-        }
-      } catch {
-        // If we can't get output, just confirm process is alive
-        return "active";
-      }
+      // Process is alive — use JSONL to determine state
+      if (!session.workspacePath) return "active";
 
-      // No terminal output available (non-tmux runtime) — process is
-      // confirmed alive so default to "active", not "idle" (we can't know).
-      if (output === null) return "active";
+      const projectPath = toClaudeProjectPath(session.workspacePath);
+      const projectDir = join(homedir(), ".claude", "projects", projectPath);
+      const sessionFile = await findLatestSessionFile(projectDir);
+      if (!sessionFile) return "active";
 
-      // Empty tmux pane with a confirmed-alive process means the pane
-      // hasn't rendered yet or was cleared — not that the process exited.
-      if (output.trim() === "") return "idle";
+      const entry = await readLastJsonlEntry(sessionFile);
+      if (!entry) return "active";
 
-      // Check patterns in priority order.
-      // 1. Active indicators (⏺, "esc to interrupt") are real-time — override everything.
-      // 2. Idle prompt (❯) means the agent is at its command line and has
-      //    recovered from any stale errors in the buffer — check before blocked.
-      // 3. Blocked errors only matter if no idle prompt follows them.
-      // 4. Input prompts checked last (blocked errors like "EACCES: permission
-      //    denied" contain "permission" which INPUT_PATTERNS would match).
-      if (ACTIVE_PATTERNS.test(output)) return "active";
-      if (IDLE_PATTERNS.test(output)) return "idle";
-      if (BLOCKED_PATTERNS.test(output)) return "blocked";
-      if (INPUT_PATTERNS.test(output)) return "waiting_input";
+      // File not updated in 30s → agent is idle (finished its turn)
+      const ageMs = Date.now() - entry.modifiedAt.getTime();
+      if (ageMs > 30_000) return "idle";
 
-      // Default: if process is running but no clear pattern, assume active
+      // If the last entry is "assistant" or "system", Claude has finished its turn
+      if (entry.lastType === "assistant" || entry.lastType === "system") return "idle";
+
+      // Otherwise the agent is actively processing
       return "active";
     },
 
@@ -399,7 +398,28 @@ function createClaudeCodeAgent(): Agent {
       return pid !== null;
     },
 
-    async introspect(session: Session): Promise<AgentIntrospection | null> {
+    async isProcessing(session: Session): Promise<boolean> {
+      if (!session.workspacePath) return false;
+
+      const projectPath = toClaudeProjectPath(session.workspacePath);
+      const projectDir = join(homedir(), ".claude", "projects", projectPath);
+
+      const sessionFile = await findLatestSessionFile(projectDir);
+      if (!sessionFile) return false;
+
+      const entry = await readLastJsonlEntry(sessionFile);
+      if (!entry) return false;
+
+      const ageMs = Date.now() - entry.modifiedAt.getTime();
+      if (ageMs > 30_000) return false;
+
+      // If the last entry is "assistant" or "system", Claude has finished its turn
+      if (entry.lastType === "assistant" || entry.lastType === "system") return false;
+
+      return true;
+    },
+
+    async getSessionInfo(session: Session): Promise<AgentSessionInfo | null> {
       if (!session.workspacePath) return null;
 
       // Build the Claude project directory path

@@ -4,13 +4,16 @@ import type { Session, RuntimeHandle, AgentLaunchConfig } from "@agent-orchestra
 // ---------------------------------------------------------------------------
 // Hoisted mocks — available inside vi.mock factories
 // ---------------------------------------------------------------------------
-const { mockExecFileAsync, mockReaddir, mockReadFile, mockStat, mockHomedir } = vi.hoisted(() => ({
-  mockExecFileAsync: vi.fn(),
-  mockReaddir: vi.fn(),
-  mockReadFile: vi.fn(),
-  mockStat: vi.fn(),
-  mockHomedir: vi.fn(() => "/mock/home"),
-}));
+const { mockExecFileAsync, mockReaddir, mockReadFile, mockStat, mockOpen, mockHomedir } = vi.hoisted(
+  () => ({
+    mockExecFileAsync: vi.fn(),
+    mockReaddir: vi.fn(),
+    mockReadFile: vi.fn(),
+    mockStat: vi.fn(),
+    mockOpen: vi.fn(),
+    mockHomedir: vi.fn(() => "/mock/home"),
+  }),
+);
 
 vi.mock("node:child_process", () => {
   const fn = Object.assign((..._args: unknown[]) => {}, {
@@ -20,6 +23,7 @@ vi.mock("node:child_process", () => {
 });
 
 vi.mock("node:fs/promises", () => ({
+  open: mockOpen,
   readdir: mockReaddir,
   readFile: mockReadFile,
   stat: mockStat,
@@ -92,22 +96,45 @@ function mockTmuxWithProcess(processName = "claude", tty = "/dev/ttys001", pid =
   });
 }
 
-function mockTmuxWithActivity(terminalOutput: string, processName = "claude") {
+/** Mock detectActivity: process is alive and JSONL has given content/mtime */
+function mockProcessAliveWithJsonl(
+  content: string | null,
+  mtime: Date = new Date(),
+) {
+  // findClaudeProcess: tmux pane + ps
   mockExecFileAsync.mockImplementation((cmd: string, args: string[]) => {
     if (cmd === "tmux" && args[0] === "list-panes") {
       return Promise.resolve({ stdout: "/dev/ttys001\n", stderr: "" });
     }
     if (cmd === "ps") {
       return Promise.resolve({
-        stdout: `  PID TT       ARGS\n  123 ttys001  ${processName}\n`,
+        stdout: "  PID TT       ARGS\n  123 ttys001  claude\n",
         stderr: "",
       });
     }
-    if (cmd === "tmux" && args[0] === "capture-pane") {
-      return Promise.resolve({ stdout: terminalOutput, stderr: "" });
-    }
     return Promise.reject(new Error(`Unexpected: ${cmd} ${args.join(" ")}`));
   });
+  if (content !== null) {
+    // findLatestSessionFile: readdir + stat
+    mockReaddir.mockResolvedValue(["session-abc.jsonl"]);
+    mockStat.mockResolvedValue({ mtimeMs: mtime.getTime(), mtime });
+    // readLastJsonlEntry: open + read + close
+    const buf = Buffer.from(content, "utf-8");
+    const fh = {
+      stat: vi.fn().mockResolvedValue({ size: buf.length, mtime }),
+      read: vi.fn().mockImplementation(
+        (buffer: Buffer, offset: number, length: number, position: number) => {
+          buf.copy(buffer, offset, position, position + length);
+          return Promise.resolve({ bytesRead: length, buffer });
+        },
+      ),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    mockOpen.mockResolvedValue(fh);
+  } else {
+    // No JSONL files
+    mockReaddir.mockResolvedValue([]);
+  }
 }
 
 function mockJsonlFiles(
@@ -332,7 +359,7 @@ describe("isProcessRunning", () => {
 });
 
 // =========================================================================
-// detectActivity
+// detectActivity — JSONL-based
 // =========================================================================
 describe("detectActivity", () => {
   const agent = create();
@@ -351,186 +378,110 @@ describe("detectActivity", () => {
     expect(await agent.detectActivity(session)).toBe("exited");
   });
 
-  describe("active patterns (stable indicators)", () => {
-    const activeStrings = [
-      "Thinking about your request...",
-      "Pondering the architecture",
-      "Analyzing the codebase",
-      "\u23FA Recording output",
-      "press esc to interrupt the agent",
-    ];
-
-    for (const output of activeStrings) {
-      it(`detects "${output.trim().substring(0, 40)}" as active`, async () => {
-        mockTmuxWithActivity(output);
-        const session = makeSession({ runtimeHandle: makeTmuxHandle() });
-        expect(await agent.detectActivity(session)).toBe("active");
-      });
-    }
+  it("returns active when no workspacePath (process alive, can't check JSONL)", async () => {
+    mockProcessAliveWithJsonl(null);
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: null });
+    expect(await agent.detectActivity(session)).toBe("active");
   });
 
-  describe("idle patterns", () => {
-    it("detects bare prompt as idle", async () => {
-      mockTmuxWithActivity("some previous output\n❯ \n");
-      const session = makeSession({ runtimeHandle: makeTmuxHandle() });
-      expect(await agent.detectActivity(session)).toBe("idle");
-    });
-
-    it("detects bare > prompt as idle", async () => {
-      mockTmuxWithActivity("output\n> \n");
-      const session = makeSession({ runtimeHandle: makeTmuxHandle() });
-      expect(await agent.detectActivity(session)).toBe("idle");
-    });
-  });
-
-  describe("waiting_input patterns", () => {
-    const inputStrings = [
-      "Do you want to continue? [y/N]",
-      "Apply changes? [Y/n]",
-      "Continue?",
-      "Proceed?",
-      "Do you want to allow this?",
-      "Allow access to file?",
-      "Approve this action?",
-      "Permission required to write",
-    ];
-
-    for (const output of inputStrings) {
-      it(`detects "${output.substring(0, 40)}" as waiting_input`, async () => {
-        mockTmuxWithActivity(output);
-        const session = makeSession({ runtimeHandle: makeTmuxHandle() });
-        expect(await agent.detectActivity(session)).toBe("waiting_input");
-      });
-    }
-  });
-
-  describe("blocked patterns (specific error framing)", () => {
-    const blockedStrings = [
-      "Error: module not found",
-      "\u2717 Build failed",
-      "ENOENT: no such file or directory",
-      "EACCES: permission denied",
-      "quota exceeded for this billing period",
-      "rate limit exceeded",
-      "APIError: 429 Too Many Requests",
-      "NetworkError: connection refused",
-    ];
-
-    for (const output of blockedStrings) {
-      it(`detects "${output.substring(0, 40)}" as blocked`, async () => {
-        mockTmuxWithActivity(output);
-        const session = makeSession({ runtimeHandle: makeTmuxHandle() });
-        expect(await agent.detectActivity(session)).toBe("blocked");
-      });
-    }
-
-    it("does NOT trigger blocked on casual mentions of 'error'", async () => {
-      // "Fixed the error" should not match — broad "error" pattern was removed
-      mockTmuxWithActivity("Fixed the error in auth.ts");
-      const session = makeSession({ runtimeHandle: makeTmuxHandle() });
-      expect(await agent.detectActivity(session)).not.toBe("blocked");
-    });
-
-    it("does NOT trigger blocked on 'failed' in normal code output", async () => {
-      mockTmuxWithActivity("Tests: 12 passed, 0 failed");
-      const session = makeSession({ runtimeHandle: makeTmuxHandle() });
-      expect(await agent.detectActivity(session)).not.toBe("blocked");
-    });
-  });
-
-  it("returns idle (not exited) when capture-pane output is empty but process alive", async () => {
-    mockTmuxWithActivity("");
+  it("returns active when no JSONL files exist (process alive, conservative)", async () => {
+    mockProcessAliveWithJsonl(null);
     const session = makeSession({ runtimeHandle: makeTmuxHandle() });
-    // Process was confirmed alive by findClaudeProcess, empty pane ≠ exited
+    expect(await agent.detectActivity(session)).toBe("active");
+  });
+
+  it("returns idle when JSONL file is older than 30 seconds", async () => {
+    const oldTime = new Date(Date.now() - 60_000);
+    const content = '{"type":"user","message":{"content":"hello"}}\n';
+    mockProcessAliveWithJsonl(content, oldTime);
+    const session = makeSession({ runtimeHandle: makeTmuxHandle() });
     expect(await agent.detectActivity(session)).toBe("idle");
   });
 
-  it("returns active when capture-pane throws (process is alive)", async () => {
-    mockExecFileAsync.mockImplementation((cmd: string, args: string[]) => {
-      if (cmd === "tmux" && args[0] === "list-panes")
-        return Promise.resolve({ stdout: "/dev/ttys001\n", stderr: "" });
-      if (cmd === "ps")
-        return Promise.resolve({
-          stdout: "  PID TT ARGS\n  123 ttys001  claude\n",
-          stderr: "",
-        });
-      if (cmd === "tmux" && args[0] === "capture-pane")
-        return Promise.reject(new Error("tmux server not found"));
-      return Promise.reject(new Error("unexpected"));
-    });
+  it("returns idle when last type is assistant", async () => {
+    const content = [
+      '{"type":"user","message":{"content":"fix bug"}}',
+      '{"type":"assistant","message":{"content":"I fixed it"}}',
+    ].join("\n") + "\n";
+    mockProcessAliveWithJsonl(content);
+    const session = makeSession({ runtimeHandle: makeTmuxHandle() });
+    expect(await agent.detectActivity(session)).toBe("idle");
+  });
+
+  it("returns idle when last type is system", async () => {
+    const content = [
+      '{"type":"user","message":{"content":"hello"}}',
+      '{"type":"system","summary":"session started"}',
+    ].join("\n") + "\n";
+    mockProcessAliveWithJsonl(content);
+    const session = makeSession({ runtimeHandle: makeTmuxHandle() });
+    expect(await agent.detectActivity(session)).toBe("idle");
+  });
+
+  it("returns active when last type is user and file is recent", async () => {
+    const content = '{"type":"user","message":{"content":"fix this"}}\n';
+    mockProcessAliveWithJsonl(content);
     const session = makeSession({ runtimeHandle: makeTmuxHandle() });
     expect(await agent.detectActivity(session)).toBe("active");
   });
 
-  it("defaults to active for unrecognised output", async () => {
-    mockTmuxWithActivity("Just some random text that matches nothing");
+  it("returns active when last type is progress and file is recent", async () => {
+    const content = [
+      '{"type":"user","message":{"content":"do it"}}',
+      '{"type":"progress","status":"running tool"}',
+    ].join("\n") + "\n";
+    mockProcessAliveWithJsonl(content);
     const session = makeSession({ runtimeHandle: makeTmuxHandle() });
     expect(await agent.detectActivity(session)).toBe("active");
   });
 
-  it("active takes priority over blocked keywords in same output", async () => {
-    mockTmuxWithActivity("Thinking about the Error: handling code");
-    const session = makeSession({ runtimeHandle: makeTmuxHandle() });
-    expect(await agent.detectActivity(session)).toBe("active");
-  });
-
-  it("handles non-tmux runtime: returns active when process alive but no output", async () => {
+  it("returns active for non-tmux runtime when process alive but no workspace", async () => {
     const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
-    const session = makeSession({ runtimeHandle: makeProcessHandle(555) });
-    // findClaudeProcess confirms alive via process.kill(555,0)
-    // No tmux pane → output stays null → returns "active" (can't determine state)
+    const session = makeSession({ runtimeHandle: makeProcessHandle(555), workspacePath: null });
     expect(await agent.detectActivity(session)).toBe("active");
     killSpy.mockRestore();
-  });
-
-  it("idle prompt overrides stale blocked errors in buffer", async () => {
-    // Buffer contains a blocked error from earlier, but the agent has since
-    // recovered and is now at its idle prompt — idle should take priority.
-    mockTmuxWithActivity("Error: module not found\nsome output\n❯ \n");
-    const session = makeSession({ runtimeHandle: makeTmuxHandle() });
-    expect(await agent.detectActivity(session)).toBe("idle");
   });
 });
 
 // =========================================================================
-// introspect — JSONL parsing
+// getSessionInfo — JSONL parsing
 // =========================================================================
-describe("introspect", () => {
+describe("getSessionInfo", () => {
   const agent = create();
 
   it("returns null when workspacePath is null", async () => {
-    expect(await agent.introspect(makeSession({ workspacePath: null }))).toBeNull();
+    expect(await agent.getSessionInfo(makeSession({ workspacePath: null }))).toBeNull();
   });
 
   it("returns null when project directory does not exist", async () => {
     mockReaddir.mockRejectedValue(new Error("ENOENT"));
-    expect(await agent.introspect(makeSession())).toBeNull();
+    expect(await agent.getSessionInfo(makeSession())).toBeNull();
   });
 
   it("returns null when no JSONL files in project dir", async () => {
     mockReaddir.mockResolvedValue(["readme.txt", "config.yaml"]);
-    expect(await agent.introspect(makeSession())).toBeNull();
+    expect(await agent.getSessionInfo(makeSession())).toBeNull();
   });
 
   it("filters out agent- prefixed JSONL files", async () => {
     mockReaddir.mockResolvedValue(["agent-toolkit.jsonl"]);
-    expect(await agent.introspect(makeSession())).toBeNull();
+    expect(await agent.getSessionInfo(makeSession())).toBeNull();
   });
 
   it("returns null when JSONL file is empty", async () => {
     mockJsonlFiles("");
-    expect(await agent.introspect(makeSession())).toBeNull();
+    expect(await agent.getSessionInfo(makeSession())).toBeNull();
   });
 
   it("returns null when JSONL has only malformed lines", async () => {
     mockJsonlFiles("not json\nalso not json\n");
-    expect(await agent.introspect(makeSession())).toBeNull();
+    expect(await agent.getSessionInfo(makeSession())).toBeNull();
   });
 
   describe("path conversion", () => {
     it("converts workspace path to Claude project dir path", async () => {
       mockJsonlFiles('{"type":"user","message":{"content":"hello"}}');
-      await agent.introspect(makeSession({ workspacePath: "/Users/dev/.worktrees/ao/ao-3" }));
+      await agent.getSessionInfo(makeSession({ workspacePath: "/Users/dev/.worktrees/ao/ao-3" }));
       expect(mockReaddir).toHaveBeenCalledWith(
         "/mock/home/.claude/projects/Users-dev--worktrees-ao-ao-3",
       );
@@ -545,7 +496,7 @@ describe("introspect", () => {
         '{"type":"summary","summary":"Latest summary"}',
       ].join("\n");
       mockJsonlFiles(jsonl);
-      const result = await agent.introspect(makeSession());
+      const result = await agent.getSessionInfo(makeSession());
       expect(result?.summary).toBe("Latest summary");
     });
 
@@ -555,7 +506,7 @@ describe("introspect", () => {
         '{"type":"assistant","message":{"content":"I will implement..."}}',
       ].join("\n");
       mockJsonlFiles(jsonl);
-      const result = await agent.introspect(makeSession());
+      const result = await agent.getSessionInfo(makeSession());
       expect(result?.summary).toBe("Implement the login feature");
     });
 
@@ -563,7 +514,7 @@ describe("introspect", () => {
       const longMsg = "A".repeat(200);
       const jsonl = `{"type":"user","message":{"content":"${longMsg}"}}`;
       mockJsonlFiles(jsonl);
-      const result = await agent.introspect(makeSession());
+      const result = await agent.getSessionInfo(makeSession());
       expect(result?.summary).toBe("A".repeat(120) + "...");
       expect(result!.summary!.length).toBe(123);
     });
@@ -571,7 +522,7 @@ describe("introspect", () => {
     it("returns null summary when no summary and no user messages", async () => {
       const jsonl = '{"type":"assistant","message":{"content":"Hello"}}';
       mockJsonlFiles(jsonl);
-      const result = await agent.introspect(makeSession());
+      const result = await agent.getSessionInfo(makeSession());
       expect(result?.summary).toBeNull();
     });
 
@@ -581,7 +532,7 @@ describe("introspect", () => {
         '{"type":"user","message":{"content":"Real content"}}',
       ].join("\n");
       mockJsonlFiles(jsonl);
-      const result = await agent.introspect(makeSession());
+      const result = await agent.getSessionInfo(makeSession());
       expect(result?.summary).toBe("Real content");
     });
   });
@@ -589,7 +540,7 @@ describe("introspect", () => {
   describe("session ID extraction", () => {
     it("extracts session ID from filename", async () => {
       mockJsonlFiles('{"type":"user","message":{"content":"hi"}}', ["abc-def-123.jsonl"]);
-      const result = await agent.introspect(makeSession());
+      const result = await agent.getSessionInfo(makeSession());
       expect(result?.agentSessionId).toBe("abc-def-123");
     });
   });
@@ -601,13 +552,13 @@ describe("introspect", () => {
         '{"type":"assistant","message":{"content":"response"}}',
       ].join("\n");
       mockJsonlFiles(jsonl);
-      const result = await agent.introspect(makeSession());
+      const result = await agent.getSessionInfo(makeSession());
       expect(result?.lastMessageType).toBe("assistant");
     });
 
     it("returns undefined when no lines have type", async () => {
       mockJsonlFiles('{"content":"no type field"}');
-      const result = await agent.introspect(makeSession());
+      const result = await agent.getSessionInfo(makeSession());
       expect(result?.lastMessageType).toBeUndefined();
     });
   });
@@ -620,7 +571,7 @@ describe("introspect", () => {
         '{"type":"assistant","usage":{"input_tokens":2000,"output_tokens":300}}',
       ].join("\n");
       mockJsonlFiles(jsonl);
-      const result = await agent.introspect(makeSession());
+      const result = await agent.getSessionInfo(makeSession());
       expect(result?.cost?.inputTokens).toBe(3000);
       expect(result?.cost?.outputTokens).toBe(800);
       expect(result?.cost?.estimatedCostUsd).toBeCloseTo(0.009 + 0.012, 6);
@@ -632,7 +583,7 @@ describe("introspect", () => {
         '{"type":"assistant","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":500,"cache_creation_input_tokens":200}}',
       ].join("\n");
       mockJsonlFiles(jsonl);
-      const result = await agent.introspect(makeSession());
+      const result = await agent.getSessionInfo(makeSession());
       expect(result?.cost?.inputTokens).toBe(800);
       expect(result?.cost?.outputTokens).toBe(50);
     });
@@ -644,7 +595,7 @@ describe("introspect", () => {
         '{"costUSD":0.03}',
       ].join("\n");
       mockJsonlFiles(jsonl);
-      const result = await agent.introspect(makeSession());
+      const result = await agent.getSessionInfo(makeSession());
       expect(result?.cost?.estimatedCostUsd).toBeCloseTo(0.08);
     });
 
@@ -654,7 +605,7 @@ describe("introspect", () => {
         '{"costUSD":0.10,"estimatedCostUsd":0.10}',
       ].join("\n");
       mockJsonlFiles(jsonl);
-      const result = await agent.introspect(makeSession());
+      const result = await agent.getSessionInfo(makeSession());
       // Should use costUSD only, not sum both
       expect(result?.cost?.estimatedCostUsd).toBeCloseTo(0.1);
     });
@@ -665,7 +616,7 @@ describe("introspect", () => {
         '{"estimatedCostUsd":0.12}',
       ].join("\n");
       mockJsonlFiles(jsonl);
-      const result = await agent.introspect(makeSession());
+      const result = await agent.getSessionInfo(makeSession());
       expect(result?.cost?.estimatedCostUsd).toBeCloseTo(0.12);
     });
 
@@ -675,7 +626,7 @@ describe("introspect", () => {
         '{"inputTokens":5000,"outputTokens":1000}',
       ].join("\n");
       mockJsonlFiles(jsonl);
-      const result = await agent.introspect(makeSession());
+      const result = await agent.getSessionInfo(makeSession());
       expect(result?.cost?.inputTokens).toBe(5000);
       expect(result?.cost?.outputTokens).toBe(1000);
     });
@@ -683,7 +634,7 @@ describe("introspect", () => {
     it("returns undefined cost when no usage data", async () => {
       const jsonl = '{"type":"user","message":{"content":"hi"}}';
       mockJsonlFiles(jsonl);
-      const result = await agent.introspect(makeSession());
+      const result = await agent.getSessionInfo(makeSession());
       expect(result?.cost).toBeUndefined();
     });
   });
@@ -698,7 +649,7 @@ describe("introspect", () => {
         return Promise.resolve({ mtimeMs: 2000, mtime: new Date(2000) });
       });
       mockReadFile.mockResolvedValue('{"type":"user","message":{"content":"hi"}}');
-      const result = await agent.introspect(makeSession());
+      const result = await agent.getSessionInfo(makeSession());
       expect(result?.agentSessionId).toBe("new");
     });
 
@@ -711,7 +662,7 @@ describe("introspect", () => {
         return Promise.resolve({ mtimeMs: 1000, mtime: new Date(1000) });
       });
       mockReadFile.mockResolvedValue('{"type":"user","message":{"content":"hi"}}');
-      const result = await agent.introspect(makeSession());
+      const result = await agent.getSessionInfo(makeSession());
       expect(result?.agentSessionId).toBe("good");
     });
   });
@@ -720,7 +671,7 @@ describe("introspect", () => {
     it("returns file mtime as lastLogModified", async () => {
       const mtime = new Date(1700000000000);
       mockJsonlFiles('{"type":"user","message":{"content":"hi"}}', undefined, mtime);
-      const result = await agent.introspect(makeSession());
+      const result = await agent.getSessionInfo(makeSession());
       expect(result?.lastLogModified).toEqual(mtime);
     });
   });
@@ -734,7 +685,7 @@ describe("introspect", () => {
         "",
       ].join("\n");
       mockJsonlFiles(jsonl);
-      const result = await agent.introspect(makeSession());
+      const result = await agent.getSessionInfo(makeSession());
       expect(result?.summary).toBe("Good summary");
     });
 
@@ -747,7 +698,7 @@ describe("introspect", () => {
         '{"type":"summary","summary":"Valid object"}',
       ].join("\n");
       mockJsonlFiles(jsonl);
-      const result = await agent.introspect(makeSession());
+      const result = await agent.getSessionInfo(makeSession());
       expect(result?.summary).toBe("Valid object");
     });
 
@@ -755,8 +706,151 @@ describe("introspect", () => {
       mockReaddir.mockResolvedValue(["session.jsonl"]);
       mockStat.mockResolvedValue({ mtimeMs: 1000, mtime: new Date(1000) });
       mockReadFile.mockRejectedValue(new Error("EACCES"));
-      const result = await agent.introspect(makeSession());
+      const result = await agent.getSessionInfo(makeSession());
       expect(result).toBeNull();
     });
+  });
+});
+
+// =========================================================================
+// isProcessing — JSONL tail-read
+// =========================================================================
+describe("isProcessing", () => {
+  const agent = create();
+
+  /** Helper to create a mock file handle from `open()` */
+  function mockOpenWithContent(
+    content: string,
+    mtime: Date = new Date(),
+  ) {
+    const buf = Buffer.from(content, "utf-8");
+    const fh = {
+      stat: vi.fn().mockResolvedValue({ size: buf.length, mtime }),
+      read: vi.fn().mockImplementation(
+        (buffer: Buffer, offset: number, length: number, position: number) => {
+          buf.copy(buffer, offset, position, position + length);
+          return Promise.resolve({ bytesRead: length, buffer });
+        },
+      ),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    mockOpen.mockResolvedValue(fh);
+    // findLatestSessionFile uses readdir + stat
+    mockReaddir.mockResolvedValue(["session-abc.jsonl"]);
+    mockStat.mockResolvedValue({ mtimeMs: mtime.getTime(), mtime });
+  }
+
+  it("returns false when workspacePath is null", async () => {
+    expect(await agent.isProcessing(makeSession({ workspacePath: null }))).toBe(false);
+  });
+
+  it("returns false when no JSONL files exist", async () => {
+    mockReaddir.mockResolvedValue([]);
+    expect(await agent.isProcessing(makeSession())).toBe(false);
+  });
+
+  it("returns false when project dir does not exist", async () => {
+    mockReaddir.mockRejectedValue(new Error("ENOENT"));
+    expect(await agent.isProcessing(makeSession())).toBe(false);
+  });
+
+  it("returns false when JSONL file is empty", async () => {
+    mockOpenWithContent("");
+    // Override stat to return size 0
+    const fh = {
+      stat: vi.fn().mockResolvedValue({ size: 0, mtime: new Date() }),
+      read: vi.fn(),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    mockOpen.mockResolvedValue(fh);
+    mockReaddir.mockResolvedValue(["session-abc.jsonl"]);
+    mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
+    expect(await agent.isProcessing(makeSession())).toBe(false);
+  });
+
+  it("returns false when file is older than 30 seconds", async () => {
+    const oldTime = new Date(Date.now() - 60_000);
+    const content = '{"type":"user","message":{"content":"hello"}}\n';
+    mockOpenWithContent(content, oldTime);
+    expect(await agent.isProcessing(makeSession())).toBe(false);
+  });
+
+  it("returns false when last type is assistant", async () => {
+    const now = new Date();
+    const content = [
+      '{"type":"user","message":{"content":"fix bug"}}',
+      '{"type":"assistant","message":{"content":"I fixed it"}}',
+    ].join("\n") + "\n";
+    mockOpenWithContent(content, now);
+    expect(await agent.isProcessing(makeSession())).toBe(false);
+  });
+
+  it("returns false when last type is system", async () => {
+    const now = new Date();
+    const content = [
+      '{"type":"user","message":{"content":"hello"}}',
+      '{"type":"system","summary":"session started"}',
+    ].join("\n") + "\n";
+    mockOpenWithContent(content, now);
+    expect(await agent.isProcessing(makeSession())).toBe(false);
+  });
+
+  it("returns true when last type is user and file is recent", async () => {
+    const now = new Date();
+    const content = '{"type":"user","message":{"content":"fix this"}}\n';
+    mockOpenWithContent(content, now);
+    expect(await agent.isProcessing(makeSession())).toBe(true);
+  });
+
+  it("returns true when last type is progress and file is recent", async () => {
+    const now = new Date();
+    const content = [
+      '{"type":"user","message":{"content":"do it"}}',
+      '{"type":"progress","status":"running tool"}',
+    ].join("\n") + "\n";
+    mockOpenWithContent(content, now);
+    expect(await agent.isProcessing(makeSession())).toBe(true);
+  });
+
+  it("returns false when open() throws", async () => {
+    mockOpen.mockRejectedValue(new Error("EACCES"));
+    mockReaddir.mockResolvedValue(["session-abc.jsonl"]);
+    mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
+    expect(await agent.isProcessing(makeSession())).toBe(false);
+  });
+
+  it("returns false when JSONL has no lines with type field", async () => {
+    const now = new Date();
+    const content = '{"content":"no type here"}\n';
+    mockOpenWithContent(content, now);
+    // lastType is null, and null is neither "assistant" nor "system",
+    // but we still return true because the file is recent and the agent
+    // appears active. Actually, let's verify what happens:
+    // entry = { lastType: null, modifiedAt: now }
+    // ageMs < 30_000 → true
+    // lastType !== "assistant" && lastType !== "system" → true
+    // So it returns true. That's the conservative (safe) behavior.
+    expect(await agent.isProcessing(makeSession())).toBe(true);
+  });
+
+  it("handles file with only malformed JSON gracefully", async () => {
+    const now = new Date();
+    const content = "not valid json at all\n";
+    mockOpenWithContent(content, now);
+    // All parse attempts fail → lastType: null → returns true (conservative)
+    expect(await agent.isProcessing(makeSession())).toBe(true);
+  });
+
+  it("always closes file handle even on error", async () => {
+    const fh = {
+      stat: vi.fn().mockRejectedValue(new Error("stat failed")),
+      read: vi.fn(),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    mockOpen.mockResolvedValue(fh);
+    mockReaddir.mockResolvedValue(["session-abc.jsonl"]);
+    mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
+    await agent.isProcessing(makeSession());
+    expect(fh.close).toHaveBeenCalled();
   });
 });

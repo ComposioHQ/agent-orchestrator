@@ -262,13 +262,36 @@ describe("detectActivity", () => {
 });
 
 // =========================================================================
-// introspect
+// isProcessing
 // =========================================================================
-describe("introspect", () => {
+describe("isProcessing", () => {
+  const agent = create();
+
+  it("returns false when no runtime handle", async () => {
+    expect(await agent.isProcessing(makeSession())).toBe(false);
+  });
+
+  it("returns true when process is running", async () => {
+    mockTmuxWithProcess("codex");
+    const session = makeSession({ runtimeHandle: makeTmuxHandle() });
+    expect(await agent.isProcessing(session)).toBe(true);
+  });
+
+  it("returns false when process is not running", async () => {
+    mockTmuxWithProcess("codex", false);
+    const session = makeSession({ runtimeHandle: makeTmuxHandle() });
+    expect(await agent.isProcessing(session)).toBe(false);
+  });
+});
+
+// =========================================================================
+// getSessionInfo
+// =========================================================================
+describe("getSessionInfo", () => {
   const agent = create();
 
   it("always returns null (not implemented)", async () => {
-    expect(await agent.introspect(makeSession())).toBeNull();
-    expect(await agent.introspect(makeSession({ workspacePath: "/some/path" }))).toBeNull();
+    expect(await agent.getSessionInfo(makeSession())).toBeNull();
+    expect(await agent.getSessionInfo(makeSession({ workspacePath: "/some/path" }))).toBeNull();
   });
 });

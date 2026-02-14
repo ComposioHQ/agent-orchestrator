@@ -76,8 +76,8 @@ export interface Session {
   /** Runtime handle for communicating with the session */
   runtimeHandle: RuntimeHandle | null;
 
-  /** Agent introspection data (summary, cost, etc.) */
-  agentInfo: AgentIntrospection | null;
+  /** Agent session info (summary, cost, etc.) */
+  agentInfo: AgentSessionInfo | null;
 
   /** When the session was created */
   createdAt: Date;
@@ -168,7 +168,7 @@ export interface AttachInfo {
 
 /**
  * Agent adapter for a specific AI coding tool.
- * Knows how to launch, detect activity, and introspect the agent.
+ * Knows how to launch, detect activity, and extract session info.
  */
 export interface Agent {
   readonly name: string;
@@ -188,8 +188,11 @@ export interface Agent {
   /** Check if agent process is running (given runtime handle) */
   isProcessRunning(handle: RuntimeHandle): Promise<boolean>;
 
+  /** Fast check: is the agent actively processing? Uses agent-native mechanism (not runtime). */
+  isProcessing(session: Session): Promise<boolean>;
+
   /** Extract information from agent's internal data (summary, cost, session ID) */
-  introspect(session: Session): Promise<AgentIntrospection | null>;
+  getSessionInfo(session: Session): Promise<AgentSessionInfo | null>;
 
   /** Optional: run setup after agent is launched (e.g. configure MCP servers) */
   postLaunchSetup?(session: Session): Promise<void>;
@@ -204,7 +207,7 @@ export interface AgentLaunchConfig {
   model?: string;
 }
 
-export interface AgentIntrospection {
+export interface AgentSessionInfo {
   /** Agent's auto-generated summary of what it's working on */
   summary: string | null;
   /** Agent's internal session ID (for resume) */
