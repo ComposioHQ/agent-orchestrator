@@ -140,7 +140,13 @@ export interface SSEActivityEvent {
 /** Determines which attention zone a session belongs to */
 export function getAttentionLevel(session: DashboardSession): AttentionLevel {
   // ── Done: terminal states ─────────────────────────────────────────
-  if (session.status === "merged" || session.status === "killed" || session.status === "cleanup") {
+  if (
+    session.status === "merged" ||
+    session.status === "killed" ||
+    session.status === "cleanup" ||
+    session.status === "done" ||
+    session.status === "terminated"
+  ) {
     return "done";
   }
   if (session.pr) {

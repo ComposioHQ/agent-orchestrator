@@ -37,7 +37,9 @@ export type SessionStatus =
   | "needs_input"
   | "stuck"
   | "errored"
-  | "killed";
+  | "killed"
+  | "done"
+  | "terminated";
 
 /** Activity state as detected by the agent plugin */
 export type ActivityState =

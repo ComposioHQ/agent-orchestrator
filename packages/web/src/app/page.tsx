@@ -32,8 +32,24 @@ export default async function Home() {
     });
 
     // Enrich sessions that have PRs with live SCM data
+    // Skip enrichment for terminal sessions (merged, closed, done, terminated)
+    const terminalStatuses = new Set(["merged", "killed", "cleanup", "done", "terminated"]);
     const enrichPromises = coreSessions.map((core, i) => {
       if (!core.pr) return Promise.resolve();
+
+      // Skip enrichment for terminal sessions
+      if (terminalStatuses.has(core.status)) {
+        return Promise.resolve();
+      }
+
+      // Skip enrichment if PR is already merged/closed
+      if (core.pr && sessions[i].pr) {
+        const prState = sessions[i].pr?.state;
+        if (prState === "merged" || prState === "closed") {
+          return Promise.resolve();
+        }
+      }
+
       let project = config.projects[core.projectId];
       if (!project) {
         const entry = Object.entries(config.projects).find(([, p]) =>

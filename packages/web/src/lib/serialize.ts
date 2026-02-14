@@ -7,6 +7,7 @@
 
 import type { Session, SCM, PRInfo, Tracker, ProjectConfig } from "@agent-orchestrator/core";
 import type { DashboardSession, DashboardPR, DashboardStats } from "./types.js";
+import { prCache, prCacheKey, type PREnrichmentData } from "./cache";
 
 /** Convert a core Session to a DashboardSession (without PR/issue enrichment). */
 export function sessionToDashboard(session: Session): DashboardSession {
@@ -27,7 +28,11 @@ export function sessionToDashboard(session: Session): DashboardSession {
   };
 }
 
-/** Convert minimal PRInfo to a DashboardPR with default values for enriched fields. */
+/**
+ * Convert minimal PRInfo to a DashboardPR with default values for enriched fields.
+ * These defaults indicate "data not yet loaded" rather than "failing".
+ * Use enrichSessionPR() to populate with live data from SCM.
+ */
 function basicPRToDashboard(pr: PRInfo): DashboardPR {
   return {
     number: pr.number,
@@ -41,22 +46,25 @@ function basicPRToDashboard(pr: PRInfo): DashboardPR {
     state: "open",
     additions: 0,
     deletions: 0,
-    ciStatus: "none",
+    ciStatus: "none", // "none" is neutral (no checks configured)
     ciChecks: [],
-    reviewDecision: "none",
+    reviewDecision: "none", // "none" is neutral (no review required)
     mergeability: {
       mergeable: false,
-      ciPassing: false,
+      ciPassing: false, // Conservative default
       approved: false,
-      noConflicts: true,
-      blockers: [],
+      noConflicts: true, // Optimistic default (conflicts are rare)
+      blockers: ["Data not loaded"], // Explicit blocker
     },
     unresolvedThreads: 0,
     unresolvedComments: [],
   };
 }
 
-/** Enrich a DashboardSession's PR with live data from the SCM plugin. */
+/**
+ * Enrich a DashboardSession's PR with live data from the SCM plugin.
+ * Uses cache to reduce API calls and handles rate limit errors gracefully.
+ */
 export async function enrichSessionPR(
   dashboard: DashboardSession,
   scm: SCM,
@@ -64,6 +72,29 @@ export async function enrichSessionPR(
 ): Promise<void> {
   if (!dashboard.pr) return;
 
+  const cacheKey = prCacheKey(pr.owner, pr.repo, pr.number);
+
+  // Check cache first
+  const cached = prCache.get(cacheKey);
+  if (cached && dashboard.pr) {
+    dashboard.pr.state = cached.state;
+    dashboard.pr.title = cached.title;
+    dashboard.pr.additions = cached.additions;
+    dashboard.pr.deletions = cached.deletions;
+    dashboard.pr.ciStatus = cached.ciStatus as "none" | "pending" | "passing" | "failing";
+    dashboard.pr.ciChecks = cached.ciChecks as DashboardPR["ciChecks"];
+    dashboard.pr.reviewDecision = cached.reviewDecision as
+      | "none"
+      | "pending"
+      | "approved"
+      | "changes_requested";
+    dashboard.pr.mergeability = cached.mergeability;
+    dashboard.pr.unresolvedThreads = cached.unresolvedThreads;
+    dashboard.pr.unresolvedComments = cached.unresolvedComments;
+    return;
+  }
+
+  // Fetch from SCM
   const results = await Promise.allSettled([
     scm.getPRSummary
       ? scm.getPRSummary(pr)
@@ -77,6 +108,18 @@ export async function enrichSessionPR(
 
   const [summaryR, checksR, ciR, reviewR, mergeR, commentsR] = results;
 
+  // Check if all requests failed (likely rate limit)
+  const allFailed = results.every((r) => r.status === "rejected");
+  if (allFailed) {
+    // Don't update PR data — leave default "Data not loaded" blocker
+    // Log for debugging (in production, you'd use a logger)
+    const firstError = (results[0] as PromiseRejectedResult).reason;
+    console.error(`[enrichSessionPR] All API calls failed for PR #${pr.number}:`, firstError);
+    dashboard.pr.mergeability.blockers = ["API rate limited or unavailable"];
+    return;
+  }
+
+  // Apply successful results
   if (summaryR.status === "fulfilled") {
     dashboard.pr.state = summaryR.value.state;
     dashboard.pr.additions = summaryR.value.additions;
@@ -104,6 +147,9 @@ export async function enrichSessionPR(
 
   if (mergeR.status === "fulfilled") {
     dashboard.pr.mergeability = mergeR.value;
+  } else {
+    // Mergeability failed — mark as unavailable
+    dashboard.pr.mergeability.blockers = ["Merge status unavailable"];
   }
 
   if (commentsR.status === "fulfilled") {
@@ -115,6 +161,23 @@ export async function enrichSessionPR(
       author: c.author,
       body: c.body,
     }));
+  }
+
+  // Cache the result if we got at least some data
+  if (!allFailed) {
+    const cacheData: PREnrichmentData = {
+      state: dashboard.pr.state,
+      title: dashboard.pr.title,
+      additions: dashboard.pr.additions,
+      deletions: dashboard.pr.deletions,
+      ciStatus: dashboard.pr.ciStatus,
+      ciChecks: dashboard.pr.ciChecks,
+      reviewDecision: dashboard.pr.reviewDecision,
+      mergeability: dashboard.pr.mergeability,
+      unresolvedThreads: dashboard.pr.unresolvedThreads,
+      unresolvedComments: dashboard.pr.unresolvedComments,
+    };
+    prCache.set(cacheKey, cacheData);
   }
 }
 
