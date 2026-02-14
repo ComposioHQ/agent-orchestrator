@@ -2,7 +2,7 @@
  * Integration tests for the Aider agent plugin.
  *
  * Requires:
- *   - `aider` binary on PATH (or at /Users/equinox/Library/Python/3.9/bin/aider)
+ *   - `aider` binary on PATH
  *   - tmux installed and running
  *   - ANTHROPIC_API_KEY or OPENAI_API_KEY set (aider may open a browser if missing)
  *

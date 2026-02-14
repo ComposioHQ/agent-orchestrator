@@ -2,7 +2,7 @@
  * Integration tests for the Claude Code agent plugin.
  *
  * Requires:
- *   - `claude` binary on PATH (or at /Users/equinox/.local/bin/claude)
+ *   - `claude` binary on PATH
  *   - tmux installed and running
  *   - ANTHROPIC_API_KEY set (Claude will make a real API call)
  *

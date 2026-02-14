@@ -87,27 +87,3 @@ export async function killSession(name: string): Promise<void> {
   }
 }
 
-/** Check whether a tmux session exists. */
-export async function sessionExists(name: string): Promise<boolean> {
-  try {
-    await execFileAsync("tmux", ["has-session", "-t", name], {
-      timeout: TIMEOUT,
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Capture the visible pane output from a tmux session. */
-export async function capturePane(
-  name: string,
-  lines = 50,
-): Promise<string> {
-  const { stdout } = await execFileAsync(
-    "tmux",
-    ["capture-pane", "-t", name, "-p", "-S", `-${lines}`],
-    { timeout: TIMEOUT },
-  );
-  return stdout;
-}
