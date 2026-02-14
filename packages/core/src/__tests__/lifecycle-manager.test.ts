@@ -67,7 +67,7 @@ beforeEach(() => {
     create: vi.fn(),
     destroy: vi.fn(),
     sendMessage: vi.fn().mockResolvedValue(undefined),
-    getOutput: vi.fn().mockResolvedValue(""),
+    getOutput: vi.fn().mockResolvedValue("$ some terminal output\n"),
     isAlive: vi.fn().mockResolvedValue(true),
   };
 

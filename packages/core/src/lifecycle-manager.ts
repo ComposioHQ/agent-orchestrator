@@ -197,10 +197,14 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const terminalOutput = runtime
           ? await runtime.getOutput(session.runtimeHandle, 10).catch(() => "")
           : "";
-        const activity = agent.detectActivity(terminalOutput);
-        if (activity === "exited") return "killed";
-        if (activity === "blocked") return "stuck";
-        if (activity === "waiting_input") return "needs_input";
+        // Only trust detectActivity when we actually have terminal output;
+        // empty output means the runtime probe failed, not that the agent exited.
+        if (terminalOutput) {
+          const activity = agent.detectActivity(terminalOutput);
+          if (activity === "exited") return "killed";
+          if (activity === "blocked") return "stuck";
+          if (activity === "waiting_input") return "needs_input";
+        }
       } catch {
         // On probe failure, preserve current stuck/needs_input state rather
         // than letting the fallback at the bottom coerce them to "working"

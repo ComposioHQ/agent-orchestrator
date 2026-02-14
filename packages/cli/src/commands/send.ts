@@ -18,14 +18,8 @@ async function captureOutput(session: string, lines: number): Promise<string> {
   return output || "";
 }
 
-function isBusy(agent: Agent, terminalOutput: string): boolean {
-  const state = agent.detectActivity(terminalOutput);
-  return state === "active";
-}
-
-function isProcessing(agent: Agent, terminalOutput: string): boolean {
-  const state = agent.detectActivity(terminalOutput);
-  return state === "active";
+function isActive(agent: Agent, terminalOutput: string): boolean {
+  return agent.detectActivity(terminalOutput) === "active";
 }
 
 function hasQueuedMessage(terminalOutput: string): boolean {
@@ -78,7 +72,7 @@ export function registerSend(program: Command): void {
         if (opts.wait !== false) {
           const start = Date.now();
           let warned = false;
-          while (isBusy(agent, await captureOutput(session, 5))) {
+          while (isActive(agent, await captureOutput(session, 5))) {
             if (!warned) {
               console.log(chalk.dim(`Waiting for ${session} to become idle...`));
               warned = true;
@@ -141,7 +135,7 @@ export function registerSend(program: Command): void {
         for (let attempt = 1; attempt <= 3; attempt++) {
           await sleep(2000);
           const output = await captureOutput(session, 10);
-          if (isProcessing(agent, output)) {
+          if (isActive(agent, output)) {
             console.log(chalk.green("Message sent and processing"));
             return;
           }
