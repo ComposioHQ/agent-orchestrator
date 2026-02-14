@@ -233,7 +233,7 @@ describe("enrichSessionPR", () => {
     consoleErrorSpy.mockRestore();
   });
 
-  it("should not cache failed enrichment attempts", async () => {
+  it("should cache even when most requests fail (to reduce API pressure)", async () => {
     const pr = createPRInfo();
     const coreSession = createCoreSession({ pr });
     const dashboard = sessionToDashboard(coreSession);
@@ -241,9 +241,11 @@ describe("enrichSessionPR", () => {
 
     await enrichSessionPR(dashboard, scm, pr);
 
+    // Even with all failures, we cache the default/partial data to prevent repeated API hits
     const cacheKey = prCacheKey(pr.owner, pr.repo, pr.number);
     const cached = prCache.get(cacheKey);
-    expect(cached).toBeNull();
+    expect(cached).not.toBeNull();
+    expect(cached?.mergeability.blockers).toContain("API rate limited or unavailable");
   });
 
   it("should handle partial failures gracefully", async () => {

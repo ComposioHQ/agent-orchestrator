@@ -38,36 +38,44 @@ export default async function Home() {
     const enrichPromises = coreSessions.map((core, i) => {
       if (!core.pr) return Promise.resolve();
 
-      // Skip enrichment for terminal sessions
-      if (terminalStatuses.has(core.status)) {
-        return Promise.resolve();
-      }
+      // Check cache first (before terminal status check)
+      const cacheKey = prCacheKey(core.pr.owner, core.pr.repo, core.pr.number);
+      const cached = prCache.get(cacheKey);
 
-      // Skip enrichment if PR is already merged/closed (check cache)
-      if (core.pr) {
-        const cacheKey = prCacheKey(core.pr.owner, core.pr.repo, core.pr.number);
-        const cached = prCache.get(cacheKey);
-        if (cached && (cached.state === "merged" || cached.state === "closed")) {
-          // Apply cached terminal state to session before skipping enrichment
-          if (sessions[i].pr) {
-            sessions[i].pr.state = cached.state;
-            sessions[i].pr.ciStatus = cached.ciStatus as "none" | "pending" | "passing" | "failing";
-            sessions[i].pr.reviewDecision = cached.reviewDecision as
-              | "none"
-              | "pending"
-              | "approved"
-              | "changes_requested";
-            sessions[i].pr.ciChecks = cached.ciChecks.map((c) => ({
-              name: c.name,
-              status: c.status as "pending" | "running" | "passed" | "failed" | "skipped",
-              url: c.url,
-            }));
-            sessions[i].pr.mergeability = cached.mergeability;
-            sessions[i].pr.unresolvedThreads = cached.unresolvedThreads;
-            sessions[i].pr.unresolvedComments = cached.unresolvedComments;
-          }
+      // Apply cached data if available (for both terminal and non-terminal sessions)
+      if (cached) {
+        if (sessions[i].pr) {
+          sessions[i].pr.state = cached.state;
+          sessions[i].pr.ciStatus = cached.ciStatus as "none" | "pending" | "passing" | "failing";
+          sessions[i].pr.reviewDecision = cached.reviewDecision as
+            | "none"
+            | "pending"
+            | "approved"
+            | "changes_requested";
+          sessions[i].pr.ciChecks = cached.ciChecks.map((c) => ({
+            name: c.name,
+            status: c.status as "pending" | "running" | "passed" | "failed" | "skipped",
+            url: c.url,
+          }));
+          sessions[i].pr.mergeability = cached.mergeability;
+          sessions[i].pr.unresolvedThreads = cached.unresolvedThreads;
+          sessions[i].pr.unresolvedComments = cached.unresolvedComments;
+        }
+
+        // Skip enrichment for terminal sessions or merged/closed PRs (data already applied from cache)
+        if (
+          terminalStatuses.has(core.status) ||
+          cached.state === "merged" ||
+          cached.state === "closed"
+        ) {
           return Promise.resolve();
         }
+      }
+
+      // Skip enrichment for terminal sessions with no cache
+      // (they won't have PR data to enrich anyway)
+      if (terminalStatuses.has(core.status)) {
+        return Promise.resolve();
       }
 
       let project = config.projects[core.projectId];

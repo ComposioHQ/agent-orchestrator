@@ -177,22 +177,21 @@ export async function enrichSessionPR(
     dashboard.pr.mergeability.blockers.push("API rate limited or unavailable");
   }
 
-  // Cache the result if we got at least some data
-  if (!mostFailed) {
-    const cacheData: PREnrichmentData = {
-      state: dashboard.pr.state,
-      title: dashboard.pr.title,
-      additions: dashboard.pr.additions,
-      deletions: dashboard.pr.deletions,
-      ciStatus: dashboard.pr.ciStatus,
-      ciChecks: dashboard.pr.ciChecks,
-      reviewDecision: dashboard.pr.reviewDecision,
-      mergeability: dashboard.pr.mergeability,
-      unresolvedThreads: dashboard.pr.unresolvedThreads,
-      unresolvedComments: dashboard.pr.unresolvedComments,
-    };
-    prCache.set(cacheKey, cacheData);
-  }
+  // Always cache the result (including partial data from rate-limited requests)
+  // This reduces API pressure during rate-limit periods - subsequent refreshes use cached partial data
+  const cacheData: PREnrichmentData = {
+    state: dashboard.pr.state,
+    title: dashboard.pr.title,
+    additions: dashboard.pr.additions,
+    deletions: dashboard.pr.deletions,
+    ciStatus: dashboard.pr.ciStatus,
+    ciChecks: dashboard.pr.ciChecks,
+    reviewDecision: dashboard.pr.reviewDecision,
+    mergeability: dashboard.pr.mergeability,
+    unresolvedThreads: dashboard.pr.unresolvedThreads,
+    unresolvedComments: dashboard.pr.unresolvedComments,
+  };
+  prCache.set(cacheKey, cacheData);
 }
 
 /** Enrich a DashboardSession's issue label using the tracker plugin. */
