@@ -4,7 +4,7 @@ import { getServices } from "@/lib/services";
 import { sessionToDashboard } from "@/lib/serialize";
 
 /** Terminal states that can be restored */
-const RESTORABLE_STATUSES = new Set(["killed", "cleanup"]);
+const RESTORABLE_STATUSES = new Set(["killed", "cleanup", "terminated", "done"]);
 const RESTORABLE_ACTIVITIES = new Set(["exited"]);
 
 /** Statuses that must never be restored (e.g. already merged) */
