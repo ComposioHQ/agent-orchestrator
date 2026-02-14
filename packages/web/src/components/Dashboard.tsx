@@ -85,7 +85,15 @@ export function Dashboard({ sessions, stats }: DashboardProps) {
         <h1 className="text-[22px] font-semibold tracking-tight">
           <span className="text-[#7c8aff]">Agent</span> Orchestrator
         </h1>
-        <ClientTimestamp />
+        <div className="flex items-baseline gap-4">
+          <a
+            href="/sessions/oa-orchestrator"
+            className="rounded-md border border-[var(--color-border-default)] px-3 py-1 text-[11px] text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-accent-blue)] hover:text-[var(--color-accent-blue)]"
+          >
+            orchestrator terminal
+          </a>
+          <ClientTimestamp />
+        </div>
       </div>
 
       {/* Stats bar */}
