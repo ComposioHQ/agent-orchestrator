@@ -79,10 +79,13 @@ update_metadata_key() {
   # Create temp file
   local temp_file="\${metadata_file}.tmp"
 
+  # Escape special sed characters in value (& | / \\)
+  local escaped_value=$(echo "$value" | sed 's/[&|\\/]/\\\\&/g')
+
   # Check if key already exists
   if grep -q "^$key=" "$metadata_file" 2>/dev/null; then
     # Update existing key
-    sed "s|^$key=.*|$key=$value|" "$metadata_file" > "$temp_file"
+    sed "s|^$key=.*|$key=$escaped_value|" "$metadata_file" > "$temp_file"
   else
     # Append new key
     cp "$metadata_file" "$temp_file"
