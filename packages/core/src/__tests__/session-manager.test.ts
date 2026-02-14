@@ -47,7 +47,8 @@ beforeEach(() => {
     getEnvironment: vi.fn().mockReturnValue({ AGENT_VAR: "1" }),
     detectActivity: vi.fn().mockResolvedValue("active"),
     isProcessRunning: vi.fn().mockResolvedValue(true),
-    introspect: vi.fn().mockResolvedValue(null),
+    isProcessing: vi.fn().mockResolvedValue(false),
+    getSessionInfo: vi.fn().mockResolvedValue(null),
   };
 
   mockWorkspace = {

@@ -78,7 +78,8 @@ beforeEach(() => {
     getEnvironment: vi.fn(),
     detectActivity: vi.fn().mockResolvedValue("active" as ActivityState),
     isProcessRunning: vi.fn(),
-    introspect: vi.fn(),
+    isProcessing: vi.fn().mockResolvedValue(false),
+    getSessionInfo: vi.fn().mockResolvedValue(null),
   };
 
   mockRegistry = {
