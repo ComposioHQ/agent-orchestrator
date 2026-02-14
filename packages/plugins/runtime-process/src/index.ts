@@ -66,6 +66,7 @@ export function create(): Runtime {
           env: { ...process.env, ...config.environment },
           stdio: ["pipe", "pipe", "pipe"],
           shell: true,
+          detached: true, // Own process group so destroy() can kill child commands
         });
       } catch (err: unknown) {
         processes.delete(handleId);
@@ -133,14 +134,33 @@ export function create(): Runtime {
 
       const child = entry.process;
       if (child.exitCode === null && child.signalCode === null) {
-        // Try graceful SIGTERM first
-        child.kill("SIGTERM");
+        // Kill the entire process group (negative PID) so child commands
+        // spawned by the shell are also terminated, not just the shell itself.
+        const pid = child.pid;
+        if (pid) {
+          try {
+            process.kill(-pid, "SIGTERM");
+          } catch {
+            // Process group may not exist — fall back to direct kill
+            child.kill("SIGTERM");
+          }
+        } else {
+          child.kill("SIGTERM");
+        }
 
         // Give it 5 seconds, then SIGKILL — use once() to avoid listener leaks
         await new Promise<void>((resolve) => {
           const timeout = setTimeout(() => {
             if (child.exitCode === null && child.signalCode === null) {
-              child.kill("SIGKILL");
+              if (pid) {
+                try {
+                  process.kill(-pid, "SIGKILL");
+                } catch {
+                  child.kill("SIGKILL");
+                }
+              } else {
+                child.kill("SIGKILL");
+              }
             }
             resolve();
           }, 5000);

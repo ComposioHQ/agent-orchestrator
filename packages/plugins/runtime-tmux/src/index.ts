@@ -115,7 +115,9 @@ export function create(): Runtime {
           }
         }
       } else {
-        await tmux("send-keys", "-t", handle.id, message);
+        // Use -l (literal) so text like "Enter" or "Space" isn't interpreted
+        // as tmux key names
+        await tmux("send-keys", "-t", handle.id, "-l", message);
       }
 
       await tmux("send-keys", "-t", handle.id, "Enter");
