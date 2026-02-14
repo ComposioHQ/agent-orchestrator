@@ -1,9 +1,14 @@
 /**
  * Integration tests for the Linear tracker plugin.
  *
- * Requires:
- *   - LINEAR_API_KEY set (direct Linear API access)
- *   - LINEAR_TEAM_ID set (team to create test issues in)
+ * Requires one of:
+ *   - LINEAR_API_KEY (direct Linear API access), or
+ *   - COMPOSIO_API_KEY (via Composio SDK, optionally COMPOSIO_ENTITY_ID)
+ * Plus:
+ *   - LINEAR_TEAM_ID (team to create test issues in)
+ *
+ * When using Composio, cleanup (issue deletion) still requires LINEAR_API_KEY
+ * since that uses a direct GraphQL call outside the plugin.
  *
  * Skipped automatically when prerequisites are missing.
  *
@@ -23,18 +28,26 @@ import trackerLinear from "@agent-orchestrator/plugin-tracker-linear";
 // ---------------------------------------------------------------------------
 
 const LINEAR_API_KEY = process.env["LINEAR_API_KEY"];
+const COMPOSIO_API_KEY = process.env["COMPOSIO_API_KEY"];
 const LINEAR_TEAM_ID = process.env["LINEAR_TEAM_ID"];
-const canRun = Boolean(LINEAR_API_KEY && LINEAR_TEAM_ID);
+const hasCredentials = Boolean(LINEAR_API_KEY || COMPOSIO_API_KEY);
+const canRun = hasCredentials && Boolean(LINEAR_TEAM_ID);
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Direct GraphQL call for test cleanup (delete issue). */
+/**
+ * Direct GraphQL call for test setup/cleanup.
+ * Only available when LINEAR_API_KEY is set.
+ */
 function linearGraphQL<T>(
   query: string,
   variables: Record<string, unknown>,
 ): Promise<T> {
+  if (!LINEAR_API_KEY) {
+    throw new Error("linearGraphQL requires LINEAR_API_KEY");
+  }
   const body = JSON.stringify({ query, variables });
 
   return new Promise<T>((resolve, reject) => {
@@ -46,7 +59,7 @@ function linearGraphQL<T>(
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: LINEAR_API_KEY!,
+          Authorization: LINEAR_API_KEY,
           "Content-Length": Buffer.byteLength(body),
         },
       },
@@ -104,7 +117,7 @@ describe.skipIf(!canRun)("tracker-linear (integration)", () => {
 
   // Issue state tracked across tests (created in beforeAll, cleaned up in afterAll)
   let issueIdentifier: string; // e.g. "INT-1234"
-  let issueUuid: string; // Linear internal UUID (needed for deletion)
+  let issueUuid: string | undefined; // Linear internal UUID (needed for trash via direct API)
 
   // -------------------------------------------------------------------------
   // Setup — create a test issue
@@ -123,22 +136,27 @@ describe.skipIf(!canRun)("tracker-linear (integration)", () => {
 
     issueIdentifier = result.id;
 
-    // Resolve the UUID for cleanup — the plugin uses identifiers (INT-1234)
-    // but deletion requires the UUID
-    const data = await linearGraphQL<{ issue: { id: string } }>(
-      `query($id: String!) { issue(id: $id) { id } }`,
-      { id: issueIdentifier },
-    );
-    issueUuid = data.issue.id;
+    // Resolve the UUID for cleanup — only possible with direct API key
+    if (LINEAR_API_KEY) {
+      const data = await linearGraphQL<{ issue: { id: string } }>(
+        `query($id: String!) { issue(id: $id) { id } }`,
+        { id: issueIdentifier },
+      );
+      issueUuid = data.issue.id;
+    }
   }, 30_000);
 
   // -------------------------------------------------------------------------
-  // Cleanup — archive the test issue so it doesn't clutter the board
+  // Cleanup — archive the test issue so it doesn't clutter the board.
+  // With LINEAR_API_KEY we can trash it directly. With Composio-only we
+  // close it via the plugin (can't trash through the plugin interface).
   // -------------------------------------------------------------------------
 
   afterAll(async () => {
-    if (issueUuid) {
-      try {
+    if (!issueIdentifier) return;
+
+    try {
+      if (issueUuid && LINEAR_API_KEY) {
         await linearGraphQL(
           `mutation($id: String!) {
             issueUpdate(id: $id, input: { trashed: true }) {
@@ -147,9 +165,16 @@ describe.skipIf(!canRun)("tracker-linear (integration)", () => {
           }`,
           { id: issueUuid },
         );
-      } catch {
-        // Best-effort cleanup
+      } else {
+        // Composio-only: best-effort close via plugin
+        await tracker.updateIssue!(
+          issueIdentifier,
+          { state: "closed" },
+          project,
+        );
       }
+    } catch {
+      // Best-effort cleanup
     }
   }, 15_000);
 
@@ -218,20 +243,23 @@ describe.skipIf(!canRun)("tracker-linear (integration)", () => {
       project,
     );
 
-    // Verify the comment was added by fetching comments directly
-    const data = await linearGraphQL<{
-      issue: { comments: { nodes: Array<{ body: string }> } };
-    }>(
-      `query($id: String!) {
-        issue(id: $id) {
-          comments { nodes { body } }
-        }
-      }`,
-      { id: issueIdentifier },
-    );
+    // Verify the comment was added — use direct API if available,
+    // otherwise trust the plugin didn't throw
+    if (LINEAR_API_KEY) {
+      const data = await linearGraphQL<{
+        issue: { comments: { nodes: Array<{ body: string }> } };
+      }>(
+        `query($id: String!) {
+          issue(id: $id) {
+            comments { nodes { body } }
+          }
+        }`,
+        { id: issueIdentifier },
+      );
 
-    const commentBodies = data.issue.comments.nodes.map((c) => c.body);
-    expect(commentBodies).toContain("Integration test comment");
+      const commentBodies = data.issue.comments.nodes.map((c) => c.body);
+      expect(commentBodies).toContain("Integration test comment");
+    }
   });
 
   it("updateIssue closes the issue and isCompleted reflects it", async () => {
