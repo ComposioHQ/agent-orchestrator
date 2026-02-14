@@ -468,7 +468,7 @@ describe("send", () => {
     await expect(sm.send("nope", "hello")).rejects.toThrow("not found");
   });
 
-  it("throws when no runtime handle", async () => {
+  it("falls back to session ID as runtime handle when no runtimeHandle stored", async () => {
     writeMetadata(dataDir, "app-1", {
       worktree: "/tmp",
       branch: "main",
@@ -477,6 +477,11 @@ describe("send", () => {
     });
 
     const sm = createSessionManager({ config, registry: mockRegistry });
-    await expect(sm.send("app-1", "hello")).rejects.toThrow("No runtime handle");
+    await sm.send("app-1", "hello");
+    // Should use session ID "app-1" as the handle id with default runtime
+    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
+      { id: "app-1", runtimeName: "mock", data: {} },
+      "hello",
+    );
   });
 });
