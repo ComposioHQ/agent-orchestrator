@@ -11,11 +11,17 @@ function parseArgs(argv: string[]): { port: number; width: number; height: numbe
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === "--port" && args[i + 1]) {
-      port = Number(args[++i]);
+      const n = Number(args[++i]);
+      if (Number.isNaN(n)) throw new Error(`Invalid --port value: ${args[i]}`);
+      port = n;
     } else if (arg === "--width" && args[i + 1]) {
-      width = Number(args[++i]);
+      const n = Number(args[++i]);
+      if (Number.isNaN(n)) throw new Error(`Invalid --width value: ${args[i]}`);
+      width = n;
     } else if (arg === "--height" && args[i + 1]) {
-      height = Number(args[++i]);
+      const n = Number(args[++i]);
+      if (Number.isNaN(n)) throw new Error(`Invalid --height value: ${args[i]}`);
+      height = n;
     } else if (arg?.startsWith("/")) {
       paths.push(arg);
     }

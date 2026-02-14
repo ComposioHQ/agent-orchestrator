@@ -525,7 +525,10 @@ export function getMockStats(): DashboardStats {
     workingSessions: sessions.filter((s) => s.activity === "active").length,
     openPRs: sessions.filter((s) => s.pr?.state === "open").length,
     needsReview: sessions.filter(
-      (s) => s.pr?.reviewDecision === "pending" || s.pr?.reviewDecision === "none",
+      (s) =>
+        s.pr &&
+        !s.pr.isDraft &&
+        (s.pr.reviewDecision === "pending" || s.pr.reviewDecision === "none"),
     ).length,
   };
 }

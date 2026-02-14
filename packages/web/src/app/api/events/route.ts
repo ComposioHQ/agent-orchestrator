@@ -11,8 +11,8 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(): Promise<Response> {
   const encoder = new TextEncoder();
-  let heartbeat: ReturnType<typeof setInterval>;
-  let updates: ReturnType<typeof setInterval>;
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
+  let updates: ReturnType<typeof setInterval> | undefined;
 
   const stream = new ReadableStream({
     start(controller) {

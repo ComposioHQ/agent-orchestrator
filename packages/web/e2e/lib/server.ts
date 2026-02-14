@@ -45,12 +45,19 @@ export async function ensureServer(port: number): Promise<ServerHandle> {
     env: { ...process.env, NODE_ENV: "development" },
   });
 
+  child.stdout?.resume();
   child.stderr?.on("data", (chunk: Buffer) => {
     const line = chunk.toString().trim();
     if (line) console.log(`[next] ${line}`);
   });
 
-  await waitForServer(port, 30_000);
+  try {
+    await waitForServer(port, 30_000);
+  } catch (err) {
+    child.kill("SIGTERM");
+    throw err;
+  }
+
   console.log(`Dev server ready on ${baseUrl}`);
 
   return {
