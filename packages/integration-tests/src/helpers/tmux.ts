@@ -76,6 +76,20 @@ export async function createSession(
   await execFileAsync("tmux", args, { timeout: TIMEOUT, cwd });
 }
 
+/** Capture terminal output from a tmux session pane. */
+export async function capturePane(name: string, lines = 50): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync(
+      "tmux",
+      ["capture-pane", "-t", name, "-p", "-S", `-${lines}`],
+      { timeout: TIMEOUT },
+    );
+    return stdout;
+  } catch {
+    return "";
+  }
+}
+
 /** Kill a specific tmux session by name. */
 export async function killSession(name: string): Promise<void> {
   try {

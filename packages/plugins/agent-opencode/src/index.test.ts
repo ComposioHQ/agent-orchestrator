@@ -234,25 +234,21 @@ describe("isProcessRunning", () => {
 });
 
 // =========================================================================
-// detectActivity
+// detectActivity — terminal output classification
 // =========================================================================
 describe("detectActivity", () => {
   const agent = create();
 
-  it("returns exited when no runtime handle", async () => {
-    expect(await agent.detectActivity(makeSession())).toBe("exited");
+  it("returns idle for empty terminal output", () => {
+    expect(agent.detectActivity("")).toBe("idle");
   });
 
-  it("returns exited when process is not running", async () => {
-    mockTmuxWithProcess("opencode", false);
-    const session = makeSession({ runtimeHandle: makeTmuxHandle() });
-    expect(await agent.detectActivity(session)).toBe("exited");
+  it("returns idle for whitespace-only terminal output", () => {
+    expect(agent.detectActivity("   \n  ")).toBe("idle");
   });
 
-  it("returns active when process is running", async () => {
-    mockTmuxWithProcess("opencode");
-    const session = makeSession({ runtimeHandle: makeTmuxHandle() });
-    expect(await agent.detectActivity(session)).toBe("active");
+  it("returns active for non-empty terminal output", () => {
+    expect(agent.detectActivity("opencode is working\n")).toBe("active");
   });
 });
 

@@ -320,6 +320,36 @@ async function findClaudeProcess(handle: RuntimeHandle): Promise<number | null> 
 }
 
 // =============================================================================
+// Terminal Output Patterns for detectActivity
+// =============================================================================
+
+/** Classify Claude Code's activity state from terminal output (pure, sync). */
+function classifyTerminalOutput(terminalOutput: string): ActivityState {
+  // Empty output — can't determine state
+  if (!terminalOutput.trim()) return "idle";
+
+  // Active indicators — Claude is processing
+  if (terminalOutput.includes("esc to interrupt")) return "active";
+  if (/Thinking|Reading|Writing|Searching/i.test(terminalOutput)) return "active";
+
+  // Waiting for user input — permission prompts
+  if (/Do you want to proceed\?/i.test(terminalOutput)) return "waiting_input";
+  if (/\(Y\)es.*\(N\)o/i.test(terminalOutput)) return "waiting_input";
+  if (/bypass.*permissions/i.test(terminalOutput)) return "waiting_input";
+
+  // Queued message indicator
+  if (terminalOutput.includes("Press up to edit queued messages")) return "active";
+
+  // Shell prompt visible — Claude has exited or is idle at prompt
+  // The ❯ is Claude Code's prompt character
+  const lines = terminalOutput.trim().split("\n");
+  const lastLine = lines[lines.length - 1]?.trim() ?? "";
+  if (/^[❯>$#]\s*$/.test(lastLine)) return "idle";
+
+  return "active";
+}
+
+// =============================================================================
 // Agent Implementation
 // =============================================================================
 
@@ -365,34 +395,8 @@ function createClaudeCodeAgent(): Agent {
       return env;
     },
 
-    async detectActivity(session: Session): Promise<ActivityState> {
-      // If no runtime handle, agent can't be running
-      if (!session.runtimeHandle) return "exited";
-
-      // Check if process is actually running
-      const pid = await findClaudeProcess(session.runtimeHandle);
-      if (pid === null) return "exited";
-
-      // Process is alive — use JSONL to determine state
-      if (!session.workspacePath) return "active";
-
-      const projectPath = toClaudeProjectPath(session.workspacePath);
-      const projectDir = join(homedir(), ".claude", "projects", projectPath);
-      const sessionFile = await findLatestSessionFile(projectDir);
-      if (!sessionFile) return "active";
-
-      const entry = await readLastJsonlEntry(sessionFile);
-      if (!entry) return "active";
-
-      // File not updated in 30s → agent is idle (finished its turn)
-      const ageMs = Date.now() - entry.modifiedAt.getTime();
-      if (ageMs > 30_000) return "idle";
-
-      // If the last entry is "assistant" or "system", Claude has finished its turn
-      if (entry.lastType === "assistant" || entry.lastType === "system") return "idle";
-
-      // Otherwise the agent is actively processing
-      return "active";
+    detectActivity(terminalOutput: string): ActivityState {
+      return classifyTerminalOutput(terminalOutput);
     },
 
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {

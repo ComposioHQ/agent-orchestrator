@@ -57,13 +57,9 @@ function createOpenCodeAgent(): Agent {
       return env;
     },
 
-    async detectActivity(session: Session): Promise<ActivityState> {
-      if (!session.runtimeHandle) return "exited";
-
-      const running = await this.isProcessRunning(session.runtimeHandle);
-      if (!running) return "exited";
-
-      // OpenCode doesn't have rich introspection yet
+    detectActivity(terminalOutput: string): ActivityState {
+      if (!terminalOutput.trim()) return "idle";
+      // OpenCode doesn't have rich terminal output patterns yet
       return "active";
     },
 

@@ -26,7 +26,7 @@ interface SessionInfo {
 }
 
 /**
- * Build a minimal Session object for agent.introspect().
+ * Build a minimal Session object for agent.getSessionInfo().
  * Only runtimeHandle and workspacePath are needed by the introspection logic.
  */
 function buildSessionForIntrospect(sessionName: string, workspacePath?: string): Session {
@@ -82,7 +82,7 @@ async function gatherSessionInfo(
   let claudeSummary: string | null = null;
   try {
     const session = buildSessionForIntrospect(sessionName, worktree);
-    const introspection = await agent.introspect(session);
+    const introspection = await agent.getSessionInfo(session);
     claudeSummary = introspection?.summary ?? null;
   } catch {
     // Introspection failed — not critical
@@ -225,7 +225,7 @@ async function showFallbackStatus(): Promise<void> {
     // Try introspection even without config
     try {
       const sessionObj = buildSessionForIntrospect(session);
-      const introspection = await agent.introspect(sessionObj);
+      const introspection = await agent.getSessionInfo(sessionObj);
       if (introspection?.summary) {
         console.log(`     ${chalk.dim("Claude:")} ${introspection.summary.slice(0, 65)}`);
       }

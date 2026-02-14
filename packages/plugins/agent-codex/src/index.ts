@@ -63,15 +63,9 @@ function createCodexAgent(): Agent {
       return env;
     },
 
-    async detectActivity(session: Session): Promise<ActivityState> {
-      if (!session.runtimeHandle) return "exited";
-
-      // Check if codex process is running
-      const running = await this.isProcessRunning(session.runtimeHandle);
-      if (!running) return "exited";
-
+    detectActivity(terminalOutput: string): ActivityState {
+      if (!terminalOutput.trim()) return "idle";
       // Codex doesn't have rich terminal output patterns yet
-      // Default to active if running
       return "active";
     },
 

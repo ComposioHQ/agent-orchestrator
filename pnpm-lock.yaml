@@ -86,6 +86,34 @@ importers:
         specifier: ^4.0.18
         version: 4.0.18(@types/node@25.2.3)(tsx@4.21.0)(yaml@2.8.2)
 
+  packages/integration-tests:
+    dependencies:
+      '@agent-orchestrator/core':
+        specifier: workspace:*
+        version: link:../core
+      '@agent-orchestrator/plugin-agent-aider':
+        specifier: workspace:*
+        version: link:../plugins/agent-aider
+      '@agent-orchestrator/plugin-agent-claude-code':
+        specifier: workspace:*
+        version: link:../plugins/agent-claude-code
+      '@agent-orchestrator/plugin-agent-codex':
+        specifier: workspace:*
+        version: link:../plugins/agent-codex
+      '@agent-orchestrator/plugin-agent-opencode':
+        specifier: workspace:*
+        version: link:../plugins/agent-opencode
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.2.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.2.3)(tsx@4.21.0)(yaml@2.8.2)
+
   packages/plugins/agent-aider:
     dependencies:
       '@agent-orchestrator/core':
@@ -98,6 +126,9 @@ importers:
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.2.3)(tsx@4.21.0)(yaml@2.8.2)
 
   packages/plugins/agent-claude-code:
     dependencies:
@@ -111,6 +142,9 @@ importers:
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.2.3)(tsx@4.21.0)(yaml@2.8.2)
 
   packages/plugins/agent-codex:
     dependencies:
@@ -124,6 +158,25 @@ importers:
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.2.3)(tsx@4.21.0)(yaml@2.8.2)
+
+  packages/plugins/agent-opencode:
+    dependencies:
+      '@agent-orchestrator/core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.2.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.2.3)(tsx@4.21.0)(yaml@2.8.2)
 
   packages/plugins/notifier-desktop:
     dependencies:
