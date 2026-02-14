@@ -13,7 +13,18 @@ export async function GET() {
     // Enrich sessions that have PRs with live SCM data (CI, reviews, mergeability)
     const enrichPromises = coreSessions.map((core, i) => {
       if (!core.pr) return Promise.resolve();
-      const project = config.projects[core.projectId];
+      // Try explicit projectId, then match by session prefix, then first project
+      let project = config.projects[core.projectId];
+      if (!project) {
+        const projectEntry = Object.entries(config.projects).find(([, p]) =>
+          core.id.startsWith(p.sessionPrefix),
+        );
+        if (projectEntry) project = projectEntry[1];
+      }
+      if (!project) {
+        const firstKey = Object.keys(config.projects)[0];
+        if (firstKey) project = config.projects[firstKey];
+      }
       const scm = getSCM(registry, project);
       if (!scm) return Promise.resolve();
       return enrichSessionPR(dashboardSessions[i], scm, core.pr);

@@ -63,7 +63,9 @@ export async function enrichSessionPR(
   if (!dashboard.pr) return;
 
   const results = await Promise.allSettled([
-    scm.getPRState(pr),
+    scm.getPRSummary
+      ? scm.getPRSummary(pr)
+      : scm.getPRState(pr).then((state) => ({ state, title: "", additions: 0, deletions: 0 })),
     scm.getCIChecks(pr),
     scm.getCISummary(pr),
     scm.getReviewDecision(pr),
@@ -71,10 +73,15 @@ export async function enrichSessionPR(
     scm.getPendingComments(pr),
   ]);
 
-  const [stateR, checksR, ciR, reviewR, mergeR, commentsR] = results;
+  const [summaryR, checksR, ciR, reviewR, mergeR, commentsR] = results;
 
-  if (stateR.status === "fulfilled") {
-    dashboard.pr.state = stateR.value;
+  if (summaryR.status === "fulfilled") {
+    dashboard.pr.state = summaryR.value.state;
+    dashboard.pr.additions = summaryR.value.additions;
+    dashboard.pr.deletions = summaryR.value.deletions;
+    if (summaryR.value.title) {
+      dashboard.pr.title = summaryR.value.title;
+    }
   }
 
   if (checksR.status === "fulfilled") {

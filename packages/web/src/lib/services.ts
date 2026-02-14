@@ -3,6 +3,11 @@
  *
  * Lazily initializes config, plugin registry, and session manager.
  * Cached in globalThis to survive Next.js HMR reloads in development.
+ *
+ * NOTE: Plugins are explicitly imported here because Next.js webpack
+ * cannot resolve dynamic `import(variable)` expressions used by the
+ * core plugin registry's loadBuiltins(). Static imports let webpack
+ * bundle them correctly.
  */
 
 import {
@@ -15,6 +20,12 @@ import {
   type SCM,
   type ProjectConfig,
 } from "@agent-orchestrator/core";
+
+// Static plugin imports — webpack needs these to be string literals
+import pluginRuntimeTmux from "@agent-orchestrator/plugin-runtime-tmux";
+import pluginAgentClaudeCode from "@agent-orchestrator/plugin-agent-claude-code";
+import pluginScmGithub from "@agent-orchestrator/plugin-scm-github";
+import pluginTrackerGithub from "@agent-orchestrator/plugin-tracker-github";
 
 export interface Services {
   config: OrchestratorConfig;
@@ -47,7 +58,13 @@ export function getServices(): Promise<Services> {
 async function initServices(): Promise<Services> {
   const config = loadConfig();
   const registry = createPluginRegistry();
-  await registry.loadFromConfig(config);
+
+  // Register plugins explicitly (webpack can't handle dynamic import() in core)
+  registry.register(pluginRuntimeTmux);
+  registry.register(pluginAgentClaudeCode);
+  registry.register(pluginScmGithub);
+  registry.register(pluginTrackerGithub);
+
   const sessionManager = createSessionManager({ config, registry });
 
   const services = { config, registry, sessionManager };

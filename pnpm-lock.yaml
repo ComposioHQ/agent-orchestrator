@@ -439,6 +439,9 @@ importers:
       '@agent-orchestrator/plugin-scm-github':
         specifier: workspace:*
         version: link:../plugins/scm-github
+      '@agent-orchestrator/plugin-tracker-github':
+        specifier: workspace:*
+        version: link:../plugins/tracker-github
       '@agent-orchestrator/plugin-workspace-worktree':
         specifier: workspace:*
         version: link:../plugins/workspace-worktree

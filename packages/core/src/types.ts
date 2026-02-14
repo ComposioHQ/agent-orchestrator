@@ -350,6 +350,14 @@ export interface SCM {
   /** Get current PR state */
   getPRState(pr: PRInfo): Promise<PRState>;
 
+  /** Get PR summary with stats (state, title, additions, deletions). Optional. */
+  getPRSummary?(pr: PRInfo): Promise<{
+    state: PRState;
+    title: string;
+    additions: number;
+    deletions: number;
+  }>;
+
   /** Merge a PR */
   mergePR(pr: PRInfo, method?: MergeMethod): Promise<void>;
 

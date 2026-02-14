@@ -20,6 +20,7 @@
     "@agent-orchestrator/plugin-agent-claude-code": "workspace:*",
     "@agent-orchestrator/plugin-runtime-tmux": "workspace:*",
     "@agent-orchestrator/plugin-scm-github": "workspace:*",
+    "@agent-orchestrator/plugin-tracker-github": "workspace:*",
     "@agent-orchestrator/plugin-workspace-worktree": "workspace:*",
     "next": "^15.1.0",
     "react": "^19.0.0",

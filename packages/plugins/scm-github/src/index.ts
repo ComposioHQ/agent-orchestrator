@@ -144,6 +144,32 @@ function createGitHubSCM(): SCM {
       return "open";
     },
 
+    async getPRSummary(pr: PRInfo) {
+      const raw = await gh([
+        "pr",
+        "view",
+        String(pr.number),
+        "--repo",
+        repoFlag(pr),
+        "--json",
+        "state,title,additions,deletions",
+      ]);
+      const data: {
+        state: string;
+        title: string;
+        additions: number;
+        deletions: number;
+      } = JSON.parse(raw);
+      const s = data.state.toUpperCase();
+      const state: PRState = s === "MERGED" ? "merged" : s === "CLOSED" ? "closed" : "open";
+      return {
+        state,
+        title: data.title ?? "",
+        additions: data.additions ?? 0,
+        deletions: data.deletions ?? 0,
+      };
+    },
+
     async mergePR(pr: PRInfo, method: MergeMethod = "squash"): Promise<void> {
       const flag =
         method === "rebase"

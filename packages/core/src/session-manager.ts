@@ -84,6 +84,8 @@ const VALID_STATUSES: ReadonlySet<string> = new Set([
 
 /** Validate and normalize a status string. */
 function validateStatus(raw: string | undefined): SessionStatus {
+  // Bash scripts write "starting" — treat as "working"
+  if (raw === "starting") return "working";
   if (raw && VALID_STATUSES.has(raw)) return raw as SessionStatus;
   return "spawning";
 }
@@ -98,16 +100,21 @@ function metadataToSession(sessionId: SessionId, meta: Record<string, string>): 
     branch: meta["branch"] || null,
     issueId: meta["issue"] || null,
     pr: meta["pr"]
-      ? {
-          number: parseInt(meta["pr"].match(/\/(\d+)$/)?.[1] ?? "0", 10),
-          url: meta["pr"],
-          title: "",
-          owner: "",
-          repo: "",
-          branch: meta["branch"] ?? "",
-          baseBranch: "",
-          isDraft: false,
-        }
+      ? (() => {
+          // Parse owner/repo from GitHub PR URL: https://github.com/owner/repo/pull/123
+          const prUrl = meta["pr"];
+          const ghMatch = prUrl.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
+          return {
+            number: ghMatch ? parseInt(ghMatch[3], 10) : parseInt(prUrl.match(/\/(\d+)$/)?.[1] ?? "0", 10),
+            url: prUrl,
+            title: "",
+            owner: ghMatch?.[1] ?? "",
+            repo: ghMatch?.[2] ?? "",
+            branch: meta["branch"] ?? "",
+            baseBranch: "",
+            isDraft: false,
+          };
+        })()
       : null,
     workspacePath: meta["worktree"] || null,
     runtimeHandle: meta["runtimeHandle"]
@@ -478,13 +485,17 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     const raw = readMetadataRaw(config.dataDir, sessionId);
     if (!raw) throw new Error(`Session ${sessionId} not found`);
 
-    if (!raw["runtimeHandle"]) {
-      throw new Error(`No runtime handle for session ${sessionId}`);
-    }
-
-    const handle = safeJsonParse<RuntimeHandle>(raw["runtimeHandle"]);
-    if (!handle) {
-      throw new Error(`Corrupted runtime handle for session ${sessionId}`);
+    // Build handle: use stored runtimeHandle, or fall back to session ID as tmux session name
+    let handle: RuntimeHandle;
+    if (raw["runtimeHandle"]) {
+      const parsed = safeJsonParse<RuntimeHandle>(raw["runtimeHandle"]);
+      if (!parsed) {
+        throw new Error(`Corrupted runtime handle for session ${sessionId}`);
+      }
+      handle = parsed;
+    } else {
+      // Sessions created by bash scripts don't have runtimeHandle — use session ID as tmux handle
+      handle = { id: sessionId, runtimeName: config.defaults.runtime, data: {} };
     }
 
     // Prefer handle.runtimeName to find the correct plugin
