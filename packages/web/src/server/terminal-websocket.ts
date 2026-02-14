@@ -9,8 +9,7 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { createServer } from "node:http";
-import { request } from "node:http";
+import { createServer, request } from "node:http";
 
 interface TtydInstance {
   sessionId: string;
@@ -41,13 +40,19 @@ function waitForTtyd(port: number, sessionId: string, timeoutMs = 3000): Promise
         path: `/${sessionId}/`,
         method: "GET",
         timeout: 500,
-      }, (res) => {
+      }, (_res) => {
         // Any response (even 404) means ttyd is listening
         resolve();
       });
 
+      req.on("timeout", () => {
+        // Request timed out - abort and retry
+        req.destroy();
+        setTimeout(checkReady, 100);
+      });
+
       req.on("error", () => {
-        // Connection refused or timeout - ttyd not ready yet, retry
+        // Connection refused or other error - ttyd not ready yet, retry
         setTimeout(checkReady, 100);
       });
 

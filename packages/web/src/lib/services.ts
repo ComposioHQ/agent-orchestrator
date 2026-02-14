@@ -28,6 +28,7 @@ import pluginAgentClaudeCode from "@agent-orchestrator/plugin-agent-claude-code"
 import pluginWorkspaceWorktree from "@agent-orchestrator/plugin-workspace-worktree";
 import pluginScmGithub from "@agent-orchestrator/plugin-scm-github";
 import pluginTrackerGithub from "@agent-orchestrator/plugin-tracker-github";
+import pluginTrackerLinear from "@agent-orchestrator/plugin-tracker-linear";
 
 export interface Services {
   config: OrchestratorConfig;
@@ -67,6 +68,7 @@ async function initServices(): Promise<Services> {
   registry.register(pluginWorkspaceWorktree);
   registry.register(pluginScmGithub);
   registry.register(pluginTrackerGithub);
+  registry.register(pluginTrackerLinear);
 
   const sessionManager = createSessionManager({ config, registry });
 

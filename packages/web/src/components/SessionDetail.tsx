@@ -49,6 +49,24 @@ function humanizeStatus(status: string): string {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+/** Converts attention level to human-readable label. */
+function humanizeLevel(level: string): string {
+  switch (level) {
+    case "merge":
+      return "Ready to Merge";
+    case "respond":
+      return "Needs Response";
+    case "review":
+      return "Pending Review";
+    case "pending":
+      return "Pending";
+    case "working":
+      return "Working";
+    default:
+      return level;
+  }
+}
+
 /** Converts ISO date string to relative time like "3h ago", "2m ago". Client-side only. */
 function relativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -86,6 +104,33 @@ function buildGitHubRepoUrl(pr: DashboardPR): string {
 }
 
 // ── Main Component ───────────────────────────────────────────────────
+
+/** Ask the agent to fix a specific review comment */
+async function askAgentToFix(
+  sessionId: string,
+  comment: { url: string; path: string; body: string },
+) {
+  try {
+    const { title, description } = cleanBugbotComment(comment.body);
+    const message = `Please address this review comment:\n\nFile: ${comment.path}\nComment: ${title}\nDescription: ${description}\n\nComment URL: ${comment.url}\n\nAfter fixing, mark the comment as resolved at ${comment.url}`;
+
+    // TODO: Implement API endpoint to send message to agent session
+    const res = await fetch(`/api/sessions/${sessionId}/message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+    });
+
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+
+    alert("Message sent to agent");
+  } catch (err) {
+    console.error("Failed to send message to agent:", err);
+    alert("Failed to send message to agent");
+  }
+}
 
 export function SessionDetail({ session }: SessionDetailProps) {
   const pr = session.pr;
@@ -125,13 +170,13 @@ export function SessionDetail({ session }: SessionDetailProps) {
               {activity.label}
             </span>
             <span
-              className="rounded-full px-2 py-0.5 text-xs font-semibold uppercase"
+              className="rounded-full px-2 py-0.5 text-xs font-semibold"
               style={{
                 color: levelColor(level),
                 background: `color-mix(in srgb, ${levelColor(level)} 10%, transparent)`,
               }}
             >
-              {level}
+              {humanizeLevel(level)}
             </span>
           </div>
 
@@ -140,26 +185,44 @@ export function SessionDetail({ session }: SessionDetailProps) {
             <p className="mt-2 text-sm text-[var(--color-text-secondary)]">{session.summary}</p>
           )}
 
-          {/* Meta chips: project · branch · issue */}
+          {/* Meta chips: PR · branch · issue */}
           <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
-            {pr ? (
-              <a
-                href={buildGitHubRepoUrl(pr)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="rounded-md bg-[var(--color-bg-tertiary)] px-2 py-0.5 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:no-underline"
-              >
-                {session.projectId}
-              </a>
-            ) : (
-              <span className="rounded-md bg-[var(--color-bg-tertiary)] px-2 py-0.5 text-[var(--color-text-secondary)]">
-                {session.projectId}
-              </span>
+            {session.projectId && (
+              <>
+                {pr ? (
+                  <a
+                    href={buildGitHubRepoUrl(pr)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="rounded-md bg-[var(--color-bg-tertiary)] px-2 py-0.5 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:no-underline"
+                  >
+                    {session.projectId}
+                  </a>
+                ) : (
+                  <span className="rounded-md bg-[var(--color-bg-tertiary)] px-2 py-0.5 text-[var(--color-text-secondary)]">
+                    {session.projectId}
+                  </span>
+                )}
+                <span className="text-[var(--color-text-muted)]">&middot;</span>
+              </>
+            )}
+
+            {pr && (
+              <>
+                <a
+                  href={pr.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rounded-md bg-[var(--color-bg-tertiary)] px-2 py-0.5 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:no-underline"
+                >
+                  #{pr.number}
+                </a>
+                <span className="text-[var(--color-text-muted)]">&middot;</span>
+              </>
             )}
 
             {session.branch && (
               <>
-                <span className="text-[var(--color-text-muted)]">&middot;</span>
                 {pr ? (
                   <a
                     href={buildGitHubBranchUrl(pr)}
@@ -174,21 +237,19 @@ export function SessionDetail({ session }: SessionDetailProps) {
                     {session.branch}
                   </span>
                 )}
+                <span className="text-[var(--color-text-muted)]">&middot;</span>
               </>
             )}
 
             {session.issueUrl && (
-              <>
-                <span className="text-[var(--color-text-muted)]">&middot;</span>
-                <a
-                  href={session.issueUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="rounded-md bg-[var(--color-bg-tertiary)] px-2 py-0.5 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:no-underline"
-                >
-                  {session.issueLabel || session.issueUrl}
-                </a>
-              </>
+              <a
+                href={session.issueUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-md bg-[var(--color-bg-tertiary)] px-2 py-0.5 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:no-underline"
+              >
+                {session.issueLabel || session.issueUrl}
+              </a>
             )}
           </div>
 
@@ -201,7 +262,7 @@ export function SessionDetail({ session }: SessionDetailProps) {
         </div>
 
         {/* ── PR Card ────────────────────────────────────────────── */}
-        {pr && <PRCard pr={pr} />}
+        {pr && <PRCard pr={pr} sessionId={session.id} />}
 
         {/* ── Terminal ───────────────────────────────────────────── */}
         <div className="mt-6">
@@ -255,7 +316,7 @@ function ClientTimestamps({
 
 // ── PR Card ──────────────────────────────────────────────────────────
 
-function PRCard({ pr }: { pr: DashboardPR }) {
+function PRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
   const allGreen =
     pr.mergeability.mergeable &&
     pr.mergeability.ciPassing &&
@@ -299,14 +360,6 @@ function PRCard({ pr }: { pr: DashboardPR }) {
             </>
           )}
 
-          {pr.state === "open" && (
-            <>
-              <span className="text-[var(--color-text-muted)]">&middot;</span>
-              <CIStatusInline status={pr.ciStatus} failedCount={failedChecks.length} />
-              <span className="text-[var(--color-text-muted)]">&middot;</span>
-              <ReviewStatusInline decision={pr.reviewDecision} />
-            </>
-          )}
         </div>
       </div>
 
@@ -335,38 +388,48 @@ function PRCard({ pr }: { pr: DashboardPR }) {
             <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
               Unresolved Comments ({pr.unresolvedThreads})
             </h4>
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               {pr.unresolvedComments.map((c) => {
                 const { title, description } = cleanBugbotComment(c.body);
                 return (
-                  <details
-                    key={c.url}
-                    className="group rounded-md border border-[var(--color-border-muted)] bg-[var(--color-bg-primary)]"
-                  >
-                    <summary className="cursor-pointer p-3 hover:bg-[var(--color-bg-tertiary)]">
-                      <div className="inline-flex items-center gap-2 text-xs">
-                        <span className="font-semibold text-[var(--color-text-secondary)]">
-                          {title}
-                        </span>
-                        <span className="text-[var(--color-text-muted)]">by {c.author}</span>
-                        <a
-                          href={c.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="ml-auto text-[11px] text-[var(--color-accent-blue)] hover:underline"
-                        >
-                          view on GitHub &rarr;
-                        </a>
-                      </div>
+                  <details key={c.url} className="group">
+                    <summary className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-xs transition-colors hover:bg-[var(--color-bg-tertiary)] [&::-webkit-details-marker]:hidden">
+                      <svg
+                        className="h-3 w-3 shrink-0 text-[var(--color-text-muted)] transition-transform group-open:rotate-90"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        viewBox="0 0 24 24"
+                      >
+                        <path d="M9 5l7 7-7 7" />
+                      </svg>
+                      <span className="font-medium text-[var(--color-text-secondary)]">
+                        {title}
+                      </span>
+                      <span className="text-[var(--color-text-muted)]">· {c.author}</span>
+                      <a
+                        href={c.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="ml-auto text-[10px] text-[var(--color-accent-blue)] hover:underline"
+                      >
+                        view →
+                      </a>
                     </summary>
-                    <div className="border-t border-[var(--color-border-muted)] p-3">
-                      <div className="mb-2 text-[10px] font-medium text-[var(--color-text-muted)]">
+                    <div className="ml-5 mt-1 space-y-1.5 px-2 pb-2">
+                      <div className="text-[10px] font-[var(--font-mono)] text-[var(--color-text-muted)]">
                         {c.path}
                       </div>
-                      <p className="border-l-2 border-[var(--color-border-default)] pl-2.5 text-xs leading-relaxed text-[var(--color-text-secondary)]">
+                      <p className="border-l-2 border-[var(--color-border-default)] pl-3 text-xs leading-relaxed text-[var(--color-text-secondary)]">
                         {description}
                       </p>
+                      <button
+                        onClick={() => askAgentToFix(sessionId, c)}
+                        className="mt-2 rounded-md bg-[var(--color-accent-blue)] px-3 py-1 text-[10px] font-medium text-white hover:opacity-90"
+                      >
+                        Ask Agent to Fix
+                      </button>
                     </div>
                   </details>
                 );
@@ -386,10 +449,13 @@ function IssuesList({ pr }: { pr: DashboardPR }) {
 
   if (pr.ciStatus === "failing") {
     const failCount = pr.ciChecks.filter((c) => c.status === "failed").length;
+    const text = failCount > 0
+      ? `CI failing \u2014 ${failCount} check${failCount !== 1 ? "s" : ""} failed`
+      : "CI failing";
     issues.push({
       icon: "\u2717",
       color: "var(--color-accent-red)",
-      text: `CI failing \u2014 ${failCount} check${failCount !== 1 ? "s" : ""} failed`,
+      text,
     });
   } else if (pr.ciStatus === "pending") {
     issues.push({
@@ -462,40 +528,3 @@ function IssuesList({ pr }: { pr: DashboardPR }) {
   );
 }
 
-// ── Inline status pills ──────────────────────────────────────────────
-
-function CIStatusInline({ status, failedCount }: { status: string; failedCount: number }) {
-  if (status === "passing") {
-    return <span className="font-semibold text-[var(--color-accent-green)]">{"\u2713"} CI passing</span>;
-  }
-  if (status === "failing") {
-    return (
-      <span className="font-semibold text-[var(--color-accent-red)]">
-        {"\u2717"} {failedCount} check{failedCount !== 1 ? "s" : ""} failing
-      </span>
-    );
-  }
-  if (status === "pending") {
-    return <span className="font-semibold text-[var(--color-accent-yellow)]">{"\u25CF"} CI pending</span>;
-  }
-  return null;
-}
-
-function ReviewStatusInline({ decision }: { decision: string }) {
-  if (decision === "approved") {
-    return <span className="font-semibold text-[var(--color-accent-green)]">{"\u2713"} Approved</span>;
-  }
-  if (decision === "changes_requested") {
-    return (
-      <span className="font-semibold text-[var(--color-accent-red)]">{"\u2717"} Changes requested</span>
-    );
-  }
-  if (decision === "pending") {
-    return (
-      <span className="font-semibold text-[var(--color-accent-yellow)]">
-        {"\u23F3"} Pending review
-      </span>
-    );
-  }
-  return <span className="text-[var(--color-text-muted)]">No review</span>;
-}

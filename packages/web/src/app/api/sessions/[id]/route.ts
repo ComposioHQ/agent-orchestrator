@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { getServices, getSCM, getTracker } from "@/lib/services";
 import { sessionToDashboard, enrichSessionPR, enrichSessionIssue } from "@/lib/serialize";
 

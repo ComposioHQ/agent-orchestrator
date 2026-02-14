@@ -11,6 +11,8 @@
  * Reference: scripts/claude-ao-session, scripts/send-to-session
  */
 
+import { statSync } from "node:fs";
+import { join } from "node:path";
 import type {
   SessionManager,
   Session,
@@ -92,7 +94,12 @@ function validateStatus(raw: string | undefined): SessionStatus {
 }
 
 /** Reconstruct a Session object from raw metadata key=value pairs. */
-function metadataToSession(sessionId: SessionId, meta: Record<string, string>): Session {
+function metadataToSession(
+  sessionId: SessionId,
+  meta: Record<string, string>,
+  createdAt?: Date,
+  modifiedAt?: Date,
+): Session {
   return {
     id: sessionId,
     projectId: meta["project"] ?? "",
@@ -122,8 +129,8 @@ function metadataToSession(sessionId: SessionId, meta: Record<string, string>): 
       ? safeJsonParse<RuntimeHandle>(meta["runtimeHandle"])
       : null,
     agentInfo: meta["summary"] ? { summary: meta["summary"], agentSessionId: null } : null,
-    createdAt: meta["createdAt"] ? new Date(meta["createdAt"]) : new Date(),
-    lastActivityAt: new Date(),
+    createdAt: meta["createdAt"] ? new Date(meta["createdAt"]) : (createdAt ?? new Date()),
+    lastActivityAt: modifiedAt ?? new Date(),
     metadata: meta,
   };
 }
@@ -358,7 +365,19 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       // Filter by project if specified
       if (projectId && raw["project"] !== projectId) continue;
 
-      const session = metadataToSession(sid, raw);
+      // Get file timestamps for createdAt/lastActivityAt
+      let createdAt: Date | undefined;
+      let modifiedAt: Date | undefined;
+      try {
+        const metaPath = join(config.dataDir, sid);
+        const stats = statSync(metaPath);
+        createdAt = stats.birthtime;
+        modifiedAt = stats.mtime;
+      } catch {
+        // If stat fails, timestamps will fall back to current time
+      }
+
+      const session = metadataToSession(sid, raw, createdAt, modifiedAt);
 
       // Check if runtime is still alive
       if (session.runtimeHandle) {
@@ -388,7 +407,41 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   async function get(sessionId: SessionId): Promise<Session | null> {
     const raw = readMetadataRaw(config.dataDir, sessionId);
     if (!raw) return null;
-    return metadataToSession(sessionId, raw);
+
+    // Get file timestamps for createdAt/lastActivityAt
+    let createdAt: Date | undefined;
+    let modifiedAt: Date | undefined;
+    try {
+      const metaPath = join(config.dataDir, sessionId);
+      const stats = statSync(metaPath);
+      createdAt = stats.birthtime;
+      modifiedAt = stats.mtime;
+    } catch {
+      // If stat fails, timestamps will fall back to current time
+    }
+
+    const session = metadataToSession(sessionId, raw, createdAt, modifiedAt);
+
+    // Check if runtime is still alive (same as list() method)
+    if (session.runtimeHandle) {
+      const project = config.projects[session.projectId];
+      if (project) {
+        const plugins = resolvePlugins(project);
+        if (plugins.runtime) {
+          try {
+            const alive = await plugins.runtime.isAlive(session.runtimeHandle);
+            if (!alive) {
+              session.status = "killed";
+              session.activity = "exited";
+            }
+          } catch {
+            // Can't check — assume still alive
+          }
+        }
+      }
+    }
+
+    return session;
   }
 
   async function kill(sessionId: SessionId): Promise<void> {

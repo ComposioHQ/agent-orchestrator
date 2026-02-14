@@ -1,13 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { SessionDetail } from "@/components/SessionDetail";
 import type { DashboardSession } from "@/lib/types";
 
 export default function SessionPage() {
   const params = useParams();
-  const router = useRouter();
   const id = params.id as string;
 
   const [session, setSession] = useState<DashboardSession | null>(null);
