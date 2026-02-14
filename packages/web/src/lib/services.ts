@@ -24,6 +24,7 @@ import {
 // Static plugin imports — webpack needs these to be string literals
 import pluginRuntimeTmux from "@agent-orchestrator/plugin-runtime-tmux";
 import pluginAgentClaudeCode from "@agent-orchestrator/plugin-agent-claude-code";
+import pluginWorkspaceWorktree from "@agent-orchestrator/plugin-workspace-worktree";
 import pluginScmGithub from "@agent-orchestrator/plugin-scm-github";
 import pluginTrackerGithub from "@agent-orchestrator/plugin-tracker-github";
 
@@ -62,6 +63,7 @@ async function initServices(): Promise<Services> {
   // Register plugins explicitly (webpack can't handle dynamic import() in core)
   registry.register(pluginRuntimeTmux);
   registry.register(pluginAgentClaudeCode);
+  registry.register(pluginWorkspaceWorktree);
   registry.register(pluginScmGithub);
   registry.register(pluginTrackerGithub);
 
