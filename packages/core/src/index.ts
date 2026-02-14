@@ -45,4 +45,4 @@ export { createLifecycleManager } from "./lifecycle-manager.js";
 export type { LifecycleManagerDeps } from "./lifecycle-manager.js";
 
 // Shared utilities
-export { shellEscape, escapeAppleScript } from "./utils.js";
+export { shellEscape, escapeAppleScript, validateUrl } from "./utils.js";

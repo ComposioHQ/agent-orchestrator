@@ -1,9 +1,10 @@
-import type {
-  PluginModule,
-  Notifier,
-  OrchestratorEvent,
-  NotifyAction,
-  NotifyContext,
+import {
+  validateUrl,
+  type PluginModule,
+  type Notifier,
+  type OrchestratorEvent,
+  type NotifyAction,
+  type NotifyContext,
 } from "@agent-orchestrator/core";
 
 export const manifest = {
@@ -100,11 +101,6 @@ function serializeEvent(event: OrchestratorEvent): WebhookPayload["event"] {
   };
 }
 
-function validateUrl(url: string, label: string): void {
-  if (!url.startsWith("https://") && !url.startsWith("http://")) {
-    throw new Error(`[${label}] Invalid url: must be http(s), got "${url}"`);
-  }
-}
 
 export function create(config?: Record<string, unknown>): Notifier {
   const url = config?.url as string | undefined;

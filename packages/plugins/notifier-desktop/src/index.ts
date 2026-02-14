@@ -52,22 +52,27 @@ function formatActionsMessage(event: OrchestratorEvent, actions: NotifyAction[])
  * On macOS, osascript's `display notification` lacks URL support.
  * Consider `terminal-notifier` for click-to-open if needed in the future.
  */
-function sendNotification(title: string, message: string, sound: boolean): Promise<void> {
+function sendNotification(
+  title: string,
+  message: string,
+  options: { sound: boolean; isUrgent: boolean },
+): Promise<void> {
   return new Promise((resolve, reject) => {
     const os = platform();
 
     if (os === "darwin") {
       const safeTitle = escapeAppleScript(title);
       const safeMessage = escapeAppleScript(message);
-      const soundClause = sound ? ' sound name "default"' : "";
+      const soundClause = options.sound ? ' sound name "default"' : "";
       const script = `display notification "${safeMessage}" with title "${safeTitle}"${soundClause}`;
       execFile("osascript", ["-e", script], (err) => {
         if (err) reject(err);
         else resolve();
       });
     } else if (os === "linux") {
+      // Linux urgency is driven by event priority, not the macOS sound config
       const args: string[] = [];
-      if (sound) {
+      if (options.isUrgent) {
         args.push("--urgency=critical");
       }
       args.push(title, message);
@@ -92,7 +97,8 @@ export function create(config?: Record<string, unknown>): Notifier {
       const title = formatTitle(event);
       const message = formatMessage(event);
       const sound = shouldPlaySound(event.priority, soundEnabled);
-      await sendNotification(title, message, sound);
+      const isUrgent = event.priority === "urgent";
+      await sendNotification(title, message, { sound, isUrgent });
     },
 
     async notifyWithActions(event: OrchestratorEvent, actions: NotifyAction[]): Promise<void> {
@@ -101,7 +107,8 @@ export function create(config?: Record<string, unknown>): Notifier {
       const title = formatTitle(event);
       const message = formatActionsMessage(event, actions);
       const sound = shouldPlaySound(event.priority, soundEnabled);
-      await sendNotification(title, message, sound);
+      const isUrgent = event.priority === "urgent";
+      await sendNotification(title, message, { sound, isUrgent });
     },
   };
 }

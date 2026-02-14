@@ -201,6 +201,15 @@ describe("notifier-desktop", () => {
       expect(urgencyIdx).toBeLessThan(titleIdx);
     });
 
+    it("includes --urgency=critical for urgent even when sound is disabled", async () => {
+      mockPlatform.mockReturnValue("linux");
+      const notifier = create({ sound: false });
+      await notifier.notify(makeEvent({ priority: "urgent" }));
+
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      expect(args).toContain("--urgency=critical");
+    });
+
     it("does not include --urgency=critical for info on Linux", async () => {
       mockPlatform.mockReturnValue("linux");
       const notifier = create();
