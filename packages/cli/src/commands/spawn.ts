@@ -3,7 +3,7 @@ import { join } from "node:path";
 import chalk from "chalk";
 import ora from "ora";
 import type { Command } from "commander";
-import { loadConfig, type OrchestratorConfig, type ProjectConfig } from "@agent-orchestrator/core";
+import { loadConfig, buildPrompt, type OrchestratorConfig, type ProjectConfig } from "@agent-orchestrator/core";
 import { exec, git, getTmuxSessions } from "../lib/shell.js";
 import { getSessionDir, writeMetadata, findSessionForIssue } from "../lib/metadata.js";
 import { banner } from "../lib/format.js";
@@ -177,11 +177,16 @@ async function spawnSession(
     console.log(`  Attach:   ${chalk.dim(`tmux attach -t ${sessionName}`)}`);
     console.log();
 
-    // Send initial prompt if we have an issue
-    if (issueId) {
+    // Send composed prompt via tmux send-keys (keeps agent interactive for follow-ups)
+    const composedPrompt = buildPrompt({
+      project,
+      projectId,
+      issueId,
+    });
+
+    if (composedPrompt) {
       await new Promise((resolve) => setTimeout(resolve, 1000));
-      const prompt = `Please start working on ${issueId}, fetch ticket info, create the appropriate branch so that github auto links to linear, and start working on the task`;
-      await exec("tmux", ["send-keys", "-t", sessionName, "-l", prompt]);
+      await exec("tmux", ["send-keys", "-t", sessionName, "-l", composedPrompt]);
       await new Promise((resolve) => setTimeout(resolve, 200));
       await exec("tmux", ["send-keys", "-t", sessionName, "Enter"]);
     }

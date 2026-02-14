@@ -691,6 +691,15 @@ export interface ProjectConfig {
 
   /** Per-project reaction overrides */
   reactions?: Record<string, Partial<ReactionConfig>>;
+
+  /** Inline rules/instructions passed to every agent prompt */
+  agentRules?: string;
+
+  /** Path to a file containing agent rules (relative to project path) */
+  agentRulesFile?: string;
+
+  /** Rules for the orchestrator agent (stored, reserved for future use) */
+  orchestratorRules?: string;
 }
 
 export interface TrackerConfig {

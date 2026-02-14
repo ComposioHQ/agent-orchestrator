@@ -72,6 +72,9 @@ const ProjectConfigSchema = z.object({
   postCreate: z.array(z.string()).optional(),
   agentConfig: AgentSpecificConfigSchema.optional(),
   reactions: z.record(ReactionConfigSchema.partial()).optional(),
+  agentRules: z.string().optional(),
+  agentRulesFile: z.string().optional(),
+  orchestratorRules: z.string().optional(),
 });
 
 const DefaultPluginsSchema = z.object({

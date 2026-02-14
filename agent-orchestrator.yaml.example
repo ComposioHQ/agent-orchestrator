@@ -43,6 +43,18 @@ projects:
     #   permissions: skip    # --dangerously-skip-permissions
     #   model: opus
 
+    # Inline rules included in every agent prompt for this project
+    # agentRules: |
+    #   Always run tests before pushing.
+    #   Use conventional commits (feat:, fix:, chore:).
+
+    # Path to a rules file (relative to project path)
+    # agentRulesFile: .agent-rules.md
+
+    # Rules for the orchestrator agent (reserved for future use)
+    # orchestratorRules: |
+    #   Prefer to batch-spawn related issues together.
+
     # Per-project reaction overrides
     # reactions:
     #   approved-and-green:

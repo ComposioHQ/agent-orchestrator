@@ -40,9 +40,13 @@ vi.mock("ora", () => ({
   }),
 }));
 
-vi.mock("@agent-orchestrator/core", () => ({
-  loadConfig: () => mockConfigRef.current,
-}));
+vi.mock("@agent-orchestrator/core", async (importOriginal) => {
+  const actual: Record<string, unknown> = await importOriginal();
+  return {
+    loadConfig: () => mockConfigRef.current,
+    buildPrompt: actual["buildPrompt"],
+  };
+});
 
 vi.mock("../../src/lib/plugins.js", () => ({
   getAgent: mockGetAgent,
