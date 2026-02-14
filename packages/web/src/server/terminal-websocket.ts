@@ -10,6 +10,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:http";
+import { request } from "node:http";
 
 interface TtydInstance {
   sessionId: string;
@@ -19,6 +20,43 @@ interface TtydInstance {
 
 const instances = new Map<string, TtydInstance>();
 let nextPort = 7800; // Start ttyd instances from port 7800
+
+/**
+ * Check if ttyd is ready to accept connections by making a test request.
+ * Returns a promise that resolves when ttyd is ready or rejects after timeout.
+ */
+function waitForTtyd(port: number, sessionId: string, timeoutMs = 3000): Promise<void> {
+  const startTime = Date.now();
+
+  return new Promise((resolve, reject) => {
+    const checkReady = () => {
+      if (Date.now() - startTime > timeoutMs) {
+        reject(new Error(`ttyd did not become ready within ${timeoutMs}ms`));
+        return;
+      }
+
+      const req = request({
+        hostname: "localhost",
+        port,
+        path: `/${sessionId}/`,
+        method: "GET",
+        timeout: 500,
+      }, (res) => {
+        // Any response (even 404) means ttyd is listening
+        resolve();
+      });
+
+      req.on("error", () => {
+        // Connection refused or timeout - ttyd not ready yet, retry
+        setTimeout(checkReady, 100);
+      });
+
+      req.end();
+    };
+
+    checkReady();
+  });
+}
 
 function getOrSpawnTtyd(sessionId: string): TtydInstance {
   const existing = instances.get(sessionId);
@@ -66,7 +104,7 @@ function getOrSpawnTtyd(sessionId: string): TtydInstance {
 }
 
 // Simple HTTP API for the dashboard to request terminal URLs
-const server = createServer((req, res) => {
+const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
 
   // CORS for dashboard
@@ -90,12 +128,21 @@ const server = createServer((req, res) => {
     }
 
     const instance = getOrSpawnTtyd(sessionId);
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({
-      url: `http://localhost:${instance.port}/${sessionId}/`,
-      port: instance.port,
-      sessionId,
-    }));
+
+    // Wait for ttyd to be ready before returning the URL
+    try {
+      await waitForTtyd(instance.port, sessionId);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        url: `http://localhost:${instance.port}/${sessionId}/`,
+        port: instance.port,
+        sessionId,
+      }));
+    } catch (err) {
+      console.error(`[Terminal] ttyd ${sessionId} failed to become ready:`, err);
+      res.writeHead(503, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Terminal server not ready" }));
+    }
     return;
   }
 
