@@ -35,6 +35,7 @@ import {
   listMetadata,
   reserveSessionId,
 } from "./metadata.js";
+import { buildPrompt } from "./prompt-builder.js";
 
 /** Escape regex metacharacters in a string. */
 function escapeRegex(str: string): string {
@@ -231,12 +232,30 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       }
     }
 
+    // Build composed prompt — fetch issue context from tracker (best-effort)
+    let issueContext: string | undefined;
+    if (spawnConfig.issueId && plugins.tracker) {
+      try {
+        issueContext = await plugins.tracker.generatePrompt(spawnConfig.issueId, project);
+      } catch {
+        // Tracker unavailable — continue without issue context
+      }
+    }
+
+    const composedPrompt = buildPrompt({
+      project,
+      projectId: spawnConfig.projectId,
+      issueId: spawnConfig.issueId,
+      issueContext,
+      userPrompt: spawnConfig.prompt,
+    });
+
     // Get agent launch config and create runtime — clean up workspace on failure
     const agentLaunchConfig = {
       sessionId,
       projectConfig: project,
       issueId: spawnConfig.issueId,
-      prompt: spawnConfig.prompt,
+      prompt: composedPrompt ?? spawnConfig.prompt,
       permissions: project.agentConfig?.permissions,
       model: project.agentConfig?.model,
     };
