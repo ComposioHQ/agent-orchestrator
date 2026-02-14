@@ -328,6 +328,14 @@ function classifyTerminalOutput(terminalOutput: string): ActivityState {
   // Empty output — can't determine state
   if (!terminalOutput.trim()) return "idle";
 
+  const lines = terminalOutput.trim().split("\n");
+  const lastLine = lines[lines.length - 1]?.trim() ?? "";
+
+  // Check the last line FIRST — if the prompt is visible, the agent is idle
+  // regardless of historical output (e.g. "Reading file..." from earlier).
+  // The ❯ is Claude Code's prompt character.
+  if (/^[❯>$#]\s*$/.test(lastLine)) return "idle";
+
   // Active indicators — Claude is processing
   if (terminalOutput.includes("esc to interrupt")) return "active";
   if (/Thinking|Reading|Writing|Searching/i.test(terminalOutput)) return "active";
@@ -339,12 +347,6 @@ function classifyTerminalOutput(terminalOutput: string): ActivityState {
 
   // Queued message indicator
   if (terminalOutput.includes("Press up to edit queued messages")) return "active";
-
-  // Shell prompt visible — Claude has exited or is idle at prompt
-  // The ❯ is Claude Code's prompt character
-  const lines = terminalOutput.trim().split("\n");
-  const lastLine = lines[lines.length - 1]?.trim() ?? "";
-  if (/^[❯>$#]\s*$/.test(lastLine)) return "idle";
 
   return "active";
 }

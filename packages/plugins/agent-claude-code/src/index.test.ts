@@ -372,6 +372,13 @@ describe("detectActivity", () => {
     expect(agent.detectActivity("some output\n$ ")).toBe("idle");
   });
 
+  it("returns idle when prompt follows historical activity indicators", () => {
+    // Key regression test: historical "Reading file..." output in the buffer
+    // should NOT override an idle prompt on the last line.
+    expect(agent.detectActivity("Reading file src/index.ts\nWriting to out.ts\n❯ ")).toBe("idle");
+    expect(agent.detectActivity("Thinking...\nSearching codebase...\n$ ")).toBe("idle");
+  });
+
   it("returns active for non-empty output with no special patterns", () => {
     expect(agent.detectActivity("some random terminal output\n")).toBe("active");
   });
