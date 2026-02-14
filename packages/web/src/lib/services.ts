@@ -34,7 +34,12 @@ export function getServices(): Promise<Services> {
     return Promise.resolve(globalForServices._aoServices);
   }
   if (!globalForServices._aoServicesInit) {
-    globalForServices._aoServicesInit = initServices();
+    globalForServices._aoServicesInit = initServices().catch((err) => {
+      // Clear the cached promise so the next call retries instead of
+      // permanently returning a rejected promise.
+      globalForServices._aoServicesInit = undefined;
+      throw err;
+    });
   }
   return globalForServices._aoServicesInit;
 }

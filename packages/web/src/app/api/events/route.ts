@@ -73,7 +73,9 @@ export async function GET(): Promise<Response> {
               controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
             }
           } catch {
-            // Silently skip failed polls — next interval will retry
+            // enqueue failure means the stream is closed — clean up both intervals
+            clearInterval(updates);
+            clearInterval(heartbeat);
           }
         })();
       }, 5000);
