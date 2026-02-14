@@ -115,16 +115,16 @@ export async function enrichSessionPR(
   const mostFailed = failedCount >= results.length / 2;
 
   if (mostFailed) {
-    // Don't update PR data — leave default "Data not loaded" blocker
-    // Log for debugging (in production, you'd use a logger)
-    const rejectedResults = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
+    // Log warning but continue to apply partial data
+    const rejectedResults = results.filter(
+      (r) => r.status === "rejected",
+    ) as PromiseRejectedResult[];
     const firstError = rejectedResults[0]?.reason;
     console.error(
       `[enrichSessionPR] ${failedCount}/${results.length} API calls failed for PR #${pr.number}:`,
       firstError,
     );
-    dashboard.pr.mergeability.blockers = ["API rate limited or unavailable"];
-    return;
+    // Add blocker message but don't return early — apply any successful results below
   }
 
   // Apply successful results
@@ -169,6 +169,12 @@ export async function enrichSessionPR(
       author: c.author,
       body: c.body,
     }));
+  }
+
+  // Add rate-limit warning blocker if most requests failed
+  // (but we still applied any successful results above)
+  if (mostFailed && !dashboard.pr.mergeability.blockers.includes("API rate limited or unavailable")) {
+    dashboard.pr.mergeability.blockers.push("API rate limited or unavailable");
   }
 
   // Cache the result if we got at least some data

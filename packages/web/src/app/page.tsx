@@ -52,11 +52,19 @@ export default async function Home() {
           if (sessions[i].pr) {
             sessions[i].pr.state = cached.state;
             sessions[i].pr.ciStatus = cached.ciStatus as "none" | "pending" | "passing" | "failing";
-            sessions[i].pr.reviewDecision = cached.reviewDecision as "none" | "pending" | "approved" | "changes_requested";
-            sessions[i].pr.ciChecks = cached.ciChecks;
+            sessions[i].pr.reviewDecision = cached.reviewDecision as
+              | "none"
+              | "pending"
+              | "approved"
+              | "changes_requested";
+            sessions[i].pr.ciChecks = cached.ciChecks.map((c) => ({
+              name: c.name,
+              status: c.status as "pending" | "running" | "passed" | "failed" | "skipped",
+              url: c.url,
+            }));
             sessions[i].pr.mergeability = cached.mergeability;
-            sessions[i].pr.pendingComments = cached.pendingComments;
-            sessions[i].pr.automatedComments = cached.automatedComments;
+            sessions[i].pr.unresolvedThreads = cached.unresolvedThreads;
+            sessions[i].pr.unresolvedComments = cached.unresolvedComments;
           }
           return Promise.resolve();
         }
