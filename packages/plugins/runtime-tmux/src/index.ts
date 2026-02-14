@@ -101,10 +101,17 @@ export function create(): Runtime {
           await tmux("load-buffer", "-b", bufferName, tmpPath);
           await tmux("paste-buffer", "-b", bufferName, "-t", handle.id, "-d");
         } finally {
+          // Clean up temp file and tmux buffer (in case paste-buffer failed
+          // and the -d flag didn't delete it)
           try {
             unlinkSync(tmpPath);
           } catch {
             // ignore cleanup errors
+          }
+          try {
+            await tmux("delete-buffer", "-b", bufferName);
+          } catch {
+            // Buffer may already be deleted by -d flag — that's fine
           }
         }
       } else {
