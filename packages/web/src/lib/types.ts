@@ -17,15 +17,15 @@ export type {
   PRState,
 } from "@composio/ao-core/types";
 
-import type {
-  CICheck as CoreCICheck,
-  MergeReadiness,
-  CIStatus,
-  SessionStatus,
-  ActivityState,
-  ReviewDecision,
+import {
+  ACTIVITY_STATE,
+  type CICheck as CoreCICheck,
+  type MergeReadiness,
+  type CIStatus,
+  type SessionStatus,
+  type ActivityState,
+  type ReviewDecision,
 } from "@composio/ao-core/types";
-import { ACTIVITY_STATE } from "@composio/ao-core/types";
 
 /**
  * Attention zone priority level, ordered by human action urgency:

@@ -1,5 +1,4 @@
-import type { Session, ProjectConfig } from "@composio/ao-core";
-import { ACTIVITY_STATE } from "@composio/ao-core";
+import { ACTIVITY_STATE, type Session, type ProjectConfig } from "@composio/ao-core";
 import { NextResponse } from "next/server";
 import { getServices, getSCM, getTracker } from "@/lib/services";
 import { sessionToDashboard, enrichSessionPR, enrichSessionIssue, computeStats } from "@/lib/serialize";
