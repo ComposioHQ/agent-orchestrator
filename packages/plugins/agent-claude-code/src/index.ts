@@ -7,6 +7,7 @@ import {
   type ActivityState,
   type CostEstimate,
   type PluginModule,
+  type ProjectConfig,
   type RuntimeHandle,
   type Session,
   type WorkspaceHooksConfig,
@@ -730,6 +731,37 @@ function createClaudeCodeAgent(): Agent {
       // Use absolute path for hook command (specific to this workspace)
       const hookScriptPath = join(workspacePath, ".claude", "metadata-updater.sh");
       await setupHookInWorkspace(workspacePath, hookScriptPath);
+    },
+
+    async getRestoreCommand(session: Session, project: ProjectConfig): Promise<string | null> {
+      if (!session.workspacePath) return null;
+
+      // Try to extract Claude session ID from JSONL files
+      const projectPath = toClaudeProjectPath(session.workspacePath);
+      const projectDir = join(homedir(), ".claude", "projects", projectPath);
+      const sessionFile = await findLatestSessionFile(projectDir);
+
+      if (!sessionFile) return null;
+
+      // Session ID is the filename without .jsonl extension
+      const claudeSessionId = basename(sessionFile, ".jsonl");
+
+      // Build resume command
+      const parts = ["claude", "--resume", shellEscape(claudeSessionId)];
+
+      // Check permissions: prefer metadata (new sessions), fall back to project config (old sessions)
+      const permissions = session.metadata?.["permissions"] ?? project.agentConfig?.permissions;
+      if (permissions === "skip") {
+        parts.push("--dangerously-skip-permissions");
+      }
+
+      // Check model: prefer metadata (new sessions), fall back to project config (old sessions)
+      const model = session.metadata?.["model"] ?? project.agentConfig?.model;
+      if (model) {
+        parts.push("--model", shellEscape(model));
+      }
+
+      return parts.join(" ");
     },
 
     async postLaunchSetup(session: Session): Promise<void> {

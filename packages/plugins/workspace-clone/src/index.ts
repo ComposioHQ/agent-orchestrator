@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync, rmSync, mkdirSync, readdirSync } from "node:fs";
+import { access } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type {
@@ -129,6 +130,39 @@ export function create(config?: Record<string, unknown>): Workspace {
       if (existsSync(workspacePath)) {
         rmSync(workspacePath, { recursive: true, force: true });
       }
+    },
+
+    async exists(path: string): Promise<boolean> {
+      try {
+        await access(path);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+
+    async restore(path: string, repoPath: string, branch: string): Promise<void> {
+      const expandedRepoPath = expandPath(repoPath);
+
+      // Get the remote URL from the source repo
+      let remoteUrl: string;
+      try {
+        remoteUrl = await git(expandedRepoPath, "remote", "get-url", "origin");
+      } catch {
+        // Fallback: use the local path as source
+        remoteUrl = expandedRepoPath;
+      }
+
+      // Clone the repo to the specified path
+      await execFileAsync("git", [
+        "clone",
+        "--reference",
+        expandedRepoPath,
+        "--branch",
+        branch,
+        remoteUrl,
+        path,
+      ], { timeout: 60_000 });
     },
 
     async list(projectId: string): Promise<WorkspaceInfo[]> {

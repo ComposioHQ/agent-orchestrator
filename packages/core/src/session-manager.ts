@@ -33,9 +33,11 @@ import {
   type Issue,
   PR_STATE,
 } from "./types.js";
+import { SessionNotRestorableError, WorkspaceMissingError } from "./types.js";
 import {
   readMetadataRaw,
   writeMetadata,
+  updateMetadata,
   deleteMetadata,
   listMetadata,
   reserveSessionId,
@@ -138,6 +140,7 @@ function metadataToSession(
     agentInfo: meta["summary"] ? { summary: meta["summary"], agentSessionId: null } : null,
     createdAt: meta["createdAt"] ? new Date(meta["createdAt"]) : (createdAt ?? new Date()),
     lastActivityAt: modifiedAt ?? new Date(),
+    restoredAt: meta["restoredAt"] ? new Date(meta["restoredAt"]) : undefined,
     metadata: meta,
   };
 }
@@ -630,5 +633,114 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     await runtimePlugin.sendMessage(handle, message);
   }
 
-  return { spawn, list, get, kill, cleanup, send };
+  async function restore(sessionId: SessionId): Promise<Session> {
+    // 1. Load session metadata
+    const metadata = readMetadataRaw(config.dataDir, sessionId);
+    if (!metadata) {
+      throw new Error(`Session ${sessionId} not found`);
+    }
+
+    const oldStatus = validateStatus(metadata["status"]);
+
+    // 2. Validate restorable status
+    const nonRestorable = new Set<SessionStatus>(["merged", "working"]);
+    if (nonRestorable.has(oldStatus)) {
+      throw new SessionNotRestorableError(sessionId, oldStatus);
+    }
+
+    const projectId = metadata["project"] ?? "";
+    const project = config.projects[projectId];
+    if (!project) {
+      throw new Error(`Project ${projectId} not found`);
+    }
+
+    const workspacePath = metadata["worktree"] ?? "";
+    const branch = metadata["branch"] ?? "";
+
+    if (!workspacePath || !branch) {
+      throw new Error(`Session ${sessionId} missing worktree or branch metadata`);
+    }
+
+    const plugins = resolvePlugins(project);
+    if (!plugins.runtime) {
+      throw new Error(`Runtime plugin '${project.runtime ?? config.defaults.runtime}' not found`);
+    }
+    if (!plugins.agent) {
+      throw new Error(`Agent plugin '${project.agent ?? config.defaults.agent}' not found`);
+    }
+    if (!plugins.workspace) {
+      throw new Error(`Workspace plugin '${project.workspace ?? config.defaults.workspace}' not found`);
+    }
+
+    // 3. Ensure workspace exists
+    const workspaceExists = await plugins.workspace.exists(workspacePath);
+
+    if (!workspaceExists) {
+      // Check if branch still exists in repo
+      const scmPlugin = plugins.scm;
+      const branchExists = scmPlugin ? await scmPlugin.branchExists(project.path, branch) : false;
+
+      if (!branchExists) {
+        throw new WorkspaceMissingError(workspacePath, branch);
+      }
+
+      // Recreate worktree on same branch
+      await plugins.workspace.restore(workspacePath, project.path, branch);
+    }
+
+    // 4. Get launch command (restore or regular)
+    const session = await get(sessionId); // Full Session object for agent
+    if (!session) {
+      throw new Error(`Failed to load session ${sessionId} after metadata read`);
+    }
+
+    const restoreCmd = plugins.agent.getRestoreCommand
+      ? await plugins.agent.getRestoreCommand(session)
+      : null;
+
+    const launchCommand =
+      restoreCmd ??
+      plugins.agent.getLaunchCommand({
+        sessionId,
+        projectConfig: project,
+        issueId: metadata["issue"],
+        permissions: project.agentConfig?.permissions,
+        model: project.agentConfig?.model,
+      });
+
+    // 5. Create runtime
+    const environment = plugins.agent.getEnvironment({
+      sessionId,
+      projectConfig: project,
+      issueId: metadata["issue"],
+    });
+
+    const runtimeHandle = await plugins.runtime.create({
+      sessionId,
+      workspacePath,
+      launchCommand,
+      environment: {
+        ...environment,
+        AO_SESSION: sessionId,
+        AO_DATA_DIR: config.dataDir,
+      },
+    });
+
+    // 6. Update metadata
+    const now = new Date().toISOString();
+    updateMetadata(config.dataDir, sessionId, {
+      status: "working",
+      runtimeHandle: JSON.stringify(runtimeHandle),
+      restoredAt: now,
+      lastActivity: now,
+    });
+
+    // 7. Return updated session
+    return get(sessionId).then((s) => {
+      if (!s) throw new Error(`Session ${sessionId} disappeared after restore`);
+      return s;
+    });
+  }
+
+  return { spawn, list, get, kill, cleanup, send, restore };
 }

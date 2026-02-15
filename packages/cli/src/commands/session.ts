@@ -1,10 +1,16 @@
 import chalk from "chalk";
 import type { Command } from "commander";
-import { loadConfig, type OrchestratorConfig } from "@composio/ao-core";
+import {
+  loadConfig,
+  type OrchestratorConfig,
+  SessionNotRestorableError,
+  WorkspaceMissingError,
+} from "@composio/ao-core";
 import { tmux, git, gh, getTmuxSessions, getTmuxActivity } from "../lib/shell.js";
 import { getSessionDir, readMetadata, archiveMetadata } from "../lib/metadata.js";
 import { formatAge } from "../lib/format.js";
 import { findProjectForSession, matchesPrefix } from "../lib/session-utils.js";
+import { getServices } from "../lib/services.js";
 
 async function killSession(
   config: OrchestratorConfig,
@@ -105,6 +111,45 @@ export function registerSession(program: Command): void {
       }
       await killSession(config, projectId, sessionName);
       console.log(chalk.green(`\nSession ${sessionName} killed.`));
+    });
+
+  session
+    .command("restore")
+    .description("Restore a terminated session")
+    .argument("<id>", "Session ID to restore")
+    .option("--open", "Open in terminal after restore")
+    .action(async (sessionId: string, options: { open?: boolean }) => {
+      try {
+        const { sessionManager } = await getServices();
+
+        console.log(chalk.dim(`Restoring session ${sessionId}...`));
+        const restoredSession = await sessionManager.restore(sessionId);
+
+        console.log(chalk.green(`\u2713 Restored session ${restoredSession.id}`));
+        console.log(`  Branch: ${chalk.cyan(restoredSession.branch ?? "unknown")}`);
+        console.log(`  Status: ${chalk.dim(restoredSession.status)}`);
+
+        if (options.open) {
+          // Try to open in terminal using tmux attach
+          try {
+            await tmux("attach", "-t", sessionId);
+          } catch {
+            console.log(chalk.yellow("  Could not open terminal (use: tmux attach -t " + sessionId + ")"));
+          }
+        }
+      } catch (error) {
+        if (error instanceof SessionNotRestorableError) {
+          console.error(chalk.red(`\u2717 Error: ${error.message}`));
+          process.exit(1);
+        }
+        if (error instanceof WorkspaceMissingError) {
+          console.error(chalk.red(`\u2717 Error: ${error.message}`));
+          console.error(chalk.dim("  The branch may have been deleted from the repository."));
+          process.exit(1);
+        }
+        console.error(chalk.red(`\u2717 Failed to restore session: ${error}`));
+        process.exit(1);
+      }
     });
 
   session

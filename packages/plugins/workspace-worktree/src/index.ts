@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync, lstatSync, symlinkSync, rmSync, mkdirSync, readdirSync } from "node:fs";
+import { access } from "node:fs/promises";
 import { join, resolve, basename, dirname } from "node:path";
 import { homedir } from "node:os";
 import type {
@@ -130,6 +131,29 @@ export function create(config?: Record<string, unknown>): Workspace {
         if (existsSync(workspacePath)) {
           rmSync(workspacePath, { recursive: true, force: true });
         }
+      }
+    },
+
+    async exists(path: string): Promise<boolean> {
+      try {
+        await access(path);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+
+    async restore(path: string, repoPath: string, branch: string): Promise<void> {
+      const expandedRepoPath = expandPath(repoPath);
+      // Create worktree at exact path on existing branch
+      const { stderr } = await execFileAsync(
+        "git",
+        ["-C", expandedRepoPath, "worktree", "add", path, branch],
+        { timeout: 60_000 },
+      );
+
+      if (stderr && !stderr.includes("Preparing worktree")) {
+        throw new Error(`Failed to restore worktree: ${stderr}`);
       }
     },
 

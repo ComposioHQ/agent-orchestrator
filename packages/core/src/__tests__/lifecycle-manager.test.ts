@@ -102,6 +102,7 @@ beforeEach(() => {
     kill: vi.fn().mockResolvedValue(undefined),
     cleanup: vi.fn(),
     send: vi.fn().mockResolvedValue(undefined),
+    restore: vi.fn(),
   };
 
   config = {
@@ -402,6 +403,7 @@ describe("check (single session)", () => {
       getPendingComments: vi.fn(),
       getAutomatedComments: vi.fn(),
       getMergeability: vi.fn(),
+      branchExists: vi.fn().mockResolvedValue(true),
     };
 
     const registryWithSCM: PluginRegistry = {
@@ -449,6 +451,7 @@ describe("check (single session)", () => {
       getPendingComments: vi.fn(),
       getAutomatedComments: vi.fn(),
       getMergeability: vi.fn(),
+      branchExists: vi.fn().mockResolvedValue(true),
     };
 
     const registryWithSCM: PluginRegistry = {
@@ -495,6 +498,7 @@ describe("check (single session)", () => {
       getReviewDecision: vi.fn().mockResolvedValue("approved"),
       getPendingComments: vi.fn(),
       getAutomatedComments: vi.fn(),
+      branchExists: vi.fn().mockResolvedValue(true),
       getMergeability: vi.fn().mockResolvedValue({
         mergeable: true,
         ciPassing: true,
@@ -598,6 +602,7 @@ describe("reactions", () => {
       getPendingComments: vi.fn(),
       getAutomatedComments: vi.fn(),
       getMergeability: vi.fn(),
+      branchExists: vi.fn().mockResolvedValue(true),
     };
 
     const registryWithSCM: PluginRegistry = {
@@ -653,6 +658,7 @@ describe("reactions", () => {
       getPendingComments: vi.fn(),
       getAutomatedComments: vi.fn(),
       getMergeability: vi.fn(),
+      branchExists: vi.fn().mockResolvedValue(true),
     };
 
     const registryWithSCM: PluginRegistry = {
@@ -704,6 +710,7 @@ describe("reactions", () => {
       getPendingComments: vi.fn(),
       getAutomatedComments: vi.fn(),
       getMergeability: vi.fn(),
+      branchExists: vi.fn().mockResolvedValue(true),
     };
 
     const registryWithNotifier: PluginRegistry = {
@@ -777,6 +784,7 @@ describe("reactions", () => {
       getPendingComments: vi.fn(),
       getAutomatedComments: vi.fn(),
       getMergeability: vi.fn(),
+      branchExists: vi.fn().mockResolvedValue(true),
     };
 
     const registryWithNotifier: PluginRegistry = {

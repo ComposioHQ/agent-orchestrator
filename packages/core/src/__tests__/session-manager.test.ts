@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { createSessionManager } from "../session-manager.js";
 import { writeMetadata, readMetadata } from "../metadata.js";
+import { SessionNotRestorableError, WorkspaceMissingError } from "../types.js";
 import type {
   OrchestratorConfig,
   PluginRegistry,
@@ -62,6 +63,8 @@ beforeEach(() => {
     }),
     destroy: vi.fn().mockResolvedValue(undefined),
     list: vi.fn().mockResolvedValue([]),
+    exists: vi.fn().mockResolvedValue(true),
+    restore: vi.fn().mockResolvedValue(undefined),
   };
 
   mockRegistry = {
@@ -589,6 +592,7 @@ describe("cleanup", () => {
       getPendingComments: vi.fn(),
       getAutomatedComments: vi.fn(),
       getMergeability: vi.fn(),
+      branchExists: vi.fn().mockResolvedValue(true),
     };
 
     const registryWithSCM: PluginRegistry = {
@@ -699,5 +703,243 @@ describe("send", () => {
       { id: "app-1", runtimeName: "mock", data: {} },
       "hello",
     );
+  });
+});
+
+describe("restore", () => {
+  it("restores a terminated session with worktree intact", async () => {
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn().mockResolvedValue(null),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn().mockResolvedValue(undefined),
+      closePR: vi.fn().mockResolvedValue(undefined),
+      getCIChecks: vi.fn().mockResolvedValue([]),
+      getCISummary: vi.fn().mockResolvedValue("none"),
+      getReviews: vi.fn().mockResolvedValue([]),
+      getReviewDecision: vi.fn().mockResolvedValue("none"),
+      getPendingComments: vi.fn().mockResolvedValue([]),
+      getAutomatedComments: vi.fn().mockResolvedValue([]),
+      getMergeability: vi.fn().mockResolvedValue({
+        mergeable: true,
+        ciPassing: true,
+        approved: false,
+        noConflicts: true,
+        blockers: [],
+      }),
+      branchExists: vi.fn().mockResolvedValue(true),
+    };
+
+    const workspaceWithRestore = {
+      ...mockWorkspace,
+      exists: vi.fn().mockResolvedValue(true),
+      restore: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const agentWithRestore = {
+      ...mockAgent,
+      getRestoreCommand: vi.fn().mockResolvedValue("mock-agent --resume abc123"),
+    };
+
+    const registryWithRestore: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return agentWithRestore;
+        if (slot === "workspace") return workspaceWithRestore;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    // Create terminated session metadata
+    writeMetadata(dataDir, "app-1", {
+      worktree: "/tmp/mock-ws/app-1",
+      branch: "feat/TEST-1",
+      status: "terminated",
+      project: "my-app",
+      issue: "TEST-1",
+      createdAt: new Date(Date.now() - 3600000).toISOString(),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithRestore });
+    const restored = await sm.restore("app-1");
+
+    expect(restored.id).toBe("app-1");
+    expect(restored.status).toBe("working");
+    expect(restored.restoredAt).toBeDefined();
+
+    // Verify workspace.exists was checked
+    expect(workspaceWithRestore.exists).toHaveBeenCalledWith("/tmp/mock-ws/app-1");
+
+    // Verify restore command was used
+    expect(agentWithRestore.getRestoreCommand).toHaveBeenCalled();
+
+    // Verify runtime was created with restore command
+    expect(mockRuntime.create).toHaveBeenCalled();
+  });
+
+  it("recreates worktree if missing but branch exists", async () => {
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn().mockResolvedValue(null),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn().mockResolvedValue(undefined),
+      closePR: vi.fn().mockResolvedValue(undefined),
+      getCIChecks: vi.fn().mockResolvedValue([]),
+      getCISummary: vi.fn().mockResolvedValue("none"),
+      getReviews: vi.fn().mockResolvedValue([]),
+      getReviewDecision: vi.fn().mockResolvedValue("none"),
+      getPendingComments: vi.fn().mockResolvedValue([]),
+      getAutomatedComments: vi.fn().mockResolvedValue([]),
+      getMergeability: vi.fn().mockResolvedValue({
+        mergeable: true,
+        ciPassing: true,
+        approved: false,
+        noConflicts: true,
+        blockers: [],
+      }),
+      branchExists: vi.fn().mockResolvedValue(true),
+    };
+
+    const workspaceWithRestore = {
+      ...mockWorkspace,
+      exists: vi.fn().mockResolvedValue(false),
+      restore: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const registryWithRestore: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return workspaceWithRestore;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    writeMetadata(dataDir, "app-1", {
+      worktree: "/tmp/mock-ws/app-1",
+      branch: "feat/TEST-1",
+      status: "killed",
+      project: "my-app",
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithRestore });
+    await sm.restore("app-1");
+
+    // Verify workspace.restore was called
+    expect(workspaceWithRestore.restore).toHaveBeenCalledWith(
+      "/tmp/mock-ws/app-1",
+      "/tmp/my-app",
+      "feat/TEST-1",
+    );
+  });
+
+  it("throws SessionNotRestorableError for merged sessions", async () => {
+    writeMetadata(dataDir, "app-1", {
+      worktree: "/tmp/mock-ws/app-1",
+      branch: "feat/TEST-1",
+      status: "merged",
+      project: "my-app",
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await expect(sm.restore("app-1")).rejects.toThrow(SessionNotRestorableError);
+  });
+
+  it("throws SessionNotRestorableError for working sessions", async () => {
+    writeMetadata(dataDir, "app-1", {
+      worktree: "/tmp/mock-ws/app-1",
+      branch: "feat/TEST-1",
+      status: "working",
+      project: "my-app",
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await expect(sm.restore("app-1")).rejects.toThrow(SessionNotRestorableError);
+  });
+
+  it("throws WorkspaceMissingError if workspace and branch both missing", async () => {
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn().mockResolvedValue(null),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn().mockResolvedValue(undefined),
+      closePR: vi.fn().mockResolvedValue(undefined),
+      getCIChecks: vi.fn().mockResolvedValue([]),
+      getCISummary: vi.fn().mockResolvedValue("none"),
+      getReviews: vi.fn().mockResolvedValue([]),
+      getReviewDecision: vi.fn().mockResolvedValue("none"),
+      getPendingComments: vi.fn().mockResolvedValue([]),
+      getAutomatedComments: vi.fn().mockResolvedValue([]),
+      getMergeability: vi.fn().mockResolvedValue({
+        mergeable: true,
+        ciPassing: true,
+        approved: false,
+        noConflicts: true,
+        blockers: [],
+      }),
+      branchExists: vi.fn().mockResolvedValue(false),
+    };
+
+    const workspaceWithRestore = {
+      ...mockWorkspace,
+      exists: vi.fn().mockResolvedValue(false),
+      restore: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const registryWithRestore: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return workspaceWithRestore;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    writeMetadata(dataDir, "app-1", {
+      worktree: "/tmp/mock-ws/app-1",
+      branch: "feat/TEST-1",
+      status: "killed",
+      project: "my-app",
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithRestore });
+    await expect(sm.restore("app-1")).rejects.toThrow(WorkspaceMissingError);
+  });
+
+  it("falls back to launch command if getRestoreCommand not available", async () => {
+    const workspaceWithRestore = {
+      ...mockWorkspace,
+      exists: vi.fn().mockResolvedValue(true),
+      restore: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const registryWithRestore: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent; // mockAgent doesn't have getRestoreCommand
+        if (slot === "workspace") return workspaceWithRestore;
+        return null;
+      }),
+    };
+
+    writeMetadata(dataDir, "app-1", {
+      worktree: "/tmp/mock-ws/app-1",
+      branch: "feat/TEST-1",
+      status: "terminated",
+      project: "my-app",
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithRestore });
+    await sm.restore("app-1");
+
+    // Should use getLaunchCommand instead
+    expect(mockAgent.getLaunchCommand).toHaveBeenCalled();
   });
 });

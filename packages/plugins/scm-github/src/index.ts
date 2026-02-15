@@ -560,6 +560,20 @@ function createGitHubSCM(): SCM {
         blockers,
       };
     },
+
+    async branchExists(repoPath: string, branch: string): Promise<boolean> {
+      try {
+        const { stdout } = await execFileAsync(
+          "git",
+          ["-C", repoPath, "show-ref", "--verify", `refs/heads/${branch}`],
+          { timeout: 10_000 },
+        );
+        return stdout.trim().length > 0;
+      } catch {
+        // show-ref exits with status 1 if ref doesn't exist
+        return false;
+      }
+    },
   };
 }
 

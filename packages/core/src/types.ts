@@ -78,6 +78,40 @@ export const SESSION_STATUS = {
   TERMINATED: "terminated" as const,
 } satisfies Record<string, SessionStatus>;
 
+// =============================================================================
+// SESSION STATE CLASSIFICATION (centralized logic)
+// =============================================================================
+
+/** Terminal states that indicate a session has ended */
+export const TERMINAL_STATUSES: ReadonlySet<SessionStatus> = new Set([
+  "killed",
+  "cleanup",
+  "terminated",
+  "done",
+  "merged",
+]);
+
+/** Terminal activity states that indicate agent is no longer running */
+export const TERMINAL_ACTIVITIES: ReadonlySet<ActivityState> = new Set([
+  "exited",
+]);
+
+/** Statuses that must never be restored (e.g. already merged) */
+export const NON_RESTORABLE_STATUSES: ReadonlySet<SessionStatus> = new Set([
+  "merged",
+  "working",
+]);
+
+/** Check if a session is in a terminal state (can be restored) */
+export function isTerminalSession(session: Session): boolean {
+  return TERMINAL_STATUSES.has(session.status) || TERMINAL_ACTIVITIES.has(session.activity);
+}
+
+/** Check if a session can be restored */
+export function isRestorable(session: Session): boolean {
+  return isTerminalSession(session) && !NON_RESTORABLE_STATUSES.has(session.status);
+}
+
 /** A running agent session */
 export interface Session {
   /** Unique session ID, e.g. "my-app-3" */
@@ -116,6 +150,9 @@ export interface Session {
   /** Last activity timestamp */
   lastActivityAt: Date;
 
+  /** ISO timestamp of last restore (optional) */
+  restoredAt?: Date;
+
   /** Metadata key-value pairs */
   metadata: Record<string, string>;
 }
@@ -126,6 +163,32 @@ export interface SessionSpawnConfig {
   issueId?: string;
   branch?: string;
   prompt?: string;
+}
+
+// =============================================================================
+// SESSION ERRORS
+// =============================================================================
+
+/** Error thrown when attempting to restore a session that cannot be restored */
+export class SessionNotRestorableError extends Error {
+  constructor(
+    public readonly sessionId: SessionId,
+    public readonly status: SessionStatus,
+  ) {
+    super(`Session ${sessionId} cannot be restored (status: ${status})`);
+    this.name = "SessionNotRestorableError";
+  }
+}
+
+/** Error thrown when workspace is missing and branch doesn't exist */
+export class WorkspaceMissingError extends Error {
+  constructor(
+    public readonly path: string,
+    public readonly branch: string,
+  ) {
+    super(`Workspace ${path} missing and branch ${branch} not found in repository`);
+    this.name = "WorkspaceMissingError";
+  }
 }
 
 // =============================================================================
@@ -251,6 +314,15 @@ export interface Agent {
    * run git/gh commands. Without this, PRs created by agents never show up.
    */
   setupWorkspaceHooks?(workspacePath: string, config: WorkspaceHooksConfig): Promise<void>;
+
+  /**
+   * Optional: Get command to restore/resume a terminated agent session.
+   * Returns null if agent doesn't support resume or session files are missing.
+   *
+   * Example (Claude Code): "claude --resume abc123def --dangerously-skip-permissions"
+   * Example (fallback): null → will use getLaunchCommand() instead
+   */
+  getRestoreCommand?(session: Session): Promise<string | null>;
 }
 
 export interface AgentLaunchConfig {
@@ -306,6 +378,12 @@ export interface Workspace {
 
   /** List existing workspaces for a project */
   list(projectId: string): Promise<WorkspaceInfo[]>;
+
+  /** Check if workspace path exists */
+  exists(path: string): Promise<boolean>;
+
+  /** Recreate workspace on existing branch (for restore after cleanup) */
+  restore(path: string, repoPath: string, branch: string): Promise<void>;
 
   /** Optional: run hooks after workspace creation (symlinks, installs, etc.) */
   postCreate?(info: WorkspaceInfo, project: ProjectConfig): Promise<void>;
@@ -455,6 +533,11 @@ export interface SCM {
 
   /** Check if PR is ready to merge */
   getMergeability(pr: PRInfo): Promise<MergeReadiness>;
+
+  // --- Restore Support ---
+
+  /** Check if branch exists in repository */
+  branchExists(repoPath: string, branch: string): Promise<boolean>;
 }
 
 // --- PR Types ---
@@ -879,6 +962,7 @@ export interface SessionManager {
   kill(sessionId: SessionId): Promise<void>;
   cleanup(projectId?: string): Promise<CleanupResult>;
   send(sessionId: SessionId, message: string): Promise<void>;
+  restore(sessionId: SessionId): Promise<Session>;
 }
 
 export interface CleanupResult {
