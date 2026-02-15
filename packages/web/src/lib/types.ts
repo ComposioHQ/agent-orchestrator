@@ -30,12 +30,23 @@ import {
 } from "@composio/ao-core/types";
 
 // =============================================================================
-// State classification constants (duplicated from @composio/ao-core/constants)
+// State classification constants (intentionally duplicated for client components)
 // =============================================================================
+//
+// IMPORTANT: These constants are duplicated from @composio/ao-core/types.ts
+// because client components (marked "use client") cannot import from
+// @composio/ao-core, which transitively includes Node.js modules like
+// node:child_process, node:fs, etc. that Next.js cannot bundle for the browser.
+//
+// Server-side code (API routes) should import from @composio/ao-core directly.
+// A test in types.test.ts verifies these constants stay in sync with core.
+//
 
 /**
  * Session statuses that indicate a terminal (ended) state.
  * Terminal sessions cannot accept new work and should be hidden or archived.
+ *
+ * MUST MATCH: @composio/ao-core TERMINAL_STATUSES
  */
 export const TERMINAL_STATUSES: ReadonlySet<SessionStatus> = new Set([
   "killed",
@@ -47,6 +58,8 @@ export const TERMINAL_STATUSES: ReadonlySet<SessionStatus> = new Set([
 
 /**
  * Activity states that indicate the runtime has exited.
+ *
+ * MUST MATCH: @composio/ao-core TERMINAL_ACTIVITIES
  */
 export const TERMINAL_ACTIVITIES: ReadonlySet<ActivityState> = new Set([
   "exited",
@@ -56,6 +69,8 @@ export const TERMINAL_ACTIVITIES: ReadonlySet<ActivityState> = new Set([
  * Session statuses that cannot be restored.
  * "merged" sessions are complete and should not be revived.
  * "working" sessions are already running and don't need restoration.
+ *
+ * MUST MATCH: @composio/ao-core NON_RESTORABLE_STATUSES
  */
 export const NON_RESTORABLE_STATUSES: ReadonlySet<SessionStatus> = new Set([
   "merged",

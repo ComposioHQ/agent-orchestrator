@@ -3,7 +3,14 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { getAttentionLevel, type DashboardSession } from "../types";
+import {
+  getAttentionLevel,
+  type DashboardSession,
+  TERMINAL_STATUSES,
+  TERMINAL_ACTIVITIES,
+  NON_RESTORABLE_STATUSES,
+} from "../types";
+import * as core from "@composio/ao-core";
 
 // Helper to create a minimal DashboardSession for testing
 function createSession(overrides?: Partial<DashboardSession>): DashboardSession {
@@ -457,5 +464,29 @@ describe("getAttentionLevel", () => {
       });
       expect(getAttentionLevel(session)).toBe("working");
     });
+  });
+});
+
+describe("State classification constants", () => {
+  // These tests verify that the constants duplicated in the web package
+  // stay in sync with @composio/ao-core. The duplication is necessary
+  // because client components cannot import from core (Node.js dependencies).
+
+  it("TERMINAL_STATUSES should match core", () => {
+    const webStatuses = Array.from(TERMINAL_STATUSES).sort();
+    const coreStatuses = Array.from(core.TERMINAL_STATUSES).sort();
+    expect(webStatuses).toEqual(coreStatuses);
+  });
+
+  it("TERMINAL_ACTIVITIES should match core", () => {
+    const webActivities = Array.from(TERMINAL_ACTIVITIES).sort();
+    const coreActivities = Array.from(core.TERMINAL_ACTIVITIES).sort();
+    expect(webActivities).toEqual(coreActivities);
+  });
+
+  it("NON_RESTORABLE_STATUSES should match core", () => {
+    const webStatuses = Array.from(NON_RESTORABLE_STATUSES).sort();
+    const coreStatuses = Array.from(core.NON_RESTORABLE_STATUSES).sort();
+    expect(webStatuses).toEqual(coreStatuses);
   });
 });
