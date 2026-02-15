@@ -228,7 +228,7 @@ export function registerSpawn(program: Command): void {
 
       try {
         await spawnSession(config, projectId, project, issueId, opts.open);
-      } catch (err) {
+      } catch {
         // spawnSession already printed spinner.fail before throwing
         process.exit(1);
       }
