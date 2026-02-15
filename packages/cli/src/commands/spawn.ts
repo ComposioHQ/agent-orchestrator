@@ -228,8 +228,9 @@ export function registerSpawn(program: Command): void {
 
       try {
         await spawnSession(config, projectId, project, issueId, opts.open);
-      } catch {
-        // spawnSession already printed spinner.fail before throwing
+      } catch (err) {
+        // spawnSession may have printed spinner.fail, but we need error details
+        console.error(chalk.red(`✗ ${err}`));
         process.exit(1);
       }
     });
@@ -289,19 +290,9 @@ export function registerBatchSpawn(program: Command): void {
           allTmux = await getTmuxSessions();
         } catch (err) {
           const message = String(err);
-          const lowerMessage = message.toLowerCase();
-
-          // Categorize the failure
-          if (lowerMessage.includes("does not exist")) {
-            console.error(chalk.red(`  ✗ ${issue} — issue not found in tracker`));
-            failed.push({ issue, error: "not_found" });
-          } else if (lowerMessage.includes("unauthorized") || lowerMessage.includes("auth")) {
-            console.error(chalk.red(`  ✗ ${issue} — authentication failed`));
-            failed.push({ issue, error: "auth_failed" });
-          } else {
-            console.error(chalk.red(`  ✗ ${issue} — ${err}`));
-            failed.push({ issue, error: message });
-          }
+          // Don't try to categorize errors - CLI doesn't do tracker validation
+          console.error(chalk.red(`  ✗ ${issue} — ${err}`));
+          failed.push({ issue, error: message });
         }
 
         // Small delay between spawns
@@ -326,29 +317,10 @@ export function registerBatchSpawn(program: Command): void {
         }
       }
       if (failed.length > 0) {
-        const notFound = failed.filter((f) => f.error === "not_found");
-        if (notFound.length > 0) {
-          console.log(chalk.yellow(`\n${notFound.length} issues not found in tracker:`));
-          notFound.forEach((f) => {
-            console.log(chalk.dim(`  - ${f.issue}`));
-          });
-          console.log(chalk.dim(`\nCreate these issues first, then retry batch-spawn.`));
-        }
-        const authFailed = failed.filter((f) => f.error === "auth_failed");
-        if (authFailed.length > 0) {
-          console.log(chalk.yellow(`\n${authFailed.length} authentication failures:`));
-          authFailed.forEach((f) => {
-            console.log(chalk.dim(`  - ${f.issue}`));
-          });
-          console.log(chalk.dim(`\nCheck your tracker credentials.`));
-        }
-        const other = failed.filter((f) => f.error !== "not_found" && f.error !== "auth_failed");
-        if (other.length > 0) {
-          console.log(chalk.yellow(`\n${other.length} other errors:`));
-          other.forEach((f) => {
-            console.log(chalk.dim(`  - ${f.issue}`));
-          });
-        }
+        console.log(chalk.yellow(`\n${failed.length} failed:`));
+        failed.forEach((f) => {
+          console.log(chalk.dim(`  - ${f.issue}: ${f.error}`));
+        });
       }
       console.log();
     });
