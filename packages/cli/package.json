@@ -37,6 +37,8 @@
     "@composio/ao-plugin-agent-codex": "workspace:*",
     "@composio/ao-plugin-agent-aider": "workspace:*",
     "@composio/ao-plugin-scm-github": "workspace:*",
+    "@composio/ao-plugin-tracker-github": "workspace:*",
+    "@composio/ao-plugin-tracker-linear": "workspace:*",
     "chalk": "^5.4.0",
     "commander": "^13.0.0",
     "ora": "^8.1.0",

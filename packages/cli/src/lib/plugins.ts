@@ -1,8 +1,10 @@
-import type { Agent, OrchestratorConfig, SCM } from "@composio/ao-core";
+import type { Agent, OrchestratorConfig, SCM, Tracker } from "@composio/ao-core";
 import claudeCodePlugin from "@composio/ao-plugin-agent-claude-code";
 import codexPlugin from "@composio/ao-plugin-agent-codex";
 import aiderPlugin from "@composio/ao-plugin-agent-aider";
 import githubSCMPlugin from "@composio/ao-plugin-scm-github";
+import githubTrackerPlugin from "@composio/ao-plugin-tracker-github";
+import linearTrackerPlugin from "@composio/ao-plugin-tracker-linear";
 
 const agentPlugins: Record<string, { create(): Agent }> = {
   "claude-code": claudeCodePlugin,
@@ -12,6 +14,11 @@ const agentPlugins: Record<string, { create(): Agent }> = {
 
 const scmPlugins: Record<string, { create(): SCM }> = {
   github: githubSCMPlugin,
+};
+
+const trackerPlugins: Record<string, { create(): Tracker }> = {
+  github: githubTrackerPlugin,
+  linear: linearTrackerPlugin,
 };
 
 /**
@@ -45,6 +52,21 @@ export function getSCM(config: OrchestratorConfig, projectId: string): SCM {
   const plugin = scmPlugins[scmName];
   if (!plugin) {
     throw new Error(`Unknown SCM plugin: ${scmName}`);
+  }
+  return plugin.create();
+}
+
+/**
+ * Resolve the Tracker plugin for a project (returns null if no tracker configured).
+ */
+export function getTracker(config: OrchestratorConfig, projectId: string): Tracker | null {
+  const trackerName = config.projects[projectId]?.tracker?.plugin;
+  if (!trackerName) {
+    return null;
+  }
+  const plugin = trackerPlugins[trackerName];
+  if (!plugin) {
+    throw new Error(`Unknown tracker plugin: ${trackerName}`);
   }
   return plugin.create();
 }

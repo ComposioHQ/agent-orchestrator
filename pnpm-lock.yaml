@@ -53,6 +53,12 @@ importers:
       '@composio/ao-plugin-scm-github':
         specifier: workspace:*
         version: link:../plugins/scm-github
+      '@composio/ao-plugin-tracker-github':
+        specifier: workspace:*
+        version: link:../plugins/tracker-github
+      '@composio/ao-plugin-tracker-linear':
+        specifier: workspace:*
+        version: link:../plugins/tracker-linear
       chalk:
         specifier: ^5.4.0
         version: 5.6.2

@@ -852,15 +852,34 @@ export interface PluginRegistry {
 /**
  * Detect if an error indicates that an issue was not found in the tracker.
  * Used by spawn validation to distinguish "not found" from other errors (auth, network, etc).
+ *
+ * Uses specific patterns to avoid matching infrastructure errors like "API key not found",
+ * "Team not found", "Configuration not found", etc.
  */
 export function isIssueNotFoundError(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
   const message = (err as Error).message?.toLowerCase() || "";
+
+  // Exclude infrastructure/config errors
+  if (
+    message.includes("api key") ||
+    message.includes("team ") ||
+    message.includes("configuration") ||
+    message.includes("workspace") ||
+    message.includes("organization") ||
+    message.includes("endpoint")
+  ) {
+    return false;
+  }
+
+  // Match issue-specific not-found patterns
   return (
-    message.includes("not found") ||
-    message.includes("does not exist") ||
-    message.includes("404") ||
+    message.includes("issue") && (message.includes("not found") || message.includes("does not exist")) ||
     message.includes("no issue found") ||
-    message.includes("could not find")
+    message.includes("could not find issue") ||
+    // GitHub: "no issue found" or "could not resolve to an Issue"
+    message.includes("could not resolve to an issue") ||
+    // Linear: "Issue <id> not found" or "No issue with identifier"
+    message.includes("no issue with identifier")
   );
 }

@@ -3,11 +3,12 @@ import { join } from "node:path";
 import chalk from "chalk";
 import ora from "ora";
 import type { Command } from "commander";
-import { loadConfig, buildPrompt, tmuxSendKeys, type OrchestratorConfig, type ProjectConfig } from "@composio/ao-core";
+import { loadConfig, buildPrompt, tmuxSendKeys, isIssueNotFoundError, type OrchestratorConfig, type ProjectConfig } from "@composio/ao-core";
 import { exec, git, getTmuxSessions } from "../lib/shell.js";
 import { getSessionDir, writeMetadata, findSessionForIssue } from "../lib/metadata.js";
 import { banner } from "../lib/format.js";
 import { getAgent } from "../lib/plugins.js";
+import { getTracker } from "../lib/plugins.js";
 import { escapeRegex } from "../lib/session-utils.js";
 
 /**
@@ -43,6 +44,27 @@ async function spawnSession(
   const num = await getNextSessionNumber(prefix);
   const sessionName = `${prefix}-${num}`;
   const worktreePath = join(config.worktreeDir, projectId, sessionName);
+
+  // Validate issue exists BEFORE creating any resources
+  if (issueId) {
+    const tracker = getTracker(config, projectId);
+    if (tracker) {
+      try {
+        const issue = await tracker.getIssue(issueId, project);
+        console.log(chalk.green(`✓ Found existing issue: ${issue.url}`));
+        console.log(chalk.dim(`  ${issue.title}`));
+      } catch (err) {
+        if (isIssueNotFoundError(err)) {
+          throw new Error(
+            `Issue ${issueId} does not exist in tracker. ` +
+            `Create the issue first, then spawn with the created issue ID.`
+          );
+        } else {
+          throw new Error(`Failed to fetch issue ${issueId}: ${err}`);
+        }
+      }
+    }
+  }
 
   const spinner = ora(`Creating session ${sessionName}`).start();
 
