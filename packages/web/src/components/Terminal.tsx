@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { cn } from "@/lib/cn";
 
 interface TerminalProps {
@@ -10,32 +10,14 @@ interface TerminalProps {
 /**
  * Terminal embed using ttyd (iframe).
  * ttyd handles xterm.js, WebSocket, ANSI rendering, resize, input — everything.
- * We just request a ttyd URL from our terminal server and embed it.
+ * We proxy ttyd through Next.js to keep everything same-origin, which:
+ * - Allows clipboard operations (document.execCommand)
+ * - Prevents cross-origin "Leave Site?" dialogs
  */
 export function Terminal({ sessionId }: TerminalProps) {
   const [fullscreen, setFullscreen] = useState(false);
-  const [terminalUrl, setTerminalUrl] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const port = process.env.NEXT_PUBLIC_TERMINAL_PORT ?? "3001";
-    // Use current hostname instead of hardcoded localhost
-    const protocol = window.location.protocol;
-    const hostname = window.location.hostname;
-    // URL-encode sessionId to prevent special characters from breaking the URL
-    fetch(`${protocol}//${hostname}:${port}/terminal?session=${encodeURIComponent(sessionId)}`)
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json() as Promise<{ url: string }>;
-      })
-      .then((data) => {
-        setTerminalUrl(data.url);
-      })
-      .catch((err) => {
-        console.error("[Terminal] Failed to get terminal URL:", err);
-        setError("Failed to connect to terminal server");
-      });
-  }, [sessionId]);
+  // Use same-origin proxy URL (no cross-origin fetch needed)
+  const terminalUrl = `/terminal-proxy/ttyd/${encodeURIComponent(sessionId)}`;
 
   return (
     <div
@@ -45,26 +27,12 @@ export function Terminal({ sessionId }: TerminalProps) {
       )}
     >
       <div className="flex items-center gap-2 border-b border-[var(--color-border-default)] bg-[var(--color-bg-tertiary)] px-3 py-2">
-        <div
-          className={cn(
-            "h-2 w-2 rounded-full",
-            terminalUrl ? "bg-[#3fb950]" : error ? "bg-[#f85149]" : "bg-[#d29922] animate-pulse",
-          )}
-        />
+        <div className="h-2 w-2 rounded-full bg-[#3fb950]" />
         <span className="font-[var(--font-mono)] text-xs text-[var(--color-text-muted)]">
           {sessionId}
         </span>
-        <span
-          className={cn(
-            "text-[10px] font-medium uppercase tracking-wide",
-            terminalUrl
-              ? "text-[var(--color-accent-green)]"
-              : error
-                ? "text-[var(--color-accent-red)]"
-                : "text-[var(--color-text-muted)]",
-          )}
-        >
-          {terminalUrl ? "Connected" : error ?? "Connecting..."}
+        <span className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-accent-green)]">
+          Connected
         </span>
         <button
           onClick={() => setFullscreen(!fullscreen)}
@@ -74,18 +42,11 @@ export function Terminal({ sessionId }: TerminalProps) {
         </button>
       </div>
       <div className={cn("w-full", fullscreen ? "h-[calc(100vh-40px)]" : "h-[600px]")}>
-        {terminalUrl ? (
-          <iframe
-            src={terminalUrl}
-            className="h-full w-full border-0"
-            title={`Terminal: ${sessionId}`}
-            allow="clipboard-read; clipboard-write"
-          />
-        ) : (
-          <div className="flex h-full items-center justify-center text-sm text-[var(--color-text-muted)]">
-            {error ?? "Connecting to terminal..."}
-          </div>
-        )}
+        <iframe
+          src={terminalUrl}
+          className="h-full w-full border-0"
+          title={`Terminal: ${sessionId}`}
+        />
       </div>
     </div>
   );
