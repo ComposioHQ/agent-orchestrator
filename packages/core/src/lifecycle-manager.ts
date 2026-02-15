@@ -1,3 +1,5 @@
+import { join } from "node:path";
+import { existsSync } from "node:fs";
 /**
  * Lifecycle Manager — state machine + polling loop + reaction engine.
  *
@@ -173,6 +175,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
 
+  /** Check if a session is exploratory (no PR/CI/review tracking). */
+  function isExploratory(session: Session): boolean {
+    return session.metadata?.["exploratory"] === "true";
+  }
+
   /** Determine current status for a session by polling plugins. */
   async function determineStatus(session: Session): Promise<SessionStatus> {
     const project = config.projects[session.projectId];
@@ -220,8 +227,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
     }
 
-    // 3. Check PR state if PR exists
-    if (session.pr && scm) {
+    // 3. Skip PR/CI/review tracking for exploratory sessions
+    if (!isExploratory(session) && session.pr && scm) {
       try {
         const prState = await scm.getPRState(session.pr);
         if (prState === "merged") return "merged";
@@ -396,7 +403,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       if (notifier) {
         try {
           await notifier.notify(eventWithPriority);
-        } catch {
+        } catch (notifErr) {
           // Notifier failed — not much we can do
         }
       }
@@ -418,7 +425,14 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       states.set(session.id, newStatus);
 
       // Update metadata
-      updateMetadata(config.dataDir, session.id, { status: newStatus });
+      // Resolve the correct metadata dir: check project subdir first, then top-level
+      const projectMetaDir = session.projectId
+        ? join(config.dataDir, `${session.projectId}-sessions`)
+        : config.dataDir;
+      const metaDir = existsSync(join(projectMetaDir, session.id))
+        ? projectMetaDir
+        : config.dataDir;
+      updateMetadata(metaDir, session.id, { status: newStatus });
 
       // Reset allCompleteEmitted when any session becomes active again
       if (newStatus !== "merged" && newStatus !== "killed") {
@@ -508,11 +522,20 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       // Poll all sessions concurrently
       await Promise.allSettled(sessionsToCheck.map((s) => checkSession(s)));
 
-      // Prune stale entries from states and reactionTrackers for sessions
-      // that no longer appear in the session list (e.g., after kill/cleanup)
+      // Detect vanished sessions (killed between polls) and fire notifications
       const currentSessionIds = new Set(sessions.map((s) => s.id));
-      for (const trackedId of states.keys()) {
+      for (const [trackedId, oldStatus] of states.entries()) {
         if (!currentSessionIds.has(trackedId)) {
+          // Session disappeared — treat as killed and notify
+          if (oldStatus !== "killed" && oldStatus !== "merged") {
+            const event = createEvent("session.killed", {
+              sessionId: trackedId,
+              projectId: "",
+              message: `${trackedId}: ${oldStatus} → vanished (killed externally)`,
+              data: { oldStatus, newStatus: "killed" },
+            });
+            await notifyHuman(event, "action");
+          }
           states.delete(trackedId);
         }
       }
@@ -539,7 +562,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           }
         }
       }
-    } catch {
+    } catch (pollErr) {
       // Poll cycle failed — will retry next interval
     } finally {
       polling = false;

@@ -14,13 +14,19 @@ import {
   loadConfig,
   createPluginRegistry,
   createSessionManager,
+  createLifecycleManager,
   type OrchestratorConfig,
   type PluginRegistry,
   type SessionManager,
+  type LifecycleManager,
   type SCM,
   type Tracker,
   type ProjectConfig,
 } from "@composio/ao-core";
+
+// Notifier plugins
+import pluginNotifierDesktop from "@composio/ao-plugin-notifier-desktop";
+import pluginNotifierOpenclaw from "@composio/ao-plugin-notifier-openclaw";
 
 // Static plugin imports — webpack needs these to be string literals
 import pluginRuntimeTmux from "@composio/ao-plugin-runtime-tmux";
@@ -34,6 +40,7 @@ export interface Services {
   config: OrchestratorConfig;
   registry: PluginRegistry;
   sessionManager: SessionManager;
+  lifecycleManager: LifecycleManager;
 }
 
 // Cache in globalThis for Next.js HMR stability
@@ -70,9 +77,25 @@ async function initServices(): Promise<Services> {
   registry.register(pluginTrackerGithub);
   registry.register(pluginTrackerLinear);
 
+  // Register notifier plugins (pass config from notifiers record)
+  registry.register(pluginNotifierDesktop, config.notifiers?.["desktop"] as Record<string, unknown> | undefined);
+  registry.register(pluginNotifierOpenclaw, config.notifiers?.["openclaw"] as Record<string, unknown> | undefined);
+
   const sessionManager = createSessionManager({ config, registry });
 
-  const services = { config, registry, sessionManager };
+  // Create and start lifecycle manager (polling loop + notifiers)
+  const lifecycleManager = createLifecycleManager({ config, registry, sessionManager });
+  lifecycleManager.start(15_000); // Poll every 15 seconds
+
+  // Graceful shutdown
+  const shutdown = () => {
+    lifecycleManager.stop();
+    process.exit(0);
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+
+  const services = { config, registry, sessionManager, lifecycleManager };
   globalForServices._aoServices = services;
   return services;
 }

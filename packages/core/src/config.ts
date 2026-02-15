@@ -92,8 +92,8 @@ const OrchestratorConfigSchema = z.object({
   projects: z.record(ProjectConfigSchema),
   notifiers: z.record(NotifierConfigSchema).default({}),
   notificationRouting: z.record(z.array(z.string())).default({
-    urgent: ["desktop", "composio"],
-    action: ["desktop", "composio"],
+    urgent: ["desktop", "composio", "openclaw"],
+    action: ["desktop", "composio", "openclaw"],
     warning: ["composio"],
     info: ["composio"],
   }),
