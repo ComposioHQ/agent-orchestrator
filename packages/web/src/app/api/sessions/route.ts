@@ -1,4 +1,5 @@
 import type { Session, ProjectConfig } from "@composio/ao-core";
+import { ACTIVITY_STATE } from "@composio/ao-core";
 import { NextResponse } from "next/server";
 import { getServices, getSCM, getTracker } from "@/lib/services";
 import { sessionToDashboard, enrichSessionPR, enrichSessionIssue, computeStats } from "@/lib/serialize";
@@ -44,7 +45,7 @@ export async function GET(request: Request) {
     // Filter to active sessions only if requested (keep workerSessions in sync)
     if (activeOnly) {
       const activeIndices = dashboardSessions
-        .map((s, i) => (s.activity !== "exited" ? i : -1))
+        .map((s, i) => (s.activity !== ACTIVITY_STATE.EXITED ? i : -1))
         .filter((i) => i !== -1);
       workerSessions = activeIndices.map((i) => workerSessions[i]);
       dashboardSessions = activeIndices.map((i) => dashboardSessions[i]);

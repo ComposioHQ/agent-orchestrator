@@ -49,6 +49,15 @@ export type ActivityState =
   | "blocked" // agent hit an error or is stuck
   | "exited"; // agent process is no longer running
 
+/** Activity state constants */
+export const ACTIVITY_STATE = {
+  ACTIVE: "active" as const,
+  IDLE: "idle" as const,
+  WAITING_INPUT: "waiting_input" as const,
+  BLOCKED: "blocked" as const,
+  EXITED: "exited" as const,
+} satisfies Record<string, ActivityState>;
+
 /** A running agent session */
 export interface Session {
   /** Unique session ID, e.g. "my-app-3" */
