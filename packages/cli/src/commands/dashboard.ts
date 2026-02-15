@@ -1,42 +1,10 @@
 import { spawn } from "node:child_process";
-import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
-import { resolve, dirname } from "node:path";
+import { resolve } from "node:path";
 import { existsSync } from "node:fs";
 import chalk from "chalk";
 import type { Command } from "commander";
 import { loadConfig } from "@composio/ao-core";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const require = createRequire(import.meta.url);
-
-/**
- * Locate the @composio/ao-web package directory.
- * Uses createRequire for ESM-compatible require.resolve, with fallback
- * to sibling package paths that work from both src/ and dist/.
- */
-function findWebDir(): string {
-  // Try to resolve from node_modules first (installed as workspace dep)
-  try {
-    const pkgJson = require.resolve("@composio/ao-web/package.json");
-    return resolve(pkgJson, "..");
-  } catch {
-    // Fallback: sibling package in monorepo (works both from src/ and dist/)
-    // packages/cli/src/commands/ → packages/web
-    // packages/cli/dist/commands/ → packages/web
-    const candidates = [
-      resolve(__dirname, "../../../web"),
-      resolve(__dirname, "../../../../packages/web"),
-    ];
-    for (const candidate of candidates) {
-      if (existsSync(resolve(candidate, "package.json"))) {
-        return candidate;
-      }
-    }
-    return candidates[0];
-  }
-}
+import { findWebDir } from "../lib/web-dir.js";
 
 export function registerDashboard(program: Command): void {
   program

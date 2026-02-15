@@ -7,9 +7,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { resolve, join, dirname } from "node:path";
-import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
+import { resolve, join } from "node:path";
 import chalk from "chalk";
 import ora from "ora";
 import type { Command } from "commander";
@@ -26,32 +24,7 @@ import {
 } from "@composio/ao-core";
 import { exec, getTmuxSessions } from "../lib/shell.js";
 import { getAgent } from "../lib/plugins.js";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const require = createRequire(import.meta.url);
-
-/**
- * Locate the @composio/ao-web package directory.
- * Reuses the logic from dashboard.ts.
- */
-function findWebDir(): string {
-  try {
-    const pkgJson = require.resolve("@composio/ao-web/package.json");
-    return resolve(pkgJson, "..");
-  } catch {
-    const candidates = [
-      resolve(__dirname, "../../../web"),
-      resolve(__dirname, "../../../../packages/web"),
-    ];
-    for (const candidate of candidates) {
-      if (existsSync(resolve(candidate, "package.json"))) {
-        return candidate;
-      }
-    }
-    return candidates[0];
-  }
-}
+import { findWebDir } from "../lib/web-dir.js";
 
 /**
  * Ensure CLAUDE.orchestrator.md exists in the project directory.
@@ -196,12 +169,6 @@ export function registerStart(program: Command): void {
 
           // Check if orchestrator session already exists
           const exists = await hasTmuxSession(sessionId);
-          if (exists && opts?.orchestrator !== false) {
-            console.log(chalk.yellow(`Orchestrator session "${sessionId}" is already running.`));
-            console.log(chalk.dim(`  Attach: tmux attach -t ${sessionId}`));
-            console.log(chalk.dim(`  Dashboard: http://localhost:${port}\n`));
-            return;
-          }
 
           // Ensure CLAUDE.orchestrator.md exists
           const spinner = ora("Generating orchestrator prompt").start();
@@ -258,9 +225,12 @@ export function registerStart(program: Command): void {
             console.log(chalk.dim("  (Dashboard will be ready in a few seconds)\n"));
           }
 
-          // Create orchestrator tmux session (unless --no-orchestrator)
-          if (opts?.orchestrator !== false && !exists) {
-            spinner.start("Creating orchestrator session");
+          // Create orchestrator tmux session (unless --no-orchestrator or already exists)
+          if (opts?.orchestrator !== false) {
+            if (exists) {
+              console.log(chalk.yellow(`Orchestrator session "${sessionId}" is already running (skipping creation)`));
+            } else {
+              spinner.start("Creating orchestrator session");
 
             // Get agent launch command
             const agent = getAgent(config, projectId);
@@ -296,26 +266,27 @@ export function registerStart(program: Command): void {
               environment,
             });
 
-            // Launch agent
-            await tmuxSendKeys(sessionId, launchCmd, true);
+              // Launch agent
+              await tmuxSendKeys(sessionId, launchCmd, true);
 
-            spinner.succeed("Orchestrator session created");
+              spinner.succeed("Orchestrator session created");
 
-            // Write metadata
-            const runtimeHandle = JSON.stringify({
-              id: sessionId,
-              runtimeName: "tmux",
-              data: {},
-            });
+              // Write metadata
+              const runtimeHandle = JSON.stringify({
+                id: sessionId,
+                runtimeName: "tmux",
+                data: {},
+              });
 
-            writeMetadata(config.dataDir, sessionId, {
-              worktree: project.path,
-              branch: project.defaultBranch,
-              status: "working",
-              project: projectId,
-              createdAt: new Date().toISOString(),
-              runtimeHandle,
-            });
+              writeMetadata(config.dataDir, sessionId, {
+                worktree: project.path,
+                branch: project.defaultBranch,
+                status: "working",
+                project: projectId,
+                createdAt: new Date().toISOString(),
+                runtimeHandle,
+              });
+            }
           }
 
           // Print summary
