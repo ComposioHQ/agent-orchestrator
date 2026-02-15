@@ -7,8 +7,7 @@ import { loadConfig, buildPrompt, tmuxSendKeys, isIssueNotFoundError, type Orche
 import { exec, git, getTmuxSessions } from "../lib/shell.js";
 import { getSessionDir, writeMetadata, findSessionForIssue } from "../lib/metadata.js";
 import { banner } from "../lib/format.js";
-import { getAgent } from "../lib/plugins.js";
-import { getTracker } from "../lib/plugins.js";
+import { getAgent, getTracker } from "../lib/plugins.js";
 import { escapeRegex } from "../lib/session-utils.js";
 
 /**
@@ -57,10 +56,11 @@ async function spawnSession(
         if (isIssueNotFoundError(err)) {
           throw new Error(
             `Issue ${issueId} does not exist in tracker. ` +
-            `Create the issue first, then spawn with the created issue ID.`
+            `Create the issue first, then spawn with the created issue ID.`,
+            { cause: err }
           );
         } else {
-          throw new Error(`Failed to fetch issue ${issueId}: ${err}`);
+          throw new Error(`Failed to fetch issue ${issueId}: ${err}`, { cause: err });
         }
       }
     }

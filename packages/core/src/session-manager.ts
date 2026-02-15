@@ -13,25 +13,25 @@
 
 import { statSync } from "node:fs";
 import { join } from "node:path";
-import type {
-  SessionManager,
-  Session,
-  SessionId,
-  SessionSpawnConfig,
-  SessionStatus,
-  CleanupResult,
-  OrchestratorConfig,
-  ProjectConfig,
-  Runtime,
-  Agent,
-  Workspace,
-  Tracker,
-  SCM,
-  PluginRegistry,
-  RuntimeHandle,
-  Issue,
+import {
+  isIssueNotFoundError,
+  type SessionManager,
+  type Session,
+  type SessionId,
+  type SessionSpawnConfig,
+  type SessionStatus,
+  type CleanupResult,
+  type OrchestratorConfig,
+  type ProjectConfig,
+  type Runtime,
+  type Agent,
+  type Workspace,
+  type Tracker,
+  type SCM,
+  type PluginRegistry,
+  type RuntimeHandle,
+  type Issue,
 } from "./types.js";
-import { isIssueNotFoundError } from "./types.js";
 import {
   readMetadataRaw,
   writeMetadata,

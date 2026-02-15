@@ -251,6 +251,18 @@ describe("plugin integration", () => {
       const registry = createTestRegistry();
       const sm = createSessionManager({ config, registry });
 
+      // Mock gh issue view response for validation
+      mockGh({
+        number: 99,
+        title: "Test issue",
+        body: "Test description",
+        url: "https://github.com/acme/app/issues/99",
+        state: "OPEN",
+        stateReason: null,
+        labels: [],
+        assignees: [],
+      });
+
       const session = await sm.spawn({
         projectId: "my-app",
         issueId: "99",
