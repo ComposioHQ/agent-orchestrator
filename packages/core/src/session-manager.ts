@@ -17,6 +17,9 @@ import {
   isIssueNotFoundError,
   SessionNotRestorableError,
   WorkspaceMissingError,
+  NON_RESTORABLE_STATUSES,
+  TERMINAL_STATUSES,
+  TERMINAL_ACTIVITIES,
   type SessionManager,
   type Session,
   type SessionId,
@@ -393,6 +396,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         project: spawnConfig.projectId,
         createdAt: new Date().toISOString(),
         runtimeHandle: JSON.stringify(handle),
+        permissions: project.agentConfig?.permissions,
       });
 
       if (plugins.agent.postLaunchSetup) {
@@ -643,10 +647,19 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
     const oldStatus = validateStatus(metadata["status"]);
 
-    // 2. Validate restorable status
-    const nonRestorable = new Set<SessionStatus>(["merged", "working"]);
-    if (nonRestorable.has(oldStatus)) {
+    // 2. Validate restorable status - must be terminal AND not non-restorable
+    if (NON_RESTORABLE_STATUSES.has(oldStatus)) {
       throw new SessionNotRestorableError(sessionId, oldStatus);
+    }
+
+    // Check if session is in a terminal state (killed, done, terminated, cleanup)
+    // This prevents restoring active sessions (working, pr_open, spawning, etc.)
+    if (!TERMINAL_STATUSES.has(oldStatus)) {
+      // For sessions with non-terminal status, also check activity state
+      const currentSession = await get(sessionId);
+      if (currentSession && !TERMINAL_ACTIVITIES.has(currentSession.activity)) {
+        throw new SessionNotRestorableError(sessionId, oldStatus);
+      }
     }
 
     const projectId = metadata["project"] ?? "";

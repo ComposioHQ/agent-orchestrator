@@ -948,6 +948,7 @@ export interface SessionMetadata {
   project?: string;
   createdAt?: string;
   runtimeHandle?: string;
+  permissions?: string;
 }
 
 // =============================================================================
