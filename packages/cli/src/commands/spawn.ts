@@ -227,10 +227,9 @@ export function registerSpawn(program: Command): void {
       }
 
       try {
-        const sessionName = await spawnSession(config, projectId, project, issueId, opts.open);
-        console.log(chalk.green(`✓ Session ${sessionName} spawned successfully`));
+        await spawnSession(config, projectId, project, issueId, opts.open);
       } catch (err) {
-        console.error(chalk.red(`✗ Failed to spawn session: ${err}`));
+        // spawnSession already printed spinner.fail before throwing
         process.exit(1);
       }
     });
@@ -283,9 +282,7 @@ export function registerBatchSpawn(program: Command): void {
         }
 
         try {
-          console.log(chalk.blue(`  Spawning session for ${issue}...`));
           const sessionName = await spawnSession(config, projectId, project, issue, opts.open);
-          console.log(chalk.green(`  ✓ ${sessionName} spawned for ${issue}`));
           created.push({ session: sessionName, issue });
           spawnedIssues.add(issue.toLowerCase());
           // Refresh tmux session list so next iteration sees the new session
