@@ -3,11 +3,11 @@ import { join } from "node:path";
 import chalk from "chalk";
 import ora from "ora";
 import type { Command } from "commander";
-import { loadConfig, buildPrompt, tmuxSendKeys, isIssueNotFoundError, type OrchestratorConfig, type ProjectConfig } from "@composio/ao-core";
+import { loadConfig, buildPrompt, tmuxSendKeys, type OrchestratorConfig, type ProjectConfig } from "@composio/ao-core";
 import { exec, git, getTmuxSessions } from "../lib/shell.js";
 import { getSessionDir, writeMetadata, findSessionForIssue } from "../lib/metadata.js";
 import { banner } from "../lib/format.js";
-import { getAgent, getTracker } from "../lib/plugins.js";
+import { getAgent } from "../lib/plugins.js";
 import { escapeRegex } from "../lib/session-utils.js";
 
 /**
@@ -43,28 +43,6 @@ async function spawnSession(
   const num = await getNextSessionNumber(prefix);
   const sessionName = `${prefix}-${num}`;
   const worktreePath = join(config.worktreeDir, projectId, sessionName);
-
-  // Validate issue exists BEFORE creating any resources
-  if (issueId) {
-    const tracker = getTracker(config, projectId);
-    if (tracker) {
-      try {
-        const issue = await tracker.getIssue(issueId, project);
-        console.log(chalk.green(`✓ Found existing issue: ${issue.url}`));
-        console.log(chalk.dim(`  ${issue.title}`));
-      } catch (err) {
-        if (isIssueNotFoundError(err)) {
-          throw new Error(
-            `Issue ${issueId} does not exist in tracker. ` +
-            `Create the issue first, then spawn with the created issue ID.`,
-            { cause: err }
-          );
-        } else {
-          throw new Error(`Failed to fetch issue ${issueId}: ${err}`, { cause: err });
-        }
-      }
-    }
-  }
 
   const spinner = ora(`Creating session ${sessionName}`).start();
 
@@ -252,19 +230,8 @@ export function registerSpawn(program: Command): void {
         const sessionName = await spawnSession(config, projectId, project, issueId, opts.open);
         console.log(chalk.green(`✓ Session ${sessionName} spawned successfully`));
       } catch (err) {
-        // Handle specific error types
-        const message = String(err);
-
-        if (message.includes("does not exist")) {
-          // Issue not found - give orchestrator clear guidance
-          console.error(chalk.red(`✗ ${err}`));
-          console.error(chalk.yellow(`\nSuggestion: Create the issue first, then spawn with the created ID.`));
-          process.exit(1);
-        } else {
-          // Other error
-          console.error(chalk.red(`✗ Failed to spawn session: ${err}`));
-          process.exit(1);
-        }
+        console.error(chalk.red(`✗ Failed to spawn session: ${err}`));
+        process.exit(1);
       }
     });
 }

@@ -223,7 +223,6 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         throw new Error(`Failed to reserve session ID after 10 attempts (prefix: ${project.sessionPrefix})`);
       }
     }
-    sessionId = `${project.sessionPrefix}-${num}`;
 
     // Determine branch name — explicit branch always takes priority
     let branch: string;
