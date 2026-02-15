@@ -223,6 +223,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         throw new Error(`Failed to reserve session ID after 10 attempts (prefix: ${project.sessionPrefix})`);
       }
     }
+    // Reassign to satisfy TypeScript's flow analysis (not redundant from compiler's perspective)
+    sessionId = `${project.sessionPrefix}-${num}`;
 
     // Determine branch name — explicit branch always takes priority
     let branch: string;
