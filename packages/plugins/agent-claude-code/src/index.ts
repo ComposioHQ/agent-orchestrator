@@ -629,7 +629,12 @@ function createClaudeCodeAgent(): Agent {
 
       // Set session info for introspection
       env["AO_SESSION_ID"] = config.sessionId;
-      env["AO_PROJECT_ID"] = config.projectConfig.name;
+
+      // NOTE: AO_PROJECT_ID is NOT set here - it's the caller's responsibility
+      // to set it based on their metadata path scheme:
+      // - spawn.ts sets it to projectId for project-specific directories
+      // - start.ts omits it for orchestrator (flat directories)
+      // - session manager omits it (flat directories)
 
       if (config.issueId) {
         env["AO_ISSUE_ID"] = config.issueId;

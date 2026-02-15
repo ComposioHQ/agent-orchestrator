@@ -56,7 +56,7 @@ function createCodexAgent(): Agent {
     getEnvironment(config: AgentLaunchConfig): Record<string, string> {
       const env: Record<string, string> = {};
       env["AO_SESSION_ID"] = config.sessionId;
-      env["AO_PROJECT_ID"] = config.projectConfig.name;
+      // NOTE: AO_PROJECT_ID is the caller's responsibility (spawn.ts sets it)
       if (config.issueId) {
         env["AO_ISSUE_ID"] = config.issueId;
       }

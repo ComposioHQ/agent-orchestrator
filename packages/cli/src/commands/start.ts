@@ -273,8 +273,7 @@ export function registerStart(program: Command): void {
             });
             Object.assign(environment, agentEnv);
 
-            // Remove AO_PROJECT_ID for orchestrator (uses flat metadata path)
-            delete environment.AO_PROJECT_ID;
+            // NOTE: AO_PROJECT_ID is intentionally not set for orchestrator (uses flat metadata path)
 
             // Create tmux session
             await newTmuxSession({

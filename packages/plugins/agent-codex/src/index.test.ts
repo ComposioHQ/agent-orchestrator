@@ -154,10 +154,10 @@ describe("getLaunchCommand", () => {
 describe("getEnvironment", () => {
   const agent = create();
 
-  it("sets AO_SESSION_ID and AO_PROJECT_ID", () => {
+  it("sets AO_SESSION_ID but not AO_PROJECT_ID (caller's responsibility)", () => {
     const env = agent.getEnvironment(makeLaunchConfig());
     expect(env["AO_SESSION_ID"]).toBe("sess-1");
-    expect(env["AO_PROJECT_ID"]).toBe("my-project");
+    expect(env["AO_PROJECT_ID"]).toBeUndefined();
   });
 
   it("sets AO_ISSUE_ID when provided", () => {
