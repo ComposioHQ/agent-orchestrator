@@ -223,7 +223,6 @@ export function DirectTerminal({ sessionId, startFullscreen = false }: DirectTer
 
       // Get container dimensions
       const rect = container.getBoundingClientRect();
-      const expectedWidth = rect.width;
       const expectedHeight = rect.height;
 
       // Check if container has reached target dimensions (within 10px tolerance)

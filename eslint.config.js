@@ -13,6 +13,8 @@ export default tseslint.config(
       "packages/web/next-env.d.ts",
       "packages/web/next.config.js",
       "packages/web/postcss.config.mjs",
+      "test-clipboard*.mjs",
+      "test-clipboard*.sh",
     ],
   },
 
