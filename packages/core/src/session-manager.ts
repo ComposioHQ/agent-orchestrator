@@ -690,13 +690,15 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     const workspaceExists = await plugins.workspace.exists(workspacePath);
 
     if (!workspaceExists) {
-      // Check if branch still exists in repo
+      // Check if branch still exists in repo (if SCM plugin available)
       const scmPlugin = plugins.scm;
-      const branchExists = scmPlugin ? await scmPlugin.branchExists(project.path, branch) : false;
-
-      if (!branchExists) {
-        throw new WorkspaceMissingError(workspacePath, branch);
+      if (scmPlugin) {
+        const branchExists = await scmPlugin.branchExists(project.path, branch);
+        if (!branchExists) {
+          throw new WorkspaceMissingError(workspacePath, branch);
+        }
       }
+      // If no SCM plugin, attempt restore anyway - git will error if branch missing
 
       // Recreate worktree on same branch
       await plugins.workspace.restore(workspacePath, project.path, branch);

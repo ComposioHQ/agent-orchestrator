@@ -128,15 +128,10 @@ export function registerSession(program: Command): void {
         console.log(chalk.green(`\u2713 Restored session ${restoredSession.id}`));
         console.log(`  Branch: ${chalk.cyan(restoredSession.branch ?? "unknown")}`);
         console.log(`  Status: ${chalk.dim(restoredSession.status)}`);
+        console.log(`  Attach: ${chalk.dim(`tmux attach -t ${sessionId}`)}`);
 
-        if (options.open) {
-          // Try to open in terminal using tmux attach
-          try {
-            await tmux("attach", "-t", sessionId);
-          } catch {
-            console.log(chalk.yellow("  Could not open terminal (use: tmux attach -t " + sessionId + ")"));
-          }
-        }
+        // Note: --open flag removed because tmux attach requires interactive terminal
+        // which can't be invoked via execFileAsync. User should run "tmux attach" manually.
       } catch (error) {
         if (error instanceof SessionNotRestorableError) {
           console.error(chalk.red(`\u2717 Error: ${error.message}`));
