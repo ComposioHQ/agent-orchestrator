@@ -235,6 +235,7 @@ export function SessionDetail({ session }: SessionDetailProps) {
           <h3 className="mb-3 text-[13px] font-semibold uppercase tracking-widest text-[var(--color-text-muted)]">
             Terminal
           </h3>
+
           <Terminal sessionId={session.id} />
         </div>
       </div>
