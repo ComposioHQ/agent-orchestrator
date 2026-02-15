@@ -28,17 +28,13 @@ function TerminalTestPageContent() {
   const [availableSessions, setAvailableSessions] = useState<string[]>([]);
   const [showComparison, setShowComparison] = useState(true);
 
-  // Fetch available sessions on mount
+  // Fetch available sessions on mount (only active ones)
   useEffect(() => {
-    fetch("/api/sessions")
+    fetch("/api/sessions?active=true")
       .then((res) => res.json())
       .then((data) => {
         if (data.sessions && Array.isArray(data.sessions)) {
-          // Filter out terminated/exited sessions - only use active ones
-          const activeSessions = data.sessions.filter(
-            (s: { activity: string }) => s.activity !== "exited",
-          );
-          const ids = activeSessions.map((s: { id: string }) => s.id);
+          const ids = data.sessions.map((s: { id: string }) => s.id);
           setAvailableSessions(ids);
         }
       })
