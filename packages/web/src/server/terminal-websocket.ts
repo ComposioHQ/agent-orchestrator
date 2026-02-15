@@ -122,11 +122,11 @@ function getOrSpawnTtyd(sessionId: string): TtydInstance {
 
   console.log(`[Terminal] Spawning ttyd for ${sessionId} on port ${port}`);
 
-  // TEMPORARILY DISABLED FOR TESTING - don't set mouse mode at all
-  // const mouseProc = spawn("tmux", ["set-option", "-t", sessionId, "mouse", "on"]);
-  // mouseProc.on("error", (err) => {
-  //   console.error(`[Terminal] Failed to set mouse mode for ${sessionId}:`, err.message);
-  // });
+  // Enable mouse mode for scrollback support
+  const mouseProc = spawn("tmux", ["set-option", "-t", sessionId, "mouse", "on"]);
+  mouseProc.on("error", (err) => {
+    console.error(`[Terminal] Failed to set mouse mode for ${sessionId}:`, err.message);
+  });
 
   // Hide the green status bar for cleaner appearance
   const statusProc = spawn("tmux", ["set-option", "-t", sessionId, "status", "off"]);

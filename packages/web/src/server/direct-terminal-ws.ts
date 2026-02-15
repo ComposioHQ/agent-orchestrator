@@ -12,7 +12,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { spawn as ptySpawn, type IPty } from "node-pty";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { loadConfig } from "@composio/ao-core";
 
 // Load config with fallback
@@ -89,16 +89,17 @@ wss.on("connection", (ws, req) => {
   console.log(`[DirectTerminal] New connection for session: ${sessionId}`);
 
   // Spawn PTY attached to tmux session
-  // Use full path to tmux to avoid PATH issues
-  const tmuxPath = "/opt/homebrew/bin/tmux";
+  // Use tmux from PATH for cross-platform compatibility
+  const tmuxPath = "tmux";
 
   // Build complete environment - node-pty requires proper env setup
   const homeDir = process.env.HOME || homedir();
+  const currentUser = process.env.USER || userInfo().username;
   const env = {
     HOME: homeDir,
-    SHELL: process.env.SHELL || "/bin/zsh",
-    USER: process.env.USER || "equinox",
-    PATH: "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
+    SHELL: process.env.SHELL || "/bin/bash",
+    USER: currentUser,
+    PATH: process.env.PATH || "/usr/local/bin:/usr/bin:/bin",
     TERM: "xterm-256color",
     LANG: process.env.LANG || "en_US.UTF-8",
     TMPDIR: process.env.TMPDIR || "/tmp",
