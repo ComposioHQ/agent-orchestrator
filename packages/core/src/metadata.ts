@@ -91,6 +91,8 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
     project: raw["project"],
     createdAt: raw["createdAt"],
     runtimeHandle: raw["runtimeHandle"],
+    permissions: raw["permissions"],
+    restoredAt: raw["restoredAt"],
   };
 }
 
@@ -129,6 +131,8 @@ export function writeMetadata(
   if (metadata.project) data["project"] = metadata.project;
   if (metadata.createdAt) data["createdAt"] = metadata.createdAt;
   if (metadata.runtimeHandle) data["runtimeHandle"] = metadata.runtimeHandle;
+  if (metadata.permissions) data["permissions"] = metadata.permissions;
+  if (metadata.restoredAt) data["restoredAt"] = metadata.restoredAt;
 
   writeFileSync(path, serializeMetadata(data), "utf-8");
 }

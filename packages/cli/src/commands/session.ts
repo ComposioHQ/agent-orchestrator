@@ -117,8 +117,7 @@ export function registerSession(program: Command): void {
     .command("restore")
     .description("Restore a terminated session")
     .argument("<id>", "Session ID to restore")
-    .option("--open", "Open in terminal after restore")
-    .action(async (sessionId: string, options: { open?: boolean }) => {
+    .action(async (sessionId: string) => {
       try {
         const { sessionManager } = await getServices();
 

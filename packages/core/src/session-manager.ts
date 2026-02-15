@@ -742,7 +742,15 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       },
     });
 
-    // 6. Update metadata
+    // 6. Run post-launch setup (hooks, settings, etc.)
+    if (plugins.agent.postLaunchSetup) {
+      const tempSession = await get(sessionId);
+      if (tempSession) {
+        await plugins.agent.postLaunchSetup(tempSession);
+      }
+    }
+
+    // 7. Update metadata
     const now = new Date().toISOString();
     updateMetadata(config.dataDir, sessionId, {
       status: "working",
@@ -751,7 +759,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       lastActivity: now,
     });
 
-    // 7. Return updated session
+    // 8. Return updated session
     return get(sessionId).then((s) => {
       if (!s) throw new Error(`Session ${sessionId} disappeared after restore`);
       return s;
