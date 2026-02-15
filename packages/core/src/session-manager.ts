@@ -162,6 +162,39 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     return { runtime, agent, workspace, tracker, scm };
   }
 
+  /**
+   * Enrich session with live runtime state (alive/exited) and activity detection.
+   * Mutates the session object in place.
+   */
+  async function enrichSessionWithRuntimeState(
+    session: Session,
+    plugins: ReturnType<typeof resolvePlugins>,
+  ): Promise<void> {
+    if (!session.runtimeHandle) return;
+
+    if (plugins.runtime) {
+      try {
+        const alive = await plugins.runtime.isAlive(session.runtimeHandle);
+        if (!alive) {
+          session.status = "killed";
+          session.activity = "exited";
+        } else {
+          // Runtime is alive — detect activity from terminal output
+          if (plugins.agent && plugins.runtime.getOutput) {
+            try {
+              const output = await plugins.runtime.getOutput(session.runtimeHandle, 30);
+              session.activity = plugins.agent.detectActivity(output);
+            } catch {
+              // Can't capture output — leave as idle
+            }
+          }
+        }
+      } catch {
+        // Can't check — assume still alive
+      }
+    }
+  }
+
   // Define methods as local functions so `this` is not needed
   async function spawn(spawnConfig: SessionSpawnConfig): Promise<Session> {
     const project = config.projects[spawnConfig.projectId];
@@ -382,32 +415,12 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
       const session = metadataToSession(sid, raw, createdAt, modifiedAt);
 
-      // Check if runtime is still alive and detect activity
+      // Enrich with live runtime state and activity detection
       if (session.runtimeHandle) {
         const project = config.projects[session.projectId];
         if (project) {
           const plugins = resolvePlugins(project);
-          if (plugins.runtime) {
-            try {
-              const alive = await plugins.runtime.isAlive(session.runtimeHandle);
-              if (!alive) {
-                session.status = "killed";
-                session.activity = "exited";
-              } else {
-                // Runtime is alive — detect activity from terminal output
-                if (plugins.agent && plugins.runtime.getOutput) {
-                  try {
-                    const output = await plugins.runtime.getOutput(session.runtimeHandle, 30);
-                    session.activity = plugins.agent.detectActivity(output);
-                  } catch {
-                    // Can't capture output — leave as idle
-                  }
-                }
-              }
-            } catch {
-              // Can't check — assume still alive
-            }
-          }
+          await enrichSessionWithRuntimeState(session, plugins);
         }
       }
 
@@ -435,32 +448,12 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
     const session = metadataToSession(sessionId, raw, createdAt, modifiedAt);
 
-    // Check if runtime is still alive and detect activity (same as list() method)
+    // Enrich with live runtime state and activity detection
     if (session.runtimeHandle) {
       const project = config.projects[session.projectId];
       if (project) {
         const plugins = resolvePlugins(project);
-        if (plugins.runtime) {
-          try {
-            const alive = await plugins.runtime.isAlive(session.runtimeHandle);
-            if (!alive) {
-              session.status = "killed";
-              session.activity = "exited";
-            } else {
-              // Runtime is alive — detect activity from terminal output
-              if (plugins.agent && plugins.runtime.getOutput) {
-                try {
-                  const output = await plugins.runtime.getOutput(session.runtimeHandle, 30);
-                  session.activity = plugins.agent.detectActivity(output);
-                } catch {
-                  // Can't capture output — leave as idle
-                }
-              }
-            }
-          } catch {
-            // Can't check — assume still alive
-          }
-        }
+        await enrichSessionWithRuntimeState(session, plugins);
       }
     }
 
