@@ -17,7 +17,7 @@ import { promisify } from "node:util";
 import type { ActivityState, AgentSessionInfo } from "@composio/ao-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import claudeCodePlugin from "@composio/ao-plugin-agent-claude-code";
-import { isTmuxAvailable, killSessionsByPrefix, createSession, killSession, capturePane } from "./helpers/tmux.js";
+import { isTmuxAvailable, killSessionsByPrefix, createSession, killSession } from "./helpers/tmux.js";
 import { pollUntilEqual, sleep } from "./helpers/polling.js";
 import { makeTmuxHandle, makeSession } from "./helpers/session-factory.js";
 
@@ -94,7 +94,7 @@ describe.skipIf(!canRun)("agent-claude-code (integration)", () => {
             aliveSessionInfo = await agent.getSessionInfo(session);
             break;
           }
-        } catch (err) {
+        } catch {
           // JSONL might not exist yet, keep polling
         }
       }
