@@ -84,6 +84,10 @@ export function DirectTerminal({ sessionId, startFullscreen = false }: DirectTer
           },
           scrollback: 10000,
           allowProposedApi: true, // Required for some advanced features
+          // Performance: smooth scrolling configuration
+          fastScrollModifier: "alt",
+          fastScrollSensitivity: 5,
+          scrollSensitivity: 3,
         });
 
         // Add FitAddon for responsive sizing
@@ -204,7 +208,7 @@ export function DirectTerminal({ sessionId, startFullscreen = false }: DirectTer
       mounted = false;
       cleanup?.();
     };
-  }, [sessionId, status, error]);
+  }, [sessionId]);
 
   // Re-fit terminal when fullscreen changes
   useEffect(() => {
