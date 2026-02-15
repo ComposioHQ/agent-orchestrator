@@ -173,6 +173,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
 
+  /** Check if a session is exploratory (no PR/CI/review tracking). */
+  function isExploratory(session: Session): boolean {
+    return session.metadata?.["exploratory"] === "true";
+  }
+
   /** Determine current status for a session by polling plugins. */
   async function determineStatus(session: Session): Promise<SessionStatus> {
     const project = config.projects[session.projectId];
@@ -220,8 +225,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
     }
 
-    // 3. Check PR state if PR exists
-    if (session.pr && scm) {
+    // 3. Skip PR/CI/review tracking for exploratory sessions
+    if (!isExploratory(session) && session.pr && scm) {
       try {
         const prState = await scm.getPRState(session.pr);
         if (prState === "merged") return "merged";

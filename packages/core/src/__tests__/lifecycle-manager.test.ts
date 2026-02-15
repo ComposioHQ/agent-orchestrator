@@ -817,6 +817,173 @@ describe("reactions", () => {
   });
 });
 
+describe("exploratory sessions", () => {
+  it("skips PR/CI/review checks for exploratory sessions", async () => {
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("failing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("none"),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    // Session has a PR but is exploratory — SCM should not be called
+    const session = makeSession({
+      status: "working",
+      pr: makePR(),
+      metadata: { exploratory: "true" },
+    });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(dataDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    // Should stay "working" — not "ci_failed" because PR checks are skipped
+    expect(lm.getStates().get("app-1")).toBe("working");
+    expect(mockSCM.getPRState).not.toHaveBeenCalled();
+    expect(mockSCM.getCISummary).not.toHaveBeenCalled();
+    expect(mockSCM.getReviewDecision).not.toHaveBeenCalled();
+  });
+
+  it("still detects killed state for exploratory sessions when runtime dies", async () => {
+    vi.mocked(mockRuntime.isAlive).mockResolvedValue(false);
+
+    const session = makeSession({
+      status: "working",
+      metadata: { exploratory: "true" },
+    });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(dataDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    // Should still detect killed — runtime liveness is always checked
+    expect(lm.getStates().get("app-1")).toBe("killed");
+  });
+
+  it("still detects killed state for exploratory sessions when agent process exits", async () => {
+    vi.mocked(mockAgent.detectActivity).mockReturnValue("idle");
+    vi.mocked(mockAgent.isProcessRunning).mockResolvedValue(false);
+
+    const session = makeSession({
+      status: "working",
+      metadata: { exploratory: "true" },
+    });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(dataDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("killed");
+  });
+
+  it("non-exploratory sessions still check PR state", async () => {
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("failing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("none"),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    // Non-exploratory session with PR — SCM should be called
+    const session = makeSession({
+      status: "pr_open",
+      pr: makePR(),
+      metadata: {},
+    });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(dataDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("ci_failed");
+    expect(mockSCM.getPRState).toHaveBeenCalled();
+  });
+});
+
 describe("getStates", () => {
   it("returns copy of states map", async () => {
     const session = makeSession({ status: "spawning" });

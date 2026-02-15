@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { buildPrompt, BASE_AGENT_PROMPT } from "../prompt-builder.js";
+import { buildPrompt, BASE_AGENT_PROMPT, EXPLORATORY_AGENT_PROMPT } from "../prompt-builder.js";
 import type { ProjectConfig } from "../types.js";
 
 let tmpDir: string;
@@ -212,5 +212,89 @@ describe("BASE_AGENT_PROMPT", () => {
     expect(BASE_AGENT_PROMPT).toContain("Session Lifecycle");
     expect(BASE_AGENT_PROMPT).toContain("Git Workflow");
     expect(BASE_AGENT_PROMPT).toContain("PR Best Practices");
+  });
+});
+
+describe("exploratory mode", () => {
+  it("uses EXPLORATORY_AGENT_PROMPT when exploratory is true", () => {
+    const result = buildPrompt({
+      project,
+      projectId: "test-app",
+      issueId: "INT-1343",
+      exploratory: true,
+    });
+    expect(result).not.toBeNull();
+    expect(result).toContain(EXPLORATORY_AGENT_PROMPT);
+    expect(result).not.toContain(BASE_AGENT_PROMPT);
+  });
+
+  it("does not contain PR instructions when exploratory", () => {
+    const result = buildPrompt({
+      project,
+      projectId: "test-app",
+      issueId: "INT-1343",
+      exploratory: true,
+    });
+    expect(result).not.toContain("create a PR and push it");
+    expect(result).not.toContain("PR Best Practices");
+    expect(result).toContain("exploratory");
+    expect(result).toContain("do NOT create a PR");
+  });
+
+  it("uses BASE_AGENT_PROMPT when exploratory is false", () => {
+    const result = buildPrompt({
+      project,
+      projectId: "test-app",
+      issueId: "INT-1343",
+      exploratory: false,
+    });
+    expect(result).toContain(BASE_AGENT_PROMPT);
+    expect(result).not.toContain(EXPLORATORY_AGENT_PROMPT);
+  });
+
+  it("uses BASE_AGENT_PROMPT when exploratory is undefined", () => {
+    const result = buildPrompt({
+      project,
+      projectId: "test-app",
+      issueId: "INT-1343",
+    });
+    expect(result).toContain(BASE_AGENT_PROMPT);
+    expect(result).not.toContain(EXPLORATORY_AGENT_PROMPT);
+  });
+
+  it("still includes project context and issue details when exploratory", () => {
+    const result = buildPrompt({
+      project,
+      projectId: "test-app",
+      issueId: "INT-1343",
+      issueContext: "Fix the login bug",
+      exploratory: true,
+    });
+    expect(result).toContain("Test App");
+    expect(result).toContain("Work on issue: INT-1343");
+    expect(result).toContain("Fix the login bug");
+  });
+
+  it("still includes user rules when exploratory", () => {
+    project.agentRules = "Always run tests.";
+    const result = buildPrompt({
+      project,
+      projectId: "test-app",
+      issueId: "INT-1343",
+      exploratory: true,
+    });
+    expect(result).toContain("Always run tests.");
+  });
+});
+
+describe("EXPLORATORY_AGENT_PROMPT", () => {
+  it("is a non-empty string", () => {
+    expect(typeof EXPLORATORY_AGENT_PROMPT).toBe("string");
+    expect(EXPLORATORY_AGENT_PROMPT.length).toBeGreaterThan(50);
+  });
+
+  it("mentions exploratory and no PR", () => {
+    expect(EXPLORATORY_AGENT_PROMPT).toContain("exploratory");
+    expect(EXPLORATORY_AGENT_PROMPT).toContain("Do NOT create a pull request");
   });
 });

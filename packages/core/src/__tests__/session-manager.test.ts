@@ -192,6 +192,24 @@ describe("spawn", () => {
     expect(meta!.issue).toBe("INT-42");
   });
 
+  it("stores exploratory flag in metadata", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.spawn({ projectId: "my-app", exploratory: true });
+
+    const meta = readMetadata(dataDir, "app-1");
+    expect(meta).not.toBeNull();
+    expect(meta!.exploratory).toBe("true");
+  });
+
+  it("does not store exploratory flag when false", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.spawn({ projectId: "my-app", exploratory: false });
+
+    const meta = readMetadata(dataDir, "app-1");
+    expect(meta).not.toBeNull();
+    expect(meta!.exploratory).toBeUndefined();
+  });
+
   it("throws for unknown project", async () => {
     const sm = createSessionManager({ config, registry: mockRegistry });
     await expect(sm.spawn({ projectId: "nonexistent" })).rejects.toThrow("Unknown project");
