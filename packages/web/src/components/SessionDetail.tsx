@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   type DashboardSession,
   type DashboardPR,
@@ -105,6 +106,8 @@ async function askAgentToFix(
 }
 
 export function SessionDetail({ session }: SessionDetailProps) {
+  const searchParams = useSearchParams();
+  const startFullscreen = searchParams.get("fullscreen") === "true";
   const pr = session.pr;
   const activity = activityLabel[session.activity] ?? {
     label: session.activity,
@@ -236,7 +239,7 @@ export function SessionDetail({ session }: SessionDetailProps) {
             Terminal
           </h3>
 
-          <DirectTerminal sessionId={session.id} />
+          <DirectTerminal sessionId={session.id} startFullscreen={startFullscreen} />
         </div>
       </div>
     </div>
