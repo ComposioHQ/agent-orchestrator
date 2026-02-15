@@ -231,10 +231,12 @@ export function registerStart(program: Command): void {
                 );
               }
 
+              // Get agent instance (used for hooks and launch)
+              const agent = getAgent(config, projectId);
+
               // Setup agent hooks for automatic metadata updates
               spinner.start("Configuring agent hooks");
               try {
-                const agent = getAgent(config, projectId);
                 if (agent.setupWorkspaceHooks) {
                   await agent.setupWorkspaceHooks(project.path, { dataDir: config.dataDir });
                 }
@@ -250,7 +252,6 @@ export function registerStart(program: Command): void {
               spinner.start("Creating orchestrator session");
 
               // Get agent launch command
-              const agent = getAgent(config, projectId);
             const launchCmd = agent.getLaunchCommand({
               sessionId,
               projectConfig: project,
