@@ -84,10 +84,10 @@ export function DirectTerminal({ sessionId, startFullscreen = false }: DirectTer
           },
           scrollback: 10000,
           allowProposedApi: true, // Required for some advanced features
-          // Performance: smooth scrolling configuration
+          // Smooth scrolling configuration
           fastScrollModifier: "alt",
-          fastScrollSensitivity: 5,
-          scrollSensitivity: 3,
+          fastScrollSensitivity: 3,
+          scrollSensitivity: 1,
         });
 
         // Add FitAddon for responsive sizing
