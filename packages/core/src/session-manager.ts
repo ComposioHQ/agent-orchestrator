@@ -17,9 +17,7 @@ import {
   isIssueNotFoundError,
   SessionNotRestorableError,
   WorkspaceMissingError,
-  NON_RESTORABLE_STATUSES,
-  TERMINAL_STATUSES,
-  TERMINAL_ACTIVITIES,
+  isRestorable,
   type SessionManager,
   type Session,
   type SessionId,
@@ -653,14 +651,9 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
     const oldStatus = currentSession.status;
 
-    // 3. Validate restorable status - must be terminal AND not non-restorable
-    if (NON_RESTORABLE_STATUSES.has(oldStatus)) {
-      throw new SessionNotRestorableError(sessionId, oldStatus);
-    }
-
-    // Check if session is actually terminated (by activity state)
-    if (!TERMINAL_STATUSES.has(oldStatus) && !TERMINAL_ACTIVITIES.has(currentSession.activity)) {
-      throw new SessionNotRestorableError(sessionId, oldStatus);
+    // 3. Validate restorable status - use centralized helper
+    if (!isRestorable(currentSession)) {
+      throw new SessionNotRestorableError(sessionId, currentSession.status);
     }
 
     const projectId = metadata["project"] ?? "";
