@@ -143,6 +143,45 @@ pnpm test              # run tests
 pnpm lint && pnpm typecheck
 ```
 
+## Development Workflow
+
+### Running the Dev Server
+
+**IMPORTANT**: The web dashboard depends on built packages. Always build before running dev server.
+
+```bash
+# 1. Install dependencies (first time only)
+pnpm install
+
+# 2. Build all packages (required before dev server)
+pnpm build
+
+# 3. Ensure config exists
+# Copy agent-orchestrator.yaml.example to agent-orchestrator.yaml and configure
+cp agent-orchestrator.yaml.example agent-orchestrator.yaml
+
+# 4. Run the dev server
+cd packages/web
+pnpm dev
+```
+
+**Why build first?** The web package imports from `@composio/ao-core` and plugin packages. These must be built (TypeScript compiled to JavaScript) before Next.js can resolve them.
+
+**Config requirement**: The app expects `agent-orchestrator.yaml` in the working directory. Without it, all API routes will fail with "No agent-orchestrator.yaml found".
+
+### Working with Worktrees
+
+If using git worktrees (common for parallel agent work):
+
+```bash
+# After creating a worktree
+cd /path/to/worktree
+pnpm install          # Install deps
+pnpm build            # Build packages
+cp /path/to/main/agent-orchestrator.yaml .  # Copy config
+cd packages/web && pnpm dev  # Start server
+```
+
 ## Common Mistakes to Avoid
 
 - Using `exec` instead of `execFile` — security vulnerability
