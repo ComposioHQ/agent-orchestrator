@@ -639,27 +639,28 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   }
 
   async function restore(sessionId: SessionId): Promise<Session> {
-    // 1. Load session metadata
+    // 1. Load raw metadata (for branch, worktree, etc.)
     const metadata = readMetadataRaw(config.dataDir, sessionId);
     if (!metadata) {
       throw new Error(`Session ${sessionId} not found`);
     }
 
-    const oldStatus = validateStatus(metadata["status"]);
+    // 2. Get resolved session (checks runtime liveness for accurate status)
+    const currentSession = await get(sessionId);
+    if (!currentSession) {
+      throw new Error(`Session ${sessionId} not found after metadata read`);
+    }
 
-    // 2. Validate restorable status - must be terminal AND not non-restorable
+    const oldStatus = currentSession.status;
+
+    // 3. Validate restorable status - must be terminal AND not non-restorable
     if (NON_RESTORABLE_STATUSES.has(oldStatus)) {
       throw new SessionNotRestorableError(sessionId, oldStatus);
     }
 
-    // Check if session is in a terminal state (killed, done, terminated, cleanup)
-    // This prevents restoring active sessions (working, pr_open, spawning, etc.)
-    if (!TERMINAL_STATUSES.has(oldStatus)) {
-      // For sessions with non-terminal status, also check activity state
-      const currentSession = await get(sessionId);
-      if (currentSession && !TERMINAL_ACTIVITIES.has(currentSession.activity)) {
-        throw new SessionNotRestorableError(sessionId, oldStatus);
-      }
+    // Check if session is actually terminated (by activity state)
+    if (!TERMINAL_STATUSES.has(oldStatus) && !TERMINAL_ACTIVITIES.has(currentSession.activity)) {
+      throw new SessionNotRestorableError(sessionId, oldStatus);
     }
 
     const projectId = metadata["project"] ?? "";
