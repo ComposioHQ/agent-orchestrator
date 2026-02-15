@@ -728,15 +728,37 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       ? await plugins.agent.getRestoreCommand(session)
       : null;
 
-    const launchCommand =
-      restoreCmd ??
-      plugins.agent.getLaunchCommand({
+    let launchCommand: string;
+    if (restoreCmd) {
+      launchCommand = restoreCmd;
+    } else {
+      // Fallback: fetch issue context and build prompt (same as spawn)
+      let issueContext: string | undefined;
+      if (metadata["issue"] && plugins.tracker) {
+        try {
+          issueContext = await plugins.tracker.generatePrompt(metadata["issue"], project);
+        } catch {
+          // Tracker unavailable — continue without issue context
+        }
+      }
+
+      const composedPrompt = buildPrompt({
+        project,
+        projectId,
+        issueId: metadata["issue"],
+        issueContext,
+        userPrompt: undefined, // No user prompt on restore
+      });
+
+      launchCommand = plugins.agent.getLaunchCommand({
         sessionId,
         projectConfig: project,
         issueId: metadata["issue"],
+        prompt: composedPrompt,
         permissions: project.agentConfig?.permissions,
         model: project.agentConfig?.model,
       });
+    }
 
     // 5. Create runtime
     const environment = plugins.agent.getEnvironment({
