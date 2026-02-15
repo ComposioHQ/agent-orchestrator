@@ -1,8 +1,12 @@
-import type { Agent, OrchestratorConfig, SCM } from "@composio/ao-core";
+import type { Agent, OrchestratorConfig, SCM, Notifier } from "@composio/ao-core";
 import claudeCodePlugin from "@composio/ao-plugin-agent-claude-code";
 import codexPlugin from "@composio/ao-plugin-agent-codex";
 import aiderPlugin from "@composio/ao-plugin-agent-aider";
 import githubSCMPlugin from "@composio/ao-plugin-scm-github";
+import desktopNotifierPlugin from "@composio/ao-plugin-notifier-desktop";
+import slackNotifierPlugin from "@composio/ao-plugin-notifier-slack";
+import webhookNotifierPlugin from "@composio/ao-plugin-notifier-webhook";
+import composioNotifierPlugin from "@composio/ao-plugin-notifier-composio";
 
 const agentPlugins: Record<string, { create(): Agent }> = {
   "claude-code": claudeCodePlugin,
@@ -12,6 +16,13 @@ const agentPlugins: Record<string, { create(): Agent }> = {
 
 const scmPlugins: Record<string, { create(): SCM }> = {
   github: githubSCMPlugin,
+};
+
+const notifierPlugins: Record<string, { create(config?: Record<string, unknown>): Notifier }> = {
+  desktop: desktopNotifierPlugin,
+  slack: slackNotifierPlugin,
+  webhook: webhookNotifierPlugin,
+  composio: composioNotifierPlugin,
 };
 
 /**
@@ -47,4 +58,18 @@ export function getSCM(config: OrchestratorConfig, projectId: string): SCM {
     throw new Error(`Unknown SCM plugin: ${scmName}`);
   }
   return plugin.create();
+}
+
+/**
+ * Get a notifier plugin module by name.
+ * Returns the plugin module so the caller can pass config to create().
+ */
+export function getNotifier(name: string): { create(config?: Record<string, unknown>): Notifier } {
+  const plugin = notifierPlugins[name];
+  if (!plugin) {
+    throw new Error(
+      `Unknown notifier plugin: "${name}". Available: ${Object.keys(notifierPlugins).join(", ")}`,
+    );
+  }
+  return plugin;
 }

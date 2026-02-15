@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getAgent, getAgentByName } from "../../src/lib/plugins.js";
+import { getAgent, getAgentByName, getNotifier } from "../../src/lib/plugins.js";
 import type { OrchestratorConfig } from "@composio/ao-core";
 
 function makeConfig(
@@ -69,5 +69,42 @@ describe("getAgentByName", () => {
 
   it("throws on unknown name", () => {
     expect(() => getAgentByName("unknown")).toThrow("Unknown agent plugin: unknown");
+  });
+});
+
+describe("getNotifier", () => {
+  it("returns desktop notifier plugin", () => {
+    const plugin = getNotifier("desktop");
+    expect(plugin).toBeDefined();
+    expect(typeof plugin.create).toBe("function");
+  });
+
+  it("returns slack notifier plugin", () => {
+    const plugin = getNotifier("slack");
+    expect(plugin).toBeDefined();
+    expect(typeof plugin.create).toBe("function");
+  });
+
+  it("returns webhook notifier plugin", () => {
+    const plugin = getNotifier("webhook");
+    expect(plugin).toBeDefined();
+    expect(typeof plugin.create).toBe("function");
+  });
+
+  it("returns composio notifier plugin", () => {
+    const plugin = getNotifier("composio");
+    expect(plugin).toBeDefined();
+    expect(typeof plugin.create).toBe("function");
+  });
+
+  it("throws on unknown notifier name", () => {
+    expect(() => getNotifier("unknown")).toThrow('Unknown notifier plugin: "unknown"');
+  });
+
+  it("creates a working notifier from plugin", () => {
+    const plugin = getNotifier("desktop");
+    const notifier = plugin.create({ sound: false });
+    expect(notifier.name).toBe("desktop");
+    expect(typeof notifier.notify).toBe("function");
   });
 });

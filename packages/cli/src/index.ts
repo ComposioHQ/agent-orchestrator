@@ -9,6 +9,7 @@ import { registerSend } from "./commands/send.js";
 import { registerReviewCheck } from "./commands/review-check.js";
 import { registerDashboard } from "./commands/dashboard.js";
 import { registerOpen } from "./commands/open.js";
+import { registerNotify } from "./commands/notify.js";
 
 const program = new Command();
 
@@ -26,5 +27,6 @@ registerSend(program);
 registerReviewCheck(program);
 registerDashboard(program);
 registerOpen(program);
+registerNotify(program);
 
 program.parse();
