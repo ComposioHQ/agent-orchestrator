@@ -27,7 +27,9 @@
     "@composio/ao-plugin-workspace-worktree": "workspace:*",
     "next": "^15.1.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "@composio/ao-plugin-notifier-desktop": "workspace:*",
+    "@composio/ao-plugin-notifier-openclaw": "workspace:*"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.0.0",

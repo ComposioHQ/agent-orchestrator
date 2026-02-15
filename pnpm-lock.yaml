@@ -458,6 +458,12 @@ importers:
       '@composio/ao-plugin-agent-claude-code':
         specifier: workspace:*
         version: link:../plugins/agent-claude-code
+      '@composio/ao-plugin-notifier-desktop':
+        specifier: workspace:*
+        version: link:../plugins/notifier-desktop
+      '@composio/ao-plugin-notifier-openclaw':
+        specifier: workspace:*
+        version: link:../plugins/notifier-openclaw
       '@composio/ao-plugin-runtime-tmux':
         specifier: workspace:*
         version: link:../plugins/runtime-tmux

@@ -1,16 +1,24 @@
-# Agent Orchestrator — self-hosting config (dog-fooding)
-
 dataDir: ~/.ao-sessions
-worktreeDir: ~/.worktrees/ao
+worktreeDir: ~/.worktrees
 port: 3000
-
 defaults:
   runtime: tmux
   agent: claude-code
   workspace: worktree
-  notifiers: [desktop]
-
+  notifiers:
+  - desktop
+  - openclaw
 projects:
+  integrator:
+    name: Integrator
+    repo: ComposioHQ/integrator
+    path: ~/integrator
+    defaultBranch: next
+    sessionPrefix: int
+    scm:
+      plugin: github
+    agentConfig:
+      permissions: skip
   ao:
     name: Agent Orchestrator
     repo: ComposioHQ/agent-orchestrator
@@ -19,11 +27,11 @@ projects:
     sessionPrefix: ao
     scm:
       plugin: github
-    tracker:
-      plugin: linear
-      teamId: "2a6e9b1b-19cd-4e30-b5bd-7b34dc491c7e"
-    symlinks: [.claude]
-    postCreate:
-      - "pnpm install"
     agentConfig:
       permissions: skip
+notifiers:
+  openclaw:
+    host: 100.94.117.76
+    port: 18789
+    token: 1af5c4fb9e07dc5e69a20de02bbea653f17c110089b68872
+    plugin: openclaw
