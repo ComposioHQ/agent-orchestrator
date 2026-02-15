@@ -271,7 +271,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     if (spawnConfig.issueId && plugins.tracker && resolvedIssue) {
       try {
         issueContext = await plugins.tracker.generatePrompt(spawnConfig.issueId, project);
-      } catch (err) {
+      } catch {
         // Non-fatal: continue without detailed issue context
         // Silently ignore errors - caller can check if issueContext is undefined
       }
