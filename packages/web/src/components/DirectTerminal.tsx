@@ -60,6 +60,7 @@ export function DirectTerminal({ sessionId, startFullscreen = false }: DirectTer
 
     // Dynamically import xterm.js to avoid SSR issues
     let mounted = true;
+    let cleanup: (() => void) | null = null;
 
     Promise.all([
       import("xterm").then((mod) => mod.Terminal),
@@ -185,8 +186,8 @@ export function DirectTerminal({ sessionId, startFullscreen = false }: DirectTer
 
         window.addEventListener("resize", handleResize);
 
-        // Cleanup
-        return () => {
+        // Store cleanup function to be called from useEffect cleanup
+        cleanup = () => {
           window.removeEventListener("resize", handleResize);
           disposable.dispose();
           websocket.close();
@@ -201,8 +202,9 @@ export function DirectTerminal({ sessionId, startFullscreen = false }: DirectTer
 
     return () => {
       mounted = false;
+      cleanup?.();
     };
-  }, [sessionId, status]);
+  }, [sessionId, status, error]);
 
   // Re-fit terminal when fullscreen changes
   useEffect(() => {
