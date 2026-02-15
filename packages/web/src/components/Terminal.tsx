@@ -80,7 +80,7 @@ export function Terminal({ sessionId }: TerminalProps) {
             className="h-full w-full border-0"
             title={`Terminal: ${sessionId}`}
             allow="clipboard-read; clipboard-write"
-            sandbox="allow-scripts allow-same-origin allow-forms"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
           />
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-[var(--color-text-muted)]">
