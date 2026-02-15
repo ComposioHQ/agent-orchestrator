@@ -503,7 +503,7 @@ function TerminalTestPageContent() {
             </li>
             <li>
               <code className="rounded bg-black px-1 py-0.5">
-                packages/web/src/server/direct-terminal-ws.ts
+                packages/web/server/direct-terminal-ws.ts
               </code> - WebSocket server using node-pty
             </li>
             <li>
