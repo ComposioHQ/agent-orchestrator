@@ -185,11 +185,6 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       try {
         // Fetch and validate the issue exists
         resolvedIssue = await plugins.tracker.getIssue(spawnConfig.issueId, project);
-
-        // Success - report to user
-        console.log(`✓ Found existing issue: ${resolvedIssue.url}`);
-        console.log(`  ${resolvedIssue.title}`);
-
       } catch (err) {
         // Issue fetch failed - determine why
         if (isIssueNotFoundError(err)) {
@@ -204,11 +199,6 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
           throw new Error(`Failed to fetch issue ${spawnConfig.issueId}: ${err}`, { cause: err });
         }
       }
-    }
-
-    // Report final status
-    if (!spawnConfig.issueId) {
-      console.log(`Spawning ad-hoc session without issue tracking`);
     }
 
     // Determine session ID — atomically reserve to prevent concurrent collisions
@@ -283,7 +273,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         issueContext = await plugins.tracker.generatePrompt(spawnConfig.issueId, project);
       } catch (err) {
         // Non-fatal: continue without detailed issue context
-        console.warn(`Warning: Could not fetch issue context: ${err}`);
+        // Silently ignore errors - caller can check if issueContext is undefined
       }
     }
 
