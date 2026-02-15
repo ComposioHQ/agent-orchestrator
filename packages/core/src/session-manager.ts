@@ -742,22 +742,41 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       },
     });
 
-    // 6. Run post-launch setup (hooks, settings, etc.)
-    if (plugins.agent.postLaunchSetup) {
-      const tempSession = await get(sessionId);
-      if (tempSession) {
-        await plugins.agent.postLaunchSetup(tempSession);
-      }
-    }
+    try {
+      // 6. Update metadata with new runtime handle (before postLaunchSetup)
+      const now = new Date().toISOString();
+      updateMetadata(config.dataDir, sessionId, {
+        status: "working",
+        runtimeHandle: JSON.stringify(runtimeHandle),
+        restoredAt: now,
+        lastActivity: now,
+      });
 
-    // 7. Update metadata
-    const now = new Date().toISOString();
-    updateMetadata(config.dataDir, sessionId, {
-      status: "working",
-      runtimeHandle: JSON.stringify(runtimeHandle),
-      restoredAt: now,
-      lastActivity: now,
-    });
+      // 7. Run post-launch setup (hooks, settings, etc.)
+      if (plugins.agent.postLaunchSetup) {
+        const session = await get(sessionId);
+        if (session) {
+          await plugins.agent.postLaunchSetup(session);
+        }
+      }
+    } catch (err) {
+      // Clean up runtime on post-restore failure
+      try {
+        await plugins.runtime.destroy(runtimeHandle);
+      } catch {
+        /* best effort */
+      }
+      // Revert metadata to terminated state
+      try {
+        updateMetadata(config.dataDir, sessionId, {
+          status: oldStatus,
+          runtimeHandle: metadata.runtimeHandle ?? "",
+        });
+      } catch {
+        /* best effort */
+      }
+      throw err;
+    }
 
     // 8. Return updated session
     return get(sessionId).then((s) => {
