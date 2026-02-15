@@ -701,20 +701,32 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       }
       // If no SCM plugin, attempt restore anyway - git will error if branch missing
 
-      // Recreate worktree on same branch
-      await plugins.workspace.restore(workspacePath, project.path, branch);
+      // Recreate worktree on same branch and run post-create hooks
+      try {
+        await plugins.workspace.restore(workspacePath, project.path, branch);
 
-      // Run post-create hooks (symlinks, npm install, etc.)
-      if (plugins.workspace.postCreate) {
-        await plugins.workspace.postCreate(
-          {
-            path: workspacePath,
-            branch,
-            sessionId,
-            projectId: projectId,
-          },
-          project,
-        );
+        // Run post-create hooks (symlinks, npm install, etc.)
+        if (plugins.workspace.postCreate) {
+          await plugins.workspace.postCreate(
+            {
+              path: workspacePath,
+              branch,
+              sessionId,
+              projectId: projectId,
+            },
+            project,
+          );
+        }
+      } catch (err) {
+        // Clean up partially-created workspace on failure
+        if (workspacePath !== project.path) {
+          try {
+            await plugins.workspace.destroy(workspacePath);
+          } catch {
+            /* best effort */
+          }
+        }
+        throw err;
       }
     }
 

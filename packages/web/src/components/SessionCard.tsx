@@ -3,6 +3,11 @@
 import { useState, useEffect, useRef } from "react";
 import { type DashboardSession, type AttentionLevel, getAttentionLevel } from "@/lib/types";
 import { CI_STATUS } from "@composio/ao-core/types";
+import {
+  TERMINAL_STATUSES,
+  TERMINAL_ACTIVITIES,
+  NON_RESTORABLE_STATUSES,
+} from "@composio/ao-core";
 import { cn } from "@/lib/cn";
 import { PRStatus } from "./PRStatus";
 import { CICheckList } from "./CIBadge";
@@ -55,13 +60,8 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
   const alerts = getAlerts(session);
   const isReadyToMerge = pr?.mergeability.mergeable && pr.state === "open";
   const isTerminal =
-    session.status === "killed" ||
-    session.status === "cleanup" ||
-    session.status === "terminated" ||
-    session.status === "done" ||
-    session.status === "merged" ||
-    session.activity === "exited";
-  const isRestorable = isTerminal && session.status !== "merged";
+    TERMINAL_STATUSES.has(session.status) || TERMINAL_ACTIVITIES.has(session.activity);
+  const isRestorable = isTerminal && !NON_RESTORABLE_STATUSES.has(session.status);
 
   return (
     <div
