@@ -3,7 +3,7 @@
 import { DirectTerminal } from "@/components/DirectTerminal";
 import { Terminal } from "@/components/Terminal";
 import { useSearchParams } from "next/navigation";
-import { useState, Suspense } from "react";
+import { useState, useEffect, Suspense } from "react";
 
 // Force dynamic rendering (required for useSearchParams)
 export const dynamic = "force-dynamic";
@@ -14,8 +14,10 @@ export const dynamic = "force-dynamic";
  * This page compares two terminal implementations and documents why DirectTerminal
  * (with XDA support) was necessary for proper clipboard functionality.
  *
+ * By default, automatically picks two different sessions to avoid port conflicts.
+ *
  * Examples:
- * - http://localhost:3000/dev/terminal-test
+ * - http://localhost:3000/dev/terminal-test (auto-picks two different sessions)
  * - http://localhost:3000/dev/terminal-test?old_session=ao-orchestrator&new_session=ao-20
  * - http://localhost:3000/dev/terminal-test?session=ao-20 (uses same session for both)
  *
@@ -23,11 +25,36 @@ export const dynamic = "force-dynamic";
  */
 function TerminalTestPageContent() {
   const searchParams = useSearchParams();
-  const sessionId = searchParams.get("session") || "ao-orchestrator";
-  // Allow overriding individual sessions, otherwise both use the same session
-  const oldSessionId = searchParams.get("old_session") || sessionId;
-  const newSessionId = searchParams.get("new_session") || sessionId;
+  const [availableSessions, setAvailableSessions] = useState<string[]>([]);
   const [showComparison, setShowComparison] = useState(true);
+
+  // Fetch available sessions on mount
+  useEffect(() => {
+    fetch("/api/sessions")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.sessions && Array.isArray(data.sessions)) {
+          const ids = data.sessions.map((s: { id: string }) => s.id);
+          setAvailableSessions(ids);
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to fetch sessions:", err);
+      });
+  }, []);
+
+  // Determine which sessions to use
+  const sessionParam = searchParams.get("session");
+  const oldSessionParam = searchParams.get("old_session");
+  const newSessionParam = searchParams.get("new_session");
+
+  // If no params provided, use first two available sessions (or fallback to defaults)
+  const defaultOldSession = availableSessions[0] || "ao-orchestrator";
+  const defaultNewSession = availableSessions[1] || availableSessions[0] || "ao-orchestrator";
+
+  // Allow overriding individual sessions
+  const oldSessionId = oldSessionParam || (sessionParam || defaultOldSession);
+  const newSessionId = newSessionParam || (sessionParam || defaultNewSession);
 
   return (
     <div className="min-h-screen bg-[var(--color-bg-primary)] p-8">
