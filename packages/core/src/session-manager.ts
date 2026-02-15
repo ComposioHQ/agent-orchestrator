@@ -382,7 +382,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
       const session = metadataToSession(sid, raw, createdAt, modifiedAt);
 
-      // Check if runtime is still alive
+      // Check if runtime is still alive and detect activity
       if (session.runtimeHandle) {
         const project = config.projects[session.projectId];
         if (project) {
@@ -393,6 +393,16 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
               if (!alive) {
                 session.status = "killed";
                 session.activity = "exited";
+              } else {
+                // Runtime is alive — detect activity from terminal output
+                if (plugins.agent && plugins.runtime.getOutput) {
+                  try {
+                    const output = await plugins.runtime.getOutput(session.runtimeHandle, 30);
+                    session.activity = plugins.agent.detectActivity(output);
+                  } catch {
+                    // Can't capture output — leave as idle
+                  }
+                }
               }
             } catch {
               // Can't check — assume still alive
@@ -425,7 +435,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
     const session = metadataToSession(sessionId, raw, createdAt, modifiedAt);
 
-    // Check if runtime is still alive (same as list() method)
+    // Check if runtime is still alive and detect activity (same as list() method)
     if (session.runtimeHandle) {
       const project = config.projects[session.projectId];
       if (project) {
@@ -436,6 +446,16 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
             if (!alive) {
               session.status = "killed";
               session.activity = "exited";
+            } else {
+              // Runtime is alive — detect activity from terminal output
+              if (plugins.agent && plugins.runtime.getOutput) {
+                try {
+                  const output = await plugins.runtime.getOutput(session.runtimeHandle, 30);
+                  session.activity = plugins.agent.detectActivity(output);
+                } catch {
+                  // Can't capture output — leave as idle
+                }
+              }
             }
           } catch {
             // Can't check — assume still alive

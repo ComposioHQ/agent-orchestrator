@@ -45,7 +45,7 @@ beforeEach(() => {
     processName: "mock",
     getLaunchCommand: vi.fn().mockReturnValue("mock-agent --start"),
     getEnvironment: vi.fn().mockReturnValue({ AGENT_VAR: "1" }),
-    detectActivity: vi.fn().mockResolvedValue("active"),
+    detectActivity: vi.fn().mockReturnValue("active"),
     isProcessRunning: vi.fn().mockResolvedValue(true),
     isProcessing: vi.fn().mockResolvedValue(false),
     getSessionInfo: vi.fn().mockResolvedValue(null),
@@ -279,6 +279,82 @@ describe("list", () => {
     expect(sessions[0].status).toBe("killed");
     expect(sessions[0].activity).toBe("exited");
   });
+
+  it("detects activity from terminal output", async () => {
+    const runtimeWithOutput: Runtime = {
+      ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(true),
+      getOutput: vi.fn().mockResolvedValue("Thinking about the problem...\n"),
+    };
+    const agentWithDetection: Agent = {
+      ...mockAgent,
+      detectActivity: vi.fn().mockReturnValue("active"),
+    };
+    const registryWithDetection: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return runtimeWithOutput;
+        if (slot === "agent") return agentWithDetection;
+        return null;
+      }),
+    };
+
+    writeMetadata(dataDir, "app-1", {
+      worktree: "/tmp",
+      branch: "a",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({
+      config,
+      registry: registryWithDetection,
+    });
+    const sessions = await sm.list();
+
+    // Verify getOutput was called with handle and line count
+    expect(runtimeWithOutput.getOutput).toHaveBeenCalledWith(
+      makeHandle("rt-1"),
+      30,
+    );
+    // Verify detectActivity was called with the output
+    expect(agentWithDetection.detectActivity).toHaveBeenCalledWith(
+      "Thinking about the problem...\n",
+    );
+    // Verify activity state was set
+    expect(sessions[0].activity).toBe("active");
+  });
+
+  it("falls back to idle on getOutput error", async () => {
+    const runtimeWithError: Runtime = {
+      ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(true),
+      getOutput: vi.fn().mockRejectedValue(new Error("tmux error")),
+    };
+    const registryWithError: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return runtimeWithError;
+        if (slot === "agent") return mockAgent;
+        return null;
+      }),
+    };
+
+    writeMetadata(dataDir, "app-1", {
+      worktree: "/tmp",
+      branch: "a",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithError });
+    const sessions = await sm.list();
+
+    // Should fall back to idle when getOutput fails
+    expect(sessions[0].activity).toBe("idle");
+  });
 });
 
 describe("get", () => {
@@ -299,6 +375,50 @@ describe("get", () => {
     expect(session!.pr).not.toBeNull();
     expect(session!.pr!.number).toBe(42);
     expect(session!.pr!.url).toBe("https://github.com/org/repo/pull/42");
+  });
+
+  it("detects activity from terminal output", async () => {
+    const runtimeWithOutput: Runtime = {
+      ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(true),
+      getOutput: vi.fn().mockResolvedValue("❯ \n"),
+    };
+    const agentWithDetection: Agent = {
+      ...mockAgent,
+      detectActivity: vi.fn().mockReturnValue("idle"),
+    };
+    const registryWithDetection: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return runtimeWithOutput;
+        if (slot === "agent") return agentWithDetection;
+        return null;
+      }),
+    };
+
+    writeMetadata(dataDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({
+      config,
+      registry: registryWithDetection,
+    });
+    const session = await sm.get("app-1");
+
+    // Verify getOutput was called
+    expect(runtimeWithOutput.getOutput).toHaveBeenCalledWith(
+      makeHandle("rt-1"),
+      30,
+    );
+    // Verify detectActivity was called
+    expect(agentWithDetection.detectActivity).toHaveBeenCalledWith("❯ \n");
+    // Verify activity state was set
+    expect(session!.activity).toBe("idle");
   });
 
   it("returns null for nonexistent session", async () => {
