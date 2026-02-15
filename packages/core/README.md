@@ -39,14 +39,18 @@ Handles session lifecycle:
 
 **Data flow in `spawn()`:**
 1. Load project config
-2. Generate prompt via `Tracker.generatePrompt()`
-3. Create workspace via `Workspace.create()`
-4. Build launch command via `Agent.getLaunchCommand()`
-5. Create runtime session via `Runtime.create()`
-6. Send launch command
-7. Run `Agent.postLaunchSetup()` (optional)
-8. Write metadata file
-9. Return Session object
+2. **Validate issue exists** via `Tracker.getIssue()` (if issueId provided, fails-fast if not found)
+3. Reserve session ID
+4. Determine branch name
+5. Create workspace via `Workspace.create()`
+6. Generate prompt via `Tracker.generatePrompt()`
+7. Build launch command via `Agent.getLaunchCommand()`
+8. Create runtime session via `Runtime.create()`
+9. Run `Agent.postLaunchSetup()` (optional)
+10. Write metadata file
+11. Return Session object
+
+**Note:** If issue validation fails (not found, auth error), spawn fails before creating any resources (no workspace, no runtime, no session ID). This prevents spawning sessions with broken issue references.
 
 ### `src/services/lifecycle-manager.ts` — State Machine + Reactions
 

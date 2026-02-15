@@ -29,7 +29,9 @@ import type {
   SCM,
   PluginRegistry,
   RuntimeHandle,
+  Issue,
 } from "./types.js";
+import { isIssueNotFoundError } from "./types.js";
 import {
   readMetadataRaw,
   writeMetadata,
@@ -177,6 +179,38 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       throw new Error(`Agent plugin '${project.agent ?? config.defaults.agent}' not found`);
     }
 
+    // Validate issue exists BEFORE creating any resources
+    let resolvedIssue: Issue | undefined;
+    if (spawnConfig.issueId && plugins.tracker) {
+      try {
+        // Fetch and validate the issue exists
+        resolvedIssue = await plugins.tracker.getIssue(spawnConfig.issueId, project);
+
+        // Success - report to user
+        console.log(`✓ Found existing issue: ${resolvedIssue.url}`);
+        console.log(`  ${resolvedIssue.title}`);
+
+      } catch (err) {
+        // Issue fetch failed - determine why
+        if (isIssueNotFoundError(err)) {
+          // Issue doesn't exist - fail fast with clear message
+          throw new Error(
+            `Issue ${spawnConfig.issueId} does not exist in tracker. ` +
+            `Create the issue first, then spawn with the created issue ID.`,
+            { cause: err }
+          );
+        } else {
+          // Other error (auth, network, etc) - fail fast
+          throw new Error(`Failed to fetch issue ${spawnConfig.issueId}: ${err}`, { cause: err });
+        }
+      }
+    }
+
+    // Report final status
+    if (!spawnConfig.issueId) {
+      console.log(`Spawning ad-hoc session without issue tracking`);
+    }
+
     // Determine session ID — atomically reserve to prevent concurrent collisions
     const existingSessions = listMetadata(config.dataDir);
     let num = getNextSessionNumber(existingSessions, project.sessionPrefix);
@@ -241,13 +275,14 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       }
     }
 
-    // Build composed prompt — fetch issue context from tracker (best-effort)
+    // Generate prompt with validated issue
     let issueContext: string | undefined;
-    if (spawnConfig.issueId && plugins.tracker) {
+    if (spawnConfig.issueId && plugins.tracker && resolvedIssue) {
       try {
         issueContext = await plugins.tracker.generatePrompt(spawnConfig.issueId, project);
-      } catch {
-        // Tracker unavailable — continue without issue context
+      } catch (err) {
+        // Non-fatal: continue without detailed issue context
+        console.warn(`Warning: Could not fetch issue context: ${err}`);
       }
     }
 

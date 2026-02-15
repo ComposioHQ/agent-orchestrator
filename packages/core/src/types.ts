@@ -844,3 +844,23 @@ export interface PluginRegistry {
   /** Load plugins from config (npm packages, local paths) */
   loadFromConfig(config: OrchestratorConfig): Promise<void>;
 }
+
+// =============================================================================
+// ERROR DETECTION HELPERS
+// =============================================================================
+
+/**
+ * Detect if an error indicates that an issue was not found in the tracker.
+ * Used by spawn validation to distinguish "not found" from other errors (auth, network, etc).
+ */
+export function isIssueNotFoundError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const message = (err as Error).message?.toLowerCase() || "";
+  return (
+    message.includes("not found") ||
+    message.includes("does not exist") ||
+    message.includes("404") ||
+    message.includes("no issue found") ||
+    message.includes("could not find")
+  );
+}

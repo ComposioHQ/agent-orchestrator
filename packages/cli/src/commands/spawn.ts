@@ -212,7 +212,7 @@ export function registerSpawn(program: Command): void {
     .command("spawn")
     .description("Spawn a single agent session")
     .argument("<project>", "Project ID from config")
-    .argument("[issue]", "Issue identifier (e.g. INT-1234, #42)")
+    .argument("[issue]", "Issue identifier (e.g. INT-1234, #42) - must exist in tracker")
     .option("--open", "Open session in terminal tab")
     .action(async (projectId: string, issueId: string | undefined, opts: { open?: boolean }) => {
       const config = loadConfig();
@@ -225,7 +225,25 @@ export function registerSpawn(program: Command): void {
         );
         process.exit(1);
       }
-      await spawnSession(config, projectId, project, issueId, opts.open);
+
+      try {
+        const sessionName = await spawnSession(config, projectId, project, issueId, opts.open);
+        console.log(chalk.green(`✓ Session ${sessionName} spawned successfully`));
+      } catch (err) {
+        // Handle specific error types
+        const message = String(err);
+
+        if (message.includes("does not exist")) {
+          // Issue not found - give orchestrator clear guidance
+          console.error(chalk.red(`✗ ${err}`));
+          console.error(chalk.yellow(`\nSuggestion: Create the issue first, then spawn with the created ID.`));
+          process.exit(1);
+        } else {
+          // Other error
+          console.error(chalk.red(`✗ Failed to spawn session: ${err}`));
+          process.exit(1);
+        }
+      }
     });
 }
 
@@ -258,7 +276,7 @@ export function registerBatchSpawn(program: Command): void {
       const sessionDir = getSessionDir(config.dataDir, projectId);
       const created: Array<{ session: string; issue: string }> = [];
       const skipped: Array<{ issue: string; existing: string }> = [];
-      const failed: string[] = [];
+      const failed: Array<{ issue: string; error: string }> = [];
       const spawnedIssues = new Set<string>();
 
       for (const issue of issues) {
@@ -276,14 +294,27 @@ export function registerBatchSpawn(program: Command): void {
         }
 
         try {
+          console.log(chalk.blue(`  Spawning session for ${issue}...`));
           const sessionName = await spawnSession(config, projectId, project, issue, opts.open);
+          console.log(chalk.green(`  ✓ ${sessionName} spawned for ${issue}`));
           created.push({ session: sessionName, issue });
           spawnedIssues.add(issue.toLowerCase());
           // Refresh tmux session list so next iteration sees the new session
           allTmux = await getTmuxSessions();
         } catch (err) {
-          console.error(chalk.red(`  Failed to spawn for ${issue}: ${err}`));
-          failed.push(issue);
+          const message = String(err);
+
+          // Categorize the failure
+          if (message.includes("does not exist")) {
+            console.error(chalk.red(`  ✗ ${issue} — issue not found in tracker`));
+            failed.push({ issue, error: "not_found" });
+          } else if (message.includes("Unauthorized") || message.includes("auth")) {
+            console.error(chalk.red(`  ✗ ${issue} — authentication failed`));
+            failed.push({ issue, error: "auth_failed" });
+          } else {
+            console.error(chalk.red(`  ✗ ${issue} — ${err}`));
+            failed.push({ issue, error: message });
+          }
         }
 
         // Small delay between spawns
@@ -305,6 +336,31 @@ export function registerBatchSpawn(program: Command): void {
         console.log(chalk.bold("\nSkipped (duplicate):"));
         for (const { issue, existing } of skipped) {
           console.log(`  ${issue} -> existing: ${existing}`);
+        }
+      }
+      if (failed.length > 0) {
+        const notFound = failed.filter((f) => f.error === "not_found");
+        if (notFound.length > 0) {
+          console.log(chalk.yellow(`\n${notFound.length} issues not found in tracker:`));
+          notFound.forEach((f) => {
+            console.log(chalk.dim(`  - ${f.issue}`));
+          });
+          console.log(chalk.dim(`\nCreate these issues first, then retry batch-spawn.`));
+        }
+        const authFailed = failed.filter((f) => f.error === "auth_failed");
+        if (authFailed.length > 0) {
+          console.log(chalk.yellow(`\n${authFailed.length} authentication failures:`));
+          authFailed.forEach((f) => {
+            console.log(chalk.dim(`  - ${f.issue}`));
+          });
+          console.log(chalk.dim(`\nCheck your tracker credentials.`));
+        }
+        const other = failed.filter((f) => f.error !== "not_found" && f.error !== "auth_failed");
+        if (other.length > 0) {
+          console.log(chalk.yellow(`\n${other.length} other errors:`));
+          other.forEach((f) => {
+            console.log(chalk.dim(`  - ${f.issue}`));
+          });
         }
       }
       console.log();

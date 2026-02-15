@@ -206,6 +206,122 @@ describe("spawn", () => {
     const sm = createSessionManager({ config, registry: emptyRegistry });
     await expect(sm.spawn({ projectId: "my-app" })).rejects.toThrow("not found");
   });
+
+  it("validates issue exists when issueId provided", async () => {
+    const mockTracker: Tracker = {
+      name: "mock-tracker",
+      getIssue: vi.fn().mockResolvedValue({
+        id: "INT-100",
+        title: "Test issue",
+        description: "Test description",
+        url: "https://linear.app/test/issue/INT-100",
+        state: "open",
+        labels: [],
+      }),
+      isCompleted: vi.fn().mockResolvedValue(false),
+      issueUrl: vi.fn().mockReturnValue("https://linear.app/test/issue/INT-100"),
+      branchName: vi.fn().mockReturnValue("feat/INT-100"),
+      generatePrompt: vi.fn().mockResolvedValue("Work on INT-100"),
+    };
+
+    const registryWithTracker: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        if (slot === "tracker") return mockTracker;
+        return null;
+      }),
+    };
+
+    const sm = createSessionManager({
+      config,
+      registry: registryWithTracker,
+    });
+
+    const session = await sm.spawn({ projectId: "my-app", issueId: "INT-100" });
+
+    expect(mockTracker.getIssue).toHaveBeenCalledWith("INT-100", config.projects["my-app"]);
+    expect(session.issueId).toBe("INT-100");
+  });
+
+  it("fails when issue not found in tracker", async () => {
+    const mockTracker: Tracker = {
+      name: "mock-tracker",
+      getIssue: vi.fn().mockRejectedValue(new Error("Issue not found")),
+      isCompleted: vi.fn().mockResolvedValue(false),
+      issueUrl: vi.fn().mockReturnValue(""),
+      branchName: vi.fn().mockReturnValue("feat/INT-9999"),
+      generatePrompt: vi.fn().mockResolvedValue(""),
+    };
+
+    const registryWithTracker: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        if (slot === "tracker") return mockTracker;
+        return null;
+      }),
+    };
+
+    const sm = createSessionManager({
+      config,
+      registry: registryWithTracker,
+    });
+
+    await expect(sm.spawn({ projectId: "my-app", issueId: "INT-9999" }))
+      .rejects.toThrow("does not exist in tracker");
+
+    // Should not create workspace or runtime when validation fails
+    expect(mockWorkspace.create).not.toHaveBeenCalled();
+    expect(mockRuntime.create).not.toHaveBeenCalled();
+  });
+
+  it("fails on tracker auth errors", async () => {
+    const mockTracker: Tracker = {
+      name: "mock-tracker",
+      getIssue: vi.fn().mockRejectedValue(new Error("Unauthorized")),
+      isCompleted: vi.fn().mockResolvedValue(false),
+      issueUrl: vi.fn().mockReturnValue(""),
+      branchName: vi.fn().mockReturnValue("feat/INT-100"),
+      generatePrompt: vi.fn().mockResolvedValue(""),
+    };
+
+    const registryWithTracker: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        if (slot === "tracker") return mockTracker;
+        return null;
+      }),
+    };
+
+    const sm = createSessionManager({
+      config,
+      registry: registryWithTracker,
+    });
+
+    await expect(sm.spawn({ projectId: "my-app", issueId: "INT-100" }))
+      .rejects.toThrow("Failed to fetch issue");
+
+    // Should not create workspace or runtime when auth fails
+    expect(mockWorkspace.create).not.toHaveBeenCalled();
+    expect(mockRuntime.create).not.toHaveBeenCalled();
+  });
+
+  it("spawns without issue tracking when no issueId provided", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    const session = await sm.spawn({ projectId: "my-app" });
+
+    expect(session.issueId).toBeNull();
+    expect(session.branch).toBe("main"); // Uses defaultBranch
+  });
 });
 
 describe("list", () => {
