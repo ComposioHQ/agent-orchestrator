@@ -8,6 +8,7 @@
  */
 
 import { createServer } from "node:http";
+import { spawn } from "node:child_process";
 import { WebSocketServer, WebSocket } from "ws";
 import { spawn as ptySpawn, type IPty } from "node-pty";
 import { existsSync } from "node:fs";
@@ -87,6 +88,18 @@ wss.on("connection", (ws, req) => {
   }
 
   console.log(`[DirectTerminal] New connection for session: ${sessionId}`);
+
+  // Enable mouse mode for scrollback support
+  const mouseProc = spawn("tmux", ["set-option", "-t", sessionId, "mouse", "on"]);
+  mouseProc.on("error", (err) => {
+    console.error(`[DirectTerminal] Failed to set mouse mode for ${sessionId}:`, err.message);
+  });
+
+  // Hide the green status bar for cleaner appearance
+  const statusProc = spawn("tmux", ["set-option", "-t", sessionId, "status", "off"]);
+  statusProc.on("error", (err) => {
+    console.error(`[DirectTerminal] Failed to hide status bar for ${sessionId}:`, err.message);
+  });
 
   // Spawn PTY attached to tmux session
   // Use tmux from PATH for cross-platform compatibility
