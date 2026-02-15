@@ -6,7 +6,7 @@ import {
   type DashboardPR,
 } from "@/lib/types";
 import { CICheckList } from "./CIBadge";
-import { Terminal } from "./Terminal";
+import { DirectTerminal } from "./DirectTerminal";
 
 interface SessionDetailProps {
   session: DashboardSession;
@@ -236,7 +236,7 @@ export function SessionDetail({ session }: SessionDetailProps) {
             Terminal
           </h3>
 
-          <Terminal sessionId={session.id} />
+          <DirectTerminal sessionId={session.id} />
         </div>
       </div>
     </div>

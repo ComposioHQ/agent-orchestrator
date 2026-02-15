@@ -122,11 +122,11 @@ function getOrSpawnTtyd(sessionId: string): TtydInstance {
 
   console.log(`[Terminal] Spawning ttyd for ${sessionId} on port ${port}`);
 
-  // Enable mouse mode so scroll works as scrollback, not input cycling
-  const mouseProc = spawn("tmux", ["set-option", "-t", sessionId, "mouse", "on"]);
-  mouseProc.on("error", (err) => {
-    console.error(`[Terminal] Failed to set mouse mode for ${sessionId}:`, err.message);
-  });
+  // TEMPORARILY DISABLED FOR TESTING - don't set mouse mode at all
+  // const mouseProc = spawn("tmux", ["set-option", "-t", sessionId, "mouse", "on"]);
+  // mouseProc.on("error", (err) => {
+  //   console.error(`[Terminal] Failed to set mouse mode for ${sessionId}:`, err.message);
+  // });
 
   // Hide the green status bar for cleaner appearance
   const statusProc = spawn("tmux", ["set-option", "-t", sessionId, "status", "off"]);
@@ -158,8 +158,11 @@ function getOrSpawnTtyd(sessionId: string): TtydInstance {
     const current = instances.get(sessionId);
     if (current?.process === proc) {
       instances.delete(sessionId);
-      // Recycle port for reuse
-      availablePorts.add(port);
+      // Only recycle port on clean exit (code 0), not on errors
+      // Failed ttyd processes may leave ports in TIME_WAIT state
+      if (code === 0) {
+        availablePorts.add(port);
+      }
     }
   });
 
@@ -169,8 +172,7 @@ function getOrSpawnTtyd(sessionId: string): TtydInstance {
     const current = instances.get(sessionId);
     if (current?.process === proc) {
       instances.delete(sessionId);
-      // Recycle port for reuse
-      availablePorts.add(port);
+      // Don't recycle port on error - may still be in use or TIME_WAIT
     }
     // Kill any running process
     try {
@@ -192,7 +194,7 @@ const server = createServer(async (req, res) => {
   // CORS for dashboard - allow requests from the same host as the dashboard
   // TODO: Replace with proper session-based authentication
   const origin = req.headers.origin;
-  if (origin) {
+  if (origin && origin !== "null") {
     // Extract hostname from origin and compare with request host
     try {
       const originUrl = new URL(origin);
@@ -204,6 +206,9 @@ const server = createServer(async (req, res) => {
     } catch {
       // Invalid origin URL, don't set CORS header
     }
+  } else {
+    // Allow null origin (file:// or local HTML files)
+    res.setHeader("Access-Control-Allow-Origin", "*");
   }
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
