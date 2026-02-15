@@ -551,7 +551,10 @@ function createClaudeCodeAgent(): Agent {
       }
 
       const entry = await readLastJsonlEntry(sessionFile);
-      if (!entry) return "idle";
+      if (!entry) {
+        // Empty file or read error, but process is running - assume active
+        return "active";
+      }
 
       // Check staleness - no activity in 30 seconds means idle
       const ageMs = Date.now() - entry.modifiedAt.getTime();
