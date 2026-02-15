@@ -472,13 +472,16 @@ function classifyTerminalOutput(terminalOutput: string): ActivityState {
 
   const lines = terminalOutput.trim().split("\n");
 
-  // Strip trailing status bar lines. Claude Code shows a persistent status bar
-  // like "⏵⏵ bypass permissions on (shift+tab to cycle)" below the prompt
-  // when --dangerously-skip-permissions is enabled. These must be removed
-  // before idle/prompt detection so they don't shadow the real prompt line
-  // or false-positive on the "bypass permissions" check.
-  while (lines.length > 0 && /⏵/.test(lines[lines.length - 1] ?? "")) {
-    lines.pop();
+  // Strip trailing decorative lines from Claude Code's TUI. From bottom up,
+  // remove: status bar lines (contain ⏵), separator lines (all ─), and
+  // empty lines. This exposes the actual prompt or content line for detection.
+  while (lines.length > 0) {
+    const last = lines[lines.length - 1]?.trim() ?? "";
+    if (/⏵/.test(last) || /^[─━]+$/.test(last) || last === "") {
+      lines.pop();
+    } else {
+      break;
+    }
   }
 
   if (!lines.length) return "idle";
