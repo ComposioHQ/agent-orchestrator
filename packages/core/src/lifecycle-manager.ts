@@ -11,6 +11,8 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
+import { existsSync } from "node:fs";
 import type {
   LifecycleManager,
   SessionManager,
@@ -201,6 +203,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         // empty output means the runtime probe failed, not that the agent exited.
         if (terminalOutput) {
           const activity = agent.detectActivity(terminalOutput);
+          console.log("[LIFECYCLE DEBUG] session:", session.id, "activity:", activity, "hasEsc:", /esc to interrupt/i.test(terminalOutput), "terminalLen:", terminalOutput.length);
+          // Persist detected activity to metadata so the API can serve it
+          const projectMetaDir2 = session.projectId
+            ? join(config.dataDir, `${session.projectId}-sessions`)
+            : config.dataDir;
+          const metaDir2 = existsSync(join(projectMetaDir2, session.id))
+            ? projectMetaDir2
+            : config.dataDir;
+          updateMetadata(metaDir2, session.id, { activity });
           if (activity === "waiting_input") return "needs_input";
 
           // Check whether the agent process is still alive. Some agents
