@@ -3,12 +3,13 @@ import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, rmSync
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-const { mockTmux, mockExec, mockGit, mockConfigRef, mockGetAgent } = vi.hoisted(() => ({
+const { mockTmux, mockExec, mockGit, mockConfigRef, mockGetAgent, mockGetTracker } = vi.hoisted(() => ({
   mockTmux: vi.fn(),
   mockExec: vi.fn(),
   mockGit: vi.fn(),
   mockConfigRef: { current: null as Record<string, unknown> | null },
   mockGetAgent: vi.fn(),
+  mockGetTracker: vi.fn(),
 }));
 
 vi.mock("../../src/lib/shell.js", () => ({
@@ -52,6 +53,7 @@ vi.mock("@composio/ao-core", async (importOriginal) => {
 vi.mock("../../src/lib/plugins.js", () => ({
   getAgent: mockGetAgent,
   getAgentByName: mockGetAgent,
+  getTracker: mockGetTracker,
 }));
 
 let tmpDir: string;
@@ -106,6 +108,7 @@ beforeEach(() => {
   mockExec.mockReset();
   mockGit.mockReset();
   mockGetAgent.mockReset();
+  mockGetTracker.mockReset();
   mockExec.mockResolvedValue({ stdout: "", stderr: "" });
   mockGetAgent.mockReturnValue({
     name: "claude-code",
@@ -114,6 +117,8 @@ beforeEach(() => {
     getEnvironment: () => ({}),
     detectActivity: () => "idle",
   });
+  // Return null by default (no tracker configured, validation skipped)
+  mockGetTracker.mockReturnValue(null);
 });
 
 afterEach(() => {

@@ -860,16 +860,19 @@ export function isIssueNotFoundError(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
   const message = (err as Error).message?.toLowerCase() || "";
 
-  // Exclude infrastructure/config errors
-  if (
-    message.includes("api key") ||
-    message.includes("team ") ||
-    message.includes("configuration") ||
-    message.includes("workspace") ||
-    message.includes("organization") ||
-    message.includes("endpoint")
-  ) {
-    return false;
+  // Exclude infrastructure/config errors ONLY if "issue" is not present
+  // (prevents shadowing errors like "Issue not found in workspace 'acme'")
+  if (!message.includes("issue")) {
+    if (
+      message.includes("api key") ||
+      message.includes("team ") ||
+      message.includes("configuration") ||
+      message.includes("workspace") ||
+      message.includes("organization") ||
+      message.includes("endpoint")
+    ) {
+      return false;
+    }
   }
 
   // Match issue-specific not-found patterns

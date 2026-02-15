@@ -325,12 +325,13 @@ export function registerBatchSpawn(program: Command): void {
           allTmux = await getTmuxSessions();
         } catch (err) {
           const message = String(err);
+          const lowerMessage = message.toLowerCase();
 
           // Categorize the failure
-          if (message.includes("does not exist")) {
+          if (lowerMessage.includes("does not exist")) {
             console.error(chalk.red(`  ✗ ${issue} — issue not found in tracker`));
             failed.push({ issue, error: "not_found" });
-          } else if (message.includes("Unauthorized") || message.includes("auth")) {
+          } else if (lowerMessage.includes("unauthorized") || lowerMessage.includes("auth")) {
             console.error(chalk.red(`  ✗ ${issue} — authentication failed`));
             failed.push({ issue, error: "auth_failed" });
           } else {
