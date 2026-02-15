@@ -38,6 +38,7 @@ async function spawnSession(
   project: ProjectConfig,
   issueId?: string,
   openTab?: boolean,
+  exploratory?: boolean,
 ): Promise<string> {
   const prefix = project.sessionPrefix || projectId;
   const num = await getNextSessionNumber(prefix);
@@ -167,6 +168,7 @@ async function spawnSession(
       status: "spawning",
       project: projectId,
       ...(issueId ? { issue: issueId } : {}),
+      ...(exploratory ? { exploratory: "true" } : {}),
       createdAt: new Date().toISOString(),
     });
 
@@ -174,6 +176,7 @@ async function spawnSession(
 
     console.log(`  Worktree: ${chalk.dim(worktreePath)}`);
     if (branch) console.log(`  Branch:   ${chalk.dim(branch)}`);
+    if (exploratory) console.log(`  Mode:     ${chalk.cyan("exploratory")} (no PR/CI/review)`);
     console.log(`  Attach:   ${chalk.dim(`tmux attach -t ${sessionName}`)}`);
     console.log();
 
@@ -182,6 +185,7 @@ async function spawnSession(
       project,
       projectId,
       issueId,
+      exploratory,
     });
 
     if (composedPrompt) {
@@ -214,7 +218,8 @@ export function registerSpawn(program: Command): void {
     .argument("<project>", "Project ID from config")
     .argument("[issue]", "Issue identifier (e.g. INT-1234, #42)")
     .option("--open", "Open session in terminal tab")
-    .action(async (projectId: string, issueId: string | undefined, opts: { open?: boolean }) => {
+    .option("--exploratory", "Run in exploratory mode (no PR, CI monitoring, or review routing)")
+    .action(async (projectId: string, issueId: string | undefined, opts: { open?: boolean; exploratory?: boolean }) => {
       const config = loadConfig();
       const project = config.projects[projectId];
       if (!project) {
@@ -225,7 +230,7 @@ export function registerSpawn(program: Command): void {
         );
         process.exit(1);
       }
-      await spawnSession(config, projectId, project, issueId, opts.open);
+      await spawnSession(config, projectId, project, issueId, opts.open, opts.exploratory);
     });
 }
 

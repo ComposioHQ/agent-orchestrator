@@ -257,6 +257,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       issueId: spawnConfig.issueId,
       issueContext,
       userPrompt: spawnConfig.prompt,
+      exploratory: spawnConfig.exploratory,
     });
 
     // Get agent launch config and create runtime — clean up workspace on failure
@@ -327,6 +328,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         project: spawnConfig.projectId,
         createdAt: new Date().toISOString(),
         runtimeHandle: JSON.stringify(handle),
+        exploratory: spawnConfig.exploratory ? "true" : undefined,
       });
 
       if (plugins.agent.postLaunchSetup) {

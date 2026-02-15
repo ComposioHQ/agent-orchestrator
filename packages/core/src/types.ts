@@ -97,6 +97,8 @@ export interface SessionSpawnConfig {
   issueId?: string;
   branch?: string;
   prompt?: string;
+  /** When true, session runs in exploratory mode — no PR, CI monitoring, or review routing */
+  exploratory?: boolean;
 }
 
 // =============================================================================
@@ -790,6 +792,8 @@ export interface SessionMetadata {
   project?: string;
   createdAt?: string;
   runtimeHandle?: string;
+  /** When "true", session is exploratory (no PR/CI/review tracking) */
+  exploratory?: string;
 }
 
 // =============================================================================

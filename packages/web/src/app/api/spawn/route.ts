@@ -27,6 +27,7 @@ export async function POST(request: NextRequest) {
     const session = await sessionManager.spawn({
       projectId: body.projectId as string,
       issueId: (body.issueId as string) ?? undefined,
+      exploratory: body.exploratory === true ? true : undefined,
     });
 
     return NextResponse.json({ session: sessionToDashboard(session) }, { status: 201 });

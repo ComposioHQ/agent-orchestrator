@@ -39,6 +39,18 @@ export const BASE_AGENT_PROMPT = `You are an AI coding agent managed by the Agen
 - If the repo has CI checks, make sure they pass before requesting review.
 - Respond to every review comment, even if just to acknowledge it.`;
 
+export const EXPLORATORY_AGENT_PROMPT = `You are an AI coding agent managed by the Agent Orchestrator (ao).
+
+## Session Lifecycle
+- You are running inside an **exploratory** session. There is no PR, CI, or review workflow.
+- Focus on the assigned task: explore, prototype, investigate, or experiment freely.
+- Commit your work to the branch so it's preserved, but do NOT create a PR.
+- When you're done, simply exit. The orchestrator will fire a notification.
+
+## Git Workflow
+- You are on a feature branch. Commit freely using conventional messages (feat:, fix:, chore:, etc.).
+- Do NOT create a pull request — this is an exploratory session.`;
+
 // =============================================================================
 // TYPES
 // =============================================================================
@@ -58,6 +70,9 @@ export interface PromptBuildConfig {
 
   /** Explicit user prompt (appended last) */
   userPrompt?: string;
+
+  /** When true, use exploratory prompt (no PR/CI/review instructions) */
+  exploratory?: boolean;
 }
 
 // =============================================================================
@@ -159,7 +174,7 @@ export function buildPrompt(config: PromptBuildConfig): string | null {
   const sections: string[] = [];
 
   // Layer 1: Base prompt (always included when we have something to compose)
-  sections.push(BASE_AGENT_PROMPT);
+  sections.push(config.exploratory ? EXPLORATORY_AGENT_PROMPT : BASE_AGENT_PROMPT);
 
   // Layer 2: Config-derived context
   sections.push(buildConfigLayer(config));
