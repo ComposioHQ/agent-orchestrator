@@ -164,7 +164,8 @@ async function spawnSession(
     writeMetadata(join(sessionDir, sessionName), {
       worktree: worktreePath,
       branch: liveBranch || branch || "detached",
-      status: "spawning",
+      status: "working",
+      runtimeHandle: JSON.stringify({ id: sessionName, runtimeName: "tmux" }),
       project: projectId,
       ...(issueId ? { issue: issueId } : {}),
       createdAt: new Date().toISOString(),

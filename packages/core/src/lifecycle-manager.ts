@@ -201,6 +201,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         // empty output means the runtime probe failed, not that the agent exited.
         if (terminalOutput) {
           const activity = agent.detectActivity(terminalOutput);
+          // Persist detected activity to metadata so the API can serve it
+          updateMetadata(config.dataDir, session.id, { activity });
           if (activity === "waiting_input") return "needs_input";
 
           // Check whether the agent process is still alive. Some agents

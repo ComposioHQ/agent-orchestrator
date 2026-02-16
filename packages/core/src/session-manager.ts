@@ -19,6 +19,7 @@ import type {
   SessionId,
   SessionSpawnConfig,
   SessionStatus,
+  ActivityState,
   CleanupResult,
   OrchestratorConfig,
   ProjectConfig,
@@ -106,7 +107,7 @@ function metadataToSession(
     id: sessionId,
     projectId: meta["project"] ?? "",
     status: validateStatus(meta["status"]),
-    activity: "idle",
+    activity: (meta["activity"] as ActivityState) || "idle",
     branch: meta["branch"] || null,
     issueId: meta["issue"] || null,
     pr: meta["pr"]
