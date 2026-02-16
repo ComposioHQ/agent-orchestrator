@@ -57,23 +57,16 @@ Comprehensive guide to installing, configuring, and troubleshooting Agent Orches
 
 ## Installation
 
-### Global Install (Recommended)
+### Build from Source (Current Method)
 
-```bash
-npm install -g @composio/ao-cli
-
-# Verify installation
-ao --version
-```
-
-### Manual Build from Source
+The package is not yet published to npm. Install by building from source:
 
 ```bash
 # Clone the repository
 git clone https://github.com/ComposioHQ/agent-orchestrator
 cd agent-orchestrator
 
-# Install dependencies
+# Install dependencies (requires pnpm)
 pnpm install
 
 # Build all packages
@@ -84,6 +77,14 @@ npm link -g packages/cli
 
 # Verify
 ao --version
+```
+
+> **Coming soon:** `npm install -g @composio/ao-cli` once published to npm.
+
+**If you don't have pnpm:**
+
+```bash
+npm install -g pnpm
 ```
 
 ## First-Time Configuration

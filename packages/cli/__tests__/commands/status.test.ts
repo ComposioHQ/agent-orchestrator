@@ -68,15 +68,13 @@ vi.mock("../../src/lib/plugins.js", () => ({
     getAutomatedComments: vi.fn().mockResolvedValue([]),
     getCIChecks: vi.fn().mockResolvedValue([]),
     getReviews: vi.fn().mockResolvedValue([]),
-    getMergeability: vi
-      .fn()
-      .mockResolvedValue({
-        mergeable: true,
-        ciPassing: true,
-        approved: false,
-        noConflicts: true,
-        blockers: [],
-      }),
+    getMergeability: vi.fn().mockResolvedValue({
+      mergeable: true,
+      ciPassing: true,
+      approved: false,
+      noConflicts: true,
+      blockers: [],
+    }),
     getPRState: vi.fn().mockResolvedValue("open"),
     mergePR: vi.fn(),
     closePR: vi.fn(),
