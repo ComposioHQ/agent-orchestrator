@@ -16,6 +16,9 @@ fi
 echo "📦 Installing dependencies..."
 pnpm install
 
+echo "🧹 Cleaning stale build artifacts..."
+rm -rf packages/web/.next
+
 echo "🔨 Building all packages..."
 pnpm build
 
