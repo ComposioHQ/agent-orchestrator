@@ -618,7 +618,7 @@ function createGitHubSCM(): SCM {
           ).catch(() => "");
 
           if (conflicts.trim()) {
-            // Abort rebase
+            // Abort rebase on conflicts
             await git(["rebase", "--abort"], workspacePath).catch(() => {});
             return {
               success: false,
@@ -626,6 +626,10 @@ function createGitHubSCM(): SCM {
               oldSha,
             };
           }
+
+          // Defensive abort before re-throwing (e.g., timeout, other errors)
+          // Prevents leaving .git/rebase-merge state that breaks subsequent git ops
+          await git(["rebase", "--abort"], workspacePath).catch(() => {});
           throw err;
         }
 

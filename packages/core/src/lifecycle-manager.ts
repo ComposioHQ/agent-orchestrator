@@ -183,6 +183,17 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
 
+  /** Get merged reaction config (project overrides + global defaults). */
+  function getReactionConfig(
+    reactionKey: string,
+    project: ProjectConfig,
+  ): ReactionConfig | null {
+    const globalReaction = config.reactions[reactionKey];
+    const projectReaction = project.reactions?.[reactionKey];
+    const merged = projectReaction ? { ...globalReaction, ...projectReaction } : globalReaction;
+    return merged ?? null;
+  }
+
   /** Determine current status for a session by polling plugins. */
   async function determineStatus(session: Session): Promise<SessionStatus> {
     const project = config.projects[session.projectId];
@@ -461,11 +472,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         if (reactionKey) {
           // Merge project-specific overrides with global defaults
           const project = config.projects[session.projectId];
-          const globalReaction = config.reactions[reactionKey];
-          const projectReaction = project?.reactions?.[reactionKey];
-          const reactionConfig = projectReaction
-            ? { ...globalReaction, ...projectReaction }
-            : globalReaction;
+          const reactionConfig = project ? getReactionConfig(reactionKey, project) : null;
 
           if (reactionConfig && reactionConfig.action) {
             // auto: false skips automated agent actions but still allows notifications
@@ -597,11 +604,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
           // Get reaction config (merge project overrides with defaults)
           const reactionKey = "rebase-conflicts";
-          const globalReaction = config.reactions[reactionKey];
-          const projectReaction = project.reactions?.[reactionKey];
-          const reactionConfig = projectReaction
-            ? { ...globalReaction, ...projectReaction }
-            : globalReaction;
+          const reactionConfig = getReactionConfig(reactionKey, project);
 
           if (reactionConfig && reactionConfig.action) {
             // Execute reaction (sends to agent, handles escalation)
@@ -652,11 +655,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
         // Get reaction config (merge project overrides with defaults)
         const reactionKey = "rebase-conflicts";
-        const globalReaction = config.reactions[reactionKey];
-        const projectReaction = project.reactions?.[reactionKey];
-        const reactionConfig = projectReaction
-          ? { ...globalReaction, ...projectReaction }
-          : globalReaction;
+        const reactionConfig = getReactionConfig(reactionKey, project);
 
         if (reactionConfig && reactionConfig.action) {
           // Re-execute reaction (checks escalation timer)
