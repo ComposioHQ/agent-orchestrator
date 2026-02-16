@@ -576,6 +576,9 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             rebaseStatus: "clean",
           });
 
+          // Clear reaction tracker for rebase-conflicts (prevents stale state on re-conflict)
+          reactionTrackers.delete(`${session.id}:rebase-conflicts`);
+
           // Emit low-priority info event
           const event = createEvent("pr.rebased", {
             sessionId: session.id,
@@ -644,6 +647,9 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   async function checkRebaseConflicts(sessions: Session[]): Promise<void> {
     for (const session of sessions) {
       try {
+        // Skip terminal sessions
+        if (session.status === "merged" || session.status === "killed") continue;
+
         // Only check sessions with conflicted rebase status
         const rebaseStatus = session.metadata?.["rebaseStatus"];
         if (rebaseStatus !== "conflicted") continue;
