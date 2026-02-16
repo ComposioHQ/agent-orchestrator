@@ -19,11 +19,6 @@ pnpm install
 echo "🔨 Building all packages..."
 pnpm build
 
-echo "🔧 Rebuilding node-pty from source (fixes DirectTerminal)..."
-cd node_modules/.pnpm/node-pty@1.1.0/node_modules/node-pty
-npx node-gyp rebuild > /dev/null 2>&1 || echo "⚠️  node-pty rebuild failed (non-critical)"
-cd ../../../../..
-
 echo "🔗 Linking CLI globally..."
 cd packages/cli
 npm link

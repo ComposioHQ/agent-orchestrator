@@ -23,7 +23,8 @@
     "changeset": "changeset",
     "version-packages": "changeset version",
     "release": "pnpm -r --filter '!@composio/ao-web' build && changeset publish",
-    "prepare": "husky"
+    "prepare": "husky",
+    "postinstall": "node scripts/rebuild-node-pty.js"
   },
   "devDependencies": {
     "@changesets/cli": "^2.29.8",
