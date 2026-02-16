@@ -66,6 +66,7 @@ export const SESSION_STATUS = {
   PR_OPEN: "pr_open" as const,
   CI_FAILED: "ci_failed" as const,
   REVIEW_PENDING: "review_pending" as const,
+  REVIEW_COMMENTS_UNRESOLVED: "review_comments_unresolved" as const,
   CHANGES_REQUESTED: "changes_requested" as const,
   APPROVED: "approved" as const,
   MERGEABLE: "mergeable" as const,
