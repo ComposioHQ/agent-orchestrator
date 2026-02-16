@@ -78,6 +78,13 @@ export const NON_RESTORABLE_STATUSES: ReadonlySet<SessionStatus> = new Set([
 ]);
 
 /**
+ * CI status constants for client components.
+ *
+ * MUST MATCH: @composio/ao-core CI_STATUS
+ */
+export { CI_STATUS };
+
+/**
  * Attention zone priority level, ordered by human action urgency:
  *
  * 1. merge   — PR approved + CI green. One click to clear. Highest ROI.
