@@ -91,6 +91,11 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
     project: raw["project"],
     createdAt: raw["createdAt"],
     runtimeHandle: raw["runtimeHandle"],
+    lastRebaseTime: raw["lastRebaseTime"],
+    lastRebaseMainSHA: raw["lastRebaseMainSHA"],
+    rebaseStatus: raw["rebaseStatus"] as "clean" | "conflicted" | "error" | undefined,
+    rebaseError: raw["rebaseError"],
+    lastRebaseAttempt: raw["lastRebaseAttempt"],
   };
 }
 
@@ -129,6 +134,11 @@ export function writeMetadata(
   if (metadata.project) data["project"] = metadata.project;
   if (metadata.createdAt) data["createdAt"] = metadata.createdAt;
   if (metadata.runtimeHandle) data["runtimeHandle"] = metadata.runtimeHandle;
+  if (metadata.lastRebaseTime) data["lastRebaseTime"] = metadata.lastRebaseTime;
+  if (metadata.lastRebaseMainSHA) data["lastRebaseMainSHA"] = metadata.lastRebaseMainSHA;
+  if (metadata.rebaseStatus) data["rebaseStatus"] = metadata.rebaseStatus;
+  if (metadata.rebaseError) data["rebaseError"] = metadata.rebaseError;
+  if (metadata.lastRebaseAttempt) data["lastRebaseAttempt"] = metadata.lastRebaseAttempt;
 
   writeFileSync(path, serializeMetadata(data), "utf-8");
 }

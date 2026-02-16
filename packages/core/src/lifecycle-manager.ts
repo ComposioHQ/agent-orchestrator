@@ -667,17 +667,20 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           const trackerKey = `${session.id}:${reactionKey}`;
           const tracker = reactionTrackers.get(trackerKey);
 
-          // Skip if reaction was recently triggered and escalation time hasn't passed
+          // Skip if reaction was recently triggered and escalation threshold hasn't been met
           if (tracker && reactionConfig.escalateAfter) {
-            const escalateDuration =
-              typeof reactionConfig.escalateAfter === "string"
-                ? parseDuration(reactionConfig.escalateAfter)
-                : reactionConfig.escalateAfter * 60_000;
-            const elapsed = Date.now() - tracker.firstTriggered.getTime();
-
-            // Only re-trigger if escalation time has passed (to actually escalate)
-            if (elapsed < escalateDuration) {
-              continue; // Skip - not time to escalate yet
+            if (typeof reactionConfig.escalateAfter === "string") {
+              // String: time duration (e.g., "30m")
+              const escalateDuration = parseDuration(reactionConfig.escalateAfter);
+              const elapsed = Date.now() - tracker.firstTriggered.getTime();
+              if (escalateDuration > 0 && elapsed < escalateDuration) {
+                continue; // Skip - not enough time has passed
+              }
+            } else {
+              // Number: attempt count (e.g., 2 means escalate after 2 attempts)
+              if (tracker.attempts <= reactionConfig.escalateAfter) {
+                continue; // Skip - not enough attempts yet
+              }
             }
           }
 
@@ -703,10 +706,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     polling = true;
 
     try {
-      const sessions = await sessionManager.list();
+      let sessions = await sessionManager.list();
 
       // Check for main branch advancement and trigger rebases
       await checkMainBranchUpdates(sessions);
+
+      // Reload sessions after rebase updates to avoid stale metadata
+      sessions = await sessionManager.list();
 
       // Re-evaluate sessions with rebase conflicts (for escalation)
       await checkRebaseConflicts(sessions);
