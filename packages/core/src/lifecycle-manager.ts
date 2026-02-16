@@ -548,66 +548,91 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const agent = registry.get<Agent>("agent", project.agent ?? config.defaults.agent);
 
     for (const session of sessions) {
-      // Skip if agent is actively processing
-      if (agent && session.runtimeHandle) {
-        try {
-          const activity = await agent.getActivityState(session);
-          if (activity && activity.state === "active") continue;
-        } catch {
-          continue; // Can't determine - skip to be safe
+      try {
+        // Skip if agent is actively processing
+        if (agent && session.runtimeHandle) {
+          try {
+            const activity = await agent.getActivityState(session);
+            if (activity && activity.state === "active") continue;
+          } catch {
+            continue; // Can't determine - skip to be safe
+          }
         }
-      }
 
-      if (!session.workspacePath || !session.pr || !scm.rebaseAndPush) continue;
+        if (!session.workspacePath || !session.pr || !scm.rebaseAndPush) continue;
 
-      const sessionsDir = getSessionsDir(config.configPath, project.path);
+        const sessionsDir = getSessionsDir(config.configPath, project.path);
 
-      // Attempt rebase
-      const result = await scm.rebaseAndPush({
-        workspacePath: session.workspacePath,
-        branch: session.pr.branch,
-        baseBranch: project.defaultBranch,
-        remoteName: "origin",
-      });
-
-      if (result.success) {
-        // Silent success - update metadata
-        updateMetadata(sessionsDir, session.id, {
-          lastRebaseTime: new Date().toISOString(),
-          lastRebaseMainSHA: result.newSha ?? "",
-          rebaseStatus: "clean",
+        // Attempt rebase
+        const result = await scm.rebaseAndPush({
+          workspacePath: session.workspacePath,
+          branch: session.pr.branch,
+          baseBranch: project.defaultBranch,
+          remoteName: "origin",
         });
 
-        // Emit low-priority info event
-        const event = createEvent("pr.rebased", {
-          sessionId: session.id,
-          projectId: session.projectId,
-          message: `Rebased ${session.id} onto ${project.defaultBranch}`,
-          priority: "info",
-        });
-        await notifyHuman(event, "info");
-      } else if (result.conflicted) {
-        // Conflicts - escalate to human
-        updateMetadata(sessionsDir, session.id, {
-          rebaseStatus: "conflicted",
-          lastRebaseAttempt: new Date().toISOString(),
-        });
+        if (result.success) {
+          // Silent success - update metadata
+          updateMetadata(sessionsDir, session.id, {
+            lastRebaseTime: new Date().toISOString(),
+            lastRebaseMainSHA: result.newSha ?? "",
+            rebaseStatus: "clean",
+          });
 
-        const event = createEvent("pr.rebase_conflict", {
-          sessionId: session.id,
-          projectId: session.projectId,
-          message: `${session.id}: Rebase conflicts with ${project.defaultBranch}`,
-          priority: "urgent",
-          data: { prUrl: session.pr.url },
-        });
-        await notifyHuman(event, "urgent");
-      } else {
-        // Other errors - log to metadata, continue
-        updateMetadata(sessionsDir, session.id, {
-          rebaseStatus: "error",
-          rebaseError: result.error ?? "Unknown error",
-          lastRebaseAttempt: new Date().toISOString(),
-        });
+          // Emit low-priority info event
+          const event = createEvent("pr.rebased", {
+            sessionId: session.id,
+            projectId: session.projectId,
+            message: `Rebased ${session.id} onto ${project.defaultBranch}`,
+            priority: "info",
+          });
+          await notifyHuman(event, "info");
+        } else if (result.conflicted) {
+          // Conflicts - invoke reaction engine for proper agent message + escalation
+          updateMetadata(sessionsDir, session.id, {
+            rebaseStatus: "conflicted",
+            lastRebaseAttempt: new Date().toISOString(),
+          });
+
+          // Get reaction config (merge project overrides with defaults)
+          const reactionKey = "rebase-conflicts";
+          const globalReaction = config.reactions[reactionKey];
+          const projectReaction = project.reactions?.[reactionKey];
+          const reactionConfig = projectReaction
+            ? { ...globalReaction, ...projectReaction }
+            : globalReaction;
+
+          if (reactionConfig && reactionConfig.action) {
+            // Execute reaction (sends to agent, handles escalation)
+            await executeReaction(
+              session.id,
+              session.projectId,
+              reactionKey,
+              reactionConfig as ReactionConfig,
+            );
+          } else {
+            // Fallback if reaction not configured
+            const event = createEvent("pr.rebase_conflict", {
+              sessionId: session.id,
+              projectId: session.projectId,
+              message: `${session.id}: Rebase conflicts with ${project.defaultBranch}`,
+              priority: "urgent",
+              data: { prUrl: session.pr.url },
+            });
+            await notifyHuman(event, "urgent");
+          }
+        } else {
+          // Other errors - log to metadata, continue
+          updateMetadata(sessionsDir, session.id, {
+            rebaseStatus: "error",
+            rebaseError: result.error ?? "Unknown error",
+            lastRebaseAttempt: new Date().toISOString(),
+          });
+        }
+      } catch {
+        // Per-session error - continue with remaining sessions
+        // (e.g., updateMetadata I/O failure, notifier errors)
+        continue;
       }
     }
   }
