@@ -174,7 +174,7 @@ export function registerStart(program: Command): void {
         try {
           const config = loadConfig();
           const { projectId, project } = resolveProject(config, projectArg);
-          const sessionId = `${project.sessionPrefix}-orchestrator`;
+          const sessionId = `${project.sessionPrefix || projectId}-orchestrator`;
           const port = config.port;
 
           console.log(chalk.bold(`\nStarting orchestrator for ${chalk.cyan(project.name)}\n`));
@@ -201,6 +201,37 @@ export function registerStart(program: Command): void {
           if (opts?.orchestrator !== false) {
             // Check if orchestrator session already exists
             exists = await hasTmuxSession(sessionId);
+
+            // Migration: Check for legacy "undefined-orchestrator" session
+            const legacySessionId = "undefined-orchestrator";
+            const legacyExists = await hasTmuxSession(legacySessionId);
+
+            if (legacyExists && !exists) {
+              console.log(
+                chalk.yellow(
+                  `\nFound legacy orchestrator session "${legacySessionId}"`,
+                ),
+              );
+              console.log(
+                chalk.yellow(
+                  `Stopping legacy session and creating new session "${sessionId}"...\n`,
+                ),
+              );
+
+              // Stop legacy session
+              try {
+                await exec("tmux", ["kill-session", "-t", legacySessionId]);
+                // Archive legacy metadata if it exists
+                deleteMetadata(config.dataDir, legacySessionId, true);
+                console.log(chalk.green(`✓ Legacy session stopped\n`));
+              } catch (err) {
+                console.log(
+                  chalk.yellow(
+                    `Warning: Could not stop legacy session: ${err instanceof Error ? err.message : String(err)}\n`,
+                  ),
+                );
+              }
+            }
 
             if (exists) {
               console.log(
@@ -365,14 +396,17 @@ export function registerStop(program: Command): void {
     .action(async (projectArg?: string) => {
       try {
         const config = loadConfig();
-        const { projectId: _projectId, project } = resolveProject(config, projectArg);
-        const sessionId = `${project.sessionPrefix}-orchestrator`;
+        const { projectId, project } = resolveProject(config, projectArg);
+        const sessionId = `${project.sessionPrefix || projectId}-orchestrator`;
         const port = config.port;
 
         console.log(chalk.bold(`\nStopping orchestrator for ${chalk.cyan(project.name)}\n`));
 
-        // Kill orchestrator session
+        // Kill orchestrator session (check both new and legacy names)
         const sessions = await getTmuxSessions();
+        const legacySessionId = "undefined-orchestrator";
+        let stopped = false;
+
         if (sessions.includes(sessionId)) {
           const spinner = ora("Stopping orchestrator session").start();
           await exec("tmux", ["kill-session", "-t", sessionId]);
@@ -380,8 +414,26 @@ export function registerStop(program: Command): void {
 
           // Archive metadata
           deleteMetadata(config.dataDir, sessionId, true);
-        } else {
-          console.log(chalk.yellow(`Orchestrator session "${sessionId}" is not running`));
+          stopped = true;
+        } else if (sessions.includes(legacySessionId)) {
+          // Migration: Stop legacy session if it exists
+          console.log(chalk.yellow(`Found legacy session "${legacySessionId}"`));
+          const spinner = ora("Stopping legacy orchestrator session").start();
+          await exec("tmux", ["kill-session", "-t", legacySessionId]);
+          spinner.succeed("Legacy orchestrator session stopped");
+
+          // Archive metadata
+          deleteMetadata(config.dataDir, legacySessionId, true);
+          stopped = true;
+        }
+
+        if (!stopped) {
+          console.log(
+            chalk.yellow(
+              `Orchestrator session "${sessionId}" is not running\n` +
+                chalk.dim(`(Also checked for legacy session "${legacySessionId}")`),
+            ),
+          );
         }
 
         // Stop dashboard

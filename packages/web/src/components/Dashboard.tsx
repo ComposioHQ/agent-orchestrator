@@ -88,13 +88,29 @@ export function Dashboard({ sessions, stats, orchestratorId }: DashboardProps) {
           <span className="text-[#7c8aff]">Agent</span> Orchestrator
         </h1>
         <div className="flex items-baseline gap-4">
-          {orchestratorId && (
+          {orchestratorId ? (
             <a
               href={`/sessions/${encodeURIComponent(orchestratorId)}`}
               className="rounded-md border border-[var(--color-border-default)] px-3 py-1 text-[11px] text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-accent-blue)] hover:text-[var(--color-accent-blue)]"
             >
               orchestrator terminal
             </a>
+          ) : (
+            <div
+              className="group relative rounded-md border border-dashed border-[var(--color-border-default)] px-3 py-1 text-[11px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-accent-blue)]"
+              title="No orchestrator session found. Run 'ao start' to create one."
+            >
+              orchestrator terminal
+              <span className="pointer-events-none absolute -bottom-14 left-1/2 z-50 hidden w-max max-w-[280px] -translate-x-1/2 rounded-md border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] px-3 py-2 text-[10px] text-[var(--color-text-secondary)] shadow-lg group-hover:block">
+                <span className="block font-semibold text-[var(--color-text-primary)]">
+                  No orchestrator session
+                </span>
+                <span className="mt-1 block">Run:</span>
+                <code className="mt-1 block rounded bg-[var(--color-bg-default)] px-1.5 py-0.5 font-mono text-[var(--color-accent-blue)]">
+                  ao start
+                </code>
+              </span>
+            </div>
           )}
           <ClientTimestamp />
         </div>

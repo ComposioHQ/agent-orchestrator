@@ -145,6 +145,9 @@ pnpm test              # run tests
 
 # Before committing
 pnpm lint && pnpm typecheck
+
+# Quick verification test (orchestrator setup)
+./scripts/test-orchestrator-setup.sh  # 5-second end-to-end test
 ```
 
 ## Development Workflow

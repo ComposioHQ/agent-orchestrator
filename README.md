@@ -205,6 +205,21 @@ packages/
     terminal-*/  - Terminal plugins
 ```
 
+## Testing
+
+### Quick Verification Test
+
+Verify your setup is working correctly:
+
+```bash
+# Automated test (5 seconds)
+./scripts/test-orchestrator-setup.sh
+
+# Manual test - see QUICKTEST.md for details
+```
+
+See [QUICKTEST.md](QUICKTEST.md) for detailed test procedures and troubleshooting.
+
 ## Troubleshooting
 
 See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for common issues and solutions.
