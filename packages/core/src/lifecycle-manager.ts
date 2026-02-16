@@ -267,15 +267,19 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           // If there are ANY pending comments, stay in review_comments_unresolved
           // (checkSession will detect new comments and trigger reactions)
           if (pendingComments.length > 0) {
-            // Initialize reviewCommentsSeen on first transition to prevent duplicate reactions
-            // Only update if currently unset (empty or missing) to avoid overwriting existing tracking
-            const currentSeenIds = session.metadata?.["reviewCommentsSeen"] || "";
-            if (!currentSeenIds) {
-              // First time detecting comments — mark all current comments as seen
-              // This prevents the reaction from firing twice (once on transition, once on next poll)
-              const allCommentIds = pendingComments.map((c) => c.id).join(",");
+            // Update reviewCommentsSeen to current comment IDs to prevent duplicate reactions
+            // This handles both initial entry and re-entry (after comments were resolved and new ones appeared)
+            const currentCommentIds = pendingComments.map((c) => c.id).join(",");
+            const seenIds = session.metadata?.["reviewCommentsSeen"] || "";
+
+            // Only update if the comment set has changed (initial entry or re-entry with different comments)
+            // This prevents unnecessary metadata writes on every poll when nothing changed
+            if (currentCommentIds !== seenIds) {
+              // Mark all current comments as seen to prevent duplicate reactions:
+              // - On first entry: prevents reaction firing twice (once on transition, once on next poll)
+              // - On re-entry: replaces stale IDs with current IDs (prevents new comments from being detected as "new" on next poll)
               updateMetadata(config.dataDir, session.id, {
-                reviewCommentsSeen: allCommentIds,
+                reviewCommentsSeen: currentCommentIds,
               });
             }
             return "review_comments_unresolved";
