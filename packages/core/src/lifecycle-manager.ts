@@ -627,12 +627,22 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             await notifyHuman(event, "urgent");
           }
         } else {
-          // Other errors - log to metadata, continue
+          // Other errors - log to metadata and notify
           updateMetadata(sessionsDir, session.id, {
             rebaseStatus: "error",
             rebaseError: result.error ?? "Unknown error",
             lastRebaseAttempt: new Date().toISOString(),
           });
+
+          // Emit error event for visibility
+          const event = createEvent("pr.rebase_error", {
+            sessionId: session.id,
+            projectId: session.projectId,
+            message: `${session.id}: Rebase error - ${result.error ?? "Unknown error"}`,
+            priority: "warning",
+            data: { error: result.error, prUrl: session.pr.url },
+          });
+          await notifyHuman(event, "warning");
         }
       } catch {
         // Per-session error - continue with remaining sessions

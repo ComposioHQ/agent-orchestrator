@@ -604,10 +604,13 @@ function createGitHubSCM(): SCM {
           };
         }
 
-        // 3. Get pre-rebase SHA
+        // 3. Checkout target branch (ensure we're on the correct branch)
+        await git(["checkout", branch], workspacePath);
+
+        // 4. Get pre-rebase SHA
         const oldSha = await git(["rev-parse", "HEAD"], workspacePath);
 
-        // 4. Attempt rebase
+        // 5. Attempt rebase
         try {
           await git(["rebase", `${remoteName}/${baseBranch}`], workspacePath);
         } catch (err) {
@@ -633,10 +636,10 @@ function createGitHubSCM(): SCM {
           throw err;
         }
 
-        // 5. Get new SHA after rebase
+        // 6. Get new SHA after rebase
         const newSha = await git(["rev-parse", "HEAD"], workspacePath);
 
-        // 6. Push with --force-with-lease
+        // 7. Push with --force-with-lease
         try {
           await git(
             ["push", remoteName, branch, "--force-with-lease"],
