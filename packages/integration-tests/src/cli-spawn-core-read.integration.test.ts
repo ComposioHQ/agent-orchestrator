@@ -12,7 +12,7 @@
  */
 
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, realpath, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, rm, realpath, writeFile } from "node:fs/promises";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
