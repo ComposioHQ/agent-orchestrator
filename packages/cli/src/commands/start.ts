@@ -19,6 +19,7 @@ import {
   newTmuxSession,
   tmuxSendKeys,
   writeMetadata,
+  readMetadata,
   deleteMetadata,
   getSessionsDir,
   type OrchestratorConfig,
@@ -322,6 +323,7 @@ export function registerStart(program: Command): void {
                     project: projectId,
                     createdAt: new Date().toISOString(),
                     runtimeHandle,
+                    dashboardPort: port,
                   });
                 } catch (err) {
                   // Cleanup tmux session if metadata write or agent launch fails
@@ -396,8 +398,11 @@ export function registerStop(program: Command): void {
         const config = loadConfig();
         const { projectId: _projectId, project } = resolveProject(config, projectArg);
         const sessionId = `${project.sessionPrefix}-orchestrator`;
-        const port = config.port;
         const sessionsDir = getSessionsDir(config.configPath, project.path);
+
+        // Read port from metadata (actual port used), fallback to config default
+        const metadata = readMetadata(sessionsDir, sessionId);
+        const port = metadata?.dashboardPort ? Number(metadata.dashboardPort) : config.port;
 
         console.log(chalk.bold(`\nStopping orchestrator for ${chalk.cyan(project.name)}\n`));
 

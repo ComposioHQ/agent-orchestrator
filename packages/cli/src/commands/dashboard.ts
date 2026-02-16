@@ -14,7 +14,7 @@ export function registerDashboard(program: Command): void {
     .option("--no-open", "Don't open browser automatically")
     .action(async (opts: { port?: string; open?: boolean }) => {
       const config = loadConfig();
-      const port = opts.port ? parseInt(opts.port, 10) : config.port;
+      const port = opts.port ? parseInt(opts.port, 10) : config.port ?? 4000;
 
       if (isNaN(port) || port < 1 || port > 65535) {
         console.error(chalk.red("Invalid port number. Must be 1-65535."));

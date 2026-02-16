@@ -715,8 +715,8 @@ export interface OrchestratorConfig {
    */
   configPath: string;
 
-  /** Web dashboard port */
-  port: number;
+  /** Web dashboard port (auto-detected if not specified, defaults to 4000) */
+  port?: number;
 
   /** Milliseconds before a "ready" session becomes "idle" (default: 300000 = 5 min) */
   readyThresholdMs: number;
@@ -877,6 +877,7 @@ export interface SessionMetadata {
   project?: string;
   createdAt?: string;
   runtimeHandle?: string;
+  dashboardPort?: number;
 }
 
 // =============================================================================
