@@ -7,6 +7,7 @@ import { registerSpawn, registerBatchSpawn } from "./commands/spawn.js";
 import { registerSession } from "./commands/session.js";
 import { registerSend } from "./commands/send.js";
 import { registerReviewCheck } from "./commands/review-check.js";
+import { registerLifecycle } from "./commands/lifecycle.js";
 import { registerDashboard } from "./commands/dashboard.js";
 import { registerOpen } from "./commands/open.js";
 import { registerStart, registerStop } from "./commands/start.js";
@@ -27,6 +28,7 @@ registerBatchSpawn(program);
 registerSession(program);
 registerSend(program);
 registerReviewCheck(program);
+registerLifecycle(program);
 registerDashboard(program);
 registerOpen(program);
 

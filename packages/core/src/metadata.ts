@@ -91,6 +91,7 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
     project: raw["project"],
     createdAt: raw["createdAt"],
     runtimeHandle: raw["runtimeHandle"],
+    reviewCommentsSeen: raw["reviewCommentsSeen"],
   };
 }
 
@@ -129,6 +130,7 @@ export function writeMetadata(
   if (metadata.project) data["project"] = metadata.project;
   if (metadata.createdAt) data["createdAt"] = metadata.createdAt;
   if (metadata.runtimeHandle) data["runtimeHandle"] = metadata.runtimeHandle;
+  if (metadata.reviewCommentsSeen) data["reviewCommentsSeen"] = metadata.reviewCommentsSeen;
 
   writeFileSync(path, serializeMetadata(data), "utf-8");
 }

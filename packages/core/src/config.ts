@@ -173,6 +173,15 @@ function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
         "There are review comments on your PR. Check with `gh pr view --comments` and `gh api` for inline comments. Address each one, push fixes, and reply.",
       escalateAfter: "30m",
     },
+    "review-comments": {
+      auto: true,
+      action: "send-to-agent",
+      message:
+        "There are new review comments on your PR. Check with `gh pr view --comments` and fetch inline comments with `gh api`. Address each comment, push fixes, and reply to resolve threads.",
+      retries: 2,
+      escalateAfter: "30m",
+      priority: "warning",
+    },
     "bugbot-comments": {
       auto: true,
       action: "send-to-agent",

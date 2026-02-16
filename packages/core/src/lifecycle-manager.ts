@@ -67,7 +67,12 @@ function inferPriority(type: EventType): EventPriority {
   ) {
     return "action";
   }
-  if (type.includes("fail") || type.includes("changes_requested") || type.includes("conflicts")) {
+  if (
+    type.includes("fail") ||
+    type.includes("changes_requested") ||
+    type.includes("conflicts") ||
+    type === "review.comments_unresolved"
+  ) {
     return "warning";
   }
   return "info";
@@ -107,6 +112,8 @@ function statusToEventType(_from: SessionStatus | undefined, to: SessionStatus):
       return "ci.failing";
     case "review_pending":
       return "review.pending";
+    case "review_comments_unresolved":
+      return "review.comments_unresolved";
     case "changes_requested":
       return "review.changes_requested";
     case "approved":
@@ -135,6 +142,8 @@ function eventToReactionKey(eventType: EventType): string | null {
       return "ci-failed";
     case "review.changes_requested":
       return "changes-requested";
+    case "review.comments_unresolved":
+      return "review-comments";
     case "automated_review.found":
       return "bugbot-comments";
     case "merge.conflicts":
@@ -235,13 +244,65 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const ciStatus = await scm.getCISummary(session.pr);
         if (ciStatus === CI_STATUS.FAILING) return "ci_failed";
 
+        // Check for new unresolved review comments
+        try {
+          const pendingComments = await scm.getPendingComments(session.pr);
+
+          // Get previously seen comment IDs from metadata
+          const seenIdsStr = session.metadata?.["reviewCommentsSeen"] || "";
+          const seenIds = new Set(seenIdsStr.split(",").filter(Boolean));
+
+          // Find new comments (not in seen set)
+          const newComments = pendingComments.filter((c) => !seenIds.has(c.id));
+
+          if (newComments.length > 0) {
+            // Update seen set with new comment IDs
+            for (const comment of newComments) {
+              seenIds.add(comment.id);
+            }
+
+            // Persist updated seen IDs
+            updateMetadata(config.dataDir, session.id, {
+              reviewCommentsSeen: Array.from(seenIds).join(","),
+            });
+
+            return "review_comments_unresolved";
+          }
+
+          // Check if all comments are now resolved
+          if (session.status === "review_comments_unresolved" && pendingComments.length === 0) {
+            // Comments are resolved — transition back to appropriate state
+            const reviewDecision = await scm.getReviewDecision(session.pr);
+            if (reviewDecision === "approved") {
+              const mergeReady = await scm.getMergeability(session.pr);
+              if (mergeReady.mergeable) return "mergeable";
+              return "approved";
+            }
+            return "pr_open";
+          }
+        } catch {
+          // getPendingComments failed — don't change status based on comments
+        }
+
         // Check reviews
         const reviewDecision = await scm.getReviewDecision(session.pr);
         if (reviewDecision === "changes_requested") return "changes_requested";
         if (reviewDecision === "approved") {
           // Check merge readiness
           const mergeReady = await scm.getMergeability(session.pr);
-          if (mergeReady.mergeable) return "mergeable";
+
+          if (mergeReady.mergeable) {
+            // Enhance mergeable check to include "no pending comments"
+            try {
+              const pendingComments = await scm.getPendingComments(session.pr);
+              if (pendingComments.length > 0) {
+                return "approved"; // Has pending comments → not truly mergeable
+              }
+            } catch {
+              // If comment check fails, fall through
+            }
+            return "mergeable";
+          }
           return "approved";
         }
         if (reviewDecision === "pending") return "review_pending";

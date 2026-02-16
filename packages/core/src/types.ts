@@ -29,6 +29,7 @@ export type SessionStatus =
   | "pr_open"
   | "ci_failed"
   | "review_pending"
+  | "review_comments_unresolved"
   | "changes_requested"
   | "approved"
   | "mergeable"
@@ -635,6 +636,7 @@ export type EventType =
   | "review.changes_requested"
   | "review.comments_sent"
   | "review.comments_unresolved"
+  | "review.comments_unresolved"
   // Automated reviews
   | "automated_review.found"
   | "automated_review.fix_sent"
@@ -865,6 +867,7 @@ export interface SessionMetadata {
   project?: string;
   createdAt?: string;
   runtimeHandle?: string;
+  reviewCommentsSeen?: string;
 }
 
 // =============================================================================
