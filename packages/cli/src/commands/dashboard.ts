@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { existsSync } from "node:fs";
 import chalk from "chalk";
 import type { Command } from "commander";
-import { loadConfig } from "@composio/ao-core";
+import { loadConfig, findConfigFile } from "@composio/ao-core";
 import { findWebDir } from "../lib/web-dir.js";
 
 export function registerDashboard(program: Command): void {
@@ -35,7 +35,7 @@ export function registerDashboard(program: Command): void {
       }
 
       // Resolve config file path and pass via AO_CONFIG_PATH
-      const configPath = config.__configPath;
+      const configPath = findConfigFile();
       const env = { ...process.env };
       if (configPath) {
         env["AO_CONFIG_PATH"] = configPath;
