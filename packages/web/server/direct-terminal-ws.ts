@@ -8,68 +8,15 @@
  */
 
 import { createServer } from "node:http";
-import { spawn, execFileSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { WebSocketServer, WebSocket } from "ws";
 import { spawn as ptySpawn, type IPty } from "node-pty";
 import { homedir, userInfo } from "node:os";
-
-/**
- * Find full path to tmux. Checks common locations since node-pty
- * doesn't reliably inherit PATH for posix_spawnp.
- */
-function findTmux(): string {
-  const candidates = [
-    "/opt/homebrew/bin/tmux", // macOS ARM (Homebrew)
-    "/usr/local/bin/tmux", // macOS Intel (Homebrew)
-    "/usr/bin/tmux", // Linux
-  ];
-  for (const p of candidates) {
-    try {
-      execFileSync(p, ["-V"], { timeout: 5000 });
-      return p;
-    } catch {
-      continue;
-    }
-  }
-  return "tmux"; // Fall back to bare name
-}
+import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
 
 /** Cached full path to tmux binary */
 const TMUX = findTmux();
 console.log(`[DirectTerminal] Using tmux: ${TMUX}`);
-
-/**
- * Resolve a user-facing session ID to its tmux session name.
- * Tries exact match first, then searches for hash-prefixed sessions.
- * Returns null if no matching tmux session is found.
- */
-function resolveTmuxSession(sessionId: string): string | null {
-  // Try exact match first (e.g., "ao-orchestrator")
-  try {
-    execFileSync(TMUX, ["has-session", "-t", `=${sessionId}`], { timeout: 5000 });
-    return sessionId;
-  } catch {
-    // Not an exact match
-  }
-
-  // Search for hash-prefixed tmux session (e.g., "8474d6f29887-ao-15" for "ao-15")
-  try {
-    const output = execFileSync(TMUX, ["list-sessions", "-F", "#{session_name}"], {
-      timeout: 5000,
-      encoding: "utf8",
-    });
-    const sessions = output.split("\n").filter(Boolean);
-    const match = sessions.find((s) => s.endsWith(`-${sessionId}`));
-    if (match) {
-      console.log(`[DirectTerminal] Resolved ${sessionId} → ${match}`);
-      return match;
-    }
-  } catch {
-    // tmux not running or no sessions
-  }
-
-  return null;
-}
 
 interface TerminalSession {
   sessionId: string;
@@ -118,7 +65,7 @@ wss.on("connection", (ws, req) => {
   }
 
   // Validate session ID format
-  if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) {
+  if (!validateSessionId(sessionId)) {
     console.error("[DirectTerminal] Invalid session ID:", sessionId);
     ws.close(1008, "Invalid session ID");
     return;
@@ -126,7 +73,7 @@ wss.on("connection", (ws, req) => {
 
   // Resolve tmux session name: try exact match first, then suffix match
   // (hash-prefixed sessions like "8474d6f29887-ao-15" are accessed by user-facing ID "ao-15")
-  const tmuxSessionId = resolveTmuxSession(sessionId);
+  const tmuxSessionId = resolveTmuxSession(sessionId, TMUX);
   if (!tmuxSessionId) {
     console.error("[DirectTerminal] tmux session not found:", sessionId);
     ws.close(1008, "Session not found");
