@@ -15,9 +15,11 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, request } from "node:http";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
-import { loadConfig } from "@composio/ao-core";
+import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
+
+/** Cached full path to tmux binary */
+const TMUX = findTmux();
+console.log(`[Terminal] Using tmux: ${TMUX}`);
 
 interface TtydInstance {
   sessionId: string;
@@ -30,8 +32,6 @@ const availablePorts = new Set<number>(); // Pool of recycled ports
 let nextPort = 7800; // Start ttyd instances from port 7800
 const MAX_PORT = 7900; // Prevent unbounded port allocation
 
-// Load config once at startup
-const config = loadConfig();
 
 /**
  * Check if ttyd is ready to accept connections by making a test request.
@@ -105,7 +105,13 @@ function waitForTtyd(port: number, sessionId: string, timeoutMs = 3000): Promise
   });
 }
 
-function getOrSpawnTtyd(sessionId: string): TtydInstance {
+/**
+ * Spawn or reuse a ttyd instance for a tmux session.
+ *
+ * @param sessionId - User-facing session ID (used for base-path and URL)
+ * @param tmuxSessionName - Actual tmux session name (may be hash-prefixed)
+ */
+function getOrSpawnTtyd(sessionId: string, tmuxSessionName: string): TtydInstance {
   const existing = instances.get(sessionId);
   if (existing) return existing;
 
@@ -123,20 +129,22 @@ function getOrSpawnTtyd(sessionId: string): TtydInstance {
     port = nextPort++;
   }
 
-  console.log(`[Terminal] Spawning ttyd for ${sessionId} on port ${port}`);
+  console.log(`[Terminal] Spawning ttyd for ${tmuxSessionName} on port ${port}`);
 
   // Enable mouse mode for scrollback support
-  const mouseProc = spawn("tmux", ["set-option", "-t", sessionId, "mouse", "on"]);
+  const mouseProc = spawn(TMUX, ["set-option", "-t", tmuxSessionName, "mouse", "on"]);
   mouseProc.on("error", (err) => {
-    console.error(`[Terminal] Failed to set mouse mode for ${sessionId}:`, err.message);
+    console.error(`[Terminal] Failed to set mouse mode for ${tmuxSessionName}:`, err.message);
   });
 
   // Hide the green status bar for cleaner appearance
-  const statusProc = spawn("tmux", ["set-option", "-t", sessionId, "status", "off"]);
+  const statusProc = spawn(TMUX, ["set-option", "-t", tmuxSessionName, "status", "off"]);
   statusProc.on("error", (err) => {
-    console.error(`[Terminal] Failed to hide status bar for ${sessionId}:`, err.message);
+    console.error(`[Terminal] Failed to hide status bar for ${tmuxSessionName}:`, err.message);
   });
 
+  // Use user-facing sessionId for base-path (matches URL the dashboard uses)
+  // Use tmuxSessionName for tmux attach (may be hash-prefixed)
   const proc = spawn(
     "ttyd",
     [
@@ -145,10 +153,10 @@ function getOrSpawnTtyd(sessionId: string): TtydInstance {
       String(port),
       "--base-path",
       `/${sessionId}`,
-      "tmux",
+      TMUX,
       "attach-session",
       "-t",
-      sessionId,
+      tmuxSessionName,
     ],
     {
       stdio: ["ignore", "pipe", "pipe"],
@@ -241,15 +249,16 @@ const server = createServer(async (req, res) => {
     }
 
     // Validate session ID to prevent path traversal and injection
-    if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) {
+    if (!validateSessionId(sessionId)) {
       res.writeHead(400, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Invalid session ID" }));
       return;
     }
 
-    // Validate session exists before spawning ttyd using configured dataDir
-    const sessionPath = join(config.dataDir, sessionId);
-    if (!existsSync(sessionPath)) {
+    // Resolve tmux session name: try exact match first, then suffix match
+    // (hash-prefixed sessions like "8474d6f29887-ao-15" are accessed by user-facing ID "ao-15")
+    const tmuxSessionId = resolveTmuxSession(sessionId, TMUX);
+    if (!tmuxSessionId) {
       res.writeHead(404, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Session not found" }));
       return;
@@ -257,7 +266,7 @@ const server = createServer(async (req, res) => {
 
     // Spawn ttyd and wait for it to be ready (catch port exhaustion and startup failures)
     try {
-      const instance = getOrSpawnTtyd(sessionId);
+      const instance = getOrSpawnTtyd(sessionId, tmuxSessionId);
       await waitForTtyd(instance.port, sessionId);
 
       // Use the request host to construct the terminal URL (supports remote access)

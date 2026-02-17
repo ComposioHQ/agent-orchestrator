@@ -22,6 +22,6 @@
     "declarationMap": false,
     "verbatimModuleSyntax": false
   },
-  "include": ["next-env.d.ts", "src", ".next/types/**/*.ts"],
+  "include": ["next-env.d.ts", "src", "server", ".next/types/**/*.ts"],
   "exclude": ["node_modules", "src/**/*.test.tsx", "src/**/__tests__"]
 }
