@@ -88,8 +88,8 @@ describe("DashboardManager", () => {
       const env = mockSpawn.mock.calls[0][2].env;
       expect(env["AO_CONFIG_PATH"]).toBe("/path/to/config.yaml");
       expect(env["PORT"]).toBe("4000");
-      expect(env["TERMINAL_WS_PORT"]).toBe("3001");
-      expect(env["DIRECT_TERMINAL_WS_PORT"]).toBe("3003");
+      expect(env["TERMINAL_PORT"]).toBe("3001");
+      expect(env["DIRECT_TERMINAL_PORT"]).toBe("3003");
     });
 
     it("should not set AO_CONFIG_PATH when configPath is null", () => {

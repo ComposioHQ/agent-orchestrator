@@ -8,7 +8,7 @@ vi.mock("../../src/lib/port.js", () => ({
   isPortAvailable: mockIsPortAvailable,
 }));
 
-import { PortManager, type ServicePorts } from "../../src/services/PortManager.js";
+import { PortManager } from "../../src/services/PortManager.js";
 
 describe("PortManager", () => {
   let pm: PortManager;

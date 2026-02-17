@@ -47,8 +47,8 @@ export class DashboardManager {
 
     // Set ports for all services
     env["PORT"] = String(ports.dashboard);
-    env["TERMINAL_WS_PORT"] = String(ports.terminalWs);
-    env["DIRECT_TERMINAL_WS_PORT"] = String(ports.directTerminalWs);
+    env["TERMINAL_PORT"] = String(ports.terminalWs);
+    env["DIRECT_TERMINAL_PORT"] = String(ports.directTerminalWs);
 
     const child = spawn("pnpm", ["run", "dev"], {
       cwd: webDir,

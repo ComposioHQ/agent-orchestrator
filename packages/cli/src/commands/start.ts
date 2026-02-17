@@ -5,15 +5,13 @@
  * CLAUDE.orchestrator.md and injecting it via CLAUDE.local.md import.
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { resolve, join } from "node:path";
+import { join } from "node:path";
 import chalk from "chalk";
 import ora from "ora";
 import type { Command } from "commander";
 import {
-  loadConfig,
-  findConfigFile,
   generateOrchestratorPrompt,
   hasTmuxSession,
   newTmuxSession,
@@ -27,8 +25,9 @@ import {
 } from "@composio/ao-core";
 import { exec, getTmuxSessions } from "../lib/shell.js";
 import { getAgent } from "../lib/plugins.js";
-import { findWebDir } from "../lib/web-dir.js";
-import { findAvailablePort } from "../lib/port.js";
+import { getConfig, getConfigPath } from "../services/ConfigService.js";
+import { PortManager } from "../services/PortManager.js";
+import { DashboardManager } from "../services/DashboardManager.js";
 
 /**
  * Ensure CLAUDE.orchestrator.md exists in the project directory.
@@ -119,75 +118,6 @@ function resolveProject(
   );
 }
 
-/**
- * Start dashboard server in the background.
- * Runs the full dev script which starts Next.js + WebSocket terminal servers.
- * Returns the child process handle for cleanup.
- */
-function startDashboard(port: number, webDir: string, configPath: string): ChildProcess {
-  const env = { ...process.env };
-
-  // Pass config path to dashboard so it uses the same config as ao start
-  env["AO_CONFIG_PATH"] = configPath;
-
-  // Set PORT for Next.js dev server (used by dev:next script)
-  env["PORT"] = String(port);
-
-  // Run full dev script (Next.js + terminal WebSocket servers)
-  const child = spawn("pnpm", ["run", "dev"], {
-    cwd: webDir,
-    stdio: "inherit",
-    detached: false,
-    env,
-  });
-
-  child.on("error", (err) => {
-    console.error(chalk.red("Dashboard failed to start:"), err);
-  });
-
-  return child;
-}
-
-/**
- * Stop dashboard server and its WebSocket servers.
- * Uses lsof to find processes listening on dashboard and WebSocket ports, then kills them.
- * Best effort — if it fails, just warn the user.
- */
-async function stopDashboard(port: number): Promise<void> {
-  try {
-    // Kill processes on all dashboard-related ports:
-    // - Dashboard port (Next.js)
-    // - Port 3001 (terminal WebSocket)
-    // - Port 3003 (direct terminal WebSocket)
-    const ports = [port, 3001, 3003];
-    const allPids: string[] = [];
-
-    for (const p of ports) {
-      try {
-        const { stdout } = await exec("lsof", ["-ti", `:${p}`]);
-        const pids = stdout
-          .trim()
-          .split("\n")
-          .filter((pid) => pid.length > 0);
-        allPids.push(...pids);
-      } catch {
-        // Port not in use, continue
-      }
-    }
-
-    if (allPids.length > 0) {
-      // Deduplicate PIDs (in case parent process is found on multiple ports)
-      const uniquePids = [...new Set(allPids)];
-      await exec("kill", uniquePids);
-      console.log(chalk.green("Dashboard and WebSocket servers stopped"));
-    } else {
-      console.log(chalk.yellow(`Dashboard not running on port ${port}`));
-    }
-  } catch {
-    console.log(chalk.yellow("Could not stop dashboard (may not be running)"));
-  }
-}
-
 export function registerStart(program: Command): void {
   program
     .command("start [project]")
@@ -201,22 +131,23 @@ export function registerStart(program: Command): void {
         opts?: { dashboard?: boolean; orchestrator?: boolean; regenerate?: boolean },
       ) => {
         try {
-          // Find config path before loading (so we can pass it to dashboard)
-          const configPath = findConfigFile();
+          const configPath = getConfigPath();
           if (!configPath) {
             throw new Error("No agent-orchestrator.yaml found. Run `ao init` to create one.");
           }
 
-          const config = loadConfig(configPath);
+          const config = getConfig(configPath);
           const { projectId, project } = resolveProject(config, projectArg);
           const sessionId = `${project.sessionPrefix}-orchestrator`;
 
-          // Find available port (default 4000, or user-specified)
-          const preferredPort = config.port ?? 4000;
-          const port = await findAvailablePort(preferredPort);
+          // Allocate ports for all services
+          const portManager = new PortManager();
+          const ports = await portManager.allocateServicePorts(config.port ?? 3000);
 
-          if (port !== preferredPort) {
-            console.log(chalk.yellow(`Port ${preferredPort} in use, using ${port} instead`));
+          if (ports.dashboard !== (config.port ?? 3000)) {
+            console.log(
+              chalk.yellow(`Port ${config.port ?? 3000} in use, using ${ports.dashboard} instead`),
+            );
           }
 
           console.log(chalk.bold(`\nStarting orchestrator for ${chalk.cyan(project.name)}\n`));
@@ -225,19 +156,22 @@ export function registerStart(program: Command): void {
           const spinner = ora();
           let dashboardProcess: ChildProcess | null = null;
           let exists = false; // Track whether orchestrator session already exists
+          const dashboardManager = new DashboardManager();
 
           if (opts?.dashboard !== false) {
             spinner.start("Starting dashboard");
-            const webDir = findWebDir();
-            if (!existsSync(resolve(webDir, "package.json"))) {
-              spinner.fail("Dashboard not found");
-              throw new Error("Could not find @composio/ao-web package. Run: pnpm install");
-            }
 
-            // Pass config path to dashboard so it uses the same config
-            dashboardProcess = startDashboard(port, webDir, configPath);
-            spinner.succeed(`Dashboard starting on http://localhost:${port}`);
-            console.log(chalk.dim("  (Dashboard will be ready in a few seconds)\n"));
+            try {
+              dashboardProcess = dashboardManager.start({
+                ports,
+                configPath,
+              });
+              spinner.succeed(`Dashboard starting on http://localhost:${ports.dashboard}`);
+              console.log(chalk.dim("  (Dashboard will be ready in a few seconds)\n"));
+            } catch (err) {
+              spinner.fail("Dashboard not found");
+              throw err;
+            }
           }
 
           // Create orchestrator tmux session (unless --no-orchestrator or already exists)
@@ -259,7 +193,7 @@ export function registerStart(program: Command): void {
               if (existingMetadata) {
                 writeMetadata(sessionsDir, sessionId, {
                   ...existingMetadata,
-                  dashboardPort: port,
+                  dashboardPort: ports.dashboard,
                 });
               }
             } else {
@@ -347,7 +281,7 @@ export function registerStart(program: Command): void {
                     project: projectId,
                     createdAt: new Date().toISOString(),
                     runtimeHandle,
-                    dashboardPort: port,
+                    dashboardPort: ports.dashboard,
                   });
                 } catch (err) {
                   // Cleanup tmux session if metadata write or agent launch fails
@@ -376,7 +310,7 @@ export function registerStart(program: Command): void {
           console.log(chalk.bold.green("\n✓ Startup complete\n"));
 
           if (opts?.dashboard !== false) {
-            console.log(chalk.cyan("Dashboard:"), `http://localhost:${port}`);
+            console.log(chalk.cyan("Dashboard:"), `http://localhost:${ports.dashboard}`);
           }
 
           if (opts?.orchestrator !== false && !exists) {
@@ -419,14 +353,20 @@ export function registerStop(program: Command): void {
     .description("Stop orchestrator agent and dashboard for a project")
     .action(async (projectArg?: string) => {
       try {
-        const config = loadConfig();
+        const config = getConfig();
         const { projectId: _projectId, project } = resolveProject(config, projectArg);
         const sessionId = `${project.sessionPrefix}-orchestrator`;
         const sessionsDir = getSessionsDir(config.configPath, project.path);
 
         // Read port from metadata (actual port used), fallback to config default
         const metadata = readMetadata(sessionsDir, sessionId);
-        const port = metadata?.dashboardPort ? Number(metadata.dashboardPort) : (config.port ?? 3000);
+        const dashboardPort = metadata?.dashboardPort
+          ? Number(metadata.dashboardPort)
+          : (config.port ?? 3000);
+
+        // WebSocket ports use fixed defaults (not stored in metadata)
+        const terminalWsPort = 3001;
+        const directTerminalWsPort = 3003;
 
         console.log(chalk.bold(`\nStopping orchestrator for ${chalk.cyan(project.name)}\n`));
 
@@ -443,8 +383,14 @@ export function registerStop(program: Command): void {
           console.log(chalk.yellow(`Orchestrator session "${sessionId}" is not running`));
         }
 
-        // Stop dashboard
-        await stopDashboard(port);
+        // Stop dashboard and WebSocket servers
+        const dashboardManager = new DashboardManager();
+        await dashboardManager.stop({
+          dashboard: dashboardPort,
+          terminalWs: terminalWsPort,
+          directTerminalWs: directTerminalWsPort,
+        });
+        console.log(chalk.green("Dashboard stopped"));
 
         console.log(chalk.bold.green("\n✓ Orchestrator stopped\n"));
       } catch (err) {
