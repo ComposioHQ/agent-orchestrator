@@ -441,6 +441,14 @@ async function handleAutoMode(outputPath: string, smart: boolean): Promise<void>
       agent: "claude-code",
       workspace: "worktree",
       notifiers: ["desktop"],
+      // Required for claude-code: each agent runs in a fresh git worktree it has
+      // never seen before. Claude shows an interactive trust dialog on first entry
+      // to any new directory. Without this flag the agent process blocks silently
+      // waiting for keyboard input that never arrives, causing every spawned
+      // session to hang at "spawning" indefinitely.
+      agentConfig: {
+        permissions: "skip",
+      },
     },
     projects: {
       [projectId]: {

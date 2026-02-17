@@ -65,18 +65,56 @@ function validateSessionId(sessionId: SessionId): void {
   }
 }
 
-/** Get the metadata file path for a session. */
+/** Get the canonical (flat) metadata file path for a session. Used for writes. */
 function metadataPath(dataDir: string, sessionId: SessionId): string {
   validateSessionId(sessionId);
   return join(dataDir, sessionId);
 }
 
 /**
+ * Find the actual metadata file for a session.
+ *
+ * Background: `ao spawn` (CLI) writes session metadata into project-scoped
+ * subdirectories (`{dataDir}/{projectId}-sessions/{sessionId}`), while
+ * `session-manager` (used by `ao start` / web API) writes flat files at
+ * `{dataDir}/{sessionId}`. Both patterns are valid; this function checks both
+ * so that reads always succeed regardless of which write path created the file.
+ *
+ * Returns the full path if found, or null if no file exists in either location.
+ */
+function resolveMetadataPath(dataDir: string, sessionId: SessionId): string | null {
+  validateSessionId(sessionId);
+
+  // Check flat path first (session-manager write path)
+  const flat = join(dataDir, sessionId);
+  try {
+    if (existsSync(flat) && statSync(flat).isFile()) return flat;
+  } catch {
+    // fall through
+  }
+
+  // Check project subdirectories: {dataDir}/{anything}-sessions/{sessionId}
+  // This is the ao-spawn CLI write path.
+  if (!existsSync(dataDir)) return null;
+  for (const entry of readdirSync(dataDir)) {
+    if (!entry.endsWith("-sessions")) continue;
+    const candidate = join(dataDir, entry, sessionId);
+    try {
+      if (existsSync(candidate) && statSync(candidate).isFile()) return candidate;
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+/**
  * Read metadata for a session. Returns null if the file doesn't exist.
  */
 export function readMetadata(dataDir: string, sessionId: SessionId): SessionMetadata | null {
-  const path = metadataPath(dataDir, sessionId);
-  if (!existsSync(path)) return null;
+  const path = resolveMetadataPath(dataDir, sessionId);
+  if (!path) return null;
 
   const content = readFileSync(path, "utf-8");
   const raw = parseMetadataFile(content);
@@ -101,8 +139,8 @@ export function readMetadataRaw(
   dataDir: string,
   sessionId: SessionId,
 ): Record<string, string> | null {
-  const path = metadataPath(dataDir, sessionId);
-  if (!existsSync(path)) return null;
+  const path = resolveMetadataPath(dataDir, sessionId);
+  if (!path) return null;
   return parseMetadataFile(readFileSync(path, "utf-8"));
 }
 
@@ -142,7 +180,8 @@ export function updateMetadata(
   sessionId: SessionId,
   updates: Partial<Record<string, string>>,
 ): void {
-  const path = metadataPath(dataDir, sessionId);
+  // Use the existing file location if found; fall back to flat path for new files.
+  const path = resolveMetadataPath(dataDir, sessionId) ?? metadataPath(dataDir, sessionId);
   let existing: Record<string, string> = {};
 
   if (existsSync(path)) {
@@ -169,8 +208,8 @@ export function updateMetadata(
  * Optionally archive it to an `archive/` subdirectory.
  */
 export function deleteMetadata(dataDir: string, sessionId: SessionId, archive = true): void {
-  const path = metadataPath(dataDir, sessionId);
-  if (!existsSync(path)) return;
+  const path = resolveMetadataPath(dataDir, sessionId);
+  if (!path) return;
 
   if (archive) {
     const archiveDir = join(dataDir, "archive");
@@ -185,20 +224,47 @@ export function deleteMetadata(dataDir: string, sessionId: SessionId, archive = 
 
 /**
  * List all session IDs that have metadata files.
+ *
+ * Scans two locations:
+ * 1. Flat files at `{dataDir}/{sessionId}` — written by session-manager (ao start)
+ * 2. Project subdirectories `{dataDir}/{projectId}-sessions/{sessionId}` — written
+ *    by the `ao spawn` CLI command
+ *
+ * Both patterns coexist; this function deduplicates by session ID.
  */
 export function listMetadata(dataDir: string): SessionId[] {
-  const dir = dataDir;
-  if (!existsSync(dir)) return [];
+  if (!existsSync(dataDir)) return [];
 
-  return readdirSync(dir).filter((name) => {
-    if (name === "archive" || name.startsWith(".")) return false;
-    if (!VALID_SESSION_ID.test(name)) return false;
+  const seen = new Set<string>();
+
+  for (const name of readdirSync(dataDir)) {
+    if (name === "archive" || name.startsWith(".")) continue;
+
+    const fullPath = join(dataDir, name);
     try {
-      return statSync(join(dir, name)).isFile();
+      const stat = statSync(fullPath);
+
+      if (stat.isFile() && VALID_SESSION_ID.test(name)) {
+        // Flat session file (session-manager write path)
+        seen.add(name);
+      } else if (stat.isDirectory() && name.endsWith("-sessions")) {
+        // Project subdirectory (ao spawn CLI write path)
+        for (const entry of readdirSync(fullPath)) {
+          if (entry === "archive" || entry.startsWith(".")) continue;
+          if (!VALID_SESSION_ID.test(entry)) continue;
+          try {
+            if (statSync(join(fullPath, entry)).isFile()) seen.add(entry);
+          } catch {
+            // skip unreadable entries
+          }
+        }
+      }
     } catch {
-      return false;
+      // skip entries that error on stat
     }
-  });
+  }
+
+  return [...seen] as SessionId[];
 }
 
 /**

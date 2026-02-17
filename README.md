@@ -158,6 +158,8 @@ defaults:
   agent: claude-code
   workspace: worktree
   notifiers: [desktop]
+  agentConfig:
+    permissions: skip  # required — see note below
 
 projects:
   my-app:
@@ -169,6 +171,16 @@ projects:
       Use conventional commits.
       Write clear commit messages.
 ```
+
+> **`permissions: skip` is required when using claude-code.**
+> Each agent runs in a fresh git worktree it has never seen before. Claude shows
+> an interactive trust prompt on first entry to any new directory — *"Do you trust
+> the files in this folder?"* — and waits for a keypress. Without this flag, every
+> spawned session silently blocks at that prompt, the dashboard shows all agents
+> stuck at "spawning", and no work ever gets done. Setting `permissions: skip`
+> passes `--dangerously-skip-permissions` to Claude, bypassing the prompt.
+> This is safe in the AO context because you are the one creating the worktrees
+> from your own repository.
 
 See `agent-orchestrator.yaml.example` for full reference.
 
@@ -213,6 +225,7 @@ See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for common issues and solutions.
 - Terminal not working → node-pty rebuild (automatic via postinstall hook)
 - Port in use → Kill existing server or change port in config
 - Config not found → Run `ao init` from your project directory
+- **All agents stuck at "spawning" forever** → `agentConfig.permissions: skip` is missing from your config. Claude blocks on an interactive trust dialog in each new worktree. Add it under `defaults:` (see Configuration above).
 
 ## Philosophy
 
