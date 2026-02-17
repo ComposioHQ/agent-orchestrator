@@ -16,6 +16,7 @@ interface SessionDetailProps {
 
 const activityLabel: Record<string, { label: string; color: string }> = {
   active: { label: "Active", color: "var(--color-accent-green)" },
+  ready: { label: "Ready", color: "var(--color-accent-blue)" },
   idle: { label: "Idle", color: "var(--color-text-muted)" },
   waiting_input: { label: "Waiting for input", color: "var(--color-accent-yellow)" },
   blocked: { label: "Blocked", color: "var(--color-accent-red)" },
@@ -111,8 +112,8 @@ export function SessionDetail({ session }: SessionDetailProps) {
   const searchParams = useSearchParams();
   const startFullscreen = searchParams.get("fullscreen") === "true";
   const pr = session.pr;
-  const activity = activityLabel[session.activity] ?? {
-    label: session.activity,
+  const activity = (session.activity && activityLabel[session.activity]) ?? {
+    label: session.activity ?? "unknown",
     color: "var(--color-text-muted)",
   };
 

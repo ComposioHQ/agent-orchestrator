@@ -86,11 +86,11 @@ describe.skipIf(!canRun)("agent-opencode (integration)", () => {
 
   // Observations captured while the agent is alive
   let aliveRunning = false;
-  let aliveActivityState: ActivityState | undefined;
+  let aliveActivityState: ActivityState | null | undefined;
 
   // Observations captured after the agent exits
   let exitedRunning: boolean;
-  let exitedActivityState: ActivityState;
+  let exitedActivityState: ActivityState | null;
   let sessionInfo: AgentSessionInfo | null;
 
   beforeAll(async () => {
@@ -139,11 +139,11 @@ describe.skipIf(!canRun)("agent-opencode (integration)", () => {
     expect(aliveRunning).toBe(true);
   });
 
-  it("getActivityState → returns active while agent is running", () => {
-    // OpenCode uses conservative fallback: returns "active" when process is running
-    // (due to global SQLite database shared by all sessions)
+  it("getActivityState → returns null while agent is running (no per-session tracking)", () => {
+    // OpenCode uses a global SQLite database shared by all sessions,
+    // so getActivityState honestly returns null instead of guessing.
     if (aliveActivityState !== undefined) {
-      expect(aliveActivityState).toBe("active");
+      expect(aliveActivityState).toBeNull();
     }
   });
 

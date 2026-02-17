@@ -30,7 +30,8 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
     }
 
     const isTerminal =
-      RESTORABLE_STATUSES.has(session.status) || RESTORABLE_ACTIVITIES.has(session.activity);
+      RESTORABLE_STATUSES.has(session.status) ||
+      (session.activity !== null && RESTORABLE_ACTIVITIES.has(session.activity));
 
     if (!isTerminal) {
       return NextResponse.json({ error: "Session is not in a terminal state" }, { status: 409 });

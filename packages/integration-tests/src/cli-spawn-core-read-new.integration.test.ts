@@ -156,6 +156,7 @@ describe.skipIf(!tmuxOk)("CLI-Core integration (hash-based architecture)", () =>
     const config: OrchestratorConfig = {
       configPath, // This enables hash-based architecture
       port: 3000,
+      readyThresholdMs: 300_000,
       defaults: {
         runtime: "tmux",
         agent: "claude-code",
@@ -215,6 +216,7 @@ describe.skipIf(!tmuxOk)("CLI-Core integration (hash-based architecture)", () =>
     const config: OrchestratorConfig = {
       configPath,
       port: 3000,
+      readyThresholdMs: 300_000,
       defaults: {
         runtime: "tmux",
         agent: "claude-code",

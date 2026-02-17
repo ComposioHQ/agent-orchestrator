@@ -62,12 +62,12 @@ describe.skipIf(!canRun)("agent-claude-code (integration)", () => {
 
   // Observations captured while the agent is alive
   let aliveRunning = false;
-  let aliveActivityState: ActivityState | undefined;
+  let aliveActivityState: ActivityState | null | undefined;
   let aliveSessionInfo: AgentSessionInfo | null = null;
 
   // Observations captured after the agent exits
   let exitedRunning: boolean;
-  let exitedActivityState: ActivityState;
+  let exitedActivityState: ActivityState | null;
   let exitedSessionInfo: AgentSessionInfo | null;
 
   beforeAll(async () => {
@@ -131,7 +131,10 @@ describe.skipIf(!canRun)("agent-claude-code (integration)", () => {
   it("getActivityState → returns valid non-exited state while agent is alive", () => {
     expect(aliveActivityState).toBeDefined();
     expect(aliveActivityState).not.toBe("exited");
-    expect(["active", "idle", "waiting_input", "blocked"]).toContain(aliveActivityState);
+    // May be null (no JSONL yet) or a concrete state
+    expect([null, "active", "ready", "idle", "waiting_input", "blocked"]).toContain(
+      aliveActivityState,
+    );
   });
 
   it("getSessionInfo → returns session data while agent is alive (or null if path mismatch)", () => {

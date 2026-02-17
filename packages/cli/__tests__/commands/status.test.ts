@@ -8,6 +8,7 @@ const {
   mockGit,
   mockConfigRef,
   mockIntrospect,
+  mockGetActivityState,
   mockDetectPR,
   mockGetCISummary,
   mockGetReviewDecision,
@@ -17,6 +18,7 @@ const {
   mockGit: vi.fn(),
   mockConfigRef: { current: null as Record<string, unknown> | null },
   mockIntrospect: vi.fn(),
+  mockGetActivityState: vi.fn(),
   mockDetectPR: vi.fn(),
   mockGetCISummary: vi.fn(),
   mockGetReviewDecision: vi.fn(),
@@ -57,12 +59,14 @@ vi.mock("../../src/lib/plugins.js", () => ({
     processName: "claude",
     detectActivity: () => "idle",
     getSessionInfo: mockIntrospect,
+    getActivityState: mockGetActivityState,
   }),
   getAgentByName: () => ({
     name: "claude-code",
     processName: "claude",
     detectActivity: () => "idle",
     getSessionInfo: mockIntrospect,
+    getActivityState: mockGetActivityState,
   }),
   getSCM: () => ({
     name: "github",
@@ -105,6 +109,7 @@ beforeEach(() => {
   mockConfigRef.current = {
     configPath,
     port: 3000,
+    readyThresholdMs: 300_000,
     defaults: {
       runtime: "tmux",
       agent: "claude-code",
@@ -142,6 +147,8 @@ beforeEach(() => {
   mockGit.mockReset();
   mockIntrospect.mockReset();
   mockIntrospect.mockResolvedValue(null);
+  mockGetActivityState.mockReset();
+  mockGetActivityState.mockResolvedValue("active");
   mockDetectPR.mockReset();
   mockDetectPR.mockResolvedValue(null);
   mockGetCISummary.mockReset();
@@ -488,10 +495,10 @@ describe("status command", () => {
     expect(parsed[0].pendingThreads).toBeNull();
   });
 
-  it("falls back to metadata status for activity when introspection unavailable", async () => {
+  it("uses agent.getActivityState() for activity detection (plugin is single source of truth)", async () => {
     writeFileSync(
       join(sessionsDir, "app-1"),
-      "worktree=/tmp/wt\nbranch=feat/meta-act\nstatus=working\n",
+      "worktree=/tmp/wt\nbranch=feat/act\nstatus=working\n",
     );
 
     mockTmux.mockImplementation(async (...args: string[]) => {
@@ -499,23 +506,23 @@ describe("status command", () => {
       if (args[0] === "display-message") return String(Math.floor(Date.now() / 1000));
       return null;
     });
-    mockGit.mockResolvedValue("feat/meta-act");
+    mockGit.mockResolvedValue("feat/act");
 
-    // Introspection returns null (no session info)
-    mockIntrospect.mockResolvedValue(null);
+    // Plugin returns "ready" — CLI should use it directly, not recompute
+    mockGetActivityState.mockResolvedValue("ready");
 
     await program.parseAsync(["node", "test", "status", "--json"]);
 
     const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
     const parsed = JSON.parse(jsonCalls);
-    // status=working should fall back to activity=active
-    expect(parsed[0].activity).toBe("active");
+    expect(parsed[0].activity).toBe("ready");
+    expect(mockGetActivityState).toHaveBeenCalled();
   });
 
-  it("treats assistant lastMessageType as idle, not active", async () => {
+  it("passes readyThresholdMs from config to agent.getActivityState()", async () => {
     writeFileSync(
       join(sessionsDir, "app-1"),
-      "worktree=/tmp/wt\nbranch=feat/asst\nstatus=working\n",
+      "worktree=/tmp/wt\nbranch=feat/thr\nstatus=working\n",
     );
 
     mockTmux.mockImplementation(async (...args: string[]) => {
@@ -523,18 +530,82 @@ describe("status command", () => {
       if (args[0] === "display-message") return String(Math.floor(Date.now() / 1000));
       return null;
     });
-    mockGit.mockResolvedValue("feat/asst");
+    mockGit.mockResolvedValue("feat/thr");
+    mockGetActivityState.mockResolvedValue("idle");
 
-    mockIntrospect.mockResolvedValue({
-      summary: "Working on feature",
-      agentSessionId: "abc",
-      lastMessageType: "assistant",
+    await program.parseAsync(["node", "test", "status", "--json"]);
+
+    // Verify the config threshold (300_000) was passed through
+    expect(mockGetActivityState).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "app-1" }),
+      300_000,
+    );
+  });
+
+  it("shows null activity when getActivityState() throws", async () => {
+    writeFileSync(
+      join(sessionsDir, "app-1"),
+      "worktree=/tmp/wt\nbranch=feat/err\nstatus=working\n",
+    );
+
+    mockTmux.mockImplementation(async (...args: string[]) => {
+      if (args[0] === "list-sessions") return "app-1";
+      if (args[0] === "display-message") return String(Math.floor(Date.now() / 1000));
+      return null;
     });
+    mockGit.mockResolvedValue("feat/err");
+
+    // Plugin throws — activity stays null (unknown)
+    mockGetActivityState.mockRejectedValue(new Error("detection failed"));
 
     await program.parseAsync(["node", "test", "status", "--json"]);
 
     const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
     const parsed = JSON.parse(jsonCalls);
-    expect(parsed[0].activity).toBe("idle");
+    expect(parsed[0].activity).toBeNull();
+  });
+
+  it("shows null activity when getActivityState() returns null", async () => {
+    writeFileSync(
+      join(sessionsDir, "app-1"),
+      "worktree=/tmp/wt\nbranch=feat/null\nstatus=working\n",
+    );
+
+    mockTmux.mockImplementation(async (...args: string[]) => {
+      if (args[0] === "list-sessions") return "app-1";
+      if (args[0] === "display-message") return String(Math.floor(Date.now() / 1000));
+      return null;
+    });
+    mockGit.mockResolvedValue("feat/null");
+
+    // Plugin returns null — activity stays null (unknown)
+    mockGetActivityState.mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "status", "--json"]);
+
+    const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
+    const parsed = JSON.parse(jsonCalls);
+    expect(parsed[0].activity).toBeNull();
+  });
+
+  it("shows exited activity from getActivityState()", async () => {
+    writeFileSync(
+      join(sessionsDir, "app-1"),
+      "worktree=/tmp/wt\nbranch=feat/dead\nstatus=working\n",
+    );
+
+    mockTmux.mockImplementation(async (...args: string[]) => {
+      if (args[0] === "list-sessions") return "app-1";
+      if (args[0] === "display-message") return null;
+      return null;
+    });
+    mockGit.mockResolvedValue("feat/dead");
+    mockGetActivityState.mockResolvedValue("exited");
+
+    await program.parseAsync(["node", "test", "status", "--json"]);
+
+    const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
+    const parsed = JSON.parse(jsonCalls);
+    expect(parsed[0].activity).toBe("exited");
   });
 });

@@ -93,11 +93,11 @@ describe.skipIf(!canRun)("agent-aider (integration)", () => {
 
   // Observations captured while the agent is alive
   let aliveRunning = false;
-  let aliveActivityState: ActivityState | undefined;
+  let aliveActivityState: ActivityState | null | undefined;
 
   // Observations captured after the agent exits
   let exitedRunning: boolean;
-  let exitedActivityState: ActivityState;
+  let exitedActivityState: ActivityState | null;
   let sessionInfo: AgentSessionInfo | null;
 
   beforeAll(async () => {
@@ -149,10 +149,13 @@ describe.skipIf(!canRun)("agent-aider (integration)", () => {
   });
 
   it("getActivityState → returns valid state while agent is running", () => {
-    // Aider checks git commits and chat history mtime for activity detection
+    // Aider checks git commits and chat history mtime for activity detection.
+    // May return null if no chat history exists yet.
     if (aliveActivityState !== undefined) {
       expect(aliveActivityState).not.toBe("exited");
-      expect(["active", "idle", "waiting_input", "blocked"]).toContain(aliveActivityState);
+      expect([null, "active", "ready", "idle", "waiting_input", "blocked"]).toContain(
+        aliveActivityState,
+      );
     }
   });
 

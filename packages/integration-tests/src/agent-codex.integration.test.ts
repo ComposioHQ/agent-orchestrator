@@ -62,11 +62,11 @@ describe.skipIf(!canRun)("agent-codex (integration)", () => {
 
   // Observations captured while the agent is alive
   let aliveRunning = false;
-  let aliveActivityState: ActivityState | undefined;
+  let aliveActivityState: ActivityState | null | undefined;
 
   // Observations captured after the agent exits
   let exitedRunning: boolean;
-  let exitedActivityState: ActivityState;
+  let exitedActivityState: ActivityState | null;
   let sessionInfo: AgentSessionInfo | null;
 
   beforeAll(async () => {
@@ -115,11 +115,11 @@ describe.skipIf(!canRun)("agent-codex (integration)", () => {
     expect(aliveRunning).toBe(true);
   });
 
-  it("getActivityState → returns active while agent is running", () => {
-    // Codex uses conservative fallback: returns "active" when process is running
-    // (due to global rollout file storage without per-session scoping)
+  it("getActivityState → returns null while agent is running (no per-session tracking)", () => {
+    // Codex uses global rollout file storage without per-session scoping,
+    // so getActivityState honestly returns null instead of guessing.
     if (aliveActivityState !== undefined) {
-      expect(aliveActivityState).toBe("active");
+      expect(aliveActivityState).toBeNull();
     }
   });
 

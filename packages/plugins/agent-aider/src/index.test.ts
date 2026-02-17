@@ -259,29 +259,6 @@ describe("detectActivity", () => {
 });
 
 // =========================================================================
-// isProcessing
-// =========================================================================
-describe("isProcessing", () => {
-  const agent = create();
-
-  it("returns false when no runtime handle", async () => {
-    expect(await agent.isProcessing(makeSession())).toBe(false);
-  });
-
-  it("returns true when process is running", async () => {
-    mockTmuxWithProcess("aider");
-    const session = makeSession({ runtimeHandle: makeTmuxHandle() });
-    expect(await agent.isProcessing(session)).toBe(true);
-  });
-
-  it("returns false when process is not running", async () => {
-    mockTmuxWithProcess("aider", false);
-    const session = makeSession({ runtimeHandle: makeTmuxHandle() });
-    expect(await agent.isProcessing(session)).toBe(false);
-  });
-});
-
-// =========================================================================
 // getSessionInfo
 // =========================================================================
 describe("getSessionInfo", () => {

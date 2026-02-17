@@ -90,7 +90,7 @@ const DefaultPluginsSchema = z.object({
 
 const OrchestratorConfigSchema = z.object({
   port: z.number().default(3000),
-  readyThresholdMs: z.number().default(300_000),
+  readyThresholdMs: z.number().nonnegative().default(300_000),
   defaults: DefaultPluginsSchema.default({}),
   projects: z.record(ProjectConfigSchema),
   notifiers: z.record(NotifierConfigSchema).default({}),

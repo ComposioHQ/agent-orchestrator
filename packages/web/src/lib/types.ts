@@ -53,7 +53,7 @@ export interface DashboardSession {
   id: string;
   projectId: string;
   status: SessionStatus;
-  activity: ActivityState;
+  activity: ActivityState | null;
   branch: string | null;
   issueId: string | null; // Deprecated: use issueUrl instead
   issueUrl: string | null; // Full issue URL
@@ -124,7 +124,7 @@ export interface SSESnapshotEvent {
   sessions: Array<{
     id: string;
     status: SessionStatus;
-    activity: ActivityState;
+    activity: ActivityState | null;
     attentionLevel: AttentionLevel;
     lastActivityAt: string;
   }>;
@@ -134,7 +134,7 @@ export interface SSESnapshotEvent {
 export interface SSEActivityEvent {
   type: "session.activity";
   sessionId: string;
-  activity: ActivityState;
+  activity: ActivityState | null;
   status: SessionStatus;
   attentionLevel: AttentionLevel;
   timestamp: string;

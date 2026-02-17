@@ -132,7 +132,8 @@ function createAiderAgent(): Agent {
 
       // Classify by age: <30s active, <threshold ready, >threshold idle
       const ageMs = Date.now() - chatMtime.getTime();
-      if (ageMs < 30_000) return "active";
+      const activeWindowMs = Math.min(30_000, threshold);
+      if (ageMs < activeWindowMs) return "active";
       if (ageMs < threshold) return "ready";
       return "idle";
     },

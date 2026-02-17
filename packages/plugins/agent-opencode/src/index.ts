@@ -63,7 +63,7 @@ function createOpenCodeAgent(): Agent {
       return "active";
     },
 
-    async getActivityState(session: Session): Promise<ActivityState | null> {
+    async getActivityState(session: Session, _readyThresholdMs?: number): Promise<ActivityState | null> {
       // Check if process is running first
       if (!session.runtimeHandle) return "exited";
       const running = await this.isProcessRunning(session.runtimeHandle);

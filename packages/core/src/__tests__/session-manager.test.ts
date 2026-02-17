@@ -472,8 +472,8 @@ describe("list", () => {
     const sm = createSessionManager({ config, registry: registryWithError });
     const sessions = await sm.list();
 
-    // Should keep default activity when getActivityState fails (not overwrite)
-    expect(sessions[0].activity).toBe("idle");
+    // Should keep null (absent) when getActivityState fails
+    expect(sessions[0].activity).toBeNull();
   });
 
   it("keeps existing activity when getActivityState returns null", async () => {
@@ -490,7 +490,7 @@ describe("list", () => {
       }),
     };
 
-    writeMetadata(dataDir, "app-1", {
+    writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp",
       branch: "a",
       status: "working",
@@ -501,9 +501,9 @@ describe("list", () => {
     const sm = createSessionManager({ config, registry: registryWithNull });
     const sessions = await sm.list();
 
-    // null = "I don't know" — should not overwrite existing activity
+    // null = "I don't know" — activity stays null (absent)
     expect(agentWithNull.getActivityState).toHaveBeenCalled();
-    expect(sessions[0].activity).toBe("idle");
+    expect(sessions[0].activity).toBeNull();
   });
 });
 
