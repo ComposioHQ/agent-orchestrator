@@ -52,7 +52,13 @@ async function gh(args: string[]): Promise<string> {
     });
     return stdout.trim();
   } catch (err) {
-    throw new Error(`gh ${args.slice(0, 3).join(" ")} failed: ${(err as Error).message}`, {
+    const msg = (err as Error).message ?? "";
+    // `gh pr checks` exits 1 with "no checks reported" when the PR has no CI.
+    // This is not an error — return an empty JSON array so callers get [].
+    if (msg.includes("no checks reported")) {
+      return "[]";
+    }
+    throw new Error(`gh ${args.slice(0, 3).join(" ")} failed: ${msg}`, {
       cause: err,
     });
   }

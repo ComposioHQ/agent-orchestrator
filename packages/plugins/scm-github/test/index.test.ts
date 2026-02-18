@@ -275,8 +275,14 @@ describe("scm-github plugin", () => {
     });
 
     it("throws on error (fail-closed)", async () => {
-      mockGhError("no checks");
+      mockGhError("something went wrong");
       await expect(scm.getCIChecks(pr)).rejects.toThrow("Failed to fetch CI checks");
+    });
+
+    it("returns empty array when gh reports no checks on branch", async () => {
+      mockGhError("no checks reported on the 'feat/my-feature' branch");
+      const checks = await scm.getCIChecks(pr);
+      expect(checks).toEqual([]);
     });
 
     it("returns empty array for PR with no checks", async () => {
@@ -328,6 +334,11 @@ describe("scm-github plugin", () => {
     it('returns "failing" on error (fail-closed)', async () => {
       mockGhError();
       expect(await scm.getCISummary(pr)).toBe("failing");
+    });
+
+    it('returns "none" when gh reports no checks on branch', async () => {
+      mockGhError("no checks reported on the 'feat/my-feature' branch");
+      expect(await scm.getCISummary(pr)).toBe("none");
     });
 
     it('returns "none" when all checks are skipped', async () => {
