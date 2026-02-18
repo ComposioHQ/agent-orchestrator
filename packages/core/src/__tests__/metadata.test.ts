@@ -249,6 +249,43 @@ describe("readArchivedMetadataRaw", () => {
     expect(raw!["branch"]).toBe("new-branch");
   });
 
+  it("does not match archives of session IDs sharing a prefix", () => {
+    const archiveDir = join(dataDir, "archive");
+    mkdirSync(archiveDir, { recursive: true });
+
+    // "app" should NOT match "app_v2_..." (belongs to session "app_v2")
+    writeFileSync(
+      join(archiveDir, "app_v2_2025-01-01T00-00-00-000Z"),
+      "branch=wrong\nstatus=killed\n",
+    );
+
+    expect(readArchivedMetadataRaw(dataDir, "app")).toBeNull();
+  });
+
+  it("correctly matches when similar-prefix sessions coexist in archive", () => {
+    const archiveDir = join(dataDir, "archive");
+    mkdirSync(archiveDir, { recursive: true });
+
+    // Archive for "app" — timestamp starts with digit
+    writeFileSync(
+      join(archiveDir, "app_2025-06-15T12-00-00-000Z"),
+      "branch=correct\nstatus=killed\n",
+    );
+    // Archive for "app_v2" — should not be matched by "app"
+    writeFileSync(
+      join(archiveDir, "app_v2_2025-01-01T00-00-00-000Z"),
+      "branch=wrong\nstatus=killed\n",
+    );
+
+    const raw = readArchivedMetadataRaw(dataDir, "app");
+    expect(raw).not.toBeNull();
+    expect(raw!["branch"]).toBe("correct");
+
+    const rawV2 = readArchivedMetadataRaw(dataDir, "app_v2");
+    expect(rawV2).not.toBeNull();
+    expect(rawV2!["branch"]).toBe("wrong");
+  });
+
   it("returns null when no archive exists for session", () => {
     const archiveDir = join(dataDir, "archive");
     mkdirSync(archiveDir, { recursive: true });

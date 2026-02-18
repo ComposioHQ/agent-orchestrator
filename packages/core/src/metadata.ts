@@ -219,6 +219,10 @@ export function readArchivedMetadataRaw(
 
   for (const file of readdirSync(archiveDir)) {
     if (!file.startsWith(prefix)) continue;
+    // Verify the separator is followed by a digit (start of ISO timestamp)
+    // to avoid prefix collisions (e.g., "app" matching "app_v2_...")
+    const charAfterPrefix = file[prefix.length];
+    if (!charAfterPrefix || charAfterPrefix < "0" || charAfterPrefix > "9") continue;
     // Pick lexicographically last (ISO timestamps sort correctly)
     if (!latest || file > latest) {
       latest = file;
