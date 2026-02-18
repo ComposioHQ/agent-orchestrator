@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { type DashboardSession, type AttentionLevel, getAttentionLevel } from "@/lib/types";
 import { CI_STATUS } from "@composio/ao-core/types";
 import { cn } from "@/lib/cn";
+import { activityIcon } from "@/lib/activity-icons";
 import { PRStatus } from "./PRStatus";
 import { CICheckList } from "./CIBadge";
 
@@ -14,15 +15,6 @@ interface SessionCardProps {
   onMerge?: (prNumber: number) => void;
   onRestore?: (sessionId: string) => void;
 }
-
-const activityIcon: Record<string, string> = {
-  active: "\u26A1",
-  ready: "\uD83D\uDFE2",
-  idle: "\uD83D\uDCA4",
-  waiting_input: "\u2753",
-  blocked: "\uD83D\uDEA7",
-  exited: "\uD83D\uDC80",
-};
 
 const borderColorByLevel: Record<AttentionLevel, string> = {
   merge: "border-l-[var(--color-accent-green)]",

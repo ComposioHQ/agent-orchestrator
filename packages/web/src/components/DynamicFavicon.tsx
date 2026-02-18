@@ -17,7 +17,7 @@ function computeHealth(sessions: DashboardSession[]): "green" | "yellow" | "red"
   for (const session of sessions) {
     const level: AttentionLevel = getAttentionLevel(session);
     if (level === "respond") return "red";
-    if (level === "review") hasYellow = true;
+    if (level === "review" || level === "merge") hasYellow = true;
   }
 
   return hasYellow ? "yellow" : "green";

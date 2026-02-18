@@ -1,5 +1,5 @@
 import { ImageResponse } from "next/og";
-import { loadConfig } from "@composio/ao-core";
+import { getProjectName } from "@/lib/project-name";
 
 export const size = { width: 32, height: 32 };
 export const contentType = "image/png";
@@ -14,20 +14,9 @@ function stringToHue(s: string): number {
 }
 
 export default function Icon() {
-  let initial = "A";
-  let hue = 220; // Default blue
-
-  try {
-    const config = loadConfig();
-    const firstKey = Object.keys(config.projects)[0];
-    if (firstKey) {
-      const name = config.projects[firstKey].name ?? firstKey;
-      initial = name.charAt(0).toUpperCase();
-      hue = stringToHue(name);
-    }
-  } catch {
-    // Config not available
-  }
+  const name = getProjectName();
+  const initial = name.charAt(0).toUpperCase();
+  const hue = stringToHue(name);
 
   return new ImageResponse(
     (

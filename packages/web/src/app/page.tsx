@@ -9,30 +9,21 @@ import {
   computeStats,
 } from "@/lib/serialize";
 import { prCache, prCacheKey } from "@/lib/cache";
+import { getProjectName } from "@/lib/project-name";
 
 export const dynamic = "force-dynamic";
 
 export async function generateMetadata(): Promise<Metadata> {
-  try {
-    const { config } = await getServices();
-    const firstKey = Object.keys(config.projects)[0];
-    const projectName = firstKey ? (config.projects[firstKey].name ?? firstKey) : "ao";
-    return { title: `${projectName} | Agent Orchestrator` };
-  } catch {
-    return { title: "Agent Orchestrator" };
-  }
+  const projectName = getProjectName();
+  return { title: `${projectName} | Agent Orchestrator` };
 }
 
 export default async function Home() {
   let sessions: DashboardSession[] = [];
   let orchestratorId: string | null = null;
-  let projectName = "ao";
+  const projectName = getProjectName();
   try {
     const { config, registry, sessionManager } = await getServices();
-    const firstKey = Object.keys(config.projects)[0];
-    if (firstKey) {
-      projectName = config.projects[firstKey].name ?? firstKey;
-    }
     const allSessions = await sessionManager.list();
 
     // Find the orchestrator session (any session ending with -orchestrator)
