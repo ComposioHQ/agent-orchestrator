@@ -5,6 +5,31 @@ import { useParams } from "next/navigation";
 import { SessionDetail } from "@/components/SessionDetail";
 import type { DashboardSession } from "@/lib/types";
 
+/** Build a descriptive tab title from session data. */
+function buildSessionTitle(session: DashboardSession): string {
+  const id = session.id;
+
+  if (session.pr) {
+    const prNum = `#${session.pr.number}`;
+    const branch = session.pr.branch;
+    // Truncate branch to keep title readable
+    const maxBranch = 30;
+    const truncated = branch.length > maxBranch ? branch.slice(0, maxBranch) + "..." : branch;
+    return `${id} | ${prNum} ${truncated}`;
+  }
+
+  if (session.branch) {
+    const maxBranch = 30;
+    const truncated =
+      session.branch.length > maxBranch
+        ? session.branch.slice(0, maxBranch) + "..."
+        : session.branch;
+    return `${id} | ${truncated}`;
+  }
+
+  return `${id} | Session Detail`;
+}
+
 export default function SessionPage() {
   const params = useParams();
   const id = params.id as string;
@@ -12,6 +37,15 @@ export default function SessionPage() {
   const [session, setSession] = useState<DashboardSession | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Update document title based on session data
+  useEffect(() => {
+    if (session) {
+      document.title = buildSessionTitle(session);
+    } else {
+      document.title = `${id} | Session Detail`;
+    }
+  }, [session, id]);
 
   // Fetch session data (memoized to avoid recreating on every render)
   const fetchSession = useCallback(async () => {

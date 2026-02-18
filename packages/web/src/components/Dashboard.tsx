@@ -11,14 +11,16 @@ import {
 import { CI_STATUS } from "@composio/ao-core/types";
 import { AttentionZone } from "./AttentionZone";
 import { PRTableRow } from "./PRStatus";
+import { DynamicFavicon } from "./DynamicFavicon";
 
 interface DashboardProps {
   sessions: DashboardSession[];
   stats: DashboardStats;
   orchestratorId?: string | null;
+  projectName?: string;
 }
 
-export function Dashboard({ sessions, stats, orchestratorId }: DashboardProps) {
+export function Dashboard({ sessions, stats, orchestratorId, projectName }: DashboardProps) {
   const grouped = useMemo(() => {
     const zones: Record<AttentionLevel, DashboardSession[]> = {
       merge: [],
@@ -82,6 +84,7 @@ export function Dashboard({ sessions, stats, orchestratorId }: DashboardProps) {
 
   return (
     <div className="mx-auto max-w-[1100px] px-8 py-8">
+      <DynamicFavicon sessions={sessions} projectName={projectName} />
       {/* Header */}
       <div className="mb-7 flex items-baseline justify-between">
         <h1 className="text-[22px] font-semibold tracking-tight">
