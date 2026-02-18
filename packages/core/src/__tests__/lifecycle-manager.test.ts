@@ -839,7 +839,7 @@ describe("reactions", () => {
 
 describe("PR detection", () => {
   it("detects PR for session without one and writes it to metadata", async () => {
-    const detectedPR = makePR({ number: 99, url: "https://github.com/org/repo/pull/99" });
+    const detectedPR = makePR();
     const mockSCM: SCM = {
       name: "mock-scm",
       detectPR: vi.fn().mockResolvedValue(detectedPR),
@@ -889,7 +889,7 @@ describe("PR detection", () => {
 
     // PR URL should be written to metadata
     const meta = readMetadataRaw(sessionsDir, "app-1");
-    expect(meta!["pr"]).toBe("https://github.com/org/repo/pull/99");
+    expect(meta!["pr"]).toBe(makePR().url);
 
     // Status should transition to pr_open (since SCM now has PR data)
     expect(lm.getStates().get("app-1")).toBe("pr_open");
