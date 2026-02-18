@@ -1103,5 +1103,22 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     return restoredSession;
   }
 
-  return { spawn, spawnOrchestrator, restore, list, get, kill, cleanup, send };
+  async function getAttachInfo(sessionId: SessionId) {
+    const session = await get(sessionId);
+    if (!session || !session.runtimeHandle) return null;
+
+    const project = config.projects[session.projectId];
+    if (!project) return null;
+
+    const { runtime } = resolvePlugins(project);
+    if (!runtime?.getAttachInfo) return null;
+
+    try {
+      return await runtime.getAttachInfo(session.runtimeHandle);
+    } catch {
+      return null;
+    }
+  }
+
+  return { spawn, spawnOrchestrator, restore, list, get, kill, cleanup, send, getAttachInfo };
 }

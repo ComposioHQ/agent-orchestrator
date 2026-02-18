@@ -72,7 +72,7 @@ ao open ${projectId}
 | \`ao spawn <project> [issue]\` | Spawn a single worker agent session |
 | \`ao batch-spawn <project> <issues...>\` | Spawn multiple sessions in parallel |
 | \`ao session ls [-p project]\` | List all sessions (optionally filter by project) |
-| \`tmux attach -t <session>\` | Attach to a session's tmux window |
+| \`ao session attach <session>\` | Attach to a running session |
 | \`ao session kill <session>\` | Kill a specific session |
 | \`ao session cleanup [-p project]\` | Kill completed/merged sessions |
 | \`ao send <session> <message>\` | Send a message to a running session |
@@ -254,7 +254,7 @@ ${reactionLines.join("\n")}`);
 
 ### Handling Stuck Agents
 1. Check \`ao status\` for sessions in "stuck" or "needs_input" state
-2. Attach with \`tmux attach -t <session>\` to see what they're doing
+2. Attach with \`ao session attach <session>\` to see what they're doing
 3. Send clarification or instructions with \`ao send <session> '...'\`
 4. Or kill and respawn with fresh context if needed
 
@@ -269,7 +269,7 @@ ${reactionLines.join("\n")}`);
 When an agent needs human judgment:
 1. You'll get a notification (desktop/slack/webhook)
 2. Check the dashboard or \`ao status\` for details
-3. Attach to the session if needed: \`tmux attach -t <session>\`
+3. Attach to the session if needed: \`ao session attach <session>\`
 4. Send instructions: \`ao send <session> '...'\`
 5. Or handle it yourself (merge PR, close issue, etc.)
 
@@ -277,7 +277,7 @@ When an agent needs human judgment:
 1. Check logs: \`ao logs events --session <session-id>\` to see state transitions
 2. Look for CI failures: \`ao logs events --session <session-id>\` | grep ci
 3. Check the dashboard: \`ao logs dashboard --since 10m --level error\`
-4. Attach if needed: \`tmux attach -t <session>\`
+4. Attach if needed: \`ao session attach <session>\`
 
 ### Dashboard Not Loading
 1. Check status: \`ao dashboard status\`

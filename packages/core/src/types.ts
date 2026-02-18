@@ -985,6 +985,7 @@ export interface SessionManager {
   kill(sessionId: SessionId): Promise<void>;
   cleanup(projectId?: string, options?: { dryRun?: boolean }): Promise<CleanupResult>;
   send(sessionId: SessionId, message: string): Promise<void>;
+  getAttachInfo(sessionId: SessionId): Promise<AttachInfo | null>;
 }
 
 export interface CleanupResult {
