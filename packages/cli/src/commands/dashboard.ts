@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import chalk from "chalk";
 import type { Command } from "commander";
 import { loadConfig } from "@composio/ao-core";
-import { findWebDir } from "../lib/web-dir.js";
+import { findWebDir, buildDashboardEnv } from "../lib/web-dir.js";
 import { cleanNextCache, findRunningDashboardPid, findProcessWebDir, waitForPortFree } from "../lib/dashboard-rebuild.js";
 
 export function registerDashboard(program: Command): void {
@@ -62,17 +62,7 @@ export function registerDashboard(program: Command): void {
 
       console.log(chalk.bold(`Starting dashboard on http://localhost:${port}\n`));
 
-      const env: Record<string, string> = { ...process.env } as Record<string, string>;
-
-      // Pass config path so dashboard uses the same config as the CLI
-      if (config.configPath) {
-        env["AO_CONFIG_PATH"] = config.configPath;
-      }
-
-      // Set ports for client-side access (Next.js requires NEXT_PUBLIC_ prefix)
-      env["PORT"] = String(port);
-      env["NEXT_PUBLIC_TERMINAL_PORT"] = env["TERMINAL_PORT"] ?? "3001";
-      env["NEXT_PUBLIC_DIRECT_TERMINAL_PORT"] = env["DIRECT_TERMINAL_PORT"] ?? "3003";
+      const env = buildDashboardEnv(port, config.configPath);
 
       const child = spawn("npx", ["next", "dev", "-p", String(port)], {
         cwd: webDir,

@@ -26,7 +26,7 @@ import {
 } from "@composio/ao-core";
 import { exec, getTmuxSessions } from "../lib/shell.js";
 import { getAgent } from "../lib/plugins.js";
-import { findWebDir } from "../lib/web-dir.js";
+import { findWebDir, buildDashboardEnv } from "../lib/web-dir.js";
 import { cleanNextCache } from "../lib/dashboard-rebuild.js";
 
 /**
@@ -72,17 +72,7 @@ function resolveProject(
  * Returns the child process handle for cleanup.
  */
 function startDashboard(port: number, webDir: string, configPath: string | null): ChildProcess {
-  const env: Record<string, string> = { ...process.env } as Record<string, string>;
-
-  // Pass config path so dashboard uses the same config as the CLI
-  if (configPath) {
-    env["AO_CONFIG_PATH"] = configPath;
-  }
-
-  // Set ports for client-side access (Next.js requires NEXT_PUBLIC_ prefix)
-  env["PORT"] = String(port);
-  env["NEXT_PUBLIC_TERMINAL_PORT"] = env["TERMINAL_PORT"] ?? "3001";
-  env["NEXT_PUBLIC_DIRECT_TERMINAL_PORT"] = env["DIRECT_TERMINAL_PORT"] ?? "3003";
+  const env = buildDashboardEnv(port, configPath);
 
   const child = spawn("pnpm", ["run", "dev"], {
     cwd: webDir,
