@@ -15,7 +15,8 @@ export const dynamic = "force-dynamic";
 
 export async function generateMetadata(): Promise<Metadata> {
   const projectName = getProjectName();
-  return { title: `${projectName} | Agent Orchestrator` };
+  // Use absolute to opt out of the layout's "%s | project" template
+  return { title: { absolute: `${projectName} | Agent Orchestrator` } };
 }
 
 export default async function Home() {
