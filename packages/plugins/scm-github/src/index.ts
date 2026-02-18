@@ -52,13 +52,7 @@ async function gh(args: string[]): Promise<string> {
     });
     return stdout.trim();
   } catch (err) {
-    const msg = (err as Error).message ?? "";
-    // `gh pr checks` exits 1 with "no checks reported" when the PR has no CI.
-    // This is not an error — return an empty JSON array so callers get [].
-    if (msg.includes("no checks reported")) {
-      return "[]";
-    }
-    throw new Error(`gh ${args.slice(0, 3).join(" ")} failed: ${msg}`, {
+    throw new Error(`gh ${args.slice(0, 3).join(" ")} failed: ${(err as Error).message}`, {
       cause: err,
     });
   }
@@ -239,6 +233,12 @@ function createGitHubSCM(): SCM {
           };
         });
       } catch (err) {
+        // `gh pr checks` exits 1 with "no checks reported" when the PR has no CI.
+        // This is not an error — the PR simply has no checks configured.
+        const msg = err instanceof Error ? err.message : "";
+        if (msg.includes("no checks reported")) {
+          return [];
+        }
         // Propagate so callers (getCISummary) can decide how to handle.
         // Do NOT silently return [] — that causes a fail-open where CI
         // appears healthy when we simply failed to fetch check status.
