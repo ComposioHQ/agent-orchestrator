@@ -11,7 +11,7 @@ import {
 } from "@composio/ao-core";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { stat, access } from "node:fs/promises";
+import { stat, access, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { constants } from "node:fs";
 
@@ -192,6 +192,16 @@ function createAiderAgent(): Agent {
     async getSessionInfo(_session: Session): Promise<AgentSessionInfo | null> {
       // Aider doesn't have JSONL session files for introspection yet
       return null;
+    },
+
+    async injectSystemPrompt(
+      workspacePath: string,
+      content: string,
+      filename: string,
+    ): Promise<void> {
+      // Aider reads .aider.conventions.md for system-level context
+      const conventionsPath = join(workspacePath, ".aider.conventions.md");
+      await writeFile(conventionsPath, content, "utf-8");
     },
   };
 }

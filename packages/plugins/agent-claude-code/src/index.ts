@@ -726,6 +726,37 @@ function createClaudeCodeAgent(): Agent {
       const hookScriptPath = join(session.workspacePath, ".claude", "metadata-updater.sh");
       await setupHookInWorkspace(session.workspacePath, hookScriptPath);
     },
+
+    async injectSystemPrompt(
+      workspacePath: string,
+      content: string,
+      filename: string,
+    ): Promise<void> {
+      // Write the prompt file (e.g. CLAUDE.orchestrator.md)
+      const promptFileName = `CLAUDE.${filename}.md`;
+      const promptPath = join(workspacePath, promptFileName);
+      await writeFile(promptPath, content, "utf-8");
+
+      // Ensure CLAUDE.local.md imports it via @-directive (idempotent)
+      const localMdPath = join(workspacePath, "CLAUDE.local.md");
+      const importLine = `@${promptFileName}`;
+
+      let existing = "";
+      if (existsSync(localMdPath)) {
+        existing = await readFile(localMdPath, "utf-8");
+      }
+
+      if (!existing.includes(importLine)) {
+        if (existing && !existing.endsWith("\n")) {
+          existing += "\n";
+        }
+        if (existing) {
+          existing += "\n";
+        }
+        existing += `${importLine}\n`;
+        await writeFile(localMdPath, existing, "utf-8");
+      }
+    },
   };
 }
 

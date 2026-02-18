@@ -254,6 +254,22 @@ export interface Agent {
    * run git/gh commands. Without this, PRs created by agents never show up.
    */
   setupWorkspaceHooks?(workspacePath: string, config: WorkspaceHooksConfig): Promise<void>;
+
+  /**
+   * Optional: Inject persistent system-level context into the workspace.
+   * Called by `ao start` to give the orchestrator agent its instructions.
+   *
+   * Each agent plugin implements this for their own config format:
+   * - Claude Code: writes to CLAUDE.orchestrator.md and imports via CLAUDE.local.md
+   * - Codex: writes to AGENTS.md or codex-specific config
+   * - Aider: writes to .aider.conf.yml conventions
+   * - OpenCode: writes to its own config
+   *
+   * @param workspacePath - path to the workspace directory
+   * @param content - markdown content to inject as persistent context
+   * @param filename - suggested filename for the content (e.g. "orchestrator-prompt")
+   */
+  injectSystemPrompt?(workspacePath: string, content: string, filename: string): Promise<void>;
 }
 
 export interface AgentLaunchConfig {

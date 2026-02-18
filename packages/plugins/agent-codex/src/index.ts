@@ -8,6 +8,8 @@ import {
   type RuntimeHandle,
   type Session,
 } from "@composio/ao-core";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -139,6 +141,16 @@ function createCodexAgent(): Agent {
     async getSessionInfo(_session: Session): Promise<AgentSessionInfo | null> {
       // Codex doesn't have JSONL session files for introspection yet
       return null;
+    },
+
+    async injectSystemPrompt(
+      workspacePath: string,
+      content: string,
+      filename: string,
+    ): Promise<void> {
+      // Codex reads AGENTS.md for system instructions
+      const agentsPath = join(workspacePath, "AGENTS.md");
+      await writeFile(agentsPath, content, "utf-8");
     },
   };
 }
