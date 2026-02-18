@@ -90,6 +90,7 @@ export const TERMINAL_STATUSES: ReadonlySet<SessionStatus> = new Set([
   "done",
   "cleanup",
   "errored",
+  "merged",
 ]);
 
 /** Activity states that indicate the session is no longer running. */
