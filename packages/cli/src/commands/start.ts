@@ -1,8 +1,9 @@
 /**
  * `ao start` and `ao stop` commands — unified orchestrator startup.
  *
- * Starts both the dashboard and the orchestrator agent session, generating
- * the orchestrator prompt and injecting it via the agent plugin.
+ * Starts the dashboard and orchestrator agent session. The orchestrator prompt
+ * is passed to the agent via --append-system-prompt (or equivalent flag) at
+ * launch time — no file writing required.
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
@@ -115,11 +116,10 @@ export function registerStart(program: Command): void {
     .description("Start orchestrator agent and dashboard for a project")
     .option("--no-dashboard", "Skip starting the dashboard server")
     .option("--no-orchestrator", "Skip starting the orchestrator agent")
-    .option("--regenerate", "Regenerate orchestrator prompt")
     .action(
       async (
         projectArg?: string,
-        opts?: { dashboard?: boolean; orchestrator?: boolean; regenerate?: boolean },
+        opts?: { dashboard?: boolean; orchestrator?: boolean },
       ) => {
         try {
           const config = loadConfig();
@@ -160,17 +160,14 @@ export function registerStart(program: Command): void {
               );
             } else {
               try {
-                // Get agent instance (used for prompt injection, hooks, and launch)
+                // Get agent instance (used for hooks and launch)
                 const agent = getAgent(config, projectId);
                 const sessionsDir = getSessionsDir(config.configPath, project.path);
 
-                // Generate and inject orchestrator prompt via agent plugin
-                spinner.start("Injecting orchestrator prompt");
-                const promptContent = generateOrchestratorPrompt({ config, projectId, project });
-                if (agent.injectSystemPrompt) {
-                  await agent.injectSystemPrompt(project.path, promptContent, "orchestrator");
-                }
-                spinner.succeed("Orchestrator prompt injected");
+                // Generate orchestrator prompt (passed to agent via launch command)
+                spinner.start("Generating orchestrator prompt");
+                const systemPrompt = generateOrchestratorPrompt({ config, projectId, project });
+                spinner.succeed("Orchestrator prompt ready");
 
                 // Setup agent hooks for automatic metadata updates
                 spinner.start("Configuring agent hooks");
@@ -181,12 +178,13 @@ export function registerStart(program: Command): void {
 
                 spinner.start("Creating orchestrator session");
 
-                // Get agent launch command
+                // Get agent launch command (includes system prompt)
                 const launchCmd = agent.getLaunchCommand({
                   sessionId,
                   projectConfig: project,
                   permissions: project.agentConfig?.permissions ?? "default",
                   model: project.agentConfig?.model,
+                  systemPrompt,
                 });
 
                 // Determine environment variables

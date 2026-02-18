@@ -448,7 +448,6 @@ Start or stop the orchestrator agent and dashboard.
 ao start ${projectId}                # Start everything
 ao start ${projectId} --no-dashboard     # Skip dashboard
 ao start ${projectId} --no-orchestrator  # Skip orchestrator agent
-ao start ${projectId} --regenerate       # Regenerate CLAUDE.orchestrator.md
 ao stop ${projectId}                 # Stop everything
 \`\`\`
 
