@@ -8,6 +8,7 @@ import {
   type ActivityState,
   type CostEstimate,
   type PluginModule,
+  type ProjectConfig,
   type RuntimeHandle,
   type Session,
   type WorkspaceHooksConfig,
@@ -720,6 +721,35 @@ function createClaudeCodeAgent(): Agent {
         cost: extractCost(lines),
         lastLogModified,
       };
+    },
+
+    async getRestoreCommand(session: Session, project: ProjectConfig): Promise<string | null> {
+      if (!session.workspacePath) return null;
+
+      // Find Claude's project directory for this workspace
+      const projectPath = toClaudeProjectPath(session.workspacePath);
+      const projectDir = join(homedir(), ".claude", "projects", projectPath);
+
+      // Find the latest session JSONL file
+      const sessionFile = await findLatestSessionFile(projectDir);
+      if (!sessionFile) return null;
+
+      // Extract session UUID from filename (e.g. "abc123-def456.jsonl" → "abc123-def456")
+      const sessionUuid = basename(sessionFile, ".jsonl");
+      if (!sessionUuid) return null;
+
+      // Build resume command
+      const parts: string[] = ["claude", "--resume", shellEscape(sessionUuid)];
+
+      if (project.agentConfig?.permissions === "skip") {
+        parts.push("--dangerously-skip-permissions");
+      }
+
+      if (project.agentConfig?.model) {
+        parts.push("--model", shellEscape(project.agentConfig.model as string));
+      }
+
+      return parts.join(" ");
     },
 
     async setupWorkspaceHooks(workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {

@@ -1,6 +1,6 @@
 import chalk from "chalk";
 import type { Command } from "commander";
-import { loadConfig } from "@composio/ao-core";
+import { loadConfig, SessionNotRestorableError, WorkspaceMissingError } from "@composio/ao-core";
 import { git, getTmuxActivity } from "../lib/shell.js";
 import { formatAge } from "../lib/format.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
@@ -146,10 +146,39 @@ export function registerSession(program: Command): void {
               console.error(chalk.red(`  Error cleaning ${sessionId}: ${error}`));
             }
           }
-          console.log(
-            chalk.green(`\nCleanup complete. ${result.killed.length} sessions cleaned.`),
-          );
+          console.log(chalk.green(`\nCleanup complete. ${result.killed.length} sessions cleaned.`));
         }
+      }
+    });
+
+  session
+    .command("restore")
+    .description("Restore a terminated/crashed session in-place")
+    .argument("<session>", "Session name to restore")
+    .action(async (sessionName: string) => {
+      const config = loadConfig();
+      const sm = await getSessionManager(config);
+
+      try {
+        const restored = await sm.restore(sessionName);
+        console.log(chalk.green(`\nSession ${sessionName} restored.`));
+        if (restored.workspacePath) {
+          console.log(chalk.dim(`  Worktree: ${restored.workspacePath}`));
+        }
+        if (restored.branch) {
+          console.log(chalk.dim(`  Branch:   ${restored.branch}`));
+        }
+        const tmuxTarget = restored.runtimeHandle?.id ?? sessionName;
+        console.log(chalk.dim(`  Attach:   tmux attach -t ${tmuxTarget}`));
+      } catch (err) {
+        if (err instanceof SessionNotRestorableError) {
+          console.error(chalk.red(`Cannot restore: ${err.reason}`));
+        } else if (err instanceof WorkspaceMissingError) {
+          console.error(chalk.red(`Workspace missing: ${err.message}`));
+        } else {
+          console.error(chalk.red(`Failed to restore session ${sessionName}: ${err}`));
+        }
+        process.exit(1);
       }
     });
 }

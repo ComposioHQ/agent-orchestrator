@@ -3,7 +3,18 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { getAttentionLevel, type DashboardSession } from "../types";
+import {
+  getAttentionLevel,
+  TERMINAL_STATUSES,
+  TERMINAL_ACTIVITIES,
+  NON_RESTORABLE_STATUSES,
+  type DashboardSession,
+} from "../types";
+import {
+  TERMINAL_STATUSES as CORE_TERMINAL_STATUSES,
+  TERMINAL_ACTIVITIES as CORE_TERMINAL_ACTIVITIES,
+  NON_RESTORABLE_STATUSES as CORE_NON_RESTORABLE_STATUSES,
+} from "@composio/ao-core/types";
 
 // Helper to create a minimal DashboardSession for testing
 function createSession(overrides?: Partial<DashboardSession>): DashboardSession {
@@ -457,5 +468,19 @@ describe("getAttentionLevel", () => {
       });
       expect(getAttentionLevel(session)).toBe("working");
     });
+  });
+});
+
+describe("constants sync with core", () => {
+  it("TERMINAL_STATUSES matches core", () => {
+    expect(TERMINAL_STATUSES).toBe(CORE_TERMINAL_STATUSES);
+  });
+
+  it("TERMINAL_ACTIVITIES matches core", () => {
+    expect(TERMINAL_ACTIVITIES).toBe(CORE_TERMINAL_ACTIVITIES);
+  });
+
+  it("NON_RESTORABLE_STATUSES matches core", () => {
+    expect(NON_RESTORABLE_STATUSES).toBe(CORE_NON_RESTORABLE_STATUSES);
   });
 });

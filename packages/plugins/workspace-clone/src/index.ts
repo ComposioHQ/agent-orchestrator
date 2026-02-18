@@ -166,6 +166,64 @@ export function create(config?: Record<string, unknown>): Workspace {
       return infos;
     },
 
+    async exists(workspacePath: string): Promise<boolean> {
+      if (!existsSync(workspacePath)) return false;
+      try {
+        await execFileAsync("git", ["rev-parse", "--is-inside-work-tree"], {
+          cwd: workspacePath,
+          timeout: 30_000,
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+
+    async restore(cfg: WorkspaceCreateConfig, workspacePath: string): Promise<WorkspaceInfo> {
+      const repoPath = expandPath(cfg.project.path);
+
+      // Get remote URL
+      let remoteUrl: string;
+      try {
+        remoteUrl = await git(repoPath, "remote", "get-url", "origin");
+      } catch {
+        remoteUrl = repoPath;
+      }
+
+      // Clone fresh
+      await execFileAsync("git", [
+        "clone",
+        "--reference",
+        repoPath,
+        "--branch",
+        cfg.project.defaultBranch,
+        remoteUrl,
+        workspacePath,
+      ]);
+
+      // Try to checkout the branch
+      try {
+        await git(workspacePath, "checkout", cfg.branch);
+      } catch {
+        try {
+          await git(workspacePath, "checkout", "-b", cfg.branch);
+        } catch (checkoutErr: unknown) {
+          rmSync(workspacePath, { recursive: true, force: true });
+          const msg = checkoutErr instanceof Error ? checkoutErr.message : String(checkoutErr);
+          throw new Error(`Failed to checkout branch "${cfg.branch}" during restore: ${msg}`, {
+            cause: checkoutErr,
+          });
+        }
+      }
+
+      return {
+        path: workspacePath,
+        branch: cfg.branch,
+        sessionId: cfg.sessionId,
+        projectId: cfg.projectId,
+      };
+    },
+
     async postCreate(info: WorkspaceInfo, project: ProjectConfig): Promise<void> {
       // Run postCreate hooks
       // NOTE: commands run with full shell privileges — they come from trusted YAML config

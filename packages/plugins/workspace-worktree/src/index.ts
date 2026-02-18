@@ -11,6 +11,9 @@ import type {
   ProjectConfig,
 } from "@composio/ao-core";
 
+/** Timeout for git commands (30 seconds) */
+const GIT_TIMEOUT = 30_000;
+
 const execFileAsync = promisify(execFile);
 
 export const manifest = {
@@ -188,6 +191,59 @@ export function create(config?: Record<string, unknown>): Workspace {
       }
 
       return infos;
+    },
+
+    async exists(workspacePath: string): Promise<boolean> {
+      if (!existsSync(workspacePath)) return false;
+      try {
+        await execFileAsync("git", ["rev-parse", "--is-inside-work-tree"], {
+          cwd: workspacePath,
+          timeout: GIT_TIMEOUT,
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+
+    async restore(cfg: WorkspaceCreateConfig, workspacePath: string): Promise<WorkspaceInfo> {
+      const repoPath = expandPath(cfg.project.path);
+
+      // Prune stale worktree entries
+      try {
+        await git(repoPath, "worktree", "prune");
+      } catch {
+        // Best effort
+      }
+
+      // Fetch latest
+      try {
+        await git(repoPath, "fetch", "origin", "--quiet");
+      } catch {
+        // May fail if offline
+      }
+
+      // Try to create worktree on the existing branch
+      try {
+        await git(repoPath, "worktree", "add", workspacePath, cfg.branch);
+      } catch {
+        // Branch might not exist locally — try from origin
+        const remoteBranch = `origin/${cfg.branch}`;
+        try {
+          await git(repoPath, "worktree", "add", "-b", cfg.branch, workspacePath, remoteBranch);
+        } catch {
+          // Last resort: create from default branch
+          const baseRef = `origin/${cfg.project.defaultBranch}`;
+          await git(repoPath, "worktree", "add", "-b", cfg.branch, workspacePath, baseRef);
+        }
+      }
+
+      return {
+        path: workspacePath,
+        branch: cfg.branch,
+        sessionId: cfg.sessionId,
+        projectId: cfg.projectId,
+      };
     },
 
     async postCreate(info: WorkspaceInfo, project: ProjectConfig): Promise<void> {

@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
-import type {
-  Session,
-  SessionManager,
-  OrchestratorConfig,
-  PluginRegistry,
-  SCM,
+import {
+  SessionNotRestorableError,
+  type Session,
+  type SessionManager,
+  type OrchestratorConfig,
+  type PluginRegistry,
+  type SCM,
 } from "@composio/ao-core";
 
 // ── Mock Data ─────────────────────────────────────────────────────────
@@ -82,6 +83,17 @@ const mockSessionManager: SessionManager = {
   }),
   cleanup: vi.fn(async () => ({ killed: [], skipped: [], errors: [] })),
   spawnOrchestrator: vi.fn(),
+  restore: vi.fn(async (id: string) => {
+    const session = testSessions.find((s) => s.id === id);
+    if (!session) {
+      throw new Error(`Session ${id} not found`);
+    }
+    // Simulate SessionNotRestorableError for non-terminal sessions
+    if (session.status === "working" && session.activity !== "exited") {
+      throw new SessionNotRestorableError(id, "session is not in a terminal state");
+    }
+    return { ...session, status: "spawning" as const, activity: "active" as const };
+  }),
 };
 
 const mockSCM: SCM = {
@@ -114,9 +126,9 @@ const mockRegistry: PluginRegistry = {
 };
 
 const mockConfig: OrchestratorConfig = {
-  dataDir: "/tmp/ao-test",
-  worktreeDir: "/tmp/ao-worktrees",
+  configPath: "/tmp/ao-test/agent-orchestrator.yaml",
   port: 3000,
+  readyThresholdMs: 300_000,
   defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
   projects: {
     "my-app": {

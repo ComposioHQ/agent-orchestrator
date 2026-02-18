@@ -83,6 +83,40 @@ export const SESSION_STATUS = {
   TERMINATED: "terminated" as const,
 } satisfies Record<string, SessionStatus>;
 
+/** Statuses that indicate the session is in a terminal (dead) state. */
+export const TERMINAL_STATUSES: ReadonlySet<SessionStatus> = new Set([
+  "killed",
+  "terminated",
+  "done",
+  "cleanup",
+  "errored",
+]);
+
+/** Activity states that indicate the session is no longer running. */
+export const TERMINAL_ACTIVITIES: ReadonlySet<ActivityState> = new Set(["exited"]);
+
+/** Statuses that must never be restored (e.g. already merged, actively working). */
+export const NON_RESTORABLE_STATUSES: ReadonlySet<SessionStatus> = new Set(["merged", "working"]);
+
+/** Check if a session is in a terminal (dead) state. */
+export function isTerminalSession(session: {
+  status: SessionStatus;
+  activity: ActivityState | null;
+}): boolean {
+  return (
+    TERMINAL_STATUSES.has(session.status) ||
+    (session.activity !== null && TERMINAL_ACTIVITIES.has(session.activity))
+  );
+}
+
+/** Check if a session can be restored. */
+export function isRestorable(session: {
+  status: SessionStatus;
+  activity: ActivityState | null;
+}): boolean {
+  return isTerminalSession(session) && !NON_RESTORABLE_STATUSES.has(session.status);
+}
+
 /** A running agent session */
 export interface Session {
   /** Unique session ID, e.g. "my-app-3" */
@@ -120,6 +154,9 @@ export interface Session {
 
   /** Last activity timestamp */
   lastActivityAt: Date;
+
+  /** When this session was last restored (undefined if never restored) */
+  restoredAt?: Date;
 
   /** Metadata key-value pairs */
   metadata: Record<string, string>;
@@ -243,6 +280,12 @@ export interface Agent {
   /** Extract information from agent's internal data (summary, cost, session ID) */
   getSessionInfo(session: Session): Promise<AgentSessionInfo | null>;
 
+  /**
+   * Optional: get a launch command that resumes a previous session.
+   * Returns null if no previous session is found (caller falls back to getLaunchCommand).
+   */
+  getRestoreCommand?(session: Session, project: ProjectConfig): Promise<string | null>;
+
   /** Optional: run setup after agent is launched (e.g. configure MCP servers) */
   postLaunchSetup?(session: Session): Promise<void>;
 
@@ -339,6 +382,12 @@ export interface Workspace {
 
   /** Optional: run hooks after workspace creation (symlinks, installs, etc.) */
   postCreate?(info: WorkspaceInfo, project: ProjectConfig): Promise<void>;
+
+  /** Optional: check if a workspace exists and is a valid git repo */
+  exists?(workspacePath: string): Promise<boolean>;
+
+  /** Optional: restore a workspace (e.g. recreate a worktree for an existing branch) */
+  restore?(config: WorkspaceCreateConfig, workspacePath: string): Promise<WorkspaceInfo>;
 }
 
 export interface WorkspaceCreateConfig {
@@ -485,6 +534,9 @@ export interface SCM {
 
   /** Check if PR is ready to merge */
   getMergeability(pr: PRInfo): Promise<MergeReadiness>;
+
+  /** Optional: check if a branch exists in the repo */
+  branchExists?(repoPath: string, branch: string): Promise<boolean>;
 }
 
 // --- PR Types ---
@@ -904,6 +956,7 @@ export interface SessionMetadata {
   project?: string;
   createdAt?: string;
   runtimeHandle?: string;
+  restoredAt?: string;
   dashboardPort?: number;
   terminalWsPort?: number;
   directTerminalWsPort?: number;
@@ -917,6 +970,7 @@ export interface SessionMetadata {
 export interface SessionManager {
   spawn(config: SessionSpawnConfig): Promise<Session>;
   spawnOrchestrator(config: OrchestratorSpawnConfig): Promise<Session>;
+  restore(sessionId: SessionId): Promise<Session>;
   list(projectId?: string): Promise<Session[]>;
   get(sessionId: SessionId): Promise<Session | null>;
   kill(sessionId: SessionId): Promise<void>;
@@ -995,4 +1049,26 @@ export function isIssueNotFoundError(err: unknown): boolean {
     // Linear: "Issue <id> not found" or "No issue with identifier"
     message.includes("no issue with identifier")
   );
+}
+
+/** Thrown when a session cannot be restored (e.g. merged, still working). */
+export class SessionNotRestorableError extends Error {
+  constructor(
+    public readonly sessionId: string,
+    public readonly reason: string,
+  ) {
+    super(`Session ${sessionId} cannot be restored: ${reason}`);
+    this.name = "SessionNotRestorableError";
+  }
+}
+
+/** Thrown when a workspace is missing and cannot be recreated. */
+export class WorkspaceMissingError extends Error {
+  constructor(
+    public readonly path: string,
+    public readonly detail?: string,
+  ) {
+    super(`Workspace missing at ${path}${detail ? `: ${detail}` : ""}`);
+    this.name = "WorkspaceMissingError";
+  }
 }

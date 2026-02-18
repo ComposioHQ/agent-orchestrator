@@ -560,6 +560,26 @@ function createGitHubSCM(): SCM {
         blockers,
       };
     },
+    async branchExists(repoPath: string, branch: string): Promise<boolean> {
+      try {
+        await execFileAsync("git", ["rev-parse", "--verify", `refs/heads/${branch}`], {
+          cwd: repoPath,
+          timeout: 30_000,
+        });
+        return true;
+      } catch {
+        // Try remote ref
+        try {
+          await execFileAsync("git", ["rev-parse", "--verify", `refs/remotes/origin/${branch}`], {
+            cwd: repoPath,
+            timeout: 30_000,
+          });
+          return true;
+        } catch {
+          return false;
+        }
+      }
+    },
   };
 }
 

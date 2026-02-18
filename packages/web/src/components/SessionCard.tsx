@@ -1,7 +1,13 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { type DashboardSession, type AttentionLevel, getAttentionLevel } from "@/lib/types";
+import {
+  type DashboardSession,
+  type AttentionLevel,
+  getAttentionLevel,
+  TERMINAL_STATUSES,
+  TERMINAL_ACTIVITIES,
+} from "@/lib/types";
 import { CI_STATUS } from "@composio/ao-core/types";
 import { cn } from "@/lib/cn";
 import { PRStatus } from "./PRStatus";
@@ -56,12 +62,11 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
   const alerts = getAlerts(session);
   const isReadyToMerge = pr?.mergeability.mergeable && pr.state === "open";
   const isTerminal =
-    session.status === "killed" ||
-    session.status === "cleanup" ||
-    session.status === "terminated" ||
-    session.status === "done" ||
-    session.status === "merged" ||
-    session.activity === "exited";
+    TERMINAL_STATUSES.has(session.status) ||
+    (session.activity !== null && TERMINAL_ACTIVITIES.has(session.activity));
+  // UI restore button: more permissive than core isRestorable() — shows restore
+  // when agent has exited even if status is "working" (agent crashed mid-work).
+  // Only block "merged" (server-side restore will reject anyway).
   const isRestorable = isTerminal && session.status !== "merged";
 
   return (
