@@ -1,14 +1,13 @@
 import chalk from "chalk";
 import ora from "ora";
 import type { Command } from "commander";
-import { getSessionsDir } from "@composio/ao-core";
-import { exec, gh, getTmuxSessions } from "../lib/shell.js";
-import { matchesPrefix } from "../lib/session-utils.js";
-import { getConfig } from "../services/ConfigService.js";
-import { MetadataService } from "../services/MetadataService.js";
+import { loadConfig } from "@composio/ao-core";
+import { exec, gh } from "../lib/shell.js";
+import { getSessionManager } from "../lib/create-session-manager.js";
 
 interface ReviewInfo {
-  session: string;
+  sessionId: string;
+  tmuxTarget: string;
   prNumber: string;
   pendingComments: number;
   reviewDecision: string | null;
@@ -66,45 +65,42 @@ export function registerReviewCheck(program: Command): void {
     .argument("[project]", "Project ID (checks all if omitted)")
     .option("--dry-run", "Show what would be done without sending messages")
     .action(async (projectId: string | undefined, opts: { dryRun?: boolean }) => {
-      const config = getConfig();
+      const config = loadConfig();
 
       if (projectId && !config.projects[projectId]) {
         console.error(chalk.red(`Unknown project: ${projectId}`));
         process.exit(1);
       }
 
-      const allTmux = await getTmuxSessions();
-      const projects = projectId ? { [projectId]: config.projects[projectId] } : config.projects;
+      const sm = await getSessionManager(config);
+      const sessions = await sm.list(projectId);
 
       const spinner = ora("Checking PRs for review comments...").start();
       const results: ReviewInfo[] = [];
 
-      for (const [pid, project] of Object.entries(projects)) {
-        const prefix = project.sessionPrefix || pid;
-        const projectSessions = allTmux.filter((s) => matchesPrefix(s, prefix));
-        const sessionsDir = getSessionsDir(config.configPath, project.path);
-        const metadata = new MetadataService(sessionsDir);
+      for (const session of sessions) {
+        const prUrl = session.metadata["pr"];
+        if (!prUrl) continue;
 
-        for (const session of projectSessions) {
-          const meta = metadata.read(session);
-          if (!meta?.pr) continue;
+        const project = config.projects[session.projectId];
+        if (!project?.repo) continue;
 
-          const prNum = meta.pr.match(/(\d+)\s*$/)?.[1];
-          if (!prNum || !project.repo) continue;
+        const prNum = prUrl.match(/(\d+)\s*$/)?.[1];
+        if (!prNum) continue;
 
-          try {
-            const { pendingComments, reviewDecision } = await checkPRReviews(project.repo, prNum);
-            if (pendingComments > 0 || reviewDecision === "CHANGES_REQUESTED") {
-              results.push({
-                session,
-                prNumber: prNum,
-                pendingComments,
-                reviewDecision,
-              });
-            }
-          } catch {
-            // Skip PRs we can't access
+        try {
+          const { pendingComments, reviewDecision } = await checkPRReviews(project.repo, prNum);
+          if (pendingComments > 0 || reviewDecision === "CHANGES_REQUESTED") {
+            results.push({
+              sessionId: session.id,
+              tmuxTarget: session.runtimeHandle?.id ?? session.id,
+              prNumber: prNum,
+              pendingComments,
+              reviewDecision,
+            });
           }
+        } catch {
+          // Skip PRs we can't access
         }
       }
 
@@ -122,7 +118,7 @@ export function registerReviewCheck(program: Command): void {
       );
 
       for (const result of results) {
-        console.log(`  ${chalk.green(result.session)}  PR #${result.prNumber}`);
+        console.log(`  ${chalk.green(result.sessionId)}  PR #${result.prNumber}`);
         if (result.reviewDecision) {
           console.log(`    Decision: ${chalk.yellow(result.reviewDecision)}`);
         }
@@ -133,15 +129,15 @@ export function registerReviewCheck(program: Command): void {
         if (!opts.dryRun) {
           try {
             // Interrupt busy agent and clear partial input before sending
-            await exec("tmux", ["send-keys", "-t", result.session, "C-c"]);
+            await exec("tmux", ["send-keys", "-t", result.tmuxTarget, "C-c"]);
             await new Promise((resolve) => setTimeout(resolve, 500));
-            await exec("tmux", ["send-keys", "-t", result.session, "C-u"]);
+            await exec("tmux", ["send-keys", "-t", result.tmuxTarget, "C-u"]);
             await new Promise((resolve) => setTimeout(resolve, 200));
             const message =
               "There are review comments on your PR. Check with `gh pr view --comments` and `gh api` for inline comments. Address each one, push fixes, and reply.";
-            await exec("tmux", ["send-keys", "-t", result.session, "-l", message]);
+            await exec("tmux", ["send-keys", "-t", result.tmuxTarget, "-l", message]);
             await new Promise((resolve) => setTimeout(resolve, 200));
-            await exec("tmux", ["send-keys", "-t", result.session, "Enter"]);
+            await exec("tmux", ["send-keys", "-t", result.tmuxTarget, "Enter"]);
             console.log(chalk.green(`    -> Fix prompt sent`));
           } catch (err) {
             console.error(chalk.red(`    -> Failed to send: ${err}`));

@@ -213,39 +213,67 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   }
 
   /**
+   * Ensure session has a runtime handle (fabricate one if missing) and enrich
+   * with live runtime state + activity detection. Used by both list() and get().
+   */
+  async function ensureHandleAndEnrich(
+    session: Session,
+    sessionName: string,
+    project: ProjectConfig,
+    plugins: ReturnType<typeof resolvePlugins>,
+  ): Promise<void> {
+    const handleFromMetadata = session.runtimeHandle !== null;
+    if (!handleFromMetadata) {
+      session.runtimeHandle = {
+        id: sessionName,
+        runtimeName: project.runtime ?? config.defaults.runtime,
+        data: {},
+      };
+    }
+    await enrichSessionWithRuntimeState(session, plugins, handleFromMetadata);
+  }
+
+  /**
    * Enrich session with live runtime state (alive/exited) and activity detection.
    * Mutates the session object in place.
    */
   async function enrichSessionWithRuntimeState(
     session: Session,
     plugins: ReturnType<typeof resolvePlugins>,
+    handleFromMetadata: boolean,
   ): Promise<void> {
-    if (!session.runtimeHandle) return;
-
-    if (plugins.runtime) {
+    // Check runtime liveness — but only if the handle came from metadata.
+    // Fabricated handles (constructed as fallback for external sessions) should
+    // NOT override status to "killed" — we don't know if the session ever had
+    // a tmux session, and we'd clobber meaningful statuses like "pr_open".
+    if (handleFromMetadata && session.runtimeHandle && plugins.runtime) {
       try {
         const alive = await plugins.runtime.isAlive(session.runtimeHandle);
         if (!alive) {
           session.status = "killed";
           session.activity = "exited";
-        } else if (plugins.agent) {
-          // Runtime is alive — detect activity using agent-native mechanism
-          try {
-            const detected = await plugins.agent.getActivityState(
-              session,
-              config.readyThresholdMs,
-            );
-            // Only overwrite if plugin returned a concrete state.
-            // null means "I don't have enough data" — keep existing value.
-            if (detected !== null) {
-              session.activity = detected;
-            }
-          } catch {
-            // Can't detect activity — keep existing value
-          }
+          return;
         }
       } catch {
-        // Can't check — assume still alive
+        // Can't check liveness — continue to activity detection
+      }
+    }
+
+    // Detect activity independently of runtime handle.
+    // Activity detection reads JSONL files on disk — it only needs workspacePath,
+    // not a runtime handle. Gating on runtimeHandle caused sessions created by
+    // external scripts (which don't store runtimeHandle) to always show "unknown".
+    if (plugins.agent) {
+      try {
+        const detected = await plugins.agent.getActivityState(
+          session,
+          config.readyThresholdMs,
+        );
+        if (detected !== null) {
+          session.activity = detected;
+        }
+      } catch {
+        // Can't detect activity — keep existing value
       }
     }
   }
@@ -517,11 +545,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
       const session = metadataToSession(sessionName, raw, createdAt, modifiedAt);
 
-      // Enrich with live runtime state and activity detection
-      if (session.runtimeHandle) {
-        const plugins = resolvePlugins(project);
-        await enrichSessionWithRuntimeState(session, plugins);
-      }
+      const plugins = resolvePlugins(project);
+      await ensureHandleAndEnrich(session, sessionName, project, plugins);
 
       sessions.push(session);
     }
@@ -550,11 +575,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
       const session = metadataToSession(sessionId, raw, createdAt, modifiedAt);
 
-      // Enrich with live runtime state and activity detection
-      if (session.runtimeHandle) {
-        const plugins = resolvePlugins(project);
-        await enrichSessionWithRuntimeState(session, plugins);
-      }
+      const plugins = resolvePlugins(project);
+      await ensureHandleAndEnrich(session, sessionId, project, plugins);
 
       return session;
     }
@@ -622,7 +644,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     deleteMetadata(sessionsDir, sessionId, true);
   }
 
-  async function cleanup(projectId?: string): Promise<CleanupResult> {
+  async function cleanup(projectId?: string, options?: { dryRun?: boolean }): Promise<CleanupResult> {
     const result: CleanupResult = { killed: [], skipped: [], errors: [] };
     const sessions = await list(projectId);
 
@@ -670,7 +692,9 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         }
 
         if (shouldKill) {
-          await kill(session.id);
+          if (!options?.dryRun) {
+            await kill(session.id);
+          }
           result.killed.push(session.id);
         } else {
           result.skipped.push(session.id);

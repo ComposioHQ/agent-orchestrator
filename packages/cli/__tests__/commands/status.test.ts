@@ -1,7 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import {
+  type Session,
+  type SessionManager,
+  type ActivityState,
+  getSessionsDir,
+} from "@composio/ao-core";
 
 const {
   mockTmux,
@@ -13,6 +19,8 @@ const {
   mockGetCISummary,
   mockGetReviewDecision,
   mockGetPendingComments,
+  mockSessionManager,
+  sessionsDirRef,
 } = vi.hoisted(() => ({
   mockTmux: vi.fn(),
   mockGit: vi.fn(),
@@ -23,6 +31,15 @@ const {
   mockGetCISummary: vi.fn(),
   mockGetReviewDecision: vi.fn(),
   mockGetPendingComments: vi.fn(),
+  mockSessionManager: {
+    list: vi.fn(),
+    kill: vi.fn(),
+    cleanup: vi.fn(),
+    get: vi.fn(),
+    spawn: vi.fn(),
+    send: vi.fn(),
+  },
+  sessionsDirRef: { current: "" },
 }));
 
 vi.mock("../../src/lib/shell.js", () => ({
@@ -94,12 +111,56 @@ vi.mock("../../src/lib/plugins.js", () => ({
   }),
 }));
 
+/** Parse a key=value metadata file into a Record<string, string>. */
+function parseMetadata(content: string): Record<string, string> {
+  const meta: Record<string, string> = {};
+  for (const line of content.split("\n")) {
+    const idx = line.indexOf("=");
+    if (idx > 0) {
+      meta[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+    }
+  }
+  return meta;
+}
+
+/** Build Session objects from metadata files in sessionsDir. */
+function buildSessionsFromDir(
+  dir: string,
+  projectId: string,
+  activityOverride?: ActivityState | null,
+): Session[] {
+  if (!existsSync(dir)) return [];
+  const files = readdirSync(dir).filter((f) => !f.startsWith(".") && f !== "archive");
+  return files.map((name) => {
+    const content = readFileSync(join(dir, name), "utf-8");
+    const meta = parseMetadata(content);
+    return {
+      id: name,
+      projectId,
+      status: (meta["status"] as Session["status"]) || "spawning",
+      activity: activityOverride !== undefined ? activityOverride : null,
+      branch: meta["branch"] || null,
+      issueId: meta["issue"] || null,
+      pr: null,
+      workspacePath: meta["worktree"] || null,
+      runtimeHandle: { id: name, runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: meta,
+    } satisfies Session;
+  });
+}
+
+vi.mock("../../src/lib/create-session-manager.js", () => ({
+  getSessionManager: async (): Promise<SessionManager> => mockSessionManager as SessionManager,
+}));
+
 let tmpDir: string;
 let sessionsDir: string;
 
 import { Command } from "commander";
 import { registerStatus } from "../../src/commands/status.js";
-import { getSessionsDir } from "@composio/ao-core";
 
 let program: Command;
 let consoleSpy: ReturnType<typeof vi.spyOn>;
@@ -138,6 +199,7 @@ beforeEach(() => {
   // Calculate and create sessions directory for hash-based architecture
   sessionsDir = getSessionsDir(configPath, join(tmpDir, "main-repo"));
   mkdirSync(sessionsDir, { recursive: true });
+  sessionsDirRef.current = sessionsDir;
 
   program = new Command();
   program.exitOverride();
@@ -161,6 +223,17 @@ beforeEach(() => {
   mockGetReviewDecision.mockResolvedValue("none");
   mockGetPendingComments.mockReset();
   mockGetPendingComments.mockResolvedValue([]);
+  mockSessionManager.list.mockReset();
+  mockSessionManager.kill.mockReset();
+  mockSessionManager.cleanup.mockReset();
+  mockSessionManager.get.mockReset();
+  mockSessionManager.spawn.mockReset();
+  mockSessionManager.send.mockReset();
+
+  // Default: list reads from sessionsDir
+  mockSessionManager.list.mockImplementation(async () => {
+    return buildSessionsFromDir(sessionsDirRef.current, "my-app");
+  });
 });
 
 afterEach(() => {
@@ -217,7 +290,7 @@ describe("status command", () => {
     expect(output).toContain("app-1");
     expect(output).toContain("app-2");
     expect(output).toContain("INT-100");
-    // other-session should not appear (doesn't match prefix)
+    // other-session should not appear (not in metadata)
     expect(output).not.toContain("other-session");
   });
 
@@ -499,11 +572,16 @@ describe("status command", () => {
     expect(parsed[0].pendingThreads).toBeNull();
   });
 
-  it("uses agent.getActivityState() for activity detection (plugin is single source of truth)", async () => {
+  it("uses session.activity from session manager for activity detection", async () => {
     writeFileSync(
       join(sessionsDir, "app-1"),
       "worktree=/tmp/wt\nbranch=feat/act\nstatus=working\n",
     );
+
+    // Override list to return sessions with activity set to "ready"
+    mockSessionManager.list.mockImplementation(async () => {
+      return buildSessionsFromDir(sessionsDirRef.current, "my-app", "ready");
+    });
 
     mockTmux.mockImplementation(async (...args: string[]) => {
       if (args[0] === "list-sessions") return "app-1";
@@ -512,41 +590,35 @@ describe("status command", () => {
     });
     mockGit.mockResolvedValue("feat/act");
 
-    // Plugin returns "ready" — CLI should use it directly, not recompute
-    mockGetActivityState.mockResolvedValue("ready");
-
     await program.parseAsync(["node", "test", "status", "--json"]);
 
     const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
     const parsed = JSON.parse(jsonCalls);
     expect(parsed[0].activity).toBe("ready");
-    expect(mockGetActivityState).toHaveBeenCalled();
   });
 
-  it("passes readyThresholdMs from config to agent.getActivityState()", async () => {
+  it("shows null activity when session has no activity set", async () => {
     writeFileSync(
       join(sessionsDir, "app-1"),
       "worktree=/tmp/wt\nbranch=feat/thr\nstatus=working\n",
     );
 
+    // Default list mock returns activity: null
     mockTmux.mockImplementation(async (...args: string[]) => {
       if (args[0] === "list-sessions") return "app-1";
       if (args[0] === "display-message") return String(Math.floor(Date.now() / 1000));
       return null;
     });
     mockGit.mockResolvedValue("feat/thr");
-    mockGetActivityState.mockResolvedValue("idle");
 
     await program.parseAsync(["node", "test", "status", "--json"]);
 
-    // Verify the config threshold (300_000) was passed through
-    expect(mockGetActivityState).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "app-1" }),
-      300_000,
-    );
+    const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
+    const parsed = JSON.parse(jsonCalls);
+    expect(parsed[0].activity).toBeNull();
   });
 
-  it("shows null activity when getActivityState() throws", async () => {
+  it("shows null activity when session activity is null", async () => {
     writeFileSync(
       join(sessionsDir, "app-1"),
       "worktree=/tmp/wt\nbranch=feat/err\nstatus=working\n",
@@ -559,9 +631,7 @@ describe("status command", () => {
     });
     mockGit.mockResolvedValue("feat/err");
 
-    // Plugin throws — activity stays null (unknown)
-    mockGetActivityState.mockRejectedValue(new Error("detection failed"));
-
+    // Session has activity: null (default from buildSessionsFromDir)
     await program.parseAsync(["node", "test", "status", "--json"]);
 
     const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
@@ -569,11 +639,15 @@ describe("status command", () => {
     expect(parsed[0].activity).toBeNull();
   });
 
-  it("shows null activity when getActivityState() returns null", async () => {
+  it("shows null activity when session activity is explicitly null", async () => {
     writeFileSync(
       join(sessionsDir, "app-1"),
       "worktree=/tmp/wt\nbranch=feat/null\nstatus=working\n",
     );
+
+    mockSessionManager.list.mockImplementation(async () => {
+      return buildSessionsFromDir(sessionsDirRef.current, "my-app", null);
+    });
 
     mockTmux.mockImplementation(async (...args: string[]) => {
       if (args[0] === "list-sessions") return "app-1";
@@ -582,9 +656,6 @@ describe("status command", () => {
     });
     mockGit.mockResolvedValue("feat/null");
 
-    // Plugin returns null — activity stays null (unknown)
-    mockGetActivityState.mockResolvedValue(null);
-
     await program.parseAsync(["node", "test", "status", "--json"]);
 
     const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
@@ -592,11 +663,15 @@ describe("status command", () => {
     expect(parsed[0].activity).toBeNull();
   });
 
-  it("shows exited activity from getActivityState()", async () => {
+  it("shows exited activity from session manager", async () => {
     writeFileSync(
       join(sessionsDir, "app-1"),
       "worktree=/tmp/wt\nbranch=feat/dead\nstatus=working\n",
     );
+
+    mockSessionManager.list.mockImplementation(async () => {
+      return buildSessionsFromDir(sessionsDirRef.current, "my-app", "exited");
+    });
 
     mockTmux.mockImplementation(async (...args: string[]) => {
       if (args[0] === "list-sessions") return "app-1";
@@ -604,7 +679,6 @@ describe("status command", () => {
       return null;
     });
     mockGit.mockResolvedValue("feat/dead");
-    mockGetActivityState.mockResolvedValue("exited");
 
     await program.parseAsync(["node", "test", "status", "--json"]);
 

@@ -3,19 +3,32 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import chalk from "chalk";
 import type { Command } from "commander";
-import { type Agent, loadConfig } from "@composio/ao-core";
+import { type Agent, type Session, loadConfig } from "@composio/ao-core";
 import { exec, tmux } from "../lib/shell.js";
-import { getAgent, getAgentByName } from "../lib/plugins.js";
-import { findProjectForSession } from "../lib/session-utils.js";
+import { getAgentByName } from "../lib/plugins.js";
+import { getSessionManager } from "../lib/create-session-manager.js";
 
-async function sessionExists(session: string): Promise<boolean> {
-  const result = await tmux("has-session", "-t", session);
-  return result !== null;
-}
-
-async function captureOutput(session: string, lines: number): Promise<string> {
-  const output = await tmux("capture-pane", "-t", session, "-p", "-S", String(-lines));
-  return output || "";
+/**
+ * Resolve session context: tmux target name and Agent plugin.
+ * Loads config and looks up the session once, avoiding duplicate work.
+ */
+async function resolveSessionContext(
+  sessionName: string,
+): Promise<{ tmuxTarget: string; agent: Agent; session: Session | null }> {
+  try {
+    const config = loadConfig();
+    const sm = await getSessionManager(config);
+    const session = await sm.get(sessionName);
+    if (session) {
+      const tmuxTarget = session.runtimeHandle?.id ?? sessionName;
+      const project = config.projects[session.projectId];
+      const agentName = project?.agent ?? config.defaults.agent;
+      return { tmuxTarget, agent: getAgentByName(agentName), session };
+    }
+  } catch {
+    // No config or session not found — fall back to defaults
+  }
+  return { tmuxTarget: sessionName, agent: getAgentByName("claude-code"), session: null };
 }
 
 function isActive(agent: Agent, terminalOutput: string): boolean {
@@ -28,19 +41,6 @@ function hasQueuedMessage(terminalOutput: string): boolean {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function resolveAgent(sessionName: string): Agent {
-  try {
-    const config = loadConfig();
-    const projectId = findProjectForSession(config, sessionName);
-    if (projectId) {
-      return getAgent(config, projectId);
-    }
-  } catch {
-    // No config or project — fall back to default
-  }
-  return getAgentByName("claude-code");
 }
 
 export function registerSend(program: Command): void {
@@ -58,7 +58,11 @@ export function registerSend(program: Command): void {
         messageParts: string[],
         opts: { file?: string; wait?: boolean; timeout?: string },
       ) => {
-        if (!(await sessionExists(session))) {
+        // Resolve session context once: tmux target, agent plugin, session data
+        const { tmuxTarget, agent } = await resolveSessionContext(session);
+
+        const exists = await tmux("has-session", "-t", tmuxTarget);
+        if (exists === null) {
           console.error(chalk.red(`Session '${session}' does not exist`));
           process.exit(1);
         }
@@ -70,16 +74,20 @@ export function registerSend(program: Command): void {
           process.exit(1);
         }
 
-        const agent = resolveAgent(session);
-
         const parsedTimeout = parseInt(opts.timeout || "600", 10);
         const timeoutMs = (isNaN(parsedTimeout) || parsedTimeout <= 0 ? 600 : parsedTimeout) * 1000;
+
+        // Helper to capture output from the resolved tmux target
+        async function captureOutput(lines: number): Promise<string> {
+          const output = await tmux("capture-pane", "-t", tmuxTarget, "-p", "-S", String(-lines));
+          return output || "";
+        }
 
         // Wait for idle
         if (opts.wait !== false) {
           const start = Date.now();
           let warned = false;
-          while (isActive(agent, await captureOutput(session, 5))) {
+          while (isActive(agent, await captureOutput(5))) {
             if (!warned) {
               console.log(chalk.dim(`Waiting for ${session} to become idle...`));
               warned = true;
@@ -92,8 +100,8 @@ export function registerSend(program: Command): void {
           }
         }
 
-        // Clear partial input (tmux interprets "C-u" as Ctrl-U, which clears the line)
-        await exec("tmux", ["send-keys", "-t", session, "C-u"]);
+        // Clear partial input
+        await exec("tmux", ["send-keys", "-t", tmuxTarget, "C-u"]);
         await sleep(200);
 
         // Send the message
@@ -109,7 +117,7 @@ export function registerSend(program: Command): void {
           writeFileSync(tmpFile, content);
           try {
             await exec("tmux", ["load-buffer", tmpFile]);
-            await exec("tmux", ["paste-buffer", "-t", session]);
+            await exec("tmux", ["paste-buffer", "-t", tmuxTarget]);
           } finally {
             try {
               unlinkSync(tmpFile);
@@ -123,7 +131,7 @@ export function registerSend(program: Command): void {
             writeFileSync(tmpFile, msg);
             try {
               await exec("tmux", ["load-buffer", tmpFile]);
-              await exec("tmux", ["paste-buffer", "-t", session]);
+              await exec("tmux", ["paste-buffer", "-t", tmuxTarget]);
             } finally {
               try {
                 unlinkSync(tmpFile);
@@ -132,17 +140,17 @@ export function registerSend(program: Command): void {
               }
             }
           } else {
-            await exec("tmux", ["send-keys", "-t", session, "-l", msg]);
+            await exec("tmux", ["send-keys", "-t", tmuxTarget, "-l", msg]);
           }
         }
 
         await sleep(300);
-        await exec("tmux", ["send-keys", "-t", session, "Enter"]);
+        await exec("tmux", ["send-keys", "-t", tmuxTarget, "Enter"]);
 
         // Verify delivery with retries
         for (let attempt = 1; attempt <= 3; attempt++) {
           await sleep(2000);
-          const output = await captureOutput(session, 10);
+          const output = await captureOutput(10);
           if (isActive(agent, output)) {
             console.log(chalk.green("Message sent and processing"));
             return;
@@ -152,7 +160,7 @@ export function registerSend(program: Command): void {
             return;
           }
           if (attempt < 3) {
-            await tmux("send-keys", "-t", session, "Enter");
+            await tmux("send-keys", "-t", tmuxTarget, "Enter");
             await sleep(1000);
           }
         }

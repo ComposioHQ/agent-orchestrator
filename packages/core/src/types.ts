@@ -900,7 +900,7 @@ export interface SessionManager {
   list(projectId?: string): Promise<Session[]>;
   get(sessionId: SessionId): Promise<Session | null>;
   kill(sessionId: SessionId): Promise<void>;
-  cleanup(projectId?: string): Promise<CleanupResult>;
+  cleanup(projectId?: string, options?: { dryRun?: boolean }): Promise<CleanupResult>;
   send(sessionId: SessionId, message: string): Promise<void>;
 }
 

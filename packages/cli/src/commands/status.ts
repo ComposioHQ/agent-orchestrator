@@ -3,19 +3,14 @@ import type { Command } from "commander";
 import {
   type Agent,
   type SCM,
-  type OrchestratorConfig,
   type Session,
-  type RuntimeHandle,
-  type ProjectConfig,
   type PRInfo,
   type CIStatus,
   type ReviewDecision,
   type ActivityState,
-  getSessionsDir,
+  loadConfig,
 } from "@composio/ao-core";
 import { git, getTmuxSessions, getTmuxActivity } from "../lib/shell.js";
-import { getConfig } from "../services/ConfigService.js";
-import { MetadataService } from "../services/MetadataService.js";
 import {
   banner,
   header,
@@ -25,8 +20,8 @@ import {
   reviewDecisionIcon,
   padCol,
 } from "../lib/format.js";
-import { getAgent, getAgentByName, getSCM } from "../lib/plugins.js";
-import { matchesPrefix } from "../lib/session-utils.js";
+import { getAgentByName, getSCM } from "../lib/plugins.js";
+import { getSessionManager } from "../lib/create-session-manager.js";
 
 interface SessionInfo {
   name: string;
@@ -45,69 +40,31 @@ interface SessionInfo {
   activity: ActivityState | null;
 }
 
-/**
- * Build a minimal Session object for agent.getSessionInfo() and SCM.detectPR().
- * Only runtimeHandle and workspacePath are needed by the introspection logic.
- */
-function buildSessionForIntrospect(
-  sessionName: string,
-  workspacePath?: string,
-  branch?: string | null,
-): Session {
-  const handle: RuntimeHandle = {
-    id: sessionName,
-    runtimeName: "tmux",
-    data: {},
-  };
-  return {
-    id: sessionName,
-    projectId: "",
-    status: "working",
-    activity: null,
-    branch: branch ?? null,
-    issueId: null,
-    pr: null,
-    workspacePath: workspacePath || null,
-    runtimeHandle: handle,
-    agentInfo: null,
-    createdAt: new Date(),
-    lastActivityAt: new Date(),
-    metadata: {},
-  };
-}
-
 async function gatherSessionInfo(
-  sessionName: string,
-  metadata: MetadataService,
+  session: Session,
   agent: Agent,
   scm: SCM,
-  projectConfig: ProjectConfig,
-  readyThresholdMs?: number,
+  projectConfig: ReturnType<typeof loadConfig>,
 ): Promise<SessionInfo> {
-  const meta = metadata.read(sessionName);
-
-  let branch = meta?.branch ?? null;
-  const status = meta?.status ?? null;
-  const summary = meta?.summary ?? null;
-  const prUrl = meta?.pr ?? null;
-  const issue = meta?.issue ?? null;
-  const project = meta?.project ?? null;
+  let branch = session.branch;
+  const status = session.status;
+  const summary = session.metadata["summary"] ?? null;
+  const prUrl = session.metadata["pr"] ?? null;
+  const issue = session.issueId;
 
   // Get live branch from worktree if available
-  const worktree = meta?.worktree;
-  if (worktree) {
-    const liveBranch = await git(["branch", "--show-current"], worktree);
+  if (session.workspacePath) {
+    const liveBranch = await git(["branch", "--show-current"], session.workspacePath);
     if (liveBranch) branch = liveBranch;
   }
 
-  // Get last activity time
-  const activityTs = await getTmuxActivity(sessionName);
+  // Get last activity time from tmux
+  const tmuxTarget = session.runtimeHandle?.id ?? session.id;
+  const activityTs = await getTmuxActivity(tmuxTarget);
   const lastActivity = activityTs ? formatAge(activityTs) : "-";
 
-  // Get agent's auto-generated summary and activity via introspection
+  // Get agent's auto-generated summary via introspection
   let claudeSummary: string | null = null;
-  let activity: ActivityState | null = null;
-  const session = buildSessionForIntrospect(sessionName, worktree, branch);
   try {
     const introspection = await agent.getSessionInfo(session);
     claudeSummary = introspection?.summary ?? null;
@@ -115,12 +72,8 @@ async function gatherSessionInfo(
     // Summary extraction failed — not critical
   }
 
-  // Detect activity via the agent plugin (single source of truth)
-  try {
-    activity = await agent.getActivityState(session, readyThresholdMs);
-  } catch {
-    // Activity detection failed — stays null (displayed as "unknown")
-  }
+  // Use activity from session (already enriched by sessionManager.list())
+  const activity = session.activity;
 
   // Fetch PR, CI, and review data from SCM
   let prNumber: number | null = null;
@@ -138,29 +91,30 @@ async function gatherSessionInfo(
 
   if (branch) {
     try {
-      const session = buildSessionForIntrospect(sessionName, worktree, branch);
-      const prInfo: PRInfo | null = await scm.detectPR(session, projectConfig);
-      if (prInfo) {
-        prNumber = prInfo.number;
+      const project = projectConfig.projects[session.projectId];
+      if (project) {
+        const prInfo: PRInfo | null = await scm.detectPR(session, project);
+        if (prInfo) {
+          prNumber = prInfo.number;
 
-        // Fetch CI, reviews, and threads in parallel
-        const [ci, review, threads] = await Promise.all([
-          scm.getCISummary(prInfo).catch(() => null),
-          scm.getReviewDecision(prInfo).catch(() => null),
-          scm.getPendingComments(prInfo).catch(() => null),
-        ]);
+          const [ci, review, threads] = await Promise.all([
+            scm.getCISummary(prInfo).catch(() => null),
+            scm.getReviewDecision(prInfo).catch(() => null),
+            scm.getPendingComments(prInfo).catch(() => null),
+          ]);
 
-        ciStatus = ci;
-        reviewDecision = review;
-        pendingThreads = threads !== null ? threads.length : null;
+          ciStatus = ci;
+          reviewDecision = review;
+          pendingThreads = threads !== null ? threads.length : null;
+        }
       }
     } catch {
-      // SCM lookup failed — not critical, we still show what we have
+      // SCM lookup failed — not critical
     }
   }
 
   return {
-    name: sessionName,
+    name: session.id,
     branch,
     status,
     summary,
@@ -169,7 +123,7 @@ async function gatherSessionInfo(
     prNumber,
     issue,
     lastActivity,
-    project,
+    project: session.projectId,
     ciStatus,
     reviewDecision,
     pendingThreads,
@@ -239,9 +193,9 @@ export function registerStatus(program: Command): void {
     .option("-p, --project <id>", "Filter by project ID")
     .option("--json", "Output as JSON")
     .action(async (opts: { project?: string; json?: boolean }) => {
-      let config: OrchestratorConfig;
+      let config: ReturnType<typeof loadConfig>;
       try {
-        config = getConfig();
+        config = loadConfig();
       } catch {
         console.log(chalk.yellow("No config found. Run `ao init` first."));
         console.log(chalk.dim("Falling back to session discovery...\n"));
@@ -254,27 +208,39 @@ export function registerStatus(program: Command): void {
         process.exit(1);
       }
 
-      const allTmux = await getTmuxSessions();
-      const projects = opts.project
-        ? { [opts.project]: config.projects[opts.project] }
-        : config.projects;
+      // Use session manager to list sessions (metadata-based, not tmux-based)
+      const sm = await getSessionManager(config);
+      const sessions = await sm.list(opts.project);
 
       if (!opts.json) {
         console.log(banner("AGENT ORCHESTRATOR STATUS"));
         console.log();
       }
 
+      // Group sessions by project
+      const byProject = new Map<string, Session[]>();
+      for (const s of sessions) {
+        const list = byProject.get(s.projectId) ?? [];
+        list.push(s);
+        byProject.set(s.projectId, list);
+      }
+
+      // Show projects that have no sessions too (if not filtered)
+      const projectIds = opts.project ? [opts.project] : Object.keys(config.projects);
       let totalSessions = 0;
       const jsonOutput: SessionInfo[] = [];
 
-      for (const [projectId, projectConfig] of Object.entries(projects)) {
-        const prefix = projectConfig.sessionPrefix || projectId;
-        const projectSessions = allTmux.filter((s) => matchesPrefix(s, prefix));
-        const sessionsDir = getSessionsDir(config.configPath, projectConfig.path);
-        const metadata = new MetadataService(sessionsDir);
+      for (const projectId of projectIds) {
+        const projectConfig = config.projects[projectId];
+        if (!projectConfig) continue;
 
-        // Resolve plugins for this project
-        const agent = getAgent(config, projectId);
+        const projectSessions = (byProject.get(projectId) ?? []).sort((a, b) =>
+          a.id.localeCompare(b.id),
+        );
+
+        // Resolve agent and SCM for this project
+        const agentName = projectConfig.agent ?? config.defaults.agent;
+        const agent = getAgentByName(agentName);
         const scm = getSCM(config, projectId);
 
         if (!opts.json) {
@@ -296,18 +262,7 @@ export function registerStatus(program: Command): void {
         }
 
         // Gather all session info in parallel
-        const infoPromises = projectSessions
-          .sort()
-          .map((session) =>
-            gatherSessionInfo(
-              session,
-              metadata,
-              agent,
-              scm,
-              projectConfig,
-              config.readyThresholdMs,
-            ),
-          );
+        const infoPromises = projectSessions.map((s) => gatherSessionInfo(s, agent, scm, config));
         const sessionInfos = await Promise.all(infoPromises);
 
         for (const info of sessionInfos) {
@@ -328,7 +283,7 @@ export function registerStatus(program: Command): void {
       } else {
         console.log(
           chalk.dim(
-            `  ${totalSessions} active session${totalSessions !== 1 ? "s" : ""} across ${Object.keys(projects).length} project${Object.keys(projects).length !== 1 ? "s" : ""}`,
+            `  ${totalSessions} active session${totalSessions !== 1 ? "s" : ""} across ${projectIds.length} project${projectIds.length !== 1 ? "s" : ""}`,
           ),
         );
         console.log();
@@ -359,7 +314,21 @@ async function showFallbackStatus(): Promise<void> {
 
     // Try introspection even without config
     try {
-      const sessionObj = buildSessionForIntrospect(session);
+      const sessionObj: Session = {
+        id: session,
+        projectId: "",
+        status: "working",
+        activity: null,
+        branch: null,
+        issueId: null,
+        pr: null,
+        workspacePath: null,
+        runtimeHandle: { id: session, runtimeName: "tmux", data: {} },
+        agentInfo: null,
+        createdAt: new Date(),
+        lastActivityAt: new Date(),
+        metadata: {},
+      };
       const introspection = await agent.getSessionInfo(sessionObj);
       if (introspection?.summary) {
         console.log(`     ${chalk.dim("Claude:")} ${introspection.summary.slice(0, 65)}`);
