@@ -412,8 +412,37 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
   }
 
+  /** Try to detect a PR for a session that doesn't have one yet. */
+  async function tryDetectPR(session: Session): Promise<void> {
+    if (session.pr || !session.branch) return;
+
+    const project = config.projects[session.projectId];
+    if (!project?.scm) return;
+
+    const scm = registry.get<SCM>("scm", project.scm.plugin);
+    if (!scm) return;
+
+    try {
+      const prInfo = await scm.detectPR(session, project);
+      if (prInfo) {
+        // Write PR URL to metadata so it persists and the state machine can use it
+        const sessionsDir = getSessionsDir(config.configPath, project.path);
+        updateMetadata(sessionsDir, session.id, { pr: prInfo.url });
+
+        // Populate session.pr in-memory so determineStatus can check PR state
+        session.pr = prInfo;
+      }
+    } catch {
+      // PR detection failed — not critical, will retry next cycle
+    }
+  }
+
   /** Poll a single session and handle state transitions. */
   async function checkSession(session: Session): Promise<void> {
+    // Detect PRs for sessions that don't have one yet (e.g., agent created
+    // a PR but the PostToolUse hook didn't capture it)
+    await tryDetectPR(session);
+
     // Use tracked state if available; otherwise use the persisted metadata status
     // (not session.status, which list() may have already overwritten for dead runtimes).
     // This ensures transitions are detected after a lifecycle manager restart.
