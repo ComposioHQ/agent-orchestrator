@@ -453,7 +453,8 @@ describe("list", () => {
   });
 
   it("updates lastActivityAt from agent session info", async () => {
-    const recentDate = new Date("2026-02-18T22:42:00Z");
+    // Far-future date ensures it's always newer than the metadata file's mtime
+    const recentDate = new Date("2099-01-01T00:00:00Z");
     const agentWithInfo: Agent = {
       ...mockAgent,
       getActivityState: vi.fn().mockResolvedValue("active"),
