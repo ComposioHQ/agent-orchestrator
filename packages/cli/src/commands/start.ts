@@ -146,7 +146,7 @@ export function registerStart(program: Command): void {
           const config = loadConfig();
           const { projectId, project } = resolveProject(config, projectArg);
           const sessionId = `${project.sessionPrefix}-orchestrator`;
-          const port = config.port ?? 4000;
+          const port = config.port ?? 3000;
 
           console.log(chalk.bold(`\nStarting orchestrator for ${chalk.cyan(project.name)}\n`));
 
@@ -332,7 +332,7 @@ export function registerStop(program: Command): void {
         const config = loadConfig();
         const { projectId: _projectId, project } = resolveProject(config, projectArg);
         const sessionId = `${project.sessionPrefix}-orchestrator`;
-        const port = config.port ?? 4000;
+        const port = config.port ?? 3000;
         const sessionsDir = getSessionsDir(config.configPath, project.path);
 
         console.log(chalk.bold(`\nStopping orchestrator for ${chalk.cyan(project.name)}\n`));

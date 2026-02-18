@@ -16,7 +16,7 @@ export function registerDashboard(program: Command): void {
     .option("--rebuild", "Clean stale build artifacts and rebuild before starting")
     .action(async (opts: { port?: string; open?: boolean; rebuild?: boolean }) => {
       const config = loadConfig();
-      const port = opts.port ? parseInt(opts.port, 10) : (config.port ?? 4000);
+      const port = opts.port ? parseInt(opts.port, 10) : (config.port ?? 3000);
 
       if (isNaN(port) || port < 1 || port > 65535) {
         console.error(chalk.red("Invalid port number. Must be 1-65535."));

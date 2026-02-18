@@ -723,7 +723,7 @@ export interface OrchestratorConfig {
    */
   configPath: string;
 
-  /** Web dashboard port (auto-detected if not specified, defaults to 4000) */
+  /** Web dashboard port (defaults to 3000) */
   port?: number;
 
   /** Milliseconds before a "ready" session becomes "idle" (default: 300000 = 5 min) */

@@ -562,6 +562,10 @@ function createClaudeCodeAgent(): Agent {
         parts.push("--model", shellEscape(config.model));
       }
 
+      if (config.systemPrompt) {
+        parts.push("--append-system-prompt", shellEscape(config.systemPrompt));
+      }
+
       if (config.prompt) {
         parts.push("-p", shellEscape(config.prompt));
       }
