@@ -1,6 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServices, getSCM, getTracker } from "@/lib/services";
-import { sessionToDashboard, enrichSessionPR, enrichSessionIssue } from "@/lib/serialize";
+import {
+  sessionToDashboard,
+  enrichSessionPR,
+  enrichSessionIssue,
+  reconcileSessionStatus,
+} from "@/lib/serialize";
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -38,6 +43,9 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
         await enrichSessionPR(dashboardSession, scm, coreSession.pr);
       }
     }
+
+    // Reconcile session status with live PR state
+    reconcileSessionStatus(dashboardSession);
 
     return NextResponse.json(dashboardSession);
   } catch (error) {

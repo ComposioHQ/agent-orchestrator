@@ -5,6 +5,7 @@ import {
   sessionToDashboard,
   enrichSessionPR,
   enrichSessionIssue,
+  reconcileSessionStatus,
   computeStats,
 } from "@/lib/serialize";
 import { prCache, prCacheKey } from "@/lib/cache";
@@ -109,6 +110,11 @@ export default async function Home() {
       return enrichSessionPR(sessions[i], scm, core.pr);
     });
     await Promise.allSettled(enrichPromises);
+
+    // Reconcile session status with live PR state
+    for (const s of sessions) {
+      reconcileSessionStatus(s);
+    }
   } catch {
     // Config not found or services unavailable — show empty dashboard
   }

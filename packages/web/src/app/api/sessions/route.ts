@@ -5,6 +5,7 @@ import {
   sessionToDashboard,
   enrichSessionPR,
   enrichSessionIssue,
+  reconcileSessionStatus,
   computeStats,
 } from "@/lib/serialize";
 
@@ -71,6 +72,12 @@ export async function GET(request: Request) {
       return enrichSessionPR(dashboardSessions[i], scm, core.pr);
     });
     await Promise.allSettled(enrichPromises);
+
+    // Reconcile session status with live PR state (e.g. metadata says "pr_open"
+    // but GitHub says the PR is merged — update status to "merged")
+    for (const ds of dashboardSessions) {
+      reconcileSessionStatus(ds);
+    }
 
     return NextResponse.json({
       sessions: dashboardSessions,

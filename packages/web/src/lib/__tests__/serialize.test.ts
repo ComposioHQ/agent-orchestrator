@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { Session, PRInfo, SCM } from "@composio/ao-core";
-import { sessionToDashboard, enrichSessionPR } from "../serialize";
+import { sessionToDashboard, enrichSessionPR, reconcileSessionStatus } from "../serialize";
 import { prCache, prCacheKey } from "../cache";
 import type { DashboardSession } from "../types";
 
@@ -316,6 +316,131 @@ describe("enrichSessionPR", () => {
     // Should fall back to getPRState
     expect(scm.getPRState).toHaveBeenCalled();
     expect(dashboard.pr?.state).toBe("open");
+  });
+});
+
+describe("reconcileSessionStatus", () => {
+  it("should update status to merged when PR is merged and status is pr_open", () => {
+    const pr = createPRInfo();
+    const coreSession = createCoreSession({ status: "pr_open", pr });
+    const dashboard = sessionToDashboard(coreSession);
+    dashboard.pr!.state = "merged";
+
+    reconcileSessionStatus(dashboard);
+
+    expect(dashboard.status).toBe("merged");
+  });
+
+  it("should update status to merged when PR is merged and status is working", () => {
+    const pr = createPRInfo();
+    const coreSession = createCoreSession({ status: "working", pr });
+    const dashboard = sessionToDashboard(coreSession);
+    dashboard.pr!.state = "merged";
+
+    reconcileSessionStatus(dashboard);
+
+    expect(dashboard.status).toBe("merged");
+  });
+
+  it("should update status to merged when PR is merged and status is review_pending", () => {
+    const pr = createPRInfo();
+    const coreSession = createCoreSession({ status: "review_pending", pr });
+    const dashboard = sessionToDashboard(coreSession);
+    dashboard.pr!.state = "merged";
+
+    reconcileSessionStatus(dashboard);
+
+    expect(dashboard.status).toBe("merged");
+  });
+
+  it("should not change status when already merged", () => {
+    const pr = createPRInfo();
+    const coreSession = createCoreSession({ status: "merged", pr });
+    const dashboard = sessionToDashboard(coreSession);
+    dashboard.pr!.state = "merged";
+
+    reconcileSessionStatus(dashboard);
+
+    expect(dashboard.status).toBe("merged");
+  });
+
+  it("should update status to done when PR is closed", () => {
+    const pr = createPRInfo();
+    const coreSession = createCoreSession({ status: "pr_open", pr });
+    const dashboard = sessionToDashboard(coreSession);
+    dashboard.pr!.state = "closed";
+
+    reconcileSessionStatus(dashboard);
+
+    expect(dashboard.status).toBe("done");
+  });
+
+  it("should not override done status when PR is closed", () => {
+    const pr = createPRInfo();
+    const coreSession = createCoreSession({ status: "done", pr });
+    const dashboard = sessionToDashboard(coreSession);
+    dashboard.pr!.state = "closed";
+
+    reconcileSessionStatus(dashboard);
+
+    expect(dashboard.status).toBe("done");
+  });
+
+  it("should not override killed status when PR is closed", () => {
+    const pr = createPRInfo();
+    const coreSession = createCoreSession({ status: "killed", pr });
+    const dashboard = sessionToDashboard(coreSession);
+    dashboard.pr!.state = "closed";
+
+    reconcileSessionStatus(dashboard);
+
+    expect(dashboard.status).toBe("killed");
+  });
+
+  it("should not change status when PR is open", () => {
+    const pr = createPRInfo();
+    const coreSession = createCoreSession({ status: "pr_open", pr });
+    const dashboard = sessionToDashboard(coreSession);
+    dashboard.pr!.state = "open";
+
+    reconcileSessionStatus(dashboard);
+
+    expect(dashboard.status).toBe("pr_open");
+  });
+
+  it("should do nothing when session has no PR", () => {
+    const coreSession = createCoreSession({ status: "working", pr: null });
+    const dashboard = sessionToDashboard(coreSession);
+
+    reconcileSessionStatus(dashboard);
+
+    expect(dashboard.status).toBe("working");
+  });
+
+  it("should reconcile after enrichment — full pipeline consistency", async () => {
+    prCache.clear(); // Ensure no stale cache from prior tests
+
+    const pr = createPRInfo();
+    const coreSession = createCoreSession({ status: "pr_open", pr });
+    const dashboard = sessionToDashboard(coreSession);
+
+    // SCM reports PR as merged
+    const scm: SCM = {
+      ...createMockSCM(),
+      getPRSummary: vi.fn().mockResolvedValue({
+        state: "merged",
+        title: "Merged PR",
+        additions: 10,
+        deletions: 5,
+      }),
+    };
+
+    await enrichSessionPR(dashboard, scm, pr);
+    reconcileSessionStatus(dashboard);
+
+    // Both pr.state AND session.status should say "merged"
+    expect(dashboard.pr!.state).toBe("merged");
+    expect(dashboard.status).toBe("merged");
   });
 });
 

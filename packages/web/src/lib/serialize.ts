@@ -197,6 +197,28 @@ export async function enrichSessionPR(
   prCache.set(cacheKey, cacheData);
 }
 
+/**
+ * Reconcile session status with live PR state.
+ *
+ * When PR data is enriched from the SCM (GitHub API), the PR state may have
+ * changed (e.g. merged) while the session metadata still shows the old status
+ * (e.g. "pr_open"). This function ensures the session status reflects the
+ * live PR state, preventing contradictory displays like "PR Open" + "Merged".
+ *
+ * Must be called after enrichSessionPR() so that pr.state is up-to-date.
+ */
+export function reconcileSessionStatus(dashboard: DashboardSession): void {
+  if (!dashboard.pr) return;
+
+  const prState = dashboard.pr.state;
+
+  if (prState === "merged" && dashboard.status !== "merged") {
+    dashboard.status = "merged";
+  } else if (prState === "closed" && dashboard.status !== "done" && dashboard.status !== "killed") {
+    dashboard.status = "done";
+  }
+}
+
 /** Enrich a DashboardSession's issue label using the tracker plugin. */
 export function enrichSessionIssue(
   dashboard: DashboardSession,
