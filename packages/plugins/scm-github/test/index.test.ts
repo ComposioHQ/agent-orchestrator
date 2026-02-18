@@ -63,8 +63,10 @@ function mockGh(result: unknown) {
   ghMock.mockResolvedValueOnce({ stdout: JSON.stringify(result) });
 }
 
-function mockGhError(msg = "Command failed") {
-  ghMock.mockRejectedValueOnce(new Error(msg));
+function mockGhError(stderr = "Command failed") {
+  // Real execFileAsync errors place CLI output in err.stderr, not err.message.
+  const err = Object.assign(new Error("Command failed"), { stderr });
+  ghMock.mockRejectedValueOnce(err);
 }
 
 // ---------------------------------------------------------------------------
