@@ -7,7 +7,7 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: {
       template: `%s | ${projectName}`,
-      default: `${projectName} | Agent Orchestrator`,
+      default: `ao | ${projectName}`,
     },
     description: "Dashboard for managing parallel AI coding agents",
   };
