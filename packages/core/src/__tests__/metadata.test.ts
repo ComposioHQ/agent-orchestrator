@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import {
   readMetadata,
   readMetadataRaw,
+  readArchivedMetadataRaw,
   writeMetadata,
   updateMetadata,
   deleteMetadata,
@@ -226,6 +227,62 @@ describe("deleteMetadata", () => {
 
   it("is a no-op for nonexistent session", () => {
     expect(() => deleteMetadata(dataDir, "nope")).not.toThrow();
+  });
+});
+
+describe("readArchivedMetadataRaw", () => {
+  it("reads the latest archived metadata for a session", () => {
+    const archiveDir = join(dataDir, "archive");
+    mkdirSync(archiveDir, { recursive: true });
+
+    writeFileSync(
+      join(archiveDir, "app-1_2025-01-01T00-00-00-000Z"),
+      "branch=old-branch\nstatus=killed\n",
+    );
+    writeFileSync(
+      join(archiveDir, "app-1_2025-06-15T12-00-00-000Z"),
+      "branch=new-branch\nstatus=killed\n",
+    );
+
+    const raw = readArchivedMetadataRaw(dataDir, "app-1");
+    expect(raw).not.toBeNull();
+    expect(raw!["branch"]).toBe("new-branch");
+  });
+
+  it("returns null when no archive exists for session", () => {
+    const archiveDir = join(dataDir, "archive");
+    mkdirSync(archiveDir, { recursive: true });
+
+    writeFileSync(
+      join(archiveDir, "other-session_2025-01-01T00-00-00-000Z"),
+      "branch=main\nstatus=killed\n",
+    );
+
+    expect(readArchivedMetadataRaw(dataDir, "app-1")).toBeNull();
+  });
+
+  it("returns null when archive directory does not exist", () => {
+    expect(readArchivedMetadataRaw(dataDir, "app-1")).toBeNull();
+  });
+
+  it("integrates with deleteMetadata archive", () => {
+    writeMetadata(dataDir, "app-1", {
+      worktree: "/tmp/w",
+      branch: "feat/test",
+      status: "killed",
+      issue: "TEST-1",
+    });
+
+    deleteMetadata(dataDir, "app-1", true);
+
+    // Active metadata should be gone
+    expect(readMetadataRaw(dataDir, "app-1")).toBeNull();
+
+    // Archived metadata should be readable
+    const archived = readArchivedMetadataRaw(dataDir, "app-1");
+    expect(archived).not.toBeNull();
+    expect(archived!["branch"]).toBe("feat/test");
+    expect(archived!["issue"]).toBe("TEST-1");
   });
 });
 

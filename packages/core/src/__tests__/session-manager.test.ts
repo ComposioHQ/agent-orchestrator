@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { createSessionManager } from "../session-manager.js";
-import { writeMetadata, readMetadata, readMetadataRaw } from "../metadata.js";
+import { writeMetadata, readMetadata, readMetadataRaw, deleteMetadata } from "../metadata.js";
 import { getSessionsDir, getProjectBaseDir } from "../paths.js";
 import {
   SessionNotRestorableError,
@@ -1051,7 +1051,76 @@ describe("restore", () => {
     await expect(sm.restore("app-1")).rejects.toThrow(WorkspaceMissingError);
   });
 
-  it("throws for nonexistent session", async () => {
+  it("restores a session from archive when active metadata is deleted", async () => {
+    const wsPath = join(tmpDir, "ws-app-1");
+    mkdirSync(wsPath, { recursive: true });
+
+    // Create metadata, then delete it (which archives it)
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/TEST-1",
+      status: "killed",
+      project: "my-app",
+      issue: "TEST-1",
+      pr: "https://github.com/org/my-app/pull/10",
+      createdAt: "2025-01-01T00:00:00.000Z",
+      runtimeHandle: JSON.stringify(makeHandle("rt-old")),
+    });
+
+    // Archive it (deleteMetadata with archive=true is the default)
+    deleteMetadata(sessionsDir, "app-1");
+
+    // Verify active metadata is gone
+    expect(readMetadataRaw(sessionsDir, "app-1")).toBeNull();
+
+    // Restore should find it in archive
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const restored = await sm.restore("app-1");
+
+    expect(restored.id).toBe("app-1");
+    expect(restored.status).toBe("spawning");
+    expect(restored.branch).toBe("feat/TEST-1");
+    expect(restored.workspacePath).toBe(wsPath);
+
+    // Verify active metadata was recreated
+    const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta).not.toBeNull();
+    expect(meta!["issue"]).toBe("TEST-1");
+    expect(meta!["pr"]).toBe("https://github.com/org/my-app/pull/10");
+  });
+
+  it("restores from archive with multiple archived versions (picks latest)", async () => {
+    const wsPath = join(tmpDir, "ws-app-1");
+    mkdirSync(wsPath, { recursive: true });
+
+    // Manually create two archive entries with different timestamps
+    const archiveDir = join(sessionsDir, "archive");
+    mkdirSync(archiveDir, { recursive: true });
+
+    // Older archive — has stale branch
+    writeFileSync(
+      join(archiveDir, "app-1_2025-01-01T00-00-00-000Z"),
+      "worktree=" + wsPath + "\nbranch=old-branch\nstatus=killed\nproject=my-app\n",
+    );
+
+    // Newer archive — has correct branch
+    writeFileSync(
+      join(archiveDir, "app-1_2025-06-15T12-00-00-000Z"),
+      "worktree=" +
+        wsPath +
+        "\nbranch=feat/latest\nstatus=killed\nproject=my-app\n" +
+        "runtimeHandle=" +
+        JSON.stringify(makeHandle("rt-old")) +
+        "\n",
+    );
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const restored = await sm.restore("app-1");
+
+    expect(restored.branch).toBe("feat/latest");
+  });
+
+  it("throws for nonexistent session (not in active or archive)", async () => {
     const sm = createSessionManager({ config, registry: mockRegistry });
     await expect(sm.restore("nonexistent")).rejects.toThrow("not found");
   });
