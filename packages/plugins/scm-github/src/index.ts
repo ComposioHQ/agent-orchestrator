@@ -52,7 +52,11 @@ async function gh(args: string[]): Promise<string> {
     });
     return stdout.trim();
   } catch (err) {
-    throw new Error(`gh ${args.slice(0, 3).join(" ")} failed: ${(err as Error).message}`, {
+    // execFileAsync places CLI output in err.stderr, not err.message.
+    // Include stderr so callers can inspect the actual CLI error text.
+    const stderr = (err as { stderr?: string }).stderr ?? "";
+    const msg = stderr || (err as Error).message;
+    throw new Error(`gh ${args.slice(0, 3).join(" ")} failed: ${msg}`, {
       cause: err,
     });
   }
