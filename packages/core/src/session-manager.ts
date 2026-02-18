@@ -213,6 +213,27 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   }
 
   /**
+   * Ensure session has a runtime handle (fabricate one if missing) and enrich
+   * with live runtime state + activity detection. Used by both list() and get().
+   */
+  async function ensureHandleAndEnrich(
+    session: Session,
+    sessionName: string,
+    project: ProjectConfig,
+    plugins: ReturnType<typeof resolvePlugins>,
+  ): Promise<void> {
+    const handleFromMetadata = session.runtimeHandle !== null;
+    if (!handleFromMetadata) {
+      session.runtimeHandle = {
+        id: sessionName,
+        runtimeName: project.runtime ?? config.defaults.runtime,
+        data: {},
+      };
+    }
+    await enrichSessionWithRuntimeState(session, plugins, handleFromMetadata);
+  }
+
+  /**
    * Enrich session with live runtime state (alive/exited) and activity detection.
    * Mutates the session object in place.
    */
@@ -524,19 +545,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
       const session = metadataToSession(sessionName, raw, createdAt, modifiedAt);
 
-      // Sessions created by external scripts don't store runtimeHandle —
-      // fall back to using session ID as tmux session name (same as sendMessage)
-      const handleFromMetadata = session.runtimeHandle !== null;
-      if (!handleFromMetadata) {
-        session.runtimeHandle = {
-          id: sessionName,
-          runtimeName: project.runtime ?? config.defaults.runtime,
-          data: {},
-        };
-      }
-
       const plugins = resolvePlugins(project);
-      await enrichSessionWithRuntimeState(session, plugins, handleFromMetadata);
+      await ensureHandleAndEnrich(session, sessionName, project, plugins);
 
       sessions.push(session);
     }
@@ -565,19 +575,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
       const session = metadataToSession(sessionId, raw, createdAt, modifiedAt);
 
-      // Sessions created by external scripts don't store runtimeHandle —
-      // fall back to using session ID as tmux session name (same as sendMessage)
-      const handleFromMetadata = session.runtimeHandle !== null;
-      if (!handleFromMetadata) {
-        session.runtimeHandle = {
-          id: sessionId,
-          runtimeName: project.runtime ?? config.defaults.runtime,
-          data: {},
-        };
-      }
-
       const plugins = resolvePlugins(project);
-      await enrichSessionWithRuntimeState(session, plugins, handleFromMetadata);
+      await ensureHandleAndEnrich(session, sessionId, project, plugins);
 
       return session;
     }
