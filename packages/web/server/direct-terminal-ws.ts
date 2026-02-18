@@ -210,7 +210,7 @@ if (isMainModule) {
   console.log(`[DirectTerminal] Using tmux: ${TMUX}`);
 
   const { server, shutdown } = createDirectTerminalServer(TMUX);
-  const PORT = parseInt(process.env.DIRECT_TERMINAL_PORT ?? "3003", 10);
+  const PORT = parseInt(process.env.DIRECT_TERMINAL_PORT ?? "14801", 10);
 
   server.listen(PORT, () => {
     console.log(`[DirectTerminal] WebSocket server listening on port ${PORT}`);

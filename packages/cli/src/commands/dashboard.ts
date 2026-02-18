@@ -62,7 +62,12 @@ export function registerDashboard(program: Command): void {
 
       console.log(chalk.bold(`Starting dashboard on http://localhost:${port}\n`));
 
-      const env = buildDashboardEnv(port, config.configPath);
+      const env = await buildDashboardEnv(
+        port,
+        config.configPath,
+        config.terminalPort,
+        config.directTerminalPort,
+      );
 
       const child = spawn("npx", ["next", "dev", "-p", String(port)], {
         cwd: webDir,

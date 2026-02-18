@@ -131,10 +131,12 @@ end_step "Step 7: Dashboard API responding"
 start_step "Step 8: Verify WebSocket servers"
 
 # Check if direct terminal WebSocket server is running (required for terminal feature)
-echo "  Checking WebSocket server on port 3003..."
+# Default port is 14801 (14800 range chosen to avoid conflicts with dev tools)
+DIRECT_TERMINAL_PORT="${DIRECT_TERMINAL_PORT:-14801}"
+echo "  Checking WebSocket server on port $DIRECT_TERMINAL_PORT..."
 max_retries=10
 for i in $(seq 1 $max_retries); do
-    if curl -sf http://localhost:3003/health > /dev/null 2>&1; then
+    if curl -sf "http://localhost:$DIRECT_TERMINAL_PORT/health" > /dev/null 2>&1; then
         echo "  ✓ WebSocket server responding"
         break
     fi

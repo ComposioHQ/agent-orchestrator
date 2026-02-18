@@ -795,6 +795,12 @@ export interface OrchestratorConfig {
   /** Web dashboard port (defaults to 3000) */
   port?: number;
 
+  /** Terminal WebSocket server port (defaults to 3001) */
+  terminalPort?: number;
+
+  /** Direct terminal WebSocket server port (defaults to 3003) */
+  directTerminalPort?: number;
+
   /** Milliseconds before a "ready" session becomes "idle" (default: 300000 = 5 min) */
   readyThresholdMs: number;
 

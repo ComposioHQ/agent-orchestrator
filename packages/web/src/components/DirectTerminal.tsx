@@ -124,7 +124,7 @@ export function DirectTerminal({ sessionId, startFullscreen = false }: DirectTer
         // Connect WebSocket
         const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
         const hostname = window.location.hostname;
-        const port = process.env.NEXT_PUBLIC_DIRECT_TERMINAL_PORT ?? "3003";
+        const port = process.env.NEXT_PUBLIC_DIRECT_TERMINAL_PORT ?? "14801";
         const wsUrl = `${protocol}//${hostname}:${port}/ws?session=${encodeURIComponent(sessionId)}`;
 
         console.log("[DirectTerminal] Connecting to:", wsUrl);

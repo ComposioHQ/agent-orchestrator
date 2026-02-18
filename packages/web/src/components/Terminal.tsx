@@ -18,7 +18,7 @@ export function Terminal({ sessionId }: TerminalProps) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const port = process.env.NEXT_PUBLIC_TERMINAL_PORT ?? "3001";
+    const port = process.env.NEXT_PUBLIC_TERMINAL_PORT ?? "14800";
     // Use current hostname instead of hardcoded localhost
     const protocol = window.location.protocol;
     const hostname = window.location.hostname;
