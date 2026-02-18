@@ -424,14 +424,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     try {
       const prInfo = await scm.detectPR(session, project);
-      if (prInfo) {
-        // Write PR URL to metadata so it persists and the state machine can use it
-        const sessionsDir = getSessionsDir(config.configPath, project.path);
-        updateMetadata(sessionsDir, session.id, { pr: prInfo.url });
+      if (!prInfo) return;
+      // Write PR URL to metadata so it persists and the state machine can use it
+      const sessionsDir = getSessionsDir(config.configPath, project.path);
+      updateMetadata(sessionsDir, session.id, { pr: prInfo.url });
 
-        // Populate session.pr in-memory so determineStatus can check PR state
-        session.pr = prInfo;
-      }
+      session.pr = prInfo;
     } catch {
       // PR detection failed — not critical, will retry next cycle
     }
