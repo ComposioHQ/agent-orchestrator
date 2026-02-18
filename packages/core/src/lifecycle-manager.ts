@@ -510,8 +510,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
 
     if (comments.length === 0) {
-      // No automated comments — clear any stored fingerprint so future comments retrigger
+      // No automated comments — clear fingerprint and reaction tracker so future bot
+      // comments are treated as new. Without clearing the tracker, tracker.escalated
+      // persists permanently and the escalation guards on both fingerprint paths would
+      // silently block all future reactions for genuinely new/different bot comments.
       automatedCommentFingerprints.delete(session.id);
+      reactionTrackers.delete(`${session.id}:bugbot-comments`);
       return;
     }
 

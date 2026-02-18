@@ -1210,6 +1210,75 @@ describe("automated comment detection (bugbot)", () => {
     expect(mockSessionManager.send).toHaveBeenCalledTimes(2);
   });
 
+  it("clears tracker when comments resolve so escalated flag does not block future comments", async () => {
+    // Regression: when comments.length === 0, only the fingerprint was cleared.
+    // tracker.escalated persisted, permanently blocking reactions for new bot comments.
+    const botComment = {
+      id: "comment-1",
+      botName: "reviewdog",
+      body: "Error: unused import",
+      severity: "error" as const,
+      createdAt: new Date(),
+      url: "https://github.com/org/repo/pull/42#comment-1",
+    };
+
+    config.reactions = {
+      "bugbot-comments": {
+        auto: true,
+        action: "send-to-agent",
+        message: "Fix bot comments",
+        retries: 1, // allows first send, escalates on second attempt
+      },
+    };
+
+    const getAutomatedComments = vi.fn().mockResolvedValue([botComment]);
+    const mockSCM: SCM = {
+      ...makeSCMWithAutomatedComments([botComment]),
+      getAutomatedComments,
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    const session = makeSession({ status: "pr_open", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    // Check 1: pr_open sets initial state
+    await lm.check("app-1");
+    // Check 2: comment appears → send-to-agent, retries:0 → escalates
+    await lm.check("app-1");
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+
+    // Agent fixes the issue — no more comments
+    getAutomatedComments.mockResolvedValue([]);
+    await lm.check("app-1"); // comments resolved → tracker cleared
+
+    // New bot comment appears (e.g., a different issue) — should react again
+    getAutomatedComments.mockResolvedValue([{ ...botComment, id: "comment-2" }]);
+    await lm.check("app-1");
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(2); // reacted to new comment
+  });
+
   it("retriggers when new automated comments appear (fingerprint changes)", async () => {
     const firstComment = {
       id: "comment-1",
