@@ -22,6 +22,7 @@ import {
   type ReviewComment,
   type AutomatedComment,
   type MergeReadiness,
+  type RateLimitInfo,
 } from "@composio/ao-core";
 
 const execFileAsync = promisify(execFile);
@@ -559,6 +560,47 @@ function createGitHubSCM(): SCM {
         noConflicts,
         blockers,
       };
+    },
+
+    async getRateLimitStatus(): Promise<RateLimitInfo[]> {
+      try {
+        const raw = await gh(["api", "rate_limit"]);
+        const data: {
+          resources: {
+            core: { limit: number; remaining: number; reset: number };
+            search: { limit: number; remaining: number; reset: number };
+            graphql: { limit: number; remaining: number; reset: number };
+          };
+        } = JSON.parse(raw);
+
+        return [
+          {
+            resource: "core",
+            remaining: data.resources.core.remaining,
+            limit: data.resources.core.limit,
+            resetAt: new Date(data.resources.core.reset * 1000),
+            isLimited: data.resources.core.remaining === 0,
+          },
+          {
+            resource: "graphql",
+            remaining: data.resources.graphql.remaining,
+            limit: data.resources.graphql.limit,
+            resetAt: new Date(data.resources.graphql.reset * 1000),
+            isLimited: data.resources.graphql.remaining === 0,
+          },
+          {
+            resource: "search",
+            remaining: data.resources.search.remaining,
+            limit: data.resources.search.limit,
+            resetAt: new Date(data.resources.search.reset * 1000),
+            isLimited: data.resources.search.remaining === 0,
+          },
+        ];
+      } catch {
+        // If we can't get rate limit status, return empty array
+        // (plugin still works, just can't report quota)
+        return [];
+      }
     },
   };
 }

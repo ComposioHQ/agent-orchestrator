@@ -111,23 +111,30 @@ export async function enrichSessionPR(
 
   const cacheKey = prCacheKey(pr.owner, pr.repo, pr.number);
 
-  // Check cache first
-  const cached = prCache.get(cacheKey);
+  // Check cache first (with metadata)
+  const cached = prCache.getWithMetadata(cacheKey);
   if (cached && dashboard.pr) {
-    dashboard.pr.state = cached.state;
-    dashboard.pr.title = cached.title;
-    dashboard.pr.additions = cached.additions;
-    dashboard.pr.deletions = cached.deletions;
-    dashboard.pr.ciStatus = cached.ciStatus as "none" | "pending" | "passing" | "failing";
-    dashboard.pr.ciChecks = cached.ciChecks as DashboardPR["ciChecks"];
-    dashboard.pr.reviewDecision = cached.reviewDecision as
+    const data = cached.value;
+    dashboard.pr.state = data.state;
+    dashboard.pr.title = data.title;
+    dashboard.pr.additions = data.additions;
+    dashboard.pr.deletions = data.deletions;
+    dashboard.pr.ciStatus = data.ciStatus as "none" | "pending" | "passing" | "failing";
+    dashboard.pr.ciChecks = data.ciChecks as DashboardPR["ciChecks"];
+    dashboard.pr.reviewDecision = data.reviewDecision as
       | "none"
       | "pending"
       | "approved"
       | "changes_requested";
-    dashboard.pr.mergeability = cached.mergeability;
-    dashboard.pr.unresolvedThreads = cached.unresolvedThreads;
-    dashboard.pr.unresolvedComments = cached.unresolvedComments;
+    dashboard.pr.mergeability = data.mergeability;
+    dashboard.pr.unresolvedThreads = data.unresolvedThreads;
+    dashboard.pr.unresolvedComments = data.unresolvedComments;
+
+    // Add cache metadata for UX transparency
+    dashboard.pr.cacheAge = cached.ageMs;
+    dashboard.pr.lastFetched = cached.cachedAt.toISOString();
+    dashboard.pr.stale = cached.stale;
+
     return;
   }
 
@@ -215,6 +222,12 @@ export async function enrichSessionPR(
     !dashboard.pr.mergeability.blockers.includes("API rate limited or unavailable")
   ) {
     dashboard.pr.mergeability.blockers.push("API rate limited or unavailable");
+
+    // Set rate limit status (we don't know exact reset time without getRateLimitStatus)
+    dashboard.pr.rateLimitStatus = {
+      isLimited: true,
+      // resetAt and retryAfter would come from plugin.getRateLimitStatus() if implemented
+    };
   }
 
   // Always cache the result (including partial data from rate-limited requests)
@@ -232,6 +245,11 @@ export async function enrichSessionPR(
     unresolvedComments: dashboard.pr.unresolvedComments,
   };
   prCache.set(cacheKey, cacheData);
+
+  // Mark data as just fetched (no cache age yet)
+  dashboard.pr.lastFetched = new Date().toISOString();
+  dashboard.pr.cacheAge = 0;
+  dashboard.pr.stale = false;
 }
 
 /** Enrich a DashboardSession's issue label using the tracker plugin. */

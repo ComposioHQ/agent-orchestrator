@@ -7,7 +7,17 @@
 
 interface CacheEntry<T> {
   value: T;
-  expiresAt: number;
+  cachedAt: number; // timestamp when cached (for age calculation)
+  expiresAt: number; // timestamp when expires
+}
+
+/** Cache entry with metadata (age, staleness) */
+export interface CachedValue<T> {
+  value: T;
+  cachedAt: Date;
+  ageMs: number; // milliseconds since cached
+  ttlMs: number; // total TTL
+  stale: boolean; // whether nearing expiry (>75% of TTL)
 }
 
 const DEFAULT_TTL_MS = 60_000; // 60 seconds
@@ -31,24 +41,47 @@ export class TTLCache<T> {
     }
   }
 
-  /** Get a cached value if it exists and isn't stale */
+  /** Get a cached value if it exists and isn't expired (backwards compatible) */
   get(key: string): T | null {
+    const cached = this.getWithMetadata(key);
+    return cached ? cached.value : null;
+  }
+
+  /**
+   * Get a cached value with metadata (age, staleness, TTL).
+   * Returns null if not found or expired.
+   */
+  getWithMetadata(key: string): CachedValue<T> | null {
     const entry = this.cache.get(key);
     if (!entry) return null;
 
-    if (Date.now() > entry.expiresAt) {
+    const now = Date.now();
+
+    // Evict if expired
+    if (now > entry.expiresAt) {
       this.cache.delete(key);
       return null;
     }
 
-    return entry.value;
+    const ageMs = now - entry.cachedAt;
+    const stale = ageMs > this.ttlMs * 0.75; // consider stale if >75% of TTL
+
+    return {
+      value: entry.value,
+      cachedAt: new Date(entry.cachedAt),
+      ageMs,
+      ttlMs: this.ttlMs,
+      stale,
+    };
   }
 
   /** Set a cache entry with TTL */
   set(key: string, value: T): void {
+    const now = Date.now();
     this.cache.set(key, {
       value,
-      expiresAt: Date.now() + this.ttlMs,
+      cachedAt: now,
+      expiresAt: now + this.ttlMs,
     });
   }
 

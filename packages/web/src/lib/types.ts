@@ -96,6 +96,16 @@ export interface DashboardPR {
   mergeability: DashboardMergeability;
   unresolvedThreads: number;
   unresolvedComments: DashboardUnresolvedComment[];
+  // Cache metadata (for transparency UX)
+  cacheAge?: number; // milliseconds since data was cached
+  lastFetched?: string; // ISO timestamp when data was last fetched
+  stale?: boolean; // whether cache is nearing expiry (>75% of TTL)
+  // Rate limit status (if plugin was rate limited)
+  rateLimitStatus?: {
+    isLimited: boolean;
+    resetAt?: string; // ISO timestamp
+    retryAfter?: number; // seconds until reset
+  };
 }
 
 /**

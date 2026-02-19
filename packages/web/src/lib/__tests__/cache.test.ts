@@ -102,6 +102,70 @@ describe("TTLCache", () => {
     expect(testCache).toBeDefined();
     testCache.clear();
   });
+
+  describe("getWithMetadata", () => {
+    it("should return value with metadata", () => {
+      vi.useFakeTimers();
+      const now = Date.now();
+      vi.setSystemTime(now);
+
+      cache.set("key1", "value1");
+
+      // Advance time by 500ms
+      vi.advanceTimersByTime(500);
+
+      const result = cache.getWithMetadata("key1");
+      expect(result).not.toBeNull();
+      expect(result?.value).toBe("value1");
+      expect(result?.ageMs).toBe(500);
+      expect(result?.ttlMs).toBe(1000);
+      expect(result?.cachedAt.getTime()).toBe(now);
+      expect(result?.stale).toBe(false); // 500ms < 75% of 1000ms
+
+      vi.useRealTimers();
+    });
+
+    it("should mark entry as stale when >75% of TTL", () => {
+      vi.useFakeTimers();
+      cache.set("key1", "value1");
+
+      // Advance time to 800ms (80% of 1000ms TTL)
+      vi.advanceTimersByTime(800);
+
+      const result = cache.getWithMetadata("key1");
+      expect(result).not.toBeNull();
+      expect(result?.stale).toBe(true); // 800ms > 75% of 1000ms
+
+      vi.useRealTimers();
+    });
+
+    it("should return null for expired entries", () => {
+      vi.useFakeTimers();
+      cache.set("key1", "value1");
+
+      // Advance past TTL
+      vi.advanceTimersByTime(1001);
+
+      const result = cache.getWithMetadata("key1");
+      expect(result).toBeNull();
+
+      vi.useRealTimers();
+    });
+
+    it("should return null for non-existent keys", () => {
+      const result = cache.getWithMetadata("nonexistent");
+      expect(result).toBeNull();
+    });
+
+    it("should work alongside get() method", () => {
+      cache.set("key1", "value1");
+
+      // Both methods should work
+      expect(cache.get("key1")).toBe("value1");
+      const result = cache.getWithMetadata("key1");
+      expect(result?.value).toBe("value1");
+    });
+  });
 });
 
 describe("prCacheKey", () => {
