@@ -115,3 +115,42 @@ a:hover {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+
+/* ── Session cards ────────────────────────────────────────────────────── */
+
+.session-card {
+  background: linear-gradient(175deg, rgba(28,36,47,1) 0%, rgba(18,23,31,1) 100%);
+  box-shadow:
+    0 1px 2px rgba(0,0,0,0.9),
+    0 3px 10px rgba(0,0,0,0.55),
+    inset 0 1px 0 rgba(255,255,255,0.07);
+  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+}
+
+.session-card:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 4px 8px rgba(0,0,0,0.85),
+    0 14px 36px rgba(0,0,0,0.55),
+    inset 0 1px 0 rgba(255,255,255,0.1);
+}
+
+.session-card.card-merge-ready {
+  background: linear-gradient(175deg, rgba(16,40,24,1) 0%, rgba(10,26,15,1) 100%);
+  box-shadow:
+    0 0 0 1px rgba(63,185,80,0.22),
+    0 1px 2px rgba(0,0,0,0.9),
+    0 3px 10px rgba(0,0,0,0.55),
+    0 0 40px rgba(63,185,80,0.13),
+    inset 0 1px 0 rgba(255,255,255,0.07);
+}
+
+.session-card.card-merge-ready:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 0 0 1px rgba(63,185,80,0.35),
+    0 4px 8px rgba(0,0,0,0.85),
+    0 14px 36px rgba(0,0,0,0.55),
+    0 0 60px rgba(63,185,80,0.2),
+    inset 0 1px 0 rgba(255,255,255,0.1);
+}

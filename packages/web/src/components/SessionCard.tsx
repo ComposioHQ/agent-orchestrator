@@ -89,15 +89,21 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
   return (
     <div
       className={cn(
-        "cursor-pointer border border-[var(--color-border-default)] border-l-[3px]",
-        "bg-[var(--color-bg-surface)] backdrop-blur-sm transition-colors duration-200",
-        "hover:border-[var(--color-border-strong)] hover:bg-[var(--color-bg-elevated)]",
+        "session-card cursor-pointer border border-l-[3px]",
+        "hover:border-[var(--color-border-strong)]",
         borderColorByLevel[level],
-        expanded && "border-[var(--color-border-strong)] bg-[var(--color-bg-elevated)]",
-        isReadyToMerge && "border-[rgba(144,219,168,0.3)] bg-[rgba(144,219,168,0.04)]",
+        isReadyToMerge
+          ? "card-merge-ready border-[rgba(63,185,80,0.3)]"
+          : "border-[var(--color-border-default)]",
+        expanded && "border-[var(--color-border-strong)]",
         pr?.state === "merged" && "opacity-55",
       )}
-      style={{ borderRadius: 7 }}
+      style={{
+        borderRadius: 7,
+        background: (expanded && !isReadyToMerge)
+          ? "linear-gradient(175deg, rgba(32,41,53,1) 0%, rgba(22,28,37,1) 100%)"
+          : undefined,
+      }}
       onClick={(e) => {
         if ((e.target as HTMLElement).closest("a, button, textarea")) return;
         setExpanded(!expanded);
