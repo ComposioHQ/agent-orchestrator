@@ -91,6 +91,12 @@ export function Dashboard({ sessions, stats, orchestratorId, projectName }: Dash
           <span className="text-[#7c8aff]">Agent</span> Orchestrator
         </h1>
         <div className="flex items-baseline gap-4">
+          <a
+            href="/activity"
+            className="rounded-md border border-[var(--color-border-default)] px-3 py-1 text-[11px] text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-accent-purple)] hover:text-[var(--color-accent-purple)]"
+          >
+            mission control
+          </a>
           {orchestratorId && (
             <a
               href={`/sessions/${encodeURIComponent(orchestratorId)}`}
