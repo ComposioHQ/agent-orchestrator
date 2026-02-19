@@ -752,9 +752,8 @@ describe("scm-github plugin", () => {
       const result = await scm.getMergeability(pr);
       expect(result.ciPassing).toBe(false);
       expect(result.mergeable).toBe(false);
-      expect(result.blockers).toContain("CI is failing");
-      // No redundant "Required checks are failing" — the CI section covers it
-      expect(result.blockers).not.toContain("Required checks are failing");
+      // CI section already added "CI is failing" — no redundant UNSTABLE blocker
+      expect(result.blockers).toEqual(["CI is failing"]);
     });
 
     it("falls back to CI failing when CI fetch fails with UNSTABLE merge state", async () => {
@@ -771,8 +770,7 @@ describe("scm-github plugin", () => {
       expect(result.ciPassing).toBe(false);
       expect(result.mergeable).toBe(false);
       // getCISummary fail-closes to "failing", which the CI section reports
-      expect(result.blockers).toContain("CI is failing");
-      expect(result.blockers).not.toContain("Required checks are failing");
+      expect(result.blockers).toEqual(["CI is failing"]);
     });
 
     it("does not treat UNSTABLE as a blocker when CI is pending", async () => {
@@ -788,9 +786,8 @@ describe("scm-github plugin", () => {
       const result = await scm.getMergeability(pr);
       expect(result.ciPassing).toBe(false);
       expect(result.mergeable).toBe(false);
-      // CI is pending — the only blocker should be from the CI section, not UNSTABLE
-      expect(result.blockers).toContain("CI is pending");
-      expect(result.blockers).not.toContain("Required checks are failing");
+      // Only the CI section blocker — UNSTABLE doesn't add a second one
+      expect(result.blockers).toEqual(["CI is pending"]);
     });
 
     it("reports UNSTABLE as blocker when CI status is none (fail closed)", async () => {
@@ -805,11 +802,10 @@ describe("scm-github plugin", () => {
       mockGh([{ name: "build", state: "SKIPPED" }]);
 
       const result = await scm.getMergeability(pr);
-      // ciStatus "none" is treated as passing by the CI section, but GitHub
-      // still says UNSTABLE — we should fail closed and report the blocker.
+      // ciPassing is true (none = passing), so UNSTABLE is the only signal
       expect(result.ciPassing).toBe(true);
       expect(result.mergeable).toBe(false);
-      expect(result.blockers).toContain("Required checks are failing");
+      expect(result.blockers).toEqual(["Required checks are failing"]);
     });
 
     it("reports changes requested as blockers", async () => {
