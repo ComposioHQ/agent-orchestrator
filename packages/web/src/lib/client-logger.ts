@@ -117,11 +117,12 @@ export function initClientLogger(): () => void {
   // Flush periodically
   flushTimer = setInterval(flush, 10_000);
 
-  // Flush on page unload
-  const onUnload = (): void => flush();
-  window.addEventListener("visibilitychange", () => {
+  // Flush on page hide / visibility change
+  const onVisibilityChange = (): void => {
     if (document.visibilityState === "hidden") flush();
-  });
+  };
+  const onUnload = (): void => flush();
+  window.addEventListener("visibilitychange", onVisibilityChange);
   window.addEventListener("pagehide", onUnload);
 
   // Return cleanup function
@@ -129,6 +130,7 @@ export function initClientLogger(): () => void {
     flush();
     window.removeEventListener("error", onError);
     window.removeEventListener("unhandledrejection", onRejection);
+    window.removeEventListener("visibilitychange", onVisibilityChange);
     window.removeEventListener("pagehide", onUnload);
     if (flushTimer) clearInterval(flushTimer);
     if (perfObserver) perfObserver.disconnect();

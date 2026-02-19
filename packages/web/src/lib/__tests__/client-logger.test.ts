@@ -562,6 +562,47 @@ describe("cleanup", () => {
     expect(pageRemoves.length).toBe(1);
   });
 
+  it("removes visibilitychange event listener", () => {
+    const removeSpy = vi.spyOn(window, "removeEventListener");
+    const cleanup = initClientLogger();
+
+    cleanup();
+
+    const visRemoves = removeSpy.mock.calls.filter(
+      ([type]) => type === "visibilitychange",
+    );
+    expect(visRemoves.length).toBe(1);
+  });
+
+  it("no longer flushes on visibilitychange after cleanup", () => {
+    const cleanup = initClientLogger();
+    cleanup();
+
+    // Reset spies after cleanup flush
+    fetchSpy.mockClear();
+    sendBeaconSpy.mockClear();
+
+    // Add an entry directly via a new error (won't be captured since error
+    // listener was removed, but set up document state for the visibility test)
+    Object.defineProperty(document, "visibilityState", {
+      value: "hidden",
+      writable: true,
+      configurable: true,
+    });
+    // Fire visibilitychange -- listener should have been removed
+    window.dispatchEvent(new Event("visibilitychange"));
+
+    expect(sendBeaconSpy).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    // Restore
+    Object.defineProperty(document, "visibilityState", {
+      value: "visible",
+      writable: true,
+      configurable: true,
+    });
+  });
+
   it("clears the flush interval", () => {
     const clearIntervalSpy = vi.spyOn(globalThis, "clearInterval");
     const cleanup = initClientLogger();
