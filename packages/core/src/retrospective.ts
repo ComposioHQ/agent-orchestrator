@@ -14,6 +14,13 @@ import { readMetadataRaw } from "./metadata.js";
 import { getSessionsDir, getLogsDir } from "./paths.js";
 import type { OrchestratorConfig, Retrospective, RetrospectiveStore, SessionReportCard } from "./types.js";
 
+// Thresholds for heuristic lesson extraction
+const CI_FAILURE_HIGH = 3;       // >3 CI failures = "high failure count" lesson
+const CI_FAILURE_LOW = 1;        // >1 CI failures = "failed N times" lesson
+const REVIEW_ROUNDS_HIGH = 2;    // >2 review rounds = "multiple rounds" lesson
+const SESSION_LONG_HOURS = 24;   // >24h = "long-running" lesson
+const SESSION_QUICK_HOURS = 2;   // <2h + no CI/review issues = "clean execution" lesson
+
 /** Generate a retrospective for a completed session. */
 export function generateRetrospective(
   sessionId: string,
@@ -136,16 +143,16 @@ function extractLessons(
   const lessons: string[] = [];
 
   // CI failure patterns
-  if (card.ciAttempts > 3) {
+  if (card.ciAttempts > CI_FAILURE_HIGH) {
     lessons.push(
       `High CI failure count (${card.ciAttempts} failures). Consider running tests locally before pushing.`,
     );
-  } else if (card.ciAttempts > 1) {
+  } else if (card.ciAttempts > CI_FAILURE_LOW) {
     lessons.push(`CI failed ${card.ciAttempts} times before passing.`);
   }
 
   // Review round patterns
-  if (card.reviewRounds > 2) {
+  if (card.reviewRounds > REVIEW_ROUNDS_HIGH) {
     lessons.push(
       `Multiple review rounds (${card.reviewRounds}). Breaking changes into smaller PRs may help.`,
     );
@@ -153,14 +160,14 @@ function extractLessons(
 
   // Duration anomalies
   const hours = card.duration.totalMs / 3_600_000;
-  if (hours > 24) {
+  if (hours > SESSION_LONG_HOURS) {
     lessons.push(
       `Session ran for ${Math.round(hours)} hours. Long-running sessions may indicate complexity or blocking.`,
     );
   }
 
   // Quick success
-  if (card.outcome === "merged" && card.ciAttempts <= 1 && card.reviewRounds <= 1 && hours < 2) {
+  if (card.outcome === "merged" && card.ciAttempts <= CI_FAILURE_LOW && card.reviewRounds <= 1 && hours < SESSION_QUICK_HOURS) {
     lessons.push("Clean execution: merged quickly with minimal CI/review iterations.");
   }
 

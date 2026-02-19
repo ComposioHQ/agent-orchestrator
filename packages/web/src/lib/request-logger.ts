@@ -5,7 +5,7 @@
  * Provides getRequestStats() for aggregated analysis used by CLI and dashboard.
  */
 
-import { getLogsDir, LogWriter, loadConfig, readLogsFromDir } from "@composio/ao-core";
+import { getLogsDir, LogWriter, loadConfig, readLogsFromDir, percentile, normalizeRoutePath } from "@composio/ao-core";
 
 export interface RequestLog {
   ts: string;
@@ -120,7 +120,7 @@ export function getRequestStats(
   // Group by route (normalize path params)
   const byRoute = new Map<string, RequestLog[]>();
   for (const log of requestLogs) {
-    const normalizedPath = normalizePath(log.path);
+    const normalizedPath = normalizeRoutePath(log.path);
     const key = `${log.method} ${normalizedPath}`;
     const existing = byRoute.get(key) ?? [];
     existing.push(log);
@@ -149,16 +149,3 @@ export function getRequestStats(
   return { routes, slowest };
 }
 
-/** Normalize API path by replacing dynamic segments. */
-function normalizePath(path: string): string {
-  return path
-    .replace(/\/sessions\/[^/]+/g, "/sessions/:id")
-    .replace(/\/prs\/[^/]+/g, "/prs/:id");
-}
-
-/** Compute percentile from a sorted array. */
-function percentile(sorted: number[], p: number): number {
-  if (sorted.length === 0) return 0;
-  const idx = Math.ceil((p / 100) * sorted.length) - 1;
-  return sorted[Math.max(0, idx)];
-}

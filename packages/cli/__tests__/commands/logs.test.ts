@@ -201,7 +201,7 @@ describe("logs session", () => {
     await program.parseAsync(["node", "test", "logs", "session", "unknown-id"]);
 
     const output = logs.join("\n");
-    expect(output).toContain('No events found for session "unknown-id"');
+    expect(output).toContain("No log entries found.");
   });
 
   it("outputs JSON with --json flag", async () => {

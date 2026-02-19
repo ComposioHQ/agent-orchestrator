@@ -68,6 +68,7 @@ function makeRequest(overrides: Partial<ParsedRequest> = {}): ParsedRequest {
     ts: "2025-01-01T12:00:00Z",
     method: "GET",
     path: "/api/sessions",
+    sessionId: null,
     statusCode: 200,
     durationMs: 50,
     ...overrides,
@@ -99,6 +100,16 @@ describe("perf routes", () => {
 
     const output = logs.join("\n");
     expect(output).toContain("No API request logs found.");
+  });
+
+  it("outputs empty object as JSON when no data with --json", async () => {
+    mockLoadRequests.mockReturnValue([]);
+
+    await program.parseAsync(["node", "test", "perf", "routes", "--json"]);
+
+    const output = logs.join("\n");
+    const parsed = JSON.parse(output);
+    expect(parsed).toEqual({});
   });
 
   it("tracks errors per route in JSON output", async () => {

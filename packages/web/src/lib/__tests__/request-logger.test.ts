@@ -13,10 +13,26 @@ const mockReadLogsFromDir = vi.fn();
 const mockLogWriterAppend = vi.fn();
 const mockLogWriterClose = vi.fn();
 
+/** Inline percentile impl (matches core's implementation) used in every mock below. */
+function mockPercentileImpl(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0;
+  const idx = Math.ceil((p / 100) * sorted.length) - 1;
+  return sorted[Math.max(0, idx)];
+}
+
+/** Inline normalizeRoutePath impl (matches core's implementation) used in every mock below. */
+function mockNormalizeRoutePathImpl(path: string): string {
+  return path
+    .replace(/\/sessions\/[^/]+/g, "/sessions/:id")
+    .replace(/\/prs\/[^/]+/g, "/prs/:id");
+}
+
 vi.mock("@composio/ao-core", () => ({
   loadConfig: (...args: unknown[]) => mockLoadConfig(...args),
   getLogsDir: (...args: unknown[]) => mockGetLogsDir(...args),
   readLogsFromDir: (...args: unknown[]) => mockReadLogsFromDir(...args),
+  percentile: mockPercentileImpl,
+  normalizeRoutePath: mockNormalizeRoutePathImpl,
   LogWriter: vi.fn().mockImplementation(() => ({
     append: mockLogWriterAppend,
     appendLine: vi.fn(),
@@ -40,11 +56,13 @@ describe("logApiRequest", () => {
   beforeEach(() => {
     vi.resetModules();
 
-    // Re-apply mock after resetModules
+    // Re-apply mock after resetModules (must include all imports from @composio/ao-core)
     vi.doMock("@composio/ao-core", () => ({
       loadConfig: (...args: unknown[]) => mockLoadConfig(...args),
       getLogsDir: (...args: unknown[]) => mockGetLogsDir(...args),
       readLogsFromDir: (...args: unknown[]) => mockReadLogsFromDir(...args),
+      percentile: mockPercentileImpl,
+      normalizeRoutePath: mockNormalizeRoutePathImpl,
       LogWriter: vi.fn().mockImplementation(() => ({
         append: mockLogWriterAppend,
         appendLine: vi.fn(),
@@ -295,6 +313,8 @@ describe("getRequestStats", () => {
       loadConfig: (...args: unknown[]) => mockLoadConfig(...args),
       getLogsDir: (...args: unknown[]) => mockGetLogsDir(...args),
       readLogsFromDir: (...args: unknown[]) => mockReadLogsFromDir(...args),
+      percentile: mockPercentileImpl,
+      normalizeRoutePath: mockNormalizeRoutePathImpl,
       LogWriter: vi.fn().mockImplementation(() => ({
         append: mockLogWriterAppend,
         appendLine: vi.fn(),
@@ -500,6 +520,8 @@ describe("normalizePath (indirect)", () => {
       loadConfig: (...args: unknown[]) => mockLoadConfig(...args),
       getLogsDir: (...args: unknown[]) => mockGetLogsDir(...args),
       readLogsFromDir: (...args: unknown[]) => mockReadLogsFromDir(...args),
+      percentile: mockPercentileImpl,
+      normalizeRoutePath: mockNormalizeRoutePathImpl,
       LogWriter: vi.fn().mockImplementation(() => ({
         append: mockLogWriterAppend,
         appendLine: vi.fn(),
@@ -569,6 +591,8 @@ describe("percentile (indirect)", () => {
       loadConfig: (...args: unknown[]) => mockLoadConfig(...args),
       getLogsDir: (...args: unknown[]) => mockGetLogsDir(...args),
       readLogsFromDir: (...args: unknown[]) => mockReadLogsFromDir(...args),
+      percentile: mockPercentileImpl,
+      normalizeRoutePath: mockNormalizeRoutePathImpl,
       LogWriter: vi.fn().mockImplementation(() => ({
         append: mockLogWriterAppend,
         appendLine: vi.fn(),
