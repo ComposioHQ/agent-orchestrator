@@ -4,13 +4,30 @@ Orchestrate parallel AI coding agents across any runtime, any repository, any is
 
 ## Quick Start
 
+**macOS / Linux:**
 ```bash
 git clone https://github.com/ComposioHQ/agent-orchestrator.git
 cd agent-orchestrator && bash scripts/setup.sh
 cd ~/your-project && ao init --auto && ao start
 ```
 
-Dashboard opens at http://localhost:3000 (port configurable via `port:` in config)
+**Windows (PowerShell):**
+```powershell
+git clone https://github.com/ComposioHQ/agent-orchestrator.git
+cd agent-orchestrator
+# Install pnpm if not already installed
+iwr https://get.pnpm.io/install.ps1 -useb | iex
+# Restart PowerShell, then:
+pnpm install
+pnpm build
+cd packages/cli && pnpm link --global && cd ../..
+cd $HOME\your-project && ao init --auto && ao start
+```
+
+**Windows (WSL or Git Bash):** Use the macOS/Linux instructions above.
+
+Dashboard opens at http://localhost:3000
+
 
 ## Overview
 
@@ -55,10 +72,14 @@ All interfaces are defined in `packages/core/src/types.ts`.
 
 - Node 20+
 - Git 2.25+
-- tmux (for tmux runtime)
-- gh CLI (for GitHub integration)
+- tmux — macOS/Linux only, required for the default tmux runtime (`brew install tmux` / `apt install tmux`)
+- gh CLI — for GitHub integration ([install guide](https://cli.github.com))
+
+> **Windows note:** tmux is not available on native Windows. Use WSL (Windows Subsystem for Linux) for full compatibility, or switch to the `process` runtime in your config.
 
 ### Setup
+
+#### macOS / Linux
 
 ```bash
 git clone https://github.com/ComposioHQ/agent-orchestrator.git
@@ -66,7 +87,32 @@ cd agent-orchestrator
 bash scripts/setup.sh
 ```
 
-The setup script installs dependencies with pnpm, builds all packages, rebuilds node-pty from source, and links the `ao` CLI globally.
+The setup script automatically installs pnpm if missing (no sudo/root needed), installs dependencies, builds all packages, rebuilds node-pty from source, and links the `ao` CLI globally.
+
+#### Windows (PowerShell)
+
+```powershell
+# 1. Clone the repo
+git clone https://github.com/ComposioHQ/agent-orchestrator.git
+cd agent-orchestrator
+
+# 2. Install pnpm (if not already installed)
+iwr https://get.pnpm.io/install.ps1 -useb | iex
+# Close and reopen PowerShell after this step
+
+# 3. Install dependencies and build
+pnpm install
+pnpm build
+
+# 4. Link the CLI globally
+cd packages/cli
+pnpm link --global
+cd ../..
+```
+
+#### Windows (WSL or Git Bash)
+
+Use the macOS/Linux instructions above — the bash script works without changes inside WSL or Git Bash.
 
 ### Initialize Your Project
 

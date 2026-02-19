@@ -10,7 +10,14 @@ echo ""
 # Check for pnpm
 if ! command -v pnpm &> /dev/null; then
     echo "❌ pnpm not found. Installing pnpm..."
-    npm install -g pnpm
+    curl -fsSL https://get.pnpm.io/install.sh | sh -
+    # macOS installs to ~/Library/pnpm, Linux to ~/.local/share/pnpm
+    if [ -d "$HOME/Library/pnpm" ]; then
+        export PNPM_HOME="$HOME/Library/pnpm"
+    else
+        export PNPM_HOME="$HOME/.local/share/pnpm"
+    fi
+    export PATH="$PNPM_HOME:$PATH"
 fi
 
 echo "📦 Installing dependencies..."
@@ -24,7 +31,7 @@ pnpm build
 
 echo "🔗 Linking CLI globally..."
 cd packages/cli
-npm link
+pnpm link --global
 cd ../..
 
 echo ""
