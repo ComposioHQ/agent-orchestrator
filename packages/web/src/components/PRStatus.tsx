@@ -72,22 +72,27 @@ interface PRTableRowProps {
 
 export function PRTableRow({ pr }: PRTableRowProps) {
   const sizeLabel = getSizeLabel(pr.additions, pr.deletions);
+  const rateLimited = isPRRateLimited(pr);
 
-  const reviewLabel = pr.isDraft
-    ? "draft"
-    : pr.reviewDecision === "approved"
-      ? "approved"
-      : pr.reviewDecision === "changes_requested"
-        ? "changes requested"
-        : "needs review";
+  const reviewLabel = rateLimited
+    ? "—"
+    : pr.isDraft
+      ? "draft"
+      : pr.reviewDecision === "approved"
+        ? "approved"
+        : pr.reviewDecision === "changes_requested"
+          ? "changes requested"
+          : "needs review";
 
-  const reviewClass = pr.isDraft
-    ? "text-[var(--color-text-muted)]"
-    : pr.reviewDecision === "approved"
-      ? "text-[var(--color-accent-green)]"
-      : pr.reviewDecision === "changes_requested"
-        ? "text-[var(--color-accent-red)]"
-        : "text-[var(--color-accent-yellow)]";
+  const reviewClass = rateLimited
+    ? "text-[var(--color-text-tertiary)]"
+    : pr.isDraft
+      ? "text-[var(--color-text-muted)]"
+      : pr.reviewDecision === "approved"
+        ? "text-[var(--color-accent-green)]"
+        : pr.reviewDecision === "changes_requested"
+          ? "text-[var(--color-accent-red)]"
+          : "text-[var(--color-accent-yellow)]";
 
   return (
     <tr className="border-b border-[var(--color-border-muted)] hover:bg-[rgba(88,166,255,0.03)]">
@@ -98,12 +103,22 @@ export function PRTableRow({ pr }: PRTableRowProps) {
       </td>
       <td className="max-w-[420px] truncate px-3 py-2.5 text-sm font-medium">{pr.title}</td>
       <td className="px-3 py-2.5 text-sm">
-        <span className="text-[var(--color-accent-green)]">+{pr.additions}</span>{" "}
-        <span className="text-[var(--color-accent-red)]">-{pr.deletions}</span>{" "}
-        <span className="text-[var(--color-text-muted)]">{sizeLabel}</span>
+        {rateLimited ? (
+          <span className="text-[var(--color-text-tertiary)]">—</span>
+        ) : (
+          <>
+            <span className="text-[var(--color-accent-green)]">+{pr.additions}</span>{" "}
+            <span className="text-[var(--color-accent-red)]">-{pr.deletions}</span>{" "}
+            <span className="text-[var(--color-text-muted)]">{sizeLabel}</span>
+          </>
+        )}
       </td>
       <td className="px-3 py-2.5">
-        <CIBadge status={pr.ciStatus} checks={pr.ciChecks} compact />
+        {rateLimited ? (
+          <span className="text-[var(--color-text-tertiary)]">—</span>
+        ) : (
+          <CIBadge status={pr.ciStatus} checks={pr.ciChecks} compact />
+        )}
       </td>
       <td className={`px-3 py-2.5 text-xs font-semibold ${reviewClass}`}>{reviewLabel}</td>
       <td
