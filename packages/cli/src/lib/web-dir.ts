@@ -20,7 +20,7 @@ const DEFAULT_TERMINAL_PORT = 14800;
  * Check if a TCP port is available by attempting to bind to it.
  * Returns true if the port is free, false if in use.
  */
-function isPortAvailable(port: number): Promise<boolean> {
+export function isPortAvailable(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const server = createServer();
     server.once("error", () => {

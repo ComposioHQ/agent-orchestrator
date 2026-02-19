@@ -6,11 +6,23 @@ import { stringify as yamlStringify } from "yaml";
 import chalk from "chalk";
 import type { Command } from "commander";
 import { git, gh, execSilent } from "../lib/shell.js";
+import { isPortAvailable } from "../lib/web-dir.js";
 import {
   detectProjectType,
   generateRulesFromTemplates,
   formatProjectTypeForDisplay,
 } from "../lib/project-detection.js";
+
+const DEFAULT_PORT = 3000;
+const MAX_PORT_SCAN = 100;
+
+/** Find the first available port starting from `start`, scanning upward. */
+async function findFreePort(start: number): Promise<number> {
+  for (let port = start; port < start + MAX_PORT_SCAN; port++) {
+    if (await isPortAvailable(port)) return port;
+  }
+  return start; // fallback — will fail at bind time with a clear error
+}
 
 async function prompt(
   rl: ReturnType<typeof createInterface>,
@@ -231,7 +243,8 @@ export function registerInit(program: Command): void {
           "~/.agent-orchestrator",
         );
         const worktreeDir = await prompt(rl, "Worktree directory", "~/.worktrees");
-        const portStr = await prompt(rl, "Dashboard port", "3000");
+        const freePort = await findFreePort(DEFAULT_PORT);
+        const portStr = await prompt(rl, "Dashboard port", String(freePort));
         const port = parseInt(portStr, 10);
         if (isNaN(port) || port < 1 || port > 65535) {
           console.error(chalk.red("\nInvalid port number. Must be 1-65535."));
@@ -430,10 +443,11 @@ async function handleAutoMode(outputPath: string, smart: boolean): Promise<void>
   const path = env.isGitRepo ? workingDir : `~/${projectId}`;
   const defaultBranch = env.defaultBranch || "main";
 
+  const port = await findFreePort(DEFAULT_PORT);
   const config: Record<string, unknown> = {
     dataDir: "~/.agent-orchestrator",
     worktreeDir: "~/.worktrees",
-    port: 3000,
+    port,
     defaults: {
       runtime: "tmux",
       agent: "claude-code",
