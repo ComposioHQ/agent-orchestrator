@@ -40,7 +40,7 @@ pnpm build
 cd packages/web
 pnpm dev
 
-# Open http://localhost:3000
+# Open http://localhost:<port> (port from agent-orchestrator.yaml)
 ```
 
 ### Project Structure
@@ -319,7 +319,7 @@ cat ~/.agent-orchestrator/my-app-3
 **Check session status:**
 
 ```bash
-curl http://localhost:3000/api/sessions/my-app-3
+curl http://localhost:<port>/api/sessions/my-app-3
 ```
 
 ## Environment Variables

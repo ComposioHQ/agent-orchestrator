@@ -108,6 +108,6 @@ After copying an example:
 1. **Edit the config** - Update repo paths, team IDs, etc.
 2. **Validate** - Run `ao start` to check for config errors
 3. **Spawn an agent** - Try `ao spawn project-id ISSUE-123`
-4. **Monitor** - Use `ao status` or open the dashboard at http://localhost:3000
+4. **Monitor** - Use `ao status` or `ao dashboard` to open the web UI
 
 See [SETUP.md](../SETUP.md) for detailed configuration reference and troubleshooting.

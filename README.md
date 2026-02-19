@@ -100,7 +100,7 @@ ao spawn my-project
 ao status
 
 # Web dashboard
-open http://localhost:3000
+ao dashboard
 ```
 
 ### Manage Sessions
