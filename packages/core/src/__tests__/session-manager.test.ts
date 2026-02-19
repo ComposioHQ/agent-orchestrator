@@ -55,7 +55,7 @@ beforeEach(() => {
     getLaunchCommand: vi.fn().mockReturnValue("mock-agent --start"),
     getEnvironment: vi.fn().mockReturnValue({ AGENT_VAR: "1" }),
     detectActivity: vi.fn().mockReturnValue("active"),
-    getActivityState: vi.fn().mockResolvedValue("active"),
+    getActivityState: vi.fn().mockResolvedValue({ state: "active" }),
     isProcessRunning: vi.fn().mockResolvedValue(true),
     getSessionInfo: vi.fn().mockResolvedValue(null),
   };
@@ -421,7 +421,7 @@ describe("list", () => {
   it("detects activity using agent-native mechanism", async () => {
     const agentWithState: Agent = {
       ...mockAgent,
-      getActivityState: vi.fn().mockResolvedValue("active"),
+      getActivityState: vi.fn().mockResolvedValue({ state: "active" }),
     };
     const registryWithState: PluginRegistry = {
       ...mockRegistry,
@@ -450,6 +450,110 @@ describe("list", () => {
     expect(agentWithState.getActivityState).toHaveBeenCalled();
     // Verify activity state was set
     expect(sessions[0].activity).toBe("active");
+  });
+
+  it("updates lastActivityAt from ActivityDetection timestamp", async () => {
+    // Far-future date ensures it's always newer than the metadata file's mtime
+    const recentDate = new Date("2099-01-01T00:00:00Z");
+    const agentWithTimestamp: Agent = {
+      ...mockAgent,
+      getActivityState: vi.fn().mockResolvedValue({ state: "active", timestamp: recentDate }),
+      getSessionInfo: vi.fn().mockResolvedValue({
+        summary: "Working on feature X",
+        agentSessionId: "abc123",
+      }),
+    };
+    const registryWithTimestamp: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return agentWithTimestamp;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "a",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithTimestamp });
+    const sessions = await sm.list();
+
+    // lastActivityAt should be updated from ActivityDetection timestamp
+    expect(sessions[0].lastActivityAt).toEqual(recentDate);
+    // agentInfo should be enriched with live data
+    expect(sessions[0].agentInfo?.summary).toBe("Working on feature X");
+    expect(sessions[0].agentInfo?.agentSessionId).toBe("abc123");
+  });
+
+  it("keeps metadata lastActivityAt when ActivityDetection has no timestamp", async () => {
+    const agentNoTimestamp: Agent = {
+      ...mockAgent,
+      getActivityState: vi.fn().mockResolvedValue({ state: "idle" }),
+      getSessionInfo: vi.fn().mockResolvedValue({
+        summary: "Old work",
+        agentSessionId: null,
+      }),
+    };
+    const registryNoTimestamp: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return agentNoTimestamp;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "a",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryNoTimestamp });
+    const sessions = await sm.list();
+
+    // lastActivityAt should remain the metadata mtime (not overwritten)
+    expect(sessions[0].lastActivityAt.getTime()).toBeGreaterThan(0);
+    // But agentInfo should still be enriched
+    expect(sessions[0].agentInfo?.summary).toBe("Old work");
+  });
+
+  it("keeps metadata lastActivityAt when ActivityDetection timestamp is older", async () => {
+    // Timestamp older than the metadata file's mtime should NOT regress lastActivityAt
+    const oldDate = new Date("2020-01-01T00:00:00Z");
+    const agentOldTimestamp: Agent = {
+      ...mockAgent,
+      getActivityState: vi.fn().mockResolvedValue({ state: "active", timestamp: oldDate }),
+    };
+    const registryOldTimestamp: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return agentOldTimestamp;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "a",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryOldTimestamp });
+    const sessions = await sm.list();
+
+    // lastActivityAt should remain the metadata mtime, not regress to the old date
+    expect(sessions[0].lastActivityAt.getTime()).toBeGreaterThan(oldDate.getTime());
   });
 
   it("keeps existing activity when getActivityState throws", async () => {
@@ -535,7 +639,7 @@ describe("get", () => {
   it("detects activity using agent-native mechanism", async () => {
     const agentWithState: Agent = {
       ...mockAgent,
-      getActivityState: vi.fn().mockResolvedValue("idle"),
+      getActivityState: vi.fn().mockResolvedValue({ state: "idle" }),
     };
     const registryWithState: PluginRegistry = {
       ...mockRegistry,

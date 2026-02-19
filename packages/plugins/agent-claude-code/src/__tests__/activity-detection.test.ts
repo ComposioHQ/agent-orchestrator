@@ -119,17 +119,19 @@ describe("Claude Code Activity Detection", () => {
     it("returns 'exited' when process is not running", async () => {
       vi.spyOn(agent, "isProcessRunning").mockResolvedValue(false);
       writeJsonl([{ type: "assistant" }]);
-      expect(await agent.getActivityState(makeSession())).toBe("exited");
+      expect(await agent.getActivityState(makeSession())).toEqual({ state: "exited" });
     });
 
     it("returns 'exited' when no runtimeHandle", async () => {
-      expect(await agent.getActivityState(makeSession({ runtimeHandle: undefined }))).toBe(
-        "exited",
-      );
+      expect(await agent.getActivityState(makeSession({ runtimeHandle: undefined }))).toEqual({
+        state: "exited",
+      });
     });
 
     it("returns 'exited' when runtimeHandle is null", async () => {
-      expect(await agent.getActivityState(makeSession({ runtimeHandle: null }))).toBe("exited");
+      expect(await agent.getActivityState(makeSession({ runtimeHandle: null }))).toEqual({
+        state: "exited",
+      });
     });
 
     // -----------------------------------------------------------------------
@@ -158,37 +160,58 @@ describe("Claude Code Activity Detection", () => {
     describe("real Claude Code entry types", () => {
       it("returns 'active' for recent 'progress' entry (streaming)", async () => {
         writeJsonl([{ type: "progress", status: "running tool" }]);
-        expect(await agent.getActivityState(makeSession())).toBe("active");
+        expect(await agent.getActivityState(makeSession())).toEqual({
+          state: "active",
+          timestamp: expect.any(Date),
+        });
       });
 
       it("returns 'active' for recent 'user' entry", async () => {
         writeJsonl([{ type: "user", message: { content: "fix the bug" } }]);
-        expect(await agent.getActivityState(makeSession())).toBe("active");
+        expect(await agent.getActivityState(makeSession())).toEqual({
+          state: "active",
+          timestamp: expect.any(Date),
+        });
       });
 
       it("returns 'ready' for recent 'assistant' entry", async () => {
         writeJsonl([{ type: "assistant", message: { content: "Done!" } }]);
-        expect(await agent.getActivityState(makeSession())).toBe("ready");
+        expect(await agent.getActivityState(makeSession())).toEqual({
+          state: "ready",
+          timestamp: expect.any(Date),
+        });
       });
 
       it("returns 'ready' for recent 'system' entry", async () => {
         writeJsonl([{ type: "system", summary: "session started" }]);
-        expect(await agent.getActivityState(makeSession())).toBe("ready");
+        expect(await agent.getActivityState(makeSession())).toEqual({
+          state: "ready",
+          timestamp: expect.any(Date),
+        });
       });
 
       it("returns 'active' for recent 'file-history-snapshot' (bookkeeping)", async () => {
         writeJsonl([{ type: "file-history-snapshot" }]);
-        expect(await agent.getActivityState(makeSession())).toBe("active");
+        expect(await agent.getActivityState(makeSession())).toEqual({
+          state: "active",
+          timestamp: expect.any(Date),
+        });
       });
 
       it("returns 'active' for recent 'queue-operation' (bookkeeping)", async () => {
         writeJsonl([{ type: "queue-operation" }]);
-        expect(await agent.getActivityState(makeSession())).toBe("active");
+        expect(await agent.getActivityState(makeSession())).toEqual({
+          state: "active",
+          timestamp: expect.any(Date),
+        });
       });
 
       it("returns 'active' for recent 'pr-link' (bookkeeping)", async () => {
         writeJsonl([{ type: "pr-link" }]);
-        expect(await agent.getActivityState(makeSession())).toBe("active");
+        expect(await agent.getActivityState(makeSession())).toEqual({
+          state: "active",
+          timestamp: expect.any(Date),
+        });
       });
     });
 
@@ -199,27 +222,42 @@ describe("Claude Code Activity Detection", () => {
     describe("agent interface spec types", () => {
       it("returns 'active' for recent 'tool_use' entry", async () => {
         writeJsonl([{ type: "tool_use" }]);
-        expect(await agent.getActivityState(makeSession())).toBe("active");
+        expect(await agent.getActivityState(makeSession())).toEqual({
+          state: "active",
+          timestamp: expect.any(Date),
+        });
       });
 
       it("returns 'waiting_input' for 'permission_request'", async () => {
         writeJsonl([{ type: "permission_request" }]);
-        expect(await agent.getActivityState(makeSession())).toBe("waiting_input");
+        expect(await agent.getActivityState(makeSession())).toEqual({
+          state: "waiting_input",
+          timestamp: expect.any(Date),
+        });
       });
 
       it("returns 'blocked' for 'error'", async () => {
         writeJsonl([{ type: "error" }]);
-        expect(await agent.getActivityState(makeSession())).toBe("blocked");
+        expect(await agent.getActivityState(makeSession())).toEqual({
+          state: "blocked",
+          timestamp: expect.any(Date),
+        });
       });
 
       it("returns 'ready' for recent 'summary' entry", async () => {
         writeJsonl([{ type: "summary", summary: "Implemented login feature" }]);
-        expect(await agent.getActivityState(makeSession())).toBe("ready");
+        expect(await agent.getActivityState(makeSession())).toEqual({
+          state: "ready",
+          timestamp: expect.any(Date),
+        });
       });
 
       it("returns 'ready' for recent 'result' entry", async () => {
         writeJsonl([{ type: "result" }]);
-        expect(await agent.getActivityState(makeSession())).toBe("ready");
+        expect(await agent.getActivityState(makeSession())).toEqual({
+          state: "ready",
+          timestamp: expect.any(Date),
+        });
       });
     });
 
@@ -230,48 +268,70 @@ describe("Claude Code Activity Detection", () => {
     describe("staleness threshold", () => {
       it("returns 'idle' for stale 'assistant' entry (> threshold)", async () => {
         writeJsonl([{ type: "assistant" }], 400_000); // 6+ min old
-        expect(await agent.getActivityState(makeSession())).toBe("idle");
+        expect(await agent.getActivityState(makeSession())).toEqual({
+          state: "idle",
+          timestamp: expect.any(Date),
+        });
       });
 
       it("returns 'idle' for stale 'user' entry (> threshold)", async () => {
         writeJsonl([{ type: "user" }], 400_000);
-        expect(await agent.getActivityState(makeSession())).toBe("idle");
+        expect(await agent.getActivityState(makeSession())).toEqual({
+          state: "idle",
+          timestamp: expect.any(Date),
+        });
       });
 
       it("returns 'idle' for stale 'progress' entry (> threshold)", async () => {
         writeJsonl([{ type: "progress" }], 400_000);
-        expect(await agent.getActivityState(makeSession())).toBe("idle");
+        expect(await agent.getActivityState(makeSession())).toEqual({
+          state: "idle",
+          timestamp: expect.any(Date),
+        });
       });
 
       it("returns 'idle' for stale bookkeeping entry (> threshold)", async () => {
         writeJsonl([{ type: "file-history-snapshot" }], 400_000);
-        expect(await agent.getActivityState(makeSession())).toBe("idle");
+        expect(await agent.getActivityState(makeSession())).toEqual({
+          state: "idle",
+          timestamp: expect.any(Date),
+        });
       });
 
       it("'permission_request' ignores staleness (always waiting_input)", async () => {
         writeJsonl([{ type: "permission_request" }], 400_000);
-        expect(await agent.getActivityState(makeSession())).toBe("waiting_input");
+        expect(await agent.getActivityState(makeSession())).toEqual({
+          state: "waiting_input",
+          timestamp: expect.any(Date),
+        });
       });
 
       it("'error' ignores staleness (always blocked)", async () => {
         writeJsonl([{ type: "error" }], 400_000);
-        expect(await agent.getActivityState(makeSession())).toBe("blocked");
+        expect(await agent.getActivityState(makeSession())).toEqual({
+          state: "blocked",
+          timestamp: expect.any(Date),
+        });
       });
 
       it("respects custom readyThresholdMs", async () => {
         // 2 minutes old — stale with 60s threshold, ready with default 5min
         writeJsonl([{ type: "assistant" }], 120_000);
 
-        expect(await agent.getActivityState(makeSession(), 60_000)).toBe("idle");
-        expect(await agent.getActivityState(makeSession(), 300_000)).toBe("ready");
+        const result60 = await agent.getActivityState(makeSession(), 60_000);
+        expect(result60).toEqual({ state: "idle", timestamp: expect.any(Date) });
+        const result300 = await agent.getActivityState(makeSession(), 300_000);
+        expect(result300).toEqual({ state: "ready", timestamp: expect.any(Date) });
       });
 
       it("custom threshold applies to active types too", async () => {
         // 2 minutes old
         writeJsonl([{ type: "user" }], 120_000);
 
-        expect(await agent.getActivityState(makeSession(), 60_000)).toBe("idle");
-        expect(await agent.getActivityState(makeSession(), 300_000)).toBe("active");
+        const result60 = await agent.getActivityState(makeSession(), 60_000);
+        expect(result60).toEqual({ state: "idle", timestamp: expect.any(Date) });
+        const result300 = await agent.getActivityState(makeSession(), 300_000);
+        expect(result300).toEqual({ state: "active", timestamp: expect.any(Date) });
       });
     });
 
@@ -285,7 +345,10 @@ describe("Claude Code Activity Detection", () => {
         writeJsonl([{ type: "assistant" }], 10_000, "old-session.jsonl");
         writeJsonl([{ type: "user" }], 0, "new-session.jsonl");
 
-        expect(await agent.getActivityState(makeSession())).toBe("active");
+        expect(await agent.getActivityState(makeSession())).toEqual({
+          state: "active",
+          timestamp: expect.any(Date),
+        });
       });
 
       it("ignores agent- prefixed JSONL files", async () => {
@@ -301,7 +364,10 @@ describe("Claude Code Activity Detection", () => {
           { type: "progress", status: "thinking" },
           { type: "assistant", message: { content: "Done!" } },
         ]);
-        expect(await agent.getActivityState(makeSession())).toBe("ready");
+        expect(await agent.getActivityState(makeSession())).toEqual({
+          state: "ready",
+          timestamp: expect.any(Date),
+        });
       });
 
       it("returns null for empty JSONL file", async () => {
@@ -321,7 +387,10 @@ describe("Claude Code Activity Detection", () => {
         writeFileSync(join(projectDir, "notes.txt"), "some notes");
         // Write actual JSONL
         writeJsonl([{ type: "assistant" }]);
-        expect(await agent.getActivityState(makeSession())).toBe("ready");
+        expect(await agent.getActivityState(makeSession())).toEqual({
+          state: "ready",
+          timestamp: expect.any(Date),
+        });
       });
     });
 
@@ -338,7 +407,10 @@ describe("Claude Code Activity Detection", () => {
           { type: "progress", status: "Writing file" },
           { type: "progress", status: "Running tool" },
         ]);
-        expect(await agent.getActivityState(makeSession())).toBe("active");
+        expect(await agent.getActivityState(makeSession())).toEqual({
+          state: "active",
+          timestamp: expect.any(Date),
+        });
       });
 
       it("detects agent done and waiting (assistant is last entry)", async () => {
@@ -348,7 +420,10 @@ describe("Claude Code Activity Detection", () => {
           { type: "progress", status: "writing" },
           { type: "assistant", message: { content: "I've implemented the auth feature." } },
         ]);
-        expect(await agent.getActivityState(makeSession())).toBe("ready");
+        expect(await agent.getActivityState(makeSession())).toEqual({
+          state: "ready",
+          timestamp: expect.any(Date),
+        });
       });
 
       it("detects agent done with system summary", async () => {
@@ -358,7 +433,10 @@ describe("Claude Code Activity Detection", () => {
           { type: "assistant", message: { content: "Fixed!" } },
           { type: "system", summary: "Fixed failing tests" },
         ]);
-        expect(await agent.getActivityState(makeSession())).toBe("ready");
+        expect(await agent.getActivityState(makeSession())).toEqual({
+          state: "ready",
+          timestamp: expect.any(Date),
+        });
       });
 
       it("detects stale finished session", async () => {
@@ -369,7 +447,10 @@ describe("Claude Code Activity Detection", () => {
           ],
           600_000, // 10 min old
         );
-        expect(await agent.getActivityState(makeSession())).toBe("idle");
+        expect(await agent.getActivityState(makeSession())).toEqual({
+          state: "idle",
+          timestamp: expect.any(Date),
+        });
       });
     });
   });

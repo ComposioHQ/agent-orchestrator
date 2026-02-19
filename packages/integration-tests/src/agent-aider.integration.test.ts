@@ -14,7 +14,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import type { ActivityState, AgentSessionInfo } from "@composio/ao-core";
+import type { ActivityDetection, AgentSessionInfo } from "@composio/ao-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import aiderPlugin from "@composio/ao-plugin-agent-aider";
 import {
@@ -93,11 +93,11 @@ describe.skipIf(!canRun)("agent-aider (integration)", () => {
 
   // Observations captured while the agent is alive
   let aliveRunning = false;
-  let aliveActivityState: ActivityState | null | undefined;
+  let aliveActivityState: ActivityDetection | null | undefined;
 
   // Observations captured after the agent exits
   let exitedRunning: boolean;
-  let exitedActivityState: ActivityState | null;
+  let exitedActivityState: ActivityDetection | null;
   let sessionInfo: AgentSessionInfo | null;
 
   beforeAll(async () => {
@@ -119,7 +119,7 @@ describe.skipIf(!canRun)("agent-aider (integration)", () => {
       if (running) {
         aliveRunning = true;
         const activityState = await agent.getActivityState(session);
-        if (activityState !== "exited") {
+        if (activityState?.state !== "exited") {
           aliveActivityState = activityState;
           break;
         }
@@ -149,13 +149,22 @@ describe.skipIf(!canRun)("agent-aider (integration)", () => {
   });
 
   it("getActivityState → returns valid state while agent is running", () => {
-    // Aider checks git commits and chat history mtime for activity detection.
-    // May return null if no chat history exists yet.
-    if (aliveActivityState !== undefined) {
-      expect(aliveActivityState).not.toBe("exited");
-      expect([null, "active", "ready", "idle", "waiting_input", "blocked"]).toContain(
-        aliveActivityState,
+    // Polling must have captured an observation — undefined means the
+    // 30s polling window expired without ever seeing a non-exited state.
+    expect(aliveActivityState).not.toBeUndefined();
+    // May be null if no chat history exists yet and no recent commits.
+    // The undefined guard is redundant after the assertion above but required
+    // for TypeScript type narrowing.
+    if (aliveActivityState !== null && aliveActivityState !== undefined) {
+      expect(aliveActivityState.state).not.toBe("exited");
+      expect(["active", "ready", "idle", "waiting_input", "blocked"]).toContain(
+        aliveActivityState.state,
       );
+      // When activity is detected, timestamp should be present (feeds lastActivityAt).
+      // Exception: hasRecentCommits detection provides no timestamp.
+      if (aliveActivityState.timestamp !== undefined) {
+        expect(aliveActivityState.timestamp).toBeInstanceOf(Date);
+      }
     }
   });
 
@@ -164,7 +173,7 @@ describe.skipIf(!canRun)("agent-aider (integration)", () => {
   });
 
   it("getActivityState → returns exited after agent process terminates", () => {
-    expect(exitedActivityState).toBe("exited");
+    expect(exitedActivityState).toEqual({ state: "exited" });
   });
 
   it("getSessionInfo → null (not implemented for aider)", () => {

@@ -211,7 +211,7 @@ beforeEach(() => {
   mockIntrospect.mockReset();
   mockIntrospect.mockResolvedValue(null);
   mockGetActivityState.mockReset();
-  mockGetActivityState.mockResolvedValue("active");
+  mockGetActivityState.mockResolvedValue({ state: "active" });
   mockDetectPR.mockReset();
   mockDetectPR.mockResolvedValue(null);
   mockGetCISummary.mockReset();

@@ -1,17 +1,15 @@
 import {
   shellEscape,
+  isAgentProcessRunning,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
+  type ActivityDetection,
   type ActivityState,
   type PluginModule,
   type RuntimeHandle,
   type Session,
 } from "@composio/ao-core";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
-const execFileAsync = promisify(execFile);
 
 // =============================================================================
 // Plugin Manifest
@@ -75,11 +73,11 @@ function createCodexAgent(): Agent {
       return "active";
     },
 
-    async getActivityState(session: Session, _readyThresholdMs?: number): Promise<ActivityState | null> {
+    async getActivityState(session: Session, _readyThresholdMs?: number): Promise<ActivityDetection | null> {
       // Check if process is running first
-      if (!session.runtimeHandle) return "exited";
+      if (!session.runtimeHandle) return { state: "exited" };
       const running = await this.isProcessRunning(session.runtimeHandle);
-      if (!running) return "exited";
+      if (!running) return { state: "exited" };
 
       // NOTE: Codex stores rollout files in a global ~/.codex/sessions/ directory
       // without workspace-specific scoping. When multiple Codex sessions run in
@@ -92,54 +90,7 @@ function createCodexAgent(): Agent {
     },
 
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
-      try {
-        if (handle.runtimeName === "tmux" && handle.id) {
-          const { stdout: ttyOut } = await execFileAsync(
-            "tmux",
-            ["list-panes", "-t", handle.id, "-F", "#{pane_tty}"],
-            { timeout: 30_000 },
-          );
-          const ttys = ttyOut
-            .trim()
-            .split("\n")
-            .map((t) => t.trim())
-            .filter(Boolean);
-          if (ttys.length === 0) return false;
-
-          const { stdout: psOut } = await execFileAsync("ps", ["-eo", "pid,tty,args"], {
-            timeout: 30_000,
-          });
-          const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
-          const processRe = /(?:^|\/)codex(?:\s|$)/;
-          for (const line of psOut.split("\n")) {
-            const cols = line.trimStart().split(/\s+/);
-            if (cols.length < 3 || !ttySet.has(cols[1] ?? "")) continue;
-            const args = cols.slice(2).join(" ");
-            if (processRe.test(args)) {
-              return true;
-            }
-          }
-          return false;
-        }
-
-        const rawPid = handle.data["pid"];
-        const pid = typeof rawPid === "number" ? rawPid : Number(rawPid);
-        if (Number.isFinite(pid) && pid > 0) {
-          try {
-            process.kill(pid, 0);
-            return true;
-          } catch (err: unknown) {
-            if (err instanceof Error && "code" in err && err.code === "EPERM") {
-              return true;
-            }
-            return false;
-          }
-        }
-
-        return false;
-      } catch {
-        return false;
-      }
+      return isAgentProcessRunning(handle, "codex");
     },
 
     async getSessionInfo(_session: Session): Promise<AgentSessionInfo | null> {

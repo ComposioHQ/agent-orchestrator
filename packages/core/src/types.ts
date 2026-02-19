@@ -60,6 +60,13 @@ export const ACTIVITY_STATE = {
   EXITED: "exited" as const,
 } satisfies Record<string, ActivityState>;
 
+/** Result of activity detection, carrying both the state and an optional timestamp. */
+export interface ActivityDetection {
+  state: ActivityState;
+  /** When activity was last observed (e.g., agent log file mtime) */
+  timestamp?: Date;
+}
+
 /** Default threshold (ms) before a "ready" session becomes "idle". */
 export const DEFAULT_READY_THRESHOLD_MS = 300_000; // 5 minutes
 
@@ -273,7 +280,7 @@ export interface Agent {
    * This is the preferred method for activity detection.
    * @param readyThresholdMs - ms before "ready" becomes "idle" (default: DEFAULT_READY_THRESHOLD_MS)
    */
-  getActivityState(session: Session, readyThresholdMs?: number): Promise<ActivityState | null>;
+  getActivityState(session: Session, readyThresholdMs?: number): Promise<ActivityDetection | null>;
 
   /** Check if agent process is running (given runtime handle) */
   isProcessRunning(handle: RuntimeHandle): Promise<boolean>;
@@ -352,10 +359,6 @@ export interface AgentSessionInfo {
   agentSessionId: string | null;
   /** Estimated cost so far */
   cost?: CostEstimate;
-  /** Last message type in agent's log */
-  lastMessageType?: string;
-  /** When agent's log was last modified */
-  lastLogModified?: Date;
 }
 
 export interface CostEstimate {

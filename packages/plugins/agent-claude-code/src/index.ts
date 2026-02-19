@@ -1,10 +1,12 @@
 import {
   shellEscape,
+  isAgentProcessRunning,
   readLastJsonlEntry,
   DEFAULT_READY_THRESHOLD_MS,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
+  type ActivityDetection,
   type ActivityState,
   type CostEstimate,
   type PluginModule,
@@ -13,14 +15,10 @@ import {
   type Session,
   type WorkspaceHooksConfig,
 } from "@composio/ao-core";
-import { execFile } from "node:child_process";
 import { readdir, readFile, stat, writeFile, mkdir, chmod } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
-import { promisify } from "node:util";
-
-const execFileAsync = promisify(execFile);
 
 // =============================================================================
 // Metadata Updater Hook Script
@@ -355,75 +353,6 @@ function extractCost(lines: JsonlLine[]): CostEstimate | undefined {
 }
 
 // =============================================================================
-// Process Detection
-// =============================================================================
-
-/**
- * Check if a process named "claude" is running in the given runtime handle's context.
- * Uses ps to find processes by TTY (for tmux) or by PID.
- */
-async function findClaudeProcess(handle: RuntimeHandle): Promise<number | null> {
-  try {
-    // For tmux runtime, get the pane TTY and find claude on it
-    if (handle.runtimeName === "tmux" && handle.id) {
-      const { stdout: ttyOut } = await execFileAsync(
-        "tmux",
-        ["list-panes", "-t", handle.id, "-F", "#{pane_tty}"],
-        { timeout: 30_000 },
-      );
-      // Iterate all pane TTYs (multi-pane sessions) — succeed on any match
-      const ttys = ttyOut
-        .trim()
-        .split("\n")
-        .map((t) => t.trim())
-        .filter(Boolean);
-      if (ttys.length === 0) return null;
-
-      // Use `args` instead of `comm` so we can match the CLI name even when
-      // the process runs via a wrapper (e.g. node, python).  `comm` would
-      // report "node" instead of "claude" in those cases.
-      const { stdout: psOut } = await execFileAsync("ps", ["-eo", "pid,tty,args"], {
-        timeout: 30_000,
-      });
-      const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
-      // Match "claude" as a word boundary — prevents false positives on
-      // names like "claude-code" or paths that merely contain the substring.
-      const processRe = /(?:^|\/)claude(?:\s|$)/;
-      for (const line of psOut.split("\n")) {
-        const cols = line.trimStart().split(/\s+/);
-        if (cols.length < 3 || !ttySet.has(cols[1] ?? "")) continue;
-        const args = cols.slice(2).join(" ");
-        if (processRe.test(args)) {
-          return parseInt(cols[0] ?? "0", 10);
-        }
-      }
-      return null;
-    }
-
-    // For process runtime, check if the PID stored in handle data is alive
-    const rawPid = handle.data["pid"];
-    const pid = typeof rawPid === "number" ? rawPid : Number(rawPid);
-    if (Number.isFinite(pid) && pid > 0) {
-      try {
-        process.kill(pid, 0); // Signal 0 = check existence
-        return pid;
-      } catch (err: unknown) {
-        // EPERM means the process exists but we lack permission to signal it
-        if (err instanceof Error && "code" in err && err.code === "EPERM") {
-          return pid;
-        }
-        return null;
-      }
-    }
-
-    // No reliable way to identify the correct process for this session
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-// =============================================================================
 // Terminal Output Patterns for detectActivity
 // =============================================================================
 
@@ -611,20 +540,19 @@ function createClaudeCodeAgent(): Agent {
     },
 
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
-      const pid = await findClaudeProcess(handle);
-      return pid !== null;
+      return isAgentProcessRunning(handle, "claude");
     },
 
     async getActivityState(
       session: Session,
       readyThresholdMs?: number,
-    ): Promise<ActivityState | null> {
+    ): Promise<ActivityDetection | null> {
       const threshold = readyThresholdMs ?? DEFAULT_READY_THRESHOLD_MS;
 
       // Check if process is running first
-      if (!session.runtimeHandle) return "exited";
+      if (!session.runtimeHandle) return { state: "exited" };
       const running = await this.isProcessRunning(session.runtimeHandle);
-      if (!running) return "exited";
+      if (!running) return { state: "exited" };
 
       // Process is running - check JSONL session file for activity
       if (!session.workspacePath) {
@@ -648,6 +576,7 @@ function createClaudeCodeAgent(): Agent {
       }
 
       const ageMs = Date.now() - entry.modifiedAt.getTime();
+      const timestamp = entry.modifiedAt;
 
       // Classify based on last JSONL entry type.
       //
@@ -668,7 +597,7 @@ function createClaudeCodeAgent(): Agent {
         case "progress":
           // Agent is processing: user just sent input, tools running, or
           // actively streaming. Stale past threshold.
-          return ageMs > threshold ? "idle" : "active";
+          return { state: ageMs > threshold ? "idle" : "active", timestamp };
 
         case "assistant":
         case "system":
@@ -676,20 +605,20 @@ function createClaudeCodeAgent(): Agent {
         case "result":
           // Agent finished its turn. If recent, the session is alive and
           // ready for the next instruction. Past threshold it's stale.
-          return ageMs > threshold ? "idle" : "ready";
+          return { state: ageMs > threshold ? "idle" : "ready", timestamp };
 
         case "permission_request":
           // Agent needs user approval for an action
-          return "waiting_input";
+          return { state: "waiting_input", timestamp };
 
         case "error":
           // Agent encountered an error
-          return "blocked";
+          return { state: "blocked", timestamp };
 
         default:
           // Unknown/bookkeeping types (file-history-snapshot, queue-operation,
           // pr-link, etc.) — if recent, assume active; otherwise idle.
-          return ageMs > threshold ? "idle" : "active";
+          return { state: ageMs > threshold ? "idle" : "active", timestamp };
       }
     },
 
@@ -704,15 +633,6 @@ function createClaudeCodeAgent(): Agent {
       const sessionFile = await findLatestSessionFile(projectDir);
       if (!sessionFile) return null;
 
-      // Get file modification time
-      let lastLogModified: Date | undefined;
-      try {
-        const fileStat = await stat(sessionFile);
-        lastLogModified = fileStat.mtime;
-      } catch {
-        // Ignore stat errors
-      }
-
       // Parse the JSONL
       const lines = await parseJsonlFile(sessionFile);
       if (lines.length === 0) return null;
@@ -726,7 +646,6 @@ function createClaudeCodeAgent(): Agent {
         summaryIsFallback: summaryResult?.isFallback,
         agentSessionId,
         cost: extractCost(lines),
-        lastLogModified,
       };
     },
 

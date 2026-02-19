@@ -606,15 +606,6 @@ describe("getSessionInfo", () => {
     });
   });
 
-  describe("lastLogModified", () => {
-    it("returns file mtime as lastLogModified", async () => {
-      const mtime = new Date(1700000000000);
-      mockJsonlFiles('{"type":"user","message":{"content":"hi"}}', undefined, mtime);
-      const result = await agent.getSessionInfo(makeSession());
-      expect(result?.lastLogModified).toEqual(mtime);
-    });
-  });
-
   describe("malformed JSONL handling", () => {
     it("skips malformed lines and parses valid ones", async () => {
       const jsonl = [

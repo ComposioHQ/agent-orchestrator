@@ -19,7 +19,7 @@ import { mkdtemp, readdir, realpath, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { readLastJsonlEntry, type ActivityState, type AgentSessionInfo } from "@composio/ao-core";
+import { readLastJsonlEntry, type ActivityDetection, type AgentSessionInfo } from "@composio/ao-core";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import claudeCodePlugin, { toClaudeProjectPath } from "@composio/ao-plugin-agent-claude-code";
 import {
@@ -163,7 +163,7 @@ describe.skipIf(!realProject)("path encoding & JSONL reading (real Claude data)"
 
     // Process is "not running" so should get "exited" — but the important thing
     // is it didn't return null (which would mean the path didn't resolve)
-    expect(state).toBe("exited");
+    expect(state).toEqual({ state: "exited" });
   });
 });
 
@@ -178,12 +178,12 @@ describe.skipIf(!canRun)("agent-claude-code (integration)", () => {
 
   // Observations captured while the agent is alive
   let aliveRunning = false;
-  let aliveActivityState: ActivityState | null | undefined;
+  let aliveActivityState: ActivityDetection | null | undefined;
   let aliveSessionInfo: AgentSessionInfo | null = null;
 
   // Observations captured after the agent exits
   let exitedRunning: boolean;
-  let exitedActivityState: ActivityState | null;
+  let exitedActivityState: ActivityDetection | null;
   let exitedSessionInfo: AgentSessionInfo | null;
 
   beforeAll(async () => {
@@ -209,7 +209,7 @@ describe.skipIf(!canRun)("agent-claude-code (integration)", () => {
         aliveRunning = true;
         try {
           const activityState = await agent.getActivityState(session);
-          if (activityState !== "exited") {
+          if (activityState?.state !== "exited") {
             aliveActivityState = activityState;
             // Also capture session info while alive
             aliveSessionInfo = await agent.getSessionInfo(session);
@@ -245,12 +245,20 @@ describe.skipIf(!canRun)("agent-claude-code (integration)", () => {
   });
 
   it("getActivityState → returns valid non-exited state while agent is alive", () => {
-    expect(aliveActivityState).toBeDefined();
-    expect(aliveActivityState).not.toBe("exited");
-    // May be null (no JSONL yet) or a concrete state
-    expect([null, "active", "ready", "idle", "waiting_input", "blocked"]).toContain(
-      aliveActivityState,
-    );
+    // Polling must have captured an observation — undefined means the
+    // 30s polling window expired without ever seeing a non-exited state.
+    expect(aliveActivityState).not.toBeUndefined();
+    // May be null (JSONL not created yet) or a concrete ActivityDetection.
+    // The undefined guard is redundant after the assertion above but required
+    // for TypeScript type narrowing.
+    if (aliveActivityState !== null && aliveActivityState !== undefined) {
+      expect(aliveActivityState.state).not.toBe("exited");
+      expect(["active", "ready", "idle", "waiting_input", "blocked"]).toContain(
+        aliveActivityState.state,
+      );
+      // Timestamp must be present — it feeds session.lastActivityAt
+      expect(aliveActivityState.timestamp).toBeInstanceOf(Date);
+    }
   });
 
   it("getSessionInfo → returns session data while agent is alive (or null if path mismatch)", () => {
@@ -269,7 +277,7 @@ describe.skipIf(!canRun)("agent-claude-code (integration)", () => {
   });
 
   it("getActivityState → returns exited after agent process terminates", () => {
-    expect(exitedActivityState).toBe("exited");
+    expect(exitedActivityState).toEqual({ state: "exited" });
   });
 
   it("getSessionInfo → returns session data after agent exits (or null if path mismatch)", () => {

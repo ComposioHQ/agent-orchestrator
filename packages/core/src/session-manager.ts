@@ -280,10 +280,23 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       try {
         const detected = await plugins.agent.getActivityState(session, config.readyThresholdMs);
         if (detected !== null) {
-          session.activity = detected;
+          session.activity = detected.state;
+          if (detected.timestamp && detected.timestamp > session.lastActivityAt) {
+            session.lastActivityAt = detected.timestamp;
+          }
         }
       } catch {
         // Can't detect activity — keep existing value
+      }
+
+      // Enrich with live agent session info (summary, cost).
+      try {
+        const info = await plugins.agent.getSessionInfo(session);
+        if (info) {
+          session.agentInfo = info;
+        }
+      } catch {
+        // Can't get session info — keep existing values
       }
     }
   }
