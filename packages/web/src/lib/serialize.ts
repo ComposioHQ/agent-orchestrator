@@ -15,7 +15,7 @@ import type {
   OrchestratorConfig,
   PluginRegistry,
 } from "@composio/ao-core";
-import type { DashboardSession, DashboardPR, DashboardStats } from "./types.js";
+import type { DashboardSession, DashboardPR } from "./types.js";
 import { TTLCache, prCache, prCacheKey, type PREnrichmentData } from "./cache";
 
 /** Cache for issue titles (5 min TTL — issue titles rarely change) */
@@ -358,13 +358,3 @@ export async function enrichSessionsMetadata(
   await Promise.allSettled([...summaryPromises, ...issueTitlePromises]);
 }
 
-/** Compute dashboard stats from a list of sessions. */
-export function computeStats(sessions: DashboardSession[]): DashboardStats {
-  return {
-    totalSessions: sessions.length,
-    workingSessions: sessions.filter((s) => s.activity === "active").length,
-    openPRs: sessions.filter((s) => s.pr?.state === "open").length,
-    needsReview: sessions.filter((s) => s.pr && !s.pr.isDraft && s.pr.reviewDecision === "pending")
-      .length,
-  };
-}

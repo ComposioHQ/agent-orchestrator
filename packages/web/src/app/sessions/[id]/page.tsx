@@ -3,8 +3,9 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { SessionDetail } from "@/components/SessionDetail";
-import type { DashboardSession } from "@/lib/types";
+import type { DashboardSession, SSESnapshotEvent } from "@/lib/types";
 import { activityIcon } from "@/lib/activity-icons";
+import { useSSE } from "@/hooks/useSSE";
 
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + "..." : s;
@@ -48,7 +49,7 @@ export default function SessionPage() {
     }
   }, [session, id]);
 
-  // Fetch session data (memoized to avoid recreating on every render)
+  // Fetch full session data (includes enriched PR/CI/review info).
   const fetchSession = useCallback(async () => {
     try {
       const res = await fetch(`/api/sessions/${encodeURIComponent(id)}`);
@@ -71,14 +72,41 @@ export default function SessionPage() {
     }
   }, [id]);
 
-  // Initial fetch
+  // Initial fetch.
   useEffect(() => {
     fetchSession();
   }, [fetchSession]);
 
-  // Poll for updates every 5 seconds
+  // SSE subscription — patch status/activity immediately for instant feedback.
+  const handleSSEMessage = useCallback(
+    (data: SSESnapshotEvent) => {
+      if (data.type !== "snapshot" || !Array.isArray(data.sessions)) return;
+      const update = data.sessions.find((s) => s.id === id);
+      if (!update) return;
+      setSession((prev) => {
+        if (!prev) return prev;
+        if (
+          prev.status !== update.status ||
+          prev.activity !== update.activity ||
+          prev.lastActivityAt !== update.lastActivityAt
+        ) {
+          return {
+            ...prev,
+            status: update.status,
+            activity: update.activity,
+            lastActivityAt: update.lastActivityAt,
+          };
+        }
+        return prev;
+      });
+    },
+    [id],
+  );
+  useSSE<SSESnapshotEvent>("/api/events", handleSSEMessage);
+
+  // Fallback poll every 30s to refresh PR/CI data (less frequent since SSE handles status changes).
   useEffect(() => {
-    const interval = setInterval(fetchSession, 5000);
+    const interval = setInterval(fetchSession, 30_000);
     return () => clearInterval(interval);
   }, [fetchSession]);
 
