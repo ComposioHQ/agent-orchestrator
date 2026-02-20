@@ -2,6 +2,7 @@
 
 import { Command } from "commander";
 import { registerInit } from "./commands/init.js";
+import { registerDoctor } from "./commands/doctor.js";
 import { registerStatus } from "./commands/status.js";
 import { registerSpawn, registerBatchSpawn } from "./commands/spawn.js";
 import { registerSession } from "./commands/session.js";
@@ -19,6 +20,7 @@ program
   .version("0.1.0");
 
 registerInit(program);
+registerDoctor(program);
 registerStart(program);
 registerStop(program);
 registerStatus(program);
