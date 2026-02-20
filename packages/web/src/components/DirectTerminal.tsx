@@ -120,8 +120,8 @@ export function DirectTerminal({
           scrollback: 10000,
           allowProposedApi: true,
           fastScrollModifier: "alt",
-          fastScrollSensitivity: 3,
-          scrollSensitivity: 1,
+          fastScrollSensitivity: 1.5,
+          scrollSensitivity: 0.5,
         });
 
         // Add FitAddon for responsive sizing
