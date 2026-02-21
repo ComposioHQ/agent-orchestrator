@@ -76,13 +76,20 @@ export function createGitLabTracker(cfg: GitLabPluginConfig = {}): Tracker {
       return String(data.state).toLowerCase() === "closed";
     },
 
-    issueUrl(identifier: string, project: ProjectConfig): string {
-      // GitLab issue URL format: https://gitlab.com/<group>/<project>/-/issues/<iid>
-      const num = identifier.replace(/^#/, "");
-      // Try to derive host from baseUrl
-      const host = client["baseUrl"].replace(/\/api\/v4\/?$/, "").replace(/^https?:\/\//, "");
-      return `https://${host}/${project.repo}/-/issues/${num}`;
-    },
+      issueUrl(identifier: string, project: ProjectConfig): string {
+          // GitLab issue URL format: <origin>/<group>/<project>/-/issues/<iid>
+          const num = identifier.replace(/^#/, "");
+
+          let origin = "";
+          try {
+              const apiUrl = new URL((client as any).baseUrl);
+              origin = apiUrl.origin;
+          } catch {
+              origin = `https://`;
+          }
+
+          return `${origin}/${project.repo}/-/issues/${num}`;
+      },
 
     branchName(identifier: string, _project: ProjectConfig): string {
       const num = identifier.replace(/^#/, "");
