@@ -1,0 +1,19 @@
+{
+  "name": "@composio/ao-plugin-tracker-gitlab",
+  "version": "0.1.0",
+  "description": "Tracker plugin: GitLab Issues",
+  "type": "module",
+  "main": "src/index.ts",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "vitest"
+  },
+  "keywords": ["composio", "tracker", "gitlab", "plugin"],
+  "license": "MIT",
+  "devDependencies": {
+    "nock": "^13.3.0",
+    "vitest": "^1.0.0"
+  }
+}
