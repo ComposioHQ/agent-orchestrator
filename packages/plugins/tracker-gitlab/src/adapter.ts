@@ -55,6 +55,9 @@ export function createGitLabTracker(cfg: GitLabPluginConfig = {}): Tracker {
       const iid = parseIid(identifier);
       const proj = projectToPath(project);
       const data = await client.get<any>(`/projects/${proj}/issues/${iid}`);
+      if (data == null) {
+        throw new Error(`GitLab API returned empty body for GET /projects/${proj}/issues/${iid}`);
+      }
       return {
         id: String(data.iid),
         title: data.title,
@@ -181,15 +184,17 @@ export function createGitLabTracker(cfg: GitLabPluginConfig = {}): Tracker {
       }
 
       const created = await client.post<any>(`/projects/${proj}/issues`, payload);
-      // Map to Issue
+      if (created == null) {
+          throw new Error(`GitLab API returned empty body for POST /projects/${proj}/issues`);
+      }
       return {
-        id: String(created.iid),
-        title: created.title,
-        description: created.description ?? "",
-        url: created.web_url,
-        state: mapState(created.state),
-        labels: created.labels ?? [],
-        assignee: created.assignees && created.assignees[0]?.username,
+          id: String(created.iid),
+          title: created.title,
+          description: created.description ?? "",
+          url: created.web_url,
+          state: mapState(created.state),
+          labels: created.labels ?? [],
+          assignee: created.assignees && created.assignees[0]?.username,
       };
     },
   };
