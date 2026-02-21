@@ -133,9 +133,14 @@ export function createGitLabTracker(cfg: GitLabPluginConfig = {}): Tracker {
         async listIssues(filters: IssueFilters, project: ProjectConfig): Promise<Issue[]> {
             const proj = encodeURIComponent(projectToPath(project));
             const query: Record<string, string | number | undefined> = { per_page: filters.limit ?? 30 };
-            if (filters.state === "closed") query["state"] = "closed";
-            else if (filters.state === "all") query["state"] = undefined;
-            else query["state"] = "opened";
+
+            if (filters.state === "closed") {
+                query["state"] = "closed";
+            } else if (filters.state === "all") {
+                query["state"] = "all";
+            } else {
+                query["state"] = "opened";
+            }
 
             if (filters.assignee) query["assignee_username"] = filters.assignee;
             if (filters.labels && filters.labels.length > 0) query["labels"] = filters.labels.join(",");
