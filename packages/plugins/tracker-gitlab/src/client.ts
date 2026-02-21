@@ -100,7 +100,7 @@ export class GitLabClient {
                 }
 
                 // Retry on 429 or 5xx
-                if ((res.status === 429 || res.status >= 500) && attempt < this.maxRetries) {
+                if ((res.status === 429 || res.status >= 500) && attempt <= this.maxRetries) {
                     const backoff = 100 * 2 ** (attempt - 1);
                     const jitter = Math.floor(Math.random() * 100);
                     await setTimeout(backoff + jitter);
