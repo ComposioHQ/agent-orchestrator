@@ -237,11 +237,6 @@ export function registerInit(program: Command): void {
       try {
         // Basic config
         console.log(chalk.bold("  Configuration\n"));
-        const dataDir = await prompt(
-          rl,
-          "Data directory (session metadata)",
-          "~/.agent-orchestrator",
-        );
         const worktreeDir = await prompt(rl, "Worktree directory", "~/.worktrees");
         const freePort = await findFreePort(DEFAULT_PORT);
         const portStr = await prompt(rl, "Dashboard port", String(freePort));
@@ -274,7 +269,6 @@ export function registerInit(program: Command): void {
         );
 
         const config: Record<string, unknown> = {
-          dataDir,
           worktreeDir,
           port,
           defaults: { runtime, agent, workspace, notifiers },
@@ -445,7 +439,6 @@ async function handleAutoMode(outputPath: string, smart: boolean): Promise<void>
 
   const port = await findFreePort(DEFAULT_PORT);
   const config: Record<string, unknown> = {
-    dataDir: "~/.agent-orchestrator",
     worktreeDir: "~/.worktrees",
     port,
     defaults: {

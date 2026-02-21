@@ -71,7 +71,18 @@ export function Dashboard({ sessions, stats, orchestratorId, projectName }: Dash
   const handleMerge = async (prNumber: number) => {
     const res = await fetch(`/api/prs/${prNumber}/merge`, { method: "POST" });
     if (!res.ok) {
-      console.error(`Failed to merge PR #${prNumber}:`, await res.text());
+      let errorMessage = `Failed to merge PR #${prNumber}`;
+      try {
+        const body = await res.json();
+        if (body.error) errorMessage += `:\n\n${body.error}`;
+        if (body.detail) errorMessage += `\n${body.detail}`;
+        if (body.blockers && Array.isArray(body.blockers) && body.blockers.length > 0) {
+          errorMessage += `\n\nBlockers:\n${body.blockers.map((b: string) => `• ${b}`).join("\n")}`;
+        }
+      } catch {
+        errorMessage += `:\n\n${await res.text().catch(() => "Unknown error")}`;
+      }
+      alert(errorMessage);
     }
   };
 

@@ -112,16 +112,42 @@ function validateStatus(raw: string | undefined): SessionStatus {
   return "spawning";
 }
 
+/**
+ * Infer projectId from a session's ID by matching its prefix against
+ * configured sessionPrefix values.
+ *
+ * Strategy 1: Match session ID prefix (e.g., "ao-18" matches prefix "ao").
+ * Strategy 2: If only one project is configured, use that.
+ */
+export function inferProjectId(
+  sessionId: string,
+  projects: Record<string, ProjectConfig>,
+): string {
+  for (const [projectKey, project] of Object.entries(projects)) {
+    if (project.sessionPrefix && sessionId.startsWith(`${project.sessionPrefix}-`)) {
+      return projectKey;
+    }
+  }
+  const projectKeys = Object.keys(projects);
+  if (projectKeys.length === 1) {
+    return projectKeys[0];
+  }
+  return "";
+}
+
 /** Reconstruct a Session object from raw metadata key=value pairs. */
 function metadataToSession(
   sessionId: SessionId,
   meta: Record<string, string>,
+  projects: Record<string, ProjectConfig>,
   createdAt?: Date,
   modifiedAt?: Date,
 ): Session {
+  const rawProject = meta["project"] ?? "";
+  const projectId = rawProject || inferProjectId(sessionId, projects);
   return {
     id: sessionId,
-    projectId: meta["project"] ?? "",
+    projectId,
     status: validateStatus(meta["status"]),
     activity: null,
     branch: meta["branch"] || null,
@@ -691,7 +717,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         // If stat fails, timestamps will fall back to current time
       }
 
-      const session = metadataToSession(sessionName, raw, createdAt, modifiedAt);
+      const session = metadataToSession(sessionName, raw, config.projects, createdAt, modifiedAt);
 
       const plugins = resolvePlugins(project);
       // Cap per-session enrichment at 2s — subprocess calls (tmux/ps) can be
@@ -725,7 +751,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         // If stat fails, timestamps will fall back to current time
       }
 
-      const session = metadataToSession(sessionId, raw, createdAt, modifiedAt);
+      const session = metadataToSession(sessionId, raw, config.projects, createdAt, modifiedAt);
 
       const plugins = resolvePlugins(project);
       await ensureHandleAndEnrich(session, sessionId, project, plugins);
@@ -966,7 +992,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     //    metadataToSession sets activity: null, so without enrichment a crashed
     //    session (status "working", agent exited) would not be detected as terminal
     //    and isRestorable would reject it.
-    const session = metadataToSession(sessionId, raw);
+    const session = metadataToSession(sessionId, raw, config.projects);
     const plugins = resolvePlugins(project);
     await enrichSessionWithRuntimeState(session, plugins, true);
 
