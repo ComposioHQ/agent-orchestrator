@@ -605,8 +605,12 @@ function createClaudeCodeAgent(): Agent {
         parts.push("--append-system-prompt", shellEscape(config.systemPrompt));
       }
 
+      // Deliver config.prompt via --append-system-prompt (NOT `-p`).
+      // Claude Code's `-p` flag is one-shot/print mode — the agent would
+      // exit after generating a single response. Using --append-system-prompt
+      // keeps the agent in interactive mode with the prompt as context.
       if (config.prompt) {
-        parts.push("-p", shellEscape(config.prompt));
+        parts.push("--append-system-prompt", shellEscape(config.prompt));
       }
 
       return parts.join(" ");

@@ -18,24 +18,39 @@ import {
   getProjectBaseDir,
 } from "@composio/ao-core";
 
-const { mockTmux, mockGit, mockGh, mockExec, mockConfigRef, mockSessionManager, sessionsDirRef } =
-  vi.hoisted(() => ({
-    mockTmux: vi.fn(),
-    mockGit: vi.fn(),
-    mockGh: vi.fn(),
-    mockExec: vi.fn(),
-    mockConfigRef: { current: null as Record<string, unknown> | null },
-    mockSessionManager: {
-      list: vi.fn(),
-      kill: vi.fn(),
-      cleanup: vi.fn(),
-      get: vi.fn(),
-      spawn: vi.fn(),
-      spawnOrchestrator: vi.fn(),
-      send: vi.fn(),
-    },
-    sessionsDirRef: { current: "" },
-  }));
+const {
+  mockTmux,
+  mockGit,
+  mockGh,
+  mockExec,
+  mockConfigRef,
+  mockSessionManager,
+  sessionsDirRef,
+  mockDetectPR,
+  mockGetCISummary,
+  mockGetAutomatedComments,
+  mockGetSCM,
+} = vi.hoisted(() => ({
+  mockTmux: vi.fn(),
+  mockGit: vi.fn(),
+  mockGh: vi.fn(),
+  mockExec: vi.fn(),
+  mockConfigRef: { current: null as Record<string, unknown> | null },
+  mockSessionManager: {
+    list: vi.fn(),
+    kill: vi.fn(),
+    cleanup: vi.fn(),
+    get: vi.fn(),
+    spawn: vi.fn(),
+    spawnOrchestrator: vi.fn(),
+    send: vi.fn(),
+  },
+  sessionsDirRef: { current: "" },
+  mockDetectPR: vi.fn(),
+  mockGetCISummary: vi.fn(),
+  mockGetAutomatedComments: vi.fn(),
+  mockGetSCM: vi.fn(),
+}));
 
 vi.mock("../../src/lib/shell.js", () => ({
   tmux: mockTmux,
@@ -67,6 +82,10 @@ vi.mock("@composio/ao-core", async (importOriginal) => {
 
 vi.mock("../../src/lib/create-session-manager.js", () => ({
   getSessionManager: async (): Promise<SessionManager> => mockSessionManager as SessionManager,
+}));
+
+vi.mock("../../src/lib/plugins.js", () => ({
+  getSCM: (...args: unknown[]) => mockGetSCM(...args),
 }));
 
 /** Parse a key=value metadata file into a Record<string, string>. */
@@ -165,12 +184,41 @@ beforeEach(() => {
   mockGit.mockReset();
   mockGh.mockReset();
   mockExec.mockReset();
+  mockDetectPR.mockReset();
+  mockDetectPR.mockResolvedValue(null);
+  mockGetCISummary.mockReset();
+  mockGetCISummary.mockResolvedValue("none");
+  mockGetAutomatedComments.mockReset();
+  mockGetAutomatedComments.mockResolvedValue([]);
   mockSessionManager.list.mockReset();
   mockSessionManager.kill.mockReset();
   mockSessionManager.cleanup.mockReset();
   mockSessionManager.get.mockReset();
   mockSessionManager.spawn.mockReset();
   mockSessionManager.send.mockReset();
+  mockGetSCM.mockReset();
+
+  // Default: getSCM returns a valid mock SCM
+  mockGetSCM.mockReturnValue({
+    name: "github",
+    detectPR: mockDetectPR,
+    getCISummary: mockGetCISummary,
+    getAutomatedComments: mockGetAutomatedComments,
+    getReviewDecision: vi.fn().mockResolvedValue("none"),
+    getPendingComments: vi.fn().mockResolvedValue([]),
+    getCIChecks: vi.fn().mockResolvedValue([]),
+    getReviews: vi.fn().mockResolvedValue([]),
+    getMergeability: vi.fn().mockResolvedValue({
+      mergeable: true,
+      ciPassing: true,
+      approved: false,
+      noConflicts: true,
+      blockers: [],
+    }),
+    getPRState: vi.fn().mockResolvedValue("open"),
+    mergePR: vi.fn(),
+    closePR: vi.fn(),
+  });
 
   // Default: list reads from sessionsDir
   mockSessionManager.list.mockImplementation(async () => {
@@ -416,5 +464,299 @@ describe("session cleanup", () => {
 
     const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
     expect(output).toContain("No sessions to clean up");
+  });
+});
+
+describe("session table", () => {
+  it("prints header and rows in plain text", async () => {
+    writeFileSync(join(sessionsDir, "app-1"), "branch=feat/fix\nstatus=working\n");
+
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-1",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        branch: "feat/fix",
+        issueId: null,
+        pr: null,
+        workspacePath: null,
+        runtimeHandle: null,
+        agentInfo: null,
+        createdAt: new Date(),
+        lastActivityAt: new Date(),
+        metadata: {},
+      } satisfies Session,
+    ]);
+
+    await program.parseAsync(["node", "test", "session", "table"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("SESSION");
+    expect(output).toContain("STATUS");
+    expect(output).toContain("ACTIVITY");
+    expect(output).toContain("PR_URL");
+    expect(output).toContain("app-1");
+    expect(output).toContain("working");
+    expect(output).toContain("active");
+    expect(output).toContain("/sessions/app-1");
+  });
+
+  it("shows PR, CI, and bugbot data from SCM", async () => {
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-1",
+        projectId: "my-app",
+        status: "pr_open",
+        activity: "active",
+        branch: "feat/test",
+        issueId: null,
+        pr: null,
+        workspacePath: null,
+        runtimeHandle: null,
+        agentInfo: null,
+        createdAt: new Date(),
+        lastActivityAt: new Date(),
+        metadata: { pr: "https://github.com/org/my-app/pull/42" },
+      } satisfies Session,
+    ]);
+
+    mockDetectPR.mockResolvedValue({
+      number: 42,
+      url: "https://github.com/org/my-app/pull/42",
+      title: "Test PR",
+      owner: "org",
+      repo: "my-app",
+      branch: "feat/test",
+      baseBranch: "main",
+      isDraft: false,
+    });
+    mockGetCISummary.mockResolvedValue("passing");
+    mockGetAutomatedComments.mockResolvedValue([
+      { id: "1", botName: "bugbot", body: "issue", severity: "error", createdAt: new Date(), url: "" },
+      { id: "2", botName: "bugbot", body: "issue2", severity: "warning", createdAt: new Date(), url: "" },
+    ]);
+
+    await program.parseAsync(["node", "test", "session", "table"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("#42");
+    expect(output).toContain("green"); // CI passing
+    expect(output).toContain("2"); // 2 bugbot comments
+    expect(output).toContain("https://github.com/org/my-app/pull/42");
+  });
+
+  it("outputs JSON with --json flag", async () => {
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-1",
+        projectId: "my-app",
+        status: "working",
+        activity: "idle",
+        branch: "feat/json",
+        issueId: null,
+        pr: null,
+        workspacePath: null,
+        runtimeHandle: null,
+        agentInfo: null,
+        createdAt: new Date(),
+        lastActivityAt: new Date(),
+        metadata: {},
+      } satisfies Session,
+    ]);
+
+    await program.parseAsync(["node", "test", "session", "table", "--json"]);
+
+    const jsonCalls = consoleSpy.mock.calls.map((c) => String(c[0])).join("");
+    const parsed = JSON.parse(jsonCalls);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].session).toBe("app-1");
+    expect(parsed[0].status).toBe("working");
+    expect(parsed[0].activity).toBe("idle");
+    expect(parsed[0].ci).toBe("-");
+    expect(parsed[0].bugbot).toBe(0);
+    expect(parsed[0].sessionUrl).toContain("/sessions/app-1");
+    expect(parsed[0].prUrl).toBe("");
+  });
+
+  it("filters by project with --project flag", async () => {
+    mockSessionManager.list.mockResolvedValue([]);
+
+    await program.parseAsync(["node", "test", "session", "table", "-p", "my-app"]);
+
+    expect(mockSessionManager.list).toHaveBeenCalledWith("my-app");
+  });
+
+  it("rejects unknown project", async () => {
+    await expect(
+      program.parseAsync(["node", "test", "session", "table", "-p", "nope"]),
+    ).rejects.toThrow("process.exit(1)");
+  });
+
+  it("handles SCM errors gracefully", async () => {
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-1",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        branch: "feat/err",
+        issueId: null,
+        pr: null,
+        workspacePath: null,
+        runtimeHandle: null,
+        agentInfo: null,
+        createdAt: new Date(),
+        lastActivityAt: new Date(),
+        metadata: { pr: "https://github.com/org/my-app/pull/5" },
+      } satisfies Session,
+    ]);
+
+    mockDetectPR.mockRejectedValue(new Error("gh failed"));
+
+    await program.parseAsync(["node", "test", "session", "table"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    // Should still show session with fallback PR from metadata
+    expect(output).toContain("app-1");
+    expect(output).toContain("#5");
+    expect(output).toContain("-"); // CI unknown
+  });
+
+  it("output contains no ANSI escape codes (machine-readable)", async () => {
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-1",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        branch: "feat/ansi",
+        issueId: null,
+        pr: null,
+        workspacePath: null,
+        runtimeHandle: null,
+        agentInfo: null,
+        createdAt: new Date(),
+        lastActivityAt: new Date(),
+        metadata: { pr: "https://github.com/org/my-app/pull/10" },
+      } satisfies Session,
+    ]);
+
+    await program.parseAsync(["node", "test", "session", "table"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    // eslint-disable-next-line no-control-regex
+    expect(output).not.toMatch(/\x1b\[/); // No ANSI escape sequences
+  });
+
+  it("header columns align with data columns", async () => {
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-1",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        branch: "feat/align",
+        issueId: null,
+        pr: null,
+        workspacePath: null,
+        runtimeHandle: null,
+        agentInfo: null,
+        createdAt: new Date(),
+        lastActivityAt: new Date(),
+        metadata: {},
+      } satisfies Session,
+    ]);
+
+    await program.parseAsync(["node", "test", "session", "table"]);
+
+    const lines = consoleSpy.mock.calls.map((c) => String(c[0]));
+    expect(lines.length).toBeGreaterThanOrEqual(2);
+
+    const header = lines[0];
+    const dataRow = lines[1];
+
+    // Each column in the header should start at the same position as in the data row
+    // Verify STATUS column starts at the same offset
+    const statusHeaderIdx = header.indexOf("STATUS");
+    expect(statusHeaderIdx).toBeGreaterThan(0);
+    expect(dataRow.indexOf("working")).toBe(statusHeaderIdx);
+  });
+
+  it("sorts sessions alphabetically by id", async () => {
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-3",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        branch: "feat/c",
+        issueId: null,
+        pr: null,
+        workspacePath: null,
+        runtimeHandle: null,
+        agentInfo: null,
+        createdAt: new Date(),
+        lastActivityAt: new Date(),
+        metadata: {},
+      } satisfies Session,
+      {
+        id: "app-1",
+        projectId: "my-app",
+        status: "pr_open",
+        activity: "idle",
+        branch: "feat/a",
+        issueId: null,
+        pr: null,
+        workspacePath: null,
+        runtimeHandle: null,
+        agentInfo: null,
+        createdAt: new Date(),
+        lastActivityAt: new Date(),
+        metadata: {},
+      } satisfies Session,
+    ]);
+
+    await program.parseAsync(["node", "test", "session", "table"]);
+
+    const lines = consoleSpy.mock.calls.map((c) => String(c[0]));
+    // Header is line 0, data starts at line 1
+    const dataLines = lines.slice(1);
+    const firstData = dataLines.find((l) => l.includes("app-"));
+    const secondData = dataLines.filter((l) => l.includes("app-"))[1];
+    expect(firstData).toContain("app-1");
+    expect(secondData).toContain("app-3");
+  });
+
+  it("handles unknown SCM plugin without crashing", async () => {
+    mockGetSCM.mockImplementation(() => {
+      throw new Error("Unknown SCM plugin: bad-scm");
+    });
+
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-1",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        branch: "feat/scm-err",
+        issueId: null,
+        pr: null,
+        workspacePath: null,
+        runtimeHandle: null,
+        agentInfo: null,
+        createdAt: new Date(),
+        lastActivityAt: new Date(),
+        metadata: { pr: "https://github.com/org/my-app/pull/5" },
+      } satisfies Session,
+    ]);
+
+    await program.parseAsync(["node", "test", "session", "table"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    // Should still show session with metadata-fallback PR data
+    expect(output).toContain("app-1");
+    expect(output).toContain("#5");
+    expect(output).toContain("-"); // CI unknown (no SCM)
   });
 });

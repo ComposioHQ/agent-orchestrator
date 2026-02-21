@@ -243,7 +243,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         data: {},
       };
     }
-    await enrichSessionWithRuntimeState(session, plugins, handleFromMetadata);
+    const sessionsDir = getProjectSessionsDir(project);
+    await enrichSessionWithRuntimeState(session, plugins, handleFromMetadata, sessionsDir);
   }
 
   /**
@@ -258,6 +259,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     session: Session,
     plugins: ReturnType<typeof resolvePlugins>,
     handleFromMetadata: boolean,
+    sessionsDir?: string,
   ): Promise<void> {
     // Skip all subprocess/IO work for sessions already known to be terminal.
     if (TERMINAL_SESSION_STATUSES.has(session.status)) {
@@ -293,6 +295,21 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
           session.activity = detected.state;
           if (detected.timestamp && detected.timestamp > session.lastActivityAt) {
             session.lastActivityAt = detected.timestamp;
+          }
+          // Safety net: if the session is still "spawning" but the agent is
+          // already active, transition to "working". This handles sessions
+          // spawned before this fix and cases where the lifecycle manager
+          // hasn't polled yet. Persist to disk so subsequent reads don't
+          // flicker back to "spawning".
+          if (session.status === "spawning" && detected.state === "active") {
+            session.status = "working";
+            if (sessionsDir) {
+              try {
+                updateMetadata(sessionsDir, session.id, { status: "working" });
+              } catch {
+                // Best effort — don't fail enrichment if metadata write fails
+              }
+            }
           }
         }
       } catch {
@@ -543,6 +560,18 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       }
       throw err;
     }
+
+    // Transition spawning → working now that launch succeeded.
+    // This is outside the teardown try/catch above because at this point
+    // the agent is running — a non-critical status write failure (e.g.
+    // disk-full) should not tear down a working session.
+    try {
+      updateMetadata(sessionsDir, sessionId, { status: "working" });
+    } catch {
+      // Best effort — the safety-net in enrichSessionWithRuntimeState
+      // will also transition spawning→working on subsequent reads.
+    }
+    session.status = "working";
 
     return session;
   }
@@ -968,7 +997,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     //    and isRestorable would reject it.
     const session = metadataToSession(sessionId, raw);
     const plugins = resolvePlugins(project);
-    await enrichSessionWithRuntimeState(session, plugins, true);
+    await enrichSessionWithRuntimeState(session, plugins, true, sessionsDir);
 
     // 3. Validate restorability
     if (!isRestorable(session)) {

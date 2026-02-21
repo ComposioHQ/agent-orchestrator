@@ -139,7 +139,7 @@ describe("spawn", () => {
     const session = await sm.spawn({ projectId: "my-app" });
 
     expect(session.id).toBe("app-1");
-    expect(session.status).toBe("spawning");
+    expect(session.status).toBe("working");
     expect(session.projectId).toBe("my-app");
     expect(session.runtimeHandle).toEqual(makeHandle("rt-1"));
 
@@ -207,7 +207,7 @@ describe("spawn", () => {
 
     const meta = readMetadata(sessionsDir, "app-1");
     expect(meta).not.toBeNull();
-    expect(meta!.status).toBe("spawning");
+    expect(meta!.status).toBe("working");
     expect(meta!.project).toBe("my-app");
     expect(meta!.issue).toBe("INT-42");
   });
@@ -337,6 +337,20 @@ describe("spawn", () => {
     expect(mockRuntime.create).not.toHaveBeenCalled();
   });
 
+  it("transitions status from spawning to working after successful launch", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    const session = await sm.spawn({ projectId: "my-app" });
+
+    // Returned session should have status "working" (not "spawning")
+    expect(session.status).toBe("working");
+
+    // Persisted metadata should also reflect "working"
+    const meta = readMetadata(sessionsDir, session.id);
+    expect(meta).not.toBeNull();
+    expect(meta!.status).toBe("working");
+  });
+
   it("spawns without issue tracking when no issueId provided", async () => {
     const sm = createSessionManager({ config, registry: mockRegistry });
 
@@ -346,6 +360,19 @@ describe("spawn", () => {
     // Uses session/{sessionId} to avoid conflicts with default branch
     expect(session.branch).toMatch(/^session\/app-\d+$/);
     expect(session.branch).not.toBe("main");
+  });
+
+  it("passes prompt to agent getLaunchCommand", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    await sm.spawn({ projectId: "my-app", prompt: "Fix the login bug" });
+
+    // getLaunchCommand should receive the prompt (composed or raw)
+    expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: expect.stringContaining("Fix the login bug"),
+      }),
+    );
   });
 });
 
@@ -450,6 +477,30 @@ describe("list", () => {
     expect(agentWithState.getActivityState).toHaveBeenCalled();
     // Verify activity state was set
     expect(sessions[0].activity).toBe("active");
+  });
+
+  it("auto-transitions spawning → working when agent is detected as active", async () => {
+    // Simulate a session stuck in "spawning" (e.g., created before the primary fix,
+    // or lifecycle manager hasn't polled yet)
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "a",
+      status: "spawning",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const sessions = await sm.list();
+
+    // Activity should be "active" and status should transition to "working"
+    expect(sessions[0].activity).toBe("active");
+    expect(sessions[0].status).toBe("working");
+
+    // Transition must be persisted to disk so subsequent reads don't flicker
+    const meta = readMetadata(sessionsDir, "app-1");
+    expect(meta).not.toBeNull();
+    expect(meta!.status).toBe("working");
   });
 
   it("keeps existing activity when getActivityState throws", async () => {

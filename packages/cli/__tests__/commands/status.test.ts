@@ -615,51 +615,6 @@ describe("status command", () => {
     expect(parsed[0].activity).toBeNull();
   });
 
-  it("shows null activity when session activity is null", async () => {
-    writeFileSync(
-      join(sessionsDir, "app-1"),
-      "worktree=/tmp/wt\nbranch=feat/err\nstatus=working\n",
-    );
-
-    mockTmux.mockImplementation(async (...args: string[]) => {
-      if (args[0] === "list-sessions") return "app-1";
-      if (args[0] === "display-message") return String(Math.floor(Date.now() / 1000));
-      return null;
-    });
-    mockGit.mockResolvedValue("feat/err");
-
-    // Session has activity: null (default from buildSessionsFromDir)
-    await program.parseAsync(["node", "test", "status", "--json"]);
-
-    const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
-    const parsed = JSON.parse(jsonCalls);
-    expect(parsed[0].activity).toBeNull();
-  });
-
-  it("shows null activity when session activity is explicitly null", async () => {
-    writeFileSync(
-      join(sessionsDir, "app-1"),
-      "worktree=/tmp/wt\nbranch=feat/null\nstatus=working\n",
-    );
-
-    mockSessionManager.list.mockImplementation(async () => {
-      return buildSessionsFromDir(sessionsDirRef.current, "my-app", null);
-    });
-
-    mockTmux.mockImplementation(async (...args: string[]) => {
-      if (args[0] === "list-sessions") return "app-1";
-      if (args[0] === "display-message") return String(Math.floor(Date.now() / 1000));
-      return null;
-    });
-    mockGit.mockResolvedValue("feat/null");
-
-    await program.parseAsync(["node", "test", "status", "--json"]);
-
-    const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
-    const parsed = JSON.parse(jsonCalls);
-    expect(parsed[0].activity).toBeNull();
-  });
-
   it("shows exited activity from session manager", async () => {
     writeFileSync(
       join(sessionsDir, "app-1"),
@@ -682,5 +637,70 @@ describe("status command", () => {
     const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
     const parsed = JSON.parse(jsonCalls);
     expect(parsed[0].activity).toBe("exited");
+  });
+
+  it("handles session with no branch (detectPR still called)", async () => {
+    // Session with NO branch and NO worktree — exercises the code path
+    // where the old status.ts had `if (branch)` guard before SCM detectPR.
+    // After refactoring to shared helper, detectPR is called unconditionally.
+    writeFileSync(join(sessionsDir, "app-1"), "status=working\n");
+
+    mockTmux.mockImplementation(async (...args: string[]) => {
+      if (args[0] === "list-sessions") return "app-1";
+      if (args[0] === "display-message") return null;
+      return null;
+    });
+    mockGit.mockResolvedValue(null);
+    mockDetectPR.mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "status", "--json"]);
+
+    const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
+    const parsed = JSON.parse(jsonCalls);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].branch).toBeNull();
+    expect(parsed[0].prNumber).toBeNull();
+    expect(parsed[0].ciStatus).toBeNull();
+    // detectPR should still be called (shared helper doesn't gate on branch)
+    expect(mockDetectPR).toHaveBeenCalled();
+  });
+
+  it("uses prUrl from SCM, not stale metadata URL", async () => {
+    // Metadata has one PR URL, SCM detects a different one.
+    // The returned `pr` field should match the SCM result.
+    writeFileSync(
+      join(sessionsDir, "app-1"),
+      "worktree=/tmp/wt\nbranch=feat/moved\nstatus=working\npr=https://github.com/org/repo/pull/10\n",
+    );
+
+    mockTmux.mockImplementation(async (...args: string[]) => {
+      if (args[0] === "list-sessions") return "app-1";
+      if (args[0] === "display-message") return String(Math.floor(Date.now() / 1000));
+      return null;
+    });
+    mockGit.mockResolvedValue("feat/moved");
+
+    // SCM detects a different PR than what's in metadata
+    mockDetectPR.mockResolvedValue({
+      number: 42,
+      url: "https://github.com/org/repo/pull/42",
+      title: "New PR",
+      owner: "org",
+      repo: "repo",
+      branch: "feat/moved",
+      baseBranch: "main",
+      isDraft: false,
+    });
+    mockGetCISummary.mockResolvedValue("passing");
+    mockGetReviewDecision.mockResolvedValue("none");
+    mockGetPendingComments.mockResolvedValue([]);
+
+    await program.parseAsync(["node", "test", "status", "--json"]);
+
+    const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
+    const parsed = JSON.parse(jsonCalls);
+    expect(parsed[0].prNumber).toBe(42);
+    // pr URL should match SCM (pull/42), NOT stale metadata (pull/10)
+    expect(parsed[0].pr).toBe("https://github.com/org/repo/pull/42");
   });
 });
