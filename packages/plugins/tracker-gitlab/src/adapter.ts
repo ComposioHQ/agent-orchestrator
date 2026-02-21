@@ -77,11 +77,22 @@ export function createGitLabTracker(cfg: GitLabPluginConfig = {}): Tracker {
     },
 
     issueUrl(identifier: string, project: ProjectConfig): string {
-      // GitLab issue URL format: https://gitlab.com/<group>/<project>/-/issues/<iid>
-      const num = identifier.replace(/^#/, "");
-      // Try to derive host from baseUrl
-      const host = client["baseUrl"].replace(/\/api\/v4\/?$/, "").replace(/^https?:\/\//, "");
-      return `https://${host}/${project.repo}/-/issues/${num}`;
+      // GitLab issue URL format: <origin>/<group>/<project>/-/issues/<iid>
+      const num = identifier.replace(/^#/, "").trim();
+
+      let origin: string;
+      try {
+        const apiUrl = new URL((client as any).baseUrl);
+        origin = apiUrl.origin;
+      } catch {
+        origin = "https://";
+      }
+
+      const repoRaw = String(project.repo ?? "").trim();
+      const repoPath =
+        repoRaw === "" ? "" : repoRaw.split("/").map((s) => encodeURIComponent(s)).join("/");
+
+      return repoPath ? `${origin}/${repoPath}/-/issues/${encodeURIComponent(num)}` : `${origin}/-/issues/${encodeURIComponent(num)}`;
     },
 
     branchName(identifier: string, _project: ProjectConfig): string {
