@@ -69,7 +69,12 @@ function inferPriority(type: EventType): EventPriority {
   ) {
     return "action";
   }
-  if (type.includes("fail") || type.includes("changes_requested") || type.includes("conflicts")) {
+  if (
+    type.includes("fail") ||
+    type.includes("changes_requested") ||
+    type.includes("conflicts") ||
+    type.includes("comments_unresolved")
+  ) {
     return "warning";
   }
   return "info";
@@ -111,6 +116,8 @@ function statusToEventType(_from: SessionStatus | undefined, to: SessionStatus):
       return "review.pending";
     case "changes_requested":
       return "review.changes_requested";
+    case "review_comments_unresolved":
+      return "review.comments_unresolved";
     case "approved":
       return "review.approved";
     case "mergeable":
@@ -137,6 +144,8 @@ function eventToReactionKey(eventType: EventType): string | null {
       return "ci-failed";
     case "review.changes_requested":
       return "changes-requested";
+    case "review.comments_unresolved":
+      return "review-comments";
     case "automated_review.found":
       return "bugbot-comments";
     case "merge.conflicts":
@@ -177,6 +186,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
+  // Cache pending comments per session during a poll cycle to avoid redundant API calls
+  const pendingCommentsCache = new Map<
+    SessionId,
+    Awaited<ReturnType<SCM["getPendingComments"]>>
+  >();
 
   /** Determine current status for a session by polling plugins. */
   async function determineStatus(session: Session): Promise<SessionStatus> {
@@ -246,10 +260,50 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         if (reviewDecision === "approved") {
           // Check merge readiness
           const mergeReady = await scm.getMergeability(session.pr);
-          if (mergeReady.mergeable) return "mergeable";
+          if (mergeReady.mergeable) {
+            // Verify no pending review comments before declaring mergeable
+            try {
+              const pendingComments = await scm.getPendingComments(session.pr);
+              pendingCommentsCache.set(session.id, pendingComments);
+              if (pendingComments.length > 0) {
+                // Update seen-tracking for comment dedup
+                const currentCommentIds = pendingComments.map((c) => c.id).join(",");
+                const seenIds = session.metadata?.["reviewCommentsSeen"] || "";
+                if (currentCommentIds !== seenIds) {
+                  const sessionsDir = getSessionsDir(config.configPath, project.path);
+                  updateMetadata(sessionsDir, session.id, {
+                    reviewCommentsSeen: currentCommentIds,
+                  });
+                }
+                return "review_comments_unresolved";
+              }
+            } catch {
+              // If comment check fails, fall through to mergeable
+            }
+            return "mergeable";
+          }
           return "approved";
         }
         if (reviewDecision === "pending") return "review_pending";
+
+        // Check for unresolved review comments even without a review decision
+        try {
+          const pendingComments = await scm.getPendingComments(session.pr);
+          pendingCommentsCache.set(session.id, pendingComments);
+          if (pendingComments.length > 0) {
+            const currentCommentIds = pendingComments.map((c) => c.id).join(",");
+            const seenIds = session.metadata?.["reviewCommentsSeen"] || "";
+            if (currentCommentIds !== seenIds) {
+              const sessionsDir = getSessionsDir(config.configPath, project.path);
+              updateMetadata(sessionsDir, session.id, {
+                reviewCommentsSeen: currentCommentIds,
+              });
+            }
+            return "review_comments_unresolved";
+          }
+        } catch {
+          // getPendingComments failed — don't change status
+        }
 
         return "pr_open";
       } catch {
@@ -497,6 +551,41 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     } else {
       // No transition but track current state
       states.set(session.id, newStatus);
+
+      // Special case: session stays in review_comments_unresolved but
+      // determineStatus() detected new comments (updated reviewCommentsSeen).
+      // Re-trigger the review-comments reaction so the agent addresses them.
+      if (
+        newStatus === "review_comments_unresolved" &&
+        oldStatus === "review_comments_unresolved" &&
+        session.pr
+      ) {
+        const pendingComments = pendingCommentsCache.get(session.id);
+        if (pendingComments && pendingComments.length > 0) {
+          const currentCommentIds = pendingComments.map((c) => c.id).join(",");
+          const seenIds = session.metadata?.["reviewCommentsSeen"] || "";
+          // Only re-trigger if comment set changed (determineStatus already updated metadata)
+          if (currentCommentIds !== seenIds) {
+            const reactionKey = "review-comments";
+            const project = config.projects[session.projectId];
+            const globalReaction = config.reactions[reactionKey];
+            const projectReaction = project?.reactions?.[reactionKey];
+            const reactionConfig = projectReaction
+              ? { ...globalReaction, ...projectReaction }
+              : globalReaction;
+            if (reactionConfig && reactionConfig.action) {
+              if (reactionConfig.auto !== false || reactionConfig.action === "notify") {
+                await executeReaction(
+                  session.id,
+                  session.projectId,
+                  reactionKey,
+                  reactionConfig as ReactionConfig,
+                );
+              }
+            }
+          }
+        }
+      }
     }
   }
 
@@ -556,6 +645,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       // Poll cycle failed — will retry next interval
     } finally {
       polling = false;
+      pendingCommentsCache.clear();
     }
   }
 

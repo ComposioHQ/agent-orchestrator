@@ -102,6 +102,7 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
     dashboardPort: raw["dashboardPort"] ? Number(raw["dashboardPort"]) : undefined,
     terminalWsPort: raw["terminalWsPort"] ? Number(raw["terminalWsPort"]) : undefined,
     directTerminalWsPort: raw["directTerminalWsPort"] ? Number(raw["directTerminalWsPort"]) : undefined,
+    reviewCommentsSeen: raw["reviewCommentsSeen"],
   };
 }
 
@@ -147,6 +148,7 @@ export function writeMetadata(
     data["terminalWsPort"] = String(metadata.terminalWsPort);
   if (metadata.directTerminalWsPort !== undefined)
     data["directTerminalWsPort"] = String(metadata.directTerminalWsPort);
+  if (metadata.reviewCommentsSeen) data["reviewCommentsSeen"] = metadata.reviewCommentsSeen;
 
   writeFileSync(path, serializeMetadata(data), "utf-8");
 }
