@@ -16,7 +16,7 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "typecheck": "pnpm -r typecheck",
+    "typecheck": "pnpm --filter @composio/ao-core build && pnpm -r typecheck",
     "test": "pnpm -r --filter '!@composio/ao-web' test",
     "test:integration": "pnpm --filter @composio/ao-integration-tests test:integration",
     "clean": "pnpm -r clean",
