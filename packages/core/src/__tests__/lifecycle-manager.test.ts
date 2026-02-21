@@ -114,6 +114,7 @@ beforeEach(() => {
 
   config = {
     configPath,
+    worktreeDir: join(tmpDir, ".worktrees"),
     port: 3000,
     defaults: {
       runtime: "mock",

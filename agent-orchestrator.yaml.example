@@ -1,10 +1,7 @@
 # Agent Orchestrator Configuration
 # Copy to agent-orchestrator.yaml and customize.
 
-# Where to store session metadata
-dataDir: ~/.agent-orchestrator
-
-# Where to create workspaces (git worktrees, clones)
+# Where to create workspaces (git worktrees, clones). Defaults to ~/.worktrees
 worktreeDir: ~/.worktrees
 
 # Web dashboard port
@@ -72,12 +69,12 @@ projects:
 #     webhook: ${SLACK_WEBHOOK_URL}
 #     channel: "#agent-updates"
 
-# Notification routing by priority
+# Notification routing by priority (defaults: all priorities → desktop)
 # notificationRouting:
 #   urgent: [desktop, slack]   # agent stuck, needs input, errored
 #   action: [desktop, slack]   # PR ready to merge
-#   warning: [slack]           # auto-fix failed
-#   info: [slack]              # summary, all done
+#   warning: [desktop, slack]  # auto-fix failed
+#   info: [desktop, slack]     # summary, all done
 
 # Reactions — auto-responses to events (these are the defaults)
 # reactions:
