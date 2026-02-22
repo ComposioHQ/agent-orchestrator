@@ -5,10 +5,12 @@
 import { describe, it, expect } from "vitest";
 import {
   getAttentionLevel,
+  isPRRateLimited,
   TERMINAL_STATUSES,
   TERMINAL_ACTIVITIES,
   NON_RESTORABLE_STATUSES,
   type DashboardSession,
+  type DashboardPR,
 } from "../types";
 import {
   TERMINAL_STATUSES as CORE_TERMINAL_STATUSES,
@@ -470,6 +472,77 @@ describe("getAttentionLevel", () => {
       });
       expect(getAttentionLevel(session)).toBe("working");
     });
+  });
+});
+
+// Helper to create a PR with specific blockers
+function createPR(blockers: string[]): DashboardPR {
+  return {
+    number: 1,
+    url: "https://github.com/test/repo/pull/1",
+    title: "Test PR",
+    owner: "test",
+    repo: "repo",
+    branch: "feat/test",
+    baseBranch: "main",
+    isDraft: false,
+    state: "open",
+    additions: 10,
+    deletions: 5,
+    ciStatus: "none",
+    ciChecks: [],
+    reviewDecision: "none",
+    mergeability: {
+      mergeable: false,
+      ciPassing: false,
+      approved: false,
+      noConflicts: true,
+      blockers,
+    },
+    unresolvedThreads: 0,
+    unresolvedComments: [],
+  };
+}
+
+describe("isPRRateLimited", () => {
+  it("returns false when blockers is empty", () => {
+    expect(isPRRateLimited(createPR([]))).toBe(false);
+  });
+
+  it("returns false for unrelated blockers", () => {
+    expect(isPRRateLimited(createPR(["Merge conflicts", "CI is failing"]))).toBe(false);
+  });
+
+  it("returns true when blockers includes the rate-limit sentinel", () => {
+    expect(isPRRateLimited(createPR(["API rate limited or unavailable"]))).toBe(true);
+  });
+
+  it("returns true when blockers includes 'Data not loaded' (enrichment timeout)", () => {
+    // When the server-side 4s enrichment timeout fires, the PR is left with
+    // this default blocker. Treating it as stale prevents false-positive alerts.
+    expect(isPRRateLimited(createPR(["Data not loaded"]))).toBe(true);
+  });
+
+  it("returns true when rate-limit sentinel is among multiple blockers", () => {
+    expect(isPRRateLimited(createPR(["Something else", "API rate limited or unavailable"]))).toBe(true);
+  });
+
+  it("getAttentionLevel treats Data-not-loaded PRs as working (not review/pending)", () => {
+    // A session whose PR enrichment timed out should NOT be classified as
+    // needing attention (its ciStatus=none, reviewDecision=none are defaults).
+    const session = createSession({
+      status: "pr_open",
+      pr: createPR(["Data not loaded"]),
+    });
+    expect(getAttentionLevel(session)).toBe("working");
+  });
+
+  it("getAttentionLevel treats rate-limited PRs as working (not review/pending)", () => {
+    const session = createSession({
+      status: "pr_open",
+      pr: createPR(["API rate limited or unavailable"]),
+    });
+    expect(getAttentionLevel(session)).toBe("working");
   });
 });
 

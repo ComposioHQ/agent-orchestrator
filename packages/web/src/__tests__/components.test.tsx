@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { CIBadge, CICheckList } from "@/components/CIBadge";
 import { PRStatus } from "@/components/PRStatus";
@@ -492,5 +492,226 @@ describe("AttentionZone", () => {
     render(<AttentionZone level="respond" sessions={sessions} onRestore={onRestore} />);
     fireEvent.click(screen.getByText("restore"));
     expect(onRestore).toHaveBeenCalledWith("s1");
+  });
+});
+
+// ── getAlerts — uncovered edge cases ─────────────────────────────────
+
+describe("getAlerts (via SessionCard) — edge cases", () => {
+  it("shows 'needs review' when reviewDecision is 'none' for non-draft PR", () => {
+    // reviewDecision="none" means no reviewer has been assigned yet — still needs review
+    const pr = makePR({
+      state: "open",
+      isDraft: false,
+      ciStatus: "passing",
+      reviewDecision: "none",
+      mergeability: { mergeable: false, ciPassing: true, approved: false, noConflicts: true, blockers: [] },
+    });
+    const session = makeSession({ activity: "idle", pr });
+    render(<SessionCard session={session} />);
+    expect(screen.getByText("needs review")).toBeInTheDocument();
+  });
+
+  it("does not show 'needs review' when PR is a draft with reviewDecision 'none'", () => {
+    const pr = makePR({
+      state: "open",
+      isDraft: true,
+      ciStatus: "passing",
+      reviewDecision: "none",
+      mergeability: { mergeable: false, ciPassing: true, approved: false, noConflicts: true, blockers: ["PR is still a draft"] },
+    });
+    const session = makeSession({ activity: "idle", pr });
+    render(<SessionCard session={session} />);
+    expect(screen.queryByText("needs review")).not.toBeInTheDocument();
+  });
+
+  it("shows merge conflict alert", () => {
+    const pr = makePR({
+      state: "open",
+      isDraft: false,
+      ciStatus: "passing",
+      reviewDecision: "approved",
+      mergeability: { mergeable: false, ciPassing: true, approved: true, noConflicts: false, blockers: ["Merge conflicts"] },
+    });
+    const session = makeSession({ activity: "idle", pr });
+    render(<SessionCard session={session} />);
+    expect(screen.getByText("merge conflict")).toBeInTheDocument();
+  });
+
+  it("merge conflict alert has 'ask to fix' action", () => {
+    const pr = makePR({
+      state: "open",
+      isDraft: false,
+      ciStatus: "passing",
+      reviewDecision: "approved",
+      mergeability: { mergeable: false, ciPassing: true, approved: true, noConflicts: false, blockers: ["Merge conflicts"] },
+    });
+    const session = makeSession({ activity: "idle", pr });
+    render(<SessionCard session={session} />);
+    // 'ask to fix' appears for merge conflicts when agent is idle
+    expect(screen.getByText("ask to fix")).toBeInTheDocument();
+  });
+
+  it("shows no alerts when PR is rate-limited (Data not loaded)", () => {
+    const pr = makePR({
+      state: "open",
+      isDraft: false,
+      ciStatus: "failing",
+      reviewDecision: "changes_requested",
+      mergeability: { mergeable: false, ciPassing: false, approved: false, noConflicts: false, blockers: ["Data not loaded"] },
+    });
+    const session = makeSession({ activity: "idle", pr });
+    render(<SessionCard session={session} />);
+    // Should not show any alert despite bad ciStatus/reviewDecision — data is stale
+    expect(screen.queryByText("CI unknown")).not.toBeInTheDocument();
+    expect(screen.queryByText(/CI check.*failing/)).not.toBeInTheDocument();
+    expect(screen.queryByText("changes requested")).not.toBeInTheDocument();
+    expect(screen.queryByText("needs review")).not.toBeInTheDocument();
+    expect(screen.queryByText("merge conflict")).not.toBeInTheDocument();
+  });
+
+  it("shows no alerts for closed PRs", () => {
+    const pr = makePR({
+      state: "closed",
+      ciStatus: "failing",
+      reviewDecision: "changes_requested",
+      mergeability: { mergeable: false, ciPassing: false, approved: false, noConflicts: false, blockers: [] },
+    });
+    const session = makeSession({ activity: "idle", pr });
+    render(<SessionCard session={session} />);
+    expect(screen.queryByText("changes requested")).not.toBeInTheDocument();
+    expect(screen.queryByText("merge conflict")).not.toBeInTheDocument();
+  });
+
+  it("shows no alerts for merged PRs", () => {
+    const pr = makePR({
+      state: "merged",
+      ciStatus: "passing",
+      reviewDecision: "approved",
+      mergeability: { mergeable: false, ciPassing: true, approved: true, noConflicts: true, blockers: [] },
+    });
+    const session = makeSession({ activity: "idle", pr });
+    render(<SessionCard session={session} />);
+    // No alerts — PR is already done
+    expect(screen.queryByText("needs review")).not.toBeInTheDocument();
+  });
+});
+
+// ── Dashboard ─────────────────────────────────────────────────────────
+
+import { Dashboard } from "@/components/Dashboard";
+import type { DashboardStats } from "@/lib/types";
+
+const makeStats = (overrides: Partial<DashboardStats> = {}): DashboardStats => ({
+  totalSessions: 0,
+  workingSessions: 0,
+  openPRs: 0,
+  needsReview: 0,
+  ...overrides,
+});
+
+describe("Dashboard", () => {
+  beforeEach(() => {
+    // Stub fetch and confirm for action callbacks
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, text: async () => "" }));
+    vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("shows 'no sessions' when session list is empty", () => {
+    render(<Dashboard sessions={[]} stats={makeStats()} />);
+    expect(screen.getByText("no sessions")).toBeInTheDocument();
+  });
+
+  it("shows total session count in status line", () => {
+    const sessions = [makeSession({ id: "s1" }), makeSession({ id: "s2" })];
+    render(<Dashboard sessions={sessions} stats={makeStats({ totalSessions: 2 })} />);
+    // "sessions" is a unique label in the StatusLine
+    expect(screen.getByText("sessions")).toBeInTheDocument();
+    // Count "2" appears in stats; use getAllByText since zone badge may also show "2"
+    expect(screen.getAllByText("2").length).toBeGreaterThan(0);
+  });
+
+  it("groups sessions into attention zones using getAttentionLevel", () => {
+    const mergeSession = makeSession({
+      id: "ready-to-merge",
+      status: "mergeable",
+      pr: makePR({ mergeability: { mergeable: true, ciPassing: true, approved: true, noConflicts: true, blockers: [] } }),
+    });
+    const workingSession = makeSession({ id: "working-agent", status: "working", activity: "active" });
+
+    render(<Dashboard sessions={[mergeSession, workingSession]} stats={makeStats({ totalSessions: 2 })} />);
+
+    // Both zone headers should be visible
+    expect(screen.getByText("Merge")).toBeInTheDocument();
+    expect(screen.getByText("Working")).toBeInTheDocument();
+  });
+
+  it("shows orchestrator link when orchestratorId is provided", () => {
+    render(<Dashboard sessions={[]} stats={makeStats()} orchestratorId="my-orchestrator" />);
+    const link = screen.getByText("orchestrator");
+    expect(link.closest("a")).toHaveAttribute("href", "/sessions/my-orchestrator");
+  });
+
+  it("hides orchestrator link when orchestratorId is null", () => {
+    render(<Dashboard sessions={[]} stats={makeStats()} orchestratorId={null} />);
+    expect(screen.queryByText("orchestrator")).not.toBeInTheDocument();
+  });
+
+  it("shows rate limit banner when any session has rate-limited PR", () => {
+    const rateLimitedPR = makePR({
+      mergeability: { mergeable: false, ciPassing: false, approved: false, noConflicts: true, blockers: ["API rate limited or unavailable"] },
+    });
+    const session = makeSession({ pr: rateLimitedPR });
+    render(<Dashboard sessions={[session]} stats={makeStats({ totalSessions: 1 })} />);
+    expect(screen.getByText(/GitHub API rate limited/)).toBeInTheDocument();
+  });
+
+  it("hides rate limit banner when no sessions are rate-limited", () => {
+    const session = makeSession({ pr: makePR() }); // clean PR
+    render(<Dashboard sessions={[session]} stats={makeStats({ totalSessions: 1 })} />);
+    expect(screen.queryByText(/GitHub API rate limited/)).not.toBeInTheDocument();
+  });
+
+  it("dismisses rate limit banner when X is clicked", () => {
+    const rateLimitedPR = makePR({
+      mergeability: { mergeable: false, ciPassing: false, approved: false, noConflicts: true, blockers: ["API rate limited or unavailable"] },
+    });
+    const session = makeSession({ pr: rateLimitedPR });
+    render(<Dashboard sessions={[session]} stats={makeStats({ totalSessions: 1 })} />);
+
+    expect(screen.getByText(/GitHub API rate limited/)).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Dismiss"));
+    expect(screen.queryByText(/GitHub API rate limited/)).not.toBeInTheDocument();
+  });
+
+  it("shows PR table for sessions with open PRs", () => {
+    const pr = makePR({ number: 42, title: "feat: dashboard redesign", state: "open" });
+    const session = makeSession({ pr });
+    render(<Dashboard sessions={[session]} stats={makeStats({ totalSessions: 1, openPRs: 1 })} />);
+    expect(screen.getByText("Pull Requests")).toBeInTheDocument();
+    // #42 may appear in session card and PR table — just verify at least one exists
+    expect(screen.getAllByText("#42").length).toBeGreaterThan(0);
+  });
+
+  it("hides PR table when no open PRs exist", () => {
+    const session = makeSession({ pr: null });
+    render(<Dashboard sessions={[session]} stats={makeStats({ totalSessions: 1 })} />);
+    expect(screen.queryByText("Pull Requests")).not.toBeInTheDocument();
+  });
+
+  it("shows working sessions count in status line", () => {
+    const sessions = [
+      makeSession({ id: "s1", activity: "active" }),
+      makeSession({ id: "s2", activity: "idle" }),
+    ];
+    render(<Dashboard sessions={sessions} stats={makeStats({ totalSessions: 2, workingSessions: 1 })} />);
+    // "active" appears in both StatusLine and ActivityDot; verify the stats label exists
+    expect(screen.getAllByText("active").length).toBeGreaterThan(0);
+    // "sessions" is the unique status-line label for totalSessions
+    expect(screen.getByText("sessions")).toBeInTheDocument();
   });
 });

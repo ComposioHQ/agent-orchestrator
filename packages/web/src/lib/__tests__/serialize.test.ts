@@ -20,6 +20,7 @@ import {
   enrichSessionAgentSummary,
   enrichSessionIssueTitle,
   enrichSessionsMetadata,
+  computeStats,
 } from "../serialize";
 import { prCache, prCacheKey } from "../cache";
 import type { DashboardSession } from "../types";
@@ -974,5 +975,70 @@ describe("basicPRToDashboard defaults", () => {
     const dashboard = sessionToDashboard(coreSession);
 
     expect(dashboard.pr?.mergeability.blockers).toContain("Data not loaded");
+  });
+});
+
+// ── computeStats ──────────────────────────────────────────────────────
+
+import { computeStats } from "../serialize";
+import { makeSession, makePR } from "../../__tests__/helpers";
+
+describe("computeStats", () => {
+  it("returns all zeros for empty sessions", () => {
+    expect(computeStats([])).toEqual({
+      totalSessions: 0,
+      workingSessions: 0,
+      openPRs: 0,
+      needsReview: 0,
+    });
+  });
+
+  it("counts total sessions correctly", () => {
+    const sessions = [makeSession(), makeSession({ id: "s2" }), makeSession({ id: "s3" })];
+    expect(computeStats(sessions).totalSessions).toBe(3);
+  });
+
+  it("counts only active-activity sessions as working", () => {
+    const sessions = [
+      makeSession({ id: "s1", activity: "active" }),
+      makeSession({ id: "s2", activity: "active" }),
+      makeSession({ id: "s3", activity: "idle" }),
+      makeSession({ id: "s4", activity: "exited" }),
+    ];
+    expect(computeStats(sessions).workingSessions).toBe(2);
+  });
+
+  it("counts only open-state PRs", () => {
+    const sessions = [
+      makeSession({ id: "s1", pr: makePR({ state: "open" }) }),
+      makeSession({ id: "s2", pr: makePR({ state: "open" }) }),
+      makeSession({ id: "s3", pr: makePR({ state: "merged" }) }),
+      makeSession({ id: "s4", pr: null }),
+    ];
+    expect(computeStats(sessions).openPRs).toBe(2);
+  });
+
+  it("counts needs-review: non-draft PRs with reviewDecision=pending", () => {
+    const sessions = [
+      makeSession({ id: "s1", pr: makePR({ isDraft: false, reviewDecision: "pending" }) }),
+      makeSession({ id: "s2", pr: makePR({ isDraft: false, reviewDecision: "pending" }) }),
+      makeSession({ id: "s3", pr: makePR({ isDraft: true, reviewDecision: "pending" }) }), // draft excluded
+      makeSession({ id: "s4", pr: makePR({ isDraft: false, reviewDecision: "approved" }) }), // approved excluded
+      makeSession({ id: "s5", pr: null }), // no PR excluded
+    ];
+    expect(computeStats(sessions).needsReview).toBe(2);
+  });
+
+  it("handles sessions with no PRs", () => {
+    const sessions = [
+      makeSession({ id: "s1", activity: "active", pr: null }),
+      makeSession({ id: "s2", activity: "idle", pr: null }),
+    ];
+    expect(computeStats(sessions)).toEqual({
+      totalSessions: 2,
+      workingSessions: 1,
+      openPRs: 0,
+      needsReview: 0,
+    });
   });
 });
