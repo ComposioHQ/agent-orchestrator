@@ -38,7 +38,7 @@ function createCodexAgent(): Agent {
       const parts: string[] = ["codex"];
 
       if (config.permissions === "skip") {
-        parts.push("--approval-mode", "full-auto");
+        parts.push("--full-auto");
       }
 
       if (config.model) {
@@ -46,9 +46,9 @@ function createCodexAgent(): Agent {
       }
 
       if (config.systemPromptFile) {
-        parts.push("--system-prompt", `"$(cat ${shellEscape(config.systemPromptFile)})"`);
+        parts.push("-c", `"developer_instructions=$(cat ${shellEscape(config.systemPromptFile)})"`);
       } else if (config.systemPrompt) {
-        parts.push("--system-prompt", shellEscape(config.systemPrompt));
+        parts.push("-c", shellEscape(`developer_instructions=${config.systemPrompt}`));
       }
 
       if (config.prompt) {
