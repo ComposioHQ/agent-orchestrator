@@ -29,7 +29,6 @@ export {
   updateMetadata,
   deleteMetadata,
   listMetadata,
-  listArchivedMetadata,
   scanArchivedSessions,
 } from "./metadata.js";
 export type { ArchivedSessionEntry } from "./metadata.js";
