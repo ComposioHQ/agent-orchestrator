@@ -391,10 +391,16 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     let branch: string;
     if (spawnConfig.branch) {
       branch = spawnConfig.branch;
-    } else if (spawnConfig.issueId && plugins.tracker) {
+    } else if (spawnConfig.issueId && plugins.tracker && resolvedIssue) {
       branch = plugins.tracker.branchName(spawnConfig.issueId, project);
     } else if (spawnConfig.issueId) {
-      branch = `feat/${spawnConfig.issueId}`;
+      // Ad-hoc: sanitize free-text into a valid git branch name
+      const slug = spawnConfig.issueId
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 60);
+      branch = `feat/${slug || sessionId}`;
     } else {
       branch = `session/${sessionId}`;
     }
