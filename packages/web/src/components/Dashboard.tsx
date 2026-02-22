@@ -54,7 +54,8 @@ export function Dashboard({ sessions, stats, orchestratorId, projectName }: Dash
       body: JSON.stringify({ message }),
     });
     if (!res.ok) {
-      console.error(`Failed to send message to ${sessionId}:`, await res.text());
+      const text = await res.text().catch(() => "Unknown error");
+      alert(`Failed to send message to ${sessionId}: ${text}`);
     }
   };
 
@@ -64,14 +65,33 @@ export function Dashboard({ sessions, stats, orchestratorId, projectName }: Dash
       method: "POST",
     });
     if (!res.ok) {
-      console.error(`Failed to kill ${sessionId}:`, await res.text());
+      const text = await res.text().catch(() => "Unknown error");
+      alert(`Failed to kill ${sessionId}: ${text}`);
     }
   };
 
   const handleMerge = async (prNumber: number) => {
     const res = await fetch(`/api/prs/${prNumber}/merge`, { method: "POST" });
     if (!res.ok) {
-      console.error(`Failed to merge PR #${prNumber}:`, await res.text());
+      let errorMessage = `Failed to merge PR #${prNumber}`;
+      // Read body as text first — res.json() and res.text() both consume the stream,
+      // so calling res.text() in the catch after res.json() throws would always fail.
+      const text = await res.text().catch(() => "");
+      try {
+        const body = JSON.parse(text) as Record<string, unknown>;
+        if (body.error) {
+          errorMessage += `:\n\n${body.error}`;
+        }
+        if (body.detail) {
+          errorMessage += `\n${body.detail}`;
+        }
+        if (body.blockers && Array.isArray(body.blockers) && body.blockers.length > 0) {
+          errorMessage += `\n\nBlockers:\n${(body.blockers as string[]).map((b) => `• ${b}`).join("\n")}`;
+        }
+      } catch {
+        if (text) errorMessage += `:\n\n${text}`;
+      }
+      alert(errorMessage);
     }
   };
 

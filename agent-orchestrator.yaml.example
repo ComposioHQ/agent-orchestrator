@@ -80,17 +80,35 @@ projects:
 #   info: [slack]              # summary, all done
 
 # Reactions — auto-responses to events (these are the defaults)
+# Each event type maps to a reaction key. All defaults can be overridden here
+# or per-project under projects.<id>.reactions.<key>.
+#
 # reactions:
 #   ci-failed:
 #     auto: true
 #     action: send-to-agent
-#     retries: 2
-#     escalateAfter: 2
+#     message: "CI is failing on your PR. Run `gh pr checks` to see the failures, fix them, and push."
+#     retries: 2              # try sending to agent 2 times before escalating
+#     escalateAfter: 2        # after 2 failures, escalate to human
+#     retriggerAfter: 15m     # re-send if CI is still failing after 15 minutes
 #
 #   changes-requested:
 #     auto: true
 #     action: send-to-agent
 #     escalateAfter: 30m
+#     retriggerAfter: 20m     # re-send if review comments still unaddressed after 20 minutes
+#
+#   bugbot-comments:
+#     auto: true              # react to automated review bot comments
+#     action: send-to-agent
+#     escalateAfter: 30m
+#     retriggerAfter: 20m     # re-send when new bot comments appear
+#
+#   merge-conflicts:
+#     auto: true
+#     action: send-to-agent
+#     escalateAfter: 15m
+#     retriggerAfter: 10m
 #
 #   approved-and-green:
 #     auto: false              # set to true for auto-merge
@@ -101,3 +119,12 @@ projects:
 #     threshold: 10m
 #     action: notify
 #     priority: urgent
+#
+#   agent-needs-input:
+#     action: notify
+#     priority: urgent
+#
+#   all-complete:
+#     action: notify
+#     priority: info
+#     includeSummary: true    # include session summary in notification

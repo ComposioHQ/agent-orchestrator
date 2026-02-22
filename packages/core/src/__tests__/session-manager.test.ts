@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { createSessionManager } from "../session-manager.js";
+import { createSessionManager, inferProjectId } from "../session-manager.js";
 import { writeMetadata, readMetadata, readMetadataRaw, deleteMetadata } from "../metadata.js";
 import { getSessionsDir, getProjectBaseDir } from "../paths.js";
 import {
@@ -1333,5 +1333,64 @@ describe("PluginRegistry.loadBuiltins importFn", () => {
     // Should have attempted to import builtin plugins via the provided importFn
     expect(importedPackages.length).toBeGreaterThan(0);
     expect(importedPackages).toContain("@composio/ao-plugin-runtime-tmux");
+  });
+});
+
+describe("inferProjectId", () => {
+  it("matches session ID prefix to project sessionPrefix", () => {
+    const projects = {
+      "my-app": { ...config.projects["my-app"], sessionPrefix: "app" },
+      integrator: {
+        ...config.projects["my-app"],
+        name: "Integrator",
+        sessionPrefix: "int",
+        path: "/tmp/integrator",
+      },
+    };
+    expect(inferProjectId("app-1", projects)).toBe("my-app");
+    expect(inferProjectId("int-42", projects)).toBe("integrator");
+    expect(inferProjectId("app-100", projects)).toBe("my-app");
+  });
+
+  it("falls back to single project when prefix doesn't match", () => {
+    const projects = {
+      "my-app": { ...config.projects["my-app"], sessionPrefix: "app" },
+    };
+    expect(inferProjectId("unknown-5", projects)).toBe("my-app");
+  });
+
+  it("returns empty string when no match and multiple projects", () => {
+    const projects = {
+      "my-app": { ...config.projects["my-app"], sessionPrefix: "app" },
+      integrator: {
+        ...config.projects["my-app"],
+        name: "Integrator",
+        sessionPrefix: "int",
+        path: "/tmp/integrator",
+      },
+    };
+    expect(inferProjectId("unknown-5", projects)).toBe("");
+  });
+
+  it("returns empty string for empty projects config", () => {
+    expect(inferProjectId("app-1", {})).toBe("");
+  });
+
+  it("uses list to infer projectId for legacy sessions without project field", async () => {
+    // Write a session without project field (legacy metadata)
+    writeMetadata(sessionsDir, "app-5", {
+      worktree: "/tmp",
+      branch: "feat/legacy",
+      status: "working",
+      // no project field
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const sessions = await sm.list();
+
+    const legacySession = sessions.find((s) => s.id === "app-5");
+    expect(legacySession).toBeDefined();
+    // Should infer "my-app" because "app" prefix matches
+    expect(legacySession!.projectId).toBe("my-app");
   });
 });

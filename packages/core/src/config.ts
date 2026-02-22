@@ -29,6 +29,8 @@ const ReactionConfigSchema = z.object({
   priority: z.enum(["urgent", "action", "warning", "info"]).optional(),
   retries: z.number().optional(),
   escalateAfter: z.union([z.number(), z.string()]).optional(),
+  /** How long to wait between re-sends when session stays in a problematic state. */
+  retriggerAfter: z.string().optional(),
   threshold: z.string().optional(),
   includeSummary: z.boolean().optional(),
 });
@@ -221,6 +223,8 @@ function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
         "CI is failing on your PR. Run `gh pr checks` to see the failures, fix them, and push.",
       retries: 2,
       escalateAfter: 2,
+      // Re-send if CI is still failing after 15 minutes (e.g., agent pushed but CI is still red)
+      retriggerAfter: "15m",
     },
     "changes-requested": {
       auto: true,
@@ -228,18 +232,28 @@ function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
       message:
         "There are review comments on your PR. Check with `gh pr view --comments` and `gh api` for inline comments. Address each one, push fixes, and reply.",
       escalateAfter: "30m",
+      // Re-send if review comments are still unaddressed after 20 minutes
+      retriggerAfter: "20m",
     },
     "bugbot-comments": {
       auto: true,
       action: "send-to-agent",
-      message: "Automated review comments found on your PR. Fix the issues flagged by the bot.",
+      message:
+        "Automated review tool found issues on your PR. Run `gh pr view --comments` to see the bot feedback and fix the flagged issues.",
       escalateAfter: "30m",
+      // Re-send if bot comments are still present (new comments appeared) — deduplication
+      // ensures this only fires when comment fingerprint changes, not every poll cycle.
+      retriggerAfter: "20m",
     },
     "merge-conflicts": {
       auto: true,
       action: "send-to-agent",
       message: "Your branch has merge conflicts. Rebase on the default branch and resolve them.",
       escalateAfter: "15m",
+      // Note: retriggerAfter is intentionally omitted here. checkPersistentConditions
+      // requires a session status in RETRIGGER_STATES, but there is no merge_conflicts
+      // SessionStatus yet — determineStatus never produces one. Adding retriggerAfter
+      // without the backing status would be dead config that could never fire.
     },
     "approved-and-green": {
       auto: false,

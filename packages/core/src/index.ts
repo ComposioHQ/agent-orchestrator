@@ -44,12 +44,15 @@ export {
 } from "./tmux.js";
 
 // Session manager — session CRUD
-export { createSessionManager } from "./session-manager.js";
+export { createSessionManager, inferProjectId } from "./session-manager.js";
 export type { SessionManagerDeps } from "./session-manager.js";
 
 // Lifecycle manager — state machine + reaction engine
 export { createLifecycleManager } from "./lifecycle-manager.js";
 export type { LifecycleManagerDeps } from "./lifecycle-manager.js";
+
+// Event log — append-only JSONL audit trail
+export { createEventLog, createNullEventLog } from "./event-log.js";
 
 // Prompt builder — layered prompt composition
 export { buildPrompt, BASE_AGENT_PROMPT } from "./prompt-builder.js";
@@ -73,6 +76,7 @@ export {
   getWorktreesDir,
   getArchiveDir,
   getOriginFilePath,
+  getEventLogPath,
   generateSessionName,
   generateTmuxName,
   parseTmuxName,
