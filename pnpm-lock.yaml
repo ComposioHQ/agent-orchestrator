@@ -44,6 +44,9 @@ importers:
       '@composio/ao-core':
         specifier: workspace:*
         version: link:../core
+      '@composio/ao-desktop':
+        specifier: workspace:*
+        version: link:../desktop
       '@composio/ao-plugin-agent-aider':
         specifier: workspace:*
         version: link:../plugins/agent-aider
@@ -133,6 +136,28 @@ importers:
       '@types/node':
         specifier: ^25.2.3
         version: 25.2.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^4.0.18
+        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+
+  packages/desktop:
+    dependencies:
+      '@composio/ao-core':
+        specifier: workspace:*
+        version: link:../core
+      '@tauri-apps/api':
+        specifier: ^2.8.0
+        version: 2.10.1
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.2.3
+      tsx:
+        specifier: ^4.19.0
+        version: 4.21.0
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
@@ -1737,6 +1762,9 @@ packages:
 
   '@tailwindcss/postcss@4.1.18':
     resolution: {integrity: sha512-Ce0GFnzAOuPyfV5SxjXGn0CubwGcuDB0zcdaPuCSzAa/2vII24JTkH+I6jcbXLb1ctjZMZZI6OjDaLPJQL1S0g==}
+
+  '@tauri-apps/api@2.10.1':
+    resolution: {integrity: sha512-hKL/jWf293UDSUN09rR69hrToyIXBb8CjGaWC7gfinvnQrBVvnLr08FeFi38gxtugAVyVcTa5/FD/Xnkb1siBw==}
 
   '@testing-library/dom@10.4.1':
     resolution: {integrity: sha512-o4PXJQidqJl82ckFaXUeoAW+XysPLauYI43Abki5hABd853iMhitooc6znOnczgbTYmEP6U6/y1ZyKAIsvMKGg==}
@@ -4924,6 +4952,8 @@ snapshots:
       '@tailwindcss/oxide': 4.1.18
       postcss: 8.5.6
       tailwindcss: 4.1.18
+
+  '@tauri-apps/api@2.10.1': {}
 
   '@testing-library/dom@10.4.1':
     dependencies:

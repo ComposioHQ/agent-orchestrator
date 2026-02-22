@@ -12,6 +12,7 @@
   "scripts": {
     "build": "pnpm -r build",
     "dev": "pnpm --filter @composio/ao-web dev",
+    "dev:desktop": "pnpm --filter @composio/ao-desktop dev:sidecar",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",

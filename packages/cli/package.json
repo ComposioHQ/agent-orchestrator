@@ -34,6 +34,7 @@
   },
   "dependencies": {
     "@composio/ao-core": "workspace:*",
+    "@composio/ao-desktop": "workspace:*",
     "@composio/ao-plugin-agent-aider": "workspace:*",
     "@composio/ao-plugin-agent-claude-code": "workspace:*",
     "@composio/ao-plugin-agent-codex": "workspace:*",

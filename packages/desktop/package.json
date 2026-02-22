@@ -1,0 +1,38 @@
+{
+  "name": "@composio/ao-desktop",
+  "version": "0.1.0",
+  "description": "Desktop foundation package for Agent Orchestrator (Tauri + sidecar runtime primitives)",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src-tauri"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsx src/demo.ts",
+    "dev:sidecar": "tsx src/sidecar/main.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@composio/ao-core": "workspace:*",
+    "@tauri-apps/api": "^2.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.2.3",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.18"
+  }
+}

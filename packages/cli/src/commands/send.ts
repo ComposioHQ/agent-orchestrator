@@ -43,6 +43,13 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const IS_TEST_ENV = process.env["NODE_ENV"] === "test";
+const IDLE_POLL_MS = IS_TEST_ENV ? 25 : 5000;
+const CLEAR_INPUT_DELAY_MS = IS_TEST_ENV ? 10 : 200;
+const POST_ENTER_VERIFY_WAIT_MS = IS_TEST_ENV ? 60 : 2000;
+const RETRY_ENTER_DELAY_MS = IS_TEST_ENV ? 25 : 1000;
+const POST_SEND_ENTER_DELAY_MS = IS_TEST_ENV ? 20 : 300;
+
 export function registerSend(program: Command): void {
   program
     .command("send")
@@ -96,13 +103,13 @@ export function registerSend(program: Command): void {
               console.log(chalk.yellow("Timeout waiting for idle. Sending anyway."));
               break;
             }
-            await sleep(5000);
+            await sleep(IDLE_POLL_MS);
           }
         }
 
         // Clear partial input
         await exec("tmux", ["send-keys", "-t", tmuxTarget, "C-u"]);
-        await sleep(200);
+        await sleep(CLEAR_INPUT_DELAY_MS);
 
         // Send the message
         if (opts.file) {
@@ -144,12 +151,12 @@ export function registerSend(program: Command): void {
           }
         }
 
-        await sleep(300);
+        await sleep(POST_SEND_ENTER_DELAY_MS);
         await exec("tmux", ["send-keys", "-t", tmuxTarget, "Enter"]);
 
         // Verify delivery with retries
         for (let attempt = 1; attempt <= 3; attempt++) {
-          await sleep(2000);
+          await sleep(POST_ENTER_VERIFY_WAIT_MS);
           const output = await captureOutput(10);
           if (isActive(agent, output)) {
             console.log(chalk.green("Message sent and processing"));
@@ -161,7 +168,7 @@ export function registerSend(program: Command): void {
           }
           if (attempt < 3) {
             await tmux("send-keys", "-t", tmuxTarget, "Enter");
-            await sleep(1000);
+            await sleep(RETRY_ENTER_DELAY_MS);
           }
         }
 

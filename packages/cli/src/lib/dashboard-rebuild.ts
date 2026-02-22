@@ -32,7 +32,7 @@ export async function findProcessWebDir(pid: string): Promise<string | null> {
   // lsof -Fn outputs lines like "n/path/to/cwd" — the cwd entry follows "fcwd"
   const lines = lsofDetail.split("\n");
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i] === "fcwd" && i + 1 < lines.length && lines[i + 1]?.startsWith("n/")) {
+    if (lines[i] === "fcwd" && i + 1 < lines.length && lines[i + 1]?.startsWith("n")) {
       const cwd = lines[i + 1].slice(1);
       if (existsSync(resolve(cwd, "package.json"))) {
         return cwd;
@@ -71,4 +71,5 @@ export async function cleanNextCache(webDir: string): Promise<void> {
     spinner.succeed(`Cleaned .next build cache (${webDir})`);
   }
 }
+
 
