@@ -18,7 +18,7 @@ port: 3000
 # Default plugins (these are the defaults — you can omit this section)
 defaults:
   runtime: tmux           # tmux | process | docker | kubernetes | ssh | e2b
-  agent: claude-code      # claude-code | codex | aider | goose | custom
+  agent: claude-code      # claude-code | codex | aider | zai | custom
   workspace: worktree     # worktree | clone | copy
   notifiers: [desktop]    # desktop | slack | discord | webhook | email
 
@@ -46,7 +46,9 @@ projects:
     # Agent-specific config
     # agentConfig:
     #   permissions: skip    # --dangerously-skip-permissions
-    #   model: opus
+    #   model: glm-4.5       # e.g. for `agent: zai` (or use claude/codex model names)
+    #   zaiApiKeyEnv: ZAI_API_KEY
+    #   zaiBaseUrl: https://api.z.ai/api/anthropic
 
     # Inline rules included in every agent prompt for this project
     # agentRules: |

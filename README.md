@@ -56,7 +56,7 @@ Eight slots. Every abstraction is swappable.
 | Slot | Default | Alternatives |
 |------|---------|-------------|
 | Runtime | tmux | docker, k8s, process |
-| Agent | claude-code | codex, aider, opencode |
+| Agent | claude-code | codex, aider, opencode, zai |
 | Workspace | worktree | clone |
 | Tracker | github | linear |
 | SCM | github | — |
@@ -98,6 +98,9 @@ reactions:
     auto: false       # flip to true for auto-merge
     action: notify
 ```
+
+Use z.ai/GLM by setting `agent: zai` for a project and exporting `ZAI_API_KEY`
+(or `ANTHROPIC_AUTH_TOKEN`) before `ao spawn`.
 
 CI fails → agent gets the logs and fixes it. Reviewer requests changes → agent addresses them. PR approved with green CI → you get a notification to merge.
 

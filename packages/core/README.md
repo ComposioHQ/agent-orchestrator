@@ -18,7 +18,7 @@ Every interface the system uses is defined here. If you're working on any part o
 **Main interfaces:**
 
 - `Runtime` — where sessions execute (tmux, docker, k8s)
-- `Agent` — AI coding tool adapter (claude-code, codex, aider)
+- `Agent` — AI coding tool adapter (claude-code, codex, aider, zai)
 - `Workspace` — code isolation (worktree, clone)
 - `Tracker` — issue tracking (GitHub Issues, Linear)
 - `SCM` — PR/CI/reviews (GitHub, GitLab)
@@ -93,7 +93,7 @@ Loads plugins and provides access to them:
 **Built-in plugins** (loaded by default):
 
 - runtime-tmux, runtime-process
-- agent-claude-code, agent-codex, agent-aider, agent-opencode
+- agent-claude-code, agent-codex, agent-aider, agent-opencode, agent-zai
 - workspace-worktree, workspace-clone
 - tracker-github, tracker-linear
 - scm-github

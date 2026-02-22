@@ -53,7 +53,7 @@ agent-orchestrator/
 │   ├── web/               # Next.js dashboard
 │   ├── plugins/           # All plugins
 │   │   ├── runtime-*/     # Runtime plugins (tmux, docker, k8s)
-│   │   ├── agent-*/       # Agent adapters (claude-code, codex, aider)
+│   │   ├── agent-*/       # Agent adapters (claude-code, codex, aider, zai)
 │   │   ├── workspace-*/   # Workspace providers (worktree, clone)
 │   │   ├── tracker-*/     # Issue trackers (github, linear)
 │   │   ├── scm-github/    # SCM adapter

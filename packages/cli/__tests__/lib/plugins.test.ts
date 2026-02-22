@@ -67,6 +67,15 @@ describe("getAgentByName", () => {
     expect(getAgentByName("aider").name).toBe("aider");
   });
 
+  it("returns agent for zai", () => {
+    process.env["ZAI_API_KEY"] = "test-zai-key";
+    try {
+      expect(getAgentByName("zai").name).toBe("zai");
+    } finally {
+      delete process.env["ZAI_API_KEY"];
+    }
+  });
+
   it("throws on unknown name", () => {
     expect(() => getAgentByName("unknown")).toThrow("Unknown agent plugin: unknown");
   });

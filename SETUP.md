@@ -168,7 +168,7 @@ Agent Orchestrator has 8 plugin slots. All are swappable:
 | Slot          | Purpose              | Default       | Alternatives                                    |
 | ------------- | -------------------- | ------------- | ----------------------------------------------- |
 | **Runtime**   | How sessions run     | `tmux`        | `process`, `docker`, `kubernetes`, `ssh`, `e2b` |
-| **Agent**     | AI coding assistant  | `claude-code` | `codex`, `aider`, `goose`, custom               |
+| **Agent**     | AI coding assistant  | `claude-code` | `codex`, `aider`, `zai`, custom                 |
 | **Workspace** | Workspace isolation  | `worktree`    | `clone`, `copy`                                 |
 | **Tracker**   | Issue tracking       | `github`      | `linear`, `jira`, custom                        |
 | **SCM**       | Source control       | `github`      | GitLab, Bitbucket (future)                      |
@@ -270,6 +270,29 @@ projects:
   backend:
     runtime: docker # Use Docker for backend
     agent: codex # Use Codex instead of Claude
+```
+
+### z.ai (GLM) Agent
+
+Use the built-in `zai` agent adapter to run through z.ai's Claude-compatible API.
+
+```yaml
+projects:
+  my-app:
+    agent: zai
+    agentConfig:
+      model: glm-4.5
+      # Optional overrides:
+      # zaiApiKeyEnv: ZAI_API_KEY
+      # zaiBaseUrl: https://api.z.ai/api/anthropic
+```
+
+Set one of these environment variables before spawning sessions:
+
+```bash
+export ZAI_API_KEY=your_key_here
+# or
+export ANTHROPIC_AUTH_TOKEN=your_key_here
 ```
 
 ## Integration Guides

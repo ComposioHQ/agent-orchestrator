@@ -6,7 +6,7 @@
  *
  * Architecture: 8 plugin slots + core services
  *   1. Runtime    — where sessions execute (tmux, docker, k8s, process)
- *   2. Agent      — AI coding tool (claude-code, codex, aider)
+ *   2. Agent      — AI coding tool (claude-code, codex, aider, zai)
  *   3. Workspace  — code isolation (worktree, clone)
  *   4. Tracker    — issue tracking (github, linear, jira)
  *   5. SCM        — source platform + PR/CI/reviews (github, gitlab)
