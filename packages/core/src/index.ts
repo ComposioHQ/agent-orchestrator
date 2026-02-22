@@ -55,7 +55,7 @@ export type { LifecycleManagerDeps } from "./lifecycle-manager.js";
 export { buildPrompt, BASE_AGENT_PROMPT } from "./prompt-builder.js";
 export type { PromptBuildConfig } from "./prompt-builder.js";
 
-// Orchestrator prompt — generates CLAUDE.orchestrator.md
+// Orchestrator prompt — generates orchestrator context for `ao start`
 export { generateOrchestratorPrompt } from "./orchestrator-prompt.js";
 export type { OrchestratorPromptConfig } from "./orchestrator-prompt.js";
 

@@ -1,8 +1,8 @@
 /**
- * Orchestrator Prompt Generator — generates CLAUDE.orchestrator.md content.
+ * Orchestrator Prompt Generator — generates orchestrator prompt content.
  *
- * This file is imported into CLAUDE.local.md (gitignored) in the main checkout
- * to provide orchestrator-specific context when the orchestrator agent runs.
+ * This is injected via `ao start` to provide orchestrator-specific context
+ * when the orchestrator agent runs.
  */
 
 import type { OrchestratorConfig, ProjectConfig } from "./types.js";
@@ -14,7 +14,7 @@ export interface OrchestratorPromptConfig {
 }
 
 /**
- * Generate markdown content for CLAUDE.orchestrator.md.
+ * Generate orchestrator prompt content.
  * Provides orchestrator agent with context about available commands,
  * session management workflows, and project configuration.
  */
@@ -23,7 +23,7 @@ export function generateOrchestratorPrompt(opts: OrchestratorPromptConfig): stri
   const sections: string[] = [];
 
   // Header
-  sections.push(`# CLAUDE.orchestrator.md - ${project.name} Orchestrator
+  sections.push(`# ${project.name} Orchestrator
 
 You are the **orchestrator agent** for the ${project.name} project.
 

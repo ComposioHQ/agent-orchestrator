@@ -737,8 +737,7 @@ agent-orchestrator/
 │
 ├── scripts/                           # Original bash scripts (reference)
 │
-├── CLAUDE.md
-└── CLAUDE.orchestrator.md
+└── CLAUDE.md
 ```
 
 ---
