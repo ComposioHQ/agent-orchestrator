@@ -148,6 +148,8 @@ See [CLAUDE.md](CLAUDE.md) for code conventions and architecture details.
 | Doc | What it covers |
 |-----|---------------|
 | [Setup Guide](SETUP.md) | Detailed installation and configuration |
+| [Environment Template](.env.example) | Common environment variables for AO, Linear, z.ai, and Composio |
+| [Uzbek User Guide](docs/USER_GUIDE_UZ.md) | End-to-end usage from a separate project (CLI, dashboard, API, z.ai) |
 | [Examples](examples/) | Config templates (GitHub, Linear, multi-project, auto-merge) |
 | [CLAUDE.md](CLAUDE.md) | Architecture, conventions, plugin pattern |
 | [Troubleshooting](TROUBLESHOOTING.md) | Common issues and fixes |
