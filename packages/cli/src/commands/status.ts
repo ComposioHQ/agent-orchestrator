@@ -46,11 +46,38 @@ async function gatherSessionInfo(
   scm: SCM,
   projectConfig: ReturnType<typeof loadConfig>,
 ): Promise<SessionInfo> {
-  let branch = session.branch;
-  const status = session.status;
   const summary = session.metadata["summary"] ?? null;
   const prUrl = session.metadata["pr"] ?? null;
   const issue = session.issueId;
+
+  // Short-circuit for exited/archived sessions — skip expensive subprocess calls
+  // (git, tmux, agent introspection, SCM) since the runtime is dead.
+  if (session.activity === "exited") {
+    let prNumber: number | null = null;
+    if (prUrl) {
+      const prMatch = /\/pull\/(\d+)/.exec(prUrl);
+      if (prMatch) prNumber = parseInt(prMatch[1], 10);
+    }
+    return {
+      name: session.id,
+      branch: session.branch,
+      status: session.status,
+      summary,
+      claudeSummary: null,
+      pr: prUrl,
+      prNumber,
+      issue,
+      lastActivity: session.lastActivityAt ? formatAge(session.lastActivityAt.getTime()) : "-",
+      project: session.projectId,
+      ciStatus: null,
+      reviewDecision: null,
+      pendingThreads: null,
+      activity: "exited",
+    };
+  }
+
+  let branch = session.branch;
+  const status = session.status;
 
   // Get live branch from worktree if available
   if (session.workspacePath) {
