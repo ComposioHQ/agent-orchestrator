@@ -341,6 +341,15 @@ export interface AgentLaunchConfig {
    * - Codex/Aider: similar shell substitution
    */
   systemPromptFile?: string;
+  /**
+   * Path to a file containing the initial prompt (-p).
+   * Preferred over inline `prompt` for long prompts to avoid shell/tmux truncation.
+   *
+   * When set, takes precedence over prompt.
+   * - Claude Code: -p "$(cat /path/to/file)"
+   * - Codex/Aider: similar shell substitution
+   */
+  promptFile?: string;
 }
 
 export interface WorkspaceHooksConfig {

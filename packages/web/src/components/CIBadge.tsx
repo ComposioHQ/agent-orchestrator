@@ -86,7 +86,7 @@ export function CICheckList({ checks, layout = "vertical" }: CICheckListProps) {
   if (layout === "inline") {
     return (
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        {sorted.map((check) => {
+        {sorted.map((check, i) => {
           const { icon, color } = checkStatusIcon[check.status];
           const inner = (
             <span className="inline-flex items-center gap-1 text-xs">
@@ -96,7 +96,7 @@ export function CICheckList({ checks, layout = "vertical" }: CICheckListProps) {
           );
           return check.url ? (
             <a
-              key={check.name}
+              key={`${check.name}-${i}`}
               href={check.url}
               target="_blank"
               rel="noopener noreferrer"
@@ -105,7 +105,7 @@ export function CICheckList({ checks, layout = "vertical" }: CICheckListProps) {
               {inner}
             </a>
           ) : (
-            <span key={check.name}>{inner}</span>
+            <span key={`${check.name}-${i}`}>{inner}</span>
           );
         })}
       </div>
@@ -115,7 +115,7 @@ export function CICheckList({ checks, layout = "vertical" }: CICheckListProps) {
   if (layout === "expanded") {
     return (
       <div className="space-y-1">
-        {sorted.map((check) => {
+        {sorted.map((check, i) => {
           const { icon, color } = checkStatusIcon[check.status];
           const inner = (
             <span className="inline-flex items-center gap-1 text-xs">
@@ -124,7 +124,7 @@ export function CICheckList({ checks, layout = "vertical" }: CICheckListProps) {
             </span>
           );
           return (
-            <div key={check.name} className="flex items-center gap-2">
+            <div key={`${check.name}-${i}`} className="flex items-center gap-2">
               {check.url ? (
                 <a
                   href={check.url}
@@ -156,10 +156,10 @@ export function CICheckList({ checks, layout = "vertical" }: CICheckListProps) {
 
   return (
     <div className="space-y-1">
-      {sorted.map((check) => {
+      {sorted.map((check, i) => {
         const { icon, color } = checkStatusIcon[check.status];
         return (
-          <div key={check.name} className="flex items-center gap-2 text-xs">
+          <div key={`${check.name}-${i}`} className="flex items-center gap-2 text-xs">
             <span style={{ color }} className="w-3.5 shrink-0 text-center">
               {icon}
             </span>

@@ -37,7 +37,9 @@ function createOpenCodeAgent(): Agent {
     getLaunchCommand(config: AgentLaunchConfig): string {
       const parts: string[] = ["opencode"];
 
-      if (config.prompt) {
+      if (config.promptFile) {
+        parts.push("run", `"$(cat ${shellEscape(config.promptFile)})"`);
+      } else if (config.prompt) {
         parts.push("run", shellEscape(config.prompt));
       }
 

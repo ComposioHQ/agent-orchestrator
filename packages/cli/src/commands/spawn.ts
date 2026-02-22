@@ -11,6 +11,8 @@ async function spawnSession(
   projectId: string,
   issueId?: string,
   openTab?: boolean,
+  branch?: string,
+  prompt?: string,
 ): Promise<string> {
   const spinner = ora("Creating session").start();
 
@@ -21,6 +23,8 @@ async function spawnSession(
     const session = await sm.spawn({
       projectId,
       issueId,
+      branch,
+      prompt,
     });
 
     spinner.succeed(`Session ${chalk.green(session.id)} created`);
@@ -58,7 +62,9 @@ export function registerSpawn(program: Command): void {
     .argument("<project>", "Project ID from config")
     .argument("[issue]", "Issue identifier (e.g. INT-1234, #42) - must exist in tracker")
     .option("--open", "Open session in terminal tab")
-    .action(async (projectId: string, issueId: string | undefined, opts: { open?: boolean }) => {
+    .option("--branch <branch>", "Use existing branch instead of creating from issue")
+    .option("-p, --prompt <prompt>", "Initial prompt to send to the agent")
+    .action(async (projectId: string, issueId: string | undefined, opts: { open?: boolean; branch?: string; prompt?: string }) => {
       const config = loadConfig();
       if (!config.projects[projectId]) {
         console.error(
@@ -70,7 +76,7 @@ export function registerSpawn(program: Command): void {
       }
 
       try {
-        await spawnSession(config, projectId, issueId, opts.open);
+        await spawnSession(config, projectId, issueId, opts.open, opts.branch, opts.prompt);
       } catch (err) {
         console.error(chalk.red(`✗ ${err}`));
         process.exit(1);

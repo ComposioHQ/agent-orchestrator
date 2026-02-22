@@ -89,7 +89,9 @@ function createAiderAgent(): Agent {
         parts.push("--system-prompt", shellEscape(config.systemPrompt));
       }
 
-      if (config.prompt) {
+      if (config.promptFile) {
+        parts.push("--message", `"$(cat ${shellEscape(config.promptFile)})"`);
+      } else if (config.prompt) {
         parts.push("--message", shellEscape(config.prompt));
       }
 
