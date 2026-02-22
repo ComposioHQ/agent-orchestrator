@@ -114,9 +114,10 @@ describe("getLaunchCommand", () => {
     expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("codex");
   });
 
-  it("includes --approval-mode full-auto when permissions=skip", () => {
+  it("includes --full-auto when permissions=skip", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "skip" }));
-    expect(cmd).toContain("--approval-mode full-auto");
+    expect(cmd).toContain("--full-auto");
+    expect(cmd).not.toContain("--approval-mode");
   });
 
   it("includes --model with shell-escaped value", () => {
@@ -133,7 +134,7 @@ describe("getLaunchCommand", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ permissions: "skip", model: "o3", prompt: "Go" }),
     );
-    expect(cmd).toBe("codex --approval-mode full-auto --model 'o3' -- 'Go'");
+    expect(cmd).toBe("codex --full-auto --model 'o3' -- 'Go'");
   });
 
   it("escapes single quotes in prompt (POSIX shell escaping)", () => {
@@ -141,9 +142,26 @@ describe("getLaunchCommand", () => {
     expect(cmd).toContain("-- 'it'\\''s broken'");
   });
 
+  it("passes inline systemPrompt via developer_instructions config override", () => {
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({ systemPrompt: "You are the orchestrator." }),
+    );
+    expect(cmd).toContain("-c 'developer_instructions=You are the orchestrator.'");
+  });
+
+  it("passes systemPromptFile via command substitution into developer_instructions", () => {
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({ systemPromptFile: "/tmp/orchestrator-prompt.md" }),
+    );
+    expect(cmd).toContain(
+      "-c \"developer_instructions=$(cat '/tmp/orchestrator-prompt.md')\"",
+    );
+  });
+
   it("omits optional flags when not provided", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig());
     expect(cmd).not.toContain("--approval-mode");
+    expect(cmd).not.toContain("--full-auto");
     expect(cmd).not.toContain("--model");
   });
 });
