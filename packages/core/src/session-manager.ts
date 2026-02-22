@@ -45,7 +45,7 @@ import {
   updateMetadata,
   deleteMetadata,
   listMetadata,
-  listArchivedMetadata,
+  scanArchivedSessions,
   reserveSessionId,
 } from "./metadata.js";
 import { buildPrompt } from "./prompt-builder.js";
@@ -711,53 +711,25 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
    * List all sessions including archived/exited ones.
    * Active sessions are enriched normally; archived sessions skip
    * expensive runtime/agent enrichment and get activity: "exited".
+   * Uses a single-pass archive scan (O(F)) instead of per-session lookups.
    */
   async function listAll(projectId?: string): Promise<Session[]> {
     // Get active sessions (fully enriched)
     const activeSessions = await list(projectId);
     const activeIds = new Set(activeSessions.map((s) => s.id));
 
-    // Scan archive directories for archived sessions not already active
+    // Single-pass scan of archive directories
     const archivedSessions: Session[] = [];
     for (const [projectKey, project] of Object.entries(config.projects)) {
       if (projectId && projectKey !== projectId) continue;
 
       const sessionsDir = getProjectSessionsDir(project);
-      const archivedIds = listArchivedMetadata(sessionsDir);
+      const entries = scanArchivedSessions(sessionsDir);
 
-      for (const archId of archivedIds) {
-        // Skip if already present as an active session
-        if (activeIds.has(archId)) continue;
+      for (const entry of entries) {
+        if (activeIds.has(entry.sessionId)) continue;
 
-        const raw = readArchivedMetadataRaw(sessionsDir, archId);
-        if (!raw) continue;
-
-        // Read archive file timestamps to populate createdAt/lastActivityAt
-        // (without this, metadataToSession defaults to new Date(), showing "just now")
-        let createdAt: Date | undefined;
-        let modifiedAt: Date | undefined;
-        try {
-          const archiveDir = join(sessionsDir, "archive");
-          const prefix = `${archId}_`;
-          let latestFile: string | null = null;
-          for (const file of readdirSync(archiveDir)) {
-            if (!file.startsWith(prefix)) continue;
-            const charAfterPrefix = file[prefix.length];
-            if (!charAfterPrefix || charAfterPrefix < "0" || charAfterPrefix > "9") continue;
-            if (!latestFile || file > latestFile) latestFile = file;
-          }
-          if (latestFile) {
-            const archivePath = join(archiveDir, latestFile);
-            const stats = statSync(archivePath);
-            createdAt = stats.birthtime;
-            modifiedAt = stats.mtime;
-          }
-        } catch {
-          // If we can't read file stats, timestamps default to current time
-        }
-
-        // Reconstruct Session from archived metadata — no runtime enrichment
-        const session = metadataToSession(archId, raw, createdAt, modifiedAt);
+        const session = metadataToSession(entry.sessionId, entry.raw, entry.createdAt, entry.modifiedAt);
         session.activity = "exited";
         archivedSessions.push(session);
       }

@@ -333,9 +333,10 @@ export function registerStatus(program: Command): void {
 
         if (filteredInfos.length === 0) {
           if (!opts.json) {
-            const label = opts.search
-              ? "(no matching sessions)"
-              : "(no active sessions)";
+            let label = "(no active sessions)";
+            if (opts.search) label = "(no matching sessions)";
+            else if (opts.state === "exited") label = "(no exited sessions)";
+            else if (opts.state === "active") label = "(no active sessions)";
             console.log(chalk.dim(`  ${label}`));
             console.log();
           }
