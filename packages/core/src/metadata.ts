@@ -256,6 +256,31 @@ export function listMetadata(dataDir: string): SessionId[] {
 }
 
 /**
+ * List all unique session IDs that have archived metadata files.
+ * Archive files are named `<sessionId>_<ISO-timestamp>` inside `<dataDir>/archive/`.
+ */
+export function listArchivedMetadata(dataDir: string): SessionId[] {
+  const archiveDir = join(dataDir, "archive");
+  if (!existsSync(archiveDir)) return [];
+
+  const seen = new Set<string>();
+  for (const file of readdirSync(archiveDir)) {
+    if (file.startsWith(".")) continue;
+    // Extract sessionId from `<sessionId>_<ISO-timestamp>` format
+    const lastUnderscoreIdx = file.lastIndexOf("_");
+    if (lastUnderscoreIdx === -1) continue;
+    const sessionId = file.slice(0, lastUnderscoreIdx);
+    // Verify the separator is followed by a digit (start of ISO timestamp)
+    const charAfterSep = file[lastUnderscoreIdx + 1];
+    if (!charAfterSep || charAfterSep < "0" || charAfterSep > "9") continue;
+    if (sessionId && VALID_SESSION_ID.test(sessionId)) {
+      seen.add(sessionId);
+    }
+  }
+  return Array.from(seen);
+}
+
+/**
  * Atomically reserve a session ID by creating its metadata file with O_EXCL.
  * Returns true if the ID was successfully reserved, false if it already exists.
  */

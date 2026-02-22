@@ -45,6 +45,7 @@ import {
   updateMetadata,
   deleteMetadata,
   listMetadata,
+  listArchivedMetadata,
   reserveSessionId,
 } from "./metadata.js";
 import { buildPrompt } from "./prompt-builder.js";
@@ -128,22 +129,22 @@ function metadataToSession(
     issueId: meta["issue"] || null,
     pr: meta["pr"]
       ? (() => {
-          // Parse owner/repo from GitHub PR URL: https://github.com/owner/repo/pull/123
-          const prUrl = meta["pr"];
-          const ghMatch = prUrl.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
-          return {
-            number: ghMatch
-              ? parseInt(ghMatch[3], 10)
-              : parseInt(prUrl.match(/\/(\d+)$/)?.[1] ?? "0", 10),
-            url: prUrl,
-            title: "",
-            owner: ghMatch?.[1] ?? "",
-            repo: ghMatch?.[2] ?? "",
-            branch: meta["branch"] ?? "",
-            baseBranch: "",
-            isDraft: false,
-          };
-        })()
+        // Parse owner/repo from GitHub PR URL: https://github.com/owner/repo/pull/123
+        const prUrl = meta["pr"];
+        const ghMatch = prUrl.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
+        return {
+          number: ghMatch
+            ? parseInt(ghMatch[3], 10)
+            : parseInt(prUrl.match(/\/(\d+)$/)?.[1] ?? "0", 10),
+          url: prUrl,
+          title: "",
+          owner: ghMatch?.[1] ?? "",
+          repo: ghMatch?.[2] ?? "",
+          branch: meta["branch"] ?? "",
+          baseBranch: "",
+          isDraft: false,
+        };
+      })()
       : null,
     workspacePath: meta["worktree"] || null,
     runtimeHandle: meta["runtimeHandle"]
@@ -706,6 +707,41 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     return results.filter((s): s is Session => s !== null);
   }
 
+  /**
+   * List all sessions including archived/exited ones.
+   * Active sessions are enriched normally; archived sessions skip
+   * expensive runtime/agent enrichment and get activity: "exited".
+   */
+  async function listAll(projectId?: string): Promise<Session[]> {
+    // Get active sessions (fully enriched)
+    const activeSessions = await list(projectId);
+    const activeIds = new Set(activeSessions.map((s) => s.id));
+
+    // Scan archive directories for archived sessions not already active
+    const archivedSessions: Session[] = [];
+    for (const [projectKey, project] of Object.entries(config.projects)) {
+      if (projectId && projectKey !== projectId) continue;
+
+      const sessionsDir = getProjectSessionsDir(project);
+      const archivedIds = listArchivedMetadata(sessionsDir);
+
+      for (const archId of archivedIds) {
+        // Skip if already present as an active session
+        if (activeIds.has(archId)) continue;
+
+        const raw = readArchivedMetadataRaw(sessionsDir, archId);
+        if (!raw) continue;
+
+        // Reconstruct Session from archived metadata — no runtime enrichment
+        const session = metadataToSession(archId, raw);
+        session.activity = "exited";
+        archivedSessions.push(session);
+      }
+    }
+
+    return [...activeSessions, ...archivedSessions];
+  }
+
   async function get(sessionId: SessionId): Promise<Session | null> {
     // Try to find the session in any project's sessions directory
     for (const project of Object.values(config.projects)) {
@@ -764,7 +800,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         const runtimePlugin = registry.get<Runtime>(
           "runtime",
           handle.runtimeName ??
-            (project ? (project.runtime ?? config.defaults.runtime) : config.defaults.runtime),
+          (project ? (project.runtime ?? config.defaults.runtime) : config.defaults.runtime),
         );
         if (runtimePlugin) {
           try {
@@ -897,7 +933,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     const runtimePlugin = registry.get<Runtime>(
       "runtime",
       handle.runtimeName ??
-        (project ? (project.runtime ?? config.defaults.runtime) : config.defaults.runtime),
+      (project ? (project.runtime ?? config.defaults.runtime) : config.defaults.runtime),
     );
     if (!runtimePlugin) {
       throw new Error(`No runtime plugin for session ${sessionId}`);
@@ -1095,5 +1131,5 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     return restoredSession;
   }
 
-  return { spawn, spawnOrchestrator, restore, list, get, kill, cleanup, send };
+  return { spawn, spawnOrchestrator, restore, list, listAll, get, kill, cleanup, send };
 }

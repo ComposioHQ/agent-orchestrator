@@ -33,12 +33,14 @@ const {
   mockGetPendingComments: vi.fn(),
   mockSessionManager: {
     list: vi.fn(),
+    listAll: vi.fn(),
     kill: vi.fn(),
     cleanup: vi.fn(),
     get: vi.fn(),
     spawn: vi.fn(),
     spawnOrchestrator: vi.fn(),
     send: vi.fn(),
+    restore: vi.fn(),
   },
   sessionsDirRef: { current: "" },
 }));
@@ -201,8 +203,8 @@ beforeEach(() => {
   program = new Command();
   program.exitOverride();
   registerStatus(program);
-  consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-  vi.spyOn(console, "error").mockImplementation(() => {});
+  consoleSpy = vi.spyOn(console, "log").mockImplementation(() => { });
+  vi.spyOn(console, "error").mockImplementation(() => { });
   vi.spyOn(process, "exit").mockImplementation((code) => {
     throw new Error(`process.exit(${code})`);
   });
@@ -221,14 +223,20 @@ beforeEach(() => {
   mockGetPendingComments.mockReset();
   mockGetPendingComments.mockResolvedValue([]);
   mockSessionManager.list.mockReset();
+  mockSessionManager.listAll.mockReset();
   mockSessionManager.kill.mockReset();
   mockSessionManager.cleanup.mockReset();
   mockSessionManager.get.mockReset();
   mockSessionManager.spawn.mockReset();
   mockSessionManager.send.mockReset();
+  mockSessionManager.restore.mockReset();
 
   // Default: list reads from sessionsDir
   mockSessionManager.list.mockImplementation(async () => {
+    return buildSessionsFromDir(sessionsDirRef.current, "my-app");
+  });
+  // Default: listAll returns same as list (no archived sessions)
+  mockSessionManager.listAll.mockImplementation(async () => {
     return buildSessionsFromDir(sessionsDirRef.current, "my-app");
   });
 });
@@ -682,5 +690,293 @@ describe("status command", () => {
     const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
     const parsed = JSON.parse(jsonCalls);
     expect(parsed[0].activity).toBe("exited");
+  });
+
+  describe("--all flag", () => {
+    it("shows archived sessions alongside active ones", async () => {
+      // Active session
+      writeFileSync(
+        join(sessionsDir, "app-1"),
+        "worktree=/tmp/wt/app-1\nbranch=feat/active\nstatus=working\nproject=my-app\n",
+      );
+
+      // Mock listAll to return both active + archived
+      mockSessionManager.listAll.mockImplementation(async () => {
+        const active = buildSessionsFromDir(sessionsDirRef.current, "my-app");
+        // Simulate an archived session
+        const archived: Session[] = [
+          {
+            id: "app-0",
+            projectId: "my-app",
+            status: "killed" as Session["status"],
+            activity: "exited" as Session["activity"],
+            branch: "feat/old-work",
+            issueId: "INT-50",
+            pr: null,
+            workspacePath: null,
+            runtimeHandle: null,
+            agentInfo: null,
+            createdAt: new Date(),
+            lastActivityAt: new Date(),
+            metadata: { branch: "feat/old-work", issue: "INT-50", status: "killed", project: "my-app" },
+          },
+        ];
+        return [...active, ...archived];
+      });
+
+      mockTmux.mockResolvedValue(null);
+      mockGit.mockResolvedValue(null);
+
+      await program.parseAsync(["node", "test", "status", "--all"]);
+
+      const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+      expect(output).toContain("app-1");
+      expect(output).toContain("app-0");
+      expect(output).toContain("exited sessions");
+    });
+
+    it("shows exited count in footer summary", async () => {
+      mockSessionManager.listAll.mockImplementation(async () => {
+        return [
+          {
+            id: "app-1",
+            projectId: "my-app",
+            status: "working" as Session["status"],
+            activity: "active" as Session["activity"],
+            branch: "feat/active",
+            issueId: null,
+            pr: null,
+            workspacePath: "/tmp/wt",
+            runtimeHandle: { id: "app-1", runtimeName: "tmux", data: {} },
+            agentInfo: null,
+            createdAt: new Date(),
+            lastActivityAt: new Date(),
+            metadata: { branch: "feat/active", status: "working", project: "my-app" },
+          },
+          {
+            id: "app-0",
+            projectId: "my-app",
+            status: "killed" as Session["status"],
+            activity: "exited" as Session["activity"],
+            branch: "feat/old",
+            issueId: null,
+            pr: null,
+            workspacePath: null,
+            runtimeHandle: null,
+            agentInfo: null,
+            createdAt: new Date(),
+            lastActivityAt: new Date(),
+            metadata: { branch: "feat/old", status: "killed", project: "my-app" },
+          },
+        ];
+      });
+
+      mockTmux.mockResolvedValue(null);
+      mockGit.mockResolvedValue(null);
+
+      await program.parseAsync(["node", "test", "status", "--all"]);
+
+      const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+      expect(output).toContain("1 active session");
+      expect(output).toContain("1 exited session");
+    });
+  });
+
+  describe("--state flag", () => {
+    it("--state exited shows only archived sessions", async () => {
+      writeFileSync(
+        join(sessionsDir, "app-1"),
+        "worktree=/tmp/wt\nbranch=feat/live\nstatus=working\nproject=my-app\n",
+      );
+
+      mockSessionManager.listAll.mockImplementation(async () => {
+        const active = buildSessionsFromDir(sessionsDirRef.current, "my-app");
+        const archived: Session[] = [
+          {
+            id: "app-0",
+            projectId: "my-app",
+            status: "killed" as Session["status"],
+            activity: "exited" as Session["activity"],
+            branch: "feat/done",
+            issueId: null,
+            pr: null,
+            workspacePath: null,
+            runtimeHandle: null,
+            agentInfo: null,
+            createdAt: new Date(),
+            lastActivityAt: new Date(),
+            metadata: { branch: "feat/done", status: "killed", project: "my-app" },
+          },
+        ];
+        return [...active, ...archived];
+      });
+
+      mockTmux.mockResolvedValue(null);
+      mockGit.mockResolvedValue(null);
+
+      await program.parseAsync(["node", "test", "status", "--state", "exited"]);
+
+      const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+      expect(output).toContain("app-0");
+      expect(output).not.toContain("app-1");
+    });
+  });
+
+  describe("--search flag", () => {
+    it("filters sessions by branch name", async () => {
+      mockSessionManager.listAll.mockImplementation(async () => {
+        return [
+          {
+            id: "app-1",
+            projectId: "my-app",
+            status: "working" as Session["status"],
+            activity: "active" as Session["activity"],
+            branch: "feat/login-page",
+            issueId: "INT-100",
+            pr: null,
+            workspacePath: "/tmp/wt",
+            runtimeHandle: { id: "app-1", runtimeName: "tmux", data: {} },
+            agentInfo: null,
+            createdAt: new Date(),
+            lastActivityAt: new Date(),
+            metadata: { branch: "feat/login-page", issue: "INT-100", status: "working", project: "my-app" },
+          },
+          {
+            id: "app-2",
+            projectId: "my-app",
+            status: "working" as Session["status"],
+            activity: "active" as Session["activity"],
+            branch: "feat/signup",
+            issueId: "INT-200",
+            pr: null,
+            workspacePath: "/tmp/wt2",
+            runtimeHandle: { id: "app-2", runtimeName: "tmux", data: {} },
+            agentInfo: null,
+            createdAt: new Date(),
+            lastActivityAt: new Date(),
+            metadata: { branch: "feat/signup", issue: "INT-200", status: "working", project: "my-app" },
+          },
+        ];
+      });
+
+      mockTmux.mockResolvedValue(null);
+      mockGit.mockResolvedValue(null);
+
+      await program.parseAsync(["node", "test", "status", "--search", "login"]);
+
+      const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+      expect(output).toContain("app-1");
+      expect(output).not.toContain("app-2");
+    });
+
+    it("filters sessions by issue ID", async () => {
+      mockSessionManager.listAll.mockImplementation(async () => {
+        return [
+          {
+            id: "app-1",
+            projectId: "my-app",
+            status: "working" as Session["status"],
+            activity: "active" as Session["activity"],
+            branch: "feat/fix",
+            issueId: "INT-999",
+            pr: null,
+            workspacePath: "/tmp/wt",
+            runtimeHandle: { id: "app-1", runtimeName: "tmux", data: {} },
+            agentInfo: null,
+            createdAt: new Date(),
+            lastActivityAt: new Date(),
+            metadata: { branch: "feat/fix", issue: "INT-999", status: "working", project: "my-app" },
+          },
+        ];
+      });
+
+      mockTmux.mockResolvedValue(null);
+      mockGit.mockResolvedValue(null);
+
+      await program.parseAsync(["node", "test", "status", "--search", "INT-999"]);
+
+      const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+      expect(output).toContain("app-1");
+    });
+
+    it("shows no matching sessions message when search has no results", async () => {
+      mockSessionManager.listAll.mockImplementation(async () => {
+        return [
+          {
+            id: "app-1",
+            projectId: "my-app",
+            status: "working" as Session["status"],
+            activity: "active" as Session["activity"],
+            branch: "feat/unrelated",
+            issueId: null,
+            pr: null,
+            workspacePath: "/tmp/wt",
+            runtimeHandle: { id: "app-1", runtimeName: "tmux", data: {} },
+            agentInfo: null,
+            createdAt: new Date(),
+            lastActivityAt: new Date(),
+            metadata: { branch: "feat/unrelated", status: "working", project: "my-app" },
+          },
+        ];
+      });
+
+      mockTmux.mockResolvedValue(null);
+      mockGit.mockResolvedValue(null);
+
+      await program.parseAsync(["node", "test", "status", "--search", "nonexistent"]);
+
+      const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+      expect(output).toContain("no matching sessions");
+    });
+
+    it("--json with --all includes archived sessions", async () => {
+      mockSessionManager.listAll.mockImplementation(async () => {
+        return [
+          {
+            id: "app-1",
+            projectId: "my-app",
+            status: "working" as Session["status"],
+            activity: "active" as Session["activity"],
+            branch: "feat/active",
+            issueId: null,
+            pr: null,
+            workspacePath: "/tmp/wt",
+            runtimeHandle: { id: "app-1", runtimeName: "tmux", data: {} },
+            agentInfo: null,
+            createdAt: new Date(),
+            lastActivityAt: new Date(),
+            metadata: { branch: "feat/active", status: "working", project: "my-app" },
+          },
+          {
+            id: "app-0",
+            projectId: "my-app",
+            status: "killed" as Session["status"],
+            activity: "exited" as Session["activity"],
+            branch: "feat/archived",
+            issueId: null,
+            pr: null,
+            workspacePath: null,
+            runtimeHandle: null,
+            agentInfo: null,
+            createdAt: new Date(),
+            lastActivityAt: new Date(),
+            metadata: { branch: "feat/archived", status: "killed", project: "my-app" },
+          },
+        ];
+      });
+
+      mockTmux.mockResolvedValue(null);
+      mockGit.mockResolvedValue(null);
+
+      await program.parseAsync(["node", "test", "status", "--all", "--json"]);
+
+      const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
+      const parsed = JSON.parse(jsonCalls);
+      expect(parsed).toHaveLength(2);
+      expect(parsed[0].name).toBe("app-1");
+      expect(parsed[0].activity).toBe("active");
+      expect(parsed[1].name).toBe("app-0");
+      expect(parsed[1].activity).toBe("exited");
+    });
   });
 });

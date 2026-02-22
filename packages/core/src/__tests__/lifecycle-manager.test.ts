@@ -106,6 +106,7 @@ beforeEach(() => {
     spawnOrchestrator: vi.fn(),
     restore: vi.fn(),
     list: vi.fn().mockResolvedValue([]),
+    listAll: vi.fn().mockResolvedValue([]),
     get: vi.fn().mockResolvedValue(null),
     kill: vi.fn().mockResolvedValue(undefined),
     cleanup: vi.fn(),
