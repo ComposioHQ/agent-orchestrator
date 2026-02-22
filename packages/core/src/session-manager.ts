@@ -732,8 +732,32 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         const raw = readArchivedMetadataRaw(sessionsDir, archId);
         if (!raw) continue;
 
+        // Read archive file timestamps to populate createdAt/lastActivityAt
+        // (without this, metadataToSession defaults to new Date(), showing "just now")
+        let createdAt: Date | undefined;
+        let modifiedAt: Date | undefined;
+        try {
+          const archiveDir = join(sessionsDir, "archive");
+          const prefix = `${archId}_`;
+          let latestFile: string | null = null;
+          for (const file of readdirSync(archiveDir)) {
+            if (!file.startsWith(prefix)) continue;
+            const charAfterPrefix = file[prefix.length];
+            if (!charAfterPrefix || charAfterPrefix < "0" || charAfterPrefix > "9") continue;
+            if (!latestFile || file > latestFile) latestFile = file;
+          }
+          if (latestFile) {
+            const archivePath = join(archiveDir, latestFile);
+            const stats = statSync(archivePath);
+            createdAt = stats.birthtime;
+            modifiedAt = stats.mtime;
+          }
+        } catch {
+          // If we can't read file stats, timestamps default to current time
+        }
+
         // Reconstruct Session from archived metadata — no runtime enrichment
-        const session = metadataToSession(archId, raw);
+        const session = metadataToSession(archId, raw, createdAt, modifiedAt);
         session.activity = "exited";
         archivedSessions.push(session);
       }
