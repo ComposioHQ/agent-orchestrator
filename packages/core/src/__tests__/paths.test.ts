@@ -24,13 +24,18 @@ import {
   getSessionsDir,
   getWorktreesDir,
   getArchiveDir,
+  getLogsDir,
+  getRetrospectivesDir,
   getOriginFilePath,
   generateSessionName,
   generateTmuxName,
   parseTmuxName,
   expandHome,
   validateAndStoreOrigin,
+  resolveProjectLogDir,
+  resolveProjectRetroDir,
 } from "../paths.js";
+import type { OrchestratorConfig, ProjectConfig } from "../types.js";
 
 describe("Hash Generation", () => {
   let tmpDir: string;
@@ -476,6 +481,185 @@ describe("Origin File Management", () => {
 
     // After validation, directory should exist
     expect(existsSync(baseDir)).toBe(true);
+  });
+});
+
+describe("Logs and Retrospectives Directories", () => {
+  let tmpDir: string;
+  let configPath: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "logs-retro-test-"));
+    configPath = join(tmpDir, "agent-orchestrator.yaml");
+    writeFileSync(configPath, "projects: {}");
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("getLogsDir returns {baseDir}/logs", () => {
+    const logsDir = getLogsDir(configPath, "/repos/integrator");
+
+    expect(logsDir).toMatch(
+      /\.agent-orchestrator\/[a-f0-9]{12}-integrator\/logs$/,
+    );
+  });
+
+  it("getRetrospectivesDir returns {baseDir}/retrospectives", () => {
+    const retroDir = getRetrospectivesDir(configPath, "/repos/integrator");
+
+    expect(retroDir).toMatch(
+      /\.agent-orchestrator\/[a-f0-9]{12}-integrator\/retrospectives$/,
+    );
+  });
+
+  it("logs and retrospectives share the same base directory", () => {
+    const baseDir = getProjectBaseDir(configPath, "/repos/integrator");
+    const logsDir = getLogsDir(configPath, "/repos/integrator");
+    const retroDir = getRetrospectivesDir(configPath, "/repos/integrator");
+
+    expect(logsDir).toBe(join(baseDir, "logs"));
+    expect(retroDir).toBe(join(baseDir, "retrospectives"));
+  });
+});
+
+describe("resolveProjectLogDir", () => {
+  let tmpDir: string;
+  let configPath: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "resolve-log-test-"));
+    configPath = join(tmpDir, "agent-orchestrator.yaml");
+    writeFileSync(configPath, "projects: {}");
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns null when no projects are configured", () => {
+    const config = {
+      configPath,
+      readyThresholdMs: 300000,
+      defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+      projects: {},
+      notifiers: {},
+      notificationRouting: {} as OrchestratorConfig["notificationRouting"],
+      reactions: {},
+    } satisfies OrchestratorConfig;
+
+    expect(resolveProjectLogDir(config)).toBeNull();
+  });
+
+  it("returns logs dir for the first project", () => {
+    const project: ProjectConfig = {
+      name: "Test",
+      repo: "owner/repo",
+      path: "/repos/integrator",
+      defaultBranch: "main",
+      sessionPrefix: "int",
+    };
+    const config = {
+      configPath,
+      readyThresholdMs: 300000,
+      defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+      projects: { integrator: project },
+      notifiers: {},
+      notificationRouting: {} as OrchestratorConfig["notificationRouting"],
+      reactions: {},
+    } satisfies OrchestratorConfig;
+
+    const result = resolveProjectLogDir(config);
+
+    expect(result).not.toBeNull();
+    expect(result).toMatch(/\.agent-orchestrator\/[a-f0-9]{12}-integrator\/logs$/);
+  });
+
+  it("uses the first project when multiple are configured", () => {
+    const projectA: ProjectConfig = {
+      name: "Alpha",
+      repo: "owner/alpha",
+      path: "/repos/alpha",
+      defaultBranch: "main",
+      sessionPrefix: "alp",
+    };
+    const projectB: ProjectConfig = {
+      name: "Beta",
+      repo: "owner/beta",
+      path: "/repos/beta",
+      defaultBranch: "main",
+      sessionPrefix: "bet",
+    };
+    const config = {
+      configPath,
+      readyThresholdMs: 300000,
+      defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+      projects: { alpha: projectA, beta: projectB },
+      notifiers: {},
+      notificationRouting: {} as OrchestratorConfig["notificationRouting"],
+      reactions: {},
+    } satisfies OrchestratorConfig;
+
+    const result = resolveProjectLogDir(config);
+
+    // Should resolve to the first project (alpha)
+    expect(result).toMatch(/alpha\/logs$/);
+  });
+});
+
+describe("resolveProjectRetroDir", () => {
+  let tmpDir: string;
+  let configPath: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "resolve-retro-test-"));
+    configPath = join(tmpDir, "agent-orchestrator.yaml");
+    writeFileSync(configPath, "projects: {}");
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns null when no projects are configured", () => {
+    const config = {
+      configPath,
+      readyThresholdMs: 300000,
+      defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+      projects: {},
+      notifiers: {},
+      notificationRouting: {} as OrchestratorConfig["notificationRouting"],
+      reactions: {},
+    } satisfies OrchestratorConfig;
+
+    expect(resolveProjectRetroDir(config)).toBeNull();
+  });
+
+  it("returns retrospectives dir for the first project", () => {
+    const project: ProjectConfig = {
+      name: "Test",
+      repo: "owner/repo",
+      path: "/repos/integrator",
+      defaultBranch: "main",
+      sessionPrefix: "int",
+    };
+    const config = {
+      configPath,
+      readyThresholdMs: 300000,
+      defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+      projects: { integrator: project },
+      notifiers: {},
+      notificationRouting: {} as OrchestratorConfig["notificationRouting"],
+      reactions: {},
+    } satisfies OrchestratorConfig;
+
+    const result = resolveProjectRetroDir(config);
+
+    expect(result).not.toBeNull();
+    expect(result).toMatch(
+      /\.agent-orchestrator\/[a-f0-9]{12}-integrator\/retrospectives$/,
+    );
   });
 });
 

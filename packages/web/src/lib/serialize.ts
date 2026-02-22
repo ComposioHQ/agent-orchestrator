@@ -131,7 +131,8 @@ export async function enrichSessionPR(
   // Cache miss — if cacheOnly, signal caller to refresh in background
   if (opts?.cacheOnly) return false;
 
-  // Fetch from SCM
+  // Fetch from SCM (with timing instrumentation)
+  const enrichStart = Date.now();
   const results = await Promise.allSettled([
     scm.getPRSummary
       ? scm.getPRSummary(pr)
@@ -142,6 +143,12 @@ export async function enrichSessionPR(
     scm.getMergeability(pr),
     scm.getPendingComments(pr),
   ]);
+  const enrichDurationMs = Date.now() - enrichStart;
+  if (enrichDurationMs > 1000) {
+    console.warn(
+      `[enrichSessionPR] Slow enrichment for PR #${pr.number}: ${enrichDurationMs}ms`,
+    );
+  }
 
   const [summaryR, checksR, ciR, reviewR, mergeR, commentsR] = results;
 
