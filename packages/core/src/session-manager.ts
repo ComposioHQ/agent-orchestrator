@@ -805,6 +805,12 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
     for (const session of sessions) {
       try {
+        // Never clean up orchestrator sessions — they manage the lifecycle
+        if (session.id.endsWith("-orchestrator")) {
+          result.skipped.push(session.id);
+          continue;
+        }
+
         const project = config.projects[session.projectId];
         if (!project) {
           result.skipped.push(session.id);

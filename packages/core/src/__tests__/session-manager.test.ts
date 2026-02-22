@@ -744,6 +744,36 @@ describe("cleanup", () => {
     expect(result.skipped).toContain("app-1");
   });
 
+  it("skips orchestrator sessions even with dead runtimes", async () => {
+    const deadRuntime: Runtime = {
+      ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(false),
+    };
+    const registryWithDead: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return deadRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-orchestrator", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-orch")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithDead });
+    const result = await sm.cleanup();
+
+    expect(result.killed).toHaveLength(0);
+    expect(result.skipped).toContain("app-orchestrator");
+  });
+
   it("kills sessions with dead runtimes", async () => {
     const deadRuntime: Runtime = {
       ...mockRuntime,
