@@ -847,16 +847,13 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         }
 
         // Fallback: if no prior check resolved, check if runtime is dead.
-        // Skip if issue was checked and is still open — work isn't done.
+        let runtimeFallback = false;
         if (!shouldKill && session.runtimeHandle && plugins.runtime) {
           try {
             const alive = await plugins.runtime.isAlive(session.runtimeHandle);
             if (!alive) {
               shouldKill = true;
-              result.warnings.push({
-                sessionId: session.id,
-                message: "Session cleaned up because runtime exited (no conclusive PR/issue status)",
-              });
+              runtimeFallback = true;
             }
           } catch {
             // Can't check — assume alive to be safe
@@ -868,6 +865,12 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
             await kill(session.id);
           }
           result.killed.push(session.id);
+          if (runtimeFallback) {
+            result.warnings.push({
+              sessionId: session.id,
+              message: "Session cleaned up because runtime exited (no conclusive PR/issue status)",
+            });
+          }
         } else {
           result.skipped.push(session.id);
         }
