@@ -157,34 +157,54 @@ describe("getLaunchCommand", () => {
     expect(cmd).toContain("--model 'claude-opus-4-6'");
   });
 
-  it("shell-escapes prompt argument", () => {
+  it("delivers prompt via --append-system-prompt, not -p (one-shot exit)", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "Fix the bug" }));
-    expect(cmd).toContain("-p 'Fix the bug'");
-  });
-
-  it("escapes dangerous characters in prompt", () => {
-    const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "$(rm -rf /); `evil`; $HOME" }));
-    // Single-quoted strings prevent shell expansion
-    expect(cmd).toContain("-p '$(rm -rf /); `evil`; $HOME'");
-  });
-
-  it("escapes single quotes in prompt using POSIX method", () => {
-    const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "it's a test" }));
-    expect(cmd).toContain("-p 'it'\\''s a test'");
+    // Must not use standalone -p flag (one-shot mode)
+    expect(cmd).not.toMatch(/\s-p\s/);
+    expect(cmd).toContain("--append-system-prompt 'Fix the bug'");
   });
 
   it("combines all options", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ permissions: "skip", model: "opus", prompt: "Hello" }),
     );
-    expect(cmd).toBe("claude --dangerously-skip-permissions --model 'opus' -p 'Hello'");
+    expect(cmd).toBe(
+      "claude --dangerously-skip-permissions --model 'opus' --append-system-prompt 'Hello'",
+    );
   });
 
   it("omits optional flags when not provided", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig());
     expect(cmd).not.toContain("--dangerously-skip-permissions");
     expect(cmd).not.toContain("--model");
+    expect(cmd).not.toContain("--append-system-prompt");
     expect(cmd).not.toContain("-p");
+  });
+
+  it("uses file-based system prompt with $(cat) expansion", () => {
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({ systemPromptFile: "/tmp/ao/prompt.md" }),
+    );
+    expect(cmd).toContain("--append-system-prompt \"$(cat '/tmp/ao/prompt.md')\"");
+  });
+
+  it("emits two --append-system-prompt flags when both systemPromptFile and prompt are set", () => {
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({ systemPromptFile: "/tmp/ao/sys.md", prompt: "Fix it" }),
+    );
+    // systemPromptFile comes first (file-based), then prompt (inline)
+    const matches = cmd.match(/--append-system-prompt/g);
+    expect(matches).toHaveLength(2);
+    expect(cmd).toContain("\"$(cat '/tmp/ao/sys.md')\"");
+    expect(cmd).toContain("'Fix it'");
+  });
+
+  it("shell-escapes dangerous characters in prompt", () => {
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({ prompt: "$(rm -rf /); `evil`; $HOME" }),
+    );
+    // Single-quoted by shellEscape — prevents shell expansion
+    expect(cmd).toContain("--append-system-prompt '$(rm -rf /); `evil`; $HOME'");
   });
 });
 

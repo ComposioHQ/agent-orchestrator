@@ -1,9 +1,19 @@
 import chalk from "chalk";
 import type { Command } from "commander";
-import { loadConfig, SessionNotRestorableError, WorkspaceMissingError } from "@composio/ao-core";
+import {
+  type Session,
+  type CIStatus,
+  type SCM,
+  type OrchestratorConfig,
+  loadConfig,
+  SessionNotRestorableError,
+  WorkspaceMissingError,
+} from "@composio/ao-core";
 import { git, getTmuxActivity } from "../lib/shell.js";
 import { formatAge } from "../lib/format.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
+import { getSCM } from "../lib/plugins.js";
+import { detectSessionPR } from "../lib/scm-data.js";
 
 export function registerSession(program: Command): void {
   const session = program.command("session").description("Session management (ls, kill, cleanup)");
@@ -181,4 +191,152 @@ export function registerSession(program: Command): void {
         process.exit(1);
       }
     });
+
+  session
+    .command("table")
+    .description("Print structured table of all sessions with PR/CI/bugbot data")
+    .option("-p, --project <id>", "Filter by project ID")
+    .option("--json", "Output as JSON instead of table")
+    .action(async (opts: { project?: string; json?: boolean }) => {
+      const config = loadConfig();
+      if (opts.project && !config.projects[opts.project]) {
+        console.error(`Unknown project: ${opts.project}`);
+        process.exit(1);
+      }
+
+      const sm = await getSessionManager(config);
+      const sessions = await sm.list(opts.project);
+      const port = config.port ?? 3000;
+
+      // Gather enriched data for each session in parallel
+      const rows = await Promise.all(
+        sessions
+          .sort((a, b) => a.id.localeCompare(b.id))
+          .map((s) => gatherTableRow(s, config, port)),
+      );
+
+      if (opts.json) {
+        console.log(JSON.stringify(rows, null, 2));
+        return;
+      }
+
+      // Compute column widths from data
+      const cols = computeColumnWidths(rows);
+
+      // Print header
+      const hdr =
+        pad("SESSION", cols.session) +
+        pad("STATUS", cols.status) +
+        pad("ACTIVITY", cols.activity) +
+        pad("PR", cols.pr) +
+        pad("CI", cols.ci) +
+        pad("BUGBOT", cols.bugbot) +
+        pad("SESSION_URL", cols.sessionUrl) +
+        "PR_URL";
+      console.log(hdr);
+
+      // Print rows
+      for (const row of rows) {
+        const line =
+          pad(row.session, cols.session) +
+          pad(row.status, cols.status) +
+          pad(row.activity, cols.activity) +
+          pad(row.pr, cols.pr) +
+          pad(row.ci, cols.ci) +
+          pad(String(row.bugbot), cols.bugbot) +
+          pad(row.sessionUrl, cols.sessionUrl) +
+          row.prUrl;
+        console.log(line);
+      }
+    });
+}
+
+interface TableRow {
+  session: string;
+  status: string;
+  activity: string;
+  pr: string;
+  ci: string;
+  bugbot: number;
+  sessionUrl: string;
+  prUrl: string;
+}
+
+async function gatherTableRow(
+  session: Session,
+  config: OrchestratorConfig,
+  port: number,
+): Promise<TableRow> {
+  const project = config.projects[session.projectId];
+  let scm: SCM | null = null;
+  if (project) {
+    try {
+      scm = getSCM(config, session.projectId);
+    } catch {
+      // Unknown/misconfigured SCM plugin — proceed without SCM data
+    }
+  }
+
+  const { prNumber, prUrl, prInfo } = await detectSessionPR(session, scm, project);
+  const prLabel = prNumber ? `#${prNumber}` : "-";
+  let ciStatus: CIStatus | null = null;
+  let bugbotCount = 0;
+
+  if (prInfo && scm) {
+    const [ci, automated] = await Promise.all([
+      scm.getCISummary(prInfo).catch(() => null),
+      scm.getAutomatedComments(prInfo).catch(() => []),
+    ]);
+    ciStatus = ci;
+    bugbotCount = automated.length;
+  }
+
+  // Map CI status to display value
+  let ciDisplay: string;
+  switch (ciStatus) {
+    case "passing":
+      ciDisplay = "green";
+      break;
+    case "failing":
+      ciDisplay = "red";
+      break;
+    case "pending":
+      ciDisplay = "pending";
+      break;
+    default:
+      ciDisplay = "-";
+  }
+
+  const sessionUrl = `http://localhost:${port}/sessions/${session.id}`;
+
+  return {
+    session: session.id,
+    status: session.status,
+    activity: session.activity ?? "unknown",
+    pr: prLabel,
+    ci: ciDisplay,
+    bugbot: bugbotCount,
+    sessionUrl,
+    prUrl,
+  };
+}
+
+function computeColumnWidths(rows: TableRow[]): Record<string, number> {
+  const min = (key: keyof TableRow, header: string) => {
+    const max = Math.max(header.length, ...rows.map((r) => String(r[key]).length));
+    return max + 2; // 2-char padding
+  };
+  return {
+    session: min("session", "SESSION"),
+    status: min("status", "STATUS"),
+    activity: min("activity", "ACTIVITY"),
+    pr: min("pr", "PR"),
+    ci: min("ci", "CI"),
+    bugbot: min("bugbot", "BUGBOT"),
+    sessionUrl: min("sessionUrl", "SESSION_URL"),
+  };
+}
+
+function pad(str: string, width: number): string {
+  return str.padEnd(width);
 }
