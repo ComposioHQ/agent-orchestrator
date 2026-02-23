@@ -251,9 +251,13 @@ export function Dashboard({ sessions, stats, orchestratorId, projectName }: Dash
 
 function buildSwarmWorkflowSummary(sessions: DashboardSession[]): SwarmWorkflowSummary | null {
   const workflowSessions = sessions.filter(
-    (session) =>
-      session.workflowMode === "full" ||
-      (!!session.phase && session.phase !== SESSION_PHASE.NONE),
+    (session) => {
+      const isTerminal =
+        TERMINAL_STATUSES.has(session.status) ||
+        (session.activity !== null && TERMINAL_ACTIVITIES.has(session.activity));
+      if (isTerminal) return false;
+      return session.workflowMode === "full" || (!!session.phase && session.phase !== SESSION_PHASE.NONE);
+    },
   );
   if (workflowSessions.length === 0) return null;
 
@@ -285,11 +289,6 @@ function buildSwarmWorkflowSummary(sessions: DashboardSession[]): SwarmWorkflowS
 
     const role = session.subSessionInfo?.role;
     if (!role) continue;
-
-    const isTerminal =
-      TERMINAL_STATUSES.has(session.status) ||
-      (session.activity !== null && TERMINAL_ACTIVITIES.has(session.activity));
-    if (isTerminal) continue;
 
     roleCounts[role] += 1;
     activeSubSessions += 1;

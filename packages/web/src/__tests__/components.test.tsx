@@ -545,4 +545,23 @@ describe("Dashboard", () => {
     );
     expect(screen.queryByText("Swarm Workflow")).not.toBeInTheDocument();
   });
+
+  it("hides swarm workflow strip when only terminal workflow sessions remain", () => {
+    const sessions = [
+      makeSession({
+        id: "app-1",
+        phase: "code_review",
+        workflowMode: "full",
+        status: "done",
+        activity: "exited",
+      }),
+    ];
+    render(
+      <Dashboard
+        sessions={sessions}
+        stats={{ totalSessions: 1, workingSessions: 0, openPRs: 0, needsReview: 0 }}
+      />,
+    );
+    expect(screen.queryByText("Swarm Workflow")).not.toBeInTheDocument();
+  });
 });
