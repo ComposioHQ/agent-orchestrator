@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { createLifecycleManager } from "../lifecycle-manager.js";
 import { writeMetadata, readMetadataRaw } from "../metadata.js";
 import { getSessionsDir, getProjectBaseDir } from "../paths.js";
+import { writePlanArtifact } from "../review-artifacts.js";
 import type {
   OrchestratorConfig,
   PluginRegistry,
@@ -589,6 +590,45 @@ describe("check (single session)", () => {
 
     // Second check — status remains working, no transition
     await lm.check("app-1");
+    expect(lm.getStates().get("app-1")).toBe("working");
+  });
+
+  it("applies phase transition before lifecycle status check", async () => {
+    config.projects["my-app"] = {
+      ...config.projects["my-app"]!,
+      workflow: { mode: "full", autoCodeReview: true },
+    };
+
+    const session = makeSession({
+      status: "working",
+      phase: "planning",
+      workspacePath: join(tmpDir, "my-app"),
+      metadata: { phase: "planning", reviewRound: "1", status: "working", project: "my-app" },
+    });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: session.workspacePath ?? "",
+      branch: "main",
+      status: "working",
+      phase: "planning",
+      reviewRound: "1",
+      project: "my-app",
+    });
+    writePlanArtifact(session.workspacePath ?? "", "# Plan");
+
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta?.["phase"]).toBe("plan_review");
+    expect(meta?.["reviewRound"]).toBe("1");
+    // Status should remain managed independently.
     expect(lm.getStates().get("app-1")).toBe("working");
   });
 });

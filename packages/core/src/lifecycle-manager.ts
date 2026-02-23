@@ -35,6 +35,7 @@ import {
 } from "./types.js";
 import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
+import { createPhaseManager } from "./phase-manager.js";
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
@@ -171,6 +172,7 @@ interface ReactionTracker {
 /** Create a LifecycleManager instance. */
 export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleManager {
   const { config, registry, sessionManager } = deps;
+  const phaseManager = createPhaseManager({ config });
 
   const states = new Map<SessionId, SessionStatus>();
   const reactionTrackers = new Map<string, ReactionTracker>(); // "sessionId:reactionKey"
@@ -414,6 +416,14 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
   /** Poll a single session and handle state transitions. */
   async function checkSession(session: Session): Promise<void> {
+    // Phase transitions are orthogonal to status transitions.
+    // Apply phase transitions first so status checks observe latest phase context.
+    try {
+      await phaseManager.check(session);
+    } catch {
+      // Non-fatal: lifecycle status tracking should continue even if phase check fails.
+    }
+
     // Use tracked state if available; otherwise use the persisted metadata status
     // (not session.status, which list() may have already overwritten for dead runtimes).
     // This ensures transitions are detected after a lifecycle manager restart.

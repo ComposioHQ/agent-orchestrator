@@ -1076,6 +1076,12 @@ export interface LifecycleManager {
   check(sessionId: SessionId): Promise<void>;
 }
 
+/** Phase manager — workflow phase transitions for multi-phase sessions. */
+export interface PhaseManager {
+  /** Evaluate and apply phase transition for a session. Returns current/updated phase. */
+  check(session: Session): Promise<SessionPhase>;
+}
+
 /** Plugin registry — discovery + loading */
 export interface PluginRegistry {
   /** Register a plugin, optionally with config to pass to create() */
