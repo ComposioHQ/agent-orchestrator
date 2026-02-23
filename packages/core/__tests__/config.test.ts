@@ -177,6 +177,24 @@ projects:
       expect(workflow?.implementationSwarm?.maxAgents).toBe(2);
       expect(workflow?.implementationSwarm?.roleAgents?.["developer"]).toBe("codex");
     });
+
+    it("loads full-workflow swarm example config", () => {
+      const configPath = join(originalCwd, "..", "..", "examples", "full-workflow-swarm.yaml");
+      const config = loadConfig(configPath);
+
+      const project = config.projects["my-app"];
+      expect(project).toBeDefined();
+      expect(project?.workflow?.mode).toBe("full");
+      expect(project?.workflow?.codingAgent).toBe("codex");
+      expect(project?.workflow?.planningSwarm?.roles).toEqual(["architect", "product"]);
+      expect(project?.workflow?.planReview?.roles).toEqual([
+        "architect",
+        "developer",
+        "product",
+      ]);
+      expect(project?.workflow?.implementationSwarm?.maxAgents).toBe(2);
+      expect(project?.workflow?.codeReview?.maxRounds).toBe(2);
+    });
   });
 
   describe("Config Discovery Priority", () => {
