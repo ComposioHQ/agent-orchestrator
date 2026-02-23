@@ -8,8 +8,11 @@ import {
   type AttentionLevel,
   getAttentionLevel,
   isPRRateLimited,
+  getSessionRound,
+  TERMINAL_STATUSES,
+  TERMINAL_ACTIVITIES,
 } from "@/lib/types";
-import { CI_STATUS } from "@composio/ao-core/types";
+import { CI_STATUS, SESSION_PHASE } from "@composio/ao-core/types";
 import { AttentionZone } from "./AttentionZone";
 import { PRTableRow } from "./PRStatus";
 import { DynamicFavicon } from "./DynamicFavicon";
@@ -22,6 +25,30 @@ interface DashboardProps {
 }
 
 const KANBAN_LEVELS = ["working", "pending", "review", "respond", "merge"] as const;
+const WORKFLOW_PHASE_ORDER = [
+  SESSION_PHASE.PLANNING,
+  SESSION_PHASE.PLAN_REVIEW,
+  SESSION_PHASE.IMPLEMENTING,
+  SESSION_PHASE.CODE_REVIEW,
+  SESSION_PHASE.READY_TO_MERGE,
+] as const;
+type WorkflowPhase = (typeof WORKFLOW_PHASE_ORDER)[number];
+
+const WORKFLOW_PHASE_LABEL: Record<WorkflowPhase, string> = {
+  [SESSION_PHASE.PLANNING]: "planning",
+  [SESSION_PHASE.PLAN_REVIEW]: "plan review",
+  [SESSION_PHASE.IMPLEMENTING]: "implementing",
+  [SESSION_PHASE.CODE_REVIEW]: "code review",
+  [SESSION_PHASE.READY_TO_MERGE]: "ready to merge",
+};
+
+interface SwarmWorkflowSummary {
+  total: number;
+  phaseCounts: Record<WorkflowPhase, number>;
+  maxRoundByPhase: Partial<Record<WorkflowPhase, number>>;
+  roleCounts: Record<"architect" | "developer" | "product", number>;
+  activeSubSessions: number;
+}
 
 export function Dashboard({ sessions, stats, orchestratorId, projectName }: DashboardProps) {
   const [rateLimitDismissed, setRateLimitDismissed] = useState(false);
@@ -91,6 +118,7 @@ export function Dashboard({ sessions, stats, orchestratorId, projectName }: Dash
     () => sessions.some((s) => s.pr && isPRRateLimited(s.pr)),
     [sessions],
   );
+  const workflowSummary = useMemo(() => buildSwarmWorkflowSummary(sessions), [sessions]);
 
   return (
     <div className="px-8 py-7">
@@ -139,6 +167,8 @@ export function Dashboard({ sessions, stats, orchestratorId, projectName }: Dash
           </button>
         </div>
       )}
+
+      {workflowSummary && <SwarmWorkflowStrip summary={workflowSummary} />}
 
       {/* Kanban columns for active zones */}
       {hasKanbanSessions && (
@@ -215,6 +245,118 @@ export function Dashboard({ sessions, stats, orchestratorId, projectName }: Dash
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function buildSwarmWorkflowSummary(sessions: DashboardSession[]): SwarmWorkflowSummary | null {
+  const workflowSessions = sessions.filter(
+    (session) =>
+      session.workflowMode === "full" ||
+      (!!session.phase && session.phase !== SESSION_PHASE.NONE),
+  );
+  if (workflowSessions.length === 0) return null;
+
+  const phaseCounts: Record<WorkflowPhase, number> = {
+    [SESSION_PHASE.PLANNING]: 0,
+    [SESSION_PHASE.PLAN_REVIEW]: 0,
+    [SESSION_PHASE.IMPLEMENTING]: 0,
+    [SESSION_PHASE.CODE_REVIEW]: 0,
+    [SESSION_PHASE.READY_TO_MERGE]: 0,
+  };
+  const maxRoundByPhase: Partial<Record<WorkflowPhase, number>> = {};
+  const roleCounts: Record<"architect" | "developer" | "product", number> = {
+    architect: 0,
+    developer: 0,
+    product: 0,
+  };
+
+  let activeSubSessions = 0;
+  for (const session of workflowSessions) {
+    const phase = session.phase;
+    if (phase && phase in phaseCounts) {
+      const phaseKey = phase as WorkflowPhase;
+      phaseCounts[phaseKey] += 1;
+      const round = getSessionRound(session);
+      if (round && round > (maxRoundByPhase[phaseKey] ?? 0)) {
+        maxRoundByPhase[phaseKey] = round;
+      }
+    }
+
+    const role = session.subSessionInfo?.role;
+    if (!role) continue;
+
+    const isTerminal =
+      TERMINAL_STATUSES.has(session.status) ||
+      (session.activity !== null && TERMINAL_ACTIVITIES.has(session.activity));
+    if (isTerminal) continue;
+
+    roleCounts[role] += 1;
+    activeSubSessions += 1;
+  }
+
+  return {
+    total: workflowSessions.length,
+    phaseCounts,
+    maxRoundByPhase,
+    roleCounts,
+    activeSubSessions,
+  };
+}
+
+function SwarmWorkflowStrip({ summary }: { summary: SwarmWorkflowSummary }) {
+  const activePhases = WORKFLOW_PHASE_ORDER.filter((phase) => summary.phaseCounts[phase] > 0);
+  const roleEntries = (Object.entries(summary.roleCounts) as Array<
+    ["architect" | "developer" | "product", number]
+  >).filter(([, count]) => count > 0);
+
+  return (
+    <div className="mb-6 rounded-[8px] border border-[rgba(88,166,255,0.18)] bg-[rgba(88,166,255,0.04)] px-4 py-3">
+      <div className="mb-2.5 flex items-center gap-2">
+        <span className="text-[10px] font-bold uppercase tracking-[0.10em] text-[var(--color-accent)]">
+          Swarm Workflow
+        </span>
+        <span className="text-[11px] text-[var(--color-text-muted)]">
+          {summary.total} sessions in full-mode flow
+        </span>
+      </div>
+
+      {activePhases.length > 0 && (
+        <div className="mb-2 flex flex-wrap items-center gap-1.5">
+          {activePhases.map((phase) => (
+            <span
+              key={phase}
+              className="inline-flex items-center gap-1 rounded-[5px] border border-[rgba(88,166,255,0.25)] bg-[rgba(88,166,255,0.08)] px-2 py-0.5 text-[11px] text-[var(--color-text-secondary)]"
+            >
+              <span>{WORKFLOW_PHASE_LABEL[phase]}</span>
+              <span className="font-[var(--font-mono)] text-[10px] text-[var(--color-accent)]">
+                {summary.phaseCounts[phase]}
+              </span>
+              {summary.maxRoundByPhase[phase] && (
+                <span className="font-[var(--font-mono)] text-[10px] text-[var(--color-text-muted)]">
+                  r{summary.maxRoundByPhase[phase]}
+                </span>
+              )}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
+        <span>active sub-sessions:</span>
+        <span className="font-[var(--font-mono)] text-[var(--color-text-secondary)]">
+          {summary.activeSubSessions}
+        </span>
+        {roleEntries.map(([role, count]) => (
+          <span
+            key={role}
+            className="inline-flex items-center gap-1 rounded-[5px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.04)] px-2 py-0.5"
+          >
+            <span>{role}</span>
+            <span className="font-[var(--font-mono)]">{count}</span>
+          </span>
+        ))}
+      </div>
     </div>
   );
 }

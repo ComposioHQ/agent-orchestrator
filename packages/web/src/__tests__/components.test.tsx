@@ -4,6 +4,7 @@ import { CIBadge, CICheckList } from "@/components/CIBadge";
 import { PRStatus } from "@/components/PRStatus";
 import { SessionCard } from "@/components/SessionCard";
 import { AttentionZone } from "@/components/AttentionZone";
+import { Dashboard } from "@/components/Dashboard";
 import { ActivityDot } from "@/components/ActivityDot";
 import { makeSession, makePR } from "./helpers";
 
@@ -492,5 +493,56 @@ describe("AttentionZone", () => {
     render(<AttentionZone level="respond" sessions={sessions} onRestore={onRestore} />);
     fireEvent.click(screen.getByText("restore"));
     expect(onRestore).toHaveBeenCalledWith("s1");
+  });
+});
+
+// ── Dashboard ────────────────────────────────────────────────────────
+
+describe("Dashboard", () => {
+  it("shows swarm workflow strip for full-mode sessions", () => {
+    const sessions = [
+      makeSession({
+        id: "app-1",
+        phase: "planning",
+        workflowMode: "full",
+        metadata: { planRound: "2" },
+      }),
+      makeSession({
+        id: "app-2",
+        phase: "code_review",
+        workflowMode: "full",
+        subSessionInfo: {
+          parentSessionId: "app-1",
+          role: "product",
+          phase: "code_review",
+          round: 3,
+        },
+        metadata: { codeReviewRound: "3" },
+      }),
+    ];
+
+    render(
+      <Dashboard
+        sessions={sessions}
+        stats={{ totalSessions: 2, workingSessions: 2, openPRs: 0, needsReview: 0 }}
+      />,
+    );
+
+    expect(screen.getByText("Swarm Workflow")).toBeInTheDocument();
+    expect(screen.getAllByText("planning").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("code review").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("r3").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("product").length).toBeGreaterThan(0);
+  });
+
+  it("hides swarm workflow strip when sessions are not in workflow mode", () => {
+    const sessions = [makeSession({ id: "app-1", phase: undefined, workflowMode: undefined })];
+    render(
+      <Dashboard
+        sessions={sessions}
+        stats={{ totalSessions: 1, workingSessions: 1, openPRs: 0, needsReview: 0 }}
+      />,
+    );
+    expect(screen.queryByText("Swarm Workflow")).not.toBeInTheDocument();
   });
 });
