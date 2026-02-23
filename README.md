@@ -1,8 +1,8 @@
 <div align="center">
 
-# Agent Orchestrator
+# Agent Orchestrator — The Orchestration Layer for Parallel AI Agents
 
-Spawn parallel AI coding agents. Monitor from one dashboard. Merge their PRs.
+Spawn parallel AI coding agents, each in its own git worktree. Agents autonomously fix CI failures, address review comments, and open PRs — you supervise from one dashboard.
 
 [![GitHub stars](https://img.shields.io/github/stars/ComposioHQ/agent-orchestrator?style=flat-square)](https://github.com/ComposioHQ/agent-orchestrator/stargazers)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
