@@ -55,6 +55,17 @@ export type { LifecycleManagerDeps } from "./lifecycle-manager.js";
 export { buildPrompt, BASE_AGENT_PROMPT } from "./prompt-builder.js";
 export type { PromptBuildConfig } from "./prompt-builder.js";
 
+// Review artifacts — .ao/plan.md + .ao/reviews/*
+export {
+  writePlanArtifact,
+  readPlanArtifact,
+  writeReviewArtifact,
+  readReviewArtifacts,
+  isAllApproved,
+  getLatestRound,
+} from "./review-artifacts.js";
+export type { ReviewArtifact, ReviewPhase } from "./review-artifacts.js";
+
 // Orchestrator prompt — generates orchestrator context for `ao start`
 export { generateOrchestratorPrompt } from "./orchestrator-prompt.js";
 export type { OrchestratorPromptConfig } from "./orchestrator-prompt.js";

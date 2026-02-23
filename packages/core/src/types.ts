@@ -214,6 +214,9 @@ export interface OrchestratorSpawnConfig {
 /** Reviewer role for swarm review sessions. */
 export type ReviewerRole = "architect" | "developer" | "product";
 
+/** Reviewer decision for a swarm review artifact. */
+export type SwarmReviewDecision = "approved" | "changes_requested" | "pending";
+
 /** Linkage metadata for a sub-session spawned from a parent session. */
 export interface SubSessionInfo {
   parentSessionId: SessionId;
