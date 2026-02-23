@@ -13,6 +13,8 @@
 
 import { statSync, existsSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import {
   isIssueNotFoundError,
   isRestorable,
@@ -56,6 +58,8 @@ import {
   validateAndStoreOrigin,
 } from "./paths.js";
 
+const execFileAsync = promisify(execFile);
+
 /** Escape regex metacharacters in a string. */
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -81,6 +85,19 @@ function safeJsonParse<T>(str: string): T | null {
     return JSON.parse(str) as T;
   } catch {
     return null;
+  }
+}
+
+async function assertAgentBinaryAvailable(agent: Agent): Promise<void> {
+  const binary = agent.getBinaryName ? agent.getBinaryName() : undefined;
+  if (!binary) return;
+  try {
+    await execFileAsync("which", [binary], { timeout: 10_000 });
+  } catch (err) {
+    throw new Error(
+      `Missing required agent binary: ${binary}. Install it and ensure "${binary}" is on PATH.`,
+      { cause: err },
+    );
   }
 }
 
@@ -326,6 +343,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       throw new Error(`Agent plugin '${project.agent ?? config.defaults.agent}' not found`);
     }
 
+    await assertAgentBinaryAvailable(plugins.agent);
+
     // Validate issue exists BEFORE creating any resources
     let resolvedIssue: Issue | undefined;
     if (spawnConfig.issueId && plugins.tracker) {
@@ -560,6 +579,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     if (!plugins.agent) {
       throw new Error(`Agent plugin '${project.agent ?? config.defaults.agent}' not found`);
     }
+
+    await assertAgentBinaryAvailable(plugins.agent);
 
     const sessionId = `${project.sessionPrefix}-orchestrator`;
 

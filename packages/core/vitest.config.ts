@@ -7,6 +7,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   test: {
     alias: {
+      // Ensure plugins resolve core to source during tests (dist may not be built).
+      "@composio/ao-core": resolve(__dirname, "./src/index.ts"),
       // Integration tests import real plugins. These aliases resolve
       // package names to source files so we don't need circular devDeps
       // (plugins depend on core, core can't depend on plugins).

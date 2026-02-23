@@ -71,6 +71,9 @@ function createAiderAgent(): Agent {
   return {
     name: "aider",
     processName: "aider",
+    getBinaryName(): string {
+      return "aider";
+    },
 
     getLaunchCommand(config: AgentLaunchConfig): string {
       const parts: string[] = ["aider"];

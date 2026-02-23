@@ -33,6 +33,9 @@ function createCodexAgent(): Agent {
   return {
     name: "codex",
     processName: "codex",
+    getBinaryName(): string {
+      return "codex";
+    },
 
     getLaunchCommand(config: AgentLaunchConfig): string {
       const parts: string[] = ["codex"];
