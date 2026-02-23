@@ -773,7 +773,7 @@ describe("cleanup", () => {
     expect(result.killed).toContain("app-1");
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0].sessionId).toBe("app-1");
-    expect(result.warnings[0].message).toContain("no PR and no issue");
+    expect(result.warnings[0].message).toContain("runtime exited");
   });
 
   it("skips sessions with open PRs", async () => {
@@ -921,6 +921,125 @@ describe("cleanup", () => {
     expect(result.killed).toHaveLength(0);
     expect(result.skipped).toContain("app-1");
     expect(result.errors).toHaveLength(0);
+  });
+
+  it("falls back to runtime check when tracker throws for session with issueId", async () => {
+    const mockTracker: Tracker = {
+      name: "mock-tracker",
+      getIssue: vi.fn(),
+      isCompleted: vi.fn().mockRejectedValue(new Error("API error")),
+      issueUrl: vi.fn(),
+      branchName: vi.fn(),
+      generatePrompt: vi.fn(),
+    };
+
+    const deadRuntime: Runtime = {
+      ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(false),
+    };
+
+    const registryWithTrackerAndDead: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return deadRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        if (slot === "tracker") return mockTracker;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "feat/INT-1",
+      status: "working",
+      project: "my-app",
+      issue: "INT-1",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithTrackerAndDead });
+    const result = await sm.cleanup();
+
+    expect(result.killed).toContain("app-1");
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0].sessionId).toBe("app-1");
+    expect(result.warnings[0].message).toContain("runtime exited");
+  });
+
+  it("falls back to runtime check when no tracker plugin for session with issueId", async () => {
+    const deadRuntime: Runtime = {
+      ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(false),
+    };
+
+    const registryNoTracker: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return deadRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "feat/INT-1",
+      status: "working",
+      project: "my-app",
+      issue: "INT-1",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryNoTracker });
+    const result = await sm.cleanup();
+
+    expect(result.killed).toContain("app-1");
+    expect(result.warnings).toHaveLength(1);
+  });
+
+  it("kills session with open issue when runtime is dead", async () => {
+    const mockTracker: Tracker = {
+      name: "mock-tracker",
+      getIssue: vi.fn(),
+      isCompleted: vi.fn().mockResolvedValue(false),
+      issueUrl: vi.fn(),
+      branchName: vi.fn(),
+      generatePrompt: vi.fn(),
+    };
+
+    const deadRuntime: Runtime = {
+      ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(false),
+    };
+
+    const registryWithOpenIssue: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return deadRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        if (slot === "tracker") return mockTracker;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "feat/INT-1",
+      status: "working",
+      project: "my-app",
+      issue: "INT-1",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithOpenIssue });
+    const result = await sm.cleanup();
+
+    expect(result.killed).toContain("app-1");
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0].message).toContain("runtime exited");
   });
 });
 
