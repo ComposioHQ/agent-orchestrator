@@ -91,6 +91,23 @@ describe("review artifacts", () => {
     expect(reviews[0]?.round).toBe(2);
     expect(reviews[0]?.role).toBe("architect");
   });
+
+  it("uses file identity over header identity fields", () => {
+    const reviewsDir = join(worktreePath, ".ao", "reviews");
+    mkdirSync(reviewsDir, { recursive: true });
+
+    writeFileSync(
+      join(reviewsDir, "plan_review-round-2-developer.md"),
+      "decision=approved\nround=99\nphase=code_review\nrole=product\n---\nCanonical identity must come from filename\n",
+      "utf-8",
+    );
+
+    const reviews = readReviewArtifacts(worktreePath, "plan_review", 2);
+    expect(reviews).toHaveLength(1);
+    expect(reviews[0]?.phase).toBe("plan_review");
+    expect(reviews[0]?.round).toBe(2);
+    expect(reviews[0]?.role).toBe("developer");
+  });
 });
 
 describe("helpers", () => {

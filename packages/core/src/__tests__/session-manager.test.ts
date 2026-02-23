@@ -406,6 +406,26 @@ describe("list", () => {
     expect(sessions[0].id).toBe("app-1");
   });
 
+  it("drops invalid reviewer role in sub-session metadata", async () => {
+    writeMetadata(sessionsDir, "app-3", {
+      worktree: "/tmp/w3",
+      branch: "feat/c",
+      status: "working",
+      phase: "plan_review",
+      project: "my-app",
+      parentSession: "app-1",
+      role: "unknown-role",
+      reviewRound: "1",
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const sessions = await sm.list();
+    const session = sessions.find((s) => s.id === "app-3");
+
+    expect(session).toBeDefined();
+    expect(session?.subSessionInfo).toBeNull();
+  });
+
   it("marks dead runtimes as killed", async () => {
     const deadRuntime: Runtime = {
       ...mockRuntime,

@@ -22,7 +22,6 @@ export interface ReviewArtifact {
   path?: string;
 }
 
-const REVIEWER_ROLES = new Set<ReviewerRole>(["architect", "developer", "product"]);
 const REVIEW_DECISIONS = new Set<SwarmReviewDecision>(["approved", "changes_requested", "pending"]);
 
 function getAoDir(worktreePath: string): string {
@@ -72,13 +71,6 @@ function parseDecision(raw: string | undefined): SwarmReviewDecision {
     return "pending";
   }
   return raw as SwarmReviewDecision;
-}
-
-function parseRole(raw: string | undefined, fallback: ReviewerRole): ReviewerRole {
-  if (!raw || !REVIEWER_ROLES.has(raw as ReviewerRole)) {
-    return fallback;
-  }
-  return raw as ReviewerRole;
 }
 
 function reviewFilename(artifact: Pick<ReviewArtifact, "phase" | "round" | "role">): string {
@@ -137,9 +129,10 @@ export function readReviewArtifacts(
       "developer") as ReviewerRole;
 
     artifacts.push({
+      // Trust canonical file path for identity fields. Header values are informational.
       phase,
-      round: parseRound(header["round"], round),
-      role: parseRole(header["role"], roleFromFilename),
+      round,
+      role: roleFromFilename,
       decision: parseDecision(header["decision"]),
       timestamp: header["timestamp"] ?? "",
       content: body,

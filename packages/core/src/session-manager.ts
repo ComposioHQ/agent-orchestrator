@@ -118,6 +118,9 @@ const VALID_PHASES: ReadonlySet<string> = new Set([
   "ready_to_merge",
 ]);
 
+/** Valid reviewer roles for sub-session linkage metadata. */
+const VALID_REVIEWER_ROLES: ReadonlySet<string> = new Set(["architect", "developer", "product"]);
+
 /** Validate and normalize a status string. */
 function validateStatus(raw: string | undefined): SessionStatus {
   // Bash scripts write "starting" — treat as "working"
@@ -132,6 +135,12 @@ function validatePhase(raw: string | undefined): SessionPhase {
   return SESSION_PHASE.NONE;
 }
 
+/** Validate reviewer role from metadata. */
+function validateReviewerRole(raw: string | undefined): ReviewerRole | null {
+  if (!raw || !VALID_REVIEWER_ROLES.has(raw)) return null;
+  return raw as ReviewerRole;
+}
+
 /** Reconstruct a Session object from raw metadata key=value pairs. */
 function metadataToSession(
   sessionId: SessionId,
@@ -139,6 +148,17 @@ function metadataToSession(
   createdAt?: Date,
   modifiedAt?: Date,
 ): Session {
+  const role = validateReviewerRole(meta["role"]);
+  const hasSubSession = meta["parentSession"] && role && meta["reviewRound"];
+  const subSessionInfo = hasSubSession
+    ? {
+        parentSessionId: meta["parentSession"] as string,
+        role,
+        phase: validatePhase(meta["phase"]),
+        round: Number.parseInt(meta["reviewRound"] as string, 10) || 1,
+      }
+    : null;
+
   return {
     id: sessionId,
     projectId: meta["project"] ?? "",
@@ -174,15 +194,8 @@ function metadataToSession(
     createdAt: meta["createdAt"] ? new Date(meta["createdAt"]) : (createdAt ?? new Date()),
     lastActivityAt: modifiedAt ?? new Date(),
     metadata: meta,
-    subSessionInfo:
-      meta["parentSession"] && meta["role"] && meta["reviewRound"]
-        ? {
-            parentSessionId: meta["parentSession"],
-            role: meta["role"] as ReviewerRole,
-            phase: validatePhase(meta["phase"]),
-            round: Number.parseInt(meta["reviewRound"], 10) || 1,
-          }
-        : null,
+    // Linkage is best-effort from flat metadata. Invalid role drops subSessionInfo.
+    subSessionInfo,
   };
 }
 
