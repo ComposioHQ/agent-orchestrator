@@ -30,6 +30,7 @@ function createCoreSession(overrides?: Partial<Session>): Session {
     id: "test-1",
     projectId: "test",
     status: "working",
+    phase: "none",
     activity: "active",
     branch: "feat/test",
     issueId: null,
@@ -40,6 +41,7 @@ function createCoreSession(overrides?: Partial<Session>): Session {
     createdAt: new Date("2025-01-01T00:00:00Z"),
     lastActivityAt: new Date("2025-01-01T01:00:00Z"),
     metadata: {},
+    subSessionInfo: null,
     ...overrides,
   };
 }
@@ -211,6 +213,29 @@ describe("sessionToDashboard", () => {
     const dashboard = sessionToDashboard(coreSession);
 
     expect(dashboard.pr).toBeNull();
+  });
+
+  it("should map workflow phase and sub-session linkage", () => {
+    const coreSession = createCoreSession({
+      phase: "code_review",
+      metadata: { workflowMode: "full", codeReviewRound: "2" },
+      subSessionInfo: {
+        parentSessionId: "app-1",
+        role: "architect",
+        phase: "code_review",
+        round: 2,
+      },
+    });
+    const dashboard = sessionToDashboard(coreSession);
+
+    expect(dashboard.phase).toBe("code_review");
+    expect(dashboard.workflowMode).toBe("full");
+    expect(dashboard.subSessionInfo).toEqual({
+      parentSessionId: "app-1",
+      role: "architect",
+      phase: "code_review",
+      round: 2,
+    });
   });
 });
 

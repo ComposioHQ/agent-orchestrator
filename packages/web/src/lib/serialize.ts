@@ -43,11 +43,26 @@ export function resolveProject(
 export function sessionToDashboard(session: Session): DashboardSession {
   const agentSummary = session.agentInfo?.summary;
   const summary = agentSummary ?? session.metadata["summary"] ?? null;
+  const rawWorkflowMode = session.metadata["workflowMode"];
+  const workflowMode =
+    rawWorkflowMode === "simple" || rawWorkflowMode === "full"
+      ? rawWorkflowMode
+      : undefined;
 
   return {
     id: session.id,
     projectId: session.projectId,
     status: session.status,
+    phase: session.phase ?? "none",
+    workflowMode,
+    subSessionInfo: session.subSessionInfo
+      ? {
+          parentSessionId: session.subSessionInfo.parentSessionId,
+          role: session.subSessionInfo.role,
+          phase: session.subSessionInfo.phase,
+          round: session.subSessionInfo.round,
+        }
+      : null,
     activity: session.activity,
     branch: session.branch,
     issueId: session.issueId, // Deprecated: kept for backwards compatibility

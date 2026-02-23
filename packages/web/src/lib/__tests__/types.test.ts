@@ -5,6 +5,8 @@
 import { describe, it, expect } from "vitest";
 import {
   getAttentionLevel,
+  getSessionPhaseLabel,
+  getSessionRound,
   TERMINAL_STATUSES,
   TERMINAL_ACTIVITIES,
   NON_RESTORABLE_STATUSES,
@@ -484,5 +486,45 @@ describe("constants sync with core", () => {
 
   it("NON_RESTORABLE_STATUSES matches core", () => {
     expect(NON_RESTORABLE_STATUSES).toBe(CORE_NON_RESTORABLE_STATUSES);
+  });
+});
+
+describe("workflow helpers", () => {
+  it("returns null phase label when phase is missing or none", () => {
+    expect(getSessionPhaseLabel(createSession())).toBeNull();
+    expect(getSessionPhaseLabel(createSession({ phase: "none" }))).toBeNull();
+  });
+
+  it("formats review phases for display", () => {
+    expect(getSessionPhaseLabel(createSession({ phase: "plan_review" }))).toBe("plan review");
+    expect(getSessionPhaseLabel(createSession({ phase: "code_review" }))).toBe("code review");
+  });
+
+  it("prefers sub-session round when available", () => {
+    const session = createSession({
+      phase: "code_review",
+      metadata: { codeReviewRound: "3" },
+      subSessionInfo: {
+        parentSessionId: "app-1",
+        role: "architect",
+        phase: "code_review",
+        round: 5,
+      },
+    });
+    expect(getSessionRound(session)).toBe(5);
+  });
+
+  it("reads round from phase-specific metadata", () => {
+    expect(
+      getSessionRound(createSession({ phase: "planning", metadata: { planRound: "2" } })),
+    ).toBe(2);
+    expect(
+      getSessionRound(
+        createSession({
+          phase: "implementing",
+          metadata: { implementationRound: "4" },
+        }),
+      ),
+    ).toBe(4);
   });
 });

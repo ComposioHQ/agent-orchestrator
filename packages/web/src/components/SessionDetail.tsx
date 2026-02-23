@@ -2,7 +2,12 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
-import { type DashboardSession, type DashboardPR } from "@/lib/types";
+import {
+  type DashboardSession,
+  type DashboardPR,
+  getSessionPhaseLabel,
+  getSessionRound,
+} from "@/lib/types";
 import { CI_STATUS } from "@composio/ao-core/types";
 import { cn } from "@/lib/cn";
 import { CICheckList } from "./CIBadge";
@@ -185,6 +190,10 @@ export function SessionDetail({ session, isOrchestrator = false, orchestratorZon
   const searchParams = useSearchParams();
   const startFullscreen = searchParams.get("fullscreen") === "true";
   const pr = session.pr;
+  const phaseLabel = getSessionPhaseLabel(session);
+  const phaseRound = getSessionRound(session);
+  const reviewerRole = session.subSessionInfo?.role ?? null;
+  const parentSessionId = session.subSessionInfo?.parentSessionId ?? null;
   const activity = (session.activity && activityMeta[session.activity]) ?? {
     label: session.activity ?? "unknown",
     color: "var(--color-text-muted)",
@@ -274,6 +283,32 @@ export function SessionDetail({ session, isOrchestrator = false, orchestratorZon
 
               {/* Meta chips */}
               <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                {phaseLabel && (
+                  <span className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(88,166,255,0.08)] px-2 py-0.5 text-[11px] text-[var(--color-accent)]">
+                    {phaseLabel}
+                  </span>
+                )}
+                {phaseRound && (
+                  <span className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.04)] px-2 py-0.5 font-[var(--font-mono)] text-[10px] text-[var(--color-text-secondary)]">
+                    r{phaseRound}
+                  </span>
+                )}
+                {reviewerRole && (
+                  <span className="rounded-[4px] border border-[rgba(63,185,80,0.25)] bg-[rgba(63,185,80,0.08)] px-2 py-0.5 text-[11px] text-[var(--color-status-ready)]">
+                    {reviewerRole}
+                  </span>
+                )}
+                {parentSessionId && (
+                  <a
+                    href={`/sessions/${encodeURIComponent(parentSessionId)}`}
+                    className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.03)] px-2 py-0.5 font-[var(--font-mono)] text-[10px] text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-primary)] hover:no-underline"
+                  >
+                    parent {parentSessionId}
+                  </a>
+                )}
+                {(phaseLabel || phaseRound || reviewerRole || parentSessionId) && session.projectId && (
+                  <span className="text-[var(--color-text-tertiary)]">&middot;</span>
+                )}
                 {session.projectId && (
                   <>
                     {pr ? (

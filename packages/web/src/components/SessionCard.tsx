@@ -8,6 +8,8 @@ import {
   isPRRateLimited,
   TERMINAL_STATUSES,
   TERMINAL_ACTIVITIES,
+  getSessionPhaseLabel,
+  getSessionRound,
 } from "@/lib/types";
 import { CI_STATUS } from "@composio/ao-core/types";
 import { cn } from "@/lib/cn";
@@ -60,6 +62,10 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
   const isRestorable = isTerminal && session.status !== "merged";
 
   const title = getSessionTitle(session);
+  const phaseLabel = getSessionPhaseLabel(session);
+  const round = getSessionRound(session);
+  const reviewerRole = session.subSessionInfo?.role ?? null;
+  const parentSessionId = session.subSessionInfo?.parentSessionId ?? null;
 
   return (
     <div
@@ -124,6 +130,34 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
 
       {/* Meta row: branch + PR pills */}
       <div className="flex flex-wrap items-center gap-1.5 px-4 pb-2.5">
+        {phaseLabel && (
+          <span className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(88,166,255,0.08)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-accent)]">
+            {phaseLabel}
+          </span>
+        )}
+        {round && (
+          <span className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.04)] px-2 py-0.5 font-[var(--font-mono)] text-[10px] text-[var(--color-text-secondary)]">
+            r{round}
+          </span>
+        )}
+        {reviewerRole && (
+          <span className="rounded-[4px] border border-[rgba(63,185,80,0.25)] bg-[rgba(63,185,80,0.08)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-status-ready)]">
+            {reviewerRole}
+          </span>
+        )}
+        {parentSessionId && (
+          <a
+            href={`/sessions/${encodeURIComponent(parentSessionId)}`}
+            onClick={(e) => e.stopPropagation()}
+            className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.03)] px-2 py-0.5 font-[var(--font-mono)] text-[10px] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-primary)] hover:no-underline"
+            title={`parent: ${parentSessionId}`}
+          >
+            parent:{shortSessionId(parentSessionId)}
+          </a>
+        )}
+        {(phaseLabel || round || reviewerRole || parentSessionId) && (session.branch || pr) && (
+          <span className="text-[9px] text-[var(--color-border-strong)]">&middot;</span>
+        )}
         {session.branch && (
           <span className="font-[var(--font-mono)] text-[10px] text-[var(--color-text-muted)]">
             {session.branch}
@@ -219,6 +253,37 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
             </DetailSection>
           )}
 
+          {(phaseLabel || round || reviewerRole || parentSessionId) && (
+            <DetailSection label="Workflow">
+              <div className="flex flex-wrap items-center gap-1.5 text-[12px] text-[var(--color-text-secondary)]">
+                {phaseLabel && (
+                  <span className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(88,166,255,0.08)] px-2 py-0.5 text-[11px] text-[var(--color-accent)]">
+                    {phaseLabel}
+                  </span>
+                )}
+                {round && (
+                  <span className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.04)] px-2 py-0.5 font-[var(--font-mono)] text-[11px]">
+                    round {round}
+                  </span>
+                )}
+                {reviewerRole && (
+                  <span className="rounded-[4px] border border-[rgba(63,185,80,0.25)] bg-[rgba(63,185,80,0.08)] px-2 py-0.5 text-[11px] text-[var(--color-status-ready)]">
+                    role: {reviewerRole}
+                  </span>
+                )}
+                {parentSessionId && (
+                  <a
+                    href={`/sessions/${encodeURIComponent(parentSessionId)}`}
+                    onClick={(e) => e.stopPropagation()}
+                    className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.03)] px-2 py-0.5 font-[var(--font-mono)] text-[11px] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-primary)] hover:no-underline"
+                  >
+                    parent {parentSessionId}
+                  </a>
+                )}
+              </div>
+            </DetailSection>
+          )}
+
           {pr && pr.ciChecks.length > 0 && (
             <DetailSection label="CI Checks">
               <CICheckList checks={pr.ciChecks} />
@@ -282,6 +347,11 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
       )}
     </div>
   );
+}
+
+function shortSessionId(sessionId: string): string {
+  if (sessionId.length <= 18) return sessionId;
+  return `${sessionId.slice(0, 8)}...${sessionId.slice(-6)}`;
 }
 
 function DetailSection({ label, children }: { label: string; children: React.ReactNode }) {

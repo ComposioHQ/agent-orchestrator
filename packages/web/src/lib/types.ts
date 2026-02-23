@@ -15,6 +15,8 @@ export type {
   ReviewDecision,
   MergeReadiness,
   PRState,
+  SessionPhase,
+  WorkflowMode,
 } from "@composio/ao-core/types";
 
 import {
@@ -24,12 +26,15 @@ import {
   TERMINAL_STATUSES,
   TERMINAL_ACTIVITIES,
   NON_RESTORABLE_STATUSES,
+  SESSION_PHASE,
   type CICheck as CoreCICheck,
   type MergeReadiness,
   type CIStatus,
   type SessionStatus,
   type ActivityState,
   type ReviewDecision,
+  type SessionPhase,
+  type WorkflowMode,
 } from "@composio/ao-core/types";
 
 // Re-export for use in client components
@@ -47,6 +52,15 @@ export { TERMINAL_STATUSES, TERMINAL_ACTIVITIES, NON_RESTORABLE_STATUSES };
  */
 export type AttentionLevel = "merge" | "respond" | "review" | "pending" | "working" | "done";
 
+export type DashboardReviewerRole = "architect" | "developer" | "product";
+
+export interface DashboardSubSessionInfo {
+  parentSessionId: string;
+  role: DashboardReviewerRole;
+  phase: SessionPhase;
+  round: number;
+}
+
 /**
  * Flattened session for dashboard rendering.
  * Maps to core Session but uses string dates (JSON-serializable for SSR/client boundary)
@@ -59,6 +73,9 @@ export interface DashboardSession {
   id: string;
   projectId: string;
   status: SessionStatus;
+  phase?: SessionPhase;
+  workflowMode?: WorkflowMode;
+  subSessionInfo?: DashboardSubSessionInfo | null;
   activity: ActivityState | null;
   branch: string | null;
   issueId: string | null; // Deprecated: use issueUrl instead
@@ -156,6 +173,50 @@ export interface SSEActivityEvent {
  */
 export function isPRRateLimited(pr: DashboardPR): boolean {
   return pr.mergeability.blockers.includes("API rate limited or unavailable");
+}
+
+function parsePositiveInt(raw: string | undefined): number | null {
+  if (!raw) return null;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
+export function getSessionPhaseLabel(session: Pick<DashboardSession, "phase">): string | null {
+  const phase = session.phase;
+  if (!phase || phase === SESSION_PHASE.NONE) return null;
+  const labels: Record<Exclude<SessionPhase, "none">, string> = {
+    planning: "planning",
+    plan_review: "plan review",
+    implementing: "implementing",
+    ci: "ci",
+    code_review: "code review",
+    ready_to_merge: "ready to merge",
+  };
+  return labels[phase];
+}
+
+export function getSessionRound(
+  session: Pick<DashboardSession, "phase" | "metadata" | "subSessionInfo">,
+): number | null {
+  if (session.subSessionInfo?.round && session.subSessionInfo.round > 0) {
+    return session.subSessionInfo.round;
+  }
+
+  const phase = session.phase ?? SESSION_PHASE.NONE;
+  const metadata = session.metadata ?? {};
+  switch (phase) {
+    case SESSION_PHASE.PLANNING:
+      return parsePositiveInt(metadata["planRound"] ?? metadata["reviewRound"]);
+    case SESSION_PHASE.PLAN_REVIEW:
+      return parsePositiveInt(metadata["reviewRound"]);
+    case SESSION_PHASE.IMPLEMENTING:
+      return parsePositiveInt(metadata["implementationRound"]);
+    case SESSION_PHASE.CODE_REVIEW:
+      return parsePositiveInt(metadata["codeReviewRound"]);
+    default:
+      return null;
+  }
 }
 
 /** Determines which attention zone a session belongs to */
