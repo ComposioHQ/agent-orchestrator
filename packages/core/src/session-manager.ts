@@ -11,9 +11,16 @@
  * Reference: scripts/claude-ao-session, scripts/send-to-session
  */
 
-import { statSync, existsSync, readdirSync, writeFileSync, mkdirSync, accessSync } from "node:fs";
+import {
+  statSync,
+  existsSync,
+  readdirSync,
+  writeFileSync,
+  mkdirSync,
+  accessSync,
+  constants,
+} from "node:fs";
 import { join, delimiter } from "node:path";
-import { constants } from "node:fs";
 import {
   isIssueNotFoundError,
   isRestorable,
