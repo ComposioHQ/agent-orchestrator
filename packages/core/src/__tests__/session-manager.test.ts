@@ -208,6 +208,15 @@ describe("spawn", () => {
     expect(session.branch).toMatch(/^feat\/app-\d+$/);
   });
 
+  it("sanitizes issueId containing '..' (invalid in git branch names)", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    const session = await sm.spawn({ projectId: "my-app", issueId: "foo..bar" });
+
+    // '..' is invalid in git refs, so it should be slugified
+    expect(session.branch).toBe("feat/foo-bar");
+  });
+
   it("uses tracker.branchName when tracker is available", async () => {
     const mockTracker: Tracker = {
       name: "mock-tracker",
@@ -433,8 +442,9 @@ describe("spawn", () => {
 
     expect(session.issueId).toBe("INT-9999");
     expect(session.branch).toBe("feat/INT-9999");
-    // tracker.branchName should NOT be called when issue wasn't resolved
+    // tracker.branchName and generatePrompt should NOT be called when issue wasn't resolved
     expect(mockTracker.branchName).not.toHaveBeenCalled();
+    expect(mockTracker.generatePrompt).not.toHaveBeenCalled();
     // Workspace and runtime should still be created
     expect(mockWorkspace.create).toHaveBeenCalled();
     expect(mockRuntime.create).toHaveBeenCalled();
