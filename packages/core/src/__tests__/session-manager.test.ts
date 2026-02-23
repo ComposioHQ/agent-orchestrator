@@ -744,7 +744,7 @@ describe("cleanup", () => {
     expect(result.skipped).toContain("app-1");
   });
 
-  it("kills sessions with dead runtimes", async () => {
+  it("kills sessions with dead runtimes and emits warning", async () => {
     const deadRuntime: Runtime = {
       ...mockRuntime,
       isAlive: vi.fn().mockResolvedValue(false),
@@ -771,6 +771,156 @@ describe("cleanup", () => {
     const result = await sm.cleanup();
 
     expect(result.killed).toContain("app-1");
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0].sessionId).toBe("app-1");
+    expect(result.warnings[0].message).toContain("no PR and no issue");
+  });
+
+  it("skips sessions with open PRs", async () => {
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn(),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn(),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+      pr: "https://github.com/org/repo/pull/10",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithSCM });
+    const result = await sm.cleanup();
+
+    expect(result.killed).toHaveLength(0);
+    expect(result.skipped).toContain("app-1");
+  });
+
+  it("does not check issue or runtime when PR is merged", async () => {
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("merged"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn(),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn(),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    const mockTracker: Tracker = {
+      name: "mock-tracker",
+      getIssue: vi.fn(),
+      isCompleted: vi.fn(),
+      issueUrl: vi.fn(),
+      branchName: vi.fn(),
+      generatePrompt: vi.fn(),
+    };
+
+    const deadRuntime: Runtime = {
+      ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(false),
+    };
+
+    const registryAll: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return deadRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        if (slot === "scm") return mockSCM;
+        if (slot === "tracker") return mockTracker;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+      pr: "https://github.com/org/repo/pull/10",
+      issue: "INT-1",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryAll });
+    const result = await sm.cleanup();
+
+    expect(result.killed).toContain("app-1");
+    // Short-circuited — should not have checked issue
+    expect(mockTracker.isCompleted).not.toHaveBeenCalled();
+  });
+
+  it("skips session when PR state check throws", async () => {
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockRejectedValue(new Error("API rate limit")),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn(),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn(),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+      pr: "https://github.com/org/repo/pull/10",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithSCM });
+    const result = await sm.cleanup();
+
+    expect(result.killed).toHaveLength(0);
+    expect(result.skipped).toContain("app-1");
+    expect(result.errors).toHaveLength(0);
   });
 });
 

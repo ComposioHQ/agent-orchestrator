@@ -122,6 +122,9 @@ export function registerSession(program: Command): void {
           for (const id of result.killed) {
             console.log(chalk.yellow(`  Would kill ${id}`));
           }
+          for (const { sessionId, message } of result.warnings) {
+            console.log(chalk.yellow(`  Warning (${sessionId}): ${message}`));
+          }
           if (result.killed.length > 0) {
             console.log(
               chalk.dim(
@@ -140,6 +143,9 @@ export function registerSession(program: Command): void {
             for (const id of result.killed) {
               console.log(chalk.green(`  Cleaned: ${id}`));
             }
+          }
+          for (const { sessionId, message } of result.warnings) {
+            console.log(chalk.yellow(`  Warning (${sessionId}): ${message}`));
           }
           if (result.errors.length > 0) {
             for (const { sessionId, error } of result.errors) {

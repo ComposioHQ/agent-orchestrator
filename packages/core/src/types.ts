@@ -990,6 +990,7 @@ export interface SessionManager {
 export interface CleanupResult {
   killed: string[];
   skipped: string[];
+  warnings: Array<{ sessionId: string; message: string }>;
   errors: Array<{ sessionId: string; error: string }>;
 }
 
