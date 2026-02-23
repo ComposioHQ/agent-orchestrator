@@ -9,6 +9,7 @@ import { getSessionsDir, getProjectBaseDir } from "../paths.js";
 import {
   SessionNotRestorableError,
   WorkspaceMissingError,
+  isIssueNotFoundError,
   type OrchestratorConfig,
   type PluginRegistry,
   type Runtime,
@@ -158,6 +159,53 @@ describe("spawn", () => {
 
     expect(session.branch).toBe("feat/INT-100");
     expect(session.issueId).toBe("INT-100");
+  });
+
+  it("sanitizes free-text issueId into a valid branch slug", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    const session = await sm.spawn({ projectId: "my-app", issueId: "fix login bug" });
+
+    expect(session.branch).toBe("feat/fix-login-bug");
+  });
+
+  it("preserves casing for branch-safe issue IDs without tracker", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    const session = await sm.spawn({ projectId: "my-app", issueId: "INT-9999" });
+
+    expect(session.branch).toBe("feat/INT-9999");
+  });
+
+  it("sanitizes issueId with special characters", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    const session = await sm.spawn({
+      projectId: "my-app",
+      issueId: "Fix: user can't login (SSO)",
+    });
+
+    expect(session.branch).toBe("feat/fix-user-can-t-login-sso");
+  });
+
+  it("truncates long slugs to 60 characters", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    const session = await sm.spawn({
+      projectId: "my-app",
+      issueId: "this is a very long issue description that should be truncated to sixty characters maximum",
+    });
+
+    expect(session.branch!.replace("feat/", "").length).toBeLessThanOrEqual(60);
+  });
+
+  it("falls back to sessionId when issueId sanitizes to empty string", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    const session = await sm.spawn({ projectId: "my-app", issueId: "!!!" });
+
+    // Slug is empty after sanitization, falls back to sessionId
+    expect(session.branch).toMatch(/^feat\/app-\d+$/);
   });
 
   it("uses tracker.branchName when tracker is available", async () => {
@@ -1610,5 +1658,35 @@ describe("PluginRegistry.loadBuiltins importFn", () => {
     // Should have attempted to import builtin plugins via the provided importFn
     expect(importedPackages.length).toBeGreaterThan(0);
     expect(importedPackages).toContain("@composio/ao-plugin-runtime-tmux");
+  });
+});
+
+describe("isIssueNotFoundError", () => {
+  it("matches 'Issue X not found'", () => {
+    expect(isIssueNotFoundError(new Error("Issue INT-9999 not found"))).toBe(true);
+  });
+
+  it("matches 'could not resolve to an Issue'", () => {
+    expect(isIssueNotFoundError(new Error("Could not resolve to an Issue"))).toBe(true);
+  });
+
+  it("matches 'no issue with identifier'", () => {
+    expect(isIssueNotFoundError(new Error("No issue with identifier ABC-123"))).toBe(true);
+  });
+
+  it("matches 'invalid issue format'", () => {
+    expect(isIssueNotFoundError(new Error("Invalid issue format: fix login bug"))).toBe(true);
+  });
+
+  it("does not match unrelated errors", () => {
+    expect(isIssueNotFoundError(new Error("Unauthorized"))).toBe(false);
+    expect(isIssueNotFoundError(new Error("Network timeout"))).toBe(false);
+    expect(isIssueNotFoundError(new Error("API key not found"))).toBe(false);
+  });
+
+  it("returns false for non-error values", () => {
+    expect(isIssueNotFoundError(null)).toBe(false);
+    expect(isIssueNotFoundError(undefined)).toBe(false);
+    expect(isIssueNotFoundError("string")).toBe(false);
   });
 });

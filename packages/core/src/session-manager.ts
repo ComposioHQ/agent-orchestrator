@@ -394,12 +394,17 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     } else if (spawnConfig.issueId && plugins.tracker && resolvedIssue) {
       branch = plugins.tracker.branchName(spawnConfig.issueId, project);
     } else if (spawnConfig.issueId) {
-      // Ad-hoc: sanitize free-text into a valid git branch name
-      const slug = spawnConfig.issueId
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-+|-+$/g, "")
-        .slice(0, 60);
+      // If the issueId is already branch-safe (e.g. "INT-9999"), use as-is.
+      // Otherwise sanitize free-text (e.g. "fix login bug") into a valid slug.
+      const id = spawnConfig.issueId;
+      const isBranchSafe = /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id);
+      const slug = isBranchSafe
+        ? id
+        : id
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-+|-+$/g, "")
+            .slice(0, 60);
       branch = `feat/${slug || sessionId}`;
     } else {
       branch = `session/${sessionId}`;
