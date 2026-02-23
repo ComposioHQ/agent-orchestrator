@@ -203,6 +203,10 @@ export interface SessionSpawnConfig {
   issueId?: string;
   branch?: string;
   prompt?: string;
+  /** Optional explicit phase (used by review sub-sessions). */
+  phase?: SessionPhase;
+  /** Optional parent/reviewer linkage (used by swarm review sessions). */
+  subSessionInfo?: SubSessionInfo;
 }
 
 /** Config for creating an orchestrator session */
@@ -881,12 +885,18 @@ export interface SwarmReviewConfig {
   roles: ReviewerRole[];
   maxRounds: number;
   codexReview: boolean;
+  /** Agent plugin name for this review phase (e.g. "codex", "claude-code"). */
+  agent?: string;
+  /** Optional per-role agent overrides for this review phase. */
+  roleAgents?: Partial<Record<ReviewerRole, string>>;
   rolePrompts?: Partial<Record<ReviewerRole, string>>;
 }
 
 /** Workflow configuration for a project. */
 export interface WorkflowConfig {
   mode: WorkflowMode;
+  /** Agent used for main coding loop (planning/implementing). */
+  codingAgent?: string;
   planReview?: SwarmReviewConfig;
   codeReview?: SwarmReviewConfig;
   autoCodeReview?: boolean;

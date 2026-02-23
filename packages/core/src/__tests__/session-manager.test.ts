@@ -229,6 +229,64 @@ describe("spawn", () => {
     expect(raw?.["workflowMode"]).toBe("full");
   });
 
+  it("uses workflow.codingAgent for full-mode worker session", async () => {
+    config.projects["my-app"] = {
+      ...config.projects["my-app"]!,
+      workflow: { mode: "full", codingAgent: "codex", autoCodeReview: true },
+    };
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.spawn({ projectId: "my-app" });
+
+    const getMock = vi.mocked(mockRegistry.get);
+    expect(getMock.mock.calls).toContainEqual(["agent", "codex"]);
+  });
+
+  it("uses role-specific review agent and writes sub-session metadata", async () => {
+    config.projects["my-app"] = {
+      ...config.projects["my-app"]!,
+      workflow: {
+        mode: "full",
+        codingAgent: "codex",
+        planReview: {
+          roles: ["architect", "developer", "product"],
+          maxRounds: 3,
+          codexReview: true,
+          roleAgents: { architect: "claude-code" },
+        },
+        autoCodeReview: true,
+      },
+    };
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const session = await sm.spawn({
+      projectId: "my-app",
+      branch: "review/app-1-architect",
+      phase: "plan_review",
+      subSessionInfo: {
+        parentSessionId: "app-1",
+        role: "architect",
+        phase: "plan_review",
+        round: 2,
+      },
+    });
+
+    expect(session.phase).toBe("plan_review");
+    expect(session.subSessionInfo).toEqual({
+      parentSessionId: "app-1",
+      role: "architect",
+      phase: "plan_review",
+      round: 2,
+    });
+    const raw = readMetadataRaw(sessionsDir, session.id);
+    expect(raw?.["parentSession"]).toBe("app-1");
+    expect(raw?.["role"]).toBe("architect");
+    expect(raw?.["reviewRound"]).toBe("2");
+
+    const getMock = vi.mocked(mockRegistry.get);
+    expect(getMock.mock.calls).toContainEqual(["agent", "claude-code"]);
+  });
+
   it("throws for unknown project", async () => {
     const sm = createSessionManager({ config, registry: mockRegistry });
     await expect(sm.spawn({ projectId: "nonexistent" })).rejects.toThrow("Unknown project");

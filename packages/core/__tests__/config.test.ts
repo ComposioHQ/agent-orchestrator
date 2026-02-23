@@ -141,19 +141,26 @@ projects:
     path: ${testDir}
     workflow:
       mode: full
+      codingAgent: codex
       planReview:
         roles: [architect, developer]
         maxRounds: 4
         codexReview: false
+        agent: claude-code
+        roleAgents:
+          architect: codex
 `,
       );
 
       const config = loadConfig(configPath);
       const workflow = config.projects["test-project"]?.workflow;
       expect(workflow?.mode).toBe("full");
+      expect(workflow?.codingAgent).toBe("codex");
       expect(workflow?.planReview?.roles).toEqual(["architect", "developer"]);
       expect(workflow?.planReview?.maxRounds).toBe(4);
       expect(workflow?.planReview?.codexReview).toBe(false);
+      expect(workflow?.planReview?.agent).toBe("claude-code");
+      expect(workflow?.planReview?.roleAgents?.["architect"]).toBe("codex");
     });
   });
 

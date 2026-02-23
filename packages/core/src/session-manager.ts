@@ -58,6 +58,7 @@ import {
   generateConfigHash,
   validateAndStoreOrigin,
 } from "./paths.js";
+import { resolveAgentName, type AgentRoutingContext } from "./agent-routing.js";
 
 /** Escape regex metacharacters in a string. */
 function escapeRegex(str: string): string {
@@ -253,9 +254,10 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   }
 
   /** Resolve which plugins to use for a project. */
-  function resolvePlugins(project: ProjectConfig) {
+  function resolvePlugins(project: ProjectConfig, agentRoutingContext?: AgentRoutingContext) {
     const runtime = registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime);
-    const agent = registry.get<Agent>("agent", project.agent ?? config.defaults.agent);
+    const agentName = resolveAgentName(config, project, agentRoutingContext);
+    const agent = registry.get<Agent>("agent", agentName);
     const workspace = registry.get<Workspace>(
       "workspace",
       project.workspace ?? config.defaults.workspace,
@@ -265,7 +267,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       : null;
     const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
 
-    return { runtime, agent, workspace, tracker, scm };
+    return { runtime, agent, workspace, tracker, scm, agentName };
   }
 
   /**
@@ -361,12 +363,20 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       throw new Error(`Unknown project: ${spawnConfig.projectId}`);
     }
 
-    const plugins = resolvePlugins(project);
+    const workflowMode = project.workflow?.mode ?? "simple";
+    const initialPhase =
+      spawnConfig.phase ?? (workflowMode === "full" ? SESSION_PHASE.PLANNING : SESSION_PHASE.NONE);
+    const subSessionInfo = spawnConfig.subSessionInfo ?? null;
+
+    const plugins = resolvePlugins(project, {
+      phase: initialPhase,
+      subSessionInfo,
+    });
     if (!plugins.runtime) {
       throw new Error(`Runtime plugin '${project.runtime ?? config.defaults.runtime}' not found`);
     }
     if (!plugins.agent) {
-      throw new Error(`Agent plugin '${project.agent ?? config.defaults.agent}' not found`);
+      throw new Error(`Agent plugin '${plugins.agentName}' not found`);
     }
 
     // Validate issue exists BEFORE creating any resources
@@ -534,9 +544,6 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     }
 
     // Write metadata and run post-launch setup — clean up on failure
-    const workflowMode = project.workflow?.mode ?? "simple";
-    const initialPhase = workflowMode === "full" ? SESSION_PHASE.PLANNING : SESSION_PHASE.NONE;
-
     const session: Session = {
       id: sessionId,
       projectId: spawnConfig.projectId,
@@ -552,6 +559,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       createdAt: new Date(),
       lastActivityAt: new Date(),
       metadata: {},
+      subSessionInfo,
     };
 
     try {
@@ -563,6 +571,9 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         tmuxName, // Store tmux name for mapping
         issue: spawnConfig.issueId,
         project: spawnConfig.projectId,
+        parentSession: subSessionInfo?.parentSessionId,
+        role: subSessionInfo?.role,
+        reviewRound: subSessionInfo ? String(subSessionInfo.round) : undefined,
         workflowMode,
         createdAt: new Date().toISOString(),
         runtimeHandle: JSON.stringify(handle),
@@ -745,7 +756,10 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
       const session = metadataToSession(sessionName, raw, createdAt, modifiedAt);
 
-      const plugins = resolvePlugins(project);
+      const plugins = resolvePlugins(project, {
+        phase: session.phase,
+        subSessionInfo: session.subSessionInfo,
+      });
       // Cap per-session enrichment at 2s — subprocess calls (tmux/ps) can be
       // slow under load. If we time out, session keeps its metadata values.
       const enrichTimeout = new Promise<void>((resolve) => setTimeout(resolve, 2_000));
@@ -779,7 +793,10 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
       const session = metadataToSession(sessionId, raw, createdAt, modifiedAt);
 
-      const plugins = resolvePlugins(project);
+      const plugins = resolvePlugins(project, {
+        phase: session.phase,
+        subSessionInfo: session.subSessionInfo,
+      });
       await ensureHandleAndEnrich(session, sessionId, project, plugins);
 
       return session;
@@ -1024,7 +1041,10 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     //    session (status "working", agent exited) would not be detected as terminal
     //    and isRestorable would reject it.
     const session = metadataToSession(sessionId, raw);
-    const plugins = resolvePlugins(project);
+    const plugins = resolvePlugins(project, {
+      phase: session.phase,
+      subSessionInfo: session.subSessionInfo,
+    });
     await enrichSessionWithRuntimeState(session, plugins, true);
 
     // 3. Validate restorability
@@ -1040,7 +1060,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       throw new Error(`Runtime plugin '${project.runtime ?? config.defaults.runtime}' not found`);
     }
     if (!plugins.agent) {
-      throw new Error(`Agent plugin '${project.agent ?? config.defaults.agent}' not found`);
+      throw new Error(`Agent plugin '${plugins.agentName}' not found`);
     }
 
     // 5. Check workspace

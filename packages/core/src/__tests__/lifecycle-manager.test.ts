@@ -631,6 +631,43 @@ describe("check (single session)", () => {
     // Status should remain managed independently.
     expect(lm.getStates().get("app-1")).toBe("working");
   });
+
+  it("resolves agent by workflow phase for status probing", async () => {
+    config.projects["my-app"] = {
+      ...config.projects["my-app"]!,
+      workflow: { mode: "full", codingAgent: "codex", autoCodeReview: true },
+    };
+
+    const registryWithNamedAgents: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, _name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        return null;
+      }),
+    };
+
+    const session = makeSession({ status: "working", phase: "implementing" });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      phase: "implementing",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithNamedAgents,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    const getMock = vi.mocked(registryWithNamedAgents.get);
+    expect(getMock.mock.calls).toContainEqual(["agent", "codex"]);
+  });
 });
 
 describe("reactions", () => {

@@ -64,11 +64,14 @@ const SwarmReviewConfigSchema = z.object({
     .default(["architect", "developer", "product"]),
   maxRounds: z.number().min(1).max(10).default(3),
   codexReview: z.boolean().default(true),
+  agent: z.string().optional(),
+  roleAgents: z.record(z.enum(["architect", "developer", "product"]), z.string()).optional(),
   rolePrompts: z.record(z.string()).optional(),
 });
 
 const WorkflowConfigSchema = z.object({
   mode: z.enum(["simple", "full"]).default("simple"),
+  codingAgent: z.string().optional(),
   planReview: SwarmReviewConfigSchema.optional(),
   codeReview: SwarmReviewConfigSchema.optional(),
   autoCodeReview: z.boolean().default(true),

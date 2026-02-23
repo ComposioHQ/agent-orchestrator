@@ -36,6 +36,7 @@ import {
 import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
 import { createPhaseManager } from "./phase-manager.js";
+import { resolveAgentName } from "./agent-routing.js";
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
@@ -185,7 +186,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const project = config.projects[session.projectId];
     if (!project) return session.status;
 
-    const agent = registry.get<Agent>("agent", project.agent ?? config.defaults.agent);
+    const agentName = resolveAgentName(config, project, {
+      phase: session.phase,
+      subSessionInfo: session.subSessionInfo,
+    });
+    const agent = registry.get<Agent>("agent", agentName);
     const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
 
     // 1. Check if runtime is alive

@@ -55,6 +55,10 @@ export type { LifecycleManagerDeps } from "./lifecycle-manager.js";
 export { createPhaseManager } from "./phase-manager.js";
 export type { PhaseManagerDeps } from "./phase-manager.js";
 
+// Agent routing — phase/role-aware agent selection
+export { resolveAgentName } from "./agent-routing.js";
+export type { AgentRoutingContext } from "./agent-routing.js";
+
 // Prompt builder — layered prompt composition
 export { buildPrompt, BASE_AGENT_PROMPT } from "./prompt-builder.js";
 export type { PromptBuildConfig } from "./prompt-builder.js";
