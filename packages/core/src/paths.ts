@@ -157,6 +157,18 @@ export function parseTmuxName(tmuxName: string): {
 }
 
 /**
+ * Get the path to the JSONL event log for a given config.
+ * Format: ~/.agent-orchestrator/{hash}-events.jsonl
+ *
+ * All events from all projects under this config are written to one log,
+ * making it easy to audit the full orchestrator history.
+ */
+export function getEventLogPath(configPath: string): string {
+  const hash = generateConfigHash(configPath);
+  return join(expandHome("~/.agent-orchestrator"), `${hash}-events.jsonl`);
+}
+
+/**
  * Expand ~ to home directory.
  */
 export function expandHome(filepath: string): string {

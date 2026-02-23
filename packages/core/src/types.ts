@@ -746,6 +746,19 @@ export interface OrchestratorEvent {
 }
 
 // =============================================================================
+// EVENT LOG
+// =============================================================================
+
+/** Append-only JSONL event log that records all orchestrator events to disk. */
+export interface EventLog {
+  /** Append an event to the log. Best-effort — errors are swallowed. */
+  log(event: OrchestratorEvent): void;
+
+  /** Read the last N events from the log. Returns [] if the log doesn't exist. */
+  readRecent(limit?: number): OrchestratorEvent[];
+}
+
+// =============================================================================
 // REACTIONS
 // =============================================================================
 
@@ -768,6 +781,16 @@ export interface ReactionConfig {
 
   /** Escalate to human notification after this many failures or this duration */
   escalateAfter?: number | string;
+
+  /**
+   * Re-trigger the reaction when session stays in the same problematic state.
+   * Duration string ("10m", "30s", "1h") — how long to wait between re-sends.
+   * Only applies to "send-to-agent" actions. Without this, reactions only fire
+   * on state transitions; with this, they also fire periodically while stuck.
+   *
+   * Example: retriggerAfter: "10m" — re-send every 10 minutes if CI still failing.
+   */
+  retriggerAfter?: string;
 
   /** Threshold duration for time-based triggers (e.g. "10m" for stuck detection) */
   threshold?: string;
