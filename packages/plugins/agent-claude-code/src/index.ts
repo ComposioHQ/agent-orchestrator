@@ -605,7 +605,9 @@ function createClaudeCodeAgent(): Agent {
         parts.push("--append-system-prompt", shellEscape(config.systemPrompt));
       }
 
-      if (config.prompt) {
+      if (config.promptFile) {
+        parts.push("-p", `"$(cat ${shellEscape(config.promptFile)})"`);
+      } else if (config.prompt) {
         parts.push("-p", shellEscape(config.prompt));
       }
 

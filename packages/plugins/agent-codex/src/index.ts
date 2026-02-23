@@ -51,7 +51,9 @@ function createCodexAgent(): Agent {
         parts.push("--system-prompt", shellEscape(config.systemPrompt));
       }
 
-      if (config.prompt) {
+      if (config.promptFile) {
+        parts.push("--", `"$(cat ${shellEscape(config.promptFile)})"`);
+      } else if (config.prompt) {
         // Use `--` to end option parsing so prompts starting with `-` aren't
         // misinterpreted as flags.
         parts.push("--", shellEscape(config.prompt));

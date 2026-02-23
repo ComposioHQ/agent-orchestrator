@@ -112,6 +112,24 @@ function validateStatus(raw: string | undefined): SessionStatus {
   return "spawning";
 }
 
+/** Parse a PR URL (typically GitHub) into a PRInfo-like object, or return null. */
+function parsePrUrl(prUrl: string | undefined, branch?: string): Session["pr"] {
+  if (!prUrl) return null;
+  const ghMatch = prUrl.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
+  return {
+    number: ghMatch
+      ? parseInt(ghMatch[3], 10)
+      : parseInt(prUrl.match(/\/(\d+)$/)?.[1] ?? "0", 10),
+    url: prUrl,
+    title: "",
+    owner: ghMatch?.[1] ?? "",
+    repo: ghMatch?.[2] ?? "",
+    branch: branch ?? "",
+    baseBranch: "",
+    isDraft: false,
+  };
+}
+
 /** Reconstruct a Session object from raw metadata key=value pairs. */
 function metadataToSession(
   sessionId: SessionId,
@@ -126,25 +144,7 @@ function metadataToSession(
     activity: null,
     branch: meta["branch"] || null,
     issueId: meta["issue"] || null,
-    pr: meta["pr"]
-      ? (() => {
-          // Parse owner/repo from GitHub PR URL: https://github.com/owner/repo/pull/123
-          const prUrl = meta["pr"];
-          const ghMatch = prUrl.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
-          return {
-            number: ghMatch
-              ? parseInt(ghMatch[3], 10)
-              : parseInt(prUrl.match(/\/(\d+)$/)?.[1] ?? "0", 10),
-            url: prUrl,
-            title: "",
-            owner: ghMatch?.[1] ?? "",
-            repo: ghMatch?.[2] ?? "",
-            branch: meta["branch"] ?? "",
-            baseBranch: "",
-            isDraft: false,
-          };
-        })()
-      : null,
+    pr: parsePrUrl(meta["pr"], meta["branch"]),
     workspacePath: meta["worktree"] || null,
     runtimeHandle: meta["runtimeHandle"]
       ? safeJsonParse<RuntimeHandle>(meta["runtimeHandle"])
@@ -446,12 +446,25 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       userPrompt: spawnConfig.prompt,
     });
 
+    // Write long prompts to a file to avoid shell/tmux truncation
+    const finalPrompt = composedPrompt ?? spawnConfig.prompt;
+    let promptFile: string | undefined;
+    if (finalPrompt) {
+      const baseDir = config.configPath
+        ? getProjectBaseDir(config.configPath, project.path)
+        : sessionsDir;
+      mkdirSync(baseDir, { recursive: true });
+      promptFile = join(baseDir, `${sessionId}-prompt.md`);
+      writeFileSync(promptFile, finalPrompt, "utf-8");
+    }
+
     // Get agent launch config and create runtime — clean up workspace on failure
     const agentLaunchConfig = {
       sessionId,
       projectConfig: project,
       issueId: spawnConfig.issueId,
-      prompt: composedPrompt ?? spawnConfig.prompt,
+      prompt: finalPrompt,
+      promptFile,
       permissions: project.agentConfig?.permissions,
       model: project.agentConfig?.model,
     };
