@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { createPhaseManager } from "../phase-manager.js";
 import { readMetadataRaw, writeMetadata } from "../metadata.js";
 import { writePlanArtifact, writeReviewArtifact } from "../review-artifacts.js";
-import type { OrchestratorConfig, Session } from "../types.js";
+import type { OrchestratorConfig, Session, SessionManager } from "../types.js";
 import { SESSION_PHASE } from "../types.js";
 import { getSessionsDir, getProjectBaseDir } from "../paths.js";
 
@@ -195,5 +195,77 @@ describe("phase manager transitions", () => {
     const raw = readMetadataRaw(sessionsDir, session.id);
     expect(raw?.["phase"]).toBe(SESSION_PHASE.PLANNING);
     expect(raw?.["reviewRound"]).toBe("3");
+  });
+
+  it("spawns plan-review sub-sessions when no review artifacts exist", async () => {
+    const mockSessionManager = {
+      list: vi.fn().mockResolvedValue([]),
+      spawn: vi.fn().mockResolvedValue(makeSession({ id: "app-2", phase: SESSION_PHASE.PLAN_REVIEW })),
+    } as unknown as SessionManager;
+    const phaseManager = createPhaseManager({ config, sessionManager: mockSessionManager });
+    const session = makeSession({
+      phase: SESSION_PHASE.PLAN_REVIEW,
+      issueId: "INT-42",
+      metadata: { phase: SESSION_PHASE.PLAN_REVIEW, reviewRound: "1" },
+    });
+
+    writeMetadata(sessionsDir, session.id, {
+      worktree: session.workspacePath ?? "",
+      branch: session.branch ?? "",
+      status: session.status,
+      phase: session.phase,
+      reviewRound: "1",
+      issue: "INT-42",
+      project: session.projectId,
+    });
+    writePlanArtifact(session.workspacePath ?? "", "# Plan\n\nShip feature X");
+
+    const phase = await phaseManager.check(session);
+    expect(phase).toBe(SESSION_PHASE.PLAN_REVIEW);
+
+    const spawnMock = vi.mocked(mockSessionManager.spawn);
+    expect(spawnMock).toHaveBeenCalledTimes(3);
+    const roles = spawnMock.mock.calls.map((call) => call[0].subSessionInfo?.role).sort();
+    expect(roles).toEqual(["architect", "developer", "product"]);
+    expect(spawnMock.mock.calls[0]?.[0].phase).toBe(SESSION_PHASE.PLAN_REVIEW);
+  });
+
+  it("does not spawn reviewers already running for the same round", async () => {
+    const existingReviewer = makeSession({
+      id: "app-2",
+      phase: SESSION_PHASE.PLAN_REVIEW,
+      subSessionInfo: {
+        parentSessionId: "app-1",
+        role: "architect",
+        phase: SESSION_PHASE.PLAN_REVIEW,
+        round: 2,
+      },
+    });
+    const mockSessionManager = {
+      list: vi.fn().mockResolvedValue([existingReviewer]),
+      spawn: vi.fn().mockResolvedValue(makeSession({ id: "app-3", phase: SESSION_PHASE.PLAN_REVIEW })),
+    } as unknown as SessionManager;
+    const phaseManager = createPhaseManager({ config, sessionManager: mockSessionManager });
+    const session = makeSession({
+      phase: SESSION_PHASE.PLAN_REVIEW,
+      metadata: { phase: SESSION_PHASE.PLAN_REVIEW, reviewRound: "2" },
+    });
+
+    writeMetadata(sessionsDir, session.id, {
+      worktree: session.workspacePath ?? "",
+      branch: session.branch ?? "",
+      status: session.status,
+      phase: session.phase,
+      reviewRound: "2",
+      project: session.projectId,
+    });
+    writePlanArtifact(session.workspacePath ?? "", "# Plan\n\nRound 2");
+
+    await phaseManager.check(session);
+
+    const spawnMock = vi.mocked(mockSessionManager.spawn);
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    const spawnedRoles = spawnMock.mock.calls.map((call) => call[0].subSessionInfo?.role).sort();
+    expect(spawnedRoles).toEqual(["developer", "product"]);
   });
 });

@@ -173,7 +173,7 @@ interface ReactionTracker {
 /** Create a LifecycleManager instance. */
 export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleManager {
   const { config, registry, sessionManager } = deps;
-  const phaseManager = createPhaseManager({ config });
+  const phaseManager = createPhaseManager({ config, sessionManager });
 
   const states = new Map<SessionId, SessionStatus>();
   const reactionTrackers = new Map<string, ReactionTracker>(); // "sessionId:reactionKey"
