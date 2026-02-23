@@ -25,6 +25,15 @@ const TEST_HASH_SESSION = `abcdef123456-${TEST_SESSION}`;
 let terminal: DirectTerminalServer;
 let port: number;
 
+function recreateSession(sessionName: string): void {
+  try {
+    execFileSync(TMUX, ["kill-session", "-t", sessionName], { timeout: 5000 });
+  } catch {
+    // Session may not exist yet.
+  }
+  execFileSync(TMUX, ["new-session", "-d", "-s", sessionName, "-x", "80", "-y", "24"], { timeout: 5000 });
+}
+
 // =============================================================================
 // Helpers
 // =============================================================================
@@ -103,8 +112,8 @@ function waitForMarker(ws: WebSocket, marker: string, timeoutMs = 3000): Promise
 
 beforeAll(() => {
   // Create test tmux sessions
-  execFileSync(TMUX, ["new-session", "-d", "-s", TEST_SESSION, "-x", "80", "-y", "24"], { timeout: 5000 });
-  execFileSync(TMUX, ["new-session", "-d", "-s", TEST_HASH_SESSION, "-x", "80", "-y", "24"], { timeout: 5000 });
+  recreateSession(TEST_SESSION);
+  recreateSession(TEST_HASH_SESSION);
 
   // Start the server on a random port
   terminal = createDirectTerminalServer(TMUX);
@@ -120,6 +129,10 @@ afterEach(() => {
     session.ws.close();
   }
   terminal.activeSessions.clear();
+
+  // Ensure each test starts with clean tmux shell state.
+  recreateSession(TEST_SESSION);
+  recreateSession(TEST_HASH_SESSION);
 });
 
 afterAll(() => {
