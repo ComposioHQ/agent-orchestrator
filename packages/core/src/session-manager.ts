@@ -105,6 +105,8 @@ async function assertAgentBinaryAvailable(agent: Agent): Promise<void> {
 
 function isExecutable(filePath: string): boolean {
   try {
+    const stats = statSync(filePath);
+    if (!stats.isFile()) return false;
     accessSync(filePath, constants.X_OK);
     return true;
   } catch {
@@ -113,8 +115,8 @@ function isExecutable(filePath: string): boolean {
 }
 
 function findExecutableOnPath(binary: string): string | null {
-  const pathEnv = process.env.PATH ?? "";
-  const pathParts = pathEnv.split(delimiter).filter(Boolean);
+  const pathEnv = process.env.PATH ?? process.env.Path ?? "";
+  const pathParts = pathEnv.split(delimiter).map((part) => (part === "" ? "." : part));
   const isWindows = process.platform === "win32";
   const pathExtRaw = process.env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM";
   const pathExts = isWindows
