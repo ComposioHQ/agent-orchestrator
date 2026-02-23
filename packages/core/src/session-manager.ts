@@ -17,6 +17,7 @@ import {
   isIssueNotFoundError,
   isRestorable,
   NON_RESTORABLE_STATUSES,
+  SESSION_PHASE,
   SessionNotRestorableError,
   WorkspaceMissingError,
   type SessionManager,
@@ -25,6 +26,8 @@ import {
   type SessionSpawnConfig,
   type OrchestratorSpawnConfig,
   type SessionStatus,
+  type SessionPhase,
+  type ReviewerRole,
   type CleanupResult,
   type OrchestratorConfig,
   type ProjectConfig,
@@ -104,12 +107,29 @@ const VALID_STATUSES: ReadonlySet<string> = new Set([
   "terminated",
 ]);
 
+/** Valid session phases for validation. */
+const VALID_PHASES: ReadonlySet<string> = new Set([
+  "none",
+  "planning",
+  "plan_review",
+  "implementing",
+  "ci",
+  "code_review",
+  "ready_to_merge",
+]);
+
 /** Validate and normalize a status string. */
 function validateStatus(raw: string | undefined): SessionStatus {
   // Bash scripts write "starting" — treat as "working"
   if (raw === "starting") return "working";
   if (raw && VALID_STATUSES.has(raw)) return raw as SessionStatus;
   return "spawning";
+}
+
+/** Validate and normalize a phase string. */
+function validatePhase(raw: string | undefined): SessionPhase {
+  if (raw && VALID_PHASES.has(raw)) return raw as SessionPhase;
+  return SESSION_PHASE.NONE;
 }
 
 /** Reconstruct a Session object from raw metadata key=value pairs. */
@@ -123,6 +143,7 @@ function metadataToSession(
     id: sessionId,
     projectId: meta["project"] ?? "",
     status: validateStatus(meta["status"]),
+    phase: validatePhase(meta["phase"]),
     activity: null,
     branch: meta["branch"] || null,
     issueId: meta["issue"] || null,
@@ -153,6 +174,15 @@ function metadataToSession(
     createdAt: meta["createdAt"] ? new Date(meta["createdAt"]) : (createdAt ?? new Date()),
     lastActivityAt: modifiedAt ?? new Date(),
     metadata: meta,
+    subSessionInfo:
+      meta["parentSession"] && meta["role"] && meta["reviewRound"]
+        ? {
+            parentSessionId: meta["parentSession"],
+            role: meta["role"] as ReviewerRole,
+            phase: validatePhase(meta["phase"]),
+            round: Number.parseInt(meta["reviewRound"], 10) || 1,
+          }
+        : null,
   };
 }
 
@@ -491,10 +521,14 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     }
 
     // Write metadata and run post-launch setup — clean up on failure
+    const workflowMode = project.workflow?.mode ?? "simple";
+    const initialPhase = workflowMode === "full" ? SESSION_PHASE.PLANNING : SESSION_PHASE.NONE;
+
     const session: Session = {
       id: sessionId,
       projectId: spawnConfig.projectId,
       status: "spawning",
+      phase: initialPhase,
       activity: "active",
       branch,
       issueId: spawnConfig.issueId ?? null,
@@ -512,9 +546,11 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         worktree: workspacePath,
         branch,
         status: "spawning",
+        phase: initialPhase,
         tmuxName, // Store tmux name for mapping
         issue: spawnConfig.issueId,
         project: spawnConfig.projectId,
+        workflowMode,
         createdAt: new Date().toISOString(),
         runtimeHandle: JSON.stringify(handle),
       });
@@ -624,6 +660,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       id: sessionId,
       projectId: orchestratorConfig.projectId,
       status: "working",
+      phase: SESSION_PHASE.NONE,
       activity: "active",
       branch: project.defaultBranch,
       issueId: null,
@@ -641,8 +678,10 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         worktree: project.path,
         branch: project.defaultBranch,
         status: "working",
+        phase: SESSION_PHASE.NONE,
         tmuxName,
         project: orchestratorConfig.projectId,
+        workflowMode: project.workflow?.mode ?? "simple",
         createdAt: new Date().toISOString(),
         runtimeHandle: JSON.stringify(handle),
       });
@@ -952,11 +991,16 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         worktree: raw["worktree"] ?? "",
         branch: raw["branch"] ?? "",
         status: raw["status"] ?? "killed",
+        phase: raw["phase"],
         tmuxName: raw["tmuxName"],
         issue: raw["issue"],
         pr: raw["pr"],
         summary: raw["summary"],
         project: raw["project"],
+        parentSession: raw["parentSession"],
+        role: raw["role"],
+        reviewRound: raw["reviewRound"],
+        workflowMode: raw["workflowMode"],
         createdAt: raw["createdAt"],
         runtimeHandle: raw["runtimeHandle"],
       });

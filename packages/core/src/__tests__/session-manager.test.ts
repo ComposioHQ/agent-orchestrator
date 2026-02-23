@@ -140,6 +140,7 @@ describe("spawn", () => {
 
     expect(session.id).toBe("app-1");
     expect(session.status).toBe("spawning");
+    expect(session.phase).toBe("none");
     expect(session.projectId).toBe("my-app");
     expect(session.runtimeHandle).toEqual(makeHandle("rt-1"));
 
@@ -208,8 +209,24 @@ describe("spawn", () => {
     const meta = readMetadata(sessionsDir, "app-1");
     expect(meta).not.toBeNull();
     expect(meta!.status).toBe("spawning");
+    expect(meta!.phase).toBe("none");
     expect(meta!.project).toBe("my-app");
     expect(meta!.issue).toBe("INT-42");
+  });
+
+  it("starts in planning phase for full workflow mode", async () => {
+    config.projects["my-app"] = {
+      ...config.projects["my-app"]!,
+      workflow: { mode: "full", autoCodeReview: true },
+    };
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const session = await sm.spawn({ projectId: "my-app", issueId: "INT-42" });
+
+    expect(session.phase).toBe("planning");
+    const raw = readMetadataRaw(sessionsDir, "app-1");
+    expect(raw?.["phase"]).toBe("planning");
+    expect(raw?.["workflowMode"]).toBe("full");
   });
 
   it("throws for unknown project", async () => {

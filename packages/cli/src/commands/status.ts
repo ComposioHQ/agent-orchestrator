@@ -318,6 +318,7 @@ async function showFallbackStatus(): Promise<void> {
         id: session,
         projectId: "",
         status: "working",
+        phase: "none",
         activity: null,
         branch: null,
         issueId: null,

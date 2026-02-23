@@ -44,10 +44,15 @@ describe("writeMetadata + readMetadata", () => {
       worktree: "/tmp/w",
       branch: "main",
       status: "pr_open",
+      phase: "plan_review",
       issue: "https://linear.app/team/issue/INT-100",
       pr: "https://github.com/org/repo/pull/42",
       summary: "Implementing feature X",
       project: "my-app",
+      parentSession: "app-1",
+      role: "architect",
+      reviewRound: "2",
+      workflowMode: "full",
       createdAt: "2025-01-01T00:00:00.000Z",
       runtimeHandle: '{"id":"tmux-1","runtimeName":"tmux"}',
     });
@@ -55,9 +60,14 @@ describe("writeMetadata + readMetadata", () => {
     const meta = readMetadata(dataDir, "app-2");
     expect(meta).not.toBeNull();
     expect(meta!.issue).toBe("https://linear.app/team/issue/INT-100");
+    expect(meta!.phase).toBe("plan_review");
     expect(meta!.pr).toBe("https://github.com/org/repo/pull/42");
     expect(meta!.summary).toBe("Implementing feature X");
     expect(meta!.project).toBe("my-app");
+    expect(meta!.parentSession).toBe("app-1");
+    expect(meta!.role).toBe("architect");
+    expect(meta!.reviewRound).toBe("2");
+    expect(meta!.workflowMode).toBe("full");
     expect(meta!.createdAt).toBe("2025-01-01T00:00:00.000Z");
     expect(meta!.runtimeHandle).toBe('{"id":"tmux-1","runtimeName":"tmux"}');
   });

@@ -41,6 +41,27 @@ export type SessionStatus =
   | "done"
   | "terminated";
 
+/** Session phase (orthogonal to status, used for multi-phase workflows). */
+export type SessionPhase =
+  | "none"
+  | "planning"
+  | "plan_review"
+  | "implementing"
+  | "ci"
+  | "code_review"
+  | "ready_to_merge";
+
+/** Session phase constants. */
+export const SESSION_PHASE = {
+  NONE: "none" as const,
+  PLANNING: "planning" as const,
+  PLAN_REVIEW: "plan_review" as const,
+  IMPLEMENTING: "implementing" as const,
+  CI: "ci" as const,
+  CODE_REVIEW: "code_review" as const,
+  READY_TO_MERGE: "ready_to_merge" as const,
+} satisfies Record<string, SessionPhase>;
+
 /** Activity state as detected by the agent plugin */
 export type ActivityState =
   | "active" // agent is processing (thinking, writing code)
@@ -136,6 +157,9 @@ export interface Session {
   /** Current lifecycle status */
   status: SessionStatus;
 
+  /** Current workflow phase (multi-phase orchestration) */
+  phase: SessionPhase;
+
   /** Activity state from agent plugin (null = not yet determined) */
   activity: ActivityState | null;
 
@@ -168,6 +192,9 @@ export interface Session {
 
   /** Metadata key-value pairs */
   metadata: Record<string, string>;
+
+  /** Parent/sub-session linkage for reviewer swarms (optional). */
+  subSessionInfo?: SubSessionInfo | null;
 }
 
 /** Config for creating a new session */
@@ -182,6 +209,17 @@ export interface SessionSpawnConfig {
 export interface OrchestratorSpawnConfig {
   projectId: string;
   systemPrompt?: string;
+}
+
+/** Reviewer role for swarm review sessions. */
+export type ReviewerRole = "architect" | "developer" | "product";
+
+/** Linkage metadata for a sub-session spawned from a parent session. */
+export interface SubSessionInfo {
+  parentSessionId: SessionId;
+  role: ReviewerRole;
+  phase: SessionPhase;
+  round: number;
 }
 
 // =============================================================================
@@ -832,6 +870,25 @@ export interface DefaultPlugins {
   notifiers: string[];
 }
 
+/** Project workflow mode. */
+export type WorkflowMode = "simple" | "full";
+
+/** Swarm review behavior for a specific phase. */
+export interface SwarmReviewConfig {
+  roles: ReviewerRole[];
+  maxRounds: number;
+  codexReview: boolean;
+  rolePrompts?: Partial<Record<ReviewerRole, string>>;
+}
+
+/** Workflow configuration for a project. */
+export interface WorkflowConfig {
+  mode: WorkflowMode;
+  planReview?: SwarmReviewConfig;
+  codeReview?: SwarmReviewConfig;
+  autoCodeReview?: boolean;
+}
+
 export interface ProjectConfig {
   /** Display name */
   name: string;
@@ -871,6 +928,9 @@ export interface ProjectConfig {
 
   /** Agent-specific configuration */
   agentConfig?: AgentSpecificConfig;
+
+  /** Optional workflow configuration for multi-phase orchestration. */
+  workflow?: WorkflowConfig;
 
   /** Per-project reaction overrides */
   reactions?: Record<string, Partial<ReactionConfig>>;
@@ -958,11 +1018,16 @@ export interface SessionMetadata {
   worktree: string;
   branch: string;
   status: string;
+  phase?: string;
   tmuxName?: string; // Globally unique tmux session name (includes hash)
   issue?: string;
   pr?: string;
   summary?: string;
   project?: string;
+  parentSession?: string;
+  role?: string;
+  reviewRound?: string;
+  workflowMode?: string;
   createdAt?: string;
   runtimeHandle?: string;
   restoredAt?: string;

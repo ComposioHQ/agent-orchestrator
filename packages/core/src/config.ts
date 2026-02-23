@@ -58,6 +58,22 @@ const AgentSpecificConfigSchema = z
   })
   .passthrough();
 
+const SwarmReviewConfigSchema = z.object({
+  roles: z
+    .array(z.enum(["architect", "developer", "product"]))
+    .default(["architect", "developer", "product"]),
+  maxRounds: z.number().min(1).max(10).default(3),
+  codexReview: z.boolean().default(true),
+  rolePrompts: z.record(z.string()).optional(),
+});
+
+const WorkflowConfigSchema = z.object({
+  mode: z.enum(["simple", "full"]).default("simple"),
+  planReview: SwarmReviewConfigSchema.optional(),
+  codeReview: SwarmReviewConfigSchema.optional(),
+  autoCodeReview: z.boolean().default(true),
+});
+
 const ProjectConfigSchema = z.object({
   name: z.string().optional(),
   repo: z.string(),
@@ -75,6 +91,7 @@ const ProjectConfigSchema = z.object({
   symlinks: z.array(z.string()).optional(),
   postCreate: z.array(z.string()).optional(),
   agentConfig: AgentSpecificConfigSchema.optional(),
+  workflow: WorkflowConfigSchema.optional(),
   reactions: z.record(ReactionConfigSchema.partial()).optional(),
   agentRules: z.string().optional(),
   agentRulesFile: z.string().optional(),
@@ -148,6 +165,14 @@ function applyProjectDefaults(config: OrchestratorConfig): OrchestratorConfig {
     // Infer tracker from repo if not set (default to github issues)
     if (!project.tracker) {
       project.tracker = { plugin: "github" };
+    }
+
+    // Default workflow mode keeps existing behavior unchanged.
+    if (!project.workflow) {
+      project.workflow = { mode: "simple", autoCodeReview: true };
+    } else {
+      project.workflow.mode ??= "simple";
+      project.workflow.autoCodeReview ??= true;
     }
   }
 

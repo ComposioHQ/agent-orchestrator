@@ -112,6 +112,49 @@ projects:
     it("should throw error if config not found", () => {
       expect(() => loadConfig()).toThrow("No agent-orchestrator.yaml found");
     });
+
+    it("applies workflow defaults for projects", () => {
+      const configPath = join(testDir, "workflow-defaults.yaml");
+      writeFileSync(
+        configPath,
+        `
+projects:
+  test-project:
+    repo: test/repo
+    path: ${testDir}
+`,
+      );
+
+      const config = loadConfig(configPath);
+      expect(config.projects["test-project"]?.workflow?.mode).toBe("simple");
+      expect(config.projects["test-project"]?.workflow?.autoCodeReview).toBe(true);
+    });
+
+    it("parses explicit full workflow config", () => {
+      const configPath = join(testDir, "workflow-full.yaml");
+      writeFileSync(
+        configPath,
+        `
+projects:
+  test-project:
+    repo: test/repo
+    path: ${testDir}
+    workflow:
+      mode: full
+      planReview:
+        roles: [architect, developer]
+        maxRounds: 4
+        codexReview: false
+`,
+      );
+
+      const config = loadConfig(configPath);
+      const workflow = config.projects["test-project"]?.workflow;
+      expect(workflow?.mode).toBe("full");
+      expect(workflow?.planReview?.roles).toEqual(["architect", "developer"]);
+      expect(workflow?.planReview?.maxRounds).toBe(4);
+      expect(workflow?.planReview?.codexReview).toBe(false);
+    });
   });
 
   describe("Config Discovery Priority", () => {

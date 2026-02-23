@@ -92,11 +92,16 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
     worktree: raw["worktree"] ?? "",
     branch: raw["branch"] ?? "",
     status: raw["status"] ?? "unknown",
+    phase: raw["phase"],
     tmuxName: raw["tmuxName"],
     issue: raw["issue"],
     pr: raw["pr"],
     summary: raw["summary"],
     project: raw["project"],
+    parentSession: raw["parentSession"],
+    role: raw["role"],
+    reviewRound: raw["reviewRound"],
+    workflowMode: raw["workflowMode"],
     createdAt: raw["createdAt"],
     runtimeHandle: raw["runtimeHandle"],
     dashboardPort: raw["dashboardPort"] ? Number(raw["dashboardPort"]) : undefined,
@@ -134,11 +139,16 @@ export function writeMetadata(
     status: metadata.status,
   };
 
+  if (metadata.phase) data["phase"] = metadata.phase;
   if (metadata.tmuxName) data["tmuxName"] = metadata.tmuxName;
   if (metadata.issue) data["issue"] = metadata.issue;
   if (metadata.pr) data["pr"] = metadata.pr;
   if (metadata.summary) data["summary"] = metadata.summary;
   if (metadata.project) data["project"] = metadata.project;
+  if (metadata.parentSession) data["parentSession"] = metadata.parentSession;
+  if (metadata.role) data["role"] = metadata.role;
+  if (metadata.reviewRound) data["reviewRound"] = metadata.reviewRound;
+  if (metadata.workflowMode) data["workflowMode"] = metadata.workflowMode;
   if (metadata.createdAt) data["createdAt"] = metadata.createdAt;
   if (metadata.runtimeHandle) data["runtimeHandle"] = metadata.runtimeHandle;
   if (metadata.dashboardPort !== undefined)

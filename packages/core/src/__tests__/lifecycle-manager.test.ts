@@ -33,6 +33,7 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     id: "app-1",
     projectId: "my-app",
     status: "spawning",
+    phase: "none",
     activity: "active",
     branch: "feat/test",
     issueId: null,
