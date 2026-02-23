@@ -116,7 +116,7 @@ export function registerSession(program: Command): void {
           }
         }
 
-        if (result.killed.length === 0 && result.errors.length === 0) {
+        if (result.killed.length === 0 && result.errors.length === 0 && result.warnings.length === 0) {
           console.log(chalk.dim("  No sessions to clean up."));
         } else {
           for (const id of result.killed) {
@@ -136,7 +136,7 @@ export function registerSession(program: Command): void {
       } else {
         const result = await sm.cleanup(opts.project);
 
-        if (result.killed.length === 0 && result.errors.length === 0) {
+        if (result.killed.length === 0 && result.errors.length === 0 && result.warnings.length === 0) {
           console.log(chalk.dim("  No sessions to clean up."));
         } else {
           if (result.killed.length > 0) {

@@ -815,7 +815,12 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         let shouldKill = false;
 
         // Check PR state first — open PR means never clean up
-        if (session.pr && plugins.scm) {
+        if (session.pr) {
+          if (!plugins.scm) {
+            // Has PR but no SCM plugin — can't verify state, skip to be safe
+            result.skipped.push(session.id);
+            continue;
+          }
           try {
             const prState = await plugins.scm.getPRState(session.pr);
             const isPrClosed = prState === PR_STATE.MERGED || prState === PR_STATE.CLOSED;
