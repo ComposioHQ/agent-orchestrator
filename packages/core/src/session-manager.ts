@@ -364,9 +364,17 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     }
 
     const workflowMode = project.workflow?.mode ?? "simple";
-    const initialPhase =
-      spawnConfig.phase ?? (workflowMode === "full" ? SESSION_PHASE.PLANNING : SESSION_PHASE.NONE);
     const subSessionInfo = spawnConfig.subSessionInfo ?? null;
+
+    if (spawnConfig.phase && subSessionInfo && spawnConfig.phase !== subSessionInfo.phase) {
+      throw new Error(
+        `Phase mismatch: spawn phase '${spawnConfig.phase}' must match sub-session phase '${subSessionInfo.phase}'`,
+      );
+    }
+
+    const explicitPhase = spawnConfig.phase ?? subSessionInfo?.phase;
+    const initialPhase =
+      explicitPhase ?? (workflowMode === "full" ? SESSION_PHASE.PLANNING : SESSION_PHASE.NONE);
 
     const plugins = resolvePlugins(project, {
       phase: initialPhase,

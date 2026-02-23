@@ -287,6 +287,59 @@ describe("spawn", () => {
     expect(getMock.mock.calls).toContainEqual(["agent", "claude-code"]);
   });
 
+  it("derives phase from sub-session info when explicit phase is omitted", async () => {
+    config.projects["my-app"] = {
+      ...config.projects["my-app"]!,
+      workflow: {
+        mode: "full",
+        codingAgent: "codex",
+        planReview: {
+          roles: ["architect", "developer", "product"],
+          maxRounds: 3,
+          codexReview: true,
+          roleAgents: { architect: "claude-code" },
+        },
+        autoCodeReview: true,
+      },
+    };
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const session = await sm.spawn({
+      projectId: "my-app",
+      branch: "review/app-1-architect",
+      subSessionInfo: {
+        parentSessionId: "app-1",
+        role: "architect",
+        phase: "plan_review",
+        round: 1,
+      },
+    });
+
+    expect(session.phase).toBe("plan_review");
+    const raw = readMetadataRaw(sessionsDir, session.id);
+    expect(raw?.["phase"]).toBe("plan_review");
+
+    const getMock = vi.mocked(mockRegistry.get);
+    expect(getMock.mock.calls).toContainEqual(["agent", "claude-code"]);
+  });
+
+  it("throws when explicit phase mismatches sub-session phase", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    await expect(
+      sm.spawn({
+        projectId: "my-app",
+        phase: "implementing",
+        subSessionInfo: {
+          parentSessionId: "app-1",
+          role: "architect",
+          phase: "plan_review",
+          round: 1,
+        },
+      }),
+    ).rejects.toThrow("Phase mismatch");
+  });
+
   it("throws for unknown project", async () => {
     const sm = createSessionManager({ config, registry: mockRegistry });
     await expect(sm.spawn({ projectId: "nonexistent" })).rejects.toThrow("Unknown project");
