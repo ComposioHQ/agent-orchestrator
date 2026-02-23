@@ -4,8 +4,11 @@ import type { Session, RuntimeHandle, AgentLaunchConfig } from "@composio/ao-cor
 // ---------------------------------------------------------------------------
 // Hoisted mocks
 // ---------------------------------------------------------------------------
-const { mockExecFileAsync } = vi.hoisted(() => ({
+const { mockExecFileAsync, mockWriteFile, mockMkdir, mockChmod } = vi.hoisted(() => ({
   mockExecFileAsync: vi.fn(),
+  mockWriteFile: vi.fn().mockResolvedValue(undefined),
+  mockMkdir: vi.fn().mockResolvedValue(undefined),
+  mockChmod: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("node:child_process", () => {
@@ -14,6 +17,12 @@ vi.mock("node:child_process", () => {
   });
   return { execFile: fn };
 });
+
+vi.mock("node:fs/promises", () => ({
+  writeFile: mockWriteFile,
+  mkdir: mockMkdir,
+  chmod: mockChmod,
+}));
 
 import { create, manifest, default as defaultExport } from "./index.js";
 
@@ -169,6 +178,18 @@ describe("getEnvironment", () => {
     const env = agent.getEnvironment(makeLaunchConfig());
     expect(env["AO_ISSUE_ID"]).toBeUndefined();
   });
+
+  it("prepends .ao-hooks/bin to PATH", () => {
+    const env = agent.getEnvironment(makeLaunchConfig());
+    expect(env["PATH"]).toMatch(/^\/workspace\/repo\/\.ao-hooks\/bin:/);
+  });
+
+  it("preserves system PATH after hooks bin directory", () => {
+    const env = agent.getEnvironment(makeLaunchConfig());
+    const parts = env["PATH"]!.split(":");
+    expect(parts.length).toBeGreaterThan(1);
+    expect(parts[0]).toBe("/workspace/repo/.ao-hooks/bin");
+  });
 });
 
 // =========================================================================
@@ -266,5 +287,99 @@ describe("getSessionInfo", () => {
   it("always returns null (not implemented)", async () => {
     expect(await agent.getSessionInfo(makeSession())).toBeNull();
     expect(await agent.getSessionInfo(makeSession({ workspacePath: "/some/path" }))).toBeNull();
+  });
+});
+
+// =========================================================================
+// setupWorkspaceHooks — installs git/gh wrapper scripts
+// =========================================================================
+describe("setupWorkspaceHooks", () => {
+  const agent = create();
+
+  it("creates .ao-hooks/bin directory", async () => {
+    await agent.setupWorkspaceHooks!("/workspace/project", { dataDir: "/data/sessions" });
+    expect(mockMkdir).toHaveBeenCalledWith("/workspace/project/.ao-hooks/bin", { recursive: true });
+  });
+
+  it("writes git wrapper script and makes it executable", async () => {
+    await agent.setupWorkspaceHooks!("/workspace/project", { dataDir: "/data/sessions" });
+    expect(mockWriteFile).toHaveBeenCalledWith(
+      "/workspace/project/.ao-hooks/bin/git",
+      expect.stringContaining("#!/usr/bin/env bash"),
+      "utf-8",
+    );
+    expect(mockChmod).toHaveBeenCalledWith("/workspace/project/.ao-hooks/bin/git", 0o755);
+  });
+
+  it("writes gh wrapper script and makes it executable", async () => {
+    await agent.setupWorkspaceHooks!("/workspace/project", { dataDir: "/data/sessions" });
+    expect(mockWriteFile).toHaveBeenCalledWith(
+      "/workspace/project/.ao-hooks/bin/gh",
+      expect.stringContaining("#!/usr/bin/env bash"),
+      "utf-8",
+    );
+    expect(mockChmod).toHaveBeenCalledWith("/workspace/project/.ao-hooks/bin/gh", 0o755);
+  });
+
+  it("git wrapper script contains branch detection logic", async () => {
+    await agent.setupWorkspaceHooks!("/workspace/project", { dataDir: "/data/sessions" });
+    const gitCall = mockWriteFile.mock.calls.find(
+      (c: unknown[]) => c[0] === "/workspace/project/.ao-hooks/bin/git",
+    );
+    expect(gitCall).toBeDefined();
+    const script = gitCall![1] as string;
+    expect(script).toContain("checkout");
+    expect(script).toContain("switch");
+    expect(script).toContain("_update_key");
+    expect(script).toContain("AO_SESSION");
+    expect(script).toContain("AO_DATA_DIR");
+  });
+
+  it("gh wrapper script contains PR detection logic", async () => {
+    await agent.setupWorkspaceHooks!("/workspace/project", { dataDir: "/data/sessions" });
+    const ghCall = mockWriteFile.mock.calls.find(
+      (c: unknown[]) => c[0] === "/workspace/project/.ao-hooks/bin/gh",
+    );
+    expect(ghCall).toBeDefined();
+    const script = ghCall![1] as string;
+    expect(script).toContain("pr_open");
+    expect(script).toContain("merged");
+    expect(script).toContain("github");
+  });
+
+  it("is idempotent (safe to call multiple times)", async () => {
+    await agent.setupWorkspaceHooks!("/workspace/project", { dataDir: "/data/sessions" });
+    await agent.setupWorkspaceHooks!("/workspace/project", { dataDir: "/data/sessions" });
+    expect(mockMkdir).toHaveBeenCalledTimes(2);
+  });
+});
+
+// =========================================================================
+// postLaunchSetup — writes hooks to session workspace
+// =========================================================================
+describe("postLaunchSetup", () => {
+  const agent = create();
+
+  it("writes hooks to session workspacePath", async () => {
+    await agent.postLaunchSetup!(makeSession({ workspacePath: "/worktree/session-1" }));
+    expect(mockMkdir).toHaveBeenCalledWith("/worktree/session-1/.ao-hooks/bin", {
+      recursive: true,
+    });
+    expect(mockWriteFile).toHaveBeenCalledWith(
+      "/worktree/session-1/.ao-hooks/bin/git",
+      expect.stringContaining("AO_SESSION"),
+      "utf-8",
+    );
+    expect(mockWriteFile).toHaveBeenCalledWith(
+      "/worktree/session-1/.ao-hooks/bin/gh",
+      expect.stringContaining("AO_SESSION"),
+      "utf-8",
+    );
+  });
+
+  it("skips when workspacePath is null", async () => {
+    await agent.postLaunchSetup!(makeSession({ workspacePath: null }));
+    expect(mockMkdir).not.toHaveBeenCalled();
+    expect(mockWriteFile).not.toHaveBeenCalled();
   });
 });
