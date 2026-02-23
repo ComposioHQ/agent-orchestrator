@@ -323,7 +323,7 @@ export interface AgentLaunchConfig {
   /**
    * System prompt to pass to the agent for orchestrator context.
    * - Claude Code: --append-system-prompt
-   * - Codex: --system-prompt or AGENTS.md
+   * - Codex: -c developer_instructions=... or AGENTS.md
    * - Aider: --system-prompt flag
    * - OpenCode: equivalent mechanism
    *
@@ -338,7 +338,8 @@ export interface AgentLaunchConfig {
    *
    * When set, takes precedence over systemPrompt.
    * - Claude Code: --append-system-prompt "$(cat /path/to/file)"
-   * - Codex/Aider: similar shell substitution
+   * - Codex: -c "developer_instructions=$(cat /path/to/file)"
+   * - Aider: --system-prompt "$(cat /path/to/file)"
    */
   systemPromptFile?: string;
 }
