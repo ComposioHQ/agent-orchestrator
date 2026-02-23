@@ -397,6 +397,68 @@ describe("phase manager transitions", () => {
     expect(roles).toEqual(["architect", "product"]);
   });
 
+  it("respawns planning swarm role when previous planner session is terminal", async () => {
+    config.projects["my-app"] = {
+      ...config.projects["my-app"]!,
+      workflow: {
+        mode: "full",
+        planningSwarm: {
+          roles: ["architect", "product"],
+          maxAgents: 2,
+        },
+        autoCodeReview: true,
+      },
+    };
+
+    const exitedPlanner = makeSession({
+      id: "app-2",
+      status: "killed",
+      activity: "exited",
+      phase: SESSION_PHASE.PLANNING,
+      subSessionInfo: {
+        parentSessionId: "app-1",
+        role: "architect",
+        phase: SESSION_PHASE.PLANNING,
+        round: 1,
+      },
+    });
+    const activePlanner = makeSession({
+      id: "app-3",
+      phase: SESSION_PHASE.PLANNING,
+      subSessionInfo: {
+        parentSessionId: "app-1",
+        role: "product",
+        phase: SESSION_PHASE.PLANNING,
+        round: 1,
+      },
+    });
+
+    const mockSessionManager = {
+      list: vi.fn().mockResolvedValue([exitedPlanner, activePlanner]),
+      spawn: vi.fn().mockResolvedValue(makeSession({ id: "app-4", phase: SESSION_PHASE.PLANNING })),
+    } as unknown as SessionManager;
+    const phaseManager = createPhaseManager({ config, sessionManager: mockSessionManager });
+    const session = makeSession({
+      phase: SESSION_PHASE.PLANNING,
+      metadata: { phase: SESSION_PHASE.PLANNING, planRound: "1" },
+    });
+
+    writeMetadata(sessionsDir, session.id, {
+      worktree: session.workspacePath ?? "",
+      branch: session.branch ?? "",
+      status: session.status,
+      phase: session.phase,
+      planRound: "1",
+      project: session.projectId,
+    });
+
+    await phaseManager.check(session);
+
+    const spawnMock = vi.mocked(mockSessionManager.spawn);
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(spawnMock.mock.calls[0]?.[0].subSessionInfo?.role).toBe("architect");
+  });
+
   it("keeps planning on round > 1 until plan has round marker", async () => {
     const phaseManager = createPhaseManager({ config });
     const session = makeSession({
@@ -462,6 +524,69 @@ describe("phase manager transitions", () => {
     expect(spawnMock.mock.calls[0]?.[0].phase).toBe(SESSION_PHASE.IMPLEMENTING);
     const prompt = spawnMock.mock.calls[0]?.[0].prompt ?? "";
     expect(prompt).toContain("Assigned work item");
+  });
+
+  it("respawns implementation swarm role when previous implementer session is terminal", async () => {
+    config.projects["my-app"] = {
+      ...config.projects["my-app"]!,
+      workflow: {
+        mode: "full",
+        implementationSwarm: {
+          roles: ["developer", "product"],
+          maxAgents: 2,
+        },
+        autoCodeReview: true,
+      },
+    };
+
+    const exitedImplementer = makeSession({
+      id: "app-2",
+      status: "killed",
+      activity: "exited",
+      phase: SESSION_PHASE.IMPLEMENTING,
+      subSessionInfo: {
+        parentSessionId: "app-1",
+        role: "developer",
+        phase: SESSION_PHASE.IMPLEMENTING,
+        round: 1,
+      },
+    });
+    const activeImplementer = makeSession({
+      id: "app-3",
+      phase: SESSION_PHASE.IMPLEMENTING,
+      subSessionInfo: {
+        parentSessionId: "app-1",
+        role: "product",
+        phase: SESSION_PHASE.IMPLEMENTING,
+        round: 1,
+      },
+    });
+
+    const mockSessionManager = {
+      list: vi.fn().mockResolvedValue([exitedImplementer, activeImplementer]),
+      spawn: vi.fn().mockResolvedValue(makeSession({ id: "app-4", phase: SESSION_PHASE.IMPLEMENTING })),
+    } as unknown as SessionManager;
+    const phaseManager = createPhaseManager({ config, sessionManager: mockSessionManager });
+    const session = makeSession({
+      phase: SESSION_PHASE.IMPLEMENTING,
+      metadata: { phase: SESSION_PHASE.IMPLEMENTING, implementationRound: "1" },
+    });
+
+    writeMetadata(sessionsDir, session.id, {
+      worktree: session.workspacePath ?? "",
+      branch: session.branch ?? "",
+      status: session.status,
+      phase: session.phase,
+      implementationRound: "1",
+      project: session.projectId,
+    });
+    writePlanArtifact(session.workspacePath ?? "", "# Plan\n\n- Implement API");
+
+    await phaseManager.check(session);
+
+    const spawnMock = vi.mocked(mockSessionManager.spawn);
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(spawnMock.mock.calls[0]?.[0].subSessionInfo?.role).toBe("developer");
   });
 
   it("transitions implementing to code_review when PR reaches review phase", async () => {

@@ -240,7 +240,9 @@ export function createPhaseManager(deps: PhaseManagerDeps): PhaseManager {
     const roles = applyMaxAgents(normalizeRoles(swarm?.roles), swarm?.maxAgents);
     if (roles.length === 0) return;
 
-    const existingRoles = await getExistingSwarmRoles(session, SESSION_PHASE.PLANNING, round);
+    const existingRoles = await getExistingSwarmRoles(session, SESSION_PHASE.PLANNING, round, {
+      activeOnly: true,
+    });
 
     for (const role of roles) {
       if (existingRoles.has(role)) continue;
@@ -365,7 +367,9 @@ export function createPhaseManager(deps: PhaseManagerDeps): PhaseManager {
     const roles = applyMaxAgents(configuredRoles, swarm?.maxAgents);
     if (roles.length === 0) return;
 
-    const existingRoles = await getExistingSwarmRoles(session, SESSION_PHASE.IMPLEMENTING, round);
+    const existingRoles = await getExistingSwarmRoles(session, SESSION_PHASE.IMPLEMENTING, round, {
+      activeOnly: true,
+    });
     const planContent = readPlanArtifact(session.workspacePath) ?? "";
     const workItems = splitPlanIntoWorkItems(planContent, roles.length);
 
