@@ -58,8 +58,10 @@ _meta="$AO_DATA_DIR/$AO_SESSION"
 
 _update_key() {
   local k="$1" v="$2" tmp="\${_meta}.tmp.$$"
+  # Escape sed special characters in value (& | / \\)
+  local ev=$(printf '%s' "$v" | sed 's/[&|\\/]/\\\\&/g')
   if grep -q "^$k=" "$_meta" 2>/dev/null; then
-    sed "s|^$k=.*|$k=$v|" "$_meta" > "$tmp"
+    sed "s|^$k=.*|$k=$ev|" "$_meta" > "$tmp"
   else
     cp "$_meta" "$tmp"
     printf '%s=%s\\n' "$k" "$v" >> "$tmp"
@@ -120,8 +122,10 @@ _ao_ok=1
 
 _update_key() {
   local k="$1" v="$2" tmp="\${_meta}.tmp.$$"
+  # Escape sed special characters in value (& | / \\)
+  local ev=$(printf '%s' "$v" | sed 's/[&|\\/]/\\\\&/g')
   if grep -q "^$k=" "$_meta" 2>/dev/null; then
-    sed "s|^$k=.*|$k=$v|" "$_meta" > "$tmp"
+    sed "s|^$k=.*|$k=$ev|" "$_meta" > "$tmp"
   else
     cp "$_meta" "$tmp"
     printf '%s=%s\\n' "$k" "$v" >> "$tmp"
