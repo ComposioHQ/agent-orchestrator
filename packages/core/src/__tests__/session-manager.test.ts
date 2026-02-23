@@ -433,9 +433,45 @@ describe("spawn", () => {
 
     expect(session.issueId).toBe("INT-9999");
     expect(session.branch).toBe("feat/INT-9999");
+    // tracker.branchName should NOT be called when issue wasn't resolved
+    expect(mockTracker.branchName).not.toHaveBeenCalled();
     // Workspace and runtime should still be created
     expect(mockWorkspace.create).toHaveBeenCalled();
     expect(mockRuntime.create).toHaveBeenCalled();
+  });
+
+  it("succeeds with ad-hoc free-text when tracker returns 'invalid issue format'", async () => {
+    const mockTracker: Tracker = {
+      name: "mock-tracker",
+      getIssue: vi.fn().mockRejectedValue(new Error("invalid issue format: fix login bug")),
+      isCompleted: vi.fn().mockResolvedValue(false),
+      issueUrl: vi.fn().mockReturnValue(""),
+      branchName: vi.fn().mockReturnValue(""),
+      generatePrompt: vi.fn().mockResolvedValue(""),
+    };
+
+    const registryWithTracker: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        if (slot === "tracker") return mockTracker;
+        return null;
+      }),
+    };
+
+    const sm = createSessionManager({
+      config,
+      registry: registryWithTracker,
+    });
+
+    const session = await sm.spawn({ projectId: "my-app", issueId: "fix login bug" });
+
+    expect(session.issueId).toBe("fix login bug");
+    expect(session.branch).toBe("feat/fix-login-bug");
+    expect(mockTracker.branchName).not.toHaveBeenCalled();
+    expect(mockWorkspace.create).toHaveBeenCalled();
   });
 
   it("fails on tracker auth errors", async () => {
