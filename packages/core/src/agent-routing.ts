@@ -82,9 +82,16 @@ export function resolveAgentName(
     return defaultAgent;
   }
 
-  if (!context.subSessionInfo || !isReviewPhase(context.phase)) {
+  if (!context.subSessionInfo) {
+    if (isReviewPhase(context.phase)) {
+      return getReviewConfig(project, context.phase)?.agent ?? codingAgent;
+    }
+    return codingAgent;
+  }
+
+  if (!isReviewPhase(context.phase)) {
     const executionConfig = getExecutionConfig(project, context.phase);
-    if (executionConfig && context.subSessionInfo) {
+    if (executionConfig) {
       const role = context.subSessionInfo.role;
       return executionConfig.roleAgents?.[role] ?? executionConfig.agent ?? codingAgent;
     }

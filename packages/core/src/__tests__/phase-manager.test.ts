@@ -205,6 +205,52 @@ describe("phase manager transitions", () => {
     expect(raw?.["reviewRound"]).toBe("3");
   });
 
+  it("stays in plan_review when changes requested at max round", async () => {
+    config.projects["my-app"] = {
+      ...config.projects["my-app"]!,
+      workflow: {
+        mode: "full",
+        planReview: {
+          roles: ["architect", "developer", "product"],
+          maxRounds: 2,
+          codexReview: true,
+        },
+        autoCodeReview: true,
+      },
+    };
+
+    const phaseManager = createPhaseManager({ config });
+    const session = makeSession({
+      phase: SESSION_PHASE.PLAN_REVIEW,
+      metadata: { phase: SESSION_PHASE.PLAN_REVIEW, reviewRound: "2" },
+    });
+
+    writeMetadata(sessionsDir, session.id, {
+      worktree: session.workspacePath ?? "",
+      branch: session.branch ?? "",
+      status: session.status,
+      phase: session.phase,
+      reviewRound: "2",
+      project: session.projectId,
+    });
+
+    writeReviewArtifact(session.workspacePath ?? "", {
+      phase: "plan_review",
+      round: 2,
+      role: "architect",
+      decision: "changes_requested",
+      timestamp: "2026-02-23T10:30:00Z",
+      content: "needs changes",
+    });
+
+    const phase = await phaseManager.check(session);
+    expect(phase).toBe(SESSION_PHASE.PLAN_REVIEW);
+
+    const raw = readMetadataRaw(sessionsDir, session.id);
+    expect(raw?.["phase"]).toBe(SESSION_PHASE.PLAN_REVIEW);
+    expect(raw?.["reviewRound"]).toBe("2");
+  });
+
   it("spawns plan-review sub-sessions when no review artifacts exist", async () => {
     const mockSessionManager = {
       list: vi.fn().mockResolvedValue([]),
@@ -741,6 +787,58 @@ describe("phase manager transitions", () => {
     const raw = readMetadataRaw(sessionsDir, session.id);
     expect(raw?.["codeReviewRound"]).toBe("3");
     expect(raw?.["implementationRound"]).toBe("2");
+  });
+
+  it("stays in code_review when changes requested at max round", async () => {
+    config.projects["my-app"] = {
+      ...config.projects["my-app"]!,
+      workflow: {
+        mode: "full",
+        codeReview: {
+          roles: ["architect", "developer", "product"],
+          maxRounds: 2,
+          codexReview: true,
+        },
+        autoCodeReview: true,
+      },
+    };
+
+    const phaseManager = createPhaseManager({ config });
+    const session = makeSession({
+      phase: SESSION_PHASE.CODE_REVIEW,
+      metadata: {
+        phase: SESSION_PHASE.CODE_REVIEW,
+        codeReviewRound: "2",
+        implementationRound: "4",
+      },
+    });
+
+    writeMetadata(sessionsDir, session.id, {
+      worktree: session.workspacePath ?? "",
+      branch: session.branch ?? "",
+      status: session.status,
+      phase: session.phase,
+      codeReviewRound: "2",
+      implementationRound: "4",
+      project: session.projectId,
+    });
+
+    writeReviewArtifact(session.workspacePath ?? "", {
+      phase: "code_review",
+      round: 2,
+      role: "architect",
+      decision: "changes_requested",
+      timestamp: "2026-02-23T10:45:00Z",
+      content: "fix issues",
+    });
+
+    const phase = await phaseManager.check(session);
+    expect(phase).toBe(SESSION_PHASE.CODE_REVIEW);
+
+    const raw = readMetadataRaw(sessionsDir, session.id);
+    expect(raw?.["phase"]).toBe(SESSION_PHASE.CODE_REVIEW);
+    expect(raw?.["codeReviewRound"]).toBe("2");
+    expect(raw?.["implementationRound"]).toBe("4");
   });
 
   it("completes full workflow loop across two code-review rounds", async () => {

@@ -435,7 +435,10 @@ export function createPhaseManager(deps: PhaseManagerDeps): PhaseManager {
         }
 
         if (reviewState.hasChangesRequested) {
-          const nextRound = String(Math.min(round + 1, maxRounds));
+          if (round >= maxRounds) {
+            return session.phase;
+          }
+          const nextRound = String(round + 1);
           return transitionPhase(session, SESSION_PHASE.PLANNING, {
             reviewRound: nextRound,
             planRound: nextRound,
@@ -479,7 +482,10 @@ export function createPhaseManager(deps: PhaseManagerDeps): PhaseManager {
         }
 
         if (reviewState.hasChangesRequested) {
-          const nextReviewRound = String(Math.min(round + 1, maxRounds));
+          if (round >= maxRounds) {
+            return session.phase;
+          }
+          const nextReviewRound = String(round + 1);
           const implementationRound = String(parseRound(session.metadata["implementationRound"]) + 1);
           return transitionPhase(session, SESSION_PHASE.IMPLEMENTING, {
             codeReviewRound: nextReviewRound,

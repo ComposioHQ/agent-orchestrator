@@ -114,6 +114,29 @@ describe("resolveAgentName", () => {
     ).toBe("claude-code");
   });
 
+  it("uses review phase agent for parent review session without sub-session role", () => {
+    const project = makeProject({
+      workflow: {
+        mode: "full",
+        codingAgent: "codex",
+        planReview: {
+          roles: ["architect", "developer", "product"],
+          maxRounds: 3,
+          codexReview: true,
+          agent: "claude-code",
+        },
+        autoCodeReview: true,
+      },
+    });
+    const config = makeConfig(project);
+
+    expect(
+      resolveAgentName(config, project, {
+        phase: SESSION_PHASE.PLAN_REVIEW,
+      }),
+    ).toBe("claude-code");
+  });
+
   it("falls back to coding agent for review sub-session without review config", () => {
     const project = makeProject({
       workflow: { mode: "full", codingAgent: "codex", autoCodeReview: true },
