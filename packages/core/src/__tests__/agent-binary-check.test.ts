@@ -1,20 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, delimiter } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { getSessionsDir, getProjectBaseDir } from "../paths.js";
 import type { OrchestratorConfig, PluginRegistry, Runtime, Agent, Workspace } from "../types.js";
-
-const execFileMock = vi.fn();
-const execFilePromisifyMock = vi.fn();
-
-vi.mock("node:child_process", () => {
-  const execFile = Object.assign(execFileMock, {
-    [Symbol.for("nodejs.util.promisify.custom")]: execFilePromisifyMock,
-  });
-  return { execFile };
-});
 
 let tmpDir: string;
 let configPath: string;
@@ -24,10 +14,10 @@ let mockAgent: Agent;
 let mockWorkspace: Workspace;
 let mockRegistry: PluginRegistry;
 let config: OrchestratorConfig;
+let originalPath: string | undefined;
 
 beforeEach(() => {
-  execFileMock.mockReset();
-  execFilePromisifyMock.mockReset();
+  originalPath = process.env.PATH;
 
   tmpDir = join(tmpdir(), `ao-test-binary-check-${randomUUID()}`);
   mkdirSync(tmpDir, { recursive: true });
@@ -115,6 +105,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  process.env.PATH = originalPath;
+
   const projectBaseDir = getProjectBaseDir(configPath, join(tmpDir, "my-app"));
   if (existsSync(projectBaseDir)) {
     rmSync(projectBaseDir, { recursive: true, force: true });
@@ -124,7 +116,7 @@ afterEach(() => {
 
 describe("agent binary preflight", () => {
   it("fails before workspace/runtime when binary is missing", async () => {
-    execFilePromisifyMock.mockRejectedValueOnce(new Error("not found"));
+    process.env.PATH = tmpDir;
 
     const { createSessionManager } = await import("../session-manager.js");
     const sm = createSessionManager({ config, registry: mockRegistry });
@@ -136,15 +128,12 @@ describe("agent binary preflight", () => {
 
   it("skips binary check when agent does not provide getBinaryName", async () => {
     delete (mockAgent as Partial<Agent>).getBinaryName;
-    execFilePromisifyMock.mockImplementation(() => {
-      throw new Error("should not be called");
-    });
+    process.env.PATH = [tmpDir, originalPath].filter(Boolean).join(delimiter);
 
     const { createSessionManager } = await import("../session-manager.js");
     const sm = createSessionManager({ config, registry: mockRegistry });
 
     await sm.spawn({ projectId: "my-app" });
-    expect(execFileMock).not.toHaveBeenCalled();
     expect(mockWorkspace.create).toHaveBeenCalled();
     expect(mockRuntime.create).toHaveBeenCalled();
   });

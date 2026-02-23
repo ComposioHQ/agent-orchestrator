@@ -11,10 +11,9 @@
  * Reference: scripts/claude-ao-session, scripts/send-to-session
  */
 
-import { statSync, existsSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { statSync, existsSync, readdirSync, writeFileSync, mkdirSync, accessSync } from "node:fs";
+import { join, delimiter } from "node:path";
+import { constants } from "node:fs";
 import {
   isIssueNotFoundError,
   isRestorable,
@@ -58,8 +57,6 @@ import {
   validateAndStoreOrigin,
 } from "./paths.js";
 
-const execFileAsync = promisify(execFile);
-
 /** Escape regex metacharacters in a string. */
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -91,14 +88,42 @@ function safeJsonParse<T>(str: string): T | null {
 async function assertAgentBinaryAvailable(agent: Agent): Promise<void> {
   const binary = agent.getBinaryName ? agent.getBinaryName() : undefined;
   if (!binary) return;
-  try {
-    await execFileAsync("which", [binary], { timeout: 10_000 });
-  } catch (err) {
+  const resolved = findExecutableOnPath(binary);
+  if (!resolved) {
     throw new Error(
       `Missing required agent binary: ${binary}. Install it and ensure "${binary}" is on PATH.`,
-      { cause: err },
     );
   }
+}
+
+function isExecutable(filePath: string): boolean {
+  try {
+    accessSync(filePath, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function findExecutableOnPath(binary: string): string | null {
+  const pathEnv = process.env.PATH ?? "";
+  const pathParts = pathEnv.split(delimiter).filter(Boolean);
+  const isWindows = process.platform === "win32";
+  const pathExtRaw = process.env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM";
+  const pathExts = isWindows
+    ? pathExtRaw.split(";").filter(Boolean)
+    : [""];
+
+  const hasExt = isWindows && /\.[^\\/]+$/.test(binary);
+  const candidates = hasExt ? [binary] : pathExts.map((ext) => `${binary}${ext}`);
+
+  for (const dir of pathParts) {
+    for (const candidate of candidates) {
+      const fullPath = join(dir, candidate);
+      if (isExecutable(fullPath)) return fullPath;
+    }
+  }
+  return null;
 }
 
 /** Valid session statuses for validation. */
