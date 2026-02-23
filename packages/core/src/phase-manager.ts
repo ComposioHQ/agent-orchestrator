@@ -2,10 +2,16 @@
  * Phase Manager — workflow phase transitions for full-mode sessions.
  *
  * Transition + orchestration set:
- * - planning -> plan_review    when .ao/plan.md exists
- * - plan_review -> spawn reviewer sub-sessions when no review artifacts exist
- * - plan_review -> implementing when all reviewer decisions are approved
- * - plan_review -> planning     when any reviewer requested changes
+ * - planning      -> planning swarm (optional) while plan is missing/stale
+ * - planning      -> plan_review when .ao/plan.md is available for current round
+ * - plan_review   -> spawn reviewer sub-sessions when no artifacts exist
+ * - plan_review   -> implementing when all reviewers approved
+ * - plan_review   -> planning when reviewers request changes
+ * - implementing  -> implementation swarm (optional) for plan-driven parallel work
+ * - implementing  -> code_review when PR reaches review states
+ * - code_review   -> spawn reviewer sub-sessions when no artifacts exist
+ * - code_review   -> ready_to_merge when all reviewers approved
+ * - code_review   -> implementing when reviewers request changes
  */
 
 import {
@@ -16,22 +22,107 @@ import {
   type Session,
   type SessionManager,
   type SessionPhase,
+  type SwarmExecutionConfig,
+  type SwarmReviewConfig,
 } from "./types.js";
 import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
-import { isAllApproved, readPlanArtifact, readReviewArtifacts } from "./review-artifacts.js";
+import { readPlanArtifact, readReviewArtifacts } from "./review-artifacts.js";
 
 export interface PhaseManagerDeps {
   config: OrchestratorConfig;
   sessionManager?: SessionManager;
 }
 
+const DEFAULT_REVIEW_ROLES: ReviewerRole[] = ["architect", "developer", "product"];
+const DEFAULT_MAX_REVIEW_ROUNDS = 3;
+
 function parseRound(raw: string | undefined): number {
   const round = Number.parseInt(raw ?? "", 10);
   return Number.isFinite(round) && round > 0 ? round : 1;
 }
 
-const DEFAULT_REVIEW_ROLES: ReviewerRole[] = ["architect", "developer", "product"];
+function normalizeRoles(roles: ReviewerRole[] | undefined): ReviewerRole[] {
+  const source = roles && roles.length > 0 ? roles : DEFAULT_REVIEW_ROLES;
+  const unique: ReviewerRole[] = [];
+  for (const role of source) {
+    if (!unique.includes(role)) unique.push(role);
+  }
+  return unique.length > 0 ? unique : DEFAULT_REVIEW_ROLES;
+}
+
+function applyMaxAgents(roles: ReviewerRole[], maxAgents: number | undefined): ReviewerRole[] {
+  if (!maxAgents || maxAgents <= 0) return roles;
+  return roles.slice(0, Math.min(roles.length, maxAgents));
+}
+
+function splitPlanIntoWorkItems(planContent: string, targetCount: number): string[] {
+  if (targetCount <= 0) return [];
+
+  const lines = planContent
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  const checklistItems = lines
+    .filter((line) => /^[-*]\s+(\[[ xX]\]\s*)?/.test(line) || /^\d+\.\s+/.test(line))
+    .map((line) => line.replace(/^[-*]\s+/, "").replace(/^\d+\.\s+/, ""));
+
+  const sectionHeadings = lines
+    .filter((line) => /^##+\s+/.test(line))
+    .map((line) => line.replace(/^##+\s+/, ""));
+
+  const tasks = checklistItems.length > 0 ? checklistItems : sectionHeadings;
+
+  if (tasks.length === 0) {
+    return Array.from(
+      { length: targetCount },
+      () => "Implement your highest-impact part of .ao/plan.md and document delivered changes.",
+    );
+  }
+
+  if (tasks.length <= targetCount) {
+    return tasks;
+  }
+
+  const chunkSize = Math.ceil(tasks.length / targetCount);
+  const chunks: string[] = [];
+  for (let i = 0; i < targetCount; i++) {
+    const chunk = tasks.slice(i * chunkSize, (i + 1) * chunkSize);
+    if (chunk.length === 0) continue;
+    chunks.push(chunk.join("\n- "));
+  }
+
+  while (chunks.length < targetCount) {
+    chunks.push(tasks[tasks.length - 1] ?? "Continue implementation according to .ao/plan.md");
+  }
+  return chunks;
+}
+
+function hasPlanRoundMarker(planContent: string, round: number): boolean {
+  if (round <= 1) return planContent.trim().length > 0;
+  const marker = new RegExp(`\\bround\\s*[:=]\\s*${round}\\b`, "i");
+  return marker.test(planContent);
+}
+
+function evaluateReviewRound(
+  reviews: Array<{ role: ReviewerRole; decision: "approved" | "changes_requested" | "pending" }>,
+  expectedRoles: ReviewerRole[],
+): { allApproved: boolean; hasChangesRequested: boolean; completedRoles: Set<ReviewerRole> } {
+  const byRole = new Map<ReviewerRole, "approved" | "changes_requested" | "pending">();
+  for (const review of reviews) {
+    byRole.set(review.role, review.decision);
+  }
+
+  const completedRoles = new Set<ReviewerRole>([...byRole.keys()]);
+  const hasChangesRequested = [...byRole.values()].some((decision) => decision === "changes_requested");
+  const allApproved =
+    expectedRoles.length > 0 &&
+    expectedRoles.every((role) => byRole.get(role) === "approved") &&
+    byRole.size >= expectedRoles.length;
+
+  return { allApproved, hasChangesRequested, completedRoles };
+}
 
 export function createPhaseManager(deps: PhaseManagerDeps): PhaseManager {
   const { config, sessionManager } = deps;
@@ -41,7 +132,19 @@ export function createPhaseManager(deps: PhaseManagerDeps): PhaseManager {
     targetPhase: SessionPhase,
     extraUpdates?: Record<string, string>,
   ): Promise<SessionPhase> {
-    if (targetPhase === session.phase) return session.phase;
+    if (targetPhase === session.phase) {
+      if (extraUpdates && Object.keys(extraUpdates).length > 0) {
+        const project = config.projects[session.projectId];
+        if (project) {
+          const sessionsDir = getSessionsDir(config.configPath, project.path);
+          updateMetadata(sessionsDir, session.id, extraUpdates);
+          for (const [key, value] of Object.entries(extraUpdates)) {
+            session.metadata[key] = value;
+          }
+        }
+      }
+      return session.phase;
+    }
 
     const project = config.projects[session.projectId];
     if (!project) return session.phase;
@@ -60,33 +163,123 @@ export function createPhaseManager(deps: PhaseManagerDeps): PhaseManager {
     return targetPhase;
   }
 
-  function getPlanReviewRoles(session: Session): ReviewerRole[] {
-    const project = config.projects[session.projectId];
-    if (!project) return [];
+  async function getExistingSwarmRoles(
+    session: Session,
+    phase: SessionPhase,
+    round: number,
+  ): Promise<Set<ReviewerRole>> {
+    const existingRoles = new Set<ReviewerRole>();
+    if (!sessionManager) return existingRoles;
 
-    const configured = project.workflow?.planReview?.roles ?? DEFAULT_REVIEW_ROLES;
-    return configured.length > 0 ? configured : DEFAULT_REVIEW_ROLES;
+    const existing = await sessionManager.list(session.projectId);
+    for (const candidate of existing) {
+      const info = candidate.subSessionInfo;
+      if (!info) continue;
+      if (info.parentSessionId !== session.id) continue;
+      if (info.phase !== phase) continue;
+      if (info.round !== round) continue;
+      existingRoles.add(info.role);
+    }
+    return existingRoles;
   }
 
-  function buildPlanReviewPrompt(
+  function getPlanningSwarmConfig(session: Session): SwarmExecutionConfig | undefined {
+    const project = config.projects[session.projectId];
+    return project?.workflow?.planningSwarm;
+  }
+
+  function getImplementationSwarmConfig(session: Session): SwarmExecutionConfig | undefined {
+    const project = config.projects[session.projectId];
+    return project?.workflow?.implementationSwarm;
+  }
+
+  function getReviewConfig(session: Session, phase: "plan_review" | "code_review"): SwarmReviewConfig | undefined {
+    const project = config.projects[session.projectId];
+    if (!project) return undefined;
+    return phase === "plan_review" ? project.workflow?.planReview : project.workflow?.codeReview;
+  }
+
+  function getReviewMaxRounds(session: Session, phase: "plan_review" | "code_review"): number {
+    return getReviewConfig(session, phase)?.maxRounds ?? DEFAULT_MAX_REVIEW_ROUNDS;
+  }
+
+  function buildPlanningPrompt(
     session: Session,
+    role: ReviewerRole,
+    round: number,
+    existingPlan: string,
+  ): string {
+    const rolePrompt = getPlanningSwarmConfig(session)?.rolePrompts?.[role];
+    const notesTarget = `.ao/planning/planning-round-${round}-${role}.md`;
+
+    const sections = [
+      `You are the ${role} planner for session ${session.id}.`,
+      rolePrompt ? `Role-specific guidance: ${rolePrompt}` : "",
+      `Round=${round}. Work in planning mode only (no implementation).`,
+      `Write your analysis notes to ${notesTarget}.`,
+      "Then help refine .ao/plan.md.",
+      round > 1
+        ? `Important: update .ao/plan.md with marker \`round=${round}\` so orchestrator knows this revision is fresh.`
+        : "",
+      existingPlan.trim().length > 0
+        ? ["Current plan snapshot:", "```markdown", existingPlan.trim(), "```"].join("\n")
+        : "Current plan is empty or missing. Build an initial plan with clear tasks and acceptance criteria.",
+    ].filter((part) => part.length > 0);
+
+    return sections.join("\n\n");
+  }
+
+  async function ensurePlanningSwarm(session: Session, round: number, planContent: string): Promise<void> {
+    if (!sessionManager) return;
+
+    const swarm = getPlanningSwarmConfig(session);
+    if (!swarm) return;
+    const roles = applyMaxAgents(normalizeRoles(swarm?.roles), swarm?.maxAgents);
+    if (roles.length === 0) return;
+
+    const existingRoles = await getExistingSwarmRoles(session, SESSION_PHASE.PLANNING, round);
+
+    for (const role of roles) {
+      if (existingRoles.has(role)) continue;
+      await sessionManager.spawn({
+        projectId: session.projectId,
+        issueId: session.issueId ?? undefined,
+        branch: `plan/${session.id}-r${round}-${role}`,
+        phase: SESSION_PHASE.PLANNING,
+        subSessionInfo: {
+          parentSessionId: session.id,
+          role,
+          phase: SESSION_PHASE.PLANNING,
+          round,
+        },
+        prompt: buildPlanningPrompt(session, role, round, planContent),
+      });
+    }
+  }
+
+  function buildReviewPrompt(
+    session: Session,
+    phase: "plan_review" | "code_review",
     role: ReviewerRole,
     round: number,
     planContent: string,
   ): string {
-    const project = config.projects[session.projectId];
-    const rolePrompt = project?.workflow?.planReview?.rolePrompts?.[role];
-    const targetFile = `.ao/reviews/plan_review-round-${round}-${role}.md`;
+    const reviewConfig = getReviewConfig(session, phase);
+    const rolePrompt = reviewConfig?.rolePrompts?.[role];
+    const targetFile = `.ao/reviews/${phase}-round-${round}-${role}.md`;
 
     const sections = [
       `You are the ${role} reviewer for session ${session.id}.`,
       rolePrompt ? `Role-specific guidance: ${rolePrompt}` : "",
-      "Review the current implementation plan from .ao/plan.md and produce a verdict.",
+      phase === "plan_review"
+        ? "Review the implementation plan and provide verdict."
+        : "Review the implemented changes and provide verdict.",
+      session.pr ? `PR: ${session.pr.url}` : "",
       `Write your review artifact to ${targetFile} using this exact header format:`,
       [
         `decision=approved|changes_requested|pending`,
         `round=${round}`,
-        `phase=plan_review`,
+        `phase=${phase}`,
         `role=${role}`,
         `timestamp=<ISO-8601 UTC>`,
         `---`,
@@ -100,39 +293,96 @@ export function createPhaseManager(deps: PhaseManagerDeps): PhaseManager {
     return sections.join("\n\n");
   }
 
-  async function ensurePlanReviewSwarm(session: Session, round: number): Promise<void> {
-    if (!sessionManager || !session.workspacePath) return;
+  async function ensureReviewSwarm(
+    session: Session,
+    phase: "plan_review" | "code_review",
+    round: number,
+    planContent: string,
+    completedRoles: Set<ReviewerRole>,
+  ): Promise<void> {
+    if (!sessionManager) return;
 
-    const roles = getPlanReviewRoles(session);
+    const reviewConfig = getReviewConfig(session, phase);
+    const roles = normalizeRoles(reviewConfig?.roles);
     if (roles.length === 0) return;
 
-    const existing = await sessionManager.list(session.projectId);
-    const existingRoles = new Set<ReviewerRole>();
-    for (const candidate of existing) {
-      const info = candidate.subSessionInfo;
-      if (!info) continue;
-      if (info.parentSessionId !== session.id) continue;
-      if (info.phase !== SESSION_PHASE.PLAN_REVIEW) continue;
-      if (info.round !== round) continue;
-      existingRoles.add(info.role);
-    }
-
-    const planContent = readPlanArtifact(session.workspacePath) ?? "";
+    const phaseValue = phase === "plan_review" ? SESSION_PHASE.PLAN_REVIEW : SESSION_PHASE.CODE_REVIEW;
+    const existingRoles = await getExistingSwarmRoles(session, phaseValue, round);
 
     for (const role of roles) {
+      if (completedRoles.has(role)) continue;
       if (existingRoles.has(role)) continue;
       await sessionManager.spawn({
         projectId: session.projectId,
         issueId: session.issueId ?? undefined,
-        branch: `review/${session.id}-plan-r${round}-${role}`,
-        phase: SESSION_PHASE.PLAN_REVIEW,
+        branch: `review/${session.id}-${phase}-r${round}-${role}`,
+        phase: phaseValue,
         subSessionInfo: {
           parentSessionId: session.id,
           role,
-          phase: SESSION_PHASE.PLAN_REVIEW,
+          phase: phaseValue,
           round,
         },
-        prompt: buildPlanReviewPrompt(session, role, round, planContent),
+        prompt: buildReviewPrompt(session, phase, role, round, planContent),
+      });
+    }
+  }
+
+  function buildImplementationPrompt(
+    session: Session,
+    role: ReviewerRole,
+    round: number,
+    workItem: string,
+    planContent: string,
+  ): string {
+    const rolePrompt = getImplementationSwarmConfig(session)?.rolePrompts?.[role];
+    const notesTarget = `.ao/implementation/implementing-round-${round}-${role}.md`;
+
+    const sections = [
+      `You are the ${role} implementer for session ${session.id}.`,
+      rolePrompt ? `Role-specific guidance: ${rolePrompt}` : "",
+      `Round=${round}. Implement your assigned scope and keep changes cohesive.`,
+      "Do not over-fragment tasks; prioritize high-leverage chunks.",
+      `Assigned work item:\n- ${workItem}`,
+      `Write execution notes and completion summary to ${notesTarget}.`,
+      planContent.trim().length > 0
+        ? ["Plan snapshot:", "```markdown", planContent.trim(), "```"].join("\n")
+        : "",
+    ].filter((part) => part.length > 0);
+
+    return sections.join("\n\n");
+  }
+
+  async function ensureImplementationSwarm(session: Session, round: number): Promise<void> {
+    if (!sessionManager || !session.workspacePath) return;
+
+    const swarm = getImplementationSwarmConfig(session);
+    if (!swarm) return;
+    const configuredRoles = normalizeRoles(swarm?.roles);
+    const roles = applyMaxAgents(configuredRoles, swarm?.maxAgents);
+    if (roles.length === 0) return;
+
+    const existingRoles = await getExistingSwarmRoles(session, SESSION_PHASE.IMPLEMENTING, round);
+    const planContent = readPlanArtifact(session.workspacePath) ?? "";
+    const workItems = splitPlanIntoWorkItems(planContent, roles.length);
+
+    for (let i = 0; i < roles.length; i++) {
+      const role = roles[i];
+      if (!role || existingRoles.has(role)) continue;
+      const workItem = workItems[i] ?? workItems[workItems.length - 1] ?? "Implement according to .ao/plan.md";
+
+      await sessionManager.spawn({
+        projectId: session.projectId,
+        issueId: session.issueId ?? undefined,
+        branch: `impl/${session.id}-r${round}-${role}`,
+        phase: SESSION_PHASE.IMPLEMENTING,
+        subSessionInfo: {
+          parentSessionId: session.id,
+          role,
+          phase: SESSION_PHASE.IMPLEMENTING,
+          round,
+        },
+        prompt: buildImplementationPrompt(session, role, round, workItem, planContent),
       });
     }
   }
@@ -150,29 +400,94 @@ export function createPhaseManager(deps: PhaseManagerDeps): PhaseManager {
       if (!session.workspacePath) return session.phase;
 
       if (session.phase === SESSION_PHASE.PLANNING) {
-        const plan = readPlanArtifact(session.workspacePath);
-        if (plan && plan.trim().length > 0) {
-          return transitionPhase(session, SESSION_PHASE.PLAN_REVIEW, { reviewRound: "1" });
+        const planRound = parseRound(session.metadata["planRound"] ?? session.metadata["reviewRound"]);
+        const plan = readPlanArtifact(session.workspacePath) ?? "";
+        const planReady = hasPlanRoundMarker(plan, planRound);
+        if (planReady) {
+          return transitionPhase(session, SESSION_PHASE.PLAN_REVIEW, {
+            reviewRound: String(planRound),
+            planRound: String(planRound),
+          });
         }
+
+        await ensurePlanningSwarm(session, planRound, plan);
         return session.phase;
       }
 
       if (session.phase === SESSION_PHASE.PLAN_REVIEW) {
         const round = parseRound(session.metadata["reviewRound"]);
+        const maxRounds = getReviewMaxRounds(session, "plan_review");
         const reviews = readReviewArtifacts(session.workspacePath, "plan_review", round);
-        if (reviews.length === 0) {
-          await ensurePlanReviewSwarm(session, round);
-          return session.phase;
+        const expectedRoles = normalizeRoles(getReviewConfig(session, "plan_review")?.roles);
+        const reviewState = evaluateReviewRound(reviews, expectedRoles);
+
+        if (reviewState.allApproved) {
+          return transitionPhase(session, SESSION_PHASE.IMPLEMENTING, {
+            implementationRound: session.metadata["implementationRound"] ?? "1",
+          });
         }
 
-        if (isAllApproved(reviews)) {
-          return transitionPhase(session, SESSION_PHASE.IMPLEMENTING);
+        if (reviewState.hasChangesRequested) {
+          const nextRound = String(Math.min(round + 1, maxRounds));
+          return transitionPhase(session, SESSION_PHASE.PLANNING, {
+            reviewRound: nextRound,
+            planRound: nextRound,
+          });
         }
 
-        const hasChangesRequested = reviews.some((r) => r.decision === "changes_requested");
-        if (hasChangesRequested) {
-          return transitionPhase(session, SESSION_PHASE.PLANNING, { reviewRound: String(round + 1) });
+        const planContent = readPlanArtifact(session.workspacePath) ?? "";
+        await ensureReviewSwarm(
+          session,
+          "plan_review",
+          round,
+          planContent,
+          reviewState.completedRoles,
+        );
+
+        return session.phase;
+      }
+
+      if (session.phase === SESSION_PHASE.IMPLEMENTING) {
+        const round = parseRound(session.metadata["implementationRound"]);
+
+        if (session.pr && ["review_pending", "approved", "mergeable"].includes(session.status)) {
+          return transitionPhase(session, SESSION_PHASE.CODE_REVIEW, {
+            codeReviewRound: session.metadata["codeReviewRound"] ?? "1",
+          });
         }
+
+        await ensureImplementationSwarm(session, round);
+        return session.phase;
+      }
+
+      if (session.phase === SESSION_PHASE.CODE_REVIEW) {
+        const round = parseRound(session.metadata["codeReviewRound"]);
+        const maxRounds = getReviewMaxRounds(session, "code_review");
+        const reviews = readReviewArtifacts(session.workspacePath, "code_review", round);
+        const expectedRoles = normalizeRoles(getReviewConfig(session, "code_review")?.roles);
+        const reviewState = evaluateReviewRound(reviews, expectedRoles);
+
+        if (reviewState.allApproved) {
+          return transitionPhase(session, SESSION_PHASE.READY_TO_MERGE);
+        }
+
+        if (reviewState.hasChangesRequested) {
+          const nextReviewRound = String(Math.min(round + 1, maxRounds));
+          const implementationRound = String(parseRound(session.metadata["implementationRound"]) + 1);
+          return transitionPhase(session, SESSION_PHASE.IMPLEMENTING, {
+            codeReviewRound: nextReviewRound,
+            implementationRound,
+          });
+        }
+
+        const planContent = readPlanArtifact(session.workspacePath) ?? "";
+        await ensureReviewSwarm(
+          session,
+          "code_review",
+          round,
+          planContent,
+          reviewState.completedRoles,
+        );
       }
 
       return session.phase;

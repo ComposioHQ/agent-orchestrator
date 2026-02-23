@@ -69,9 +69,21 @@ const SwarmReviewConfigSchema = z.object({
   rolePrompts: z.record(z.string()).optional(),
 });
 
+const SwarmExecutionConfigSchema = z.object({
+  roles: z
+    .array(z.enum(["architect", "developer", "product"]))
+    .default(["architect", "developer", "product"]),
+  maxAgents: z.number().min(1).max(10).optional(),
+  agent: z.string().optional(),
+  roleAgents: z.record(z.enum(["architect", "developer", "product"]), z.string()).optional(),
+  rolePrompts: z.record(z.string()).optional(),
+});
+
 const WorkflowConfigSchema = z.object({
   mode: z.enum(["simple", "full"]).default("simple"),
   codingAgent: z.string().optional(),
+  planningSwarm: SwarmExecutionConfigSchema.optional(),
+  implementationSwarm: SwarmExecutionConfigSchema.optional(),
   planReview: SwarmReviewConfigSchema.optional(),
   codeReview: SwarmReviewConfigSchema.optional(),
   autoCodeReview: z.boolean().default(true),

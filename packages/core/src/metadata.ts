@@ -101,6 +101,9 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
     parentSession: raw["parentSession"],
     role: raw["role"],
     reviewRound: raw["reviewRound"],
+    planRound: raw["planRound"],
+    implementationRound: raw["implementationRound"],
+    codeReviewRound: raw["codeReviewRound"],
     workflowMode: raw["workflowMode"],
     createdAt: raw["createdAt"],
     runtimeHandle: raw["runtimeHandle"],
@@ -148,6 +151,9 @@ export function writeMetadata(
   if (metadata.parentSession) data["parentSession"] = metadata.parentSession;
   if (metadata.role) data["role"] = metadata.role;
   if (metadata.reviewRound) data["reviewRound"] = metadata.reviewRound;
+  if (metadata.planRound) data["planRound"] = metadata.planRound;
+  if (metadata.implementationRound) data["implementationRound"] = metadata.implementationRound;
+  if (metadata.codeReviewRound) data["codeReviewRound"] = metadata.codeReviewRound;
   if (metadata.workflowMode) data["workflowMode"] = metadata.workflowMode;
   if (metadata.createdAt) data["createdAt"] = metadata.createdAt;
   if (metadata.runtimeHandle) data["runtimeHandle"] = metadata.runtimeHandle;

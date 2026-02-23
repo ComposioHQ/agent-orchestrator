@@ -158,6 +158,14 @@ describe("phase manager transitions", () => {
       timestamp: "2026-02-23T10:31:00Z",
       content: "ok",
     });
+    writeReviewArtifact(session.workspacePath ?? "", {
+      phase: "plan_review",
+      round: 1,
+      role: "product",
+      decision: "approved",
+      timestamp: "2026-02-23T10:32:00Z",
+      content: "ok",
+    });
 
     const phase = await phaseManager.check(session);
     expect(phase).toBe(SESSION_PHASE.IMPLEMENTING);
@@ -267,5 +275,305 @@ describe("phase manager transitions", () => {
     expect(spawnMock).toHaveBeenCalledTimes(2);
     const spawnedRoles = spawnMock.mock.calls.map((call) => call[0].subSessionInfo?.role).sort();
     expect(spawnedRoles).toEqual(["developer", "product"]);
+  });
+
+  it("keeps phase on partial approvals and spawns missing reviewers only", async () => {
+    const mockSessionManager = {
+      list: vi.fn().mockResolvedValue([]),
+      spawn: vi.fn().mockResolvedValue(makeSession({ id: "app-2", phase: SESSION_PHASE.PLAN_REVIEW })),
+    } as unknown as SessionManager;
+    const phaseManager = createPhaseManager({ config, sessionManager: mockSessionManager });
+    const session = makeSession({
+      phase: SESSION_PHASE.PLAN_REVIEW,
+      metadata: { phase: SESSION_PHASE.PLAN_REVIEW, reviewRound: "1" },
+    });
+
+    writeMetadata(sessionsDir, session.id, {
+      worktree: session.workspacePath ?? "",
+      branch: session.branch ?? "",
+      status: session.status,
+      phase: session.phase,
+      reviewRound: "1",
+      project: session.projectId,
+    });
+    writePlanArtifact(session.workspacePath ?? "", "# Plan\n\nShip feature X");
+    writeReviewArtifact(session.workspacePath ?? "", {
+      phase: "plan_review",
+      round: 1,
+      role: "architect",
+      decision: "approved",
+      timestamp: "2026-02-23T10:35:00Z",
+      content: "ok",
+    });
+
+    const phase = await phaseManager.check(session);
+    expect(phase).toBe(SESSION_PHASE.PLAN_REVIEW);
+
+    const spawnMock = vi.mocked(mockSessionManager.spawn);
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    const roles = spawnMock.mock.calls.map((call) => call[0].subSessionInfo?.role).sort();
+    expect(roles).toEqual(["developer", "product"]);
+  });
+
+  it("spawns planning swarm when plan is missing and planningSwarm is configured", async () => {
+    config.projects["my-app"] = {
+      ...config.projects["my-app"]!,
+      workflow: {
+        mode: "full",
+        planningSwarm: {
+          roles: ["architect", "product"],
+          maxAgents: 2,
+        },
+        autoCodeReview: true,
+      },
+    };
+
+    const mockSessionManager = {
+      list: vi.fn().mockResolvedValue([]),
+      spawn: vi.fn().mockResolvedValue(makeSession({ id: "app-2", phase: SESSION_PHASE.PLANNING })),
+    } as unknown as SessionManager;
+    const phaseManager = createPhaseManager({ config, sessionManager: mockSessionManager });
+    const session = makeSession({
+      phase: SESSION_PHASE.PLANNING,
+      metadata: { phase: SESSION_PHASE.PLANNING, planRound: "1" },
+    });
+
+    writeMetadata(sessionsDir, session.id, {
+      worktree: session.workspacePath ?? "",
+      branch: session.branch ?? "",
+      status: session.status,
+      phase: session.phase,
+      planRound: "1",
+      project: session.projectId,
+    });
+
+    await phaseManager.check(session);
+
+    const spawnMock = vi.mocked(mockSessionManager.spawn);
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    expect(spawnMock.mock.calls[0]?.[0].phase).toBe(SESSION_PHASE.PLANNING);
+    const roles = spawnMock.mock.calls.map((call) => call[0].subSessionInfo?.role).sort();
+    expect(roles).toEqual(["architect", "product"]);
+  });
+
+  it("keeps planning on round > 1 until plan has round marker", async () => {
+    const phaseManager = createPhaseManager({ config });
+    const session = makeSession({
+      phase: SESSION_PHASE.PLANNING,
+      metadata: { phase: SESSION_PHASE.PLANNING, planRound: "2", reviewRound: "2" },
+    });
+
+    writeMetadata(sessionsDir, session.id, {
+      worktree: session.workspacePath ?? "",
+      branch: session.branch ?? "",
+      status: session.status,
+      phase: session.phase,
+      planRound: "2",
+      reviewRound: "2",
+      project: session.projectId,
+    });
+    writePlanArtifact(session.workspacePath ?? "", "# Plan\n\nNo explicit round marker");
+
+    const phase = await phaseManager.check(session);
+    expect(phase).toBe(SESSION_PHASE.PLANNING);
+  });
+
+  it("spawns implementation swarm from plan tasks when configured", async () => {
+    config.projects["my-app"] = {
+      ...config.projects["my-app"]!,
+      workflow: {
+        mode: "full",
+        implementationSwarm: {
+          roles: ["developer", "product", "architect"],
+          maxAgents: 2,
+        },
+        autoCodeReview: true,
+      },
+    };
+
+    const mockSessionManager = {
+      list: vi.fn().mockResolvedValue([]),
+      spawn: vi.fn().mockResolvedValue(makeSession({ id: "app-2", phase: SESSION_PHASE.IMPLEMENTING })),
+    } as unknown as SessionManager;
+    const phaseManager = createPhaseManager({ config, sessionManager: mockSessionManager });
+    const session = makeSession({
+      phase: SESSION_PHASE.IMPLEMENTING,
+      metadata: { phase: SESSION_PHASE.IMPLEMENTING, implementationRound: "1" },
+    });
+
+    writeMetadata(sessionsDir, session.id, {
+      worktree: session.workspacePath ?? "",
+      branch: session.branch ?? "",
+      status: session.status,
+      phase: session.phase,
+      implementationRound: "1",
+      project: session.projectId,
+    });
+    writePlanArtifact(
+      session.workspacePath ?? "",
+      "# Plan\n\n- Build API endpoint\n- Add unit tests\n- Update docs",
+    );
+
+    await phaseManager.check(session);
+
+    const spawnMock = vi.mocked(mockSessionManager.spawn);
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    expect(spawnMock.mock.calls[0]?.[0].phase).toBe(SESSION_PHASE.IMPLEMENTING);
+    const prompt = spawnMock.mock.calls[0]?.[0].prompt ?? "";
+    expect(prompt).toContain("Assigned work item");
+  });
+
+  it("transitions implementing to code_review when PR reaches review phase", async () => {
+    const phaseManager = createPhaseManager({ config });
+    const session = makeSession({
+      phase: SESSION_PHASE.IMPLEMENTING,
+      status: "review_pending",
+      pr: {
+        number: 42,
+        url: "https://github.com/org/repo/pull/42",
+        title: "Work",
+        owner: "org",
+        repo: "repo",
+        branch: "feat/test",
+        baseBranch: "main",
+        isDraft: false,
+      },
+      metadata: { phase: SESSION_PHASE.IMPLEMENTING, implementationRound: "1" },
+    });
+
+    writeMetadata(sessionsDir, session.id, {
+      worktree: session.workspacePath ?? "",
+      branch: session.branch ?? "",
+      status: session.status,
+      phase: session.phase,
+      implementationRound: "1",
+      project: session.projectId,
+    });
+
+    const phase = await phaseManager.check(session);
+    expect(phase).toBe(SESSION_PHASE.CODE_REVIEW);
+    expect(readMetadataRaw(sessionsDir, session.id)?.["codeReviewRound"]).toBe("1");
+  });
+
+  it("spawns code-review sub-sessions when no code-review artifacts exist", async () => {
+    const mockSessionManager = {
+      list: vi.fn().mockResolvedValue([]),
+      spawn: vi.fn().mockResolvedValue(makeSession({ id: "app-2", phase: SESSION_PHASE.CODE_REVIEW })),
+    } as unknown as SessionManager;
+    const phaseManager = createPhaseManager({ config, sessionManager: mockSessionManager });
+    const session = makeSession({
+      phase: SESSION_PHASE.CODE_REVIEW,
+      pr: {
+        number: 42,
+        url: "https://github.com/org/repo/pull/42",
+        title: "Work",
+        owner: "org",
+        repo: "repo",
+        branch: "feat/test",
+        baseBranch: "main",
+        isDraft: false,
+      },
+      metadata: { phase: SESSION_PHASE.CODE_REVIEW, codeReviewRound: "1" },
+    });
+
+    writeMetadata(sessionsDir, session.id, {
+      worktree: session.workspacePath ?? "",
+      branch: session.branch ?? "",
+      status: session.status,
+      phase: session.phase,
+      codeReviewRound: "1",
+      project: session.projectId,
+    });
+    writePlanArtifact(session.workspacePath ?? "", "# Plan\n\nShip");
+
+    await phaseManager.check(session);
+
+    const spawnMock = vi.mocked(mockSessionManager.spawn);
+    expect(spawnMock).toHaveBeenCalledTimes(3);
+    const roles = spawnMock.mock.calls.map((call) => call[0].subSessionInfo?.role).sort();
+    expect(roles).toEqual(["architect", "developer", "product"]);
+  });
+
+  it("transitions code_review to ready_to_merge when all reviewers approved", async () => {
+    const phaseManager = createPhaseManager({ config });
+    const session = makeSession({
+      phase: SESSION_PHASE.CODE_REVIEW,
+      metadata: { phase: SESSION_PHASE.CODE_REVIEW, codeReviewRound: "1" },
+    });
+
+    writeMetadata(sessionsDir, session.id, {
+      worktree: session.workspacePath ?? "",
+      branch: session.branch ?? "",
+      status: session.status,
+      phase: session.phase,
+      codeReviewRound: "1",
+      project: session.projectId,
+    });
+
+    writeReviewArtifact(session.workspacePath ?? "", {
+      phase: "code_review",
+      round: 1,
+      role: "architect",
+      decision: "approved",
+      timestamp: "2026-02-23T10:40:00Z",
+      content: "ok",
+    });
+    writeReviewArtifact(session.workspacePath ?? "", {
+      phase: "code_review",
+      round: 1,
+      role: "developer",
+      decision: "approved",
+      timestamp: "2026-02-23T10:41:00Z",
+      content: "ok",
+    });
+    writeReviewArtifact(session.workspacePath ?? "", {
+      phase: "code_review",
+      round: 1,
+      role: "product",
+      decision: "approved",
+      timestamp: "2026-02-23T10:42:00Z",
+      content: "ok",
+    });
+
+    const phase = await phaseManager.check(session);
+    expect(phase).toBe(SESSION_PHASE.READY_TO_MERGE);
+  });
+
+  it("transitions code_review back to implementing when changes are requested", async () => {
+    const phaseManager = createPhaseManager({ config });
+    const session = makeSession({
+      phase: SESSION_PHASE.CODE_REVIEW,
+      metadata: {
+        phase: SESSION_PHASE.CODE_REVIEW,
+        codeReviewRound: "2",
+        implementationRound: "1",
+      },
+    });
+
+    writeMetadata(sessionsDir, session.id, {
+      worktree: session.workspacePath ?? "",
+      branch: session.branch ?? "",
+      status: session.status,
+      phase: session.phase,
+      codeReviewRound: "2",
+      implementationRound: "1",
+      project: session.projectId,
+    });
+
+    writeReviewArtifact(session.workspacePath ?? "", {
+      phase: "code_review",
+      round: 2,
+      role: "architect",
+      decision: "changes_requested",
+      timestamp: "2026-02-23T10:45:00Z",
+      content: "fix issues",
+    });
+
+    const phase = await phaseManager.check(session);
+    expect(phase).toBe(SESSION_PHASE.IMPLEMENTING);
+
+    const raw = readMetadataRaw(sessionsDir, session.id);
+    expect(raw?.["codeReviewRound"]).toBe("3");
+    expect(raw?.["implementationRound"]).toBe("2");
   });
 });

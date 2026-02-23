@@ -52,6 +52,9 @@ describe("writeMetadata + readMetadata", () => {
       parentSession: "app-1",
       role: "architect",
       reviewRound: "2",
+      planRound: "2",
+      implementationRound: "1",
+      codeReviewRound: "3",
       workflowMode: "full",
       createdAt: "2025-01-01T00:00:00.000Z",
       runtimeHandle: '{"id":"tmux-1","runtimeName":"tmux"}',
@@ -67,6 +70,9 @@ describe("writeMetadata + readMetadata", () => {
     expect(meta!.parentSession).toBe("app-1");
     expect(meta!.role).toBe("architect");
     expect(meta!.reviewRound).toBe("2");
+    expect(meta!.planRound).toBe("2");
+    expect(meta!.implementationRound).toBe("1");
+    expect(meta!.codeReviewRound).toBe("3");
     expect(meta!.workflowMode).toBe("full");
     expect(meta!.createdAt).toBe("2025-01-01T00:00:00.000Z");
     expect(meta!.runtimeHandle).toBe('{"id":"tmux-1","runtimeName":"tmux"}');

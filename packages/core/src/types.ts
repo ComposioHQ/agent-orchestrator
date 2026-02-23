@@ -892,11 +892,26 @@ export interface SwarmReviewConfig {
   rolePrompts?: Partial<Record<ReviewerRole, string>>;
 }
 
+/** Swarm execution behavior for non-review phases (planning/implementation). */
+export interface SwarmExecutionConfig {
+  roles: ReviewerRole[];
+  maxAgents?: number;
+  /** Agent plugin name for this phase's sub-sessions. */
+  agent?: string;
+  /** Optional per-role agent overrides for this phase. */
+  roleAgents?: Partial<Record<ReviewerRole, string>>;
+  rolePrompts?: Partial<Record<ReviewerRole, string>>;
+}
+
 /** Workflow configuration for a project. */
 export interface WorkflowConfig {
   mode: WorkflowMode;
   /** Agent used for main coding loop (planning/implementing). */
   codingAgent?: string;
+  /** Optional swarm for collaborative plan drafting. */
+  planningSwarm?: SwarmExecutionConfig;
+  /** Optional swarm for parallel implementation execution. */
+  implementationSwarm?: SwarmExecutionConfig;
   planReview?: SwarmReviewConfig;
   codeReview?: SwarmReviewConfig;
   autoCodeReview?: boolean;
@@ -1040,6 +1055,9 @@ export interface SessionMetadata {
   parentSession?: string;
   role?: string;
   reviewRound?: string;
+  planRound?: string;
+  implementationRound?: string;
+  codeReviewRound?: string;
   workflowMode?: string;
   createdAt?: string;
   runtimeHandle?: string;

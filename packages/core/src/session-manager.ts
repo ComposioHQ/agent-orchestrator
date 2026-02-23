@@ -571,6 +571,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     };
 
     try {
+      const initialRound = subSessionInfo ? String(subSessionInfo.round) : "1";
       writeMetadata(sessionsDir, sessionId, {
         worktree: workspacePath,
         branch,
@@ -581,7 +582,11 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         project: spawnConfig.projectId,
         parentSession: subSessionInfo?.parentSessionId,
         role: subSessionInfo?.role,
-        reviewRound: subSessionInfo ? String(subSessionInfo.round) : undefined,
+        reviewRound:
+          subSessionInfo || initialPhase === SESSION_PHASE.PLAN_REVIEW ? initialRound : undefined,
+        planRound: initialPhase === SESSION_PHASE.PLANNING ? initialRound : undefined,
+        implementationRound: initialPhase === SESSION_PHASE.IMPLEMENTING ? initialRound : undefined,
+        codeReviewRound: initialPhase === SESSION_PHASE.CODE_REVIEW ? initialRound : undefined,
         workflowMode,
         createdAt: new Date().toISOString(),
         runtimeHandle: JSON.stringify(handle),
@@ -1038,6 +1043,9 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         parentSession: raw["parentSession"],
         role: raw["role"],
         reviewRound: raw["reviewRound"],
+        planRound: raw["planRound"],
+        implementationRound: raw["implementationRound"],
+        codeReviewRound: raw["codeReviewRound"],
         workflowMode: raw["workflowMode"],
         createdAt: raw["createdAt"],
         runtimeHandle: raw["runtimeHandle"],

@@ -13,6 +13,7 @@ import {
   type ProjectConfig,
   type Session,
   type SessionPhase,
+  type SwarmExecutionConfig,
   type SwarmReviewConfig,
 } from "./types.js";
 
@@ -31,6 +32,19 @@ function getReviewConfig(project: ProjectConfig, phase: SessionPhase): SwarmRevi
   }
   if (phase === SESSION_PHASE.CODE_REVIEW) {
     return project.workflow?.codeReview;
+  }
+  return undefined;
+}
+
+function getExecutionConfig(
+  project: ProjectConfig,
+  phase: SessionPhase,
+): SwarmExecutionConfig | undefined {
+  if (phase === SESSION_PHASE.PLANNING) {
+    return project.workflow?.planningSwarm;
+  }
+  if (phase === SESSION_PHASE.IMPLEMENTING) {
+    return project.workflow?.implementationSwarm;
   }
   return undefined;
 }
@@ -69,6 +83,11 @@ export function resolveAgentName(
   }
 
   if (!context.subSessionInfo || !isReviewPhase(context.phase)) {
+    const executionConfig = getExecutionConfig(project, context.phase);
+    if (executionConfig && context.subSessionInfo) {
+      const role = context.subSessionInfo.role;
+      return executionConfig.roleAgents?.[role] ?? executionConfig.agent ?? codingAgent;
+    }
     return codingAgent;
   }
 

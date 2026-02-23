@@ -132,4 +132,33 @@ describe("resolveAgentName", () => {
       }),
     ).toBe("codex");
   });
+
+  it("uses implementation swarm role agent for implementation sub-session", () => {
+    const project = makeProject({
+      workflow: {
+        mode: "full",
+        codingAgent: "codex",
+        implementationSwarm: {
+          roles: ["architect", "developer", "product"],
+          maxAgents: 2,
+          agent: "codex",
+          roleAgents: { developer: "claude-code" },
+        },
+        autoCodeReview: true,
+      },
+    });
+    const config = makeConfig(project);
+
+    expect(
+      resolveAgentName(config, project, {
+        phase: SESSION_PHASE.IMPLEMENTING,
+        subSessionInfo: {
+          parentSessionId: "app-1",
+          role: "developer",
+          phase: SESSION_PHASE.IMPLEMENTING,
+          round: 1,
+        },
+      }),
+    ).toBe("claude-code");
+  });
 });

@@ -142,6 +142,10 @@ projects:
     workflow:
       mode: full
       codingAgent: codex
+      planningSwarm:
+        roles: [architect, product]
+        maxAgents: 2
+        agent: claude-code
       planReview:
         roles: [architect, developer]
         maxRounds: 4
@@ -149,6 +153,11 @@ projects:
         agent: claude-code
         roleAgents:
           architect: codex
+      implementationSwarm:
+        roles: [developer, product]
+        maxAgents: 2
+        roleAgents:
+          developer: codex
 `,
       );
 
@@ -156,11 +165,17 @@ projects:
       const workflow = config.projects["test-project"]?.workflow;
       expect(workflow?.mode).toBe("full");
       expect(workflow?.codingAgent).toBe("codex");
+      expect(workflow?.planningSwarm?.roles).toEqual(["architect", "product"]);
+      expect(workflow?.planningSwarm?.maxAgents).toBe(2);
+      expect(workflow?.planningSwarm?.agent).toBe("claude-code");
       expect(workflow?.planReview?.roles).toEqual(["architect", "developer"]);
       expect(workflow?.planReview?.maxRounds).toBe(4);
       expect(workflow?.planReview?.codexReview).toBe(false);
       expect(workflow?.planReview?.agent).toBe("claude-code");
       expect(workflow?.planReview?.roleAgents?.["architect"]).toBe("codex");
+      expect(workflow?.implementationSwarm?.roles).toEqual(["developer", "product"]);
+      expect(workflow?.implementationSwarm?.maxAgents).toBe(2);
+      expect(workflow?.implementationSwarm?.roleAgents?.["developer"]).toBe("codex");
     });
   });
 
