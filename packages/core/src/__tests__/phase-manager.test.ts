@@ -742,4 +742,114 @@ describe("phase manager transitions", () => {
     expect(raw?.["codeReviewRound"]).toBe("3");
     expect(raw?.["implementationRound"]).toBe("2");
   });
+
+  it("completes full workflow loop across two code-review rounds", async () => {
+    const phaseManager = createPhaseManager({ config });
+    const session = makeSession({
+      phase: SESSION_PHASE.PLANNING,
+      status: "working",
+      metadata: { phase: SESSION_PHASE.PLANNING, planRound: "1" },
+    });
+
+    writeMetadata(sessionsDir, session.id, {
+      worktree: session.workspacePath ?? "",
+      branch: session.branch ?? "",
+      status: session.status,
+      phase: session.phase,
+      planRound: "1",
+      project: session.projectId,
+    });
+    writePlanArtifact(session.workspacePath ?? "", "# Plan\n\n- Implement feature\n- Add tests");
+
+    expect(await phaseManager.check(session)).toBe(SESSION_PHASE.PLAN_REVIEW);
+
+    writeReviewArtifact(session.workspacePath ?? "", {
+      phase: "plan_review",
+      round: 1,
+      role: "architect",
+      decision: "approved",
+      timestamp: "2026-02-23T11:00:00Z",
+      content: "ok",
+    });
+    writeReviewArtifact(session.workspacePath ?? "", {
+      phase: "plan_review",
+      round: 1,
+      role: "developer",
+      decision: "approved",
+      timestamp: "2026-02-23T11:01:00Z",
+      content: "ok",
+    });
+    writeReviewArtifact(session.workspacePath ?? "", {
+      phase: "plan_review",
+      round: 1,
+      role: "product",
+      decision: "approved",
+      timestamp: "2026-02-23T11:02:00Z",
+      content: "ok",
+    });
+
+    expect(await phaseManager.check(session)).toBe(SESSION_PHASE.IMPLEMENTING);
+
+    session.pr = {
+      number: 42,
+      url: "https://github.com/org/repo/pull/42",
+      title: "Work",
+      owner: "org",
+      repo: "repo",
+      branch: "feat/test",
+      baseBranch: "main",
+      isDraft: false,
+    };
+    session.status = "review_pending";
+    expect(await phaseManager.check(session)).toBe(SESSION_PHASE.CODE_REVIEW);
+
+    writeReviewArtifact(session.workspacePath ?? "", {
+      phase: "code_review",
+      round: 1,
+      role: "architect",
+      decision: "changes_requested",
+      timestamp: "2026-02-23T11:10:00Z",
+      content: "fix edge case",
+    });
+
+    expect(await phaseManager.check(session)).toBe(SESSION_PHASE.IMPLEMENTING);
+    let raw = readMetadataRaw(sessionsDir, session.id);
+    expect(raw?.["codeReviewRound"]).toBe("2");
+    expect(raw?.["implementationRound"]).toBe("2");
+
+    session.status = "working";
+    expect(await phaseManager.check(session)).toBe(SESSION_PHASE.IMPLEMENTING);
+
+    session.status = "review_pending";
+    expect(await phaseManager.check(session)).toBe(SESSION_PHASE.CODE_REVIEW);
+
+    writeReviewArtifact(session.workspacePath ?? "", {
+      phase: "code_review",
+      round: 2,
+      role: "architect",
+      decision: "approved",
+      timestamp: "2026-02-23T11:20:00Z",
+      content: "ok",
+    });
+    writeReviewArtifact(session.workspacePath ?? "", {
+      phase: "code_review",
+      round: 2,
+      role: "developer",
+      decision: "approved",
+      timestamp: "2026-02-23T11:21:00Z",
+      content: "ok",
+    });
+    writeReviewArtifact(session.workspacePath ?? "", {
+      phase: "code_review",
+      round: 2,
+      role: "product",
+      decision: "approved",
+      timestamp: "2026-02-23T11:22:00Z",
+      content: "ok",
+    });
+
+    expect(await phaseManager.check(session)).toBe(SESSION_PHASE.READY_TO_MERGE);
+    raw = readMetadataRaw(sessionsDir, session.id);
+    expect(raw?.["phase"]).toBe(SESSION_PHASE.READY_TO_MERGE);
+  });
 });
