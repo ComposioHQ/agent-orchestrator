@@ -3,13 +3,14 @@ import { mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { createSessionManager } from "../session-manager.js";
+import { createSessionManager, inferProjectId } from "../session-manager.js";
 import { writeMetadata, readMetadata, readMetadataRaw, deleteMetadata } from "../metadata.js";
 import { getSessionsDir, getProjectBaseDir } from "../paths.js";
 import {
   SessionNotRestorableError,
   WorkspaceMissingError,
   type OrchestratorConfig,
+  type ProjectConfig,
   type PluginRegistry,
   type Runtime,
   type Agent,
@@ -87,6 +88,7 @@ beforeEach(() => {
 
   config = {
     configPath,
+    worktreeDir: join(tmpDir, ".worktrees"),
     port: 3000,
     defaults: {
       runtime: "mock",
@@ -1333,5 +1335,51 @@ describe("PluginRegistry.loadBuiltins importFn", () => {
     // Should have attempted to import builtin plugins via the provided importFn
     expect(importedPackages.length).toBeGreaterThan(0);
     expect(importedPackages).toContain("@composio/ao-plugin-runtime-tmux");
+  });
+});
+
+describe("inferProjectId", () => {
+  it("should match session prefix to project key", () => {
+    const projects = {
+      myApp: { path: "/tmp/app", sessionPrefix: "app" } as ProjectConfig,
+      other: { path: "/tmp/other", sessionPrefix: "other" } as ProjectConfig,
+    };
+    expect(inferProjectId("app-42", projects)).toBe("myApp");
+    expect(inferProjectId("other-1", projects)).toBe("other");
+  });
+
+  it("should fall back to single project when no prefix matches", () => {
+    const projects = {
+      solo: { path: "/tmp/solo", sessionPrefix: "solo" } as ProjectConfig,
+    };
+    expect(inferProjectId("unknown-7", projects)).toBe("solo");
+  });
+
+  it("should return empty string when no match and multiple projects", () => {
+    const projects = {
+      a: { path: "/tmp/a", sessionPrefix: "aaa" } as ProjectConfig,
+      b: { path: "/tmp/b", sessionPrefix: "bbb" } as ProjectConfig,
+    };
+    expect(inferProjectId("unknown-7", projects)).toBe("");
+  });
+
+  it("should return empty string for empty projects config", () => {
+    expect(inferProjectId("anything-1", {})).toBe("");
+  });
+
+  it("should be used as fallback when metadata has no project field", async () => {
+    const mgr = createSessionManager({ config, registry: mockRegistry });
+
+    // Write metadata WITHOUT a "project" field — prefix "app" matches "my-app" project
+    writeMetadata(sessionsDir, "app-99", {
+      worktree: "/tmp/mock-ws/app-99",
+      branch: "feat/test",
+      status: "working",
+    });
+
+    const sessions = await mgr.list();
+    const session = sessions.find((s) => s.id === "app-99");
+    expect(session).toBeDefined();
+    expect(session!.projectId).toBe("my-app");
   });
 });

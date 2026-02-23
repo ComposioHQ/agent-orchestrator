@@ -797,6 +797,9 @@ export interface OrchestratorConfig {
    */
   configPath: string;
 
+  /** Where to create workspaces (git worktrees, clones). Defaults to ~/.worktrees */
+  worktreeDir: string;
+
   /** Web dashboard port (defaults to 3000) */
   port?: number;
 

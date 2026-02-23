@@ -155,6 +155,7 @@ describe.skipIf(!tmuxOk)("CLI-Core integration (hash-based architecture)", () =>
     // Create session-manager with configPath
     const config: OrchestratorConfig = {
       configPath, // This enables hash-based architecture
+      worktreeDir: join(tmpDir, ".worktrees"),
       port: 3000,
       readyThresholdMs: 300_000,
       defaults: {
@@ -215,6 +216,7 @@ describe.skipIf(!tmuxOk)("CLI-Core integration (hash-based architecture)", () =>
 
     const config: OrchestratorConfig = {
       configPath,
+      worktreeDir: join(tmpDir, ".worktrees"),
       port: 3000,
       readyThresholdMs: 300_000,
       defaults: {
