@@ -16,6 +16,7 @@
 
 import {
   SESSION_PHASE,
+  isTerminalSession,
   type OrchestratorConfig,
   type PhaseManager,
   type ReviewerRole,
@@ -167,6 +168,7 @@ export function createPhaseManager(deps: PhaseManagerDeps): PhaseManager {
     session: Session,
     phase: SessionPhase,
     round: number,
+    options?: { activeOnly?: boolean },
   ): Promise<Set<ReviewerRole>> {
     const existingRoles = new Set<ReviewerRole>();
     if (!sessionManager) return existingRoles;
@@ -178,6 +180,7 @@ export function createPhaseManager(deps: PhaseManagerDeps): PhaseManager {
       if (info.parentSessionId !== session.id) continue;
       if (info.phase !== phase) continue;
       if (info.round !== round) continue;
+      if (options?.activeOnly && isTerminalSession(candidate)) continue;
       existingRoles.add(info.role);
     }
     return existingRoles;
@@ -307,7 +310,7 @@ export function createPhaseManager(deps: PhaseManagerDeps): PhaseManager {
     if (roles.length === 0) return;
 
     const phaseValue = phase === "plan_review" ? SESSION_PHASE.PLAN_REVIEW : SESSION_PHASE.CODE_REVIEW;
-    const existingRoles = await getExistingSwarmRoles(session, phaseValue, round);
+    const existingRoles = await getExistingSwarmRoles(session, phaseValue, round, { activeOnly: true });
 
     for (const role of roles) {
       if (completedRoles.has(role)) continue;

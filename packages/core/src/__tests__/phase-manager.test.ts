@@ -277,6 +277,47 @@ describe("phase manager transitions", () => {
     expect(spawnedRoles).toEqual(["developer", "product"]);
   });
 
+  it("respawns reviewer role when previous reviewer session is terminal", async () => {
+    const exitedReviewer = makeSession({
+      id: "app-2",
+      status: "killed",
+      activity: "exited",
+      phase: SESSION_PHASE.PLAN_REVIEW,
+      subSessionInfo: {
+        parentSessionId: "app-1",
+        role: "architect",
+        phase: SESSION_PHASE.PLAN_REVIEW,
+        round: 1,
+      },
+    });
+    const mockSessionManager = {
+      list: vi.fn().mockResolvedValue([exitedReviewer]),
+      spawn: vi.fn().mockResolvedValue(makeSession({ id: "app-3", phase: SESSION_PHASE.PLAN_REVIEW })),
+    } as unknown as SessionManager;
+    const phaseManager = createPhaseManager({ config, sessionManager: mockSessionManager });
+    const session = makeSession({
+      phase: SESSION_PHASE.PLAN_REVIEW,
+      metadata: { phase: SESSION_PHASE.PLAN_REVIEW, reviewRound: "1" },
+    });
+
+    writeMetadata(sessionsDir, session.id, {
+      worktree: session.workspacePath ?? "",
+      branch: session.branch ?? "",
+      status: session.status,
+      phase: session.phase,
+      reviewRound: "1",
+      project: session.projectId,
+    });
+    writePlanArtifact(session.workspacePath ?? "", "# Plan\n\nRound 1");
+
+    await phaseManager.check(session);
+
+    const spawnMock = vi.mocked(mockSessionManager.spawn);
+    expect(spawnMock).toHaveBeenCalledTimes(3);
+    const roles = spawnMock.mock.calls.map((call) => call[0].subSessionInfo?.role).sort();
+    expect(roles).toEqual(["architect", "developer", "product"]);
+  });
+
   it("keeps phase on partial approvals and spawns missing reviewers only", async () => {
     const mockSessionManager = {
       list: vi.fn().mockResolvedValue([]),
