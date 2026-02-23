@@ -48,6 +48,50 @@ projects:
     #   permissions: skip    # --dangerously-skip-permissions
     #   model: opus
 
+    # Multi-phase workflow orchestration (optional)
+    # Supports mixed-model routing and swarm by phase/role.
+    #
+    # workflow:
+    #   mode: full                # simple | full
+    #   codingAgent: codex        # main coding loop model
+    #   autoCodeReview: true
+    #
+    #   # Optional collaborative plan drafting swarm
+    #   planningSwarm:
+    #     roles: [architect, product]
+    #     maxAgents: 2
+    #     agent: claude-code
+    #     roleAgents:
+    #       architect: codex
+    #       product: claude-code
+    #
+    #   # Plan review swarm (round-based)
+    #   planReview:
+    #     roles: [architect, developer, product]
+    #     maxRounds: 3
+    #     codexReview: true
+    #     agent: claude-code
+    #     roleAgents:
+    #       architect: codex
+    #       product: claude-code
+    #
+    #   # Optional implementation swarm (parallel execution)
+    #   implementationSwarm:
+    #     roles: [developer, product]
+    #     maxAgents: 2
+    #     roleAgents:
+    #       developer: codex
+    #       product: claude-code
+    #
+    #   # Final code review swarm before merge
+    #   codeReview:
+    #     roles: [architect, developer, product]
+    #     maxRounds: 2
+    #     codexReview: true
+    #     roleAgents:
+    #       architect: codex
+    #       developer: claude-code
+
     # Inline rules included in every agent prompt for this project
     # agentRules: |
     #   Always run tests before pushing.

@@ -101,6 +101,52 @@ reactions:
 
 CI fails → agent gets the logs and fixes it. Reviewer requests changes → agent addresses them. PR approved with green CI → you get a notification to merge.
 
+### Full Workflow (Swarm + Mixed Models)
+
+Use `workflow.mode: full` when you want explicit plan -> review -> implementation -> code review phases, with role-based model routing.
+
+```yaml
+projects:
+  my-app:
+    # ...
+    workflow:
+      mode: full
+      codingAgent: codex
+      autoCodeReview: true
+
+      planningSwarm:
+        roles: [architect, product]
+        maxAgents: 2
+        roleAgents:
+          architect: codex
+          product: claude-code
+
+      planReview:
+        roles: [architect, developer, product]
+        maxRounds: 3
+        codexReview: true
+        roleAgents:
+          architect: codex
+          product: claude-code
+
+      implementationSwarm:
+        roles: [developer, product]
+        maxAgents: 2
+        roleAgents:
+          developer: codex
+          product: claude-code
+
+      codeReview:
+        roles: [architect, developer, product]
+        maxRounds: 2
+        codexReview: true
+```
+
+This enables combinations like:
+- Codex implements, Claude Code reviews
+- Claude Code implements, Codex reviews
+- Role-specific routing (for example, product reviewer uses Claude Code while architect reviewer uses Codex)
+
 See [`agent-orchestrator.yaml.example`](agent-orchestrator.yaml.example) for the full reference.
 
 ## CLI

@@ -139,6 +139,13 @@ cp examples/simple-github.yaml agent-orchestrator.yaml
 nano agent-orchestrator.yaml
 ```
 
+For full multi-phase swarm orchestration with mixed models:
+
+```bash
+cp examples/full-workflow-swarm.yaml agent-orchestrator.yaml
+nano agent-orchestrator.yaml
+```
+
 ## Configuration Reference
 
 ### Minimal Configuration
@@ -580,6 +587,46 @@ projects:
 ```
 
 See [examples/multi-project.yaml](./examples/multi-project.yaml) for full example.
+
+### Full Workflow Swarm (Plan -> Review -> Implement -> Review)
+
+Use workflow mode `full` to orchestrate explicit phases and route different roles to different models:
+
+```yaml
+projects:
+  my-app:
+    # ...
+    workflow:
+      mode: full
+      codingAgent: codex
+      autoCodeReview: true
+
+      planningSwarm:
+        roles: [architect, product]
+        maxAgents: 2
+        roleAgents:
+          architect: codex
+          product: claude-code
+
+      planReview:
+        roles: [architect, developer, product]
+        maxRounds: 3
+        codexReview: true
+
+      implementationSwarm:
+        roles: [developer, product]
+        maxAgents: 2
+        roleAgents:
+          developer: codex
+          product: claude-code
+
+      codeReview:
+        roles: [architect, developer, product]
+        maxRounds: 2
+        codexReview: true
+```
+
+See [examples/full-workflow-swarm.yaml](./examples/full-workflow-swarm.yaml) for a complete template.
 
 ### Custom Plugin Development
 

@@ -1,0 +1,60 @@
+# Full multi-phase workflow with mixed-model routing and swarm reviews
+# Goal: Codex drives implementation, Claude Code focuses on product-facing review.
+
+dataDir: ~/.agent-orchestrator
+worktreeDir: ~/.worktrees
+
+defaults:
+  runtime: tmux
+  agent: claude-code
+  workspace: worktree
+  notifiers: [desktop]
+
+projects:
+  my-app:
+    name: My App
+    repo: owner/my-app
+    path: ~/my-app
+    defaultBranch: main
+    sessionPrefix: app
+
+    workflow:
+      mode: full
+      codingAgent: codex
+      autoCodeReview: true
+
+      # Optional: collaborative planning before implementation starts.
+      planningSwarm:
+        roles: [architect, product]
+        maxAgents: 2
+        roleAgents:
+          architect: codex
+          product: claude-code
+
+      # Plan quality gate: all roles must approve or request changes.
+      planReview:
+        roles: [architect, developer, product]
+        maxRounds: 3
+        codexReview: true
+        roleAgents:
+          architect: codex
+          developer: codex
+          product: claude-code
+
+      # Optional: split implementation in parallel based on .ao/plan.md tasks.
+      implementationSwarm:
+        roles: [developer, product]
+        maxAgents: 2
+        roleAgents:
+          developer: codex
+          product: claude-code
+
+      # Final review gate before merge-ready state.
+      codeReview:
+        roles: [architect, developer, product]
+        maxRounds: 2
+        codexReview: true
+        roleAgents:
+          architect: codex
+          developer: codex
+          product: claude-code
