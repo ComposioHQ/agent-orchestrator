@@ -53,6 +53,9 @@ importers:
       '@composio/ao-plugin-agent-codex':
         specifier: workspace:*
         version: link:../plugins/agent-codex
+      '@composio/ao-plugin-agent-opencode':
+        specifier: workspace:*
+        version: link:../plugins/agent-opencode
       '@composio/ao-plugin-notifier-composio':
         specifier: workspace:*
         version: link:../plugins/notifier-composio
@@ -481,6 +484,9 @@ importers:
       '@composio/ao-plugin-agent-claude-code':
         specifier: workspace:*
         version: link:../plugins/agent-claude-code
+      '@composio/ao-plugin-agent-opencode':
+        specifier: workspace:*
+        version: link:../plugins/agent-opencode
       '@composio/ao-plugin-runtime-tmux':
         specifier: workspace:*
         version: link:../plugins/runtime-tmux

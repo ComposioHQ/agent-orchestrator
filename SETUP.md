@@ -168,7 +168,7 @@ Agent Orchestrator has 8 plugin slots. All are swappable:
 | Slot          | Purpose              | Default       | Alternatives                                    |
 | ------------- | -------------------- | ------------- | ----------------------------------------------- |
 | **Runtime**   | How sessions run     | `tmux`        | `process`, `docker`, `kubernetes`, `ssh`, `e2b` |
-| **Agent**     | AI coding assistant  | `claude-code` | `codex`, `aider`, `goose`, custom               |
+| **Agent**     | AI coding assistant  | `claude-code` | `codex`, `aider`, `opencode`                    |
 | **Workspace** | Workspace isolation  | `worktree`    | `clone`, `copy`                                 |
 | **Tracker**   | Issue tracking       | `github`      | `linear`, `jira`, custom                        |
 | **SCM**       | Source control       | `github`      | GitLab, Bitbucket (future)                      |
