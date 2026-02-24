@@ -75,7 +75,18 @@ body {
     var(--color-bg-base);
   color: var(--color-text-primary);
   min-height: 100vh;
+  min-height: 100dvh;
   letter-spacing: -0.011em;
+  /* Safe area insets for PWA standalone mode (notch/home indicator) */
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+/* Touch optimization for mobile */
+@media (pointer: coarse) {
+  button, a { -webkit-tap-highlight-color: transparent; }
 }
 
 a {
@@ -177,12 +188,14 @@ a:hover {
   --color-text-tertiary:  #656d76;
 }
 
-.session-card:hover {
-  transform: translateY(-2px);
-  box-shadow:
-    0 4px 8px rgba(0,0,0,0.85),
-    0 14px 36px rgba(0,0,0,0.55),
-    inset 0 1px 0 rgba(255,255,255,0.1);
+@media (hover: hover) {
+  .session-card:hover {
+    transform: translateY(-2px);
+    box-shadow:
+      0 4px 8px rgba(0,0,0,0.85),
+      0 14px 36px rgba(0,0,0,0.55),
+      inset 0 1px 0 rgba(255,255,255,0.1);
+  }
 }
 
 .session-card.card-merge-ready {
@@ -195,12 +208,14 @@ a:hover {
     inset 0 1px 0 rgba(255,255,255,0.07);
 }
 
-.session-card.card-merge-ready:hover {
-  transform: translateY(-2px);
-  box-shadow:
-    0 0 0 1px rgba(63,185,80,0.35),
-    0 4px 8px rgba(0,0,0,0.85),
-    0 14px 36px rgba(0,0,0,0.55),
-    0 0 60px rgba(63,185,80,0.2),
-    inset 0 1px 0 rgba(255,255,255,0.1);
+@media (hover: hover) {
+  .session-card.card-merge-ready:hover {
+    transform: translateY(-2px);
+    box-shadow:
+      0 0 0 1px rgba(63,185,80,0.35),
+      0 4px 8px rgba(0,0,0,0.85),
+      0 14px 36px rgba(0,0,0,0.55),
+      0 0 60px rgba(63,185,80,0.2),
+      inset 0 1px 0 rgba(255,255,255,0.1);
+  }
 }

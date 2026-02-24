@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0d1117" />
+  <title>Offline — Agent Orchestrator</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, system-ui, "Segoe UI", sans-serif;
+      background: #0d1117;
+      color: #e6edf3;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 2rem;
+    }
+    .container { max-width: 380px; }
+    .icon {
+      width: 64px;
+      height: 64px;
+      margin: 0 auto 1.5rem;
+      opacity: 0.4;
+    }
+    h1 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin-bottom: 0.75rem;
+      color: #e6edf3;
+    }
+    p {
+      font-size: 0.875rem;
+      color: #7d8590;
+      line-height: 1.6;
+      margin-bottom: 1.5rem;
+    }
+    .dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #d29922;
+      margin-right: 8px;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    .status {
+      font-size: 0.75rem;
+      color: #484f58;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="#484f58" stroke-width="1.5">
+      <path d="M1 1l22 22M16.72 11.06A10.94 10.94 0 0119 12.55M5 12.55a10.94 10.94 0 015.17-2.39M10.71 5.05A16 16 0 0122.56 9M1.42 9a15.91 15.91 0 014.7-2.88M8.53 16.11a6 6 0 016.95 0M12 20h.01" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <h1>You&rsquo;re offline</h1>
+    <p>Can&rsquo;t reach the orchestrator. Check your connection and try again.</p>
+    <div class="status">
+      <span class="dot"></span>
+      Reconnecting&hellip;
+    </div>
+  </div>
+  <script>
+    // Auto-reload when connection is restored
+    window.addEventListener("online", () => window.location.reload());
+  </script>
+</body>
+</html>

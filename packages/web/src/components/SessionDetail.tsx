@@ -137,10 +137,10 @@ function OrchestratorStatusStrip({
 
   return (
     <div
-      className="border-b border-[var(--color-border-subtle)] px-8 py-4"
+      className="border-b border-[var(--color-border-subtle)] px-4 py-3 md:px-8 md:py-4"
       style={{ background: "linear-gradient(to bottom, rgba(88,166,255,0.04) 0%, transparent 100%)" }}
     >
-      <div className="mx-auto flex max-w-[900px] items-center gap-3 flex-wrap">
+      <div className="mx-auto flex max-w-[900px] items-center gap-2 flex-wrap md:gap-3">
         {/* Total count */}
         <div className="flex items-baseline gap-1.5 mr-2">
           <span className="text-[22px] font-bold leading-none tabular-nums text-[var(--color-text-primary)]">
@@ -195,13 +195,13 @@ export function SessionDetail({ session, isOrchestrator = false, orchestratorZon
 
   const terminalHeight = isOrchestrator
     ? "calc(100vh - 240px)"
-    : "max(440px, calc(100vh - 440px))";
+    : "max(300px, calc(100vh - 380px))";
 
   return (
     <div className="min-h-screen bg-[var(--color-bg-base)]">
       {/* Nav bar — glass effect */}
       <nav className="nav-glass sticky top-0 z-10 border-b border-[var(--color-border-subtle)]">
-        <div className="mx-auto flex max-w-[900px] items-center gap-2 px-8 py-2.5">
+        <div className="mx-auto flex max-w-[900px] items-center gap-2 px-4 py-2.5 md:px-8">
           <a
             href="/"
             className="flex items-center gap-1 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-text-primary)] hover:no-underline"
@@ -235,10 +235,10 @@ export function SessionDetail({ session, isOrchestrator = false, orchestratorZon
         <OrchestratorStatusStrip zones={orchestratorZones} createdAt={session.createdAt} />
       )}
 
-      <div className="mx-auto max-w-[900px] px-8 py-6">
+      <div className="mx-auto max-w-[900px] px-4 py-4 md:px-8 md:py-6">
         {/* ── Header card ─────────────────────────────────────────── */}
         <div
-          className="detail-card mb-6 rounded-[8px] border border-[var(--color-border-default)] p-5"
+          className="detail-card mb-4 rounded-[8px] border border-[var(--color-border-default)] p-3.5 md:mb-6 md:p-5"
           style={{
             borderLeft: isOrchestrator
               ? `3px solid ${accentColor}`
@@ -248,7 +248,7 @@ export function SessionDetail({ session, isOrchestrator = false, orchestratorZon
           <div className="flex items-start gap-3">
             <div className="flex-1 min-w-0">
               <div className="flex flex-wrap items-center gap-2.5">
-                <h1 className="font-[var(--font-mono)] text-[17px] font-semibold tracking-[-0.01em] text-[var(--color-text-primary)]">
+                <h1 className="break-all font-[var(--font-mono)] text-[14px] font-semibold tracking-[-0.01em] text-[var(--color-text-primary)] md:text-[17px]">
                   {session.id}
                 </h1>
                 {/* Activity badge */}
@@ -487,7 +487,7 @@ function PRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
       style={{ borderColor }}
     >
       {/* Title row */}
-      <div className="border-b border-[var(--color-border-subtle)] px-5 py-3.5">
+      <div className="border-b border-[var(--color-border-subtle)] px-3.5 py-3 md:px-5 md:py-3.5">
         <a
           href={pr.url}
           target="_blank"
@@ -522,7 +522,7 @@ function PRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
       </div>
 
       {/* Body */}
-      <div className="px-5 py-4">
+      <div className="px-3.5 py-3 md:px-5 md:py-4">
         {/* Ready-to-merge banner */}
         {allGreen ? (
           <div className="flex items-center gap-2 rounded-[5px] border border-[rgba(63,185,80,0.25)] bg-[rgba(63,185,80,0.07)] px-3.5 py-2.5">
@@ -594,7 +594,7 @@ function PRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
                         onClick={() => handleAskAgentToFix(c)}
                         disabled={sendingComments.has(c.url)}
                         className={cn(
-                          "mt-1.5 rounded-[4px] px-3 py-1 text-[11px] font-semibold transition-all",
+                          "mt-1.5 min-h-[44px] rounded-[4px] px-4 py-2 text-[11px] font-semibold transition-all md:min-h-0 md:px-3 md:py-1",
                           sentComments.has(c.url)
                             ? "bg-[var(--color-status-ready)] text-white"
                             : errorComments.has(c.url)
