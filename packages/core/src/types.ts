@@ -418,6 +418,9 @@ export interface WorkspaceInfo {
 
 /**
  * Issue/task tracker integration — GitHub Issues, Linear, Jira, etc.
+ *
+ * @deprecated Use {@link McpInputSource} instead. Will be removed in v2.0.
+ * Kept for backward compatibility with existing tracker plugins.
  */
 export interface Tracker {
   readonly name: string;
@@ -481,6 +484,73 @@ export interface CreateIssueInput {
   labels?: string[];
   assignee?: string;
   priority?: number;
+}
+
+// =============================================================================
+// MCP INPUT SOURCE — Replaces Tracker
+// =============================================================================
+
+/**
+ * Protocol-agnostic input source for driving agent spawning.
+ * Any MCP server (Linear, GitHub, Notion, custom) can implement this.
+ *
+ * Replaces the Tracker plugin for issue context resolution.
+ * Linear is the default implementation.
+ *
+ * @see McpInputSource for the new interface
+ * @see Tracker for the deprecated interface (kept for backward compatibility)
+ */
+export interface McpInputSource {
+  connect(): Promise<void>;
+  disconnect(): Promise<void>;
+
+  /**
+   * Fetch full context for a resource.
+   * resourceId can be "POS-863" (Linear identifier), a UUID, or a URL.
+   * The implementation resolves the format.
+   */
+  getContext(resourceId: string): Promise<AgentContext>;
+
+  /** Post a comment / progress update back to the source */
+  postUpdate(resourceId: string, body: string): Promise<void>;
+
+  /**
+   * Update status. status is a human-readable name ("In Progress").
+   * Implementation maps to provider-specific IDs.
+   */
+  setStatus(resourceId: string, status: string): Promise<void>;
+
+  /** List resources available to spawn for a given project key */
+  listPending(projectKey: string): Promise<Resource[]>;
+}
+
+export interface AgentContext {
+  id: string;
+  identifier?: string; // short display ID e.g. "POS-863"
+  title: string;
+  description: string;
+  status: string;
+  priority?: number;
+  labels: string[];
+  comments: AgentContextComment[];
+  /** Raw provider fields — injected into agent system prompt as JSON */
+  metadata: Record<string, unknown>;
+}
+
+export interface AgentContextComment {
+  id: string;
+  body: string;
+  author: string;
+  createdAt: string;
+}
+
+export interface Resource {
+  id: string;
+  identifier?: string;
+  title: string;
+  status: string;
+  priority?: number;
+  url?: string;
 }
 
 // =============================================================================
