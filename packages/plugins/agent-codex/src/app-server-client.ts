@@ -209,6 +209,9 @@ export class CodexAppServerClient extends EventEmitter {
     } catch (err) {
       this.connecting = false;
       await this.close();
+      // Reset closed flag so the client can retry connect() after a
+      // transient handshake failure instead of being permanently unusable.
+      this.closed = false;
       throw err;
     }
 

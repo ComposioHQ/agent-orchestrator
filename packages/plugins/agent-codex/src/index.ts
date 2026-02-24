@@ -759,8 +759,11 @@ function createCodexAgent(): Agent {
         if (!resolvingBinary) {
           resolvingBinary = resolveCodexBinary();
         }
-        resolvedBinary = await resolvingBinary;
-        resolvingBinary = null;
+        try {
+          resolvedBinary = await resolvingBinary;
+        } finally {
+          resolvingBinary = null;
+        }
       }
       if (!session.workspacePath) return;
       await setupCodexWorkspace(session.workspacePath);

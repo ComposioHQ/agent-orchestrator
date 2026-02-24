@@ -12,8 +12,7 @@ vi.mock("node:child_process", () => ({
   spawn: mockSpawn,
 }));
 
-import { CodexAppServerClient } from "./app-server-client.js";
-import type { ApprovalDecision } from "./app-server-client.js";
+import { CodexAppServerClient, type ApprovalDecision } from "./app-server-client.js";
 
 // ---------------------------------------------------------------------------
 // Helpers: fake child process
@@ -591,10 +590,6 @@ describe("CodexAppServerClient", () => {
       await new Promise((r) => setTimeout(r, 10));
 
       // Should have auto-responded with accept
-      const responses = parseStdinMessages(proc).filter(
-        (m) => m["id"] === "0" || m["id"] === 0,
-      );
-      // Response should contain decision: "accept"
       const approvalResponse = proc.stdinLines.find((l) => l.includes('"accept"'));
       expect(approvalResponse).toBeDefined();
 
@@ -949,6 +944,30 @@ describe("CodexAppServerClient", () => {
 
       // Client should have cleaned up — not connected, not connecting
       expect(client.isConnected).toBe(false);
+    });
+
+    it("allows retry after a failed connect (does not permanently close)", async () => {
+      // First attempt: spawn a process that times out during handshake
+      const proc1 = createFakeProcess();
+      vi.spyOn(proc1, "kill").mockImplementation((_signal?: string) => {
+        proc1.simulateExit(1, "SIGTERM");
+        return true;
+      });
+      const client = new CodexAppServerClient({ requestTimeout: 200 });
+
+      await expect(client.connect()).rejects.toThrow("timed out");
+      expect(client.isConnected).toBe(false);
+
+      // Second attempt should NOT throw "Client is closed" — it should be retryable
+      const proc2 = createFakeProcess();
+      const connectPromise = client.connect();
+      await new Promise((r) => setTimeout(r, 10));
+      const initReq = findRequest(proc2, "initialize");
+      proc2.sendLine(JSON.stringify({ id: initReq!["id"], result: {} }));
+      await connectPromise;
+
+      expect(client.isConnected).toBe(true);
+      await closeClient(client, proc2);
     });
 
     it("drains stderr without blocking the child process", async () => {
