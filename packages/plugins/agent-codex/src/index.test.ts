@@ -6,25 +6,32 @@ import type { Session, RuntimeHandle, AgentLaunchConfig } from "@composio/ao-cor
 // ---------------------------------------------------------------------------
 const {
   mockExecFileAsync,
+  mockExecFileSync,
   mockWriteFile,
   mockMkdir,
   mockReadFile,
   mockRename,
   mockHomedir,
+  mockExistsSync,
 } = vi.hoisted(() => ({
   mockExecFileAsync: vi.fn(),
+  mockExecFileSync: vi.fn(),
   mockWriteFile: vi.fn().mockResolvedValue(undefined),
   mockMkdir: vi.fn().mockResolvedValue(undefined),
   mockReadFile: vi.fn(),
   mockRename: vi.fn().mockResolvedValue(undefined),
   mockHomedir: vi.fn(() => "/mock/home"),
+  mockExistsSync: vi.fn(() => false),
 }));
 
 vi.mock("node:child_process", () => {
   const fn = Object.assign((..._args: unknown[]) => {}, {
     [Symbol.for("nodejs.util.promisify.custom")]: mockExecFileAsync,
   });
-  return { execFile: fn };
+  return {
+    execFile: fn,
+    execFileSync: mockExecFileSync,
+  };
 });
 
 vi.mock("node:fs/promises", () => ({
@@ -39,7 +46,7 @@ vi.mock("node:crypto", () => ({
 }));
 
 vi.mock("node:fs", () => ({
-  existsSync: vi.fn(() => false),
+  existsSync: mockExistsSync,
 }));
 
 vi.mock("node:os", () => ({
@@ -145,6 +152,47 @@ describe("getLaunchCommand", () => {
   const agent = create();
 
   it("generates base command", () => {
+    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("codex");
+  });
+
+  it("uses custom binaryPath from config if provided", () => {
+    const config = makeLaunchConfig();
+    config.projectConfig.agentConfig = { binaryPath: "/opt/bin/codex-cli" };
+    expect(agent.getLaunchCommand(config)).toBe("/opt/bin/codex-cli");
+  });
+
+  it("uses resolved path from which command", () => {
+    mockExecFileSync.mockReturnValue("/usr/bin/codex\n");
+    mockExistsSync.mockImplementation((path: string) => path === "/usr/bin/codex");
+
+    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("/usr/bin/codex");
+    expect(mockExecFileSync).toHaveBeenCalledWith("which", ["codex"], expect.anything());
+  });
+
+  it("uses fallback location /usr/local/bin/codex if which fails", () => {
+    mockExecFileSync.mockImplementation(() => {
+      throw new Error("not found");
+    });
+    mockExistsSync.mockImplementation((path: string) => path === "/usr/local/bin/codex");
+
+    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("/usr/local/bin/codex");
+  });
+
+  it("uses fallback location ~/.npm/bin/codex if others fail", () => {
+    mockExecFileSync.mockImplementation(() => {
+      throw new Error("not found");
+    });
+    mockExistsSync.mockImplementation((path: string) => path === "/mock/home/.npm/bin/codex");
+
+    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("/mock/home/.npm/bin/codex");
+  });
+
+  it("falls back to 'codex' if all resolution steps fail", () => {
+    mockExecFileSync.mockImplementation(() => {
+      throw new Error("not found");
+    });
+    mockExistsSync.mockReturnValue(false);
+
     expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("codex");
   });
 

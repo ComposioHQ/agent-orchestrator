@@ -10,8 +10,9 @@ import {
   type Session,
   type WorkspaceHooksConfig,
 } from "@composio/ao-core";
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { writeFile, mkdir, readFile, rename } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -274,13 +275,62 @@ async function setupCodexWorkspace(workspacePath: string): Promise<void> {
 // Agent Implementation
 // =============================================================================
 
+/**
+ * Resolve the Codex binary location dynamically.
+ * Checks in order:
+ * 1. config.projectConfig.agentConfig.binaryPath
+ * 2. which codex via execFileSync to find it on PATH
+ * 3. Common fallback locations: /usr/local/bin/codex, ~/.npm/bin/codex
+ *
+ * @param config - Agent launch config
+ * @returns Resolved binary path or "codex" fallback
+ */
+function resolveCodexBinary(config: AgentLaunchConfig): string {
+  // 1. config.binaryPath if provided in agent config
+  const agentConfig = config.projectConfig?.agentConfig;
+  if (typeof agentConfig?.binaryPath === "string") {
+    return agentConfig.binaryPath;
+  }
+
+  // 2. which codex via execFileSync (no shell, safe)
+  try {
+    const stdout = execFileSync("which", ["codex"], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 2000,
+    });
+    const resolvedPath = stdout.trim();
+    if (resolvedPath && existsSync(resolvedPath)) {
+      return resolvedPath;
+    }
+  } catch {
+    // which failed or codex not found on PATH
+  }
+
+  // 3. Common fallback locations
+  const fallbacks = [
+    "/usr/local/bin/codex",
+    join(homedir(), ".npm", "bin", "codex"),
+  ];
+
+  for (const fallback of fallbacks) {
+    if (existsSync(fallback)) {
+      return fallback;
+    }
+  }
+
+  // Graceful degradation: let the shell resolve it at runtime
+  return "codex";
+}
+
 function createCodexAgent(): Agent {
   return {
     name: "codex",
     processName: "codex",
 
     getLaunchCommand(config: AgentLaunchConfig): string {
-      const parts: string[] = ["codex"];
+      const binary = resolveCodexBinary(config);
+      const parts: string[] = [binary];
 
       if (config.permissions === "skip") {
         parts.push("--full-auto");
