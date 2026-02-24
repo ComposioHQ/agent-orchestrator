@@ -465,7 +465,6 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       sessionId,
       projectConfig: project,
       issueId: spawnConfig.issueId,
-      prompt: composedPrompt ?? spawnConfig.prompt,
       permissions: project.agentConfig?.permissions,
       model: project.agentConfig?.model,
     };
