@@ -7,6 +7,8 @@ coverage/
 *.patch
 *-context.md
 packages/web/screenshots/
+packages/web/e2e/test-results/
+packages/web/e2e/playwright-report/
 
 # Environment files (secrets)
 .env

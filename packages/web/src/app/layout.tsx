@@ -40,9 +40,6 @@ export async function generateMetadata(): Promise<Metadata> {
       statusBarStyle: "black-translucent",
       title: "Agent Orchestrator",
     },
-    icons: {
-      apple: "/icon-192.svg",
-    },
   };
 }
 
