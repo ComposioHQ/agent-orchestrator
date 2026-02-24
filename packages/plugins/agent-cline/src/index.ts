@@ -347,13 +347,12 @@ function createClineAgent(): Agent {
 
       // Add system prompt file content first (shell substitution)
       // Note: Wrap in double quotes to prevent word splitting on file content
+      // systemPromptFile takes precedence over systemPrompt per API contract
       if (config.systemPromptFile) {
         const escapedPath = shellEscape(config.systemPromptFile);
         promptParts.push(`"$(cat ${escapedPath})"`);
-      }
-
-      // Add system prompt (from orchestrator)
-      if (config.systemPrompt) {
+      } else if (config.systemPrompt) {
+        // Add system prompt (from orchestrator) only if systemPromptFile not provided
         promptParts.push(config.systemPrompt);
       }
 
