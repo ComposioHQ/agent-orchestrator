@@ -497,26 +497,11 @@ function createClineAgent(): Agent {
 
       if (!taskId) return null;
 
-      const parts: string[] = ["cline", "task"];
-
-      // Resume existing task using -T flag
-      // Note: This flag is used by Cline internally (visible in their source code)
-      // but not currently documented in the public CLI help. It may change in future versions.
-      parts.push("-T", shellEscape(taskId));
-
-      // Add model override if specified
-      if (project.agentConfig?.model) {
-        parts.push("--model", shellEscape(project.agentConfig.model as string));
-      }
-
-      // Act mode for autonomous operation (required when resuming to ensure
-      // the agent works autonomously rather than in plan mode)
-      parts.push("--act");
-
-      // Yolo mode for autonomous operation
-      parts.push("--yolo");
-
-      return parts.join(" ");
+      // TODO: Cline CLI currently doesn't expose a documented way to resume a specific task.
+      // The `-T` flag exists internally but is not in public API documentation.
+      // Session restoration will need to wait for Cline to add a public task resume feature.
+      // For now, return null to indicate restoration is not supported.
+      return null;
     },
 
     async setupWorkspaceHooks(
