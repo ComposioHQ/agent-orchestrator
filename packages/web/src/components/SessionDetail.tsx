@@ -200,7 +200,7 @@ export function SessionDetail({ session, isOrchestrator = false, orchestratorZon
   return (
     <div className="min-h-screen bg-[var(--color-bg-base)]">
       {/* Nav bar — glass effect, top offset for PWA safe area */}
-      <nav className="nav-glass sticky z-10 border-b border-[var(--color-border-subtle)]" style={{ top: "env(safe-area-inset-top, 0px)" }}>
+      <nav className="nav-glass nav-sticky z-10 border-b border-[var(--color-border-subtle)]">
         <div className="mx-auto flex max-w-[900px] items-center gap-2 px-4 py-2.5 md:px-8">
           <a
             href="/"

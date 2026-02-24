@@ -159,6 +159,15 @@ a:hover {
   -webkit-backdrop-filter: blur(16px);
 }
 
+/* Sticky nav with safe-area offset for notched devices / PWA standalone.
+   Uses separate top declarations so browsers that don't support env()
+   fall back to 0 instead of dropping the property entirely. */
+.nav-sticky {
+  position: sticky;
+  top: 0;
+  top: env(safe-area-inset-top);
+}
+
 /* ── Detail page cards — subtle depth, no hover lift ─────────────────── */
 
 .detail-card {
