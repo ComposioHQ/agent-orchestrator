@@ -1,4 +1,9 @@
-const path = require("path");
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
 
 // Resolve @composio/core only when not installed, so COMPOSIO_API_KEY + real SDK work.
 let stubComposioCorePath = null;
