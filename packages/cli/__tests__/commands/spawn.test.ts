@@ -291,16 +291,16 @@ describe("spawn command", () => {
   });
 
   it("rejects unknown project ID", async () => {
-    await expect(
-      program.parseAsync(["node", "test", "spawn", "nonexistent"]),
-    ).rejects.toThrow("process.exit(1)");
+    await expect(program.parseAsync(["node", "test", "spawn", "nonexistent"])).rejects.toThrow(
+      "process.exit(1)",
+    );
   });
 
   it("reports error when spawn fails", async () => {
     mockSessionManager.spawn.mockRejectedValue(new Error("worktree creation failed"));
 
-    await expect(
-      program.parseAsync(["node", "test", "spawn", "my-app"]),
-    ).rejects.toThrow("process.exit(1)");
+    await expect(program.parseAsync(["node", "test", "spawn", "my-app"])).rejects.toThrow(
+      "process.exit(1)",
+    );
   });
 });

@@ -446,7 +446,6 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         issueContext = await plugins.tracker.generatePrompt(spawnConfig.issueId, project);
       } catch {
         // Non-fatal: continue without detailed issue context
-        // Silently ignore errors - caller can check if issueContext is undefined
       }
     }
 
@@ -459,6 +458,10 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     });
 
     // Get agent launch config and create runtime — clean up workspace on failure
+    // NOTE: Do NOT pass composedPrompt here — agentLaunchConfig.prompt triggers
+    // non-interactive mode (e.g. `claude -p '...'`). The composed prompt is
+    // delivered interactively via runtime.sendMessage() after launch so agents
+    // stay interactive for follow-up messages (CI fixes, review comments).
     const agentLaunchConfig = {
       sessionId,
       projectConfig: project,
@@ -534,6 +537,12 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
       if (plugins.agent.postLaunchSetup) {
         await plugins.agent.postLaunchSetup(session);
+      }
+
+      // Deliver the composed prompt interactively via runtime.sendMessage()
+      // (not via -p flag, which makes the agent non-interactive)
+      if (composedPrompt) {
+        await plugins.runtime.sendMessage(handle, composedPrompt);
       }
     } catch (err) {
       // Clean up runtime and workspace on post-launch failure
