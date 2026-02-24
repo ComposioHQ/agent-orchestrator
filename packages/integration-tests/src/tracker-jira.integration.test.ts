@@ -112,7 +112,8 @@ function jiraApi<T>(method: string, path: string, body?: unknown): Promise<T> {
 // ---------------------------------------------------------------------------
 
 describe.skipIf(!canRun)("tracker-jira (integration)", () => {
-  const tracker = trackerJira.create();
+  const transport = hasComposioCredentials ? "composio" : "direct";
+  const tracker = trackerJira.create({ transport });
 
   const project: ProjectConfig = {
     name: "test-project",

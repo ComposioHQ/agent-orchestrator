@@ -1,13 +1,11 @@
 /**
  * tracker-jira plugin — Jira as an issue tracker.
  *
- * Supports two transports:
- *   1. Direct Jira REST API v3 with Basic Auth
+ * Supports two transports selected via config.transport:
+ *   1. "direct" (default) — Jira REST API v3 with Basic Auth
  *      (JIRA_HOST, JIRA_EMAIL, JIRA_API_TOKEN)
- *   2. Composio SDK (COMPOSIO_API_KEY, optional COMPOSIO_ENTITY_ID)
+ *   2. "composio" — Composio SDK (COMPOSIO_API_KEY, optional COMPOSIO_ENTITY_ID)
  *      Still requires JIRA_HOST for URL construction.
- *
- * When COMPOSIO_API_KEY is set, the Composio transport is preferred.
  */
 
 import { request } from "node:https";
@@ -81,21 +79,7 @@ interface JiraTransitionsResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Transport abstraction — action-based interface
-// ---------------------------------------------------------------------------
-
-interface JiraTransportActions {
-  getIssue(key: string, fields?: string): Promise<JiraIssue>;
-  searchIssues(jql: string, maxResults: number, fields: string): Promise<JiraSearchResult>;
-  getTransitions(key: string): Promise<JiraTransitionsResponse>;
-  transitionIssue(key: string, transitionId: string): Promise<void>;
-  updateIssueFields(key: string, fields: Record<string, unknown>): Promise<void>;
-  addComment(key: string, body: unknown): Promise<void>;
-  createIssue(fields: Record<string, unknown>): Promise<JiraIssue>;
-}
-
-// ---------------------------------------------------------------------------
-// Direct Jira API transport
+// Direct Jira API helpers
 // ---------------------------------------------------------------------------
 
 interface JiraCredentials {
@@ -189,186 +173,6 @@ function jiraHttpRequest<T>(
   });
 }
 
-function createDirectTransport(): { actions: JiraTransportActions; host: string } {
-  const creds = getJiraCredentials();
-  const auth = Buffer.from(`${creds.email}:${creds.apiToken}`).toString("base64");
-
-  const http = <T>(method: string, path: string, body?: unknown): Promise<T> =>
-    jiraHttpRequest<T>(creds, auth, method, path, body);
-
-  const actions: JiraTransportActions = {
-    async getIssue(key, fields) {
-      const qs = fields ? `?fields=${encodeURIComponent(fields)}` : "";
-      return http<JiraIssue>("GET", `/rest/api/3/issue/${encodeURIComponent(key)}${qs}`);
-    },
-
-    async searchIssues(jql, maxResults, fields) {
-      const params = new URLSearchParams({
-        jql,
-        maxResults: String(maxResults),
-        fields,
-      });
-      return http<JiraSearchResult>("GET", `/rest/api/3/search/jql?${params.toString()}`);
-    },
-
-    async getTransitions(key) {
-      return http<JiraTransitionsResponse>(
-        "GET",
-        `/rest/api/3/issue/${encodeURIComponent(key)}/transitions`,
-      );
-    },
-
-    async transitionIssue(key, transitionId) {
-      await http("POST", `/rest/api/3/issue/${encodeURIComponent(key)}/transitions`, {
-        transition: { id: transitionId },
-      });
-    },
-
-    async updateIssueFields(key, fields) {
-      await http("PUT", `/rest/api/3/issue/${encodeURIComponent(key)}`, { fields });
-    },
-
-    async addComment(key, body) {
-      await http("POST", `/rest/api/3/issue/${encodeURIComponent(key)}/comment`, { body });
-    },
-
-    async createIssue(fields) {
-      return http<JiraIssue>("POST", "/rest/api/3/issue", { fields });
-    },
-  };
-
-  return { actions, host: creds.host };
-}
-
-// ---------------------------------------------------------------------------
-// Composio SDK transport
-// ---------------------------------------------------------------------------
-
-type ComposioTools = Composio["tools"];
-
-function createComposioTransport(apiKey: string, entityId: string): JiraTransportActions {
-  // Lazy-load the Composio client — cached as a promise so the constructor
-  // is called only once, even under concurrent requests.
-  let clientPromise: Promise<ComposioTools> | undefined;
-
-  function getClient(): Promise<ComposioTools> {
-    if (!clientPromise) {
-      clientPromise = (async () => {
-        try {
-          const { Composio } = await import("@composio/core");
-          const client = new Composio({ apiKey });
-          return client.tools;
-        } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : String(err);
-          if (
-            msg.includes("Cannot find module") ||
-            msg.includes("Cannot find package") ||
-            msg.includes("ERR_MODULE_NOT_FOUND")
-          ) {
-            throw new Error(
-              "Composio SDK (@composio/core) is not installed. " +
-                "Install it with: pnpm add @composio/core",
-              { cause: err },
-            );
-          }
-          throw err;
-        }
-      })();
-    }
-    return clientPromise;
-  }
-
-  async function exec<T>(action: string, args: Record<string, unknown>): Promise<T> {
-    const tools = await getClient();
-
-    const resultPromise = tools.execute(action, {
-      entityId,
-      arguments: args,
-    });
-
-    // Apply 30s timeout for parity with the direct transport
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeoutPromise = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => {
-        reject(new Error("Composio Jira API request timed out after 30s"));
-      }, 30_000);
-    });
-
-    // Attach no-op .catch() to both promises so the loser of the race
-    // doesn't trigger an unhandled promise rejection.
-    resultPromise.catch(() => {});
-    timeoutPromise.catch(() => {});
-
-    try {
-      const result = await Promise.race([resultPromise, timeoutPromise]);
-
-      if (!result.successful) {
-        throw new Error(`Composio Jira API error: ${result.error ?? "unknown error"}`);
-      }
-
-      if (!result.data) {
-        throw new Error("Composio Jira API returned no data");
-      }
-
-      return result.data as T;
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
-  const actions: JiraTransportActions = {
-    async getIssue(key, fields) {
-      return exec<JiraIssue>("JIRA_GET_ISSUE", {
-        issue_id_or_key: key,
-        ...(fields ? { fields } : {}),
-      });
-    },
-
-    async searchIssues(jql, maxResults, fields) {
-      return exec<JiraSearchResult>("JIRA_SEARCH_ISSUES", {
-        jql,
-        max_results: maxResults,
-        fields,
-      });
-    },
-
-    async getTransitions(key) {
-      return exec<JiraTransitionsResponse>("JIRA_GET_TRANSITIONS", {
-        issue_id_or_key: key,
-      });
-    },
-
-    async transitionIssue(key, transitionId) {
-      await exec("JIRA_TRANSITION_ISSUE", {
-        issue_id_or_key: key,
-        transition_id: transitionId,
-      });
-    },
-
-    async updateIssueFields(key, fields) {
-      await exec("JIRA_UPDATE_ISSUE", {
-        issue_id_or_key: key,
-        fields: JSON.stringify(fields),
-      });
-    },
-
-    async addComment(key, body) {
-      await exec("JIRA_ADD_COMMENT", {
-        issue_id_or_key: key,
-        body: JSON.stringify(body),
-      });
-    },
-
-    async createIssue(fields) {
-      return exec<JiraIssue>("JIRA_CREATE_ISSUE", {
-        fields: JSON.stringify(fields),
-      });
-    },
-  };
-
-  return actions;
-}
-
 // ---------------------------------------------------------------------------
 // State mapping
 // ---------------------------------------------------------------------------
@@ -428,8 +232,10 @@ function extractDescription(desc: AdfNode | string | null): string {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: map JiraIssue to Issue
+// Shared helpers
 // ---------------------------------------------------------------------------
+
+const ISSUE_FIELDS_PARAM = "summary,status,labels,assignee,priority,issuetype,project,description";
 
 function mapIssue(jiraIssue: JiraIssue, host: string): Issue {
   const fields = jiraIssue.fields;
@@ -445,23 +251,173 @@ function mapIssue(jiraIssue: JiraIssue, host: string): Issue {
   };
 }
 
+function extractIssueLabel(url: string): string {
+  // Extract issue key from Jira URL
+  // Examples:
+  //   https://mycompany.atlassian.net/browse/PROJ-123
+  //   https://mycompany.atlassian.net/browse/PROJ-123?focusedId=12345
+  const match = url.match(/\/browse\/([A-Z][A-Z0-9_]+-\d+)/);
+  if (match) {
+    return match[1];
+  }
+  // Fallback: return the last path segment
+  const parts = url.split("/");
+  return parts[parts.length - 1] || url;
+}
+
+function buildPromptText(issue: Issue): string {
+  const lines = [
+    `You are working on Jira ticket ${issue.id}: ${issue.title}`,
+    `Issue URL: ${issue.url}`,
+    "",
+  ];
+
+  if (issue.labels.length > 0) {
+    lines.push(`Labels: ${issue.labels.join(", ")}`);
+  }
+
+  if (issue.priority !== undefined) {
+    const priorityNames: Record<number, string> = {
+      1: "Highest",
+      2: "High",
+      3: "Medium",
+      4: "Low",
+      5: "Lowest",
+    };
+    lines.push(`Priority: ${priorityNames[issue.priority] ?? String(issue.priority)}`);
+  }
+
+  if (issue.description) {
+    lines.push("## Description", "", issue.description);
+  }
+
+  lines.push(
+    "",
+    "Please implement the changes described in this ticket. When done, commit and push your changes.",
+  );
+
+  return lines.join("\n");
+}
+
+function buildJql(
+  filters: IssueFilters,
+  project: ProjectConfig,
+): { jql: string; maxResults: number } {
+  const projectKey = project.tracker?.["projectKey"] as string | undefined;
+  const clauses: string[] = [];
+
+  if (projectKey) {
+    clauses.push(`project = "${projectKey}"`);
+  }
+
+  if (filters.state === "closed") {
+    clauses.push('statusCategory = "Done"');
+  } else if (filters.state !== "all") {
+    clauses.push('statusCategory != "Done"');
+  }
+
+  if (filters.assignee) {
+    clauses.push(`assignee = "${filters.assignee}"`);
+  }
+
+  if (filters.labels && filters.labels.length > 0) {
+    for (const label of filters.labels) {
+      clauses.push(`labels = "${label}"`);
+    }
+  }
+
+  return {
+    jql: clauses.length > 0 ? clauses.join(" AND ") : "ORDER BY created DESC",
+    maxResults: filters.limit ?? 30,
+  };
+}
+
+function targetCategoryKey(state: "open" | "in_progress" | "closed"): string {
+  if (state === "closed") return "done";
+  if (state === "in_progress") return "indeterminate";
+  return "new";
+}
+
+function adfCommentBody(text: string): unknown {
+  return {
+    type: "doc",
+    version: 1,
+    content: [
+      {
+        type: "paragraph",
+        content: [{ type: "text", text }],
+      },
+    ],
+  };
+}
+
+function buildCreateIssueFields(
+  input: CreateIssueInput,
+  projectKey: string,
+): Record<string, unknown> {
+  const fields: Record<string, unknown> = {
+    project: { key: projectKey },
+    summary: input.title,
+    issuetype: { name: "Task" },
+  };
+
+  if (input.description) {
+    fields["description"] = {
+      type: "doc",
+      version: 1,
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: input.description }],
+        },
+      ],
+    };
+  }
+
+  if (input.labels && input.labels.length > 0) {
+    fields["labels"] = input.labels;
+  }
+
+  if (input.assignee) {
+    fields["assignee"] = { name: input.assignee };
+  }
+
+  if (input.priority !== undefined) {
+    fields["priority"] = { id: String(input.priority) };
+  }
+
+  return fields;
+}
+
 // ---------------------------------------------------------------------------
-// Tracker implementation
+// Direct Jira tracker
 // ---------------------------------------------------------------------------
 
-function createJiraTracker(actions: JiraTransportActions, host: string): Tracker {
+function createDirectTracker(host: string): Tracker {
+  const creds = getJiraCredentials();
+  const auth = Buffer.from(`${creds.email}:${creds.apiToken}`).toString("base64");
+
+  const http = <T>(method: string, path: string, body?: unknown): Promise<T> =>
+    jiraHttpRequest<T>(creds, auth, method, path, body);
+
   return {
     name: "jira",
 
     async getIssue(identifier: string, _project: ProjectConfig): Promise<Issue> {
-      const jiraIssue = await actions.getIssue(identifier);
+      const jiraIssue = await http<JiraIssue>(
+        "GET",
+        `/rest/api/3/issue/${encodeURIComponent(identifier)}`,
+      );
       return mapIssue(jiraIssue, host);
     },
 
     async isCompleted(identifier: string, _project: ProjectConfig): Promise<boolean> {
-      const jiraIssue = await actions.getIssue(identifier, "status");
-      const cat = jiraIssue.fields.status.statusCategory.key;
-      return cat === "done";
+      const qs = `?fields=${encodeURIComponent("status")}`;
+      const jiraIssue = await http<JiraIssue>(
+        "GET",
+        `/rest/api/3/issue/${encodeURIComponent(identifier)}${qs}`,
+      );
+      return jiraIssue.fields.status.statusCategory.key === "done";
     },
 
     issueUrl(identifier: string, _project: ProjectConfig): string {
@@ -469,17 +425,7 @@ function createJiraTracker(actions: JiraTransportActions, host: string): Tracker
     },
 
     issueLabel(url: string, _project: ProjectConfig): string {
-      // Extract issue key from Jira URL
-      // Examples:
-      //   https://mycompany.atlassian.net/browse/PROJ-123
-      //   https://mycompany.atlassian.net/browse/PROJ-123?focusedId=12345
-      const match = url.match(/\/browse\/([A-Z][A-Z0-9_]+-\d+)/);
-      if (match) {
-        return match[1];
-      }
-      // Fallback: return the last path segment
-      const parts = url.split("/");
-      return parts[parts.length - 1] || url;
+      return extractIssueLabel(url);
     },
 
     branchName(identifier: string, _project: ProjectConfig): string {
@@ -488,71 +434,20 @@ function createJiraTracker(actions: JiraTransportActions, host: string): Tracker
 
     async generatePrompt(identifier: string, project: ProjectConfig): Promise<string> {
       const issue = await this.getIssue(identifier, project);
-      const lines = [
-        `You are working on Jira ticket ${issue.id}: ${issue.title}`,
-        `Issue URL: ${issue.url}`,
-        "",
-      ];
-
-      if (issue.labels.length > 0) {
-        lines.push(`Labels: ${issue.labels.join(", ")}`);
-      }
-
-      if (issue.priority !== undefined) {
-        const priorityNames: Record<number, string> = {
-          1: "Highest",
-          2: "High",
-          3: "Medium",
-          4: "Low",
-          5: "Lowest",
-        };
-        lines.push(`Priority: ${priorityNames[issue.priority] ?? String(issue.priority)}`);
-      }
-
-      if (issue.description) {
-        lines.push("## Description", "", issue.description);
-      }
-
-      lines.push(
-        "",
-        "Please implement the changes described in this ticket. When done, commit and push your changes.",
-      );
-
-      return lines.join("\n");
+      return buildPromptText(issue);
     },
 
     async listIssues(filters: IssueFilters, project: ProjectConfig): Promise<Issue[]> {
-      const projectKey = project.tracker?.["projectKey"] as string | undefined;
-
-      // Build JQL clauses
-      const clauses: string[] = [];
-
-      if (projectKey) {
-        clauses.push(`project = "${projectKey}"`);
-      }
-
-      if (filters.state === "closed") {
-        clauses.push('statusCategory = "Done"');
-      } else if (filters.state !== "all") {
-        // Default to open (exclude done)
-        clauses.push('statusCategory != "Done"');
-      }
-
-      if (filters.assignee) {
-        clauses.push(`assignee = "${filters.assignee}"`);
-      }
-
-      if (filters.labels && filters.labels.length > 0) {
-        for (const label of filters.labels) {
-          clauses.push(`labels = "${label}"`);
-        }
-      }
-
-      const jql = clauses.length > 0 ? clauses.join(" AND ") : "ORDER BY created DESC";
-      const maxResults = filters.limit ?? 30;
-      const fields = "summary,status,labels,assignee,priority,issuetype,project,description";
-
-      const result = await actions.searchIssues(jql, maxResults, fields);
+      const { jql, maxResults } = buildJql(filters, project);
+      const params = new URLSearchParams({
+        jql,
+        maxResults: String(maxResults),
+        fields: ISSUE_FIELDS_PARAM,
+      });
+      const result = await http<JiraSearchResult>(
+        "GET",
+        `/rest/api/3/search/jql?${params.toString()}`,
+      );
       return result.issues.map((issue) => mapIssue(issue, host));
     },
 
@@ -561,38 +456,32 @@ function createJiraTracker(actions: JiraTransportActions, host: string): Tracker
       update: IssueUpdate,
       _project: ProjectConfig,
     ): Promise<void> {
-      // Handle state change via transitions
       if (update.state) {
-        const transitionsData = await actions.getTransitions(identifier);
-
-        let targetCategoryKey: string;
-        if (update.state === "closed") {
-          targetCategoryKey = "done";
-        } else if (update.state === "in_progress") {
-          targetCategoryKey = "indeterminate";
-        } else {
-          targetCategoryKey = "new";
-        }
-
-        const transition = transitionsData.transitions.find(
-          (t) => t.to.statusCategory.key === targetCategoryKey,
+        const transitionsData = await http<JiraTransitionsResponse>(
+          "GET",
+          `/rest/api/3/issue/${encodeURIComponent(identifier)}/transitions`,
         );
-
+        const catKey = targetCategoryKey(update.state);
+        const transition = transitionsData.transitions.find(
+          (t) => t.to.statusCategory.key === catKey,
+        );
         if (!transition) {
           throw new Error(
-            `No transition found to status category "${targetCategoryKey}" for issue ${identifier}`,
+            `No transition found to status category "${catKey}" for issue ${identifier}`,
           );
         }
-
-        await actions.transitionIssue(identifier, transition.id);
+        await http("POST", `/rest/api/3/issue/${encodeURIComponent(identifier)}/transitions`, {
+          transition: { id: transition.id },
+        });
       }
 
-      // Handle field updates (labels, assignee)
       const fieldsUpdate: Record<string, unknown> = {};
 
       if (update.labels && update.labels.length > 0) {
-        // Additive — fetch existing labels and merge
-        const existing = await actions.getIssue(identifier, "labels");
+        const existing = await http<JiraIssue>(
+          "GET",
+          `/rest/api/3/issue/${encodeURIComponent(identifier)}?fields=${encodeURIComponent("labels")}`,
+        );
         const existingLabels = new Set(existing.fields.labels ?? []);
         for (const label of update.labels) {
           existingLabels.add(label);
@@ -601,26 +490,18 @@ function createJiraTracker(actions: JiraTransportActions, host: string): Tracker
       }
 
       if (update.assignee) {
-        // Jira assignee is set by accountId; use displayName search
-        // For simplicity, pass the name — works when assignee matches accountId or displayName
         fieldsUpdate["assignee"] = { name: update.assignee };
       }
 
       if (Object.keys(fieldsUpdate).length > 0) {
-        await actions.updateIssueFields(identifier, fieldsUpdate);
+        await http("PUT", `/rest/api/3/issue/${encodeURIComponent(identifier)}`, {
+          fields: fieldsUpdate,
+        });
       }
 
-      // Handle comment
       if (update.comment) {
-        await actions.addComment(identifier, {
-          type: "doc",
-          version: 1,
-          content: [
-            {
-              type: "paragraph",
-              content: [{ type: "text", text: update.comment }],
-            },
-          ],
+        await http("POST", `/rest/api/3/issue/${encodeURIComponent(identifier)}/comment`, {
+          body: adfCommentBody(update.comment),
         });
       }
     },
@@ -630,43 +511,202 @@ function createJiraTracker(actions: JiraTransportActions, host: string): Tracker
       if (!projectKey) {
         throw new Error("Jira tracker requires 'projectKey' in project tracker config");
       }
+      const fields = buildCreateIssueFields(input, projectKey);
+      const created = await http<JiraIssue>("POST", "/rest/api/3/issue", { fields });
+      const full = await http<JiraIssue>(
+        "GET",
+        `/rest/api/3/issue/${encodeURIComponent(created.key)}`,
+      );
+      return mapIssue(full, host);
+    },
+  };
+}
 
-      const fields: Record<string, unknown> = {
-        project: { key: projectKey },
-        summary: input.title,
-        issuetype: { name: "Task" },
-      };
+// ---------------------------------------------------------------------------
+// Composio Jira tracker
+// ---------------------------------------------------------------------------
 
-      if (input.description) {
-        fields["description"] = {
-          type: "doc",
-          version: 1,
-          content: [
-            {
-              type: "paragraph",
-              content: [{ type: "text", text: input.description }],
-            },
-          ],
-        };
+type ComposioTools = Composio["tools"];
+
+function createComposioTracker(host: string, apiKey: string, entityId: string): Tracker {
+  let clientPromise: Promise<ComposioTools> | undefined;
+
+  function getClient(): Promise<ComposioTools> {
+    if (!clientPromise) {
+      clientPromise = (async () => {
+        try {
+          const { Composio } = await import("@composio/core");
+          const client = new Composio({ apiKey });
+          return client.tools;
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (
+            msg.includes("Cannot find module") ||
+            msg.includes("Cannot find package") ||
+            msg.includes("ERR_MODULE_NOT_FOUND")
+          ) {
+            throw new Error(
+              "Composio SDK (@composio/core) is not installed. " +
+                "Install it with: pnpm add @composio/core",
+              { cause: err },
+            );
+          }
+          throw err;
+        }
+      })();
+    }
+    return clientPromise;
+  }
+
+  async function exec<T>(action: string, args: Record<string, unknown>): Promise<T> {
+    const tools = await getClient();
+
+    const resultPromise = tools.execute(action, {
+      entityId,
+      arguments: args,
+    });
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error("Composio Jira API request timed out after 30s"));
+      }, 30_000);
+    });
+
+    resultPromise.catch(() => {});
+    timeoutPromise.catch(() => {});
+
+    try {
+      const result = await Promise.race([resultPromise, timeoutPromise]);
+
+      if (!result.successful) {
+        throw new Error(`Composio Jira API error: ${result.error ?? "unknown error"}`);
       }
 
-      if (input.labels && input.labels.length > 0) {
-        fields["labels"] = input.labels;
+      if (!result.data) {
+        throw new Error("Composio Jira API returned no data");
       }
 
-      if (input.assignee) {
-        fields["assignee"] = { name: input.assignee };
+      return result.data as T;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  return {
+    name: "jira",
+
+    async getIssue(identifier: string, _project: ProjectConfig): Promise<Issue> {
+      const jiraIssue = await exec<JiraIssue>("JIRA_GET_ISSUE", {
+        issue_id_or_key: identifier,
+      });
+      return mapIssue(jiraIssue, host);
+    },
+
+    async isCompleted(identifier: string, _project: ProjectConfig): Promise<boolean> {
+      const jiraIssue = await exec<JiraIssue>("JIRA_GET_ISSUE", {
+        issue_id_or_key: identifier,
+        fields: "status",
+      });
+      return jiraIssue.fields.status.statusCategory.key === "done";
+    },
+
+    issueUrl(identifier: string, _project: ProjectConfig): string {
+      return `https://${host}/browse/${identifier}`;
+    },
+
+    issueLabel(url: string, _project: ProjectConfig): string {
+      return extractIssueLabel(url);
+    },
+
+    branchName(identifier: string, _project: ProjectConfig): string {
+      return `feat/${identifier}`;
+    },
+
+    async generatePrompt(identifier: string, project: ProjectConfig): Promise<string> {
+      const issue = await this.getIssue(identifier, project);
+      return buildPromptText(issue);
+    },
+
+    async listIssues(filters: IssueFilters, project: ProjectConfig): Promise<Issue[]> {
+      const { jql, maxResults } = buildJql(filters, project);
+      const result = await exec<JiraSearchResult>("JIRA_SEARCH_ISSUES", {
+        jql,
+        max_results: maxResults,
+        fields: ISSUE_FIELDS_PARAM,
+      });
+      return result.issues.map((issue) => mapIssue(issue, host));
+    },
+
+    async updateIssue(
+      identifier: string,
+      update: IssueUpdate,
+      _project: ProjectConfig,
+    ): Promise<void> {
+      if (update.state) {
+        const transitionsData = await exec<JiraTransitionsResponse>("JIRA_GET_TRANSITIONS", {
+          issue_id_or_key: identifier,
+        });
+        const catKey = targetCategoryKey(update.state);
+        const transition = transitionsData.transitions.find(
+          (t) => t.to.statusCategory.key === catKey,
+        );
+        if (!transition) {
+          throw new Error(
+            `No transition found to status category "${catKey}" for issue ${identifier}`,
+          );
+        }
+        await exec("JIRA_TRANSITION_ISSUE", {
+          issue_id_or_key: identifier,
+          transition_id: transition.id,
+        });
       }
 
-      if (input.priority !== undefined) {
-        fields["priority"] = { id: String(input.priority) };
+      const fieldsUpdate: Record<string, unknown> = {};
+
+      if (update.labels && update.labels.length > 0) {
+        const existing = await exec<JiraIssue>("JIRA_GET_ISSUE", {
+          issue_id_or_key: identifier,
+          fields: "labels",
+        });
+        const existingLabels = new Set(existing.fields.labels ?? []);
+        for (const label of update.labels) {
+          existingLabels.add(label);
+        }
+        fieldsUpdate["labels"] = [...existingLabels];
       }
 
-      const created = await actions.createIssue(fields);
+      if (update.assignee) {
+        fieldsUpdate["assignee"] = { name: update.assignee };
+      }
 
-      // Fetch full issue details since create response may be partial
-      const full = await actions.getIssue(created.key);
+      if (Object.keys(fieldsUpdate).length > 0) {
+        await exec("JIRA_UPDATE_ISSUE", {
+          issue_id_or_key: identifier,
+          fields: JSON.stringify(fieldsUpdate),
+        });
+      }
 
+      if (update.comment) {
+        await exec("JIRA_ADD_COMMENT", {
+          issue_id_or_key: identifier,
+          body: JSON.stringify(adfCommentBody(update.comment)),
+        });
+      }
+    },
+
+    async createIssue(input: CreateIssueInput, project: ProjectConfig): Promise<Issue> {
+      const projectKey = project.tracker?.["projectKey"] as string | undefined;
+      if (!projectKey) {
+        throw new Error("Jira tracker requires 'projectKey' in project tracker config");
+      }
+      const fields = buildCreateIssueFields(input, projectKey);
+      const created = await exec<JiraIssue>("JIRA_CREATE_ISSUE", {
+        fields: JSON.stringify(fields),
+      });
+      const full = await exec<JiraIssue>("JIRA_GET_ISSUE", {
+        issue_id_or_key: created.key,
+      });
       return mapIssue(full, host);
     },
   };
@@ -683,20 +723,26 @@ export const manifest = {
   version: "0.1.0",
 };
 
-export function create(): Tracker {
+export function create(config?: Record<string, unknown>): Tracker {
   const host = process.env["JIRA_HOST"];
   if (!host) {
     throw new Error("JIRA_HOST environment variable is required for the Jira tracker plugin");
   }
 
-  const composioKey = process.env["COMPOSIO_API_KEY"];
-  if (composioKey) {
+  const transport = (config?.transport as string) ?? "direct";
+
+  if (transport === "composio") {
+    const apiKey = process.env["COMPOSIO_API_KEY"];
+    if (!apiKey) {
+      throw new Error(
+        "COMPOSIO_API_KEY environment variable is required when using the Composio transport",
+      );
+    }
     const entityId = process.env["COMPOSIO_ENTITY_ID"] ?? "default";
-    return createJiraTracker(createComposioTransport(composioKey, entityId), host);
+    return createComposioTracker(host, apiKey, entityId);
   }
 
-  const { actions } = createDirectTransport();
-  return createJiraTracker(actions, host);
+  return createDirectTracker(host);
 }
 
 export default { manifest, create } satisfies PluginModule<Tracker>;
