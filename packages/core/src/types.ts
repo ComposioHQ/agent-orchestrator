@@ -971,6 +971,12 @@ export interface ProjectConfig {
 
   /** MCP tool plugins to inject into spawned agent sessions */
   mcp?: McpEntry[];
+
+  /** Default input source name (defaults to "linear") */
+  defaultInputSource?: string;
+
+  /** Named input source configurations */
+  inputSources?: Record<string, InputSourceConfig>;
 }
 
 /** Configuration entry for an MCP tool plugin */
@@ -987,6 +993,15 @@ export interface McpEntry {
   env?: Record<string, string>;
   /** Additional plugin-specific config */
   [key: string]: unknown;
+}
+
+/** Configuration for an input source (stored in project.inputSources) */
+export interface InputSourceConfig {
+  type: "linear" | "generic";
+  token?: string;
+  url?: string;
+  auth?: { type: "bearer"; token: string };
+  toolMap?: Record<string, unknown>;
 }
 
 export interface TrackerConfig {

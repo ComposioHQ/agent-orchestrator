@@ -94,6 +94,19 @@ const ProjectConfigSchema = z.object({
   agentRulesFile: z.string().optional(),
   orchestratorRules: z.string().optional(),
   mcp: z.array(McpEntrySchema).optional(),
+  defaultInputSource: z.string().optional(),
+  inputSources: z.record(
+    z.object({
+      type: z.enum(["linear", "generic"]),
+      token: z.string().optional(),
+      url: z.string().url().optional(),
+      auth: z.object({
+        type: z.literal("bearer"),
+        token: z.string(),
+      }).optional(),
+      toolMap: z.record(z.unknown()).optional(),
+    }),
+  ).optional(),
 });
 
 const DefaultPluginsSchema = z.object({
