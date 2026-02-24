@@ -26,11 +26,16 @@ export function InstallPrompt() {
     const prompt = deferredPromptRef.current;
     if (!prompt) return;
 
-    await prompt.prompt();
-    await prompt.userChoice;
-    // Hide banner regardless of outcome — user already made their choice
-    setVisible(false);
+    // Nullify ref before awaiting to prevent double-tap race condition —
+    // prompt() throws InvalidStateError if called twice on the same event
     deferredPromptRef.current = null;
+    try {
+      await prompt.prompt();
+      await prompt.userChoice;
+    } catch {
+      // InvalidStateError from double-tap or browser rejecting prompt
+    }
+    setVisible(false);
   };
 
   const handleDismiss = () => {
