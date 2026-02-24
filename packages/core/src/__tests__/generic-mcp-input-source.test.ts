@@ -21,61 +21,74 @@ const mockToolMap: McpToolMap = {
   },
 };
 
+// Shared mock references for assertions — assigned inside MockClient constructor
+let mockCallTool: ReturnType<typeof vi.fn>;
+let mockListTools: ReturnType<typeof vi.fn>;
+
 // Mock the MCP SDK
 vi.mock("@modelcontextprotocol/sdk/client/index.js", () => {
   class MockClient {
     connect = vi.fn().mockResolvedValue(undefined);
     close = vi.fn().mockResolvedValue(undefined);
-    listTools = vi.fn().mockResolvedValue({
-      tools: [
-        { name: "get_page" },
-        { name: "add_comment" },
-        { name: "update_status" },
-        { name: "list_pages" },
-      ],
-    });
-    callTool = vi.fn().mockImplementation(({ name }: { name: string }) => {
-      if (name === "get_page") {
-        return Promise.resolve({
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                id: "page-123",
-                properties: {
-                  Name: { title: [{ plain_text: "My Task" }] },
-                  Description: {
-                    rich_text: [{ plain_text: "Task description" }],
-                  },
-                  Status: { select: { name: "In Progress" } },
-                },
-              }),
-            },
-          ],
-        });
-      }
-      if (name === "list_pages") {
-        return Promise.resolve({
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                items: [
-                  {
-                    id: "page-1",
-                    properties: {
-                      Name: { title: [{ plain_text: "Task 1" }] },
-                      Status: { select: { name: "Todo" } },
+    listTools: ReturnType<typeof vi.fn>;
+    callTool: ReturnType<typeof vi.fn>;
+
+    constructor() {
+      this.callTool = vi.fn().mockImplementation(({ name }: { name: string }) => {
+        if (name === "get_page") {
+          return Promise.resolve({
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  id: "page-123",
+                  properties: {
+                    Name: { title: [{ plain_text: "My Task" }] },
+                    Description: {
+                      rich_text: [{ plain_text: "Task description" }],
                     },
+                    Status: { select: { name: "In Progress" } },
                   },
-                ],
-              }),
-            },
-          ],
-        });
-      }
-      return Promise.resolve({ content: [] });
-    });
+                }),
+              },
+            ],
+          });
+        }
+        if (name === "list_pages") {
+          return Promise.resolve({
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  items: [
+                    {
+                      id: "page-1",
+                      properties: {
+                        Name: { title: [{ plain_text: "Task 1" }] },
+                        Status: { select: { name: "Todo" } },
+                      },
+                    },
+                  ],
+                }),
+              },
+            ],
+          });
+        }
+        return Promise.resolve({ content: [] });
+      });
+      this.listTools = vi.fn().mockResolvedValue({
+        tools: [
+          { name: "get_page" },
+          { name: "add_comment" },
+          { name: "update_status" },
+          { name: "list_pages" },
+        ],
+      });
+
+      // Expose to outer scope for assertions
+      mockCallTool = this.callTool;
+      mockListTools = this.listTools;
+    }
   }
   return { Client: MockClient };
 });
@@ -183,5 +196,79 @@ describe("resolvePath", () => {
       toolMap: mockToolMap,
     });
     expect(source.resolvePath({}, "missing.path")).toBeUndefined();
+  });
+});
+
+describe("postUpdate", () => {
+  let source: GenericMcpInputSource;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    source = new GenericMcpInputSource({
+      url: "http://localhost:8080/mcp",
+      auth: { type: "bearer", token: "test-token" },
+      toolMap: mockToolMap,
+    });
+  });
+
+  it("calls the correct tool with correct arguments", async () => {
+    await source.connect();
+    await source.postUpdate("page-123", "Starting work");
+    expect(mockCallTool).toHaveBeenCalledWith({
+      name: "add_comment",
+      arguments: { pageId: "page-123", content: "Starting work" },
+    });
+  });
+});
+
+describe("setStatus", () => {
+  let source: GenericMcpInputSource;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    source = new GenericMcpInputSource({
+      url: "http://localhost:8080/mcp",
+      auth: { type: "bearer", token: "test-token" },
+      toolMap: mockToolMap,
+    });
+  });
+
+  it("calls the correct tool with correct arguments", async () => {
+    await source.connect();
+    await source.setStatus("page-123", "In Review");
+    expect(mockCallTool).toHaveBeenCalledWith({
+      name: "update_status",
+      arguments: { pageId: "page-123", status: "In Review" },
+    });
+  });
+});
+
+describe("error handling", () => {
+  let source: GenericMcpInputSource;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    source = new GenericMcpInputSource({
+      url: "http://localhost:8080/mcp",
+      auth: { type: "bearer", token: "test-token" },
+      toolMap: mockToolMap,
+    });
+  });
+
+  it("getContext handles missing text content gracefully", async () => {
+    await source.connect();
+    mockCallTool.mockResolvedValueOnce({ content: [] });
+    const ctx = await source.getContext("page-missing");
+    // Should not throw, returns defaults from the empty result
+    expect(ctx.id).toBeDefined();
+  });
+
+  it("getContext handles non-JSON text content", async () => {
+    await source.connect();
+    mockCallTool.mockResolvedValueOnce({
+      content: [{ type: "text", text: "Not JSON at all" }],
+    });
+    const ctx = await source.getContext("page-bad");
+    expect(ctx.id).toBeDefined();
   });
 });

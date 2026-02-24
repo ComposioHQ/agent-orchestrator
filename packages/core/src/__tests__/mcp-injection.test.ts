@@ -213,3 +213,93 @@ describe("resolveMcpPlugins", () => {
     );
   });
 });
+
+describe("injectMcpConfig edge cases", () => {
+  it("handles health check that throws (rejected promise)", async () => {
+    const dir = makeTmpDir();
+    const session = { worktreePath: dir, metadata: {} };
+    const throwingPlugin = makePlugin({
+      name: "throwing-plugin",
+      healthCheck: async (): Promise<HealthResult> => {
+        throw new Error("Unexpected crash");
+      },
+    });
+    const healthyPlugin = makePlugin({
+      name: "healthy-plugin",
+      buildMcpJson: () => ({ url: "http://ok/mcp" }),
+    });
+
+    // Should not throw — allSettled handles rejections
+    const result = await injectMcpConfig(session, [throwingPlugin, healthyPlugin]);
+    // Healthy plugin should still be written
+    expect(result.blockedByHardware).toBe(false);
+
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it("blocks when multiple hardware plugins fail", async () => {
+    const session = { worktreePath: "/tmp/test", metadata: {} };
+    const hw1 = makePlugin({
+      name: "hw1",
+      healthCheck: async (): Promise<HealthResult> => ({
+        healthy: false,
+        message: "Device 1 offline",
+      }),
+      onUnhealthy: (): ReactionType => "hardware-test-required",
+    });
+    const hw2 = makePlugin({
+      name: "hw2",
+      healthCheck: async (): Promise<HealthResult> => ({
+        healthy: false,
+        message: "Device 2 offline",
+      }),
+      onUnhealthy: (): ReactionType => "hardware-test-required",
+    });
+
+    const result = await injectMcpConfig(session, [hw1, hw2]);
+    expect(result.blockedByHardware).toBe(true);
+    expect(result.failedPlugins).toHaveLength(2);
+    expect(result.mcpJsonPath).toBe("");
+  });
+
+  it("stores mcpJsonPath in session metadata", async () => {
+    const dir = makeTmpDir();
+    const metadata: Record<string, unknown> = {};
+    const session = { worktreePath: dir, metadata };
+    const plugin = makePlugin({
+      name: "test",
+      buildMcpJson: () => ({ url: "http://test/mcp" }),
+    });
+
+    await injectMcpConfig(session, [plugin]);
+    expect(metadata["mcpJsonPath"]).toBe(path.join(dir, ".mcp.json"));
+
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe("registerMcpPlugin", () => {
+  it("registers and resolves a named plugin class", () => {
+    class TestMcpPlugin {
+      readonly name: string;
+      readonly scope = "readonly" as const;
+      constructor(config: Record<string, unknown>) {
+        this.name = String(config["name"] ?? "test");
+      }
+      buildFlags() {
+        return [];
+      }
+      buildMcpJson() {
+        return { url: "http://test/mcp" };
+      }
+    }
+
+    registerMcpPlugin(
+      "TestMcpPlugin",
+      TestMcpPlugin as unknown as new (config: Record<string, unknown>) => McpToolPlugin,
+    );
+    const plugins = resolveMcpPlugins([{ plugin: "TestMcpPlugin", name: "my-test" }]);
+    expect(plugins).toHaveLength(1);
+    expect(plugins[0].name).toBe("my-test");
+  });
+});
