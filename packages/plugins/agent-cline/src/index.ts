@@ -425,7 +425,7 @@ function createClineAgent(): Agent {
 
       // Check model usage to determine activity
       const lastUsage = metadata.model_usage?.[metadata.model_usage.length - 1];
-      if (lastUsage) {
+      if (lastUsage && typeof lastUsage.ts === "number") {
         // Detect timestamp unit: if < 10^12, assume seconds; otherwise milliseconds
         // This handles both Unix epoch seconds and JavaScript milliseconds
         const tsValue = lastUsage.ts;
