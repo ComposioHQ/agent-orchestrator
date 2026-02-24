@@ -213,7 +213,10 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   /** Resolve which plugins to use for a project. */
   function resolvePlugins(project: ProjectConfig, agentOverride?: string) {
     const runtime = registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime);
-    const agent = registry.get<Agent>("agent", agentOverride ?? project.agent ?? config.defaults.agent);
+    const agent = registry.get<Agent>(
+      "agent",
+      agentOverride ?? project.agent ?? config.defaults.agent,
+    );
     const workspace = registry.get<Workspace>(
       "workspace",
       project.workspace ?? config.defaults.workspace,
@@ -251,9 +254,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
    * Enrich session with live runtime state (alive/exited) and activity detection.
    * Mutates the session object in place.
    */
-  const TERMINAL_SESSION_STATUSES = new Set([
-    "killed", "done", "merged", "terminated", "cleanup",
-  ]);
+  const TERMINAL_SESSION_STATUSES = new Set(["killed", "done", "merged", "terminated", "cleanup"]);
 
   async function enrichSessionWithRuntimeState(
     session: Session,
@@ -683,36 +684,41 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   async function list(projectId?: string): Promise<Session[]> {
     const allSessions = listAllSessions(projectId);
 
-    const sessionPromises = allSessions.map(async ({ sessionName, projectId: sessionProjectId }) => {
-      const project = config.projects[sessionProjectId];
-      if (!project) return null;
+    const sessionPromises = allSessions.map(
+      async ({ sessionName, projectId: sessionProjectId }) => {
+        const project = config.projects[sessionProjectId];
+        if (!project) return null;
 
-      const sessionsDir = getProjectSessionsDir(project);
-      const raw = readMetadataRaw(sessionsDir, sessionName);
-      if (!raw) return null;
+        const sessionsDir = getProjectSessionsDir(project);
+        const raw = readMetadataRaw(sessionsDir, sessionName);
+        if (!raw) return null;
 
-      // Get file timestamps for createdAt/lastActivityAt
-      let createdAt: Date | undefined;
-      let modifiedAt: Date | undefined;
-      try {
-        const metaPath = join(sessionsDir, sessionName);
-        const stats = statSync(metaPath);
-        createdAt = stats.birthtime;
-        modifiedAt = stats.mtime;
-      } catch {
-        // If stat fails, timestamps will fall back to current time
-      }
+        // Get file timestamps for createdAt/lastActivityAt
+        let createdAt: Date | undefined;
+        let modifiedAt: Date | undefined;
+        try {
+          const metaPath = join(sessionsDir, sessionName);
+          const stats = statSync(metaPath);
+          createdAt = stats.birthtime;
+          modifiedAt = stats.mtime;
+        } catch {
+          // If stat fails, timestamps will fall back to current time
+        }
 
-      const session = metadataToSession(sessionName, raw, createdAt, modifiedAt);
+        const session = metadataToSession(sessionName, raw, createdAt, modifiedAt);
 
-      const plugins = resolvePlugins(project, raw["agent"]);
-      // Cap per-session enrichment at 2s — subprocess calls (tmux/ps) can be
-      // slow under load. If we time out, session keeps its metadata values.
-      const enrichTimeout = new Promise<void>((resolve) => setTimeout(resolve, 2_000));
-      await Promise.race([ensureHandleAndEnrich(session, sessionName, project, plugins), enrichTimeout]);
+        const plugins = resolvePlugins(project, raw["agent"]);
+        // Cap per-session enrichment at 2s — subprocess calls (tmux/ps) can be
+        // slow under load. If we time out, session keeps its metadata values.
+        const enrichTimeout = new Promise<void>((resolve) => setTimeout(resolve, 2_000));
+        await Promise.race([
+          ensureHandleAndEnrich(session, sessionName, project, plugins),
+          enrichTimeout,
+        ]);
 
-      return session;
-    });
+        return session;
+      },
+    );
 
     const results = await Promise.all(sessionPromises);
     return results.filter((s): s is Session => s !== null);
