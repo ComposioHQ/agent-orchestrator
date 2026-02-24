@@ -334,18 +334,29 @@ function createClineAgent(): Agent {
       // Yolo mode for autonomous operation (auto-approve actions)
       parts.push("--yolo");
 
-      // Add system prompt if provided
+      // Build the prompt: concatenate systemPromptFile (if exists),
+      // systemPrompt, and prompt to ensure nothing is lost
+      // Cline only supports -p for a single prompt argument
+      const promptParts: string[] = [];
+
+      // Add system prompt file content first (shell substitution)
       if (config.systemPromptFile) {
-        // For Cline, we need to pass the prompt differently
-        // Cline doesn't have --append-system-prompt, but we can use -p
+        promptParts.push(`$(cat ${shellEscape(config.systemPromptFile)})`);
       }
 
+      // Add system prompt (from orchestrator)
       if (config.systemPrompt) {
-        // Pass system prompt via -p with the prompt
-        // Note: This may get truncated for very long prompts
-        parts.push("-p", shellEscape(config.systemPrompt));
-      } else if (config.prompt) {
-        parts.push("-p", shellEscape(config.prompt));
+        promptParts.push(config.systemPrompt);
+      }
+
+      // Add task prompt
+      if (config.prompt) {
+        promptParts.push(config.prompt);
+      }
+
+      // Pass combined prompt via -p
+      if (promptParts.length > 0) {
+        parts.push("-p", shellEscape(promptParts.join("\n\n")));
       }
 
       return parts.join(" ");
@@ -458,7 +469,9 @@ function createClineAgent(): Agent {
 
       return {
         summary,
-        summaryIsFallback: !summary,
+        // Always mark as fallback since the summary is a heuristic derived from
+        // file metadata, not a real agent-generated summary from the issue
+        summaryIsFallback: true,
         agentSessionId: task.taskId,
         cost: extractCost(conversation),
       };
@@ -486,6 +499,10 @@ function createClineAgent(): Agent {
       if (project.agentConfig?.model) {
         parts.push("--model", shellEscape(project.agentConfig.model as string));
       }
+
+      // Act mode for autonomous operation (required when resuming to ensure
+      // the agent works autonomously rather than in plan mode)
+      parts.push("--act");
 
       // Yolo mode for autonomous operation
       parts.push("--yolo");
