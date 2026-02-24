@@ -234,6 +234,62 @@ describe("spawn command", () => {
     expect(output).toContain("8474d6f29887-app-7");
   });
 
+  it("passes --agent flag to sessionManager.spawn()", async () => {
+    const fakeSession: Session = {
+      id: "app-1",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: null,
+      issueId: null,
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "hash-app-1", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+
+    await program.parseAsync(["node", "test", "spawn", "my-app", "--agent", "codex"]);
+
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith({
+      projectId: "my-app",
+      issueId: undefined,
+      agent: "codex",
+    });
+  });
+
+  it("passes --agent flag with issue ID", async () => {
+    const fakeSession: Session = {
+      id: "app-1",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: "feat/INT-42",
+      issueId: "INT-42",
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "hash-app-1", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+
+    await program.parseAsync(["node", "test", "spawn", "my-app", "INT-42", "--agent", "codex"]);
+
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith({
+      projectId: "my-app",
+      issueId: "INT-42",
+      agent: "codex",
+    });
+  });
+
   it("rejects unknown project ID", async () => {
     await expect(
       program.parseAsync(["node", "test", "spawn", "nonexistent"]),

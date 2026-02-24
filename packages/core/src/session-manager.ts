@@ -210,9 +210,9 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   }
 
   /** Resolve which plugins to use for a project. */
-  function resolvePlugins(project: ProjectConfig) {
+  function resolvePlugins(project: ProjectConfig, agentOverride?: string) {
     const runtime = registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime);
-    const agent = registry.get<Agent>("agent", project.agent ?? config.defaults.agent);
+    const agent = registry.get<Agent>("agent", agentOverride ?? project.agent ?? config.defaults.agent);
     const workspace = registry.get<Workspace>(
       "workspace",
       project.workspace ?? config.defaults.workspace,
@@ -322,6 +322,16 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     if (!plugins.runtime) {
       throw new Error(`Runtime plugin '${project.runtime ?? config.defaults.runtime}' not found`);
     }
+
+    // Allow --agent override to swap the agent plugin for this session
+    if (spawnConfig.agent) {
+      const overrideAgent = registry.get<Agent>("agent", spawnConfig.agent);
+      if (!overrideAgent) {
+        throw new Error(`Agent plugin '${spawnConfig.agent}' not found`);
+      }
+      plugins.agent = overrideAgent;
+    }
+
     if (!plugins.agent) {
       throw new Error(`Agent plugin '${project.agent ?? config.defaults.agent}' not found`);
     }
@@ -515,6 +525,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         tmuxName, // Store tmux name for mapping
         issue: spawnConfig.issueId,
         project: spawnConfig.projectId,
+        agent: plugins.agent.name, // Persist agent name for lifecycle manager
         createdAt: new Date().toISOString(),
         runtimeHandle: JSON.stringify(handle),
       });
@@ -693,7 +704,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
       const session = metadataToSession(sessionName, raw, createdAt, modifiedAt);
 
-      const plugins = resolvePlugins(project);
+      const plugins = resolvePlugins(project, raw["agent"]);
       // Cap per-session enrichment at 2s — subprocess calls (tmux/ps) can be
       // slow under load. If we time out, session keeps its metadata values.
       const enrichTimeout = new Promise<void>((resolve) => setTimeout(resolve, 2_000));
@@ -727,7 +738,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
       const session = metadataToSession(sessionId, raw, createdAt, modifiedAt);
 
-      const plugins = resolvePlugins(project);
+      const plugins = resolvePlugins(project, raw["agent"]);
       await ensureHandleAndEnrich(session, sessionId, project, plugins);
 
       return session;
@@ -967,7 +978,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     //    session (status "working", agent exited) would not be detected as terminal
     //    and isRestorable would reject it.
     const session = metadataToSession(sessionId, raw);
-    const plugins = resolvePlugins(project);
+    const plugins = resolvePlugins(project, raw["agent"]);
     await enrichSessionWithRuntimeState(session, plugins, true);
 
     // 3. Validate restorability

@@ -140,6 +140,26 @@ describe("loadBuiltins", () => {
     // In the test environment, most are not resolvable — should not throw.
     await expect(registry.loadBuiltins()).resolves.toBeUndefined();
   });
+
+  it("registers multiple agent plugins from importFn", async () => {
+    const registry = createPluginRegistry();
+
+    const fakeClaudeCode = makePlugin("agent", "claude-code");
+    const fakeCodex = makePlugin("agent", "codex");
+
+    await registry.loadBuiltins(undefined, async (pkg: string) => {
+      if (pkg === "@composio/ao-plugin-agent-claude-code") return fakeClaudeCode;
+      if (pkg === "@composio/ao-plugin-agent-codex") return fakeCodex;
+      throw new Error(`Not found: ${pkg}`);
+    });
+
+    const agents = registry.list("agent");
+    expect(agents).toContainEqual(expect.objectContaining({ name: "claude-code", slot: "agent" }));
+    expect(agents).toContainEqual(expect.objectContaining({ name: "codex", slot: "agent" }));
+
+    expect(registry.get("agent", "codex")).not.toBeNull();
+    expect(registry.get("agent", "claude-code")).not.toBeNull();
+  });
 });
 
 describe("extractPluginConfig (via register with config)", () => {
