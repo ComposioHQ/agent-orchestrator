@@ -5,15 +5,17 @@ import {
   type AgentLaunchConfig,
   type ActivityState,
   type ActivityDetection,
+  type CostEstimate,
   type PluginModule,
+  type ProjectConfig,
   type RuntimeHandle,
   type Session,
   type WorkspaceHooksConfig,
 } from "@composio/ao-core";
 import { execFile } from "node:child_process";
-import { writeFile, mkdir, readFile, rename } from "node:fs/promises";
+import { writeFile, mkdir, readFile, readdir, rename, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { promisify } from "node:util";
 import { randomBytes } from "node:crypto";
 
@@ -271,23 +273,243 @@ async function setupCodexWorkspace(workspacePath: string): Promise<void> {
 }
 
 // =============================================================================
+// Codex Session JSONL Parsing (for getSessionInfo)
+// =============================================================================
+
+/** Codex session directory: ~/.codex/sessions/ */
+const CODEX_SESSIONS_DIR = join(homedir(), ".codex", "sessions");
+
+/** Typed representation of a line in a Codex JSONL session file */
+interface CodexJsonlLine {
+  type?: string;
+  cwd?: string;
+  model?: string;
+  // Thread ID from thread_started notifications
+  threadId?: string;
+  // User message content (from user input events)
+  content?: string;
+  role?: string;
+  // event_msg with token_count subtype
+  msg?: {
+    type?: string;
+    input_tokens?: number;
+    output_tokens?: number;
+    cached_tokens?: number;
+    reasoning_tokens?: number;
+  };
+}
+
+/**
+ * Find Codex session files whose `session_meta` cwd matches the given workspace path.
+ * Returns the path to the most recently modified matching file, or null.
+ */
+async function findCodexSessionFile(workspacePath: string): Promise<string | null> {
+  let entries: string[];
+  try {
+    entries = await readdir(CODEX_SESSIONS_DIR);
+  } catch {
+    return null;
+  }
+
+  const jsonlFiles = entries.filter((f) => f.endsWith(".jsonl"));
+  if (jsonlFiles.length === 0) return null;
+
+  // Check each file for a matching cwd in the session_meta line
+  let bestMatch: { path: string; mtime: number } | null = null;
+
+  for (const file of jsonlFiles) {
+    const fullPath = join(CODEX_SESSIONS_DIR, file);
+    try {
+      const content = await readFile(fullPath, "utf-8");
+      // Only need to check the first few lines for session_meta
+      const lines = content.split("\n").slice(0, 10);
+      let cwdMatch = false;
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          const parsed: unknown = JSON.parse(trimmed);
+          if (
+            typeof parsed === "object" &&
+            parsed !== null &&
+            !Array.isArray(parsed) &&
+            (parsed as CodexJsonlLine).type === "session_meta" &&
+            (parsed as CodexJsonlLine).cwd === workspacePath
+          ) {
+            cwdMatch = true;
+            break;
+          }
+        } catch {
+          // Skip malformed lines
+        }
+      }
+      if (cwdMatch) {
+        const s = await stat(fullPath);
+        if (!bestMatch || s.mtimeMs > bestMatch.mtime) {
+          bestMatch = { path: fullPath, mtime: s.mtimeMs };
+        }
+      }
+    } catch {
+      // Skip unreadable files
+    }
+  }
+
+  return bestMatch?.path ?? null;
+}
+
+/** Parse a Codex JSONL session file and extract all lines */
+function parseCodexJsonl(content: string): CodexJsonlLine[] {
+  const result: CodexJsonlLine[] = [];
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+        result.push(parsed as CodexJsonlLine);
+      }
+    } catch {
+      // Skip malformed lines
+    }
+  }
+  return result;
+}
+
+/** Extract model name from Codex session_meta entry */
+function extractCodexModel(lines: CodexJsonlLine[]): string | null {
+  for (const line of lines) {
+    if (line.type === "session_meta" && typeof line.model === "string") {
+      return line.model;
+    }
+  }
+  return null;
+}
+
+/** Aggregate token usage from Codex token_count events */
+function extractCodexCost(lines: CodexJsonlLine[]): CostEstimate | undefined {
+  let inputTokens = 0;
+  let outputTokens = 0;
+
+  for (const line of lines) {
+    if (line.type === "event_msg" && line.msg?.type === "token_count") {
+      inputTokens += line.msg.input_tokens ?? 0;
+      inputTokens += line.msg.cached_tokens ?? 0;
+      outputTokens += line.msg.output_tokens ?? 0;
+      outputTokens += line.msg.reasoning_tokens ?? 0;
+    }
+  }
+
+  if (inputTokens === 0 && outputTokens === 0) return undefined;
+
+  // Rough cost estimate using GPT-4o pricing as baseline
+  // ($2.50/1M input, $10/1M output)
+  const estimatedCostUsd =
+    (inputTokens / 1_000_000) * 2.5 + (outputTokens / 1_000_000) * 10.0;
+
+  return { inputTokens, outputTokens, estimatedCostUsd };
+}
+
+/** Extract the Codex thread ID from JSONL (from thread_started or session_meta) */
+function extractCodexThreadId(lines: CodexJsonlLine[]): string | null {
+  for (const line of lines) {
+    if (typeof line.threadId === "string" && line.threadId) {
+      return line.threadId;
+    }
+  }
+  return null;
+}
+
+/** Extract the last user prompt from JSONL for context re-injection on resume */
+function extractLastUserPrompt(lines: CodexJsonlLine[]): string | null {
+  // Walk backwards to find the last user message
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (
+      line?.role === "user" &&
+      typeof line.content === "string" &&
+      line.content.trim().length > 0
+    ) {
+      const content = line.content.trim();
+      // Truncate very long prompts to avoid shell issues
+      return content.length > 500 ? content.substring(0, 500) + "..." : content;
+    }
+  }
+  return null;
+}
+
+// =============================================================================
+// Binary Resolution
+// =============================================================================
+
+/**
+ * Resolve the Codex CLI binary path.
+ * Checks (in order): which, common fallback locations.
+ * Returns "codex" as final fallback (let the shell resolve it at runtime).
+ */
+export async function resolveCodexBinary(): Promise<string> {
+  // 1. Try `which codex`
+  try {
+    const { stdout } = await execFileAsync("which", ["codex"], { timeout: 10_000 });
+    const resolved = stdout.trim();
+    if (resolved) return resolved;
+  } catch {
+    // Not found via which
+  }
+
+  // 2. Check common locations
+  const home = homedir();
+  const candidates = [
+    "/usr/local/bin/codex",
+    join(home, ".npm", "bin", "codex"),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      await stat(candidate);
+      return candidate;
+    } catch {
+      // Not found at this location
+    }
+  }
+
+  // 3. Fallback: let the shell resolve it
+  return "codex";
+}
+
+// =============================================================================
 // Agent Implementation
 // =============================================================================
 
 function createCodexAgent(): Agent {
+  /** Cached resolved binary path (populated by init or first getLaunchCommand) */
+  let resolvedBinary: string | null = null;
+
   return {
     name: "codex",
     processName: "codex",
 
     getLaunchCommand(config: AgentLaunchConfig): string {
-      const parts: string[] = ["codex"];
+      const binary = resolvedBinary ?? "codex";
+      const parts: string[] = [binary];
 
-      if (config.permissions === "skip") {
-        parts.push("--full-auto");
+      // Approval mode mapping — cast to string for forward-compat with
+      // extended permission values not yet in AgentLaunchConfig type.
+      const perms = config.permissions as string | undefined;
+      if (perms === "skip") {
+        parts.push("--dangerously-bypass-approvals-and-sandbox");
+      } else if (perms === "auto-edit") {
+        parts.push("--approval-mode", "auto-edit");
+      } else if (perms === "suggest") {
+        parts.push("--approval-mode", "suggest");
       }
 
       if (config.model) {
         parts.push("--model", shellEscape(config.model));
+
+        // Auto-detect o-series models that support extended thinking
+        if (/^o[34]/i.test(config.model)) {
+          parts.push("--reasoning");
+        }
       }
 
       if (config.systemPromptFile) {
@@ -409,9 +631,88 @@ function createCodexAgent(): Agent {
       }
     },
 
-    async getSessionInfo(_session: Session): Promise<AgentSessionInfo | null> {
-      // Codex doesn't have JSONL session files for introspection yet
-      return null;
+    async getSessionInfo(session: Session): Promise<AgentSessionInfo | null> {
+      if (!session.workspacePath) return null;
+
+      const sessionFile = await findCodexSessionFile(session.workspacePath);
+      if (!sessionFile) return null;
+
+      let content: string;
+      try {
+        content = await readFile(sessionFile, "utf-8");
+      } catch {
+        return null;
+      }
+
+      const lines = parseCodexJsonl(content);
+      if (lines.length === 0) return null;
+
+      const agentSessionId = basename(sessionFile, ".jsonl");
+      const model = extractCodexModel(lines);
+
+      return {
+        summary: model ? `Codex session (${model})` : null,
+        summaryIsFallback: true,
+        agentSessionId,
+        cost: extractCodexCost(lines),
+      };
+    },
+
+    async getRestoreCommand(session: Session, project: ProjectConfig): Promise<string | null> {
+      if (!session.workspacePath) return null;
+
+      // Find the Codex session file for this workspace
+      const sessionFile = await findCodexSessionFile(session.workspacePath);
+      if (!sessionFile) return null;
+
+      let content: string;
+      try {
+        content = await readFile(sessionFile, "utf-8");
+      } catch {
+        return null;
+      }
+
+      const lines = parseCodexJsonl(content);
+      if (lines.length === 0) return null;
+
+      // Extract context for re-injection
+      const threadId = extractCodexThreadId(lines);
+      const lastPrompt = extractLastUserPrompt(lines);
+      const model = extractCodexModel(lines);
+
+      // Build context summary for the new session
+      const contextParts: string[] = [];
+      if (threadId) contextParts.push(`Previous thread: ${threadId}.`);
+      if (lastPrompt) contextParts.push(`Last task: ${lastPrompt}`);
+
+      if (contextParts.length === 0) return null;
+
+      const contextPrompt = `Continue previous session. ${contextParts.join(" ")}`;
+
+      // Build the restore command with the same flags as getLaunchCommand
+      const binary = resolvedBinary ?? "codex";
+      const parts: string[] = [binary];
+
+      const perms = project.agentConfig?.permissions as string | undefined;
+      if (perms === "skip") {
+        parts.push("--dangerously-bypass-approvals-and-sandbox");
+      } else if (perms === "auto-edit") {
+        parts.push("--approval-mode", "auto-edit");
+      } else if (perms === "suggest") {
+        parts.push("--approval-mode", "suggest");
+      }
+
+      const effectiveModel = project.agentConfig?.model ?? model;
+      if (effectiveModel) {
+        parts.push("--model", shellEscape(effectiveModel as string));
+
+        if (/^o[34]/i.test(effectiveModel as string)) {
+          parts.push("--reasoning");
+        }
+      }
+
+      parts.push("--", shellEscape(contextPrompt));
+      return parts.join(" ");
     },
 
     async setupWorkspaceHooks(workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
@@ -419,6 +720,10 @@ function createCodexAgent(): Agent {
     },
 
     async postLaunchSetup(session: Session): Promise<void> {
+      // Resolve binary path on first launch (cached for subsequent calls)
+      if (!resolvedBinary) {
+        resolvedBinary = await resolveCodexBinary();
+      }
       if (!session.workspacePath) return;
       await setupCodexWorkspace(session.workspacePath);
     },
@@ -432,5 +737,15 @@ function createCodexAgent(): Agent {
 export function create(): Agent {
   return createCodexAgent();
 }
+
+export { CodexAppServerClient } from "./app-server-client.js";
+export type {
+  AppServerClientOptions,
+  ThreadStartParams,
+  TurnStartParams,
+  NotificationHandler,
+  ApprovalHandler,
+  ApprovalDecision,
+} from "./app-server-client.js";
 
 export default { manifest, create } satisfies PluginModule<Agent>;
