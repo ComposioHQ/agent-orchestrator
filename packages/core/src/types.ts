@@ -273,10 +273,7 @@ export interface Agent {
   /** Get environment variables for the agent process */
   getEnvironment(config: AgentLaunchConfig): Record<string, string>;
 
-  /**
-   * Detect what the agent is currently doing from terminal output.
-   * @deprecated Use getActivityState() instead - this uses hacky terminal parsing.
-   */
+  /** Detect what the agent is currently doing from terminal output */
   detectActivity(terminalOutput: string): ActivityState;
 
   /**
@@ -301,20 +298,12 @@ export interface Agent {
   /** Optional: run setup after agent is launched (e.g. configure MCP servers) */
   postLaunchSetup?(session: Session): Promise<void>;
 
-  /**
-   * Optional: Set up agent-specific hooks/config in the workspace for automatic metadata updates.
-   * Called once per workspace during ao init/start and when creating new worktrees.
-   *
-   * Each agent plugin implements this for their own config format:
-   * - Claude Code: writes .claude/settings.json with PostToolUse hook
-   * - Codex: whatever config mechanism Codex uses
-   * - Aider: .aider.conf.yml or similar
-   * - OpenCode: its own config
-   *
-   * CRITICAL: The dashboard depends on metadata being auto-updated when agents
-   * run git/gh commands. Without this, PRs created by agents never show up.
-   */
+  /** Optional: set up workspace hooks for automatic metadata updates */
   setupWorkspaceHooks?(workspacePath: string, config: WorkspaceHooksConfig): Promise<void>;
+}
+
+export interface WorkspaceHooksConfig {
+  dataDir: string;
 }
 
 export interface AgentLaunchConfig {
@@ -345,13 +334,6 @@ export interface AgentLaunchConfig {
    * - Codex/Aider: similar shell substitution
    */
   systemPromptFile?: string;
-}
-
-export interface WorkspaceHooksConfig {
-  /** Data directory where session metadata files are stored */
-  dataDir: string;
-  /** Optional session ID (may not be known at ao init time) */
-  sessionId?: string;
 }
 
 export interface AgentSessionInfo {
@@ -569,13 +551,6 @@ export interface PRInfo {
 
 export type PRState = "open" | "merged" | "closed";
 
-/** PR state constants */
-export const PR_STATE = {
-  OPEN: "open" as const,
-  MERGED: "merged" as const,
-  CLOSED: "closed" as const,
-} satisfies Record<string, PRState>;
-
 export type MergeMethod = "merge" | "squash" | "rebase";
 
 // --- CI Types ---
@@ -590,14 +565,6 @@ export interface CICheck {
 }
 
 export type CIStatus = "pending" | "passing" | "failing" | "none";
-
-/** CI status constants */
-export const CI_STATUS = {
-  PENDING: "pending" as const,
-  PASSING: "passing" as const,
-  FAILING: "failing" as const,
-  NONE: "none" as const,
-} satisfies Record<string, CIStatus>;
 
 // --- Review Types ---
 

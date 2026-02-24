@@ -534,9 +534,7 @@ describe("list", () => {
     });
     const sessions = await sm.list();
 
-    // Verify getActivityState was called
     expect(agentWithState.getActivityState).toHaveBeenCalled();
-    // Verify activity state was set
     expect(sessions[0].activity).toBe("active");
   });
 
@@ -565,7 +563,6 @@ describe("list", () => {
     const sm = createSessionManager({ config, registry: registryWithError });
     const sessions = await sm.list();
 
-    // Should keep null (absent) when getActivityState fails
     expect(sessions[0].activity).toBeNull();
   });
 
@@ -594,13 +591,12 @@ describe("list", () => {
     const sm = createSessionManager({ config, registry: registryWithNull });
     const sessions = await sm.list();
 
-    // null = "I don't know" — activity stays null (absent)
     expect(agentWithNull.getActivityState).toHaveBeenCalled();
     expect(sessions[0].activity).toBeNull();
   });
 
   it("updates lastActivityAt when detection timestamp is newer", async () => {
-    const newerTimestamp = new Date(Date.now() + 60_000); // 1 minute in the future
+    const newerTimestamp = new Date(Date.now() + 60_000);
     const agentWithTimestamp: Agent = {
       ...mockAgent,
       getActivityState: vi.fn().mockResolvedValue({ state: "active", timestamp: newerTimestamp }),
@@ -626,12 +622,11 @@ describe("list", () => {
     const sessions = await sm.list();
 
     expect(sessions[0].activity).toBe("active");
-    // lastActivityAt should be updated to the detection timestamp
     expect(sessions[0].lastActivityAt).toEqual(newerTimestamp);
   });
 
   it("does not downgrade lastActivityAt when detection timestamp is older", async () => {
-    const olderTimestamp = new Date(0); // epoch — definitely older than session creation
+    const olderTimestamp = new Date(0);
     const agentWithOldTimestamp: Agent = {
       ...mockAgent,
       getActivityState: vi.fn().mockResolvedValue({ state: "active", timestamp: olderTimestamp }),
@@ -657,7 +652,6 @@ describe("list", () => {
     const sessions = await sm.list();
 
     expect(sessions[0].activity).toBe("active");
-    // lastActivityAt should NOT be downgraded to the older detection timestamp
     expect(sessions[0].lastActivityAt.getTime()).toBeGreaterThan(olderTimestamp.getTime());
   });
 });
@@ -710,9 +704,7 @@ describe("get", () => {
     });
     const session = await sm.get("app-1");
 
-    // Verify getActivityState was called
     expect(agentWithState.getActivityState).toHaveBeenCalled();
-    // Verify activity state was set
     expect(session!.activity).toBe("idle");
   });
 
