@@ -83,3 +83,15 @@ export {
 // Generic MCP Input Source
 export { GenericMcpInputSource } from "./generic-mcp-input-source.js";
 export type { McpToolMap, GenericMcpConfig } from "./generic-mcp-input-source.js";
+
+// MCP injection — scoped .mcp.json for agent sessions
+export { injectMcpConfig, cleanupMcpConfig } from "./mcp-injection.js";
+export type { McpInjectionSession, InjectionResult } from "./mcp-injection.js";
+
+// MCP plugin resolution
+export {
+  registerMcpPlugin,
+  getRegisteredMcpPlugin,
+  resolveMcpPlugins,
+  UrlMcpToolPlugin,
+} from "./resolve-mcp-plugins.js";
