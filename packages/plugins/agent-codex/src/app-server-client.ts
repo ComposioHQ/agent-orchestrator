@@ -174,37 +174,34 @@ export class CodexAppServerClient extends EventEmitter {
 
     this.connecting = true;
 
-    this.process = spawn(this.binaryPath, ["app-server"], {
-      cwd: this.cwd,
-      env: this.env ? { ...process.env, ...this.env } : undefined,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-
-    if (!this.process.stdout || !this.process.stdin) {
-      this.connecting = false;
-      throw new Error("Failed to open stdio pipes for codex app-server");
-    }
-
-    // Drain stderr to prevent the child process from blocking when
-    // the pipe buffer fills up.
-    this.process.stderr?.resume();
-
-    // Set up line-based reading from stdout
-    this.readline = createInterface({ input: this.process.stdout });
-    this.readline.on("line", (line) => this.handleLine(line));
-
-    // Handle process exit
-    this.process.once("exit", (code, signal) => {
-      this.handleProcessExit(code, signal);
-    });
-
-    this.process.once("error", (err) => {
-      this.handleProcessError(err);
-    });
-
-    // Perform initialization handshake. On failure, clean up the spawned
-    // process so the caller doesn't need to call close() explicitly.
     try {
+      this.process = spawn(this.binaryPath, ["app-server"], {
+        cwd: this.cwd,
+        env: this.env ? { ...process.env, ...this.env } : undefined,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+
+      if (!this.process.stdout || !this.process.stdin) {
+        throw new Error("Failed to open stdio pipes for codex app-server");
+      }
+
+      // Drain stderr to prevent the child process from blocking when
+      // the pipe buffer fills up.
+      this.process.stderr?.resume();
+
+      // Set up line-based reading from stdout
+      this.readline = createInterface({ input: this.process.stdout });
+      this.readline.on("line", (line) => this.handleLine(line));
+
+      // Handle process exit
+      this.process.once("exit", (code, signal) => {
+        this.handleProcessExit(code, signal);
+      });
+
+      this.process.once("error", (err) => {
+        this.handleProcessError(err);
+      });
+
       await this.initialize();
     } catch (err) {
       this.connecting = false;

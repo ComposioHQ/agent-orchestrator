@@ -638,10 +638,11 @@ describe("getSessionInfo", () => {
     expect(result!.summary).toBe("Codex session (o3-mini)");
     expect(result!.summaryIsFallback).toBe(true);
     expect(result!.cost).toBeDefined();
-    // input: 1000 + 200 (cached) + 2000 + 0 = 3200
-    // output: 500 + 100 (reasoning) + 300 + 0 = 900
-    expect(result!.cost!.inputTokens).toBe(3200);
-    expect(result!.cost!.outputTokens).toBe(900);
+    // cached_tokens/reasoning_tokens are subsets, not additive
+    // input: 1000 + 2000 = 3000
+    // output: 500 + 300 = 800
+    expect(result!.cost!.inputTokens).toBe(3000);
+    expect(result!.cost!.outputTokens).toBe(800);
     expect(result!.cost!.estimatedCostUsd).toBeGreaterThan(0);
   });
 

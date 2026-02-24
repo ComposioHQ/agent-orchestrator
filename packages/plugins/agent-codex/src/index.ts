@@ -443,9 +443,9 @@ function extractCodexCost(lines: CodexJsonlLine[]): CostEstimate | undefined {
   for (const line of lines) {
     if (line.type === "event_msg" && line.msg?.type === "token_count") {
       inputTokens += line.msg.input_tokens ?? 0;
-      inputTokens += line.msg.cached_tokens ?? 0;
+      // cached_tokens is a subset of input_tokens (not additive)
       outputTokens += line.msg.output_tokens ?? 0;
-      outputTokens += line.msg.reasoning_tokens ?? 0;
+      // reasoning_tokens is a subset of output_tokens (not additive)
     }
   }
 

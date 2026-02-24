@@ -983,6 +983,27 @@ describe("CodexAppServerClient", () => {
       expect(client.isConnected).toBe(true);
       await closeClient(client, proc);
     });
+
+    it("resets connecting flag if spawn throws synchronously", async () => {
+      // Make spawn throw (e.g. EMFILE, ENOMEM)
+      mockSpawn.mockImplementationOnce(() => {
+        throw new Error("spawn EMFILE");
+      });
+
+      const client = new CodexAppServerClient({ requestTimeout: 500 });
+      await expect(client.connect()).rejects.toThrow("spawn EMFILE");
+
+      // connecting flag should be reset — a retry should not throw "already connecting"
+      const proc = createFakeProcess();
+      const connectPromise = client.connect();
+      await new Promise((r) => setTimeout(r, 10));
+      const initReq = findRequest(proc, "initialize");
+      proc.sendLine(JSON.stringify({ id: initReq!["id"], result: {} }));
+      await connectPromise;
+
+      expect(client.isConnected).toBe(true);
+      await closeClient(client, proc);
+    });
   });
 
   describe("readline cleanup on process exit/error", () => {
