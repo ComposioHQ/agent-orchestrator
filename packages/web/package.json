@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently \"npm:dev:next\" \"npm:dev:terminal\" \"npm:dev:direct-terminal\"",
-    "dev:next": "next dev -p ${PORT:-3000}",
+    "dev:next": "next dev -H 0.0.0.0 -p ${PORT:-3000}",
     "dev:terminal": "tsx watch server/terminal-websocket.ts",
     "dev:direct-terminal": "tsx watch server/direct-terminal-ws.ts",
     "build": "next build",
