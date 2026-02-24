@@ -425,7 +425,11 @@ function createClineAgent(): Agent {
       // Check model usage to determine activity
       const lastUsage = metadata.model_usage?.[metadata.model_usage.length - 1];
       if (lastUsage) {
-        const lastActivityTime = new Date(lastUsage.ts);
+        // Detect timestamp unit: if < 10^12, assume seconds; otherwise milliseconds
+        // This handles both Unix epoch seconds and JavaScript milliseconds
+        const tsValue = lastUsage.ts;
+        const tsMs = tsValue < 1e12 ? tsValue * 1000 : tsValue;
+        const lastActivityTime = new Date(tsMs);
         const ageMs = Date.now() - lastActivityTime.getTime();
 
         if (lastUsage.mode === "plan") {
