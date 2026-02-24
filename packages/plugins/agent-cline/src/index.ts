@@ -352,19 +352,20 @@ function createClineAgent(): Agent {
         promptParts.push(`"$(cat ${escapedPath})"`);
       }
 
-      // Add system prompt (from orchestrator) - escape it to handle special chars
+      // Add system prompt (from orchestrator)
       if (config.systemPrompt) {
-        promptParts.push(shellEscape(config.systemPrompt));
+        promptParts.push(config.systemPrompt);
       }
 
-      // Add task prompt - escape to handle special chars
+      // Add task prompt
       if (config.prompt) {
-        promptParts.push(shellEscape(config.prompt));
+        promptParts.push(config.prompt);
       }
 
-      // Pass combined prompt as positional argument (after all flags)
+      // Pass combined prompt as a single positional argument (after all flags)
+      // Join first, then escape as a single unit to prevent splitting
       if (promptParts.length > 0) {
-        parts.push(promptParts.join(" "));
+        parts.push(shellEscape(promptParts.join("\n\n")));
       }
 
       return parts.join(" ");
