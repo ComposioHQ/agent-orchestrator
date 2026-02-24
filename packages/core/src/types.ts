@@ -551,6 +551,12 @@ export interface PRInfo {
 
 export type PRState = "open" | "merged" | "closed";
 
+export const PR_STATE: Readonly<Record<Uppercase<PRState>, PRState>> = {
+  OPEN: "open",
+  MERGED: "merged",
+  CLOSED: "closed",
+} as const;
+
 export type MergeMethod = "merge" | "squash" | "rebase";
 
 // --- CI Types ---
@@ -565,6 +571,13 @@ export interface CICheck {
 }
 
 export type CIStatus = "pending" | "passing" | "failing" | "none";
+
+export const CI_STATUS: Readonly<Record<Uppercase<CIStatus>, CIStatus>> = {
+  PENDING: "pending",
+  PASSING: "passing",
+  FAILING: "failing",
+  NONE: "none",
+} as const;
 
 // --- Review Types ---
 

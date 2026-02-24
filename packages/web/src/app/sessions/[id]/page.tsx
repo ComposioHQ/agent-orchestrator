@@ -52,7 +52,7 @@ export default function SessionPage() {
   const isOrchestrator = id.endsWith("-orchestrator");
 
   const [session, setSession] = useState<DashboardSession | null>(null);
-  const [zoneCounts, setZoneCounts] = useState<ZoneCounts | null>(null);
+  const [_zoneCounts, setZoneCounts] = useState<ZoneCounts | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
