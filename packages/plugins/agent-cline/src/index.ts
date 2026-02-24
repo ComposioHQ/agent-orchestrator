@@ -346,10 +346,10 @@ function createClineAgent(): Agent {
       const promptParts: string[] = [];
 
       // Add system prompt file content first (shell substitution)
-      // Note: Keep $(cat ...) outside shellEscape to allow shell substitution
+      // Note: Wrap in double quotes to prevent word splitting on file content
       if (config.systemPromptFile) {
         const escapedPath = shellEscape(config.systemPromptFile);
-        promptParts.push(`$(cat ${escapedPath})`);
+        promptParts.push(`"$(cat ${escapedPath})"`);
       }
 
       // Add system prompt (from orchestrator) - escape it to handle special chars
