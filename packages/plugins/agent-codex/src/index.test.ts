@@ -160,25 +160,25 @@ describe("getLaunchCommand", () => {
     expect(cmd).not.toContain("--full-auto");
   });
 
-  it("includes --approval-mode auto-edit when permissions=auto-edit", () => {
+  it("includes --ask-for-approval never when permissions=auto-edit", () => {
     // Cast needed: "auto-edit" not yet in AgentLaunchConfig type union
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ permissions: "auto-edit" as AgentLaunchConfig["permissions"] }),
     );
-    expect(cmd).toContain("--approval-mode auto-edit");
+    expect(cmd).toContain("--ask-for-approval never");
   });
 
-  it("includes --approval-mode suggest when permissions=suggest", () => {
+  it("includes --ask-for-approval untrusted when permissions=suggest", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ permissions: "suggest" as AgentLaunchConfig["permissions"] }),
     );
-    expect(cmd).toContain("--approval-mode suggest");
+    expect(cmd).toContain("--ask-for-approval untrusted");
   });
 
   it("omits approval flags when permissions=default", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "default" }));
     expect(cmd).not.toContain("--dangerously-bypass-approvals-and-sandbox");
-    expect(cmd).not.toContain("--approval-mode");
+    expect(cmd).not.toContain("--ask-for-approval");
     expect(cmd).not.toContain("--full-auto");
   });
 
@@ -196,7 +196,7 @@ describe("getLaunchCommand", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ permissions: "skip", model: "o3", prompt: "Go" }),
     );
-    expect(cmd).toBe("codex --dangerously-bypass-approvals-and-sandbox --model 'o3' --reasoning -- 'Go'");
+    expect(cmd).toBe("codex --dangerously-bypass-approvals-and-sandbox --model 'o3' -c model_reasoning_effort=high -- 'Go'");
   });
 
   it("escapes single quotes in prompt (POSIX shell escaping)", () => {
@@ -233,52 +233,52 @@ describe("getLaunchCommand", () => {
   it("omits optional flags when not provided", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig());
     expect(cmd).not.toContain("--dangerously-bypass-approvals-and-sandbox");
-    expect(cmd).not.toContain("--approval-mode");
+    expect(cmd).not.toContain("--ask-for-approval");
     expect(cmd).not.toContain("--model");
     expect(cmd).not.toContain("-c");
-    expect(cmd).not.toContain("--reasoning");
+    expect(cmd).not.toContain("model_reasoning_effort");
   });
 
-  // -- Reasoning flag tests --
-  describe("reasoning flag", () => {
-    it("adds --reasoning for o3 model", () => {
+  // -- Reasoning effort tests --
+  describe("reasoning effort", () => {
+    it("adds model_reasoning_effort=high for o3 model", () => {
       const cmd = agent.getLaunchCommand(makeLaunchConfig({ model: "o3" }));
-      expect(cmd).toContain("--reasoning");
+      expect(cmd).toContain("-c model_reasoning_effort=high");
     });
 
-    it("adds --reasoning for o3-mini model", () => {
+    it("adds model_reasoning_effort=high for o3-mini model", () => {
       const cmd = agent.getLaunchCommand(makeLaunchConfig({ model: "o3-mini" }));
-      expect(cmd).toContain("--reasoning");
+      expect(cmd).toContain("-c model_reasoning_effort=high");
     });
 
-    it("adds --reasoning for o4-mini model", () => {
+    it("adds model_reasoning_effort=high for o4-mini model", () => {
       const cmd = agent.getLaunchCommand(makeLaunchConfig({ model: "o4-mini" }));
-      expect(cmd).toContain("--reasoning");
+      expect(cmd).toContain("-c model_reasoning_effort=high");
     });
 
-    it("adds --reasoning for O3 (case-insensitive)", () => {
+    it("adds model_reasoning_effort=high for O3 (case-insensitive)", () => {
       const cmd = agent.getLaunchCommand(makeLaunchConfig({ model: "O3" }));
-      expect(cmd).toContain("--reasoning");
+      expect(cmd).toContain("-c model_reasoning_effort=high");
     });
 
-    it("adds --reasoning for O4-MINI (case-insensitive)", () => {
+    it("adds model_reasoning_effort=high for O4-MINI (case-insensitive)", () => {
       const cmd = agent.getLaunchCommand(makeLaunchConfig({ model: "O4-MINI" }));
-      expect(cmd).toContain("--reasoning");
+      expect(cmd).toContain("-c model_reasoning_effort=high");
     });
 
-    it("does NOT add --reasoning for gpt-4o model", () => {
+    it("does NOT add reasoning effort for gpt-4o model", () => {
       const cmd = agent.getLaunchCommand(makeLaunchConfig({ model: "gpt-4o" }));
-      expect(cmd).not.toContain("--reasoning");
+      expect(cmd).not.toContain("model_reasoning_effort");
     });
 
-    it("does NOT add --reasoning for gpt-4.1 model", () => {
+    it("does NOT add reasoning effort for gpt-4.1 model", () => {
       const cmd = agent.getLaunchCommand(makeLaunchConfig({ model: "gpt-4.1" }));
-      expect(cmd).not.toContain("--reasoning");
+      expect(cmd).not.toContain("model_reasoning_effort");
     });
 
-    it("does NOT add --reasoning when no model specified", () => {
+    it("does NOT add reasoning effort when no model specified", () => {
       const cmd = agent.getLaunchCommand(makeLaunchConfig());
-      expect(cmd).not.toContain("--reasoning");
+      expect(cmd).not.toContain("model_reasoning_effort");
     });
   });
 });
@@ -729,18 +729,43 @@ describe("getSessionInfo", () => {
     expect(result).toBeNull();
   });
 
+  it("finds session files in date-sharded subdirectories (YYYY/MM/DD)", async () => {
+    // Simulate ~/.codex/sessions/2026/02/24/rollout-abc.jsonl
+    mockReaddir.mockImplementation((dir: string) => {
+      if (dir.endsWith("sessions")) return Promise.resolve(["2026"]);
+      if (dir.endsWith("2026")) return Promise.resolve(["02"]);
+      if (dir.endsWith("02")) return Promise.resolve(["24"]);
+      if (dir.endsWith("24")) return Promise.resolve(["rollout-abc.jsonl"]);
+      return Promise.resolve([]);
+    });
+    mockStat.mockImplementation((path: string) => {
+      if (path.endsWith(".jsonl")) return Promise.resolve({ mtimeMs: 2000 });
+      // Directories: 2026, 02, 24
+      return Promise.resolve({ isDirectory: () => true });
+    });
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "o3-mini" },
+    );
+    mockReadFile.mockResolvedValue(content);
+
+    const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
+    expect(result).not.toBeNull();
+    expect(result!.agentSessionId).toBe("rollout-abc");
+    expect(result!.summary).toBe("Codex session (o3-mini)");
+  });
+
   it("ignores non-JSONL files in sessions directory", async () => {
     mockReaddir.mockResolvedValue(["notes.txt", "config.json", "sess.jsonl"]);
     const content = jsonl(
       { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
     );
     mockReadFile.mockResolvedValue(content);
-    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+    // Non-JSONL entries trigger stat to check isDirectory()
+    mockStat.mockResolvedValue({ mtimeMs: 1000, isDirectory: () => false });
 
     const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
     expect(result).not.toBeNull();
-    // readFile should only be called for the .jsonl file (+ possibly stat)
-    // Non-.jsonl files should be filtered out
+    // readFile should only be called for the .jsonl file
     const readFileCalls = mockReadFile.mock.calls.filter(
       (call: string[]) => typeof call[0] === "string" && call[0].includes("sessions/"),
     );
@@ -785,24 +810,24 @@ describe("getRestoreCommand", () => {
     expect(await agent.getRestoreCommand!(session, makeProjectConfig())).toBeNull();
   });
 
-  it("returns null when session file has no usable context", async () => {
+  it("returns null when session has no threadId", async () => {
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     mockReadFile.mockResolvedValue(jsonl(
       { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
+      { role: "user", content: "Some prompt" },
     ));
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const session = makeSession({ workspacePath: "/workspace/test" });
-    // No threadId and no user messages → no context to re-inject
+    // Native resume requires a threadId
     expect(await agent.getRestoreCommand!(session, makeProjectConfig())).toBeNull();
   });
 
-  it("builds restore command with thread context", async () => {
+  it("builds native resume command with codex resume <threadId>", async () => {
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     mockReadFile.mockResolvedValue(jsonl(
       { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
       { threadId: "thread-abc-123" },
-      { role: "user", content: "Fix the authentication bug" },
     ));
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
@@ -810,12 +835,11 @@ describe("getRestoreCommand", () => {
     const cmd = await agent.getRestoreCommand!(session, makeProjectConfig());
 
     expect(cmd).not.toBeNull();
-    expect(cmd).toContain("codex");
+    expect(cmd).toContain("codex resume");
     expect(cmd).toContain("thread-abc-123");
-    expect(cmd).toContain("Fix the authentication bug");
   });
 
-  it("includes permissions flags from project config", async () => {
+  it("includes --dangerously-bypass-approvals-and-sandbox from project config", async () => {
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     mockReadFile.mockResolvedValue(jsonl(
       { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
@@ -831,7 +855,7 @@ describe("getRestoreCommand", () => {
     expect(cmd).toContain("--dangerously-bypass-approvals-and-sandbox");
   });
 
-  it("includes --approval-mode auto-edit from project config", async () => {
+  it("includes --ask-for-approval never from project config", async () => {
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     mockReadFile.mockResolvedValue(jsonl(
       { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
@@ -844,11 +868,11 @@ describe("getRestoreCommand", () => {
       agentConfig: { permissions: "auto-edit" },
     }));
 
-    expect(cmd).toContain("--approval-mode auto-edit");
+    expect(cmd).toContain("--ask-for-approval never");
     expect(cmd).not.toContain("--dangerously-bypass-approvals-and-sandbox");
   });
 
-  it("includes --approval-mode suggest from project config", async () => {
+  it("includes --ask-for-approval untrusted from project config", async () => {
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     mockReadFile.mockResolvedValue(jsonl(
       { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
@@ -861,7 +885,7 @@ describe("getRestoreCommand", () => {
       agentConfig: { permissions: "suggest" },
     }));
 
-    expect(cmd).toContain("--approval-mode suggest");
+    expect(cmd).toContain("--ask-for-approval untrusted");
   });
 
   it("includes model from project config (overrides session model)", async () => {
@@ -878,7 +902,7 @@ describe("getRestoreCommand", () => {
     }));
 
     expect(cmd).toContain("--model 'o3-mini'");
-    expect(cmd).toContain("--reasoning");
+    expect(cmd).toContain("-c model_reasoning_effort=high");
   });
 
   it("falls back to session model when project config has no model", async () => {
@@ -893,42 +917,7 @@ describe("getRestoreCommand", () => {
     const cmd = await agent.getRestoreCommand!(session, makeProjectConfig());
 
     expect(cmd).toContain("--model 'o4-mini'");
-    expect(cmd).toContain("--reasoning");
-  });
-
-  it("uses last user prompt for context when no threadId", async () => {
-    mockReaddir.mockResolvedValue(["sess.jsonl"]);
-    mockReadFile.mockResolvedValue(jsonl(
-      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
-      { role: "user", content: "Implement the search feature" },
-      { role: "assistant", content: "I'll help with that" },
-      { role: "user", content: "Now add tests" },
-    ));
-    mockStat.mockResolvedValue({ mtimeMs: 1000 });
-
-    const session = makeSession({ workspacePath: "/workspace/test" });
-    const cmd = await agent.getRestoreCommand!(session, makeProjectConfig());
-
-    expect(cmd).not.toBeNull();
-    // Should contain the LAST user prompt
-    expect(cmd).toContain("Now add tests");
-  });
-
-  it("truncates very long prompts", async () => {
-    const longPrompt = "x".repeat(600);
-    mockReaddir.mockResolvedValue(["sess.jsonl"]);
-    mockReadFile.mockResolvedValue(jsonl(
-      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
-      { role: "user", content: longPrompt },
-    ));
-    mockStat.mockResolvedValue({ mtimeMs: 1000 });
-
-    const session = makeSession({ workspacePath: "/workspace/test" });
-    const cmd = await agent.getRestoreCommand!(session, makeProjectConfig());
-
-    expect(cmd).not.toBeNull();
-    // The prompt should be truncated
-    expect(cmd!.length).toBeLessThan(700);
+    expect(cmd).toContain("-c model_reasoning_effort=high");
   });
 
   it("handles unreadable session files gracefully", async () => {
@@ -973,6 +962,32 @@ describe("resolveCodexBinary", () => {
 
     const result = await resolveCodexBinary();
     expect(result).toBe("/usr/local/bin/codex");
+  });
+
+  it("checks /opt/homebrew/bin/codex as fallback", async () => {
+    mockExecFileAsync.mockRejectedValue(new Error("not found"));
+    mockStat.mockImplementation((path: string) => {
+      if (path === "/opt/homebrew/bin/codex") {
+        return Promise.resolve({ mtimeMs: 1000 });
+      }
+      return Promise.reject(new Error("ENOENT"));
+    });
+
+    const result = await resolveCodexBinary();
+    expect(result).toBe("/opt/homebrew/bin/codex");
+  });
+
+  it("checks ~/.cargo/bin/codex as fallback (Rust-based codex)", async () => {
+    mockExecFileAsync.mockRejectedValue(new Error("not found"));
+    mockStat.mockImplementation((path: string) => {
+      if (path === "/mock/home/.cargo/bin/codex") {
+        return Promise.resolve({ mtimeMs: 1000 });
+      }
+      return Promise.reject(new Error("ENOENT"));
+    });
+
+    const result = await resolveCodexBinary();
+    expect(result).toBe("/mock/home/.cargo/bin/codex");
   });
 
   it("checks ~/.npm/bin/codex as fallback", async () => {

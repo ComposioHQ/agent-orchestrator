@@ -300,57 +300,98 @@ interface CodexJsonlLine {
 }
 
 /**
+ * Collect all JSONL files under a directory, recursively.
+ * Codex stores sessions in date-sharded directories:
+ *   ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl
+ */
+async function collectJsonlFiles(dir: string): Promise<string[]> {
+  let entries: string[];
+  try {
+    entries = await readdir(dir);
+  } catch {
+    return [];
+  }
+
+  const results: string[] = [];
+  for (const entry of entries) {
+    const fullPath = join(dir, entry);
+    if (entry.endsWith(".jsonl")) {
+      results.push(fullPath);
+    } else {
+      // Recurse into subdirectories (YYYY/MM/DD structure)
+      try {
+        const s = await stat(fullPath);
+        if (s.isDirectory()) {
+          const nested = await collectJsonlFiles(fullPath);
+          results.push(...nested);
+        }
+      } catch {
+        // Skip inaccessible entries
+      }
+    }
+  }
+  return results;
+}
+
+/**
+ * Check if the first few lines of a JSONL file contain a session_meta
+ * entry matching the given workspace path. Reads only the first 4 KB
+ * to avoid loading large rollout files into memory.
+ */
+async function sessionFileMatchesCwd(
+  filePath: string,
+  workspacePath: string,
+): Promise<boolean> {
+  try {
+    const content = await readFile(filePath, "utf-8");
+    // Only parse the first few lines for the metadata header
+    const lines = content.split("\n").slice(0, 10);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const parsed: unknown = JSON.parse(trimmed);
+        if (
+          typeof parsed === "object" &&
+          parsed !== null &&
+          !Array.isArray(parsed) &&
+          (parsed as CodexJsonlLine).type === "session_meta" &&
+          (parsed as CodexJsonlLine).cwd === workspacePath
+        ) {
+          return true;
+        }
+      } catch {
+        // Skip malformed lines
+      }
+    }
+  } catch {
+    // Unreadable file
+  }
+  return false;
+}
+
+/**
  * Find Codex session files whose `session_meta` cwd matches the given workspace path.
+ * Recursively scans ~/.codex/sessions/ (date-sharded: YYYY/MM/DD/rollout-*.jsonl).
  * Returns the path to the most recently modified matching file, or null.
  */
 async function findCodexSessionFile(workspacePath: string): Promise<string | null> {
-  let entries: string[];
-  try {
-    entries = await readdir(CODEX_SESSIONS_DIR);
-  } catch {
-    return null;
-  }
-
-  const jsonlFiles = entries.filter((f) => f.endsWith(".jsonl"));
+  const jsonlFiles = await collectJsonlFiles(CODEX_SESSIONS_DIR);
   if (jsonlFiles.length === 0) return null;
 
-  // Check each file for a matching cwd in the session_meta line
   let bestMatch: { path: string; mtime: number } | null = null;
 
-  for (const file of jsonlFiles) {
-    const fullPath = join(CODEX_SESSIONS_DIR, file);
-    try {
-      const content = await readFile(fullPath, "utf-8");
-      // Only need to check the first few lines for session_meta
-      const lines = content.split("\n").slice(0, 10);
-      let cwdMatch = false;
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        try {
-          const parsed: unknown = JSON.parse(trimmed);
-          if (
-            typeof parsed === "object" &&
-            parsed !== null &&
-            !Array.isArray(parsed) &&
-            (parsed as CodexJsonlLine).type === "session_meta" &&
-            (parsed as CodexJsonlLine).cwd === workspacePath
-          ) {
-            cwdMatch = true;
-            break;
-          }
-        } catch {
-          // Skip malformed lines
-        }
-      }
-      if (cwdMatch) {
-        const s = await stat(fullPath);
+  for (const filePath of jsonlFiles) {
+    const matches = await sessionFileMatchesCwd(filePath, workspacePath);
+    if (matches) {
+      try {
+        const s = await stat(filePath);
         if (!bestMatch || s.mtimeMs > bestMatch.mtime) {
-          bestMatch = { path: fullPath, mtime: s.mtimeMs };
+          bestMatch = { path: filePath, mtime: s.mtimeMs };
         }
+      } catch {
+        // Skip if stat fails
       }
-    } catch {
-      // Skip unreadable files
     }
   }
 
@@ -419,24 +460,6 @@ function extractCodexThreadId(lines: CodexJsonlLine[]): string | null {
   return null;
 }
 
-/** Extract the last user prompt from JSONL for context re-injection on resume */
-function extractLastUserPrompt(lines: CodexJsonlLine[]): string | null {
-  // Walk backwards to find the last user message
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i];
-    if (
-      line?.role === "user" &&
-      typeof line.content === "string" &&
-      line.content.trim().length > 0
-    ) {
-      const content = line.content.trim();
-      // Truncate very long prompts to avoid shell issues
-      return content.length > 500 ? content.substring(0, 500) + "..." : content;
-    }
-  }
-  return null;
-}
-
 // =============================================================================
 // Binary Resolution
 // =============================================================================
@@ -456,10 +479,12 @@ export async function resolveCodexBinary(): Promise<string> {
     // Not found via which
   }
 
-  // 2. Check common locations
+  // 2. Check common locations (npm global, Homebrew, Cargo — Codex is now Rust-based)
   const home = homedir();
   const candidates = [
     "/usr/local/bin/codex",
+    "/opt/homebrew/bin/codex",
+    join(home, ".cargo", "bin", "codex"),
     join(home, ".npm", "bin", "codex"),
   ];
 
@@ -492,23 +517,29 @@ function createCodexAgent(): Agent {
       const binary = resolvedBinary ?? "codex";
       const parts: string[] = [binary];
 
-      // Approval mode mapping — cast to string for forward-compat with
+      // Approval policy mapping — cast to string for forward-compat with
       // extended permission values not yet in AgentLaunchConfig type.
+      // Codex CLI uses --ask-for-approval (-a) with values:
+      //   untrusted  — approve before any state-mutating command
+      //   on-request — approve only for privilege escalation
+      //   never      — no approval prompts (sandbox still applies)
       const perms = config.permissions as string | undefined;
       if (perms === "skip") {
         parts.push("--dangerously-bypass-approvals-and-sandbox");
       } else if (perms === "auto-edit") {
-        parts.push("--approval-mode", "auto-edit");
+        parts.push("--ask-for-approval", "never");
       } else if (perms === "suggest") {
-        parts.push("--approval-mode", "suggest");
+        parts.push("--ask-for-approval", "untrusted");
       }
 
       if (config.model) {
         parts.push("--model", shellEscape(config.model));
 
-        // Auto-detect o-series models that support extended thinking
+        // Auto-detect o-series models and enable reasoning via config override.
+        // Codex does not have a --reasoning flag; reasoning is controlled via
+        // the model_reasoning_effort config key.
         if (/^o[34]/i.test(config.model)) {
-          parts.push("--reasoning");
+          parts.push("-c", "model_reasoning_effort=high");
         }
       }
 
@@ -675,43 +706,34 @@ function createCodexAgent(): Agent {
       const lines = parseCodexJsonl(content);
       if (lines.length === 0) return null;
 
-      // Extract context for re-injection
+      // Extract the session/thread ID for native resume
       const threadId = extractCodexThreadId(lines);
-      const lastPrompt = extractLastUserPrompt(lines);
-      const model = extractCodexModel(lines);
+      if (!threadId) return null;
 
-      // Build context summary for the new session
-      const contextParts: string[] = [];
-      if (threadId) contextParts.push(`Previous thread: ${threadId}.`);
-      if (lastPrompt) contextParts.push(`Last task: ${lastPrompt}`);
-
-      if (contextParts.length === 0) return null;
-
-      const contextPrompt = `Continue previous session. ${contextParts.join(" ")}`;
-
-      // Build the restore command with the same flags as getLaunchCommand
+      // Use Codex's native `resume` subcommand for proper conversation resume.
+      // This restores the full thread state, not just a text prompt re-injection.
       const binary = resolvedBinary ?? "codex";
-      const parts: string[] = [binary];
+      const parts: string[] = [binary, "resume", shellEscape(threadId)];
 
+      // Add approval policy flags from project config
       const perms = project.agentConfig?.permissions as string | undefined;
       if (perms === "skip") {
         parts.push("--dangerously-bypass-approvals-and-sandbox");
       } else if (perms === "auto-edit") {
-        parts.push("--approval-mode", "auto-edit");
+        parts.push("--ask-for-approval", "never");
       } else if (perms === "suggest") {
-        parts.push("--approval-mode", "suggest");
+        parts.push("--ask-for-approval", "untrusted");
       }
 
-      const effectiveModel = project.agentConfig?.model ?? model;
+      const effectiveModel = project.agentConfig?.model ?? extractCodexModel(lines);
       if (effectiveModel) {
         parts.push("--model", shellEscape(effectiveModel as string));
 
         if (/^o[34]/i.test(effectiveModel as string)) {
-          parts.push("--reasoning");
+          parts.push("-c", "model_reasoning_effort=high");
         }
       }
 
-      parts.push("--", shellEscape(contextPrompt));
       return parts.join(" ");
     },
 

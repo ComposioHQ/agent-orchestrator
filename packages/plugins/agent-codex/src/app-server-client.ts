@@ -92,9 +92,12 @@ export interface ThreadStartParams {
   model?: string;
   modelProvider?: string;
   cwd?: string;
-  approvalPolicy?: "suggest" | "auto-edit";
-  sandbox?: "full" | "network-only" | "off";
-  instructions?: string;
+  /** Codex approval policy: untrusted (ask for all), on-request, or never */
+  approvalPolicy?: "untrusted" | "on-request" | "never";
+  /** Codex sandbox mode */
+  sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+  /** Personality/instruction preset */
+  personality?: string;
 }
 
 /** Turn start parameters */
