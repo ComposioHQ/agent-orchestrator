@@ -821,13 +821,26 @@ export interface OrchestratorEvent {
 // REACTIONS
 // =============================================================================
 
+/** Known reaction types — keys in the reactions config map */
+export type ReactionType =
+  | "ci-failed"
+  | "changes-requested"
+  | "bugbot-comments"
+  | "merge-conflicts"
+  | "approved-and-green"
+  | "agent-stuck"
+  | "agent-needs-input"
+  | "agent-exited"
+  | "all-complete"
+  | "hardware-test-required";
+
 /** A configured automatic reaction to an event */
 export interface ReactionConfig {
   /** Whether this reaction is enabled */
   auto: boolean;
 
-  /** What to do: send message to agent, notify human, auto-merge */
-  action: "send-to-agent" | "notify" | "auto-merge";
+  /** What to do: send message to agent, notify human, auto-merge, or queue for hardware */
+  action: "send-to-agent" | "notify" | "auto-merge" | "queue-for-hardware";
 
   /** Message to send (for send-to-agent) */
   message?: string;
@@ -955,6 +968,25 @@ export interface ProjectConfig {
 
   /** Rules for the orchestrator agent (stored, reserved for future use) */
   orchestratorRules?: string;
+
+  /** MCP tool plugins to inject into spawned agent sessions */
+  mcp?: McpEntry[];
+}
+
+/** Configuration entry for an MCP tool plugin */
+export interface McpEntry {
+  /** Named plugin class e.g. "DejavooPlugin" */
+  plugin?: string;
+  /** Inline: key in .mcp.json */
+  name?: string;
+  /** Inline: HTTP MCP server URL */
+  url?: string;
+  /** Access scope */
+  scope?: "readonly" | "readwrite";
+  /** Environment variables */
+  env?: Record<string, string>;
+  /** Additional plugin-specific config */
+  [key: string]: unknown;
 }
 
 export interface TrackerConfig {
@@ -1012,6 +1044,51 @@ export interface PluginManifest {
 export interface PluginModule<T = unknown> {
   manifest: PluginManifest;
   create(config?: Record<string, unknown>): T;
+}
+
+// =============================================================================
+// MCP TOOL PLUGIN — Plugin Slot 9
+// =============================================================================
+
+/**
+ * Gives each spawned agent a scoped MCP tool surface at session start.
+ * Session init writes .mcp.json to the worktree. Cleanup removes it.
+ */
+export interface McpToolPlugin {
+  readonly name: string;
+  readonly url?: string;
+  readonly command?: string;
+  readonly args?: string[];
+  readonly scope: "readonly" | "readwrite";
+  readonly env?: Record<string, string>;
+
+  /** Generate --mcp flags for Claude Code CLI */
+  buildFlags(): string[];
+
+  /** Generate mcpServers entry for session-scoped .mcp.json */
+  buildMcpJson(): McpServerConfig;
+
+  /** Optional pre-flight check. Called before session init. */
+  healthCheck?(): Promise<HealthResult>;
+
+  /**
+   * What reaction to trigger when healthCheck returns { healthy: false }.
+   * Return 'hardware-test-required' to route to hardware queue.
+   */
+  onUnhealthy?(): ReactionType;
+}
+
+export interface McpServerConfig {
+  command?: string;
+  args?: string[];
+  url?: string;
+  env?: Record<string, string>;
+}
+
+export interface HealthResult {
+  healthy: boolean;
+  latencyMs?: number;
+  message?: string;
 }
 
 // =============================================================================

@@ -24,7 +24,7 @@ import { generateSessionPrefix } from "./paths.js";
 
 const ReactionConfigSchema = z.object({
   auto: z.boolean().default(true),
-  action: z.enum(["send-to-agent", "notify", "auto-merge"]).default("notify"),
+  action: z.enum(["send-to-agent", "notify", "auto-merge", "queue-for-hardware"]).default("notify"),
   message: z.string().optional(),
   priority: z.enum(["urgent", "action", "warning", "info"]).optional(),
   retries: z.number().optional(),
@@ -58,6 +58,20 @@ const AgentSpecificConfigSchema = z
   })
   .passthrough();
 
+const McpEntrySchema = z
+  .object({
+    plugin: z.string().optional(),
+    name: z.string().optional(),
+    url: z.string().url().optional(),
+    scope: z.enum(["readonly", "readwrite"]).optional(),
+    env: z.record(z.string()).optional(),
+  })
+  .passthrough()
+  .refine(
+    (data) => data.plugin || (data.name && data.url),
+    "MCP entry must have 'plugin' or both 'name' and 'url'",
+  );
+
 const ProjectConfigSchema = z.object({
   name: z.string().optional(),
   repo: z.string(),
@@ -79,6 +93,7 @@ const ProjectConfigSchema = z.object({
   agentRules: z.string().optional(),
   agentRulesFile: z.string().optional(),
   orchestratorRules: z.string().optional(),
+  mcp: z.array(McpEntrySchema).optional(),
 });
 
 const DefaultPluginsSchema = z.object({
@@ -268,6 +283,11 @@ function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
       action: "notify",
       priority: "info",
       includeSummary: true,
+    },
+    "hardware-test-required": {
+      auto: false,
+      action: "notify",
+      priority: "action",
     },
   };
 
