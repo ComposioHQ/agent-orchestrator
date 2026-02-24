@@ -95,3 +95,11 @@ export {
   resolveMcpPlugins,
   UrlMcpToolPlugin,
 } from "./resolve-mcp-plugins.js";
+
+// Resource argument parsing
+export { parseResourceArg } from "./parse-resource-arg.js";
+export type { ParsedResource } from "./parse-resource-arg.js";
+
+// Input source resolution
+export { resolveInputSource } from "./resolve-input-source.js";
+export type { ResolvedSource } from "./resolve-input-source.js";
