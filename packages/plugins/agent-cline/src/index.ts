@@ -241,7 +241,11 @@ async function findClineProcess(handle: RuntimeHandle): Promise<number | null> {
         if (cols.length < 3 || !ttySet.has(cols[1] ?? "")) continue;
         const args = cols.slice(2).join(" ");
         if (processRe.test(args)) {
-          return parseInt(cols[0] ?? "0", 10);
+          const pid = parseInt(cols[0] ?? "0", 10);
+          // Validate parsed PID to avoid returning NaN
+          if (Number.isFinite(pid) && pid > 0) {
+            return pid;
+          }
         }
       }
       return null;
@@ -343,28 +347,39 @@ function createClineAgent(): Agent {
       // systemPrompt, and prompt to ensure nothing is lost
       // Note: Cline uses -p/--plan for plan mode, not for passing prompts.
       // Prompts are passed as positional arguments (after all flags).
-      const promptParts: string[] = [];
+      let finalPrompt = "";
 
       // Add system prompt file content first (shell substitution)
-      // Note: Wrap in double quotes to prevent word splitting on file content
+      // Keep unescaped to allow shell expansion of $(cat ...)
       // systemPromptFile takes precedence over systemPrompt per API contract
       if (config.systemPromptFile) {
         const escapedPath = shellEscape(config.systemPromptFile);
-        promptParts.push(`"$(cat ${escapedPath})"`);
+        finalPrompt = `$(cat ${escapedPath})`;
       } else if (config.systemPrompt) {
         // Add system prompt (from orchestrator) only if systemPromptFile not provided
-        promptParts.push(config.systemPrompt);
+        finalPrompt = config.systemPrompt;
       }
 
       // Add task prompt
       if (config.prompt) {
-        promptParts.push(config.prompt);
+        if (finalPrompt) {
+          finalPrompt += "\n\n" + config.prompt;
+        } else {
+          finalPrompt = config.prompt;
+        }
       }
 
       // Pass combined prompt as a single positional argument (after all flags)
-      // Join first, then escape as a single unit to prevent splitting
-      if (promptParts.length > 0) {
-        parts.push(shellEscape(promptParts.join("\n\n")));
+      // If it contains shell substitution ($(...)), use double quotes to allow expansion
+      // Otherwise, use shellEscape for safety
+      if (finalPrompt) {
+        if (finalPrompt.includes("$(")) {
+          // Contains shell substitution - use double quotes to allow expansion
+          parts.push(`"${finalPrompt}"`);
+        } else {
+          // No shell substitution - safe to escape
+          parts.push(shellEscape(finalPrompt));
+        }
       }
 
       return parts.join(" ");
