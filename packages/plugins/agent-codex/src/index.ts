@@ -69,34 +69,31 @@ _update_key() {
   mv "$tmp" "$_meta"
 }
 
-# Helper: returns 0 if the argument looks like a branch name, 1 otherwise.
-# Filters out flags (-*), HEAD, standalone -- separator, and hex-only strings
-# that are likely commit SHAs (7+ hex chars).
-_is_branch() {
-  case "$1" in
-    -* | HEAD | -- ) return 1 ;;
-  esac
-  # Skip probable commit SHAs (7+ hex-only characters)
-  if printf '%s' "$1" | grep -qE '^[0-9a-f]{7,}$'; then
-    return 1
-  fi
-  return 0
-}
-
 # Detect branch-changing commands from positional args
 case "\${1:-}" in
   checkout)
     if [ "\${2:-}" = "-b" ] && [ -n "\${3:-}" ]; then
+      # Explicit branch creation — always update
       _update_key "branch" "$3"
-    elif [ -n "\${2:-}" ] && _is_branch "\${2:-}"; then
-      _update_key "branch" "$2"
+    elif [ -n "\${2:-}" ]; then
+      # Plain checkout — only update for feature-branch patterns (contains / or -)
+      # to avoid false positives from file restores (git checkout .) or tag checkouts
+      case "\${2:-}" in
+        -*) ;;
+        */*|*-*) [ "\${2:-}" != "HEAD" ] && _update_key "branch" "$2" ;;
+      esac
     fi
     ;;
   switch)
     if { [ "\${2:-}" = "-c" ] || [ "\${2:-}" = "--create" ]; } && [ -n "\${3:-}" ]; then
+      # Explicit branch creation — always update
       _update_key "branch" "$3"
-    elif [ -n "\${2:-}" ] && _is_branch "\${2:-}"; then
-      _update_key "branch" "$2"
+    elif [ -n "\${2:-}" ]; then
+      # Plain switch — only update for feature-branch patterns (contains / or -)
+      case "\${2:-}" in
+        -*) ;;
+        */*|*-*) [ "\${2:-}" != "HEAD" ] && _update_key "branch" "$2" ;;
+      esac
     fi
     ;;
 esac
