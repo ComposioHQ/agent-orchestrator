@@ -720,3 +720,5 @@ export function create(): Tracker {
 }
 
 export default { manifest, create } satisfies PluginModule<Tracker>;
+
+export { LinearMcpInputSource } from "./linear-mcp-input-source.js";
