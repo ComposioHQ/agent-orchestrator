@@ -23,6 +23,11 @@ const nextConfig = {
         "@composio/core": stubComposioCorePath,
       };
     }
+    // Core's plugin-registry uses dynamic import(pkg); webpack can't resolve it at build time.
+    config.ignoreWarnings = [
+      ...(config.ignoreWarnings ?? []),
+      { module: /plugin-registry\.js$/, message: /Critical dependency: the request of a dependency is an expression/ },
+    ];
     return config;
   },
 };
