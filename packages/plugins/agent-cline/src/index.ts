@@ -437,9 +437,9 @@ function createClineAgent(): Agent {
           return { state: "waiting_input", timestamp: lastActivityTime };
         }
 
-        // If recently active (< threshold), it's active or ready
+        // If recently completed (< threshold), it's ready; otherwise idle
         if (ageMs < threshold) {
-          return { state: "active", timestamp: lastActivityTime };
+          return { state: "ready", timestamp: lastActivityTime };
         }
 
         return { state: "idle", timestamp: lastActivityTime };
