@@ -12,6 +12,7 @@ const {
   mockReaddir,
   mockRename,
   mockStat,
+  mockOpen,
   mockHomedir,
 } = vi.hoisted(() => ({
   mockExecFileAsync: vi.fn(),
@@ -21,6 +22,7 @@ const {
   mockReaddir: vi.fn(),
   mockRename: vi.fn().mockResolvedValue(undefined),
   mockStat: vi.fn(),
+  mockOpen: vi.fn(),
   mockHomedir: vi.fn(() => "/mock/home"),
 }));
 
@@ -38,6 +40,7 @@ vi.mock("node:fs/promises", () => ({
   readdir: mockReaddir,
   rename: mockRename,
   stat: mockStat,
+  open: mockOpen,
 }));
 
 vi.mock("node:crypto", () => ({
@@ -114,9 +117,36 @@ function mockTmuxWithProcess(processName: string, found = true) {
   });
 }
 
+/**
+ * Create a mock file handle for `open()` that returns `content` from `read()`.
+ * Used by sessionFileMatchesCwd which reads only the first 4 KB.
+ */
+function makeFakeFileHandle(content: string) {
+  const buf = Buffer.from(content, "utf-8");
+  return {
+    read: vi.fn().mockImplementation((buffer: Buffer, offset: number, length: number, _position: number) => {
+      const bytesToCopy = Math.min(length, buf.length);
+      buf.copy(buffer, offset, 0, bytesToCopy);
+      return Promise.resolve({ bytesRead: bytesToCopy, buffer });
+    }),
+    close: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+/**
+ * Set up mockOpen so that any `open(path, "r")` call returns a fake handle
+ * reading `content`. This is used by sessionFileMatchesCwd.
+ */
+function setupMockOpen(content: string) {
+  mockOpen.mockResolvedValue(makeFakeFileHandle(content));
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockHomedir.mockReturnValue("/mock/home");
+  // Default: open() returns a handle with empty content (no session_meta match).
+  // Session tests call setupMockOpen(content) to override.
+  mockOpen.mockResolvedValue(makeFakeFileHandle(""));
 });
 
 // =========================================================================
@@ -583,9 +613,9 @@ describe("getSessionInfo", () => {
 
   it("returns null when no session files match the workspace cwd", async () => {
     mockReaddir.mockResolvedValue(["session-abc.jsonl"]);
-    mockReadFile.mockResolvedValue(
-      jsonl({ type: "session_meta", cwd: "/other/workspace", model: "gpt-4o" }),
-    );
+    const content = jsonl({ type: "session_meta", cwd: "/other/workspace", model: "gpt-4o" });
+    setupMockOpen(content);
+    mockReadFile.mockResolvedValue(content);
     expect(await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }))).toBeNull();
   });
 
@@ -597,6 +627,7 @@ describe("getSessionInfo", () => {
     );
 
     mockReaddir.mockResolvedValue(["session-123.jsonl"]);
+    setupMockOpen(sessionContent);
     mockReadFile.mockResolvedValue(sessionContent);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
@@ -623,6 +654,11 @@ describe("getSessionInfo", () => {
     );
 
     mockReaddir.mockResolvedValue(["old-session.jsonl", "new-session.jsonl"]);
+    mockOpen.mockImplementation(async (path: string) => {
+      if (path.includes("old-session")) return makeFakeFileHandle(oldContent);
+      if (path.includes("new-session")) return makeFakeFileHandle(newContent);
+      throw new Error("ENOENT");
+    });
     mockReadFile.mockImplementation((path: string) => {
       if (path.includes("old-session")) return Promise.resolve(oldContent);
       if (path.includes("new-session")) return Promise.resolve(newContent);
@@ -647,6 +683,7 @@ describe("getSessionInfo", () => {
       '{"type":"event_msg","msg":{"type":"token_count","input_tokens":500,"output_tokens":200}}\n';
 
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
     mockReadFile.mockResolvedValue(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
@@ -664,6 +701,7 @@ describe("getSessionInfo", () => {
     );
 
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
     mockReadFile.mockResolvedValue(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
@@ -680,6 +718,7 @@ describe("getSessionInfo", () => {
     );
 
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
     mockReadFile.mockResolvedValue(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
@@ -691,6 +730,9 @@ describe("getSessionInfo", () => {
 
   it("handles unreadable session files gracefully", async () => {
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    // open() finds matching session_meta, but readFile fails for full parse
+    setupMockOpen(jsonl({ type: "session_meta", cwd: "/workspace/test" }));
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
     mockReadFile.mockRejectedValue(new Error("EACCES"));
 
     expect(await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }))).toBeNull();
@@ -701,6 +743,7 @@ describe("getSessionInfo", () => {
       { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
     );
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
     mockReadFile.mockResolvedValue(content);
     mockStat.mockRejectedValue(new Error("EACCES"));
 
@@ -711,18 +754,10 @@ describe("getSessionInfo", () => {
 
   it("returns null when session JSONL has only empty/malformed lines", async () => {
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
-    // First read (cwd check) has session_meta matching
-    // Second read (full parse) returns only garbage
-    let callCount = 0;
-    mockReadFile.mockImplementation(() => {
-      callCount++;
-      if (callCount <= 1) {
-        return Promise.resolve(jsonl(
-          { type: "session_meta", cwd: "/workspace/test" },
-        ));
-      }
-      return Promise.resolve("not json\n\n   \n");
-    });
+    // open() finds matching session_meta for cwd check
+    setupMockOpen(jsonl({ type: "session_meta", cwd: "/workspace/test" }));
+    // readFile (full parse) returns only garbage
+    mockReadFile.mockResolvedValue("not json\n\n   \n");
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
@@ -746,6 +781,7 @@ describe("getSessionInfo", () => {
     const content = jsonl(
       { type: "session_meta", cwd: "/workspace/test", model: "o3-mini" },
     );
+    setupMockOpen(content);
     mockReadFile.mockResolvedValue(content);
 
     const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
@@ -759,17 +795,18 @@ describe("getSessionInfo", () => {
     const content = jsonl(
       { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
     );
+    setupMockOpen(content);
     mockReadFile.mockResolvedValue(content);
     // Non-JSONL entries trigger stat to check isDirectory()
     mockStat.mockResolvedValue({ mtimeMs: 1000, isDirectory: () => false });
 
     const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
     expect(result).not.toBeNull();
-    // readFile should only be called for the .jsonl file
+    // readFile should only be called once (full parse); cwd check uses open()
     const readFileCalls = mockReadFile.mock.calls.filter(
       (call: string[]) => typeof call[0] === "string" && call[0].includes("sessions/"),
     );
-    expect(readFileCalls.length).toBe(2); // once for cwd check, once for full parse
+    expect(readFileCalls.length).toBe(1); // once for full parse (cwd check uses open())
   });
 });
 
@@ -811,11 +848,13 @@ describe("getRestoreCommand", () => {
   });
 
   it("returns null when session has no threadId", async () => {
-    mockReaddir.mockResolvedValue(["sess.jsonl"]);
-    mockReadFile.mockResolvedValue(jsonl(
+    const content = jsonl(
       { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
       { role: "user", content: "Some prompt" },
-    ));
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockReadFile.mockResolvedValue(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const session = makeSession({ workspacePath: "/workspace/test" });
@@ -824,11 +863,13 @@ describe("getRestoreCommand", () => {
   });
 
   it("builds native resume command with codex resume <threadId>", async () => {
-    mockReaddir.mockResolvedValue(["sess.jsonl"]);
-    mockReadFile.mockResolvedValue(jsonl(
+    const content = jsonl(
       { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
       { threadId: "thread-abc-123" },
-    ));
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockReadFile.mockResolvedValue(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const session = makeSession({ workspacePath: "/workspace/test" });
@@ -840,11 +881,13 @@ describe("getRestoreCommand", () => {
   });
 
   it("includes --dangerously-bypass-approvals-and-sandbox from project config", async () => {
-    mockReaddir.mockResolvedValue(["sess.jsonl"]);
-    mockReadFile.mockResolvedValue(jsonl(
+    const content = jsonl(
       { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
       { threadId: "thread-1" },
-    ));
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockReadFile.mockResolvedValue(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const session = makeSession({ workspacePath: "/workspace/test" });
@@ -856,11 +899,13 @@ describe("getRestoreCommand", () => {
   });
 
   it("includes --ask-for-approval never from project config", async () => {
-    mockReaddir.mockResolvedValue(["sess.jsonl"]);
-    mockReadFile.mockResolvedValue(jsonl(
+    const content = jsonl(
       { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
       { threadId: "thread-1" },
-    ));
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockReadFile.mockResolvedValue(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const session = makeSession({ workspacePath: "/workspace/test" });
@@ -873,11 +918,13 @@ describe("getRestoreCommand", () => {
   });
 
   it("includes --ask-for-approval untrusted from project config", async () => {
-    mockReaddir.mockResolvedValue(["sess.jsonl"]);
-    mockReadFile.mockResolvedValue(jsonl(
+    const content = jsonl(
       { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
       { threadId: "thread-1" },
-    ));
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockReadFile.mockResolvedValue(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const session = makeSession({ workspacePath: "/workspace/test" });
@@ -889,11 +936,13 @@ describe("getRestoreCommand", () => {
   });
 
   it("includes model from project config (overrides session model)", async () => {
-    mockReaddir.mockResolvedValue(["sess.jsonl"]);
-    mockReadFile.mockResolvedValue(jsonl(
+    const content = jsonl(
       { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
       { threadId: "thread-1" },
-    ));
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockReadFile.mockResolvedValue(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const session = makeSession({ workspacePath: "/workspace/test" });
@@ -906,11 +955,13 @@ describe("getRestoreCommand", () => {
   });
 
   it("falls back to session model when project config has no model", async () => {
-    mockReaddir.mockResolvedValue(["sess.jsonl"]);
-    mockReadFile.mockResolvedValue(jsonl(
+    const content = jsonl(
       { type: "session_meta", cwd: "/workspace/test", model: "o4-mini" },
       { threadId: "thread-1" },
-    ));
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockReadFile.mockResolvedValue(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const session = makeSession({ workspacePath: "/workspace/test" });
@@ -922,17 +973,10 @@ describe("getRestoreCommand", () => {
 
   it("handles unreadable session files gracefully", async () => {
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
-    // First call for cwd check succeeds, second call for full parse fails
-    let callCount = 0;
-    mockReadFile.mockImplementation(() => {
-      callCount++;
-      if (callCount <= 1) {
-        return Promise.resolve(jsonl(
-          { type: "session_meta", cwd: "/workspace/test" },
-        ));
-      }
-      return Promise.reject(new Error("EACCES"));
-    });
+    // open() finds matching session_meta for cwd check
+    setupMockOpen(jsonl({ type: "session_meta", cwd: "/workspace/test" }));
+    // readFile (full parse) fails
+    mockReadFile.mockRejectedValue(new Error("EACCES"));
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const session = makeSession({ workspacePath: "/workspace/test" });

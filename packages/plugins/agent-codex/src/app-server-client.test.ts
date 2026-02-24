@@ -912,4 +912,92 @@ describe("CodexAppServerClient", () => {
       await closePromise;
     });
   });
+
+  // =========================================================================
+  // Concurrency & resource cleanup (review fixes)
+  // =========================================================================
+  describe("concurrency guards", () => {
+    it("throws if connect() is called while already connecting", async () => {
+      const proc = createFakeProcess();
+      const client = new CodexAppServerClient({ requestTimeout: 500 });
+
+      // Start connect but don't complete the handshake
+      const connectPromise = client.connect();
+
+      // Second connect() should throw immediately
+      await expect(client.connect()).rejects.toThrow("already connecting");
+
+      // Complete the handshake to clean up
+      await new Promise((r) => setTimeout(r, 10));
+      const initReq = findRequest(proc, "initialize");
+      proc.sendLine(JSON.stringify({ id: initReq!["id"], result: {} }));
+      await connectPromise;
+      await closeClient(client, proc);
+    });
+
+    it("cleans up process when initialize handshake fails", async () => {
+      const proc = createFakeProcess();
+      // Make kill trigger exit so close() doesn't hang
+      vi.spyOn(proc, "kill").mockImplementation((_signal?: string) => {
+        proc.simulateExit(1, "SIGTERM");
+        return true;
+      });
+      const client = new CodexAppServerClient({ requestTimeout: 200 });
+
+      // Start connect — don't answer the initialize request so it times out
+      await expect(client.connect()).rejects.toThrow("timed out");
+
+      // Client should have cleaned up — not connected, not connecting
+      expect(client.isConnected).toBe(false);
+    });
+
+    it("drains stderr without blocking the child process", async () => {
+      const proc = createFakeProcess();
+      const client = new CodexAppServerClient({ requestTimeout: 500 });
+      await connectClient(client, proc);
+
+      // Write a large amount of data to stderr — should not block
+      const largeChunk = "x".repeat(65536);
+      proc.stderr.write(largeChunk);
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(client.isConnected).toBe(true);
+      await closeClient(client, proc);
+    });
+  });
+
+  describe("readline cleanup on process exit/error", () => {
+    it("closes readline on unexpected process exit", async () => {
+      const proc = createFakeProcess();
+      const client = new CodexAppServerClient({ requestTimeout: 500 });
+      await connectClient(client, proc);
+
+      // Spy on readline close — the client stores it privately so we check
+      // indirectly: after exit, sending another line should not cause errors
+      proc.simulateExit(1, null);
+      await new Promise((r) => setTimeout(r, 10));
+
+      // Client should be disconnected
+      expect(client.isConnected).toBe(false);
+
+      // Sending data on stdout should not throw (readline is closed)
+      expect(() => proc.sendLine('{"id":"x","result":{}}')).not.toThrow();
+    });
+
+    it("closes readline on process error", async () => {
+      const proc = createFakeProcess();
+      const client = new CodexAppServerClient({ requestTimeout: 500 });
+      await connectClient(client, proc);
+
+      // Catch the error event on the client to prevent unhandled error
+      const errors: Error[] = [];
+      client.on("error", (err: Error) => errors.push(err));
+
+      proc.emit("error", new Error("process crashed"));
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(client.isConnected).toBe(false);
+      expect(errors).toHaveLength(1);
+    });
+  });
 });

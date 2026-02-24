@@ -139,6 +139,7 @@ export class CodexAppServerClient extends EventEmitter {
   private pending = new Map<string, PendingRequest>();
   private initialized = false;
   private closed = false;
+  private connecting = false;
 
   private readonly binaryPath: string;
   private readonly cwd: string | undefined;
@@ -169,6 +170,9 @@ export class CodexAppServerClient extends EventEmitter {
   async connect(): Promise<void> {
     if (this.closed) throw new Error("Client is closed");
     if (this.initialized) throw new Error("Client is already connected");
+    if (this.connecting) throw new Error("Client is already connecting");
+
+    this.connecting = true;
 
     this.process = spawn(this.binaryPath, ["app-server"], {
       cwd: this.cwd,
@@ -177,8 +181,13 @@ export class CodexAppServerClient extends EventEmitter {
     });
 
     if (!this.process.stdout || !this.process.stdin) {
+      this.connecting = false;
       throw new Error("Failed to open stdio pipes for codex app-server");
     }
+
+    // Drain stderr to prevent the child process from blocking when
+    // the pipe buffer fills up.
+    this.process.stderr?.resume();
 
     // Set up line-based reading from stdout
     this.readline = createInterface({ input: this.process.stdout });
@@ -193,8 +202,17 @@ export class CodexAppServerClient extends EventEmitter {
       this.handleProcessError(err);
     });
 
-    // Perform initialization handshake
-    await this.initialize();
+    // Perform initialization handshake. On failure, clean up the spawned
+    // process so the caller doesn't need to call close() explicitly.
+    try {
+      await this.initialize();
+    } catch (err) {
+      this.connecting = false;
+      await this.close();
+      throw err;
+    }
+
+    this.connecting = false;
   }
 
   /**
@@ -445,6 +463,12 @@ export class CodexAppServerClient extends EventEmitter {
   private handleProcessExit(code: number | null, signal: string | null): void {
     this.initialized = false;
 
+    // Close readline to release the event listener on the closed stdout stream
+    if (this.readline) {
+      this.readline.close();
+      this.readline = null;
+    }
+
     // Reject all pending requests
     const exitMsg = `codex app-server exited (code=${code}, signal=${signal})`;
     for (const [id, pending] of this.pending) {
@@ -458,6 +482,13 @@ export class CodexAppServerClient extends EventEmitter {
 
   private handleProcessError(err: Error): void {
     this.initialized = false;
+
+    // Close readline to release the event listener on the closed stdout stream
+    if (this.readline) {
+      this.readline.close();
+      this.readline = null;
+    }
+
     this.emit("error", err);
 
     // Reject all pending requests

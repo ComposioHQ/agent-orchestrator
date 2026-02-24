@@ -13,7 +13,7 @@ import {
   type WorkspaceHooksConfig,
 } from "@composio/ao-core";
 import { execFile } from "node:child_process";
-import { writeFile, mkdir, readFile, readdir, rename, stat } from "node:fs/promises";
+import { writeFile, mkdir, readFile, readdir, rename, stat, open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
@@ -343,8 +343,17 @@ async function sessionFileMatchesCwd(
   workspacePath: string,
 ): Promise<boolean> {
   try {
-    const content = await readFile(filePath, "utf-8");
-    // Only parse the first few lines for the metadata header
+    // Read only the first 4 KB — session_meta is always in the first few lines.
+    // Avoids loading large rollout files (100 MB+) into memory.
+    const handle = await open(filePath, "r");
+    let content: string;
+    try {
+      const buffer = Buffer.allocUnsafe(4096);
+      const { bytesRead } = await handle.read(buffer, 0, 4096, 0);
+      content = buffer.subarray(0, bytesRead).toString("utf-8");
+    } finally {
+      await handle.close();
+    }
     const lines = content.split("\n").slice(0, 10);
     for (const line of lines) {
       const trimmed = line.trim();
@@ -508,6 +517,8 @@ export async function resolveCodexBinary(): Promise<string> {
 function createCodexAgent(): Agent {
   /** Cached resolved binary path (populated by init or first getLaunchCommand) */
   let resolvedBinary: string | null = null;
+  /** Guard against concurrent resolveCodexBinary() calls */
+  let resolvingBinary: Promise<string> | null = null;
 
   return {
     name: "codex",
@@ -742,9 +753,14 @@ function createCodexAgent(): Agent {
     },
 
     async postLaunchSetup(session: Session): Promise<void> {
-      // Resolve binary path on first launch (cached for subsequent calls)
+      // Resolve binary path on first launch (cached for subsequent calls).
+      // Uses a promise guard to prevent concurrent calls from racing.
       if (!resolvedBinary) {
-        resolvedBinary = await resolveCodexBinary();
+        if (!resolvingBinary) {
+          resolvingBinary = resolveCodexBinary();
+        }
+        resolvedBinary = await resolvingBinary;
+        resolvingBinary = null;
       }
       if (!session.workspacePath) return;
       await setupCodexWorkspace(session.workspacePath);
