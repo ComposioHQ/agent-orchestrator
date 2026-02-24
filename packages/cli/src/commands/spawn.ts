@@ -12,6 +12,7 @@ async function spawnSession(
   issueId?: string,
   openTab?: boolean,
   agent?: string,
+  customPrompt?: string,
 ): Promise<string> {
   const spinner = ora("Creating session").start();
 
@@ -23,6 +24,7 @@ async function spawnSession(
       projectId,
       issueId,
       agent,
+      prompt: customPrompt,
     });
 
     spinner.succeed(`Session ${chalk.green(session.id)} created`);
@@ -61,24 +63,47 @@ export function registerSpawn(program: Command): void {
     .argument("[issue]", "Issue identifier (e.g. INT-1234, #42) - must exist in tracker")
     .option("--open", "Open session in terminal tab")
     .option("--agent <name>", "Override the agent plugin (e.g. codex, claude-code)")
-    .action(async (projectId: string, issueId: string | undefined, opts: { open?: boolean; agent?: string }) => {
-      const config = loadConfig();
-      if (!config.projects[projectId]) {
-        console.error(
-          chalk.red(
-            `Unknown project: ${projectId}\nAvailable: ${Object.keys(config.projects).join(", ")}`,
-          ),
-        );
-        process.exit(1);
-      }
+    .option("--prompt <file>", "Read custom prompt from file")
+    .option("--prompt-text <text>", "Use custom prompt (inline text)")
+    .action(
+      async (
+        projectId: string,
+        issueId: string | undefined,
+        opts: { open?: boolean; agent?: string; prompt?: string; promptText?: string },
+      ) => {
+        const config = loadConfig();
+        if (!config.projects[projectId]) {
+          console.error(
+            chalk.red(
+              `Unknown project: ${projectId}\nAvailable: ${Object.keys(config.projects).join(", ")}`,
+            ),
+          );
+          process.exit(1);
+        }
 
-      try {
-        await spawnSession(config, projectId, issueId, opts.open, opts.agent);
-      } catch (err) {
-        console.error(chalk.red(`✗ ${err}`));
-        process.exit(1);
-      }
-    });
+        // Handle custom prompt
+        let customPrompt: string | undefined;
+        if (opts.promptText) {
+          customPrompt = opts.promptText;
+        } else if (opts.prompt) {
+          const { readFileSync } = await import("node:fs");
+          try {
+            customPrompt = readFileSync(opts.prompt, "utf-8");
+          } catch (err) {
+            console.error(chalk.red(`Failed to read prompt file: ${opts.prompt}`));
+            console.error(chalk.dim(String(err)));
+            process.exit(1);
+          }
+        }
+
+        try {
+          await spawnSession(config, projectId, issueId, opts.open, opts.agent, customPrompt);
+        } catch (err) {
+          console.error(chalk.red(`\u2717 ${err}`));
+          process.exit(1);
+        }
+      },
+    );
 }
 
 export function registerBatchSpawn(program: Command): void {
@@ -143,7 +168,7 @@ export function registerBatchSpawn(program: Command): void {
           spawnedIssues.add(issue.toLowerCase());
         } catch (err) {
           const message = String(err);
-          console.error(chalk.red(`  ✗ ${issue} — ${err}`));
+          console.error(chalk.red(`  \u2717 ${issue} — ${err}`));
           failed.push({ issue, error: message });
         }
 
