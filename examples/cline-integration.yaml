@@ -1,0 +1,49 @@
+# Using Cline CLI instead of Claude Code
+# Demonstrates using Cline with multi-provider support
+
+dataDir: ~/.agent-orchestrator
+worktreeDir: ~/.worktrees
+
+defaults:
+  agent: cline # Use Cline CLI instead of Claude Code
+  runtime: tmux
+  workspace: worktree
+
+projects:
+  my-app:
+    repo: owner/my-app
+    path: ~/my-app
+    defaultBranch: main
+
+    # Cline-specific configuration
+    agentConfig:
+      # Optional: Specify a specific model
+      # Cline uses the model configured via `cline auth` by default
+      # model: anthropic.claude-sonnet-4-6-20250501
+
+      # Optional: Skip permissions for autonomous operation
+      # Note: Cline's --yolo mode already auto-approves actions
+      # permissions: skip
+
+    agentRules: |
+      Write clean, well-documented code.
+      Follow project conventions.
+      Run tests before pushing.
+
+# Cline Configuration (done separately via CLI)
+# --------------------------------------------
+# Cline supports multiple providers. Configure with:
+#
+# cline auth --provider <provider> --apikey <key> --modelid <model>
+#
+# Example providers:
+#   - openai-native: OpenAI models (gpt-4o, etc.)
+#   - anthropic: Anthropic models (claude-sonnet-4-6, etc.)
+#   - openrouter: Access to 200+ models (deepseek, qwen, etc.)
+#   - moonshot: Moonshot AI (kimi series)
+#
+# Example:
+#   cline auth --provider openai-native --apikey sk-xxx --modelid gpt-4o
+#   cline auth --provider openrouter --apikey sk-or-v1-xxx --modelid deepseek/deepseek-chat
+#
+# Cline automatically uses the authenticated provider/model for all tasks.
