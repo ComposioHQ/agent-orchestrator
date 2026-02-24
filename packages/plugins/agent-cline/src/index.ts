@@ -336,7 +336,8 @@ function createClineAgent(): Agent {
 
       // Build the prompt: concatenate systemPromptFile (if exists),
       // systemPrompt, and prompt to ensure nothing is lost
-      // Cline only supports -p for a single prompt argument
+      // Note: Cline uses -p/--plan for plan mode, not for passing prompts.
+      // Prompts are passed as positional arguments (after all flags).
       const promptParts: string[] = [];
 
       // Add system prompt file content first (shell substitution)
@@ -354,9 +355,9 @@ function createClineAgent(): Agent {
         promptParts.push(config.prompt);
       }
 
-      // Pass combined prompt via -p
+      // Pass combined prompt as positional argument (after all flags)
       if (promptParts.length > 0) {
-        parts.push("-p", shellEscape(promptParts.join("\n\n")));
+        parts.push(shellEscape(promptParts.join("\n\n")));
       }
 
       return parts.join(" ");
@@ -420,15 +421,6 @@ function createClineAgent(): Agent {
         const lastActivityTime = new Date(lastUsage.ts);
         const ageMs = Date.now() - lastActivityTime.getTime();
 
-        // Check for permission prompts by looking at recent file edits
-        // (currently unused but available for future enhancements)
-        void metadata.files_in_context?.filter((f) => {
-          if (f.cline_edit_date) {
-            return Date.now() - f.cline_edit_date < 60000; // Last minute
-          }
-          return false;
-        });
-
         if (lastUsage.mode === "plan") {
           return { state: "waiting_input", timestamp: lastActivityTime };
         }
@@ -454,9 +446,6 @@ function createClineAgent(): Agent {
       const conversation = await readConversationHistory(task.path);
 
       if (!metadata) return null;
-
-      // Extract model info (currently unused but available for future enhancements)
-      void metadata.model_usage?.[metadata.model_usage.length - 1];
 
       // Build summary from recent file activity
       const recentFiles = metadata.files_in_context?.slice(0, 5) || [];

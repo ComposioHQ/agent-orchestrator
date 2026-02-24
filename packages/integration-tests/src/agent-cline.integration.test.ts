@@ -160,9 +160,9 @@ describe.skipIf(!canRun)("agent-cline (integration)", () => {
     tmpDir = await realpath(raw);
 
     // Spawn Cline with a task that generates observable activity (file creation)
-    // Using --act mode for autonomous operation and -p for the prompt
+    // Using --act mode for autonomous operation; prompt is positional argument
     const prompt = "Create a file called test.txt with the content 'integration test'";
-    const cmd = `${clineBin} task --act -p '${prompt}'`;
+    const cmd = `${clineBin} task --act '${prompt}'`;
 
     await createSession(sessionName, cmd, tmpDir);
 
@@ -278,7 +278,7 @@ describe("agent-cline (unit)", () => {
     expect(cmd).toContain("task");
     expect(cmd).toContain("--act");
     expect(cmd).toContain("--yolo");
-    expect(cmd).toContain("-p");
+    // Prompt is passed as positional argument (not -p, which is plan mode)
     expect(cmd).toContain("Test prompt");
   });
 
