@@ -51,11 +51,14 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
 
 /** Extract plugin-specific config from orchestrator config */
 function extractPluginConfig(
-  _slot: PluginSlot,
-  _name: string,
-  _config: OrchestratorConfig,
+  slot: PluginSlot,
+  name: string,
+  config: OrchestratorConfig,
 ): Record<string, unknown> | undefined {
-  // Reserved for future plugin-specific config mapping
+  if (slot === "notifier" && config.notifiers?.[name]) {
+    const { plugin: _plugin, ...rest } = config.notifiers[name] as Record<string, unknown>;
+    return rest;
+  }
   return undefined;
 }
 
