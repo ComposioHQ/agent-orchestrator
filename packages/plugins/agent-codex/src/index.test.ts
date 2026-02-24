@@ -355,31 +355,11 @@ describe("setupWorkspaceHooks", () => {
 });
 
 // =========================================================================
-// postLaunchSetup — writes hooks to session workspace
+// postLaunchSetup — not implemented (PATH-based hooks don't need it)
 // =========================================================================
 describe("postLaunchSetup", () => {
-  const agent = create();
-
-  it("writes hooks to session workspacePath", async () => {
-    await agent.postLaunchSetup!(makeSession({ workspacePath: "/worktree/session-1" }));
-    expect(mockMkdir).toHaveBeenCalledWith("/worktree/session-1/.ao-hooks/bin", {
-      recursive: true,
-    });
-    expect(mockWriteFile).toHaveBeenCalledWith(
-      "/worktree/session-1/.ao-hooks/bin/git",
-      expect.stringContaining("AO_SESSION"),
-      "utf-8",
-    );
-    expect(mockWriteFile).toHaveBeenCalledWith(
-      "/worktree/session-1/.ao-hooks/bin/gh",
-      expect.stringContaining("AO_SESSION"),
-      "utf-8",
-    );
-  });
-
-  it("skips when workspacePath is null", async () => {
-    await agent.postLaunchSetup!(makeSession({ workspacePath: null }));
-    expect(mockMkdir).not.toHaveBeenCalled();
-    expect(mockWriteFile).not.toHaveBeenCalled();
+  it("is not defined (PATH-based hooks are installed by setupWorkspaceHooks)", () => {
+    const agent = create();
+    expect(agent.postLaunchSetup).toBeUndefined();
   });
 });

@@ -335,10 +335,10 @@ function createCodexAgent(): Agent {
       await writeHookScripts(workspacePath);
     },
 
-    async postLaunchSetup(session: Session): Promise<void> {
-      if (!session.workspacePath) return;
-      await writeHookScripts(session.workspacePath);
-    },
+    // NOTE: No postLaunchSetup needed. Unlike Claude Code (which discovers hooks
+    // via workspace-relative .claude/settings.json), Codex uses PATH-based hook
+    // discovery. The hooks installed by setupWorkspaceHooks at projectConfig.path
+    // are already on PATH for all sessions, including worktree-based ones.
   };
 }
 
