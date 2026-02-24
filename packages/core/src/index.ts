@@ -79,3 +79,15 @@ export {
   expandHome,
   validateAndStoreOrigin,
 } from "./paths.js";
+
+// MCP injection — scoped .mcp.json for agent sessions
+export { injectMcpConfig, cleanupMcpConfig } from "./mcp-injection.js";
+export type { McpInjectionSession, InjectionResult } from "./mcp-injection.js";
+
+// MCP plugin resolution
+export {
+  registerMcpPlugin,
+  getRegisteredMcpPlugin,
+  resolveMcpPlugins,
+  UrlMcpToolPlugin,
+} from "./resolve-mcp-plugins.js";
