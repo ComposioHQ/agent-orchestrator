@@ -1,0 +1,42 @@
+port: 3000
+
+defaults:
+  runtime: tmux
+  agent: claude-code
+  workspace: worktree
+  notifiers: [desktop]
+
+projects:
+  paradise-pos:
+    repo: twelvearrays/agent-orchestrator
+    path: ~/paradise-pos
+    defaultBranch: main
+    sessionPrefix: pos
+    defaultInputSource: linear
+    inputSources:
+      linear:
+        type: linear
+
+    mcp:
+      - plugin: DejavooPlugin
+        bridgeUrl: http://localhost:3747
+      - plugin: PowerSyncPlugin
+        supabaseUrl: ${SUPABASE_URL}
+        supabaseAnonKey: ${SUPABASE_ANON_KEY}
+      - plugin: SupabasePOSPlugin
+        projectRef: ${SUPABASE_PROJECT_REF}
+        accessToken: ${SUPABASE_ACCESS_TOKEN}
+
+reactions:
+  ci-failed:
+    auto: true
+    action: send-to-agent
+    retries: 2
+  hardware-test-required:
+    auto: false
+    action: queue-for-hardware
+    escalateAfter: 4h
+  changes-requested:
+    auto: true
+    action: send-to-agent
+    escalateAfter: 30m
