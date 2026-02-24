@@ -1,3 +1,4 @@
+/* global self, caches, fetch, URL, Response */
 /// <reference lib="webworker" />
 
 const CACHE_NAME = "ao-v1";
@@ -43,7 +44,14 @@ self.addEventListener("fetch", (event) => {
   if (url.pathname.startsWith("/api/")) {
     event.respondWith(
       fetch(request).catch(() =>
-        caches.match(request).then((cached) => cached || new Response("{}", { status: 503 })),
+        caches.match(request).then(
+          (cached) =>
+            cached ||
+            new Response("{}", {
+              status: 503,
+              headers: { "Content-Type": "application/json" },
+            }),
+        ),
       ),
     );
     return;

@@ -27,10 +27,9 @@ export function InstallPrompt() {
     if (!prompt) return;
 
     await prompt.prompt();
-    const { outcome } = await prompt.userChoice;
-    if (outcome === "accepted") {
-      setVisible(false);
-    }
+    await prompt.userChoice;
+    // Hide banner regardless of outcome — user already made their choice
+    setVisible(false);
     deferredPromptRef.current = null;
   };
 
