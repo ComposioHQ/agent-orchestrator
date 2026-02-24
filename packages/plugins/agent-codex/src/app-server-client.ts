@@ -19,6 +19,7 @@ import { EventEmitter } from "node:events";
 
 /** JSON-RPC request sent from client to server */
 export interface JsonRpcRequest {
+  jsonrpc: "2.0";
   id: string;
   method: string;
   params: Record<string, unknown>;
@@ -339,7 +340,7 @@ export class CodexAppServerClient extends EventEmitter {
     }
 
     const id = randomUUID();
-    const request: JsonRpcRequest = { id, method, params };
+    const request: JsonRpcRequest = { jsonrpc: "2.0", id, method, params };
 
     return new Promise<Record<string, unknown>>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -357,7 +358,7 @@ export class CodexAppServerClient extends EventEmitter {
     if (this.closed) return;
     if (!this.process?.stdin?.writable) return;
 
-    this.writeLine(JSON.stringify({ method, params }));
+    this.writeLine(JSON.stringify({ jsonrpc: "2.0", method, params }));
   }
 
   /** Respond to an approval request from the server */
@@ -365,7 +366,7 @@ export class CodexAppServerClient extends EventEmitter {
     if (this.closed) return;
     if (!this.process?.stdin?.writable) return;
 
-    this.writeLine(JSON.stringify({ id, result: { decision } }));
+    this.writeLine(JSON.stringify({ jsonrpc: "2.0", id, result: { decision } }));
   }
 
   // ---------------------------------------------------------------------------

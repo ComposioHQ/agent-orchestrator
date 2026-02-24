@@ -732,8 +732,9 @@ function createCodexAgent(): Agent {
 
       // Use Codex's native `resume` subcommand for proper conversation resume.
       // This restores the full thread state, not just a text prompt re-injection.
+      // Flags are placed before the positional threadId for CLI parser compatibility.
       const binary = resolvedBinary ?? "codex";
-      const parts: string[] = [binary, "resume", shellEscape(threadId)];
+      const parts: string[] = [binary, "resume"];
 
       // Add approval policy flags from project config
       const perms = project.agentConfig?.permissions as string | undefined;
@@ -753,6 +754,9 @@ function createCodexAgent(): Agent {
           parts.push("-c", "model_reasoning_effort=high");
         }
       }
+
+      // Positional threadId goes last, after all flags
+      parts.push(shellEscape(threadId));
 
       return parts.join(" ");
     },

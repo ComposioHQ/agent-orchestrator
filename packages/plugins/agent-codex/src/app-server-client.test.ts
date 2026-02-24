@@ -137,8 +137,10 @@ describe("CodexAppServerClient", () => {
       // Should have sent initialize request and initialized notification
       const initReq = findRequest(proc, "initialize");
       expect(initReq).toBeDefined();
+      expect(initReq!["jsonrpc"]).toBe("2.0");
       const initializedNotif = findRequest(proc, "initialized");
       expect(initializedNotif).toBeDefined();
+      expect(initializedNotif!["jsonrpc"]).toBe("2.0");
 
       await closeClient(client, proc);
     });

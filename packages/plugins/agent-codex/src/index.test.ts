@@ -942,6 +942,30 @@ describe("getRestoreCommand", () => {
     expect(cmd).toContain("--ask-for-approval untrusted");
   });
 
+  it("places flags before positional threadId in resume command", async () => {
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "o3-mini" },
+      { threadId: "thread-order-test" },
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockReadFile.mockResolvedValue(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const session = makeSession({ workspacePath: "/workspace/test" });
+    const cmd = await agent.getRestoreCommand!(session, makeProjectConfig({
+      agentConfig: { permissions: "auto-edit", model: "o3-mini" },
+    }));
+
+    expect(cmd).not.toBeNull();
+    // threadId should come after all flags
+    const threadIdIdx = cmd!.indexOf("thread-order-test");
+    const flagIdx = cmd!.indexOf("--ask-for-approval");
+    const modelIdx = cmd!.indexOf("--model");
+    expect(flagIdx).toBeLessThan(threadIdIdx);
+    expect(modelIdx).toBeLessThan(threadIdIdx);
+  });
+
   it("includes model from project config (overrides session model)", async () => {
     const content = jsonl(
       { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
