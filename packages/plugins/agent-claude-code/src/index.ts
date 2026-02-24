@@ -15,8 +15,19 @@ import {
   type WorkspaceHooksConfig,
 } from "@composio/ao-core";
 import { execFile } from "node:child_process";
-import { readdir, readFile, stat, open, writeFile, mkdir, chmod } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import {
+  readdir,
+  readFile,
+  stat,
+  open,
+  writeFile,
+  mkdir,
+  chmod,
+  lstat,
+  rm,
+  symlink,
+} from "node:fs/promises";
+import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
@@ -288,8 +299,7 @@ async function parseJsonlFileTail(filePath: string, maxBytes = 131_072): Promise
   // Skip potentially truncated first line only when we started mid-file.
   // If offset === 0 we read from the start so the first line is complete.
   const firstNewline = content.indexOf("\n");
-  const safeContent =
-    offset > 0 && firstNewline >= 0 ? content.slice(firstNewline + 1) : content;
+  const safeContent = offset > 0 && firstNewline >= 0 ? content.slice(firstNewline + 1) : content;
   const lines: JsonlLine[] = [];
   for (const line of safeContent.split("\n")) {
     const trimmed = line.trim();
@@ -307,9 +317,7 @@ async function parseJsonlFileTail(filePath: string, maxBytes = 131_072): Promise
 }
 
 /** Extract auto-generated summary from JSONL (last "summary" type entry) */
-function extractSummary(
-  lines: JsonlLine[],
-): { summary: string; isFallback: boolean } | null {
+function extractSummary(lines: JsonlLine[]): { summary: string; isFallback: boolean } | null {
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
     if (line?.type === "summary" && line.summary) {
@@ -498,6 +506,28 @@ async function setupHookInWorkspace(workspacePath: string, hookCommand: string):
   const claudeDir = join(workspacePath, ".claude");
   const settingsPath = join(claudeDir, "settings.json");
   const hookScriptPath = join(claudeDir, "metadata-updater.sh");
+
+  // If .claude is a symlink (created by ao's symlinks config), materialize it into
+  // a real directory so each worktree gets its own settings.json instead of all
+  // sessions sharing and overwriting the project's shared .claude/settings.json.
+  try {
+    const dirStat = await lstat(claudeDir);
+    if (dirStat.isSymbolicLink()) {
+      const realClaudeDir = realpathSync(claudeDir);
+      await rm(claudeDir);
+      await mkdir(claudeDir, { recursive: true });
+      // Re-symlink all files from the original .claude/ except settings.json
+      // (we'll write our own session-specific settings.json below)
+      const files = await readdir(realClaudeDir);
+      for (const file of files) {
+        if (file !== "settings.json") {
+          await symlink(join(realClaudeDir, file), join(claudeDir, file));
+        }
+      }
+    }
+  } catch {
+    // Not a symlink or doesn't exist — proceed normally
+  }
 
   // Create .claude directory if it doesn't exist
   try {
