@@ -143,10 +143,18 @@ async function findAllTaskDirs(): Promise<Array<{ taskId: string; path: string; 
 }
 
 /**
- * Find the most recent task directory for a workspace
+ * Find the most recent task directory for a workspace.
+ *
+ * TODO: Currently ignores workspacePath parameter because Cline doesn't expose
+ * workspace information in task metadata. Would need to either:
+ * 1. Parse Cline's internal task data to extract workspace context
+ * 2. Track task->workspace mapping in the orchestrator
+ * 3. Use file path matching against files_in_context
+ *
+ * For now, returns the most recent task as fallback.
  */
-async function _findLatestTaskForWorkspace(
-  _workspacePath: string,
+async function findLatestTaskForWorkspace(
+  _workspacePath: string, // TODO: implement workspace-aware task lookup
 ): Promise<{ taskId: string; path: string } | null> {
   const taskDirs = await findAllTaskDirs();
 
@@ -174,9 +182,6 @@ async function _findLatestTaskForWorkspace(
 
   return null;
 }
-
-// Keep the function name for future use when workspace matching is needed
-const findLatestTaskForWorkspace = _findLatestTaskForWorkspace;
 
 /**
  * Read task metadata
@@ -481,7 +486,9 @@ function createClineAgent(): Agent {
 
       const parts: string[] = ["cline", "task"];
 
-      // Resume existing task
+      // Resume existing task using -T flag
+      // Note: This flag is used by Cline internally (visible in their source code)
+      // but not currently documented in the public CLI help. It may change in future versions.
       parts.push("-T", shellEscape(taskId));
 
       // Add model override if specified
