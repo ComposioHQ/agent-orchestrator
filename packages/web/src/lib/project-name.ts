@@ -12,10 +12,13 @@ import { loadConfig } from "@composio/ao-core";
 export const getProjectName = cache((): string => {
   try {
     const config = loadConfig();
-    const firstKey = Object.keys(config.projects)[0];
-    if (firstKey) {
-      const name = config.projects[firstKey].name ?? firstKey;
-      return name || firstKey || "ao";
+    const keys = Object.keys(config.projects);
+    if (keys.length === 1) {
+      const name = config.projects[keys[0]].name ?? keys[0];
+      return name || keys[0] || "ao";
+    }
+    if (keys.length > 1) {
+      return keys.map((k) => config.projects[k].name ?? k).join(" \u00b7 ");
     }
   } catch {
     // Config not available

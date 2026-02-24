@@ -22,18 +22,20 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export default async function Home() {
   let sessions: DashboardSession[] = [];
-  let orchestratorId: string | null = null;
+  let orchestrators: Array<{ id: string; projectId: string; projectName: string }> = [];
   const projectName = getProjectName();
   try {
     const { config, registry, sessionManager } = await getServices();
     const allSessions = await sessionManager.list();
 
-    // Find the orchestrator session (any session ending with -orchestrator)
-    // Only set orchestratorId if an actual session exists (no fallback)
-    const orchSession = allSessions.find((s) => s.id.endsWith("-orchestrator"));
-    if (orchSession) {
-      orchestratorId = orchSession.id;
-    }
+    // Find ALL orchestrator sessions (one per project)
+    orchestrators = allSessions
+      .filter((s) => s.id.endsWith("-orchestrator"))
+      .map((s) => ({
+        id: s.id,
+        projectId: s.projectId,
+        projectName: config.projects[s.projectId]?.name ?? s.projectId,
+      }));
 
     // Filter out orchestrator from worker sessions
     const coreSessions = allSessions.filter((s) => !s.id.endsWith("-orchestrator"));
@@ -41,7 +43,10 @@ export default async function Home() {
 
     // Enrich metadata (issue labels, agent summaries, issue titles) — cap at 3s
     const metaTimeout = new Promise<void>((resolve) => setTimeout(resolve, 3_000));
-    await Promise.race([enrichSessionsMetadata(coreSessions, sessions, config, registry), metaTimeout]);
+    await Promise.race([
+      enrichSessionsMetadata(coreSessions, sessions, config, registry),
+      metaTimeout,
+    ]);
 
     // Enrich sessions that have PRs with live SCM data
     // Skip enrichment for terminal sessions (merged, closed, done, terminated)
@@ -101,6 +106,11 @@ export default async function Home() {
   }
 
   return (
-    <Dashboard sessions={sessions} stats={computeStats(sessions)} orchestratorId={orchestratorId} projectName={projectName} />
+    <Dashboard
+      sessions={sessions}
+      stats={computeStats(sessions)}
+      orchestrators={orchestrators}
+      projectName={projectName}
+    />
   );
 }

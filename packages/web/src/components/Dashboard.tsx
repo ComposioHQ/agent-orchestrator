@@ -14,16 +14,22 @@ import { AttentionZone } from "./AttentionZone";
 import { PRTableRow } from "./PRStatus";
 import { DynamicFavicon } from "./DynamicFavicon";
 
+export interface OrchestratorInfo {
+  id: string;
+  projectId: string;
+  projectName: string;
+}
+
 interface DashboardProps {
   sessions: DashboardSession[];
   stats: DashboardStats;
-  orchestratorId?: string | null;
+  orchestrators: OrchestratorInfo[];
   projectName?: string;
 }
 
 const KANBAN_LEVELS = ["working", "pending", "review", "respond", "merge"] as const;
 
-export function Dashboard({ sessions, stats, orchestratorId, projectName }: DashboardProps) {
+export function Dashboard({ sessions, stats, orchestrators, projectName }: DashboardProps) {
   const [rateLimitDismissed, setRateLimitDismissed] = useState(false);
   const grouped = useMemo(() => {
     const zones: Record<AttentionLevel, DashboardSession[]> = {
@@ -103,37 +109,60 @@ export function Dashboard({ sessions, stats, orchestratorId, projectName }: Dash
           </h1>
           <StatusLine stats={stats} />
         </div>
-        {orchestratorId && (
-          <a
-            href={`/sessions/${encodeURIComponent(orchestratorId)}`}
-            className="orchestrator-btn flex items-center gap-2 rounded-[7px] px-4 py-2 text-[12px] font-semibold hover:no-underline"
-          >
-            <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] opacity-80" />
-            orchestrator
-            <svg className="h-3 w-3 opacity-70" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-              <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" />
-            </svg>
-          </a>
+        {orchestrators.length > 0 && (
+          <div className="flex items-center gap-2">
+            {orchestrators.map((orch) => (
+              <a
+                key={orch.id}
+                href={`/sessions/${encodeURIComponent(orch.id)}`}
+                className="orchestrator-btn flex items-center gap-2 rounded-[7px] px-4 py-2 text-[12px] font-semibold hover:no-underline"
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] opacity-80" />
+                {orch.projectName}
+                <svg
+                  className="h-3 w-3 opacity-70"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  viewBox="0 0 24 24"
+                >
+                  <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" />
+                </svg>
+              </a>
+            ))}
+          </div>
         )}
       </div>
 
       {/* Rate limit notice */}
       {anyRateLimited && !rateLimitDismissed && (
         <div className="mb-6 flex items-center gap-2.5 rounded border border-[rgba(245,158,11,0.25)] bg-[rgba(245,158,11,0.05)] px-3.5 py-2.5 text-[11px] text-[var(--color-status-attention)]">
-          <svg className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+          <svg
+            className="h-3.5 w-3.5 shrink-0"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            viewBox="0 0 24 24"
+          >
             <circle cx="12" cy="12" r="10" />
             <path d="M12 8v4M12 16h.01" />
           </svg>
           <span className="flex-1">
-            GitHub API rate limited — PR data (CI status, review state, sizes) may be stale.
-            {" "}Will retry automatically on next refresh.
+            GitHub API rate limited — PR data (CI status, review state, sizes) may be stale. Will
+            retry automatically on next refresh.
           </span>
           <button
             onClick={() => setRateLimitDismissed(true)}
             className="ml-1 shrink-0 opacity-60 hover:opacity-100"
             aria-label="Dismiss"
           >
-            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <svg
+              className="h-3.5 w-3.5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              viewBox="0 0 24 24"
+            >
               <path d="M18 6 6 18M6 6l12 12" />
             </svg>
           </button>
@@ -239,18 +268,14 @@ function StatusLine({ stats }: { stats: DashboardStats }) {
     <div className="flex items-baseline gap-0.5">
       {parts.map((p, i) => (
         <span key={p.label} className="flex items-baseline">
-          {i > 0 && (
-            <span className="mx-3 text-[11px] text-[var(--color-border-strong)]">·</span>
-          )}
+          {i > 0 && <span className="mx-3 text-[11px] text-[var(--color-border-strong)]">·</span>}
           <span
             className="text-[20px] font-bold tabular-nums tracking-tight"
             style={{ color: p.color ?? "var(--color-text-primary)" }}
           >
             {p.value}
           </span>
-          <span className="ml-1.5 text-[11px] text-[var(--color-text-muted)]">
-            {p.label}
-          </span>
+          <span className="ml-1.5 text-[11px] text-[var(--color-text-muted)]">{p.label}</span>
         </span>
       ))}
     </div>

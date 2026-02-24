@@ -116,6 +116,18 @@ async function stopDashboard(port: number): Promise<void> {
   }
 }
 
+/**
+ * Check if a port is already in use (e.g. dashboard from another project).
+ */
+async function isPortInUse(port: number): Promise<boolean> {
+  try {
+    const { stdout } = await exec("lsof", ["-ti", `:${port}`]);
+    return stdout.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
 export function registerStart(program: Command): void {
   program
     .command("start [project]")
@@ -146,25 +158,30 @@ export function registerStart(program: Command): void {
           let exists = false; // Track whether orchestrator session already exists
 
           if (opts?.dashboard !== false) {
-            const webDir = findWebDir();
-            if (!existsSync(resolve(webDir, "package.json"))) {
-              throw new Error("Could not find @composio/ao-web package. Run: pnpm install");
-            }
+            const portInUse = await isPortInUse(port);
+            if (portInUse) {
+              console.log(chalk.yellow(`Dashboard already running on port ${port} (reusing)\n`));
+            } else {
+              const webDir = findWebDir();
+              if (!existsSync(resolve(webDir, "package.json"))) {
+                throw new Error("Could not find @composio/ao-web package. Run: pnpm install");
+              }
 
-            if (opts?.rebuild) {
-              await cleanNextCache(webDir);
-            }
+              if (opts?.rebuild) {
+                await cleanNextCache(webDir);
+              }
 
-            spinner.start("Starting dashboard");
-            dashboardProcess = await startDashboard(
-              port,
-              webDir,
-              config.configPath,
-              config.terminalPort,
-              config.directTerminalPort,
-            );
-            spinner.succeed(`Dashboard starting on http://localhost:${port}`);
-            console.log(chalk.dim("  (Dashboard will be ready in a few seconds)\n"));
+              spinner.start("Starting dashboard");
+              dashboardProcess = await startDashboard(
+                port,
+                webDir,
+                config.configPath,
+                config.terminalPort,
+                config.directTerminalPort,
+              );
+              spinner.succeed(`Dashboard starting on http://localhost:${port}`);
+              console.log(chalk.dim("  (Dashboard will be ready in a few seconds)\n"));
+            }
           }
 
           // Create orchestrator session (unless --no-orchestrator or already exists)
@@ -275,8 +292,20 @@ export function registerStop(program: Command): void {
           console.log(chalk.yellow(`Orchestrator session "${sessionId}" is not running`));
         }
 
-        // Stop dashboard
-        await stopDashboard(port);
+        // Only stop dashboard if no other orchestrator sessions are still running
+        const allSessions = await sm.list();
+        const otherOrchestrators = allSessions.filter(
+          (s) => s.id.endsWith("-orchestrator") && s.id !== sessionId && s.status !== "killed",
+        );
+        if (otherOrchestrators.length === 0) {
+          await stopDashboard(port);
+        } else {
+          console.log(
+            chalk.dim(
+              `Dashboard kept alive (${otherOrchestrators.length} other orchestrator(s) running)`,
+            ),
+          );
+        }
 
         console.log(chalk.bold.green("\n✓ Orchestrator stopped\n"));
       } catch (err) {
