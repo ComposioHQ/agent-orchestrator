@@ -544,6 +544,14 @@ export interface SCM {
 
   /** Check if PR is ready to merge */
   getMergeability(pr: PRInfo): Promise<MergeReadiness>;
+
+  // --- Rebase Support ---
+
+  /** Get the current SHA of a branch */
+  getBranchSHA?(repo: string, branch: string): Promise<string>;
+
+  /** Rebase a branch in a workspace, push with --force-with-lease */
+  rebaseAndPush?(config: RebaseConfig): Promise<RebaseResult>;
 }
 
 // --- PR Types ---
@@ -632,6 +640,23 @@ export interface MergeReadiness {
   approved: boolean;
   noConflicts: boolean;
   blockers: string[];
+}
+
+// --- Rebase Types ---
+
+export interface RebaseConfig {
+  workspacePath: string;
+  branch: string;
+  baseBranch: string;
+  remoteName: string;
+}
+
+export interface RebaseResult {
+  success: boolean;
+  conflicted: boolean;
+  error?: string;
+  oldSha?: string;
+  newSha?: string;
 }
 
 // =============================================================================
@@ -734,6 +759,10 @@ export type EventType =
   // Reactions
   | "reaction.triggered"
   | "reaction.escalated"
+  // Rebase
+  | "pr.rebased"
+  | "pr.rebase_conflict"
+  | "pr.rebase_error"
   // Summary
   | "summary.all_complete";
 
@@ -975,6 +1004,13 @@ export interface SessionMetadata {
   terminalWsPort?: number;
   directTerminalWsPort?: number;
   reviewCommentsSeen?: string;
+
+  // Rebase tracking (all optional for backwards compatibility)
+  lastRebaseTime?: string;
+  lastRebaseMainSHA?: string;
+  rebaseStatus?: "clean" | "conflicted" | "error";
+  rebaseError?: string;
+  lastRebaseAttempt?: string;
 }
 
 // =============================================================================

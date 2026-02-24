@@ -102,8 +102,15 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
     runtimeHandle: raw["runtimeHandle"],
     dashboardPort: raw["dashboardPort"] ? Number(raw["dashboardPort"]) : undefined,
     terminalWsPort: raw["terminalWsPort"] ? Number(raw["terminalWsPort"]) : undefined,
-    directTerminalWsPort: raw["directTerminalWsPort"] ? Number(raw["directTerminalWsPort"]) : undefined,
+    directTerminalWsPort: raw["directTerminalWsPort"]
+      ? Number(raw["directTerminalWsPort"])
+      : undefined,
     reviewCommentsSeen: raw["reviewCommentsSeen"],
+    lastRebaseTime: raw["lastRebaseTime"],
+    lastRebaseMainSHA: raw["lastRebaseMainSHA"],
+    rebaseStatus: raw["rebaseStatus"] as "clean" | "conflicted" | "error" | undefined,
+    rebaseError: raw["rebaseError"],
+    lastRebaseAttempt: raw["lastRebaseAttempt"],
   };
 }
 
@@ -144,13 +151,17 @@ export function writeMetadata(
   if (metadata.agent) data["agent"] = metadata.agent;
   if (metadata.createdAt) data["createdAt"] = metadata.createdAt;
   if (metadata.runtimeHandle) data["runtimeHandle"] = metadata.runtimeHandle;
-  if (metadata.dashboardPort !== undefined)
-    data["dashboardPort"] = String(metadata.dashboardPort);
+  if (metadata.dashboardPort !== undefined) data["dashboardPort"] = String(metadata.dashboardPort);
   if (metadata.terminalWsPort !== undefined)
     data["terminalWsPort"] = String(metadata.terminalWsPort);
   if (metadata.directTerminalWsPort !== undefined)
     data["directTerminalWsPort"] = String(metadata.directTerminalWsPort);
   if (metadata.reviewCommentsSeen) data["reviewCommentsSeen"] = metadata.reviewCommentsSeen;
+  if (metadata.lastRebaseTime) data["lastRebaseTime"] = metadata.lastRebaseTime;
+  if (metadata.lastRebaseMainSHA) data["lastRebaseMainSHA"] = metadata.lastRebaseMainSHA;
+  if (metadata.rebaseStatus) data["rebaseStatus"] = metadata.rebaseStatus;
+  if (metadata.rebaseError) data["rebaseError"] = metadata.rebaseError;
+  if (metadata.lastRebaseAttempt) data["lastRebaseAttempt"] = metadata.lastRebaseAttempt;
 
   writeFileSync(path, serializeMetadata(data), "utf-8");
 }

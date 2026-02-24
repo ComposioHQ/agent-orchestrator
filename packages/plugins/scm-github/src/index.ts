@@ -22,6 +22,8 @@ import {
   type ReviewComment,
   type AutomatedComment,
   type MergeReadiness,
+  type RebaseConfig,
+  type RebaseResult,
 } from "@composio/ao-core";
 
 const execFileAsync = promisify(execFile);
@@ -66,6 +68,20 @@ function parseDate(val: string | undefined | null): Date {
   if (!val) return new Date(0);
   const d = new Date(val);
   return isNaN(d.getTime()) ? new Date(0) : d;
+}
+
+async function git(args: string[], cwd: string): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync("git", args, {
+      cwd,
+      timeout: 60_000,
+    });
+    return stdout.trim();
+  } catch (err) {
+    throw new Error(`git ${args.slice(0, 3).join(" ")} failed: ${(err as Error).message}`, {
+      cause: err,
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -559,6 +575,100 @@ function createGitHubSCM(): SCM {
         noConflicts,
         blockers,
       };
+    },
+
+    async getBranchSHA(repo: string, branch: string): Promise<string> {
+      const raw = await gh([
+        "api",
+        `repos/${repo}/git/ref/heads/${branch}`,
+        "--jq",
+        ".object.sha",
+      ]);
+      return raw;
+    },
+
+    async rebaseAndPush(config: RebaseConfig): Promise<RebaseResult> {
+      const { workspacePath, branch, baseBranch, remoteName } = config;
+
+      try {
+        // 1. Fetch latest base branch
+        await git(["fetch", remoteName, baseBranch], workspacePath);
+
+        // 2. Check workspace is clean
+        const statusOut = await git(["status", "--porcelain"], workspacePath);
+        if (statusOut.trim()) {
+          return {
+            success: false,
+            conflicted: false,
+            error: "Workspace is dirty",
+          };
+        }
+
+        // 3. Checkout target branch (ensure we're on the correct branch)
+        await git(["checkout", branch], workspacePath);
+
+        // 4. Get pre-rebase SHA
+        const oldSha = await git(["rev-parse", "HEAD"], workspacePath);
+
+        // 5. Attempt rebase
+        try {
+          await git(["rebase", `${remoteName}/${baseBranch}`], workspacePath);
+        } catch (err) {
+          // Check for conflicts
+          const conflicts = await git(
+            ["diff", "--name-only", "--diff-filter=U"],
+            workspacePath,
+          ).catch(() => "");
+
+          if (conflicts.trim()) {
+            // Abort rebase on conflicts
+            await git(["rebase", "--abort"], workspacePath).catch(() => {});
+            return {
+              success: false,
+              conflicted: true,
+              oldSha,
+            };
+          }
+
+          // Defensive abort before re-throwing (e.g., timeout, other errors)
+          // Prevents leaving .git/rebase-merge state that breaks subsequent git ops
+          await git(["rebase", "--abort"], workspacePath).catch(() => {});
+          throw err;
+        }
+
+        // 6. Get new SHA after rebase
+        const newSha = await git(["rev-parse", "HEAD"], workspacePath);
+
+        // 7. Push with --force-with-lease
+        try {
+          await git(
+            ["push", remoteName, branch, "--force-with-lease"],
+            workspacePath,
+          );
+        } catch (pushErr) {
+          // Rollback on force-with-lease rejection
+          await git(["reset", "--hard", oldSha], workspacePath).catch(() => {});
+          return {
+            success: false,
+            conflicted: false,
+            error: `Push rejected: ${(pushErr as Error).message}`,
+            oldSha,
+          };
+        }
+
+        return {
+          success: true,
+          conflicted: false,
+          oldSha,
+          newSha,
+        };
+      } catch (err) {
+        return {
+          success: false,
+          conflicted: false,
+          error: (err as Error).message,
+        };
+      }
     },
   };
 }

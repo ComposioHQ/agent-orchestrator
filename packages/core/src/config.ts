@@ -250,6 +250,13 @@ function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
       message: "Your branch has merge conflicts. Rebase on the default branch and resolve them.",
       escalateAfter: "15m",
     },
+    "rebase-conflicts": {
+      auto: true,
+      action: "send-to-agent",
+      message:
+        "Your branch has rebase conflicts with main. Fetch latest, rebase, resolve conflicts, and force-push with --force-with-lease.",
+      escalateAfter: "30m",
+    },
     "approved-and-green": {
       auto: false,
       action: "notify",

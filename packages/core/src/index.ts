@@ -51,6 +51,9 @@ export type { SessionManagerDeps } from "./session-manager.js";
 export { createLifecycleManager } from "./lifecycle-manager.js";
 export type { LifecycleManagerDeps } from "./lifecycle-manager.js";
 
+// Main branch tracker — detects when main advances
+export { MainBranchTracker } from "./main-branch-tracker.js";
+
 // Prompt builder — layered prompt composition
 export { buildPrompt, BASE_AGENT_PROMPT } from "./prompt-builder.js";
 export type { PromptBuildConfig } from "./prompt-builder.js";

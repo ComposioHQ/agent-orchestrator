@@ -22,6 +22,7 @@ import {
   type EventType,
   type OrchestratorEvent,
   type OrchestratorConfig,
+  type ProjectConfig,
   type ReactionConfig,
   type ReactionResult,
   type PluginRegistry,
@@ -35,6 +36,7 @@ import {
 } from "./types.js";
 import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
+import { MainBranchTracker } from "./main-branch-tracker.js";
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
@@ -150,6 +152,8 @@ function eventToReactionKey(eventType: EventType): string | null {
       return "bugbot-comments";
     case "merge.conflicts":
       return "merge-conflicts";
+    case "pr.rebase_conflict":
+      return "rebase-conflicts";
     case "merge.ready":
       return "approved-and-green";
     case "session.stuck":
@@ -183,6 +187,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
   const states = new Map<SessionId, SessionStatus>();
   const reactionTrackers = new Map<string, ReactionTracker>(); // "sessionId:reactionKey"
+  const mainBranchTracker = new MainBranchTracker();
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
@@ -191,6 +196,18 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     SessionId,
     Awaited<ReturnType<SCM["getPendingComments"]>>
   >();
+
+  /** Get merged reaction config (project overrides + global defaults). */
+  function getReactionConfig(
+    reactionKey: string,
+    project: ProjectConfig | undefined,
+  ): ReactionConfig | null {
+    const globalReaction = config.reactions[reactionKey];
+    if (!project) return globalReaction ?? null;
+    const projectReaction = project.reactions?.[reactionKey];
+    const merged = projectReaction ? { ...globalReaction, ...projectReaction } : globalReaction;
+    return merged ?? null;
+  }
 
   /** Determine current status for a session by polling plugins. */
   async function determineStatus(session: Session): Promise<SessionStatus> {
@@ -530,11 +547,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         if (reactionKey) {
           // Merge project-specific overrides with global defaults
           const project = config.projects[session.projectId];
-          const globalReaction = config.reactions[reactionKey];
-          const projectReaction = project?.reactions?.[reactionKey];
-          const reactionConfig = projectReaction
-            ? { ...globalReaction, ...projectReaction }
-            : globalReaction;
+          const reactionConfig = getReactionConfig(reactionKey, project);
 
           if (reactionConfig && reactionConfig.action) {
             // auto: false skips automated agent actions but still allows notifications
@@ -609,6 +622,206 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
   }
 
+  /** Check for main branch updates and trigger rebases. */
+  async function checkMainBranchUpdates(sessions: Session[]): Promise<void> {
+    // Group sessions by project (only those with open PRs)
+    const projectSessions = new Map<string, Session[]>();
+    for (const session of sessions) {
+      if (!session.pr || session.status === "merged" || session.status === "killed") {
+        continue;
+      }
+      const list = projectSessions.get(session.projectId) ?? [];
+      list.push(session);
+      projectSessions.set(session.projectId, list);
+    }
+
+    // Check each project's main branch
+    for (const [projectId, projectSessionsList] of projectSessions.entries()) {
+      const project = config.projects[projectId];
+      if (!project) continue;
+
+      const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+      if (!scm || !scm.rebaseAndPush) continue;
+
+      try {
+        // Check if main advanced
+        const result = await mainBranchTracker.checkMainAdvanced(project, projectId, scm);
+        if (!result.advanced) continue;
+
+        // Trigger rebases for all open PRs, passing the main branch SHA
+        await rebaseAllSessions(projectSessionsList, project, scm, result.newSha);
+      } catch {
+        // Continue with other projects
+      }
+    }
+  }
+
+  /** Rebase all sessions for a project. */
+  async function rebaseAllSessions(
+    sessions: Session[],
+    project: ProjectConfig,
+    scm: SCM,
+    mainBranchSHA: string,
+  ): Promise<void> {
+    const agent = registry.get<Agent>("agent", project.agent ?? config.defaults.agent);
+
+    for (const session of sessions) {
+      try {
+        // Skip if agent is actively processing
+        if (agent && session.runtimeHandle) {
+          try {
+            const activity = await agent.getActivityState(session);
+            if (activity && activity.state === "active") continue;
+          } catch {
+            continue; // Can't determine - skip to be safe
+          }
+        }
+
+        if (!session.workspacePath || !session.pr || !scm.rebaseAndPush) continue;
+
+        const sessionsDir = getSessionsDir(config.configPath, project.path);
+
+        // Attempt rebase
+        const result = await scm.rebaseAndPush({
+          workspacePath: session.workspacePath,
+          branch: session.pr.branch,
+          baseBranch: project.defaultBranch,
+          remoteName: "origin",
+        });
+
+        if (result.success) {
+          // Silent success - update metadata and clear error fields
+          updateMetadata(sessionsDir, session.id, {
+            lastRebaseTime: new Date().toISOString(),
+            lastRebaseMainSHA: mainBranchSHA,
+            rebaseStatus: "clean",
+            rebaseError: "", // Clear stale error from previous failure
+            lastRebaseAttempt: "", // Clear stale attempt timestamp
+          });
+
+          // Clear reaction tracker for rebase-conflicts (prevents stale state on re-conflict)
+          reactionTrackers.delete(`${session.id}:rebase-conflicts`);
+
+          // Emit low-priority info event
+          const event = createEvent("pr.rebased", {
+            sessionId: session.id,
+            projectId: session.projectId,
+            message: `Rebased ${session.id} onto ${project.defaultBranch}`,
+            priority: "info",
+          });
+          await notifyHuman(event, "info");
+        } else if (result.conflicted) {
+          // Conflicts - invoke reaction engine for proper agent message + escalation
+          updateMetadata(sessionsDir, session.id, {
+            rebaseStatus: "conflicted",
+            lastRebaseAttempt: new Date().toISOString(),
+          });
+
+          // Get reaction config (merge project overrides with defaults)
+          const reactionKey = "rebase-conflicts";
+          const reactionConfig = getReactionConfig(reactionKey, project);
+
+          if (reactionConfig && reactionConfig.action) {
+            // Execute reaction (sends to agent, handles escalation)
+            await executeReaction(
+              session.id,
+              session.projectId,
+              reactionKey,
+              reactionConfig as ReactionConfig,
+            );
+          } else {
+            // Fallback if reaction not configured
+            const event = createEvent("pr.rebase_conflict", {
+              sessionId: session.id,
+              projectId: session.projectId,
+              message: `${session.id}: Rebase conflicts with ${project.defaultBranch}`,
+              priority: "urgent",
+              data: { prUrl: session.pr.url },
+            });
+            await notifyHuman(event, "urgent");
+          }
+        } else {
+          // Other errors - log to metadata and notify
+          updateMetadata(sessionsDir, session.id, {
+            rebaseStatus: "error",
+            rebaseError: result.error ?? "Unknown error",
+            lastRebaseAttempt: new Date().toISOString(),
+          });
+
+          // Emit error event for visibility
+          const event = createEvent("pr.rebase_error", {
+            sessionId: session.id,
+            projectId: session.projectId,
+            message: `${session.id}: Rebase error - ${result.error ?? "Unknown error"}`,
+            priority: "warning",
+            data: { error: result.error, prUrl: session.pr.url },
+          });
+          await notifyHuman(event, "warning");
+        }
+      } catch {
+        // Per-session error - continue with remaining sessions
+        // (e.g., updateMetadata I/O failure, notifier errors)
+        continue;
+      }
+    }
+  }
+
+  /** Check sessions with rebase conflicts and re-trigger reactions for escalation. */
+  async function checkRebaseConflicts(sessions: Session[]): Promise<void> {
+    for (const session of sessions) {
+      try {
+        // Skip terminal sessions
+        if (session.status === "merged" || session.status === "killed") continue;
+
+        // Only check sessions with conflicted rebase status
+        const rebaseStatus = session.metadata?.["rebaseStatus"];
+        if (rebaseStatus !== "conflicted") continue;
+
+        // Get project config
+        const project = config.projects[session.projectId];
+        if (!project) continue;
+
+        // Get reaction config (merge project overrides with defaults)
+        const reactionKey = "rebase-conflicts";
+        const reactionConfig = getReactionConfig(reactionKey, project);
+
+        if (reactionConfig && reactionConfig.action) {
+          // Check if reaction already triggered (to prevent spam)
+          const trackerKey = `${session.id}:${reactionKey}`;
+          const tracker = reactionTrackers.get(trackerKey);
+
+          // Skip if reaction was recently triggered and escalation threshold hasn't been met
+          if (tracker && reactionConfig.escalateAfter) {
+            if (typeof reactionConfig.escalateAfter === "string") {
+              // String: time duration (e.g., "30m")
+              const escalateDuration = parseDuration(reactionConfig.escalateAfter);
+              const elapsed = Date.now() - tracker.firstTriggered.getTime();
+              if (escalateDuration > 0 && elapsed < escalateDuration) {
+                continue; // Skip - not enough time has passed
+              }
+            } else {
+              // Number: attempt count (e.g., 2 means escalate after 2 attempts)
+              if (tracker.attempts <= reactionConfig.escalateAfter) {
+                continue; // Skip - not enough attempts yet
+              }
+            }
+          }
+
+          // Execute reaction (first time or ready to escalate)
+          await executeReaction(
+            session.id,
+            session.projectId,
+            reactionKey,
+            reactionConfig as ReactionConfig,
+          );
+        }
+      } catch {
+        // Continue with other sessions
+        continue;
+      }
+    }
+  }
+
   /** Run one polling cycle across all sessions. */
   async function pollAll(): Promise<void> {
     // Re-entrancy guard: skip if previous poll is still running
@@ -616,7 +829,16 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     polling = true;
 
     try {
-      const sessions = await sessionManager.list();
+      let sessions = await sessionManager.list();
+
+      // Check for main branch advancement and trigger rebases
+      await checkMainBranchUpdates(sessions);
+
+      // Reload sessions after rebase updates to avoid stale metadata
+      sessions = await sessionManager.list();
+
+      // Re-evaluate sessions with rebase conflicts (for escalation)
+      await checkRebaseConflicts(sessions);
 
       // Include sessions that are active OR whose status changed from what we last saw
       // (e.g., list() detected a dead runtime and marked it "killed" — we need to
