@@ -79,3 +79,7 @@ export {
   expandHome,
   validateAndStoreOrigin,
 } from "./paths.js";
+
+// Generic MCP Input Source
+export { GenericMcpInputSource } from "./generic-mcp-input-source.js";
+export type { McpToolMap, GenericMcpConfig } from "./generic-mcp-input-source.js";

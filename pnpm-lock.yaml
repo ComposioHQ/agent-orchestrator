@@ -120,6 +120,9 @@ importers:
 
   packages/core:
     dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.27.1
+        version: 1.27.1(@cfworker/json-schema@4.1.1)(zod@3.25.76)
       yaml:
         specifier: ^2.7.0
         version: 2.8.2

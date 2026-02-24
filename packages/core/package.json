@@ -39,6 +39,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "yaml": "^2.7.0",
     "zod": "^3.24.0"
   },
