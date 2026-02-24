@@ -162,7 +162,7 @@ describe.skipIf(!canRun)("agent-cline (integration)", () => {
     // Spawn Cline with a task that generates observable activity (file creation)
     // Using --act mode for autonomous operation; prompt is positional argument
     const prompt = "Create a file called test.txt with the content 'integration test'";
-    const cmd = `${clineBin} task --act '${prompt}'`;
+    const cmd = `${clineBin} task --act "${prompt}"`;
 
     await createSession(sessionName, cmd, tmpDir);
 

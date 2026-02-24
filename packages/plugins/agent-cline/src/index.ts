@@ -346,23 +346,25 @@ function createClineAgent(): Agent {
       const promptParts: string[] = [];
 
       // Add system prompt file content first (shell substitution)
+      // Note: Keep $(cat ...) outside shellEscape to allow shell substitution
       if (config.systemPromptFile) {
-        promptParts.push(`$(cat ${shellEscape(config.systemPromptFile)})`);
+        const escapedPath = shellEscape(config.systemPromptFile);
+        promptParts.push(`$(cat ${escapedPath})`);
       }
 
-      // Add system prompt (from orchestrator)
+      // Add system prompt (from orchestrator) - escape it to handle special chars
       if (config.systemPrompt) {
-        promptParts.push(config.systemPrompt);
+        promptParts.push(shellEscape(config.systemPrompt));
       }
 
-      // Add task prompt
+      // Add task prompt - escape to handle special chars
       if (config.prompt) {
-        promptParts.push(config.prompt);
+        promptParts.push(shellEscape(config.prompt));
       }
 
       // Pass combined prompt as positional argument (after all flags)
       if (promptParts.length > 0) {
-        parts.push(shellEscape(promptParts.join("\n\n")));
+        parts.push(promptParts.join(" "));
       }
 
       return parts.join(" ");
@@ -472,16 +474,16 @@ function createClineAgent(): Agent {
     },
 
     async getRestoreCommand(session: Session, project: ProjectConfig): Promise<string | null> {
-      if (!session.agentInfo?.agentSessionId) {
+      // Find task ID without mutating session.agentInfo to preserve existing summary
+      let taskId = session.agentInfo?.agentSessionId;
+
+      if (!taskId && session.workspacePath) {
         // Try to find a task for this workspace
-        const task = session.workspacePath
-          ? await findLatestTaskForWorkspace(session.workspacePath)
-          : null;
+        const task = await findLatestTaskForWorkspace(session.workspacePath);
         if (!task) return null;
-        session.agentInfo = { agentSessionId: task.taskId, summary: null };
+        taskId = task.taskId;
       }
 
-      const taskId = session.agentInfo?.agentSessionId;
       if (!taskId) return null;
 
       const parts: string[] = ["cline", "task"];
