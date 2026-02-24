@@ -30,6 +30,7 @@ export type SessionStatus =
   | "ci_failed"
   | "review_pending"
   | "changes_requested"
+  | "review_comments_unresolved"
   | "approved"
   | "mergeable"
   | "merged"
@@ -78,6 +79,7 @@ export const SESSION_STATUS = {
   CI_FAILED: "ci_failed" as const,
   REVIEW_PENDING: "review_pending" as const,
   CHANGES_REQUESTED: "changes_requested" as const,
+  REVIEW_COMMENTS_UNRESOLVED: "review_comments_unresolved" as const,
   APPROVED: "approved" as const,
   MERGEABLE: "mergeable" as const,
   MERGED: "merged" as const,
@@ -972,6 +974,7 @@ export interface SessionMetadata {
   dashboardPort?: number;
   terminalWsPort?: number;
   directTerminalWsPort?: number;
+  reviewCommentsSeen?: string;
 }
 
 // =============================================================================
