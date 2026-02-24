@@ -35,6 +35,11 @@ projects:
     # tracker:
     #   plugin: linear
     #   teamId: "your-team-id"
+    #
+    # tracker:
+    #   plugin: azure-devops
+    #   organizationUrl: "https://dev.azure.com/your-org"
+    #   project: "your-azure-project-name"
 
     # Files to symlink into workspaces
     # symlinks: [.env, .claude]

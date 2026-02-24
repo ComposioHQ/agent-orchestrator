@@ -44,6 +44,7 @@ interface EnvironmentInfo {
   hasGh: boolean;
   ghAuthed: boolean;
   hasLinearKey: boolean;
+  hasAzureDevOpsPat: boolean;
   hasSlackWebhook: boolean;
 }
 
@@ -133,6 +134,7 @@ async function detectEnvironment(workingDir: string): Promise<EnvironmentInfo> {
 
   // Check for API keys in environment
   const hasLinearKey = !!process.env["LINEAR_API_KEY"];
+  const hasAzureDevOpsPat = !!process.env["AZURE_DEVOPS_PAT"];
   const hasSlackWebhook = !!process.env["SLACK_WEBHOOK_URL"];
 
   return {
@@ -145,6 +147,7 @@ async function detectEnvironment(workingDir: string): Promise<EnvironmentInfo> {
     hasGh,
     ghAuthed,
     hasLinearKey,
+    hasAzureDevOpsPat,
     hasSlackWebhook,
   };
 }
@@ -222,6 +225,9 @@ export function registerInit(program: Command): void {
       if (env.hasLinearKey) {
         console.log(chalk.green("  ✓ LINEAR_API_KEY detected"));
       }
+      if (env.hasAzureDevOpsPat) {
+        console.log(chalk.green("  ✓ AZURE_DEVOPS_PAT detected"));
+      }
 
       if (env.hasSlackWebhook) {
         console.log(chalk.green("  ✓ SLACK_WEBHOOK_URL detected"));
@@ -298,8 +304,8 @@ export function registerInit(program: Command): void {
           }
           const tracker = await prompt(
             rl,
-            "Tracker (github, linear, none)",
-            env.hasLinearKey ? "linear" : "github",
+            "Tracker (github, linear, azure-devops, none)",
+            env.hasLinearKey ? "linear" : env.hasAzureDevOpsPat ? "azure-devops" : "github",
           );
 
           const projectConfig: Record<string, unknown> = {
@@ -318,6 +324,29 @@ export function registerInit(program: Command): void {
             const teamId = await prompt(rl, "Linear team ID (find at linear.app/settings/api)", "");
             if (teamId) {
               projectConfig.tracker = { plugin: "linear", teamId };
+            }
+          } else if (tracker === "azure-devops") {
+            if (!env.hasAzureDevOpsPat) {
+              console.log(chalk.yellow("\nWarning: AZURE_DEVOPS_PAT not found in environment"));
+              console.log(chalk.dim("Set it in your shell profile or .env file"));
+            }
+
+            const organizationUrl = await prompt(
+              rl,
+              "Azure DevOps organization URL (e.g. https://dev.azure.com/your-org)",
+              process.env["AZURE_DEVOPS_ORG_URL"] || "",
+            );
+            const azureProject = await prompt(
+              rl,
+              "Azure DevOps project name",
+              process.env["AZURE_DEVOPS_PROJECT"] || projectId,
+            );
+            if (organizationUrl && azureProject) {
+              projectConfig.tracker = {
+                plugin: "azure-devops",
+                organizationUrl,
+                project: azureProject,
+              };
             }
           } else if (tracker === "none") {
             // Don't add tracker config

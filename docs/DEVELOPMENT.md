@@ -55,7 +55,7 @@ agent-orchestrator/
 │   │   ├── runtime-*/     # Runtime plugins (tmux, docker, k8s)
 │   │   ├── agent-*/       # Agent adapters (claude-code, codex, aider)
 │   │   ├── workspace-*/   # Workspace providers (worktree, clone)
-│   │   ├── tracker-*/     # Issue trackers (github, linear)
+│   │   ├── tracker-*/     # Issue trackers (github, linear, azure-devops)
 │   │   ├── scm-github/    # SCM adapter
 │   │   ├── notifier-*/    # Notification channels
 │   │   └── terminal-*/    # Terminal UIs

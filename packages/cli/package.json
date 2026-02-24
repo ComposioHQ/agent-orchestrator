@@ -47,6 +47,7 @@
     "@composio/ao-plugin-scm-github": "workspace:*",
     "@composio/ao-plugin-terminal-iterm2": "workspace:*",
     "@composio/ao-plugin-terminal-web": "workspace:*",
+    "@composio/ao-plugin-tracker-azure-devops": "workspace:*",
     "@composio/ao-plugin-tracker-github": "workspace:*",
     "@composio/ao-plugin-tracker-linear": "workspace:*",
     "@composio/ao-plugin-workspace-clone": "workspace:*",

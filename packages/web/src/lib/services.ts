@@ -28,6 +28,7 @@ import pluginWorkspaceWorktree from "@composio/ao-plugin-workspace-worktree";
 import pluginScmGithub from "@composio/ao-plugin-scm-github";
 import pluginTrackerGithub from "@composio/ao-plugin-tracker-github";
 import pluginTrackerLinear from "@composio/ao-plugin-tracker-linear";
+import pluginTrackerAzureDevops from "@composio/ao-plugin-tracker-azure-devops";
 
 export interface Services {
   config: OrchestratorConfig;
@@ -68,6 +69,7 @@ async function initServices(): Promise<Services> {
   registry.register(pluginScmGithub);
   registry.register(pluginTrackerGithub);
   registry.register(pluginTrackerLinear);
+  registry.register(pluginTrackerAzureDevops);
 
   const sessionManager = createSessionManager({ config, registry });
 
@@ -81,4 +83,3 @@ export function getSCM(registry: PluginRegistry, project: ProjectConfig | undefi
   if (!project?.scm) return null;
   return registry.get<SCM>("scm", project.scm.plugin);
 }
-

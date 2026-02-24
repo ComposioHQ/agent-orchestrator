@@ -20,7 +20,7 @@ Every interface the system uses is defined here. If you're working on any part o
 - `Runtime` — where sessions execute (tmux, docker, k8s)
 - `Agent` — AI coding tool adapter (claude-code, codex, aider)
 - `Workspace` — code isolation (worktree, clone)
-- `Tracker` — issue tracking (GitHub Issues, Linear)
+- `Tracker` — issue tracking (GitHub Issues, Linear, Azure DevOps)
 - `SCM` — PR/CI/reviews (GitHub, GitLab)
 - `Notifier` — push notifications (desktop, Slack, webhook)
 - `Terminal` — human interaction UI (iTerm2, web)
@@ -95,7 +95,7 @@ Loads plugins and provides access to them:
 - runtime-tmux, runtime-process
 - agent-claude-code, agent-codex, agent-aider, agent-opencode
 - workspace-worktree, workspace-clone
-- tracker-github, tracker-linear
+- tracker-github, tracker-linear, tracker-azure-devops
 - scm-github
 - notifier-desktop, notifier-slack, notifier-composio, notifier-webhook
 - terminal-iterm2, terminal-web
