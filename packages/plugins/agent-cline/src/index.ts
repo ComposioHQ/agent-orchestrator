@@ -464,8 +464,14 @@ function createClineAgent(): Agent {
       let summary: string | null = null;
 
       if (recentFiles.length > 0) {
-        const fileNames = recentFiles.map((f) => f.path.split("/").pop()).join(", ");
-        summary = `Working on: ${fileNames}`;
+        // Safe extraction: skip files without a path field
+        const fileNames = recentFiles
+          .map((f) => f.path?.split("/").pop())
+          .filter(Boolean)
+          .join(", ");
+        if (fileNames) {
+          summary = `Working on: ${fileNames}`;
+        }
       }
 
       return {
