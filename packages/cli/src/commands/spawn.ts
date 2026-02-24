@@ -11,6 +11,7 @@ async function spawnSession(
   projectId: string,
   issueId?: string,
   openTab?: boolean,
+  agent?: string,
 ): Promise<string> {
   const spinner = ora("Creating session").start();
 
@@ -21,6 +22,7 @@ async function spawnSession(
     const session = await sm.spawn({
       projectId,
       issueId,
+      agent,
     });
 
     spinner.succeed(`Session ${chalk.green(session.id)} created`);
@@ -58,7 +60,8 @@ export function registerSpawn(program: Command): void {
     .argument("<project>", "Project ID from config")
     .argument("[issue]", "Issue identifier (e.g. INT-1234, #42) - must exist in tracker")
     .option("--open", "Open session in terminal tab")
-    .action(async (projectId: string, issueId: string | undefined, opts: { open?: boolean }) => {
+    .option("--agent <name>", "Override the agent plugin (e.g. codex, claude-code)")
+    .action(async (projectId: string, issueId: string | undefined, opts: { open?: boolean; agent?: string }) => {
       const config = loadConfig();
       if (!config.projects[projectId]) {
         console.error(
@@ -70,7 +73,7 @@ export function registerSpawn(program: Command): void {
       }
 
       try {
-        await spawnSession(config, projectId, issueId, opts.open);
+        await spawnSession(config, projectId, issueId, opts.open, opts.agent);
       } catch (err) {
         console.error(chalk.red(`✗ ${err}`));
         process.exit(1);

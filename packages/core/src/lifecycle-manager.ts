@@ -183,7 +183,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const project = config.projects[session.projectId];
     if (!project) return session.status;
 
-    const agent = registry.get<Agent>("agent", project.agent ?? config.defaults.agent);
+    const agentName = session.metadata["agent"] ?? project.agent ?? config.defaults.agent;
+    const agent = registry.get<Agent>("agent", agentName);
     const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
 
     // 1. Check if runtime is alive
@@ -229,7 +230,26 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
     }
 
-    // 3. Check PR state if PR exists
+    // 3. Auto-detect PR by branch if metadata.pr is missing.
+    //    This is critical for agents without auto-hook systems (Codex, Aider,
+    //    OpenCode) that can't reliably write pr=<url> to metadata on their own.
+    if (!session.pr && scm && session.branch) {
+      try {
+        const detectedPR = await scm.detectPR(session, project);
+        if (detectedPR) {
+          session.pr = detectedPR;
+          // Persist PR URL so subsequent polls don't need to re-query.
+          // Don't write status here — step 4 below will determine the
+          // correct status (merged, ci_failed, etc.) on this same cycle.
+          const sessionsDir = getSessionsDir(config.configPath, project.path);
+          updateMetadata(sessionsDir, session.id, { pr: detectedPR.url });
+        }
+      } catch {
+        // SCM detection failed — will retry next poll
+      }
+    }
+
+    // 4. Check PR state if PR exists
     if (session.pr && scm) {
       try {
         const prState = await scm.getPRState(session.pr);
@@ -257,7 +277,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
     }
 
-    // 4. Default: if agent is active, it's working
+    // 5. Default: if agent is active, it's working
     if (
       session.status === "spawning" ||
       session.status === SESSION_STATUS.STUCK ||

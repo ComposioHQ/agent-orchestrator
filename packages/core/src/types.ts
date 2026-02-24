@@ -176,6 +176,8 @@ export interface SessionSpawnConfig {
   issueId?: string;
   branch?: string;
   prompt?: string;
+  /** Override the agent plugin for this session (e.g. "codex", "claude-code") */
+  agent?: string;
 }
 
 /** Config for creating an orchestrator session */
@@ -963,6 +965,7 @@ export interface SessionMetadata {
   pr?: string;
   summary?: string;
   project?: string;
+  agent?: string; // Agent plugin name (e.g. "codex", "claude-code") — persisted for lifecycle
   createdAt?: string;
   runtimeHandle?: string;
   restoredAt?: string;
