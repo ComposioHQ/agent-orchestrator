@@ -13,7 +13,7 @@ import {
   type WorkspaceHooksConfig,
 } from "@composio/ao-core";
 import { execFile } from "node:child_process";
-import { writeFile, mkdir, readFile, readdir, rename, stat, open } from "node:fs/promises";
+import { writeFile, mkdir, readFile, readdir, rename, stat, lstat, open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
@@ -303,8 +303,16 @@ interface CodexJsonlLine {
  * Collect all JSONL files under a directory, recursively.
  * Codex stores sessions in date-sharded directories:
  *   ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl
+ *
+ * Uses lstat (not stat) so symlinks to directories are never followed,
+ * preventing infinite loops from symlink cycles. Max depth is capped at 4
+ * (YYYY/MM/DD + 1 buffer) as an additional safety guard.
  */
-async function collectJsonlFiles(dir: string): Promise<string[]> {
+const MAX_SESSION_SCAN_DEPTH = 4;
+
+async function collectJsonlFiles(dir: string, depth = 0): Promise<string[]> {
+  if (depth > MAX_SESSION_SCAN_DEPTH) return [];
+
   let entries: string[];
   try {
     entries = await readdir(dir);
@@ -318,11 +326,12 @@ async function collectJsonlFiles(dir: string): Promise<string[]> {
     if (entry.endsWith(".jsonl")) {
       results.push(fullPath);
     } else {
-      // Recurse into subdirectories (YYYY/MM/DD structure)
+      // Recurse into subdirectories (YYYY/MM/DD structure).
+      // Use lstat to avoid following symlinks that could create cycles.
       try {
-        const s = await stat(fullPath);
+        const s = await lstat(fullPath);
         if (s.isDirectory()) {
-          const nested = await collectJsonlFiles(fullPath);
+          const nested = await collectJsonlFiles(fullPath, depth + 1);
           results.push(...nested);
         }
       } catch {

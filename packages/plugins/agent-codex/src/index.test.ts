@@ -12,6 +12,7 @@ const {
   mockReaddir,
   mockRename,
   mockStat,
+  mockLstat,
   mockOpen,
   mockHomedir,
 } = vi.hoisted(() => ({
@@ -22,6 +23,7 @@ const {
   mockReaddir: vi.fn(),
   mockRename: vi.fn().mockResolvedValue(undefined),
   mockStat: vi.fn(),
+  mockLstat: vi.fn(),
   mockOpen: vi.fn(),
   mockHomedir: vi.fn(() => "/mock/home"),
 }));
@@ -40,6 +42,7 @@ vi.mock("node:fs/promises", () => ({
   readdir: mockReaddir,
   rename: mockRename,
   stat: mockStat,
+  lstat: mockLstat,
   open: mockOpen,
 }));
 
@@ -147,6 +150,8 @@ beforeEach(() => {
   // Default: open() returns a handle with empty content (no session_meta match).
   // Session tests call setupMockOpen(content) to override.
   mockOpen.mockResolvedValue(makeFakeFileHandle(""));
+  // Default: lstat rejects (no subdirectories). Session tests override as needed.
+  mockLstat.mockRejectedValue(new Error("ENOENT"));
 });
 
 // =========================================================================
@@ -774,11 +779,10 @@ describe("getSessionInfo", () => {
       if (dir.endsWith("24")) return Promise.resolve(["rollout-abc.jsonl"]);
       return Promise.resolve([]);
     });
-    mockStat.mockImplementation((path: string) => {
-      if (path.endsWith(".jsonl")) return Promise.resolve({ mtimeMs: 2000 });
-      // Directories: 2026, 02, 24
-      return Promise.resolve({ isDirectory: () => true });
-    });
+    // lstat is used by collectJsonlFiles to check subdirectories (avoids symlink cycles)
+    mockLstat.mockResolvedValue({ isDirectory: () => true });
+    // stat is used by findCodexSessionFile to get mtimeMs of matching JSONL files
+    mockStat.mockResolvedValue({ mtimeMs: 2000 });
     const content = jsonl(
       { type: "session_meta", cwd: "/workspace/test", model: "o3-mini" },
     );
@@ -798,8 +802,10 @@ describe("getSessionInfo", () => {
     );
     setupMockOpen(content);
     mockReadFile.mockResolvedValue(content);
-    // Non-JSONL entries trigger stat to check isDirectory()
-    mockStat.mockResolvedValue({ mtimeMs: 1000, isDirectory: () => false });
+    // Non-JSONL entries trigger lstat to check isDirectory()
+    mockLstat.mockResolvedValue({ isDirectory: () => false });
+    // stat is used to get mtimeMs for matching JSONL files
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
     expect(result).not.toBeNull();
