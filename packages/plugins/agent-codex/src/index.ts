@@ -52,7 +52,7 @@ _ec=$?
 
 # Skip metadata update on failure or missing env
 [ "$_ec" -ne 0 ] && exit "$_ec"
-[ -z "\${AO_SESSION:-}" ] || [ -z "\${AO_DATA_DIR:-}" ] && exit "$_ec"
+{ [ -z "\${AO_SESSION:-}" ] || [ -z "\${AO_DATA_DIR:-}" ]; } && exit "$_ec"
 _meta="$AO_DATA_DIR/$AO_SESSION"
 [ -f "$_meta" ] || exit "$_ec"
 
