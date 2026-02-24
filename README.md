@@ -1,3 +1,24 @@
+## OpenClaw Instance — Marc Mantei's Agent Swarm
+
+This fork runs on the OpenClaw instance with Claude Max, managing all projects via Telegram notifications (@SwarmManager_Bot).
+
+### Configured Projects
+
+| Projekt | ao-Befehl | Prefix | Model |
+|---|---|---|---|
+| ChargePilot Launch | `ao spawn chargepilot <issue>` | cp- | opus |
+| ChargePilot App | `ao spawn chargepilot-app <issue>` | cpa- | opus |
+| getchargepilot.app | `ao spawn getchargepilot <issue>` | gcp- | sonnet |
+| mitbeziehung.de | `ao spawn mitbeziehung <issue>` | mb- | sonnet |
+| Event Platform | `ao spawn event-platform <issue>` | emp- | opus |
+
+### Extras (nicht im Upstream)
+- Dashboard bindet auf `0.0.0.0` (LAN-Zugang)
+- Telegram Bridge (`~/.openclaw/telegram-bridge/bridge.mjs`) via Webhook-Notifier
+- Issue Scanner (`~/.openclaw/workspace/.clawdbot/scan-github-issues.sh`) scannt alle 15 min via Cron
+
+---
+
 <div align="center">
 
 # Agent Orchestrator — The Orchestration Layer for Parallel AI Agents
