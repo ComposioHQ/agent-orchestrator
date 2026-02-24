@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# pr-auto-review — Automatic senior-dev code review for agent PRs.
+#
+# Required env vars: PR_NUMBER, REPO, PROJECT_PATH
+# Optional: BASE_BRANCH, SESSION_ID, PR_URL
+#
+# De-duplicates via sentinel comment, fetches diff, calls Claude for
+# structured review, posts via gh pr review.
+
+set -euo pipefail
+
+: "${PR_NUMBER:?PR_NUMBER is required}"
+: "${REPO:?REPO is required}"
+: "${PROJECT_PATH:?PROJECT_PATH is required}"
+BASE_BRANCH="${BASE_BRANCH:-main}"
+
+SENTINEL="<!-- ao-auto-review -->"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# ── De-duplicate: skip if we already posted a review ──────────────────────
+existing=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --jq '.[].body' 2>/dev/null || true)
+if echo "$existing" | grep -qF "$SENTINEL"; then
+  echo "Auto-review already posted for PR #${PR_NUMBER}, skipping."
+  exit 0
+fi
+
+existing_comments=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --jq '.[].body' 2>/dev/null || true)
+if echo "$existing_comments" | grep -qF "$SENTINEL"; then
+  echo "Auto-review comment already posted for PR #${PR_NUMBER}, skipping."
+  exit 0
+fi
+
+# ── Fetch PR diff (truncated for context limits) ──────────────────────────
+diff=$(gh pr diff "$PR_NUMBER" --repo "$REPO" 2>/dev/null | head -c 8000 || true)
+if [ -z "$diff" ]; then
+  echo "No diff found for PR #${PR_NUMBER}, skipping review."
+  exit 0
+fi
+
+# ── Detect frontend files ─────────────────────────────────────────────────
+has_frontend=false
+changed_files=$(gh pr diff "$PR_NUMBER" --repo "$REPO" --name-only 2>/dev/null || true)
+if echo "$changed_files" | grep -qE '\.(tsx|jsx|css|html|vue|svelte)$'; then
+  has_frontend=true
+fi
+
+# ── Load project CUPID rules if available ─────────────────────────────────
+cupid_rules=""
+if [ -f "${PROJECT_PATH}/.agent-rules.md" ]; then
+  cupid_rules=$(head -c 3000 "${PROJECT_PATH}/.agent-rules.md")
+fi
+
+# ── Build the review prompt ───────────────────────────────────────────────
+review_prompt="You are a senior software engineer doing a thorough code review.
+
+Review this PR diff and provide structured feedback covering:
+
+1. **Logic & Correctness** — bugs, edge cases, off-by-one errors, null handling
+2. **Security** — injection risks, auth issues, data exposure, OWASP top 10
+3. **Performance** — N+1 queries, unnecessary re-renders, memory leaks, missing indexes
+4. **Accessibility** — if frontend: ARIA, keyboard nav, color contrast, semantic HTML
+5. **Code Quality** — naming, duplication, complexity, missing error handling"
+
+if [ -n "$cupid_rules" ]; then
+  review_prompt="${review_prompt}
+6. **CUPID / Project Rules Compliance** — check against these project rules:
+
+${cupid_rules}"
+fi
+
+review_prompt="${review_prompt}
+
+Format your review as markdown. Start with a one-line summary verdict (APPROVE / REQUEST CHANGES / COMMENT).
+Then list findings grouped by category. Be specific — reference file names and line numbers from the diff.
+If the code looks good, say so briefly. Don't nitpick style if it's consistent.
+
+PR diff:
+\`\`\`
+${diff}
+\`\`\`"
+
+# ── Call Claude for the review ────────────────────────────────────────────
+echo "Generating review for ${REPO}#${PR_NUMBER}..."
+unset CLAUDECODE 2>/dev/null || true
+review_body=$(claude --print --model claude-sonnet-4-20250514 --dangerously-skip-permissions <<< "$review_prompt" 2>/dev/null || true)
+
+if [ -z "$review_body" ]; then
+  echo "Claude returned empty review, skipping."
+  exit 1
+fi
+
+# ── Determine review action from verdict ──────────────────────────────────
+review_action="COMMENT"
+if echo "$review_body" | head -5 | grep -qi "APPROVE"; then
+  review_action="APPROVE"
+elif echo "$review_body" | head -5 | grep -qi "REQUEST CHANGES"; then
+  review_action="REQUEST_CHANGES"
+fi
+
+# Prepend sentinel for de-duplication
+full_body="${SENTINEL}
+## Auto Review (Agent Orchestrator)
+
+${review_body}"
+
+# ── Post the review ───────────────────────────────────────────────────────
+echo "Posting ${review_action} review on ${REPO}#${PR_NUMBER}..."
+
+# gh pr review may fail if the PR author is the same as the token owner (self-review)
+if ! gh pr review "$PR_NUMBER" --repo "$REPO" --body "$full_body" --"$(echo "$review_action" | tr '[:upper:]' '[:lower:]' | tr '_' '-')" 2>/dev/null; then
+  echo "gh pr review failed (possibly self-review), falling back to comment..."
+  gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$full_body"
+fi
+
+echo "Review posted successfully."
+
+# ── Trigger screenshots if frontend files changed ─────────────────────────
+if [ "$has_frontend" = true ] && [ -x "${SCRIPT_DIR}/pr-screenshot" ]; then
+  echo "Frontend files detected, triggering screenshot capture..."
+  PR_NUMBER="$PR_NUMBER" REPO="$REPO" PROJECT_PATH="$PROJECT_PATH" BASE_BRANCH="$BASE_BRANCH" \
+    "${SCRIPT_DIR}/pr-screenshot" &
+fi
+
+echo "Done."

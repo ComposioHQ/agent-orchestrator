@@ -11,6 +11,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { spawn as spawnChild } from "node:child_process";
 import {
   SESSION_STATUS,
   PR_STATE,
@@ -149,6 +150,8 @@ function eventToReactionKey(eventType: EventType): string | null {
       return "agent-needs-input";
     case "session.killed":
       return "agent-exited";
+    case "review.pending":
+      return "auto-review";
     case "summary.all_complete":
       return "all-complete";
     default:
@@ -404,6 +407,51 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           action: "auto-merge",
           escalated: false,
         };
+      }
+
+      case "spawn-reviewer": {
+        if (!reactionConfig.script) break;
+
+        const session = await sessionManager.get(sessionId);
+        const project = session ? config.projects[session.projectId] : null;
+        const pr = session?.pr;
+
+        const env: Record<string, string> = {
+          ...process.env as Record<string, string>,
+          SESSION_ID: sessionId,
+        };
+        if (pr) {
+          env["PR_NUMBER"] = String(pr.number);
+          env["PR_URL"] = pr.url;
+          env["REPO"] = `${pr.owner}/${pr.repo}`;
+          env["BASE_BRANCH"] = pr.baseBranch;
+        }
+        if (project) {
+          env["PROJECT_PATH"] = project.path;
+        }
+
+        try {
+          const child = spawnChild(reactionConfig.script, [], {
+            detached: true,
+            stdio: "ignore",
+            env,
+          });
+          child.unref();
+
+          return {
+            reactionType: reactionKey,
+            success: true,
+            action: "spawn-reviewer",
+            escalated: false,
+          };
+        } catch {
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action: "spawn-reviewer",
+            escalated: false,
+          };
+        }
       }
     }
 

@@ -757,7 +757,7 @@ export interface ReactionConfig {
   auto: boolean;
 
   /** What to do: send message to agent, notify human, auto-merge */
-  action: "send-to-agent" | "notify" | "auto-merge";
+  action: "send-to-agent" | "notify" | "auto-merge" | "spawn-reviewer";
 
   /** Message to send (for send-to-agent) */
   message?: string;
@@ -776,6 +776,9 @@ export interface ReactionConfig {
 
   /** Whether to include a summary in the notification */
   includeSummary?: boolean;
+
+  /** Path to an external script to run (for spawn-reviewer action) */
+  script?: string;
 }
 
 export interface ReactionResult {

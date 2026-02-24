@@ -1,0 +1,220 @@
+#!/usr/bin/env bash
+# pr-screenshot — Capture before/after screenshots for frontend PRs.
+#
+# Required env vars: PR_NUMBER, REPO, PROJECT_PATH
+# Optional: BASE_BRANCH (default: main)
+#
+# Detects dev server type, starts it on base + PR branches, captures
+# screenshots via Playwright, and posts them as a PR comment.
+
+set -euo pipefail
+
+: "${PR_NUMBER:?PR_NUMBER is required}"
+: "${REPO:?REPO is required}"
+: "${PROJECT_PATH:?PROJECT_PATH is required}"
+BASE_BRANCH="${BASE_BRANCH:-main}"
+
+SCREENSHOT_DIR=$(mktemp -d)
+BEFORE_IMG="${SCREENSHOT_DIR}/before.png"
+AFTER_IMG="${SCREENSHOT_DIR}/after.png"
+DEV_PORT=3987  # Unlikely to conflict
+
+cleanup() {
+  # Kill any dev server we started
+  if [ -n "${DEV_PID:-}" ]; then
+    kill "$DEV_PID" 2>/dev/null || true
+    wait "$DEV_PID" 2>/dev/null || true
+  fi
+  rm -rf "$SCREENSHOT_DIR"
+}
+trap cleanup EXIT
+
+# ── Detect dev server command ─────────────────────────────────────────────
+detect_dev_command() {
+  local pkg_json="$1/package.json"
+  if [ ! -f "$pkg_json" ]; then
+    echo ""
+    return
+  fi
+
+  local scripts
+  scripts=$(python3 -c "import json; d=json.load(open('$pkg_json')); print(json.dumps(d.get('scripts',{})))" 2>/dev/null || echo "{}")
+
+  # Check for common dev server patterns
+  if echo "$scripts" | grep -q '"dev"'; then
+    local dev_cmd
+    dev_cmd=$(python3 -c "import json; print(json.loads('$scripts').get('dev',''))" 2>/dev/null || echo "")
+
+    if echo "$dev_cmd" | grep -qE '(vite|next|nuxt|turbo)'; then
+      echo "pnpm dev"
+      return
+    fi
+    # Generic dev script
+    echo "pnpm dev"
+    return
+  fi
+
+  echo ""
+}
+
+# ── Take screenshot via Playwright ────────────────────────────────────────
+take_screenshot() {
+  local url="$1"
+  local output_path="$2"
+  local max_wait=30
+
+  python3 - "$url" "$output_path" "$max_wait" << 'PYEOF'
+import sys
+from playwright.sync_api import sync_playwright
+
+url = sys.argv[1]
+output = sys.argv[2]
+timeout = int(sys.argv[3]) * 1000
+
+with sync_playwright() as p:
+    browser = p.chromium.launch()
+    page = browser.new_page(viewport={"width": 1280, "height": 720})
+    try:
+        page.goto(url, wait_until="networkidle", timeout=timeout)
+        page.wait_for_timeout(2000)  # Extra settle time
+        page.screenshot(path=output, full_page=False)
+    finally:
+        browser.close()
+PYEOF
+}
+
+# ── Wait for dev server to be ready ───────────────────────────────────────
+wait_for_server() {
+  local port="$1"
+  local max_attempts=30
+  local attempt=0
+
+  while [ $attempt -lt $max_attempts ]; do
+    if curl -s -o /dev/null -w "%{http_code}" "http://localhost:${port}" 2>/dev/null | grep -qE '^(200|304|301|302)'; then
+      return 0
+    fi
+    sleep 1
+    attempt=$((attempt + 1))
+  done
+  return 1
+}
+
+# ── Start dev server on a branch ──────────────────────────────────────────
+start_dev_server() {
+  local branch="$1"
+  local work_dir="$PROJECT_PATH"
+
+  # Checkout the branch
+  git -C "$work_dir" checkout "$branch" --quiet 2>/dev/null || git -C "$work_dir" checkout "origin/$branch" --quiet 2>/dev/null || return 1
+
+  # Install deps if needed
+  if [ -f "$work_dir/pnpm-lock.yaml" ]; then
+    (cd "$work_dir" && pnpm install --frozen-lockfile --silent 2>/dev/null || true)
+  elif [ -f "$work_dir/package-lock.json" ]; then
+    (cd "$work_dir" && npm ci --silent 2>/dev/null || true)
+  fi
+
+  # Start dev server with custom port
+  (cd "$work_dir" && PORT=$DEV_PORT npx --yes cross-env PORT=$DEV_PORT $DEV_CMD &)
+  DEV_PID=$!
+
+  if ! wait_for_server "$DEV_PORT"; then
+    echo "Dev server failed to start on branch $branch"
+    kill "$DEV_PID" 2>/dev/null || true
+    return 1
+  fi
+}
+
+# ── Main ──────────────────────────────────────────────────────────────────
+
+# Check if we have a package.json
+if [ ! -f "${PROJECT_PATH}/package.json" ]; then
+  echo "No package.json found at ${PROJECT_PATH}, skipping screenshots."
+  exit 0
+fi
+
+# Detect dev server command
+DEV_CMD=$(detect_dev_command "$PROJECT_PATH")
+if [ -z "$DEV_CMD" ]; then
+  echo "No dev server detected in ${PROJECT_PATH}, skipping screenshots."
+  exit 0
+fi
+
+# Get the PR branch name
+PR_BRANCH=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRefName --jq '.headRefName' 2>/dev/null || true)
+if [ -z "$PR_BRANCH" ]; then
+  echo "Could not determine PR branch, skipping screenshots."
+  exit 0
+fi
+
+# Save current branch to restore later
+ORIGINAL_BRANCH=$(git -C "$PROJECT_PATH" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "$BASE_BRANCH")
+
+# Fetch latest
+git -C "$PROJECT_PATH" fetch --quiet 2>/dev/null || true
+
+echo "Capturing BEFORE screenshot (${BASE_BRANCH})..."
+if start_dev_server "$BASE_BRANCH"; then
+  take_screenshot "http://localhost:${DEV_PORT}" "$BEFORE_IMG" || echo "Before screenshot failed"
+  kill "$DEV_PID" 2>/dev/null || true
+  wait "$DEV_PID" 2>/dev/null || true
+  unset DEV_PID
+else
+  echo "Could not start dev server on base branch, skipping before screenshot."
+fi
+
+echo "Capturing AFTER screenshot (${PR_BRANCH})..."
+if start_dev_server "$PR_BRANCH"; then
+  take_screenshot "http://localhost:${DEV_PORT}" "$AFTER_IMG" || echo "After screenshot failed"
+  kill "$DEV_PID" 2>/dev/null || true
+  wait "$DEV_PID" 2>/dev/null || true
+  unset DEV_PID
+else
+  echo "Could not start dev server on PR branch, skipping after screenshot."
+fi
+
+# Restore original branch
+git -C "$PROJECT_PATH" checkout "$ORIGINAL_BRANCH" --quiet 2>/dev/null || true
+
+# ── Post screenshots as PR comment ────────────────────────────────────────
+if [ -f "$BEFORE_IMG" ] || [ -f "$AFTER_IMG" ]; then
+  echo "Uploading screenshots..."
+
+  comment_body="<!-- ao-auto-screenshot -->
+## Visual Diff (Agent Orchestrator)
+"
+
+  if [ -f "$BEFORE_IMG" ]; then
+    before_url=$(gh gist create "$BEFORE_IMG" --public --desc "PR #${PR_NUMBER} before screenshot" 2>/dev/null | tail -1 || true)
+    if [ -n "$before_url" ]; then
+      # Convert gist URL to raw file URL
+      gist_id=$(echo "$before_url" | grep -oE '[a-f0-9]{32}' || true)
+      if [ -n "$gist_id" ]; then
+        comment_body="${comment_body}
+### Before (\`${BASE_BRANCH}\`)
+![before](https://gist.githubusercontent.com/raw/${gist_id}/before.png)
+"
+      fi
+    fi
+  fi
+
+  if [ -f "$AFTER_IMG" ]; then
+    after_url=$(gh gist create "$AFTER_IMG" --public --desc "PR #${PR_NUMBER} after screenshot" 2>/dev/null | tail -1 || true)
+    if [ -n "$after_url" ]; then
+      gist_id=$(echo "$after_url" | grep -oE '[a-f0-9]{32}' || true)
+      if [ -n "$gist_id" ]; then
+        comment_body="${comment_body}
+### After (\`${PR_BRANCH}\`)
+![after](https://gist.githubusercontent.com/raw/${gist_id}/after.png)
+"
+      fi
+    fi
+  fi
+
+  gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$comment_body"
+  echo "Screenshots posted."
+else
+  echo "No screenshots captured, skipping comment."
+fi
+
+echo "Done."

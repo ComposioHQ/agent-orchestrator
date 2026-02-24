@@ -1,28 +1,203 @@
-# Agent Orchestrator — self-hosting config (dog-fooding)
+# Agent Orchestrator — Marc Mantei's OpenClaw Instance
+# Claude-only agent swarm for all projects
 
-dataDir: ~/.ao-sessions
-worktreeDir: ~/.worktrees/ao
+dataDir: ~/.agent-orchestrator
+worktreeDir: ~/.worktrees
+
+port: 3000
 
 defaults:
   runtime: tmux
   agent: claude-code
   workspace: worktree
-  notifiers: [desktop]
+  notifiers: [desktop, telegram]
+
+notifiers:
+  telegram:
+    plugin: webhook
+    url: "http://localhost:8787"
+
+notificationRouting:
+  urgent: [desktop, telegram]
+  action: [desktop, telegram]
+  warning: [telegram]
+  info: [telegram]
+
+reactions:
+  auto-review:
+    auto: true
+    action: spawn-reviewer
+    script: /home/sira/.openclaw/agent-orchestrator/scripts/pr-auto-review
+    retries: 1
+    escalateAfter: 1
 
 projects:
-  ao:
-    name: Agent Orchestrator
-    repo: ComposioHQ/agent-orchestrator
-    path: ~/agent-orchestrator
+  chargepilot:
+    name: ChargePilot Launch
+    repo: marcmantei/ChargePilot-Launch
+    path: ~/ChargePilot-Launch
     defaultBranch: main
-    sessionPrefix: ao
+    sessionPrefix: cp
     scm:
       plugin: github
-    tracker:
-      plugin: linear
-      teamId: "2a6e9b1b-19cd-4e30-b5bd-7b34dc491c7e"
     symlinks: [.claude]
     postCreate:
-      - "pnpm install"
+      - "test -f package.json && pnpm install || true"
     agentConfig:
       permissions: skip
+      model: opus
+    agentRulesFile: .agent-rules.md
+    reactions:
+      ci-failed:
+        auto: true
+        action: send-to-agent
+        retries: 2
+        escalateAfter: 2
+      changes-requested:
+        auto: true
+        action: send-to-agent
+        escalateAfter: 30m
+      approved-and-green:
+        auto: false
+        action: notify
+        priority: action
+      agent-stuck:
+        threshold: 10m
+        action: notify
+        priority: urgent
+
+  chargepilot-app:
+    name: ChargePilot App
+    repo: marcmantei/ChargePilot-App
+    path: ~/ChargePilot-App
+    defaultBranch: main
+    sessionPrefix: cpa
+    scm:
+      plugin: github
+    symlinks: [.claude]
+    postCreate:
+      - "test -f package.json && pnpm install || true"
+    agentConfig:
+      permissions: skip
+      model: opus
+    agentRulesFile: .agent-rules.md
+    reactions:
+      ci-failed:
+        auto: true
+        action: send-to-agent
+        retries: 2
+        escalateAfter: 2
+      changes-requested:
+        auto: true
+        action: send-to-agent
+        escalateAfter: 30m
+      approved-and-green:
+        auto: false
+        action: notify
+        priority: action
+      agent-stuck:
+        threshold: 10m
+        action: notify
+        priority: urgent
+
+  getchargepilot:
+    name: getchargepilot.app
+    repo: marcmantei/getchargepilot.app
+    path: ~/getchargepilot.app
+    defaultBranch: main
+    sessionPrefix: gcp
+    scm:
+      plugin: github
+    symlinks: [.claude]
+    postCreate:
+      - "test -f package.json && pnpm install || true"
+    agentConfig:
+      permissions: skip
+      model: sonnet
+    agentRulesFile: .agent-rules.md
+    reactions:
+      ci-failed:
+        auto: true
+        action: send-to-agent
+        retries: 2
+        escalateAfter: 2
+      changes-requested:
+        auto: true
+        action: send-to-agent
+        escalateAfter: 30m
+      approved-and-green:
+        auto: false
+        action: notify
+        priority: action
+      agent-stuck:
+        threshold: 10m
+        action: notify
+        priority: urgent
+
+  mitbeziehung:
+    name: mitbeziehung.de
+    repo: marcmantei/mitbeziehung.de
+    path: ~/mitbeziehung.de
+    defaultBranch: main
+    sessionPrefix: mb
+    scm:
+      plugin: github
+    symlinks: [.claude]
+    postCreate:
+      - "test -f package.json && pnpm install || true"
+    agentConfig:
+      permissions: skip
+      model: sonnet
+    agentRulesFile: .agent-rules.md
+    reactions:
+      ci-failed:
+        auto: true
+        action: send-to-agent
+        retries: 2
+        escalateAfter: 2
+      changes-requested:
+        auto: true
+        action: send-to-agent
+        escalateAfter: 30m
+      approved-and-green:
+        auto: false
+        action: notify
+        priority: action
+      agent-stuck:
+        threshold: 10m
+        action: notify
+        priority: urgent
+
+  event-platform:
+    name: Event Management Platform
+    repo: marcmantei/event-management-platform
+    path: ~/event-management-platform
+    defaultBranch: main
+    sessionPrefix: emp
+    scm:
+      plugin: github
+    symlinks: [.claude]
+    postCreate:
+      - "test -f package.json && pnpm install || true"
+    agentConfig:
+      permissions: skip
+      model: opus
+    agentRulesFile: .agent-rules.md
+    reactions:
+      ci-failed:
+        auto: true
+        action: send-to-agent
+        retries: 2
+        escalateAfter: 2
+      changes-requested:
+        auto: true
+        action: send-to-agent
+        escalateAfter: 30m
+      approved-and-green:
+        auto: false
+        action: notify
+        priority: action
+      agent-stuck:
+        threshold: 10m
+        action: notify
+        priority: urgent
