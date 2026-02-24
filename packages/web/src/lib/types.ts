@@ -127,6 +127,18 @@ export interface DashboardStats {
   needsReview: number;
 }
 
+/** Compute dashboard stats from a list of sessions. Pure function — safe for client and server. */
+export function computeStats(sessions: DashboardSession[]): DashboardStats {
+  return {
+    totalSessions: sessions.length,
+    workingSessions: sessions.filter((s) => s.activity === "active").length,
+    openPRs: sessions.filter((s) => s.pr?.state === "open").length,
+    needsReview: sessions.filter(
+      (s) => s.pr && !s.pr.isDraft && s.pr.reviewDecision === "pending",
+    ).length,
+  };
+}
+
 /** SSE snapshot event from /api/events */
 export interface SSESnapshotEvent {
   type: "snapshot";

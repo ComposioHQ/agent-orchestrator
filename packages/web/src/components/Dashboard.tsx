@@ -1,15 +1,20 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useCallback, useRef } from "react";
 import {
   type DashboardSession,
   type DashboardStats,
   type DashboardPR,
   type AttentionLevel,
+  type ActivityState,
+  type SessionStatus,
+  type SSESnapshotEvent,
+  computeStats,
   getAttentionLevel,
   isPRRateLimited,
 } from "@/lib/types";
 import { CI_STATUS } from "@composio/ao-core/types";
+import { useSSE } from "@/hooks/useSSE";
 import { AttentionZone } from "./AttentionZone";
 import { PRTableRow } from "./PRStatus";
 import { DynamicFavicon } from "./DynamicFavicon";
@@ -22,15 +27,79 @@ export interface OrchestratorInfo {
 
 interface DashboardProps {
   sessions: DashboardSession[];
-  stats: DashboardStats;
-  orchestrators: OrchestratorInfo[];
+  orchestratorId?: string | null;
   projectName?: string;
 }
 
 const KANBAN_LEVELS = ["working", "pending", "review", "respond", "merge"] as const;
 
-export function Dashboard({ sessions, stats, orchestrators, projectName }: DashboardProps) {
+/**
+ * Apply SSE snapshot partial-updates.
+ * Only patches status/activity/lastActivityAt; preserves PR data.
+ * Skips sessions in `pendingCounts` to avoid clobbering in-flight optimistic updates.
+ * Returns the original array reference when nothing changed so React skips re-render.
+ */
+function applySSESnapshot(
+  current: DashboardSession[],
+  updates: SSESnapshotEvent["sessions"],
+  pendingCounts: ReadonlyMap<string, number>,
+): DashboardSession[] {
+  const updateMap = new Map(updates.map((u) => [u.id, u]));
+  let changed = false;
+  const next = current.map((s) => {
+    const u = updateMap.get(s.id);
+    if (!u) return s;
+    if ((pendingCounts.get(s.id) ?? 0) > 0) return s;
+    if (
+      s.status === u.status &&
+      s.activity === u.activity &&
+      s.lastActivityAt === u.lastActivityAt
+    ) {
+      return s;
+    }
+    changed = true;
+    return {
+      ...s,
+      status: u.status,
+      activity: u.activity,
+      lastActivityAt: u.lastActivityAt,
+      pr:
+        u.status === "merged" && s.pr?.state === "open"
+          ? { ...s.pr, state: "merged" as const }
+          : s.pr,
+    };
+  });
+  return changed ? next : current;
+}
+
+export function Dashboard({
+  sessions: initialSessions,
+  orchestratorId,
+  projectName,
+}: DashboardProps) {
+  const [sessions, setSessions] = useState(initialSessions);
   const [rateLimitDismissed, setRateLimitDismissed] = useState(false);
+
+  const pendingOptimistic = useRef<Map<string, number>>(new Map());
+
+  const pendingAdd = (id: string) => {
+    pendingOptimistic.current.set(id, (pendingOptimistic.current.get(id) ?? 0) + 1);
+  };
+  const pendingDel = (id: string) => {
+    const n = (pendingOptimistic.current.get(id) ?? 1) - 1;
+    if (n <= 0) pendingOptimistic.current.delete(id);
+    else pendingOptimistic.current.set(id, n);
+  };
+
+  const stats = useMemo(() => computeStats(sessions), [sessions]);
+
+  const handleSSEMessage = useCallback((data: SSESnapshotEvent) => {
+    if (data.type === "snapshot" && Array.isArray(data.sessions)) {
+      setSessions((prev) => applySSESnapshot(prev, data.sessions, pendingOptimistic.current));
+    }
+  }, []);
+  useSSE<SSESnapshotEvent>("/api/events", handleSSEMessage);
+
   const grouped = useMemo(() => {
     const zones: Record<AttentionLevel, DashboardSession[]> = {
       merge: [],
@@ -66,28 +135,87 @@ export function Dashboard({ sessions, stats, orchestrators, projectName }: Dashb
 
   const handleKill = async (sessionId: string) => {
     if (!confirm(`Kill session ${sessionId}?`)) return;
-    const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/kill`, {
-      method: "POST",
-    });
-    if (!res.ok) {
-      console.error(`Failed to kill ${sessionId}:`, await res.text());
+    const snapshot = sessions.find((s) => s.id === sessionId);
+    // Block SSE from overwriting the optimistic state while the request is in-flight.
+    pendingAdd(sessionId);
+    // Optimistic update — moves session to "done" zone immediately.
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.id === sessionId
+          ? { ...s, status: "terminated" as SessionStatus, activity: "exited" as ActivityState }
+          : s,
+      ),
+    );
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/kill`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error(await res.text());
+    } catch (err) {
+      console.error(`Failed to kill ${sessionId}:`, err);
+      // Roll back optimistic update; SSE will reconcile true state.
+      if (snapshot) {
+        setSessions((prev) => prev.map((s) => (s.id === sessionId ? snapshot : s)));
+      }
+    } finally {
+      pendingDel(sessionId);
     }
   };
 
   const handleMerge = async (prNumber: number) => {
-    const res = await fetch(`/api/prs/${prNumber}/merge`, { method: "POST" });
-    if (!res.ok) {
-      console.error(`Failed to merge PR #${prNumber}:`, await res.text());
+    if (!confirm(`Merge PR #${prNumber}?`)) return;
+    const snapshot = sessions.find((s) => s.pr?.number === prNumber);
+    if (snapshot) pendingAdd(snapshot.id);
+    setSessions((prev) =>
+      prev.map((s) => {
+        if (s.pr?.number !== prNumber) return s;
+        return {
+          ...s,
+          status: "merged" as SessionStatus,
+          activity: "exited" as ActivityState,
+          pr: s.pr ? { ...s.pr, state: "merged" as const } : null,
+        };
+      }),
+    );
+    try {
+      const res = await fetch(`/api/prs/${prNumber}/merge`, { method: "POST" });
+      if (!res.ok) throw new Error(await res.text());
+    } catch (err) {
+      console.error(`Failed to merge PR #${prNumber}:`, err);
+      if (snapshot) {
+        setSessions((prev) => prev.map((s) => (s.id === snapshot.id ? snapshot : s)));
+      }
+    } finally {
+      if (snapshot) pendingDel(snapshot.id);
     }
   };
 
   const handleRestore = async (sessionId: string) => {
     if (!confirm(`Restore session ${sessionId}?`)) return;
-    const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/restore`, {
-      method: "POST",
-    });
-    if (!res.ok) {
-      console.error(`Failed to restore ${sessionId}:`, await res.text());
+    const snapshot = sessions.find((s) => s.id === sessionId);
+    // Block SSE from overwriting the optimistic state while the request is in-flight.
+    pendingAdd(sessionId);
+    // Optimistic update — moves session out of "done" zone immediately.
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.id === sessionId
+          ? { ...s, status: "working" as SessionStatus, activity: "active" as ActivityState }
+          : s,
+      ),
+    );
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/restore`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error(await res.text());
+    } catch (err) {
+      console.error(`Failed to restore ${sessionId}:`, err);
+      // Roll back; SSE will reconcile.
+      if (snapshot) {
+        setSessions((prev) => prev.map((s) => (s.id === sessionId ? snapshot : s)));
+      }
+    } finally {
+      pendingDel(sessionId);
     }
   };
 
@@ -109,28 +237,23 @@ export function Dashboard({ sessions, stats, orchestrators, projectName }: Dashb
           </h1>
           <StatusLine stats={stats} />
         </div>
-        {orchestrators.length > 0 && (
-          <div className="flex items-center gap-2">
-            {orchestrators.map((orch) => (
-              <a
-                key={orch.id}
-                href={`/sessions/${encodeURIComponent(orch.id)}`}
-                className="orchestrator-btn flex items-center gap-2 rounded-[7px] px-4 py-2 text-[12px] font-semibold hover:no-underline"
-              >
-                <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] opacity-80" />
-                {orch.projectName}
-                <svg
-                  className="h-3 w-3 opacity-70"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  viewBox="0 0 24 24"
-                >
-                  <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" />
-                </svg>
-              </a>
-            ))}
-          </div>
+        {orchestratorId && (
+          <a
+            href={`/sessions/${encodeURIComponent(orchestratorId)}`}
+            className="orchestrator-btn flex items-center gap-2 rounded-[7px] px-4 py-2 text-[12px] font-semibold hover:no-underline"
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] opacity-80" />
+            orchestrator
+            <svg
+              className="h-3 w-3 opacity-70"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              viewBox="0 0 24 24"
+            >
+              <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" />
+            </svg>
+          </a>
         )}
       </div>
 
@@ -178,7 +301,6 @@ export function Dashboard({ sessions, stats, orchestrators, projectName }: Dashb
                 <AttentionZone
                   level={level}
                   sessions={grouped[level]}
-                  variant="column"
                   onSend={handleSend}
                   onKill={handleKill}
                   onMerge={handleMerge}
@@ -196,7 +318,6 @@ export function Dashboard({ sessions, stats, orchestrators, projectName }: Dashb
           <AttentionZone
             level="done"
             sessions={grouped.done}
-            variant="grid"
             onSend={handleSend}
             onKill={handleKill}
             onMerge={handleMerge}

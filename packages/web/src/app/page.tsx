@@ -7,7 +7,6 @@ import {
   resolveProject,
   enrichSessionPR,
   enrichSessionsMetadata,
-  computeStats,
 } from "@/lib/serialize";
 import { prCache, prCacheKey } from "@/lib/cache";
 import { getProjectName } from "@/lib/project-name";
@@ -22,20 +21,15 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export default async function Home() {
   let sessions: DashboardSession[] = [];
-  let orchestrators: Array<{ id: string; projectId: string; projectName: string }> = [];
+  let orchestratorId: string | null = null;
   const projectName = getProjectName();
   try {
     const { config, registry, sessionManager } = await getServices();
     const allSessions = await sessionManager.list();
 
-    // Find ALL orchestrator sessions (one per project)
-    orchestrators = allSessions
-      .filter((s) => s.id.endsWith("-orchestrator"))
-      .map((s) => ({
-        id: s.id,
-        projectId: s.projectId,
-        projectName: config.projects[s.projectId]?.name ?? s.projectId,
-      }));
+    // Find orchestrator session (if any)
+    const orchSession = allSessions.find((s) => s.id.endsWith("-orchestrator"));
+    orchestratorId = orchSession?.id ?? null;
 
     // Filter out orchestrator from worker sessions
     const coreSessions = allSessions.filter((s) => !s.id.endsWith("-orchestrator"));
@@ -106,11 +100,6 @@ export default async function Home() {
   }
 
   return (
-    <Dashboard
-      sessions={sessions}
-      stats={computeStats(sessions)}
-      orchestrators={orchestrators}
-      projectName={projectName}
-    />
+    <Dashboard sessions={sessions} orchestratorId={orchestratorId} projectName={projectName} />
   );
 }

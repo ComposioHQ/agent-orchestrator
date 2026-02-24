@@ -3,8 +3,14 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { SessionDetail } from "@/components/SessionDetail";
-import { type DashboardSession, getAttentionLevel, type AttentionLevel } from "@/lib/types";
+import {
+  type DashboardSession,
+  type SSESnapshotEvent,
+  type AttentionLevel,
+  getAttentionLevel,
+} from "@/lib/types";
 import { activityIcon } from "@/lib/activity-icons";
+import { useSSE } from "@/hooks/useSSE";
 
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + "..." : s;
@@ -59,7 +65,7 @@ export default function SessionPage() {
     }
   }, [session, id]);
 
-  // Fetch session data (memoized to avoid recreating on every render)
+  // Fetch full session data (includes enriched PR/CI/review info).
   const fetchSession = useCallback(async () => {
     try {
       const res = await fetch(`/api/sessions/${encodeURIComponent(id)}`);
@@ -87,7 +93,14 @@ export default function SessionPage() {
       if (!res.ok) return;
       const body = (await res.json()) as { sessions: DashboardSession[] };
       const sessions = body.sessions ?? [];
-      const counts: ZoneCounts = { merge: 0, respond: 0, review: 0, pending: 0, working: 0, done: 0 };
+      const counts: ZoneCounts = {
+        merge: 0,
+        respond: 0,
+        review: 0,
+        pending: 0,
+        working: 0,
+        done: 0,
+      };
       for (const s of sessions) {
         if (!s.id.endsWith("-orchestrator")) {
           counts[getAttentionLevel(s) as AttentionLevel]++;
@@ -107,12 +120,36 @@ export default function SessionPage() {
     return () => clearTimeout(t);
   }, [fetchSession, fetchZoneCounts]);
 
-  // Poll every 5s
+  // SSE subscription — patch status/activity immediately for instant feedback.
+  const handleSSEMessage = useCallback(
+    (data: SSESnapshotEvent) => {
+      if (data.type !== "snapshot" || !Array.isArray(data.sessions)) return;
+      const update = data.sessions.find((s) => s.id === id);
+      if (!update) return;
+      setSession((prev) => {
+        if (!prev) return prev;
+        if (
+          prev.status !== update.status ||
+          prev.activity !== update.activity ||
+          prev.lastActivityAt !== update.lastActivityAt
+        ) {
+          return {
+            ...prev,
+            status: update.status,
+            activity: update.activity,
+            lastActivityAt: update.lastActivityAt,
+          };
+        }
+        return prev;
+      });
+    },
+    [id],
+  );
+  useSSE<SSESnapshotEvent>("/api/events", handleSSEMessage);
+
+  // Poll every 30s to refresh PR/CI enrichment data.
   useEffect(() => {
-    const interval = setInterval(() => {
-      fetchSession();
-      fetchZoneCounts();
-    }, 5000);
+    const interval = setInterval(fetchSession, 30_000);
     return () => clearInterval(interval);
   }, [fetchSession, fetchZoneCounts]);
 
@@ -127,7 +164,9 @@ export default function SessionPage() {
   if (error || !session) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[var(--color-bg-base)]">
-        <div className="text-[13px] text-[var(--color-status-error)]">{error ?? "Session not found"}</div>
+        <div className="text-[13px] text-[var(--color-status-error)]">
+          {error ?? "Session not found"}
+        </div>
         <a href="/" className="text-[12px] text-[var(--color-accent)] hover:underline">
           ← Back to dashboard
         </a>
@@ -135,11 +174,5 @@ export default function SessionPage() {
     );
   }
 
-  return (
-    <SessionDetail
-      session={session}
-      isOrchestrator={isOrchestrator}
-      orchestratorZones={zoneCounts ?? undefined}
-    />
-  );
+  return <SessionDetail session={session} />;
 }

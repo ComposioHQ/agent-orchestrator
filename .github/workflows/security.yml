@@ -67,4 +67,16 @@ jobs:
         continue-on-error: true # Don't fail build on vulnerabilities in deps
 
       - name: Run pnpm audit (strict)
-        run: pnpm audit --prod --audit-level=high
+        run: |
+          OUTPUT=$(pnpm audit --prod --audit-level=high 2>&1) || {
+            EXIT_CODE=$?
+            echo "$OUTPUT"
+            # Treat registry unavailability (HTTP 5xx) as a warning, not a failure.
+            # Real vulnerability findings produce a different error format.
+            if echo "$OUTPUT" | grep -q "ERR_PNPM_AUDIT_BAD_RESPONSE"; then
+              echo "::warning::npm registry unavailable, skipping strict audit"
+              exit 0
+            fi
+            exit $EXIT_CODE
+          }
+          echo "$OUTPUT"

@@ -6,8 +6,8 @@ import {
   resolveProject,
   enrichSessionPR,
   enrichSessionsMetadata,
-  computeStats,
 } from "@/lib/serialize";
+import { computeStats } from "@/lib/types";
 
 /** GET /api/sessions — List all sessions with full state
  * Query params:
