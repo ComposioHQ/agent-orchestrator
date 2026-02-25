@@ -133,24 +133,27 @@ test.describe("API Integration via UI Actions", () => {
     expect(hasInterval).toBe(true);
   });
 
-  test("kill action endpoint exists and responds", async ({ page }) => {
-    // Directly test the API endpoint via page.request
+  test("kill action endpoint exists and returns JSON", async ({ page }) => {
     const response = await page.request.post(
       "http://127.0.0.1:3333/api/sessions/api-kill/kill",
     );
-    // Without a real backend, this returns 404 or 500 — we just verify the route exists
-    // (a non-existent route would return the Next.js 404 page with text/html)
+    // Verify route exists (returns JSON, not Next.js HTML 404) and responds
     const contentType = response.headers()["content-type"] ?? "";
     expect(contentType).toContain("application/json");
+    // Route should return a parseable JSON body
+    const body = await response.json();
+    expect(typeof body).toBe("object");
   });
 
-  test("merge PR endpoint exists and responds", async ({ page }) => {
-    // Directly test the API call flow
+  test("merge PR endpoint exists and returns JSON", async ({ page }) => {
     const response = await page.request.post(
       "http://127.0.0.1:3333/api/prs/999/merge",
     );
-    // Without a real backend, this returns an error — we just verify the route exists
+    // Verify route exists (returns JSON, not Next.js HTML 404) and responds
     const contentType = response.headers()["content-type"] ?? "";
     expect(contentType).toContain("application/json");
+    // Route should return a parseable JSON body
+    const body = await response.json();
+    expect(typeof body).toBe("object");
   });
 });

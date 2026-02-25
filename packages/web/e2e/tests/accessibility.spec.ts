@@ -16,14 +16,16 @@ test.describe("Accessibility", () => {
     await expect(html).toHaveAttribute("lang", "en");
   });
 
-  test("interactive elements are keyboard accessible", async ({ page }) => {
+  test("interactive elements are keyboard accessible", async ({ page, isMobile }) => {
+    test.skip(!!isMobile, "Tab key navigation does not apply to touch devices");
     await page.goto("/");
+    // Wait for hydration before testing keyboard nav
+    await page.waitForLoadState("networkidle");
     // Tab to the first focusable element
     await page.keyboard.press("Tab");
     const focused = page.locator(":focus");
-    // Should have focused on something
-    const count = await focused.count();
-    expect(count).toBeGreaterThanOrEqual(0);
+    // Must actually focus on an element after Tab
+    await expect(focused.first()).toBeAttached();
   });
 
   test("session detail navigation is accessible", async ({ page }) => {
