@@ -109,3 +109,22 @@ projects:
 #     threshold: 10m
 #     action: notify
 #     priority: urgent
+#
+#   # Issue update reactions — post comments and update labels on the linked issue
+#   agent-started:
+#     auto: true
+#     action: update-issue
+#     comment: "Agent started working on this issue. Branch: {{branch}}"
+#     labels: [agent-working]
+#
+#   pr-created:
+#     auto: true
+#     action: update-issue
+#     comment: "PR ready for review: {{pr_url}}"
+#
+#   merge-completed:
+#     auto: true
+#     action: update-issue
+#     comment: "Done. PR merged successfully. Closing issue."
+#     labels: ["-agent-working", agent-done]
+#     state: closed

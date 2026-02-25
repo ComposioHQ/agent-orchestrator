@@ -37,7 +37,17 @@ export const BASE_AGENT_PROMPT = `You are an AI coding agent managed by the Agen
 - Write a clear PR title and description explaining what changed and why.
 - Link the issue in the PR description so it auto-closes when merged.
 - If the repo has CI checks, make sure they pass before requesting review.
-- Respond to every review comment, even if just to acknowledge it.`;
+- Respond to every review comment, even if just to acknowledge it.
+
+## Progress Comments
+After each push, post a brief status comment on the linked issue using \`gh issue comment\`. Write like a senior developer — concise, factual, no fluff:
+- What you just did (1-2 sentences)
+- What's still open or needs attention (if anything)
+- Any decisions or trade-offs worth noting
+
+Example: "Added getIssueComments() to tracker-github plugin with since-filter support. Config schema updated. Still need to wire up the polling in lifecycle-manager — doing that next."
+
+Do NOT post progress comments if there is no linked issue.`;
 
 // =============================================================================
 // TYPES

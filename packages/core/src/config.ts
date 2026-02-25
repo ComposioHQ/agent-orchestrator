@@ -30,9 +30,12 @@ const ReactionFilterSchema = z.object({
 const ReactionConfigSchema = z.object({
   auto: z.boolean().default(true),
   action: z
-    .enum(["send-to-agent", "notify", "auto-merge", "spawn-reviewer", "spawn-agent"])
+    .enum(["send-to-agent", "notify", "auto-merge", "spawn-reviewer", "spawn-agent", "update-issue"])
     .default("notify"),
   message: z.string().optional(),
+  comment: z.string().optional(),
+  state: z.enum(["open", "closed"]).optional(),
+  labels: z.array(z.string()).optional(),
   priority: z.enum(["urgent", "action", "warning", "info"]).optional(),
   retries: z.number().optional(),
   escalateAfter: z.union([z.number(), z.string()]).optional(),

@@ -778,8 +778,14 @@ export interface ReactionConfig {
   /** Whether this reaction is enabled */
   auto: boolean;
 
-  /** What to do: send message to agent, notify human, auto-merge, spawn agent */
-  action: "send-to-agent" | "notify" | "auto-merge" | "spawn-reviewer" | "spawn-agent";
+  /** What to do: send message to agent, notify human, auto-merge, spawn agent, update issue */
+  action:
+    | "send-to-agent"
+    | "notify"
+    | "auto-merge"
+    | "spawn-reviewer"
+    | "spawn-agent"
+    | "update-issue";
 
   /** Message to send (for send-to-agent) */
   message?: string;
@@ -801,6 +807,15 @@ export interface ReactionConfig {
 
   /** Path to an external script to run (for spawn-reviewer action) */
   script?: string;
+
+  /** Comment to post on the linked issue (for update-issue action). Supports template variables. */
+  comment?: string;
+
+  /** Issue state to set (for update-issue action) */
+  state?: "open" | "closed";
+
+  /** Labels to add/remove on the linked issue (for update-issue action). Prefix with "-" to remove. */
+  labels?: string[];
 
   /** Filter criteria for event-based reactions (e.g. issue-commented) */
   filter?: ReactionFilter;

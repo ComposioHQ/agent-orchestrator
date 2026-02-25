@@ -136,34 +136,75 @@ function statusToEventType(_from: SessionStatus | undefined, to: SessionStatus):
   }
 }
 
-/** Map event type to reaction config key. */
-function eventToReactionKey(eventType: EventType): string | null {
+/** Map event type to reaction config key. Returns all matching keys (some events trigger multiple reactions). */
+function eventToReactionKeys(eventType: EventType): string[] {
+  const keys: string[] = [];
   switch (eventType) {
     case "ci.failing":
-      return "ci-failed";
+      keys.push("ci-failed");
+      break;
     case "review.changes_requested":
-      return "changes-requested";
+      keys.push("changes-requested");
+      break;
     case "automated_review.found":
-      return "bugbot-comments";
+      keys.push("bugbot-comments");
+      break;
     case "merge.conflicts":
-      return "merge-conflicts";
+      keys.push("merge-conflicts");
+      break;
     case "merge.ready":
-      return "approved-and-green";
+      keys.push("approved-and-green");
+      break;
     case "session.stuck":
-      return "agent-stuck";
+      keys.push("agent-stuck");
+      break;
     case "session.needs_input":
-      return "agent-needs-input";
+      keys.push("agent-needs-input");
+      break;
     case "session.killed":
-      return "agent-exited";
+      keys.push("agent-exited");
+      break;
     case "review.pending":
-      return "auto-review";
+      keys.push("auto-review");
+      break;
     case "issue.comment_added":
-      return "issue-commented";
+      keys.push("issue-commented");
+      break;
     case "summary.all_complete":
-      return "all-complete";
-    default:
-      return null;
+      keys.push("all-complete");
+      break;
+    case "pr.created":
+      keys.push("pr-created");
+      break;
+    case "merge.completed":
+      keys.push("merge-completed");
+      break;
+    case "session.working":
+      keys.push("agent-started");
+      break;
   }
+  return keys;
+}
+
+/** Backwards-compatible wrapper that returns the first matching key. */
+function eventToReactionKey(eventType: EventType): string | null {
+  const keys = eventToReactionKeys(eventType);
+  return keys.length > 0 ? keys[0] : null;
+}
+
+/**
+ * Interpolate template variables in a string.
+ * Supported variables: {{pr_url}}, {{pr_title}}, {{branch}}, {{issue_id}}
+ */
+function interpolateTemplate(
+  template: string,
+  session: Session,
+): string {
+  return template
+    .replace(/\{\{pr_url\}\}/g, session.pr?.url ?? "")
+    .replace(/\{\{pr_title\}\}/g, session.pr?.title ?? "")
+    .replace(/\{\{branch\}\}/g, session.branch ?? "")
+    .replace(/\{\{issue_id\}\}/g, session.issueId ?? "");
 }
 
 // ---------------------------------------------------------------------------
@@ -658,6 +699,115 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           };
         }
       }
+
+      case "update-issue": {
+        const session = await sessionManager.get(sessionId);
+        const project = session ? config.projects[session.projectId] : null;
+
+        if (!session || !project || !session.issueId) {
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action: "update-issue",
+            message: "No session, project, or issue ID available",
+            escalated: false,
+          };
+        }
+
+        const tracker = project.tracker
+          ? registry.get<Tracker>("tracker", project.tracker.plugin)
+          : null;
+
+        if (!tracker?.updateIssue) {
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action: "update-issue",
+            message: "Tracker does not support updateIssue",
+            escalated: false,
+          };
+        }
+
+        try {
+          const update: {
+            comment?: string;
+            state?: "open" | "in_progress" | "closed";
+            labels?: string[];
+          } = {};
+
+          if (reactionConfig.comment) {
+            update.comment = interpolateTemplate(reactionConfig.comment, session);
+          }
+
+          if (reactionConfig.state) {
+            update.state = reactionConfig.state;
+          }
+
+          if (reactionConfig.labels) {
+            // Split labels into adds and removes (prefixed with "-")
+            const addLabels = reactionConfig.labels.filter((l) => !l.startsWith("-"));
+            const removeLabels = reactionConfig.labels
+              .filter((l) => l.startsWith("-"))
+              .map((l) => l.slice(1));
+
+            // First pass: add labels via the standard update
+            if (addLabels.length > 0) {
+              update.labels = addLabels;
+            }
+
+            // Remove labels requires separate calls after the main update
+            if (removeLabels.length > 0) {
+              // We'll handle removal after the main updateIssue call below
+              await tracker.updateIssue(session.issueId, update, project);
+
+              // Remove labels by fetching current labels and re-setting without the removed ones
+              // Use a second updateIssue call for each removal via the tracker
+              // For now, use gh CLI directly for label removal since the Tracker interface
+              // only supports addLabel. This is a pragmatic choice — the tracker-github plugin
+              // uses gh CLI internally anyway.
+              for (const label of removeLabels) {
+                try {
+                  const { execFile: execFileCb } = await import("node:child_process");
+                  const { promisify } = await import("node:util");
+                  const execFileAsync = promisify(execFileCb);
+                  await execFileAsync(
+                    "gh",
+                    ["issue", "edit", session.issueId, "--repo", project.repo, "--remove-label", label],
+                    { timeout: 30_000 },
+                  );
+                } catch {
+                  // Label removal failed — non-fatal
+                }
+              }
+
+              return {
+                reactionType: reactionKey,
+                success: true,
+                action: "update-issue",
+                message: update.comment,
+                escalated: false,
+              };
+            }
+          }
+
+          await tracker.updateIssue(session.issueId, update, project);
+
+          return {
+            reactionType: reactionKey,
+            success: true,
+            action: "update-issue",
+            message: update.comment,
+            escalated: false,
+          };
+        } catch {
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action: "update-issue",
+            escalated: false,
+          };
+        }
+      }
     }
 
     return {
@@ -724,9 +874,9 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       const eventType = statusToEventType(oldStatus, newStatus);
       if (eventType) {
         let reactionHandledNotify = false;
-        const reactionKey = eventToReactionKey(eventType);
+        const reactionKeys = eventToReactionKeys(eventType);
 
-        if (reactionKey) {
+        for (const reactionKey of reactionKeys) {
           // Merge project-specific overrides with global defaults
           const project = config.projects[session.projectId];
           const globalReaction = config.reactions[reactionKey];
