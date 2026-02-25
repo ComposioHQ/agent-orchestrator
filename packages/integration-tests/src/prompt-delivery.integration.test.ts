@@ -39,6 +39,9 @@ const execFileAsync = promisify(execFile);
 
 const SESSION_PREFIX = "ao-inttest-prompt-";
 
+/** Lines of scrollback to capture — generous to account for Claude's TUI output. */
+const CAPTURE_LINES = 500;
+
 async function findClaudeBinary(): Promise<string | null> {
   try {
     await execFileAsync("which", ["claude"], { timeout: 5_000 });
@@ -48,10 +51,43 @@ async function findClaudeBinary(): Promise<string | null> {
   }
 }
 
+/** Check if Claude has interactive auth configured (not just ANTHROPIC_API_KEY). */
+async function hasInteractiveAuth(): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync("claude", ["auth", "status"], {
+      timeout: 10_000,
+    });
+    const status = JSON.parse(stdout) as { loggedIn?: boolean };
+    return status.loggedIn === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Wait for Claude Code's TUI to be ready for input.
+ * Polls the tmux pane for the prompt character (❯) that Claude shows when idle.
+ */
+async function waitForTuiReady(
+  sessionName: string,
+  timeoutMs = 60_000,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const output = await capturePane(sessionName, CAPTURE_LINES);
+    // Claude Code shows ❯ (or > as fallback) when its TUI is ready for input
+    if (/[❯>]\s*$/.test(output.trim())) return true;
+    await sleep(2_000);
+  }
+  return false;
+}
+
 const tmuxOk = await isTmuxAvailable();
 const claudeBin = await findClaudeBinary();
 const hasApiKey = Boolean(process.env.ANTHROPIC_API_KEY);
 const canRun = tmuxOk && claudeBin !== null && hasApiKey;
+// Interactive mode requires a full login (ANTHROPIC_API_KEY alone only works with -p)
+const canRunInteractive = canRun && (await hasInteractiveAuth());
 
 // ---------------------------------------------------------------------------
 // Test 1: -p flag causes Claude to exit (the bug)
@@ -110,7 +146,7 @@ describe.skipIf(!canRun)("claude -p exits after completing work (the bug)", () =
     expect(exited).toBe(false);
 
     // Verify the work was done (Claude did respond before exiting)
-    const output = await capturePane(sessionName, 100);
+    const output = await capturePane(sessionName, CAPTURE_LINES);
     expect(output).toContain("SENTINEL_P_DELIVERED");
 
     // This is the problem: process is gone, ao send has nothing to talk to
@@ -123,7 +159,7 @@ describe.skipIf(!canRun)("claude -p exits after completing work (the bug)", () =
 // Test 2: interactive mode + post-launch prompt keeps Claude alive (the fix)
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!canRun)(
+describe.skipIf(!canRunInteractive)(
   "interactive claude stays alive after post-launch prompt (the fix)",
   () => {
     const agent = claudeCodePlugin.create();
@@ -163,20 +199,23 @@ describe.skipIf(!canRun)(
         intervalMs: 1_000,
       });
 
-      // Give Claude time to fully initialize its TUI
-      await sleep(5_000);
+      // Wait for Claude's TUI to be fully ready (shows prompt character ❯)
+      await waitForTuiReady(sessionName, 60_000);
 
       // Deliver the initial prompt post-launch (what the fix does)
       await runtime.sendMessage(handle, "Respond with exactly: SENTINEL_I_DELIVERED");
 
-      // Wait for Claude to process the prompt
+      // Wait for Claude to process the prompt and return to idle (❯)
       const deadline = Date.now() + 90_000;
       while (Date.now() < deadline) {
-        const output = await capturePane(sessionName, 200);
-        if (output.includes("SENTINEL_I_DELIVERED")) break;
+        const output = await capturePane(sessionName, CAPTURE_LINES);
+        // Check that Claude responded (sentinel in output) AND is back at idle prompt
+        if (output.includes("SENTINEL_I_DELIVERED") && /[❯>]\s*$/.test(output.trim())) {
+          break;
+        }
         await sleep(2_000);
       }
-    }, 150_000);
+    }, 180_000);
 
     afterAll(async () => {
       await killSession(sessionName);
@@ -184,7 +223,7 @@ describe.skipIf(!canRun)(
     }, 30_000);
 
     it("prompt was delivered and processed", async () => {
-      const output = await capturePane(sessionName, 200);
+      const output = await capturePane(sessionName, CAPTURE_LINES);
       expect(output).toContain("SENTINEL_I_DELIVERED");
     });
 
@@ -199,7 +238,7 @@ describe.skipIf(!canRun)(
       const deadline = Date.now() + 90_000;
       let output = "";
       while (Date.now() < deadline) {
-        output = await capturePane(sessionName, 300);
+        output = await capturePane(sessionName, CAPTURE_LINES);
         if (output.includes("SENTINEL_FOLLOWUP_OK")) break;
         await sleep(2_000);
       }
