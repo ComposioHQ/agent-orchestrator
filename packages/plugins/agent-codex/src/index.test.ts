@@ -738,13 +738,17 @@ describe("getSessionInfo", () => {
 
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
-    mockReadFile.mockResolvedValue(content);
+    setupMockStream(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
 
     expect(result).not.toBeNull();
     expect(result!.summary).toBeNull();
+    // Verify cost was actually parsed from the stream (not just defaulting to undefined)
+    expect(result!.cost).toBeDefined();
+    expect(result!.cost!.inputTokens).toBe(100);
+    expect(result!.cost!.outputTokens).toBe(50);
   });
 
   it("returns undefined cost when no token_count events", async () => {
@@ -755,13 +759,15 @@ describe("getSessionInfo", () => {
 
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
-    mockReadFile.mockResolvedValue(content);
+    setupMockStream(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
 
     expect(result).not.toBeNull();
     expect(result!.cost).toBeUndefined();
+    // Verify model was actually parsed from the stream (not just defaulting to null)
+    expect(result!.summary).toContain("gpt-4o");
   });
 
   it("handles unreadable session files gracefully", async () => {
@@ -900,7 +906,7 @@ describe("getRestoreCommand", () => {
     );
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
-    mockReadFile.mockResolvedValue(content);
+    setupMockStream(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const session = makeSession({ workspacePath: "/workspace/test" });
