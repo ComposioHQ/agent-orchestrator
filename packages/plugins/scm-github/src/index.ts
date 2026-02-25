@@ -478,6 +478,53 @@ function createGitHubSCM(): SCM {
       }
     },
 
+    async listOpenPRs(project: ProjectConfig): Promise<Array<PRInfo & { author: string }>> {
+      const parts = project.repo.split("/");
+      if (parts.length !== 2 || !parts[0] || !parts[1]) {
+        throw new Error(`Invalid repo format "${project.repo}", expected "owner/repo"`);
+      }
+      const [owner, repo] = parts;
+
+      try {
+        const raw = await gh([
+          "pr",
+          "list",
+          "--repo",
+          project.repo,
+          "--state",
+          "open",
+          "--json",
+          "number,url,title,headRefName,baseRefName,isDraft,author",
+          "--limit",
+          "50",
+        ]);
+
+        const prs: Array<{
+          number: number;
+          url: string;
+          title: string;
+          headRefName: string;
+          baseRefName: string;
+          isDraft: boolean;
+          author: { login: string };
+        }> = JSON.parse(raw);
+
+        return prs.map((pr) => ({
+          number: pr.number,
+          url: pr.url,
+          title: pr.title,
+          owner,
+          repo,
+          branch: pr.headRefName,
+          baseBranch: pr.baseRefName,
+          isDraft: pr.isDraft,
+          author: pr.author?.login ?? "unknown",
+        }));
+      } catch {
+        return [];
+      }
+    },
+
     async getMergeability(pr: PRInfo): Promise<MergeReadiness> {
       const blockers: string[] = [];
 

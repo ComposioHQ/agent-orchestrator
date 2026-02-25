@@ -6,6 +6,12 @@ worktreeDir: ~/.worktrees
 
 port: 3000
 
+# Security: Only react to PR reviews/comments from these GitHub users.
+# Prevents prompt injection from external commenters on public repos.
+# Bot comments (CI, linters) are always allowed regardless.
+allowedUsers:
+  - marcmantei
+
 defaults:
   runtime: tmux
   agent: claude-code

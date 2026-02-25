@@ -557,6 +557,11 @@ export interface SCM {
 
   /** Check if PR is ready to merge */
   getMergeability(pr: PRInfo): Promise<MergeReadiness>;
+
+  // --- PR Discovery ---
+
+  /** List all open PRs for a project. Used to adopt externally-created PRs. */
+  listOpenPRs?(project: ProjectConfig): Promise<Array<PRInfo & { author: string }>>;
 }
 
 // --- PR Types ---
@@ -856,6 +861,14 @@ export interface OrchestratorConfig {
 
   /** Default reaction configs */
   reactions: Record<string, ReactionConfig>;
+
+  /**
+   * GitHub usernames whose PR reviews and comments are trusted.
+   * When set, agents only see and react to comments from these users.
+   * Bot comments (CI, linters) are always allowed regardless of this setting.
+   * If empty or omitted, all non-bot users are allowed (backwards-compatible).
+   */
+  allowedUsers?: string[];
 }
 
 export interface DefaultPlugins {
@@ -988,7 +1001,7 @@ export interface PluginModule<T = unknown> {
  * (e.g., "a3b4c5d6e7f8-int-1").
  */
 export interface SessionMetadata {
-  worktree: string;
+  worktree?: string;
   branch: string;
   status: string;
   tmuxName?: string; // Globally unique tmux session name (includes hash)
@@ -1003,6 +1016,8 @@ export interface SessionMetadata {
   dashboardPort?: number;
   terminalWsPort?: number;
   directTerminalWsPort?: number;
+  /** Marks a session as adopted (externally-created PR, no agent/runtime). */
+  adopted?: string;
 }
 
 // =============================================================================
