@@ -15,7 +15,7 @@ Spawn parallel AI coding agents, each in its own git worktree. Agents autonomous
 
 Agent Orchestrator manages fleets of AI coding agents working in parallel on your codebase. Each agent gets its own git worktree, its own branch, and its own PR. When CI fails, the agent fixes it. When reviewers leave comments, the agent addresses them. You only get pulled in when human judgment is needed.
 
-**Agent-agnostic** (Claude Code, Codex, Aider) · **Runtime-agnostic** (tmux, Docker) · **Tracker-agnostic** (GitHub, Linear)
+**Agent-agnostic** (Claude Code, Codex, Aider) · **Runtime-agnostic** (tmux, Docker) · **Tracker-agnostic** (GitHub, GitLab, Linear)
 
 <!-- TODO: Add dashboard screenshot or terminal GIF showing 10+ sessions with attention zones -->
 
@@ -58,8 +58,8 @@ Eight slots. Every abstraction is swappable.
 | Runtime | tmux | docker, k8s, process |
 | Agent | claude-code | codex, aider, opencode |
 | Workspace | worktree | clone |
-| Tracker | github | linear |
-| SCM | github | — |
+| Tracker | github | gitlab, linear |
+| SCM | github | gitlab |
 | Notifier | desktop | slack, composio, webhook |
 | Terminal | iterm2 | web |
 | Lifecycle | core | — |
@@ -129,6 +129,7 @@ Running one AI agent in a terminal is easy. Running 30 across different issues, 
 - Git 2.25+
 - tmux (for default runtime)
 - `gh` CLI (for GitHub integration)
+- `glab` CLI (for GitLab integration, optional)
 
 ## Development
 

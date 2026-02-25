@@ -28,6 +28,8 @@ import pluginWorkspaceWorktree from "@composio/ao-plugin-workspace-worktree";
 import pluginScmGithub from "@composio/ao-plugin-scm-github";
 import pluginTrackerGithub from "@composio/ao-plugin-tracker-github";
 import pluginTrackerLinear from "@composio/ao-plugin-tracker-linear";
+import pluginScmGitlab from "@composio/ao-plugin-scm-gitlab";
+import pluginTrackerGitlab from "@composio/ao-plugin-tracker-gitlab";
 
 export interface Services {
   config: OrchestratorConfig;
@@ -68,6 +70,8 @@ async function initServices(): Promise<Services> {
   registry.register(pluginScmGithub);
   registry.register(pluginTrackerGithub);
   registry.register(pluginTrackerLinear);
+  registry.register(pluginScmGitlab);
+  registry.register(pluginTrackerGitlab);
 
   const sessionManager = createSessionManager({ config, registry });
 
