@@ -26,6 +26,9 @@ export type SessionId = string;
 export type SessionStatus =
   | "spawning"
   | "working"
+  | "verifier_pending"
+  | "verifier_failed"
+  | "pr_ready"
   | "pr_open"
   | "ci_failed"
   | "review_pending"
@@ -74,6 +77,9 @@ export const DEFAULT_READY_THRESHOLD_MS = 300_000; // 5 minutes
 export const SESSION_STATUS = {
   SPAWNING: "spawning" as const,
   WORKING: "working" as const,
+  VERIFIER_PENDING: "verifier_pending" as const,
+  VERIFIER_FAILED: "verifier_failed" as const,
+  PR_READY: "pr_ready" as const,
   PR_OPEN: "pr_open" as const,
   CI_FAILED: "ci_failed" as const,
   REVIEW_PENDING: "review_pending" as const,
@@ -194,6 +200,8 @@ export interface SessionSpawnConfig {
    * this must be provided with `validated: true`.
    */
   planTask?: PlanTaskReference;
+  /** Override the runtime plugin for this session (e.g. "tmux", "process") */
+  runtime?: string;
 }
 
 /** Config for creating an orchestrator session */
@@ -755,6 +763,10 @@ export type EventType =
   | "session.stuck"
   | "session.needs_input"
   | "session.errored"
+  // Verifier lifecycle
+  | "verifier.pending"
+  | "verifier.failed"
+  | "verifier.passed"
   // PR lifecycle
   | "pr.created"
   | "pr.updated"
@@ -1175,6 +1187,12 @@ export interface SessionMetadata {
   evidenceChangedPaths?: string;
   evidenceKnownRisks?: string;
   escalationState?: string; // Serialized per-reaction escalation state map (JSON)
+  role?: string;
+  verifierFor?: string;
+  verifierSessionId?: string;
+  verifierStatus?: string;
+  verifierVerdict?: string;
+  verifierFeedback?: string;
 }
 
 /** Plan lifecycle status for orchestrator planning artifacts. */

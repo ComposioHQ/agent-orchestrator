@@ -61,6 +61,44 @@ function makePR(overrides: Partial<PRInfo> = {}): PRInfo {
   };
 }
 
+function writeCompleteEvidence(workspacePath: string, sessionId = "app-1"): string {
+  const evidenceDir = join(workspacePath, ".ao", "evidence", sessionId);
+  mkdirSync(evidenceDir, { recursive: true });
+  writeFileSync(
+    join(evidenceDir, "command-log.json"),
+    JSON.stringify({
+      schemaVersion: "1",
+      complete: true,
+      entries: [{ command: "pnpm --filter @composio/ao-core test", exitCode: 0 }],
+    }),
+  );
+  writeFileSync(
+    join(evidenceDir, "tests-run.json"),
+    JSON.stringify({
+      schemaVersion: "1",
+      complete: true,
+      tests: [{ command: "pnpm --filter @composio/ao-core test", status: "passed" }],
+    }),
+  );
+  writeFileSync(
+    join(evidenceDir, "changed-paths.json"),
+    JSON.stringify({
+      schemaVersion: "1",
+      complete: true,
+      paths: ["packages/core/src/evidence.ts"],
+    }),
+  );
+  writeFileSync(
+    join(evidenceDir, "known-risks.json"),
+    JSON.stringify({
+      schemaVersion: "1",
+      complete: true,
+      risks: [{ risk: "None" }],
+    }),
+  );
+  return evidenceDir;
+}
+
 beforeEach(() => {
   tmpDir = join(tmpdir(), `ao-test-lifecycle-${randomUUID()}`);
   mkdirSync(tmpDir, { recursive: true });
@@ -205,40 +243,7 @@ describe("check (single session)", () => {
 
   it("detects done state from complete worker evidence artifacts", async () => {
     const workspacePath = join(tmpDir, "ws");
-    const evidenceDir = join(workspacePath, ".ao", "evidence", "app-1");
-    mkdirSync(evidenceDir, { recursive: true });
-    writeFileSync(
-      join(evidenceDir, "command-log.json"),
-      JSON.stringify({
-        schemaVersion: "1",
-        complete: true,
-        entries: [{ command: "pnpm --filter @composio/ao-core test", exitCode: 0 }],
-      }),
-    );
-    writeFileSync(
-      join(evidenceDir, "tests-run.json"),
-      JSON.stringify({
-        schemaVersion: "1",
-        complete: true,
-        tests: [{ command: "pnpm --filter @composio/ao-core test", status: "passed" }],
-      }),
-    );
-    writeFileSync(
-      join(evidenceDir, "changed-paths.json"),
-      JSON.stringify({
-        schemaVersion: "1",
-        complete: true,
-        paths: ["packages/core/src/evidence.ts"],
-      }),
-    );
-    writeFileSync(
-      join(evidenceDir, "known-risks.json"),
-      JSON.stringify({
-        schemaVersion: "1",
-        complete: true,
-        risks: [{ risk: "None" }],
-      }),
-    );
+    const evidenceDir = writeCompleteEvidence(workspacePath);
 
     const session = makeSession({ status: "working", workspacePath, pr: null });
     session.metadata = {
@@ -275,6 +280,207 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("done");
     const meta = readMetadataRaw(sessionsDir, "app-1");
     expect(meta!["status"]).toBe("done");
+  });
+
+  it("auto-spawns verifier after complete worker evidence", async () => {
+    config.defaults.verifier = { runtime: "mock", agent: "mock-agent" };
+    config.projects["my-app"].verifier = { runtime: "mock", agent: "mock-agent" };
+
+    const workspacePath = join(tmpDir, "ws-verifier");
+    const evidenceDir = writeCompleteEvidence(workspacePath);
+    const worker = makeSession({ status: "working", workspacePath, pr: null });
+    worker.metadata = {
+      evidenceSchemaVersion: "1",
+      evidenceDir,
+      evidenceCommandLog: join(evidenceDir, "command-log.json"),
+      evidenceTestsRun: join(evidenceDir, "tests-run.json"),
+      evidenceChangedPaths: join(evidenceDir, "changed-paths.json"),
+      evidenceKnownRisks: join(evidenceDir, "known-risks.json"),
+    };
+
+    const verifierSession = makeSession({
+      id: "app-2",
+      status: "spawning",
+      workspacePath,
+      issueId: worker.issueId,
+      branch: worker.branch,
+      metadata: {},
+    });
+
+    vi.mocked(mockSessionManager.get).mockResolvedValue(worker);
+    vi.mocked(mockSessionManager.spawn).mockResolvedValue(verifierSession);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: workspacePath,
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      evidenceSchemaVersion: "1",
+      evidenceDir,
+      evidenceCommandLog: join(evidenceDir, "command-log.json"),
+      evidenceTestsRun: join(evidenceDir, "tests-run.json"),
+      evidenceChangedPaths: join(evidenceDir, "changed-paths.json"),
+      evidenceKnownRisks: join(evidenceDir, "known-risks.json"),
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("verifier_pending");
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "my-app",
+        runtime: "mock",
+        agent: "mock-agent",
+      }),
+    );
+
+    const workerMeta = readMetadataRaw(sessionsDir, "app-1");
+    expect(workerMeta!["verifierSessionId"]).toBe("app-2");
+    expect(workerMeta!["verifierStatus"]).toBe("pending");
+
+    const verifierMeta = readMetadataRaw(sessionsDir, "app-2");
+    expect(verifierMeta!["role"]).toBe("verifier");
+    expect(verifierMeta!["verifierFor"]).toBe("app-1");
+  });
+
+  it("marks worker pr_ready only after verifier pass", async () => {
+    config.defaults.verifier = { runtime: "mock", agent: "mock-agent" };
+    config.projects["my-app"].verifier = { runtime: "mock", agent: "mock-agent" };
+
+    const workspacePath = join(tmpDir, "ws-pass");
+    const evidenceDir = writeCompleteEvidence(workspacePath);
+
+    const worker = makeSession({ status: "verifier_pending", workspacePath, pr: null });
+    worker.metadata = {
+      verifierSessionId: "app-2",
+      verifierStatus: "pending",
+      evidenceSchemaVersion: "1",
+      evidenceDir,
+      evidenceCommandLog: join(evidenceDir, "command-log.json"),
+      evidenceTestsRun: join(evidenceDir, "tests-run.json"),
+      evidenceChangedPaths: join(evidenceDir, "changed-paths.json"),
+      evidenceKnownRisks: join(evidenceDir, "known-risks.json"),
+    };
+
+    const verifier = makeSession({
+      id: "app-2",
+      status: "done",
+      workspacePath,
+      metadata: {
+        role: "verifier",
+        verifierFor: "app-1",
+        verifierVerdict: "passed",
+      },
+    });
+
+    vi.mocked(mockSessionManager.get).mockImplementation(async (sessionId: string) => {
+      if (sessionId === "app-1") return worker;
+      if (sessionId === "app-2") return verifier;
+      return null;
+    });
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: workspacePath,
+      branch: "main",
+      status: "verifier_pending",
+      project: "my-app",
+      verifierSessionId: "app-2",
+      verifierStatus: "pending",
+      evidenceSchemaVersion: "1",
+      evidenceDir,
+      evidenceCommandLog: join(evidenceDir, "command-log.json"),
+      evidenceTestsRun: join(evidenceDir, "tests-run.json"),
+      evidenceChangedPaths: join(evidenceDir, "changed-paths.json"),
+      evidenceKnownRisks: join(evidenceDir, "known-risks.json"),
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("pr_ready");
+    const workerMeta = readMetadataRaw(sessionsDir, "app-1");
+    expect(workerMeta!["verifierStatus"]).toBe("passed");
+  });
+
+  it("routes verifier failure feedback back to worker", async () => {
+    config.defaults.verifier = { runtime: "mock", agent: "mock-agent" };
+    config.projects["my-app"].verifier = { runtime: "mock", agent: "mock-agent" };
+
+    const workspacePath = join(tmpDir, "ws-fail");
+    const evidenceDir = writeCompleteEvidence(workspacePath);
+    const worker = makeSession({ status: "verifier_pending", workspacePath, pr: null });
+    worker.metadata = {
+      verifierSessionId: "app-2",
+      verifierStatus: "pending",
+      evidenceSchemaVersion: "1",
+      evidenceDir,
+      evidenceCommandLog: join(evidenceDir, "command-log.json"),
+      evidenceTestsRun: join(evidenceDir, "tests-run.json"),
+      evidenceChangedPaths: join(evidenceDir, "changed-paths.json"),
+      evidenceKnownRisks: join(evidenceDir, "known-risks.json"),
+    };
+
+    const verifier = makeSession({
+      id: "app-2",
+      status: "done",
+      workspacePath,
+      metadata: {
+        role: "verifier",
+        verifierFor: "app-1",
+        verifierVerdict: "failed",
+        verifierFeedback: "Fix flaky tests in packages/core/src/lifecycle-manager.ts",
+      },
+    });
+
+    vi.mocked(mockSessionManager.get).mockImplementation(async (sessionId: string) => {
+      if (sessionId === "app-1") return worker;
+      if (sessionId === "app-2") return verifier;
+      return null;
+    });
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: workspacePath,
+      branch: "main",
+      status: "verifier_pending",
+      project: "my-app",
+      verifierSessionId: "app-2",
+      verifierStatus: "pending",
+      evidenceSchemaVersion: "1",
+      evidenceDir,
+      evidenceCommandLog: join(evidenceDir, "command-log.json"),
+      evidenceTestsRun: join(evidenceDir, "tests-run.json"),
+      evidenceChangedPaths: join(evidenceDir, "changed-paths.json"),
+      evidenceKnownRisks: join(evidenceDir, "known-risks.json"),
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("verifier_failed");
+    expect(mockSessionManager.send).toHaveBeenCalledWith(
+      "app-1",
+      expect.stringContaining("Fix flaky tests"),
+    );
+
+    const workerMeta = readMetadataRaw(sessionsDir, "app-1");
+    expect(workerMeta!["verifierStatus"]).toBe("failed");
+    expect(workerMeta!["verifierSessionId"]).toBeUndefined();
   });
 
   it("detects killed state when runtime is dead", async () => {
@@ -626,6 +832,64 @@ describe("check (single session)", () => {
     await lm.check("app-1");
 
     expect(lm.getStates().get("app-1")).toBe("mergeable");
+  });
+
+  it("blocks mergeable transition until verifier passes", async () => {
+    config.defaults.verifier = { runtime: "mock", agent: "mock-agent" };
+    config.projects["my-app"].verifier = { runtime: "mock", agent: "mock-agent" };
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("passing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("approved"),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn().mockResolvedValue({
+        mergeable: true,
+        ciPassing: true,
+        approved: true,
+        noConflicts: true,
+        blockers: [],
+      }),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    const session = makeSession({ status: "pr_open", pr: makePR() });
+    session.metadata = { verifierStatus: "pending" };
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+      verifierStatus: "pending",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("approved");
   });
 
   it("throws for nonexistent session", async () => {

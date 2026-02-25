@@ -236,12 +236,18 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
     planStatus,
     planPath: raw["planPath"],
     evidenceSchemaVersion: raw["evidenceSchemaVersion"],
-    evidenceDir: raw["evidenceDir"],
+   evidenceDir: raw["evidenceDir"],
     evidenceCommandLog: raw["evidenceCommandLog"],
     evidenceTestsRun: raw["evidenceTestsRun"],
     evidenceChangedPaths: raw["evidenceChangedPaths"],
     evidenceKnownRisks: raw["evidenceKnownRisks"],
     escalationState: raw["escalationState"],
+    role: raw["role"],
+    verifierFor: raw["verifierFor"],
+    verifierSessionId: raw["verifierSessionId"],
+    verifierStatus: raw["verifierStatus"],
+    verifierVerdict: raw["verifierVerdict"],
+    verifierFeedback: raw["verifierFeedback"],
   };
 }
 
@@ -304,6 +310,12 @@ export function writeMetadata(
     data["evidenceChangedPaths"] = metadata.evidenceChangedPaths;
   if (metadata.evidenceKnownRisks) data["evidenceKnownRisks"] = metadata.evidenceKnownRisks;
   if (metadata.escalationState) data["escalationState"] = metadata.escalationState;
+  if (metadata.role) data["role"] = metadata.role;
+  if (metadata.verifierFor) data["verifierFor"] = metadata.verifierFor;
+  if (metadata.verifierSessionId) data["verifierSessionId"] = metadata.verifierSessionId;
+  if (metadata.verifierStatus) data["verifierStatus"] = metadata.verifierStatus;
+  if (metadata.verifierVerdict) data["verifierVerdict"] = metadata.verifierVerdict;
+  if (metadata.verifierFeedback) data["verifierFeedback"] = metadata.verifierFeedback;
 
   writeFileSync(path, serializeMetadata(data), "utf-8");
 }

@@ -403,6 +403,53 @@ describe("spawn", () => {
     });
   });
 
+  describe("runtime override", () => {
+    let mockProcessRuntime: Runtime;
+    let registryWithMultipleRuntimes: PluginRegistry;
+
+    beforeEach(() => {
+      mockProcessRuntime = {
+        name: "process",
+        create: vi.fn().mockResolvedValue({ id: "proc-1", runtimeName: "process", data: {} }),
+        destroy: vi.fn().mockResolvedValue(undefined),
+        sendMessage: vi.fn().mockResolvedValue(undefined),
+        getOutput: vi.fn().mockResolvedValue(""),
+        isAlive: vi.fn().mockResolvedValue(true),
+      };
+
+      registryWithMultipleRuntimes = {
+        ...mockRegistry,
+        get: vi.fn().mockImplementation((slot: string, name: string) => {
+          if (slot === "runtime") {
+            if (name === "mock") return mockRuntime;
+            if (name === "process") return mockProcessRuntime;
+            return null;
+          }
+          if (slot === "agent") return mockAgent;
+          if (slot === "workspace") return mockWorkspace;
+          return null;
+        }),
+      };
+    });
+
+    it("uses overridden runtime when spawnConfig.runtime is provided", async () => {
+      const sm = createSessionManager({ config, registry: registryWithMultipleRuntimes });
+
+      await sm.spawn({ projectId: "my-app", runtime: "process" });
+
+      expect(mockProcessRuntime.create).toHaveBeenCalled();
+      expect(mockRuntime.create).not.toHaveBeenCalled();
+    });
+
+    it("throws when runtime override plugin is not found", async () => {
+      const sm = createSessionManager({ config, registry: registryWithMultipleRuntimes });
+
+      await expect(
+        sm.spawn({ projectId: "my-app", runtime: "nonexistent-runtime" }),
+      ).rejects.toThrow("Runtime plugin 'nonexistent-runtime' not found");
+    });
+  });
+
   it("validates issue exists when issueId provided", async () => {
     const mockTracker: Tracker = {
       name: "mock-tracker",

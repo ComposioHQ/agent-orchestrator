@@ -11,6 +11,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { existsSync, statSync } from "node:fs";
 import {
   SESSION_STATUS,
   PR_STATE,
@@ -41,7 +42,81 @@ import {
 import { readMetadataRaw, updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
 import { buildReactionMessage } from "./reaction-message.js";
-import { parseWorkerEvidence } from "./evidence.js";
+import { parseWorkerEvidence, type WorkerEvidenceParseResult } from "./evidence.js";
+
+const VERIFIER_ROLE = "verifier";
+const VERIFIER_STATUS = {
+  PENDING: "pending",
+  PASSED: "passed",
+  FAILED: "failed",
+} as const;
+
+function isVerifierSession(session: Session): boolean {
+  return (session.metadata?.["role"] ?? "").toLowerCase() === VERIFIER_ROLE;
+}
+
+function normalizeVerifierVerdict(value: string | undefined): "passed" | "failed" | null {
+  if (!value) return null;
+  const normalized = value.trim().toLowerCase();
+  if (["pass", "passed", "ok", "approved", "green"].includes(normalized)) return "passed";
+  if (["fail", "failed", "reject", "rejected", "red"].includes(normalized)) return "failed";
+  return null;
+}
+
+function buildVerifierPrompt(
+  worker: Session,
+  evidence: WorkerEvidenceParseResult,
+): string {
+  const tests =
+    evidence.testsRun.items.length > 0
+      ? evidence.testsRun.items
+          .slice(0, 20)
+          .map((test) => `- ${test.command} (${test.status})`)
+          .join("\n")
+      : "- No test runs recorded";
+  const changedPaths =
+    evidence.changedPaths.items.length > 0
+      ? evidence.changedPaths.items.slice(0, 30).map((path) => `- ${path}`).join("\n")
+      : "- No changed paths recorded";
+  const knownRisks =
+    evidence.knownRisks.items.length > 0
+      ? evidence.knownRisks.items
+          .slice(0, 20)
+          .map((risk) => `- ${risk.risk}${risk.mitigation ? ` | mitigation: ${risk.mitigation}` : ""}`)
+          .join("\n")
+      : "- No known risks reported";
+
+  return [
+    "You are the verifier for this worker session.",
+    `Worker session: ${worker.id}`,
+    `Branch: ${worker.branch ?? "unknown"}`,
+    "",
+    "Evidence summary:",
+    `- Evidence parse status: ${evidence.status}`,
+    "- Tests:",
+    tests,
+    "- Changed paths:",
+    changedPaths,
+    "- Known risks:",
+    knownRisks,
+    "",
+    "Review the code and evidence. When done, set your metadata with one of:",
+    "- verifierVerdict=passed",
+    "- verifierVerdict=failed",
+    "If failed, also set verifierFeedback with actionable retry instructions for the worker.",
+  ].join("\n");
+}
+
+function buildVerifierFailureMessage(feedback: string): string {
+  return [
+    "Verifier failed this handoff.",
+    "",
+    "Actionable retry instructions:",
+    feedback,
+    "",
+    "Please address each item, update evidence artifacts, and continue implementation.",
+  ].join("\n");
+}
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number | null {
@@ -77,6 +152,7 @@ function inferPriority(type: EventType): EventPriority {
   }
   if (
     type.includes("approved") ||
+    type.includes("passed") ||
     type.includes("ready") ||
     type.includes("merged") ||
     type.includes("completed")
@@ -117,6 +193,12 @@ function statusToEventType(_from: SessionStatus | undefined, to: SessionStatus):
   switch (to) {
     case "working":
       return "session.working";
+    case "verifier_pending":
+      return "verifier.pending";
+    case "verifier_failed":
+      return "verifier.failed";
+    case "pr_ready":
+      return "verifier.passed";
     case "pr_open":
       return "pr.created";
     case "ci_failed":
@@ -470,6 +552,160 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     return merged && merged.action ? (merged as ReactionConfig) : null;
   }
 
+  function hasVerifierGate(project: _ProjectConfig): boolean {
+    const verifier = project.verifier ?? config.defaults.verifier;
+    return Boolean(verifier?.agent || verifier?.runtime);
+  }
+
+  function evidenceFingerprint(evidence: WorkerEvidenceParseResult): string {
+    const paths = [
+      evidence.commandLog.path,
+      evidence.testsRun.path,
+      evidence.changedPaths.path,
+      evidence.knownRisks.path,
+    ].filter(Boolean);
+
+    const parts = paths.map((path) => {
+      if (!existsSync(path)) return `${path}:missing`;
+      try {
+        const stat = statSync(path);
+        return `${path}:${stat.size}:${stat.mtimeMs}`;
+      } catch {
+        return `${path}:unreadable`;
+      }
+    });
+    return parts.join("|");
+  }
+
+  async function resolveVerifierGateStatus(
+    session: Session,
+    project: _ProjectConfig,
+    evidence: WorkerEvidenceParseResult,
+  ): Promise<SessionStatus | null> {
+    if (isVerifierSession(session)) return null;
+    if (!hasVerifierGate(project)) return null;
+
+    const sessionsDir = getSessionsDir(config.configPath, project.path);
+    const verifierAgent = project.verifier?.agent ?? config.defaults.verifier?.agent;
+    const verifierRuntime = project.verifier?.runtime ?? config.defaults.verifier?.runtime;
+    const verifierSessionId = session.metadata["verifierSessionId"]?.trim();
+    const verifierStatus = session.metadata["verifierStatus"]?.trim().toLowerCase();
+    const evidenceToken = evidenceFingerprint(evidence);
+    const failedToken = session.metadata["verifierFailedEvidenceToken"];
+
+    if (verifierStatus === VERIFIER_STATUS.PASSED) {
+      return SESSION_STATUS.PR_READY;
+    }
+
+    if (
+      verifierStatus === VERIFIER_STATUS.FAILED &&
+      failedToken &&
+      failedToken === evidenceToken &&
+      !verifierSessionId
+    ) {
+      return SESSION_STATUS.VERIFIER_FAILED;
+    }
+
+    if (verifierSessionId) {
+      const verifierSession = await sessionManager.get(verifierSessionId).catch(() => null);
+      if (!verifierSession) {
+        updateMetadata(sessionsDir, session.id, {
+          verifierSessionId: "",
+          verifierStatus: "",
+        });
+      } else {
+        const verdict = normalizeVerifierVerdict(verifierSession.metadata["verifierVerdict"]);
+        const feedback =
+          verifierSession.metadata["verifierFeedback"]?.trim() ||
+          session.metadata["verifierFeedback"]?.trim() ||
+          "";
+
+        if (verdict === "passed") {
+          updateMetadata(sessionsDir, session.id, {
+            verifierStatus: VERIFIER_STATUS.PASSED,
+            verifierFeedback: feedback,
+            verifierFailedEvidenceToken: "",
+            verifierEvidenceToken: "",
+          });
+          return SESSION_STATUS.PR_READY;
+        }
+
+        if (verdict === "failed") {
+          const actionableFeedback =
+            feedback ||
+            "Verifier rejected the handoff without details. Re-run checks, inspect recent changes, and document concrete failures.";
+          const failureSentFor = session.metadata["verifierFailureSentFor"];
+          if (failureSentFor !== verifierSession.id) {
+            await sessionManager.send(session.id, buildVerifierFailureMessage(actionableFeedback));
+          }
+          updateMetadata(sessionsDir, session.id, {
+            verifierStatus: VERIFIER_STATUS.FAILED,
+            verifierFeedback: actionableFeedback,
+            verifierSessionId: "",
+            verifierFailureSentFor: verifierSession.id,
+            verifierFailedEvidenceToken: evidenceToken,
+            verifierEvidenceToken: "",
+          });
+          return SESSION_STATUS.VERIFIER_FAILED;
+        }
+
+        if (
+          verifierSession.status === SESSION_STATUS.KILLED ||
+          verifierSession.status === SESSION_STATUS.ERRORED ||
+          verifierSession.status === SESSION_STATUS.TERMINATED
+        ) {
+          const fallbackFeedback =
+            "Verifier session exited before producing a verdict. Re-run implementation checks and retry verifier handoff.";
+          updateMetadata(sessionsDir, session.id, {
+            verifierStatus: VERIFIER_STATUS.FAILED,
+            verifierFeedback: fallbackFeedback,
+            verifierSessionId: "",
+            verifierFailedEvidenceToken: evidenceToken,
+            verifierEvidenceToken: "",
+          });
+          return SESSION_STATUS.VERIFIER_FAILED;
+        }
+
+        return SESSION_STATUS.VERIFIER_PENDING;
+      }
+    }
+
+    try {
+      const verifierSession = await sessionManager.spawn({
+        projectId: session.projectId,
+        issueId: session.issueId ?? undefined,
+        branch: session.branch ?? undefined,
+        prompt: buildVerifierPrompt(session, evidence),
+        agent: verifierAgent,
+        runtime: verifierRuntime,
+      });
+
+      updateMetadata(sessionsDir, session.id, {
+        verifierSessionId: verifierSession.id,
+        verifierStatus: VERIFIER_STATUS.PENDING,
+        verifierFeedback: "",
+        verifierEvidenceToken: evidenceToken,
+        verifierFailedEvidenceToken: "",
+      });
+
+      updateMetadata(sessionsDir, verifierSession.id, {
+        role: VERIFIER_ROLE,
+        verifierFor: session.id,
+        verifierStatus: VERIFIER_STATUS.PENDING,
+      });
+
+      return SESSION_STATUS.VERIFIER_PENDING;
+    } catch {
+      updateMetadata(sessionsDir, session.id, {
+        verifierStatus: VERIFIER_STATUS.FAILED,
+        verifierFeedback:
+          "Unable to spawn verifier session automatically. Retry after checking runtime/agent plugin health.",
+        verifierFailedEvidenceToken: evidenceToken,
+      });
+      return SESSION_STATUS.VERIFIER_FAILED;
+    }
+  }
+
   /** Determine current status for a session by polling plugins. */
   async function determineStatus(session: Session): Promise<SessionStatus> {
     const project = config.projects[session.projectId];
@@ -488,21 +724,26 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
     }
 
-    // 2. Check agent activity via terminal output + process liveness
-    if (!session.pr && session.workspacePath) {
+    // 2. Parse worker evidence and gate PR readiness behind verifier pass.
+    if (!isVerifierSession(session) && !session.pr && session.workspacePath) {
       const evidence = parseWorkerEvidence({
         sessionId: session.id,
         workspacePath: session.workspacePath,
         metadata: session.metadata ?? {},
       });
-      if (
-        evidence.status === "complete" &&
-        (session.status === "spawning" ||
+
+      if (evidence.status === "complete") {
+        const verifierStatus = await resolveVerifierGateStatus(session, project, evidence);
+        if (verifierStatus) return verifierStatus;
+
+        if (
+          session.status === SESSION_STATUS.SPAWNING ||
           session.status === SESSION_STATUS.WORKING ||
           session.status === SESSION_STATUS.NEEDS_INPUT ||
-          session.status === SESSION_STATUS.STUCK)
-      ) {
-        return SESSION_STATUS.DONE;
+          session.status === SESSION_STATUS.STUCK
+        ) {
+          return SESSION_STATUS.DONE;
+        }
       }
     }
 
@@ -576,7 +817,14 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         if (reviewDecision === "approved") {
           // Check merge readiness
           const mergeReady = await scm.getMergeability(session.pr);
-          if (mergeReady.mergeable) return "mergeable";
+          if (mergeReady.mergeable) {
+            const verifierPassed =
+              !hasVerifierGate(project) ||
+              isVerifierSession(session) ||
+              session.metadata["verifierStatus"]?.trim().toLowerCase() === VERIFIER_STATUS.PASSED;
+            if (!verifierPassed) return SESSION_STATUS.APPROVED;
+            return "mergeable";
+          }
           return "approved";
         }
         if (reviewDecision === "pending") return "review_pending";

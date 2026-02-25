@@ -121,6 +121,9 @@ function validateSpawnPolicy(config: OrchestratorConfig, spawnConfig: SessionSpa
 const VALID_STATUSES: ReadonlySet<string> = new Set([
   "spawning",
   "working",
+  "verifier_pending",
+  "verifier_failed",
+  "pr_ready",
   "pr_open",
   "ci_failed",
   "review_pending",
@@ -243,8 +246,15 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   }
 
   /** Resolve which plugins to use for a project. */
-  function resolvePlugins(project: ProjectConfig, agentOverride?: string) {
-    const runtime = registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime);
+  function resolvePlugins(
+    project: ProjectConfig,
+    agentOverride?: string,
+    runtimeOverride?: string,
+  ) {
+    const runtime = registry.get<Runtime>(
+      "runtime",
+      runtimeOverride ?? project.runtime ?? config.defaults.runtime,
+    );
     const agent = registry.get<Agent>("agent", agentOverride ?? project.agent ?? config.defaults.agent);
     const workspace = registry.get<Workspace>(
       "workspace",
@@ -353,22 +363,15 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
     validateSpawnPolicy(config, spawnConfig);
 
-    const plugins = resolvePlugins(project);
+    const selectedRuntimeName = spawnConfig.runtime ?? project.runtime ?? config.defaults.runtime;
+    const selectedAgentName = spawnConfig.agent ?? project.agent ?? config.defaults.agent;
+    const plugins = resolvePlugins(project, spawnConfig.agent, spawnConfig.runtime);
     if (!plugins.runtime) {
-      throw new Error(`Runtime plugin '${project.runtime ?? config.defaults.runtime}' not found`);
-    }
-
-    // Allow --agent override to swap the agent plugin for this session
-    if (spawnConfig.agent) {
-      const overrideAgent = registry.get<Agent>("agent", spawnConfig.agent);
-      if (!overrideAgent) {
-        throw new Error(`Agent plugin '${spawnConfig.agent}' not found`);
-      }
-      plugins.agent = overrideAgent;
+      throw new Error(`Runtime plugin '${selectedRuntimeName}' not found`);
     }
 
     if (!plugins.agent) {
-      throw new Error(`Agent plugin '${project.agent ?? config.defaults.agent}' not found`);
+      throw new Error(`Agent plugin '${selectedAgentName}' not found`);
     }
 
     // Validate issue exists BEFORE creating any resources
