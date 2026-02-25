@@ -1033,6 +1033,39 @@ export interface SessionMetadata {
   dashboardPort?: number;
   terminalWsPort?: number;
   directTerminalWsPort?: number;
+  planId?: string;
+  planVersion?: number;
+  planStatus?: PlanStatus;
+  planPath?: string;
+}
+
+/** Plan lifecycle status for orchestrator planning artifacts. */
+export type PlanStatus = "draft" | "validated" | "superseded";
+
+/** Constants for plan lifecycle status values. */
+export const PLAN_STATUS = {
+  DRAFT: "draft" as const,
+  VALIDATED: "validated" as const,
+  SUPERSEDED: "superseded" as const,
+} satisfies Record<string, PlanStatus>;
+
+/** Persisted plan artifact (metadata + serialized plan blob). */
+export interface PlanArtifact<TBlob = unknown> {
+  planId: string;
+  planVersion: number;
+  planStatus: PlanStatus;
+  planPath: string; // Relative to the session metadata directory
+  createdAt: string;
+  updatedAt: string;
+  blob: TBlob;
+}
+
+/** Input for persisting a plan blob. */
+export interface PlanBlobWriteInput<TBlob = unknown> {
+  planId: string;
+  planVersion: number;
+  planStatus?: PlanStatus;
+  blob: TBlob;
 }
 
 // =============================================================================

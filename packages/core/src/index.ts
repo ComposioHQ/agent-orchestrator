@@ -25,6 +25,9 @@ export { createPluginRegistry } from "./plugin-registry.js";
 export {
   readMetadata,
   readMetadataRaw,
+  readPlanBlob,
+  writePlanBlob,
+  updatePlanStatus,
   writeMetadata,
   updateMetadata,
   deleteMetadata,
@@ -54,6 +57,17 @@ export type { LifecycleManagerDeps } from "./lifecycle-manager.js";
 // Prompt builder — layered prompt composition
 export { buildPrompt, BASE_AGENT_PROMPT } from "./prompt-builder.js";
 export type { PromptBuildConfig } from "./prompt-builder.js";
+
+// Scheduler — DAG ready-queue computation with concurrency limits
+export { createScheduler } from "./scheduler.js";
+export type {
+  TaskNodeState,
+  TaskNode,
+  TaskGraph,
+  SchedulerConfig,
+  SchedulerResult,
+  SchedulerService,
+} from "./scheduler.js";
 
 // Orchestrator prompt — generates orchestrator context for `ao start`
 export { generateOrchestratorPrompt } from "./orchestrator-prompt.js";

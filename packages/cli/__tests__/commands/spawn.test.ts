@@ -4,9 +4,10 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { type Session, type SessionManager, getProjectBaseDir } from "@composio/ao-core";
 
-const { mockExec, mockConfigRef, mockSessionManager } = vi.hoisted(() => ({
+const { mockExec, mockConfigRef, mockReadPlanBlob, mockSessionManager } = vi.hoisted(() => ({
   mockExec: vi.fn(),
   mockConfigRef: { current: null as Record<string, unknown> | null },
+  mockReadPlanBlob: vi.fn(),
   mockSessionManager: {
     list: vi.fn(),
     kill: vi.fn(),
@@ -44,6 +45,7 @@ vi.mock("@composio/ao-core", async (importOriginal) => {
   return {
     ...actual,
     loadConfig: () => mockConfigRef.current,
+    readPlanBlob: mockReadPlanBlob,
   };
 });
 
@@ -60,7 +62,7 @@ let tmpDir: string;
 let configPath: string;
 
 import { Command } from "commander";
-import { registerSpawn } from "../../src/commands/spawn.js";
+import { registerBatchSpawn, registerSpawn } from "../../src/commands/spawn.js";
 
 let program: Command;
 let consoleSpy: ReturnType<typeof vi.spyOn>;
@@ -98,6 +100,7 @@ beforeEach(() => {
   program = new Command();
   program.exitOverride();
   registerSpawn(program);
+  registerBatchSpawn(program);
   consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(process, "exit").mockImplementation((code) => {
@@ -105,7 +108,9 @@ beforeEach(() => {
   });
 
   mockSessionManager.spawn.mockReset();
+  mockSessionManager.list.mockReset();
   mockExec.mockReset();
+  mockReadPlanBlob.mockReset();
 });
 
 afterEach(() => {
@@ -302,5 +307,241 @@ describe("spawn command", () => {
     await expect(
       program.parseAsync(["node", "test", "spawn", "my-app"]),
     ).rejects.toThrow("process.exit(1)");
+  });
+
+  it("supports plan-task spawning via --plan-session", async () => {
+    mockReadPlanBlob.mockReturnValue({
+      planId: "workplan",
+      planVersion: 1,
+      planStatus: "validated",
+      planPath: "plans/orch/workplan.v1.json",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      blob: {
+        tasks: [{ id: "task-1", issueId: "INT-101", state: "ready" }],
+      },
+    });
+
+    const fakeSession: Session = {
+      id: "app-1",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: "feat/INT-101",
+      issueId: "INT-101",
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "hash-app-1", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "spawn",
+      "my-app",
+      "task-1",
+      "--plan-session",
+      "orch-1",
+    ]);
+
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith({
+      projectId: "my-app",
+      issueId: "INT-101",
+      agent: undefined,
+    });
+  });
+});
+
+describe("batch-spawn command", () => {
+  it("spawns only scheduler-ready plan tasks and reports blocked reasons", async () => {
+    mockSessionManager.list.mockResolvedValue([]);
+    mockReadPlanBlob.mockReturnValue({
+      planId: "workplan",
+      planVersion: 2,
+      planStatus: "validated",
+      planPath: "plans/orch/workplan.v2.json",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      blob: {
+        tasks: [
+          { id: "task-1", issueId: "INT-201", state: "ready" },
+          { id: "task-2", issueId: "INT-202", state: "pending", dependencies: ["task-1"] },
+        ],
+      },
+    });
+    mockSessionManager.spawn.mockResolvedValue({
+      id: "app-2",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: "feat/INT-201",
+      issueId: "INT-201",
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "hash-app-2", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    } satisfies Session);
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "batch-spawn",
+      "my-app",
+      "task-1",
+      "task-2",
+      "--plan-session",
+      "orch-1",
+    ]);
+
+    expect(mockSessionManager.spawn).toHaveBeenCalledTimes(1);
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith({
+      projectId: "my-app",
+      issueId: "INT-201",
+      agent: undefined,
+    });
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("Scheduling rationale:");
+    expect(output).toContain("Skip task-2 — blocked by incomplete dependencies: task-1");
+  });
+
+  it("unlocks dependent tasks once predecessor is complete", async () => {
+    mockSessionManager.list.mockResolvedValue([]);
+    mockSessionManager.spawn.mockResolvedValue({
+      id: "app-3",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: "feat/INT-302",
+      issueId: "INT-302",
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "hash-app-3", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    } satisfies Session);
+
+    mockReadPlanBlob.mockReturnValueOnce({
+      planId: "workplan",
+      planVersion: 1,
+      planStatus: "validated",
+      planPath: "plans/orch/workplan.v1.json",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      blob: {
+        tasks: [
+          { id: "task-1", issueId: "INT-301", state: "pending" },
+          { id: "task-2", issueId: "INT-302", state: "pending", dependencies: ["task-1"] },
+        ],
+      },
+    });
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "batch-spawn",
+      "my-app",
+      "task-2",
+      "--plan-session",
+      "orch-2",
+    ]);
+
+    expect(mockSessionManager.spawn).not.toHaveBeenCalled();
+
+    mockReadPlanBlob.mockReturnValueOnce({
+      planId: "workplan",
+      planVersion: 2,
+      planStatus: "validated",
+      planPath: "plans/orch/workplan.v2.json",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      blob: {
+        tasks: [
+          { id: "task-1", issueId: "INT-301", state: "complete" },
+          { id: "task-2", issueId: "INT-302", state: "pending", dependencies: ["task-1"] },
+        ],
+      },
+    });
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "batch-spawn",
+      "my-app",
+      "task-2",
+      "--plan-session",
+      "orch-2",
+    ]);
+
+    expect(mockSessionManager.spawn).toHaveBeenCalledTimes(1);
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith({
+      projectId: "my-app",
+      issueId: "INT-302",
+      agent: undefined,
+    });
+  });
+
+  it("retains duplicate detection for manual issue-based batch spawning", async () => {
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "existing-1",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        branch: "feat/INT-401",
+        issueId: "INT-401",
+        pr: null,
+        workspacePath: "/tmp/wt",
+        runtimeHandle: null,
+        agentInfo: null,
+        createdAt: new Date(),
+        lastActivityAt: new Date(),
+        metadata: {},
+      } satisfies Session,
+    ]);
+
+    mockSessionManager.spawn.mockResolvedValue({
+      id: "app-4",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: "feat/INT-402",
+      issueId: "INT-402",
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "hash-app-4", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    } satisfies Session);
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "batch-spawn",
+      "my-app",
+      "INT-401",
+      "INT-402",
+      "INT-402",
+    ]);
+
+    expect(mockSessionManager.spawn).toHaveBeenCalledTimes(1);
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith({
+      projectId: "my-app",
+      issueId: "INT-402",
+      agent: undefined,
+    });
   });
 });

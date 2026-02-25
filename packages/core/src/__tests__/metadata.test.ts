@@ -7,8 +7,11 @@ import {
   readMetadata,
   readMetadataRaw,
   readArchivedMetadataRaw,
+  readPlanBlob,
   writeMetadata,
+  writePlanBlob,
   updateMetadata,
+  updatePlanStatus,
   deleteMetadata,
   listMetadata,
 } from "../metadata.js";
@@ -191,6 +194,114 @@ describe("updateMetadata", () => {
     const meta = readMetadata(dataDir, "upd-4");
     expect(meta!.status).toBe("pr_open");
     expect(meta!.summary).toBeUndefined();
+  });
+});
+
+describe("plan blob persistence", () => {
+  it("writes and reads a plan blob and updates metadata fields", () => {
+    writeMetadata(dataDir, "plan-1", {
+      worktree: "/tmp/w",
+      branch: "main",
+      status: "working",
+    });
+
+    const written = writePlanBlob(dataDir, "plan-1", {
+      planId: "workplan",
+      planVersion: 1,
+      blob: {
+        tasks: [{ id: "t1", title: "Implement feature" }],
+      },
+    });
+
+    expect(written.planStatus).toBe("draft");
+    expect(existsSync(join(dataDir, written.planPath))).toBe(true);
+
+    const meta = readMetadata(dataDir, "plan-1");
+    expect(meta!.planId).toBe("workplan");
+    expect(meta!.planVersion).toBe(1);
+    expect(meta!.planStatus).toBe("draft");
+    expect(meta!.planPath).toBe(written.planPath);
+
+    const readBack = readPlanBlob<{ tasks: Array<{ id: string; title: string }> }>(
+      dataDir,
+      "plan-1",
+    );
+    expect(readBack).not.toBeNull();
+    expect(readBack!.blob.tasks).toHaveLength(1);
+    expect(readBack!.blob.tasks[0].id).toBe("t1");
+  });
+
+  it("transitions plan status and persists it to metadata + blob", () => {
+    writeMetadata(dataDir, "plan-2", {
+      worktree: "/tmp/w",
+      branch: "main",
+      status: "working",
+    });
+
+    const initial = writePlanBlob(dataDir, "plan-2", {
+      planId: "workplan",
+      planVersion: 1,
+      blob: { goal: "ship" },
+    });
+
+    const updated = updatePlanStatus(dataDir, "plan-2", "validated");
+    expect(updated).not.toBeNull();
+    expect(updated!.planStatus).toBe("validated");
+
+    const meta = readMetadata(dataDir, "plan-2");
+    expect(meta!.planStatus).toBe("validated");
+
+    const onDisk = JSON.parse(readFileSync(join(dataDir, initial.planPath), "utf-8")) as {
+      planStatus: string;
+    };
+    expect(onDisk.planStatus).toBe("validated");
+  });
+
+  it("supersedes prior plan artifact when writing a newer version", () => {
+    writeMetadata(dataDir, "plan-3", {
+      worktree: "/tmp/w",
+      branch: "main",
+      status: "working",
+    });
+
+    const v1 = writePlanBlob(dataDir, "plan-3", {
+      planId: "workplan",
+      planVersion: 1,
+      planStatus: "validated",
+      blob: { iteration: 1 },
+    });
+
+    const v2 = writePlanBlob(dataDir, "plan-3", {
+      planId: "workplan",
+      planVersion: 2,
+      blob: { iteration: 2 },
+    });
+
+    const v1Disk = JSON.parse(readFileSync(join(dataDir, v1.planPath), "utf-8")) as {
+      planStatus: string;
+    };
+    expect(v1Disk.planStatus).toBe("superseded");
+
+    const meta = readMetadata(dataDir, "plan-3");
+    expect(meta!.planVersion).toBe(2);
+    expect(meta!.planStatus).toBe("draft");
+    expect(meta!.planPath).toBe(v2.planPath);
+  });
+
+  it("remains backward compatible with legacy metadata files", () => {
+    writeFileSync(
+      join(dataDir, "legacy-1"),
+      "worktree=/tmp/w\nbranch=main\nstatus=working\n",
+      "utf-8",
+    );
+
+    const meta = readMetadata(dataDir, "legacy-1");
+    expect(meta).not.toBeNull();
+    expect(meta!.planId).toBeUndefined();
+    expect(meta!.planVersion).toBeUndefined();
+    expect(meta!.planStatus).toBeUndefined();
+    expect(meta!.planPath).toBeUndefined();
+    expect(readPlanBlob(dataDir, "legacy-1")).toBeNull();
   });
 });
 

@@ -31,8 +31,14 @@ import {
   closeSync,
   constants,
 } from "node:fs";
-import { join, dirname } from "node:path";
-import type { SessionId, SessionMetadata } from "./types.js";
+import { join, dirname, resolve, isAbsolute, sep } from "node:path";
+import type {
+  SessionId,
+  SessionMetadata,
+  PlanArtifact,
+  PlanBlobWriteInput,
+  PlanStatus,
+} from "./types.js";
 
 /**
  * Parse a key=value metadata file into a record.
@@ -65,6 +71,13 @@ function serializeMetadata(data: Record<string, string>): string {
 
 /** Validate sessionId to prevent path traversal. */
 const VALID_SESSION_ID = /^[a-zA-Z0-9_-]+$/;
+const VALID_PLAN_ID = /^[a-zA-Z0-9._-]+$/;
+const VALID_PLAN_STATUSES: ReadonlySet<PlanStatus> = new Set([
+  "draft",
+  "validated",
+  "superseded",
+]);
+const PLAN_DIR = "plans";
 
 function validateSessionId(sessionId: SessionId): void {
   if (!VALID_SESSION_ID.test(sessionId)) {
@@ -78,6 +91,117 @@ function metadataPath(dataDir: string, sessionId: SessionId): string {
   return join(dataDir, sessionId);
 }
 
+/** Parse a positive integer from metadata, returning undefined on invalid values. */
+function parsePositiveInt(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed <= 0) return undefined;
+  return parsed;
+}
+
+/** Normalize plan status from metadata. Unknown values are ignored for compatibility. */
+function parsePlanStatus(raw: string | undefined): PlanStatus | undefined {
+  if (!raw) return undefined;
+  if (VALID_PLAN_STATUSES.has(raw as PlanStatus)) return raw as PlanStatus;
+  return undefined;
+}
+
+/** Validate plan identifiers used for metadata + file naming. */
+function validatePlanId(planId: string): void {
+  if (!planId || !VALID_PLAN_ID.test(planId)) {
+    throw new Error(`Invalid plan ID: ${planId}`);
+  }
+}
+
+/** Validate plan version values. */
+function validatePlanVersion(planVersion: number): void {
+  if (!Number.isInteger(planVersion) || planVersion <= 0) {
+    throw new Error(`Invalid plan version: ${planVersion}`);
+  }
+}
+
+/** Validate plan status values. */
+function validatePlanStatus(planStatus: PlanStatus): void {
+  if (!VALID_PLAN_STATUSES.has(planStatus)) {
+    throw new Error(`Invalid plan status: ${planStatus}`);
+  }
+}
+
+/** Build canonical relative plan path for a given session plan artifact. */
+function buildPlanPath(sessionId: SessionId, planId: string, planVersion: number): string {
+  validateSessionId(sessionId);
+  validatePlanId(planId);
+  validatePlanVersion(planVersion);
+  return join(PLAN_DIR, sessionId, `${planId}.v${planVersion}.json`);
+}
+
+/** Resolve a plan path and ensure it stays inside the session metadata directory. */
+function resolvePlanPath(dataDir: string, planPath: string): string {
+  const baseDir = resolve(dataDir);
+  const resolvedPath = isAbsolute(planPath) ? resolve(planPath) : resolve(baseDir, planPath);
+  if (resolvedPath !== baseDir && !resolvedPath.startsWith(`${baseDir}${sep}`)) {
+    throw new Error(`Invalid plan path outside metadata directory: ${planPath}`);
+  }
+  return resolvedPath;
+}
+
+/** Parse an on-disk plan artifact. */
+function readPlanArtifactFromPath<TBlob>(
+  dataDir: string,
+  planPath: string,
+  fallback: {
+    planId: string;
+    planVersion: number;
+    planStatus: PlanStatus;
+  },
+): PlanArtifact<TBlob> | null {
+  let absolutePath: string;
+  try {
+    absolutePath = resolvePlanPath(dataDir, planPath);
+  } catch {
+    return null;
+  }
+  if (!existsSync(absolutePath)) return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(absolutePath, "utf-8"));
+  } catch {
+    return null;
+  }
+
+  const nowIso = new Date().toISOString();
+  const candidate = parsed as Partial<PlanArtifact<TBlob>>;
+  const hasWrappedBlob =
+    typeof candidate === "object" &&
+    candidate !== null &&
+    Object.prototype.hasOwnProperty.call(candidate, "blob");
+
+  return {
+    planId: typeof candidate.planId === "string" ? candidate.planId : fallback.planId,
+    planVersion:
+      typeof candidate.planVersion === "number" && Number.isInteger(candidate.planVersion)
+        ? candidate.planVersion
+        : fallback.planVersion,
+    planStatus:
+      typeof candidate.planStatus === "string" &&
+      VALID_PLAN_STATUSES.has(candidate.planStatus as PlanStatus)
+        ? (candidate.planStatus as PlanStatus)
+        : fallback.planStatus,
+    planPath,
+    createdAt: typeof candidate.createdAt === "string" ? candidate.createdAt : nowIso,
+    updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : nowIso,
+    blob: hasWrappedBlob ? (candidate.blob as TBlob) : (parsed as TBlob),
+  };
+}
+
+/** Persist a plan artifact JSON document to disk. */
+function writePlanArtifact<TBlob>(dataDir: string, artifact: PlanArtifact<TBlob>): void {
+  const absolutePath = resolvePlanPath(dataDir, artifact.planPath);
+  mkdirSync(dirname(absolutePath), { recursive: true });
+  writeFileSync(absolutePath, `${JSON.stringify(artifact, null, 2)}\n`, "utf-8");
+}
+
 /**
  * Read metadata for a session. Returns null if the file doesn't exist.
  */
@@ -87,6 +211,8 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
 
   const content = readFileSync(path, "utf-8");
   const raw = parseMetadataFile(content);
+  const planVersion = parsePositiveInt(raw["planVersion"]);
+  const planStatus = parsePlanStatus(raw["planStatus"]);
 
   return {
     worktree: raw["worktree"] ?? "",
@@ -103,6 +229,10 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
     dashboardPort: raw["dashboardPort"] ? Number(raw["dashboardPort"]) : undefined,
     terminalWsPort: raw["terminalWsPort"] ? Number(raw["terminalWsPort"]) : undefined,
     directTerminalWsPort: raw["directTerminalWsPort"] ? Number(raw["directTerminalWsPort"]) : undefined,
+    planId: raw["planId"],
+    planVersion,
+    planStatus,
+    planPath: raw["planPath"],
   };
 }
 
@@ -149,8 +279,127 @@ export function writeMetadata(
     data["terminalWsPort"] = String(metadata.terminalWsPort);
   if (metadata.directTerminalWsPort !== undefined)
     data["directTerminalWsPort"] = String(metadata.directTerminalWsPort);
+  if (metadata.planId) data["planId"] = metadata.planId;
+  if (metadata.planVersion !== undefined) data["planVersion"] = String(metadata.planVersion);
+  if (metadata.planStatus) data["planStatus"] = metadata.planStatus;
+  if (metadata.planPath) data["planPath"] = metadata.planPath;
 
   writeFileSync(path, serializeMetadata(data), "utf-8");
+}
+
+/**
+ * Write a versioned plan blob for a session and persist lifecycle metadata.
+ * If a different plan artifact was previously active, it is marked as superseded.
+ */
+export function writePlanBlob<TBlob>(
+  dataDir: string,
+  sessionId: SessionId,
+  plan: PlanBlobWriteInput<TBlob>,
+): PlanArtifact<TBlob> {
+  validateSessionId(sessionId);
+  validatePlanId(plan.planId);
+  validatePlanVersion(plan.planVersion);
+
+  const planStatus = plan.planStatus ?? "draft";
+  validatePlanStatus(planStatus);
+
+  const nextPlanPath = buildPlanPath(sessionId, plan.planId, plan.planVersion);
+  const nowIso = new Date().toISOString();
+
+  const existingMeta = readMetadata(dataDir, sessionId);
+  const existingPlanPath = existingMeta?.planPath;
+  const existingPlanId = existingMeta?.planId;
+  const existingPlanVersion = existingMeta?.planVersion;
+  const existingPlanStatus = existingMeta?.planStatus;
+
+  if (
+    existingPlanPath &&
+    existingPlanStatus !== "superseded" &&
+    (existingPlanPath !== nextPlanPath ||
+      existingPlanId !== plan.planId ||
+      existingPlanVersion !== plan.planVersion)
+  ) {
+    const oldPlan = readPlanArtifactFromPath<unknown>(dataDir, existingPlanPath, {
+      planId: existingPlanId ?? "legacy-plan",
+      planVersion: existingPlanVersion ?? 1,
+      planStatus: existingPlanStatus ?? "draft",
+    });
+    if (oldPlan) {
+      const superseded: PlanArtifact<unknown> = {
+        ...oldPlan,
+        planStatus: "superseded",
+        updatedAt: nowIso,
+      };
+      writePlanArtifact(dataDir, superseded);
+    }
+  }
+
+  const existingCurrent = readPlanArtifactFromPath<TBlob>(dataDir, nextPlanPath, {
+    planId: plan.planId,
+    planVersion: plan.planVersion,
+    planStatus,
+  });
+
+  const artifact: PlanArtifact<TBlob> = {
+    planId: plan.planId,
+    planVersion: plan.planVersion,
+    planStatus,
+    planPath: nextPlanPath,
+    createdAt: existingCurrent?.createdAt ?? nowIso,
+    updatedAt: nowIso,
+    blob: plan.blob,
+  };
+
+  writePlanArtifact(dataDir, artifact);
+  updateMetadata(dataDir, sessionId, {
+    planId: artifact.planId,
+    planVersion: String(artifact.planVersion),
+    planStatus: artifact.planStatus,
+    planPath: artifact.planPath,
+  });
+
+  return artifact;
+}
+
+/**
+ * Read the current persisted plan blob for a session.
+ * Returns null when the session has no plan metadata or no readable blob.
+ */
+export function readPlanBlob<TBlob>(dataDir: string, sessionId: SessionId): PlanArtifact<TBlob> | null {
+  const meta = readMetadata(dataDir, sessionId);
+  if (!meta?.planId || !meta.planVersion) return null;
+
+  const planStatus = meta.planStatus ?? "draft";
+  const planPath = meta.planPath ?? buildPlanPath(sessionId, meta.planId, meta.planVersion);
+  return readPlanArtifactFromPath<TBlob>(dataDir, planPath, {
+    planId: meta.planId,
+    planVersion: meta.planVersion,
+    planStatus,
+  });
+}
+
+/**
+ * Transition the current plan lifecycle status in metadata and its blob.
+ * Returns null when no current plan exists for the session.
+ */
+export function updatePlanStatus(
+  dataDir: string,
+  sessionId: SessionId,
+  planStatus: PlanStatus,
+): PlanArtifact<unknown> | null {
+  validatePlanStatus(planStatus);
+
+  const current = readPlanBlob<unknown>(dataDir, sessionId);
+  if (!current) return null;
+
+  const updated: PlanArtifact<unknown> = {
+    ...current,
+    planStatus,
+    updatedAt: new Date().toISOString(),
+  };
+  writePlanArtifact(dataDir, updated);
+  updateMetadata(dataDir, sessionId, { planStatus });
+  return updated;
 }
 
 /**
