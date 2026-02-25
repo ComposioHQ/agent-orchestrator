@@ -22,9 +22,16 @@ import { generateSessionPrefix } from "./paths.js";
 // ZOD SCHEMAS
 // =============================================================================
 
+const ReactionFilterSchema = z.object({
+  labels: z.array(z.string()).optional(),
+  authors: z.array(z.string()).optional(),
+});
+
 const ReactionConfigSchema = z.object({
   auto: z.boolean().default(true),
-  action: z.enum(["send-to-agent", "notify", "auto-merge", "spawn-reviewer"]).default("notify"),
+  action: z
+    .enum(["send-to-agent", "notify", "auto-merge", "spawn-reviewer", "spawn-agent"])
+    .default("notify"),
   message: z.string().optional(),
   priority: z.enum(["urgent", "action", "warning", "info"]).optional(),
   retries: z.number().optional(),
@@ -32,6 +39,7 @@ const ReactionConfigSchema = z.object({
   threshold: z.string().optional(),
   includeSummary: z.boolean().optional(),
   script: z.string().optional(),
+  filter: ReactionFilterSchema.optional(),
 });
 
 const TrackerConfigSchema = z
@@ -264,6 +272,13 @@ function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
       auto: true,
       action: "notify",
       priority: "urgent",
+    },
+    "issue-commented": {
+      auto: true,
+      action: "send-to-agent",
+      message:
+        "There is a new comment on the linked issue. Review the comment context above and address the feedback. Push your changes when done.",
+      escalateAfter: "30m",
     },
     "all-complete": {
       auto: true,

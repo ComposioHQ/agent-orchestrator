@@ -10,6 +10,7 @@ import type {
   PluginModule,
   Tracker,
   Issue,
+  IssueComment,
   IssueFilters,
   IssueUpdate,
   CreateIssueInput,
@@ -249,6 +250,49 @@ function createGitHubTracker(): Tracker {
           update.comment,
         ]);
       }
+    },
+
+    async getIssueComments(
+      identifier: string,
+      project: ProjectConfig,
+      since?: Date,
+    ): Promise<IssueComment[]> {
+      const num = identifier.replace(/^#/, "");
+      const [owner, repo] = project.repo.split("/");
+
+      // Use gh api to fetch issue comments, optionally filtered by since
+      const endpoint = `repos/${owner}/${repo}/issues/${num}/comments`;
+      const args = ["api", endpoint, "--paginate"];
+
+      if (since) {
+        args.push("-f", `since=${since.toISOString()}`);
+      }
+
+      const raw = await gh(args);
+
+      let comments: Array<{
+        id: number;
+        user: { login: string };
+        body: string;
+        created_at: string;
+        html_url: string;
+      }>;
+
+      try {
+        comments = JSON.parse(raw);
+      } catch {
+        return [];
+      }
+
+      if (!Array.isArray(comments)) return [];
+
+      return comments.map((c) => ({
+        id: String(c.id),
+        author: c.user.login,
+        body: c.body,
+        createdAt: new Date(c.created_at),
+        url: c.html_url,
+      }));
     },
 
     async createIssue(input: CreateIssueInput, project: ProjectConfig): Promise<Issue> {
