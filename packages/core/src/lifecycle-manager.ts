@@ -175,6 +175,18 @@ interface ReactionTracker {
 export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleManager {
   const { config, registry, sessionManager } = deps;
 
+  /** Fallback messages when reaction config omits `message`. */
+  const defaultMessages: Record<string, string> = {
+    "ci-failed":
+      "CI is failing on your PR. Run the failing checks locally, fix the issues, and push.",
+    "changes-requested":
+      "Review comments were left on your PR. Run `gh pr view --comments` to read them, address the feedback, and push fixes.",
+    "merge-conflicts":
+      "Your PR has merge conflicts. Rebase onto the default branch, resolve conflicts, and push.",
+    "bugbot-comments":
+      "Automated review comments were posted on your PR. Run `gh pr view --comments` to read them and address the issues.",
+  };
+
   const states = new Map<SessionId, SessionStatus>();
   const reactionTrackers = new Map<string, ReactionTracker>(); // "sessionId:reactionKey"
   let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -351,15 +363,16 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     switch (action) {
       case "send-to-agent": {
-        if (reactionConfig.message) {
+        const message = reactionConfig.message ?? defaultMessages[reactionKey];
+        if (message) {
           try {
-            await sessionManager.send(sessionId, reactionConfig.message);
+            await sessionManager.send(sessionId, message);
 
             return {
               reactionType: reactionKey,
               success: true,
               action: "send-to-agent",
-              message: reactionConfig.message,
+              message,
               escalated: false,
             };
           } catch {

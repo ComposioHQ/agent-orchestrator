@@ -24,6 +24,17 @@ notificationRouting:
   info: [telegram]
 
 reactions:
+  ci-failed:
+    auto: true
+    action: send-to-agent
+    message: "CI is failing on your PR. Run the failing checks locally, fix the issues, and push."
+    retries: 2
+    escalateAfter: 2
+  changes-requested:
+    auto: true
+    action: send-to-agent
+    message: "Review comments were left on your PR. Run `gh pr view --comments` to read them, address the feedback, and push fixes."
+    escalateAfter: 30m
   auto-review:
     auto: true
     action: spawn-reviewer
@@ -53,11 +64,13 @@ projects:
       ci-failed:
         auto: true
         action: send-to-agent
+        message: "CI is failing on your PR. Run the failing checks locally, fix the issues, and push."
         retries: 2
         escalateAfter: 2
       changes-requested:
         auto: true
         action: send-to-agent
+        message: "Review comments were left on your PR. Run `gh pr view --comments` to read them, address the feedback, and push fixes."
         escalateAfter: 30m
       approved-and-green:
         auto: false
@@ -89,11 +102,13 @@ projects:
       ci-failed:
         auto: true
         action: send-to-agent
+        message: "CI is failing on your PR. Run the failing checks locally, fix the issues, and push."
         retries: 2
         escalateAfter: 2
       changes-requested:
         auto: true
         action: send-to-agent
+        message: "Review comments were left on your PR. Run `gh pr view --comments` to read them, address the feedback, and push fixes."
         escalateAfter: 30m
       approved-and-green:
         auto: false
@@ -125,11 +140,13 @@ projects:
       ci-failed:
         auto: true
         action: send-to-agent
+        message: "CI is failing on your PR. Run the failing checks locally, fix the issues, and push."
         retries: 2
         escalateAfter: 2
       changes-requested:
         auto: true
         action: send-to-agent
+        message: "Review comments were left on your PR. Run `gh pr view --comments` to read them, address the feedback, and push fixes."
         escalateAfter: 30m
       approved-and-green:
         auto: false
@@ -161,11 +178,13 @@ projects:
       ci-failed:
         auto: true
         action: send-to-agent
+        message: "CI is failing on your PR. Run the failing checks locally, fix the issues, and push."
         retries: 2
         escalateAfter: 2
       changes-requested:
         auto: true
         action: send-to-agent
+        message: "Review comments were left on your PR. Run `gh pr view --comments` to read them, address the feedback, and push fixes."
         escalateAfter: 30m
       approved-and-green:
         auto: false
@@ -197,11 +216,13 @@ projects:
       ci-failed:
         auto: true
         action: send-to-agent
+        message: "CI is failing on your PR. Run the failing checks locally, fix the issues, and push."
         retries: 2
         escalateAfter: 2
       changes-requested:
         auto: true
         action: send-to-agent
+        message: "Review comments were left on your PR. Run `gh pr view --comments` to read them, address the feedback, and push fixes."
         escalateAfter: 30m
       approved-and-green:
         auto: false
@@ -233,11 +254,13 @@ projects:
       ci-failed:
         auto: true
         action: send-to-agent
+        message: "CI is failing on your PR. Run the failing checks locally, fix the issues, and push."
         retries: 2
         escalateAfter: 2
       changes-requested:
         auto: true
         action: send-to-agent
+        message: "Review comments were left on your PR. Run `gh pr view --comments` to read them, address the feedback, and push fixes."
         escalateAfter: 30m
       approved-and-green:
         auto: false
