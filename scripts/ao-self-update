@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+#
+# ao-self-update — detached updater script
+#
+# Spawned by `ao self-update`. Runs independently of the Node process so it
+# survives ao stop. Expects env vars:
+#   AO_REPO_DIR  — path to the agent-orchestrator repo
+#   AO_PORT      — dashboard port (for fallback kill)
+#   AO_PROJECT   — project id to restart (may be empty)
+#   AO_RESTART   — "true" to restart after build
+#
+
+set -euo pipefail
+
+LOG_DIR="$HOME/.agent-orchestrator"
+LOG_FILE="$LOG_DIR/self-update.log"
+mkdir -p "$LOG_DIR"
+
+exec &> >(tee -a "$LOG_FILE")
+
+echo ""
+echo "========================================"
+echo "ao self-update — $(date)"
+echo "========================================"
+echo "REPO_DIR:  $AO_REPO_DIR"
+echo "PORT:      $AO_PORT"
+echo "PROJECT:   $AO_PROJECT"
+echo "RESTART:   $AO_RESTART"
+echo ""
+
+cd "$AO_REPO_DIR"
+
+# ── Stop ao ────────────────────────────────────────────────────────
+echo ">> Stopping ao..."
+if [ -n "$AO_PROJECT" ]; then
+  ./packages/cli/dist/index.js stop "$AO_PROJECT" 2>&1 || true
+else
+  ./packages/cli/dist/index.js stop 2>&1 || true
+fi
+
+# Fallback: kill anything still on the port
+echo ">> Killing any remaining processes on port $AO_PORT..."
+lsof -ti ":$AO_PORT" | xargs kill 2>/dev/null || true
+sleep 1
+
+# ── Pull ───────────────────────────────────────────────────────────
+echo ">> Pulling latest from origin/main..."
+git pull origin main
+
+# ── Install + Build ────────────────────────────────────────────────
+echo ">> Installing dependencies..."
+pnpm install
+
+echo ">> Building..."
+pnpm build
+
+# ── Restart ────────────────────────────────────────────────────────
+if [ "$AO_RESTART" = "true" ]; then
+  echo ">> Restarting ao..."
+  if [ -n "$AO_PROJECT" ]; then
+    ./packages/cli/dist/index.js start "$AO_PROJECT" &
+  else
+    ./packages/cli/dist/index.js start &
+  fi
+  echo ">> Restart initiated."
+else
+  echo ">> Skipping restart (--no-restart)."
+fi
+
+echo ""
+echo "========================================"
+echo "ao self-update complete — $(date)"
+echo "========================================"
