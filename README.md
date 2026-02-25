@@ -17,6 +17,28 @@ This fork runs on the OpenClaw instance with Claude Max, managing all projects v
 - Telegram Bridge (`~/.openclaw/telegram-bridge/bridge.mjs`) via Webhook-Notifier
 - Issue Scanner (`~/.openclaw/workspace/.clawdbot/scan-github-issues.sh`) scannt alle 15 min via Cron
 
+### Fork Changes
+
+<!-- FORK_CHANGES_START -->
+
+> **10 commits** since fork (2026-02-24 — 2026-02-25) · 6 features · 2 fixes
+
+**2026-02-25**
+- fix: add default messages for send-to-agent reactions (`ee4e742`)
+- config: add github tracker to all projects (`566c858`)
+- feat: add systemd user-units for reliable service management (`077c5f2`)
+- feat: auto-spawn agents for open issues on `ao start` (`168595d`)
+- feat: add agent-orchestrator as a managed project (`5140107`)
+- feat: add `ao self-update` for controlled self-deployment (`071637d`)
+- feat: add automatic PR code review on review_pending state (`4eb50ec`)
+- fix: pass notifier config to plugins via extractPluginConfig (`70b82b7`)
+
+**2026-02-24**
+- docs: add OpenClaw instance overview to README (`669b0ae`)
+- feat: bind dashboard and dev server to 0.0.0.0 for LAN access (`8282ee2`)
+
+<!-- FORK_CHANGES_END -->
+
 ---
 
 <div align="center">
