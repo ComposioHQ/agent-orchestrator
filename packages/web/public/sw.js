@@ -54,11 +54,8 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Static assets (JS, CSS, images, fonts) — cache-first
-  if (
-    url.pathname.startsWith("/_next/static/") ||
-    url.pathname.match(/\.(js|css|woff2?|svg|png|ico)$/)
-  ) {
+  // Content-hashed static assets — cache-first (safe because hash changes on update)
+  if (url.pathname.startsWith("/_next/static/")) {
     event.respondWith(
       caches.match(request).then(
         (cached) =>
