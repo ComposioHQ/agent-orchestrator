@@ -31,3 +31,4 @@ Closes: #216
 
 ## Validation
 - `pnpm --filter @composio/ao-core test -- plugin-registry`
+- Additional plugin/package tests were added, but full workspace execution is currently blocked in this environment because `pnpm install` cannot reach `registry.npmjs.org` (DNS/network restriction).
