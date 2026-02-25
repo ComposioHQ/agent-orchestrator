@@ -40,18 +40,15 @@ self.addEventListener("fetch", (event) => {
   // Skip SSE/WebSocket endpoints
   if (url.pathname.startsWith("/api/events")) return;
 
-  // API routes — network-first (fresh data)
+  // API routes — network-only (API responses are not cached)
   if (url.pathname.startsWith("/api/")) {
     event.respondWith(
-      fetch(request).catch(() =>
-        caches.match(request).then(
-          (cached) =>
-            cached ||
-            new Response("{}", {
-              status: 503,
-              headers: { "Content-Type": "application/json" },
-            }),
-        ),
+      fetch(request).catch(
+        () =>
+          new Response("{}", {
+            status: 503,
+            headers: { "Content-Type": "application/json" },
+          }),
       ),
     );
     return;

@@ -77,11 +77,6 @@ body {
   min-height: 100vh;
   min-height: 100dvh;
   letter-spacing: -0.011em;
-  /* Safe area insets for PWA standalone mode (notch/home indicator) */
-  padding-top: env(safe-area-inset-top);
-  padding-bottom: env(safe-area-inset-bottom);
-  padding-left: env(safe-area-inset-left);
-  padding-right: env(safe-area-inset-right);
 }
 
 /* Touch optimization for mobile */
