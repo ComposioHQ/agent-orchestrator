@@ -35,6 +35,7 @@ import {
 } from "./types.js";
 import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
+import { buildReactionMessage } from "./reaction-message.js";
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
@@ -294,6 +295,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     projectId: string,
     reactionKey: string,
     reactionConfig: ReactionConfig,
+    session?: Session,
   ): Promise<ReactionResult> {
     const trackerKey = `${sessionId}:${reactionKey}`;
     let tracker = reactionTrackers.get(trackerKey);
@@ -350,13 +352,28 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       case "send-to-agent": {
         if (reactionConfig.message) {
           try {
-            await sessionManager.send(sessionId, reactionConfig.message);
+            const project = config.projects[projectId];
+            const scm = project?.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+            const runtime = project
+              ? registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime)
+              : null;
+            const message = session
+              ? await buildReactionMessage({
+                  reactionKey,
+                  fallbackMessage: reactionConfig.message,
+                  session,
+                  scm,
+                  runtime,
+                })
+              : reactionConfig.message;
+
+            await sessionManager.send(sessionId, message);
 
             return {
               reactionType: reactionKey,
               success: true,
               action: "send-to-agent",
-              message: reactionConfig.message,
+              message,
               escalated: false,
             };
           } catch {
@@ -490,6 +507,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
                 session.projectId,
                 reactionKey,
                 reactionConfig as ReactionConfig,
+                session,
               );
               // Reaction is handling this event — suppress immediate human notification.
               // "send-to-agent" retries + escalates on its own; "notify"/"auto-merge"
