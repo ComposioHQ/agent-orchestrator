@@ -130,11 +130,11 @@ export function writeMetadata(
   mkdirSync(dirname(path), { recursive: true });
 
   const data: Record<string, string> = {
-    worktree: metadata.worktree,
     branch: metadata.branch,
     status: metadata.status,
   };
 
+  if (metadata.worktree) data["worktree"] = metadata.worktree;
   if (metadata.tmuxName) data["tmuxName"] = metadata.tmuxName;
   if (metadata.issue) data["issue"] = metadata.issue;
   if (metadata.pr) data["pr"] = metadata.pr;
@@ -143,6 +143,7 @@ export function writeMetadata(
   if (metadata.agent) data["agent"] = metadata.agent;
   if (metadata.createdAt) data["createdAt"] = metadata.createdAt;
   if (metadata.runtimeHandle) data["runtimeHandle"] = metadata.runtimeHandle;
+  if (metadata.adopted) data["adopted"] = metadata.adopted;
   if (metadata.dashboardPort !== undefined)
     data["dashboardPort"] = String(metadata.dashboardPort);
   if (metadata.terminalWsPort !== undefined)

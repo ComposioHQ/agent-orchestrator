@@ -32,13 +32,12 @@ import {
   type Notifier,
   type Session,
   type EventPriority,
-  type ProjectConfig as _ProjectConfig,
   type Review,
   type ReviewDecision,
   type PRInfo,
   type ReviewComment,
 } from "./types.js";
-import { updateMetadata } from "./metadata.js";
+import { updateMetadata, writeMetadata, listMetadata, reserveSessionId } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
@@ -493,6 +492,27 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         }
 
         if (message) {
+          // Check if this is an adopted session (no runtime) — fall back to notify
+          const session = await sessionManager.get(sessionId);
+          const isAdopted = session?.metadata["adopted"] === "true";
+
+          if (isAdopted) {
+            const event = createEvent("reaction.triggered", {
+              sessionId,
+              projectId,
+              message: `[adopted PR] ${reactionKey}: ${message}`,
+              data: { reactionKey, adopted: true },
+            });
+            await notifyHuman(event, reactionConfig.priority ?? "warning");
+            return {
+              reactionType: reactionKey,
+              success: true,
+              action: "notify",
+              message: `(adopted PR, no agent) ${message}`,
+              escalated: false,
+            };
+          }
+
           try {
             await sessionManager.send(sessionId, message);
 
@@ -709,6 +729,80 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
   }
 
+  /** Track PR scan cycles to reduce frequency (every ~5 minutes at 30s intervals). */
+  let prScanCounter = 0;
+  const PR_SCAN_INTERVAL = 10; // Run PR scan every 10th poll cycle
+
+  /**
+   * Scan configured projects for open PRs not tracked by any session.
+   * Creates lightweight "adopted" session entries for PRs from allowedUsers.
+   */
+  async function scanForExternalPRs(): Promise<void> {
+    if (!config.allowedUsers || config.allowedUsers.length === 0) return;
+
+    const existingSessions = await sessionManager.list();
+
+    for (const [projectKey, project] of Object.entries(config.projects)) {
+      const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+      if (!scm?.listOpenPRs) continue;
+
+      let openPRs: Array<PRInfo & { author: string }>;
+      try {
+        openPRs = await scm.listOpenPRs(project);
+      } catch {
+        continue; // SCM call failed — skip this project
+      }
+
+      // Filter by allowedUsers (guarded by early return above)
+      const allowedUsers = config.allowedUsers ?? [];
+      const allowedPRs = openPRs.filter((pr) =>
+        allowedUsers.includes(pr.author),
+      );
+
+      for (const pr of allowedPRs) {
+        // Check if any existing session already tracks this PR
+        const alreadyTracked = existingSessions.some(
+          (s) => s.pr?.url === pr.url,
+        );
+        if (alreadyTracked) continue;
+
+        // Create adopted session
+        try {
+          const sessionsDir = getSessionsDir(config.configPath, project.path);
+          const prefix = project.sessionPrefix || projectKey;
+
+          // Find existing session IDs to determine next number
+          const existingIds = listMetadata(sessionsDir);
+          let max = 0;
+          const pattern = new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-(\\d+)$`);
+          for (const id of existingIds) {
+            const match = id.match(pattern);
+            if (match) {
+              const num = parseInt(match[1], 10);
+              if (num > max) max = num;
+            }
+          }
+          const sessionId = `${prefix}-${max + 1}`;
+
+          // Reserve the session ID atomically
+          reserveSessionId(sessionsDir, sessionId);
+
+          // Write metadata for adopted session
+          writeMetadata(sessionsDir, sessionId, {
+            project: projectKey,
+            branch: pr.branch,
+            status: "pr_open",
+            pr: pr.url,
+            adopted: "true",
+            createdAt: new Date().toISOString(),
+          });
+        } catch {
+          // Session creation failed — will retry next scan
+        }
+      }
+    }
+  }
+
   /** Run one polling cycle across all sessions. */
   async function pollAll(): Promise<void> {
     // Re-entrancy guard: skip if previous poll is still running
@@ -716,6 +810,17 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     polling = true;
 
     try {
+      // Periodically scan for external PRs to adopt
+      prScanCounter++;
+      if (prScanCounter >= PR_SCAN_INTERVAL) {
+        prScanCounter = 0;
+        try {
+          await scanForExternalPRs();
+        } catch {
+          // PR scan failed — non-fatal, will retry next cycle
+        }
+      }
+
       const sessions = await sessionManager.list();
 
       // Include sessions that are active OR whose status changed from what we last saw
