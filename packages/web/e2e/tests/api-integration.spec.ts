@@ -91,16 +91,16 @@ test.describe("API Integration via UI Actions", () => {
 
     // Click "Ask Agent to Fix" button
     const fixButton = page.getByRole("button", { name: /Ask Agent to Fix/i });
-    if (await fixButton.first().isVisible({ timeout: 3000 }).catch(() => false)) {
-      await fixButton.first().click();
-      await page.waitForTimeout(1000);
-      expect(messageSent).toBe(true);
-    }
+    await expect(fixButton.first()).toBeVisible();
+    await fixButton.first().click();
+    await page.waitForTimeout(1000);
+    expect(messageSent).toBe(true);
   });
 
   test("session detail page uses polling interval", async ({ page }) => {
-    // Verify the page creates a polling interval by checking the API is called
+    // Verify the page creates a polling interval by detecting repeated API calls
     const session = makeSession({ id: "api-poll", activity: "active" });
+    let fetchCount = 0;
 
     await page.route("**/api/sessions/api-poll", async (route) => {
       const url = new URL(route.request().url());
@@ -108,6 +108,7 @@ test.describe("API Integration via UI Actions", () => {
         route.request().method() === "GET" &&
         url.pathname === "/api/sessions/api-poll"
       ) {
+        fetchCount++;
         await route.fulfill({
           status: 200,
           headers: {
@@ -124,13 +125,10 @@ test.describe("API Integration via UI Actions", () => {
     await page.goto("/sessions/api-poll");
     await expect(page.getByRole("heading", { name: "api-poll" })).toBeVisible();
 
-    // Verify the page has a running interval by checking window state
-    const hasInterval = await page.evaluate(() => {
-      // The page should have setInterval running
-      // We verify by checking the fetch function was called
-      return typeof window.fetch === "function";
-    });
-    expect(hasInterval).toBe(true);
+    // Wait for at least one polling cycle (detail page polls every few seconds)
+    const initialCount = fetchCount;
+    await page.waitForTimeout(6000);
+    expect(fetchCount).toBeGreaterThan(initialCount);
   });
 
   test("kill action endpoint exists and returns JSON", async ({ page }) => {
