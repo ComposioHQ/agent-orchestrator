@@ -163,6 +163,13 @@ a:hover {
   top: env(safe-area-inset-top);
 }
 
+/* Safe-area top padding for pages without a sticky nav (e.g. Dashboard).
+   Adds notch clearance in PWA standalone mode on notched devices. */
+.safe-area-top {
+  padding-top: 0;
+  padding-top: env(safe-area-inset-top);
+}
+
 /* ── Detail page cards — subtle depth, no hover lift ─────────────────── */
 
 .detail-card {
