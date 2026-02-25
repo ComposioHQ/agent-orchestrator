@@ -38,6 +38,8 @@ projects:
     path: ~/ChargePilot-Launch
     defaultBranch: main
     sessionPrefix: cp
+    tracker:
+      plugin: github
     scm:
       plugin: github
     symlinks: [.claude]
@@ -72,6 +74,8 @@ projects:
     path: ~/ChargePilot-App
     defaultBranch: main
     sessionPrefix: cpa
+    tracker:
+      plugin: github
     scm:
       plugin: github
     symlinks: [.claude]
@@ -106,6 +110,8 @@ projects:
     path: ~/getchargepilot.app
     defaultBranch: main
     sessionPrefix: gcp
+    tracker:
+      plugin: github
     scm:
       plugin: github
     symlinks: [.claude]
@@ -140,6 +146,8 @@ projects:
     path: ~/mitbeziehung.de
     defaultBranch: main
     sessionPrefix: mb
+    tracker:
+      plugin: github
     scm:
       plugin: github
     symlinks: [.claude]
@@ -174,6 +182,8 @@ projects:
     path: ~/event-management-platform
     defaultBranch: main
     sessionPrefix: emp
+    tracker:
+      plugin: github
     scm:
       plugin: github
     symlinks: [.claude]
@@ -208,6 +218,8 @@ projects:
     path: ~/.openclaw/agent-orchestrator
     defaultBranch: main
     sessionPrefix: ao
+    tracker:
+      plugin: github
     scm:
       plugin: github
     symlinks: [.claude]
