@@ -59,6 +59,16 @@ export type { PromptBuildConfig } from "./prompt-builder.js";
 export { generateOrchestratorPrompt } from "./orchestrator-prompt.js";
 export type { OrchestratorPromptConfig } from "./orchestrator-prompt.js";
 
+// Work plan schema + validator
+export {
+  validateWorkPlan,
+  WorkPlanSchema,
+  TaskNodeSchema,
+  AcceptanceContractSchema,
+  WorkPlanValidationError,
+} from "./work-plan.js";
+export type { WorkPlanValidationIssue } from "./work-plan.js";
+
 // Shared utilities
 export { shellEscape, escapeAppleScript, validateUrl, readLastJsonlEntry } from "./utils.js";
 

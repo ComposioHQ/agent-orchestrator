@@ -910,6 +910,67 @@ export interface AgentSpecificConfig {
 }
 
 // =============================================================================
+// WORK PLAN SCHEMA
+// =============================================================================
+
+/** Task priority used by planning output. */
+export type TaskPriority = "critical" | "high" | "medium" | "low";
+
+/** A single acceptance check in the plan-level acceptance contract. */
+export interface AcceptanceCheck {
+  /** Stable ID used by tasks to reference this check. */
+  id: string;
+  /** What must be true for this check to pass. */
+  description: string;
+  /** How the check will be verified (test, manual check, metric, etc.). */
+  verification: string;
+  /** Whether this check is required for completion. */
+  required: boolean;
+}
+
+/** Plan-level acceptance contract shared by all tasks. */
+export interface AcceptanceContract {
+  /** Definition of done for the complete plan. */
+  definitionOfDone: string;
+  /** Concrete checks that validate the definition of done. */
+  checks: AcceptanceCheck[];
+}
+
+/** A single executable task node in a work plan. */
+export interface TaskNode {
+  /** Stable task ID, unique across the full plan tree. */
+  id: string;
+  /** Short task title. */
+  title: string;
+  /** Detailed task intent and scope. */
+  description: string;
+  /** Relative execution priority. */
+  priority: TaskPriority;
+  /** Task IDs that must complete before this task can start. */
+  dependencies: string[];
+  /** Known risks for this task. */
+  risks: string[];
+  /** Acceptance check IDs that this task contributes to. */
+  acceptanceChecks: string[];
+  /** Optional nested subtasks. */
+  subtasks?: TaskNode[];
+}
+
+/** Machine-validated planning payload produced by orchestrator planning. */
+export interface WorkPlan {
+  /** Schema version for forward compatibility. */
+  schemaVersion: "1.0";
+  /** High-level goal of the plan. */
+  goal: string;
+  /** Optional plan assumptions. */
+  assumptions?: string[];
+  /** Executable tasks. Must include at least one root task. */
+  tasks: TaskNode[];
+  /** Plan-level acceptance contract. */
+  acceptance: AcceptanceContract;
+}
+
+// =============================================================================
 // PLUGIN SYSTEM
 // =============================================================================
 
