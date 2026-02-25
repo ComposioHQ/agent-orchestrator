@@ -55,6 +55,39 @@ export async function spawnCodingAgent(
   }
 }
 
+export async function sendMergeInstruction(
+  issueIdentifier: string,
+  issueTitle: string,
+  config: WebhookConfig,
+): Promise<void> {
+  if (wasRecentlySpawned(issueIdentifier, "merge")) {
+    console.log(`[SKIP] ${issueIdentifier} (merge) — already sent within dedup window`);
+    return;
+  }
+
+  const message = [
+    "QA passed. Merge the PR now.",
+    "",
+    "1. Squash-merge the PR: gh pr merge --squash --delete-branch",
+    `2. Move Linear issue ${issueIdentifier} to "Done"`,
+    '3. Remove the "agent-working" label if still present',
+    '4. Post a comment on the Linear issue: "Merged. QA passed."',
+  ].join("\n");
+
+  console.log(`[MERGE] ${issueIdentifier}: "${issueTitle}"`);
+
+  const success = await runAoSpawn(
+    config.aoBin,
+    ["send", config.aoProjectId, issueIdentifier, message],
+    `Merge instruction for ${issueIdentifier}`,
+    config.dryRun,
+  );
+
+  if (success) {
+    markSpawned(issueIdentifier, "merge");
+  }
+}
+
 export async function spawnTestGenAgent(
   issueIdentifier: string,
   issueTitle: string,

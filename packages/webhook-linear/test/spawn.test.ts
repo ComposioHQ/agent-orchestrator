@@ -25,7 +25,7 @@ vi.mock("node:fs", () => ({
 // Import after mocks are set up
 import { execFile } from "node:child_process";
 import { writeFileSync, unlinkSync } from "node:fs";
-import { spawnCodingAgent, spawnTestGenAgent } from "../src/spawn.js";
+import { spawnCodingAgent, spawnTestGenAgent, sendMergeInstruction } from "../src/spawn.js";
 
 const execFileMock = vi.mocked(execFile);
 const writeFileSyncMock = vi.mocked(writeFileSync);
@@ -38,6 +38,7 @@ const testConfig: WebhookConfig = {
   aoBin: "/usr/local/bin/ao",
   dashboardTeamId: "test-team-id",
   triggerLabel: "agent-ready",
+  qaMergeLabel: "qa-passed",
   dryRun: false,
   testGenPrompt: "# Test Gen Instructions\nWrite tests.",
 };
@@ -256,5 +257,104 @@ describe("spawnTestGenAgent", () => {
     await spawnTestGenAgent("DASH-42", "Fix the bug", testConfig);
 
     expect(entries().has("DASH-42:test-gen")).toBe(false);
+  });
+});
+
+describe("sendMergeInstruction", () => {
+  beforeEach(() => {
+    reset();
+    vi.clearAllMocks();
+    // Restore default success behavior
+    execFileMock.mockImplementation(
+      (
+        _cmd: unknown,
+        _args: unknown,
+        _opts: unknown,
+        cb?: (err: Error | null, result: { stdout: string; stderr: string }) => void,
+      ) => {
+        if (typeof _opts === "function") {
+          (_opts as (err: Error | null, result: { stdout: string; stderr: string }) => void)(
+            null,
+            { stdout: "", stderr: "" },
+          );
+        } else if (cb) {
+          cb(null, { stdout: "", stderr: "" });
+        }
+        return undefined as never;
+      },
+    );
+  });
+
+  it("calls ao send with correct args", async () => {
+    await sendMergeInstruction("DASH-42", "Fix the bug", testConfig);
+
+    expect(execFileMock).toHaveBeenCalledWith(
+      "/usr/local/bin/ao",
+      ["send", "dashboard", "DASH-42", expect.stringContaining("QA passed. Merge the PR now.")],
+      { timeout: 30_000 },
+      expect.any(Function),
+    );
+  });
+
+  it("message contains merge instructions", async () => {
+    await sendMergeInstruction("DASH-42", "Fix the bug", testConfig);
+
+    const args = execFileMock.mock.calls[0]![1] as string[];
+    const message = args[3]!;
+    expect(message).toContain("gh pr merge --squash --delete-branch");
+    expect(message).toContain('Move Linear issue DASH-42 to "Done"');
+    expect(message).toContain('Remove the "agent-working" label');
+    expect(message).toContain("Merged. QA passed.");
+  });
+
+  it("skips if recently sent", async () => {
+    markSpawned("DASH-42", "merge");
+
+    await sendMergeInstruction("DASH-42", "Fix the bug", testConfig);
+
+    expect(execFileMock).not.toHaveBeenCalled();
+  });
+
+  it("in dry-run mode, logs but does not call execFile", async () => {
+    const dryConfig = { ...testConfig, dryRun: true };
+    const consoleSpy = vi.spyOn(console, "log");
+
+    await sendMergeInstruction("DASH-42", "Fix the bug", dryConfig);
+
+    expect(execFileMock).not.toHaveBeenCalled();
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("[DRY_RUN]"));
+    consoleSpy.mockRestore();
+  });
+
+  it("marks as sent after successful execution", async () => {
+    await sendMergeInstruction("DASH-42", "Fix the bug", testConfig);
+
+    expect(entries().has("DASH-42:merge")).toBe(true);
+  });
+
+  it("does NOT mark as sent on execFile failure", async () => {
+    execFileMock.mockImplementation(
+      (
+        _cmd: unknown,
+        _args: unknown,
+        _opts: unknown,
+        cb?: (err: Error | null, result: { stdout: string; stderr: string }) => void,
+      ) => {
+        const err = new Error("Command failed");
+        if (typeof _opts === "function") {
+          (_opts as (err: Error | null, result: { stdout: string; stderr: string }) => void)(err, {
+            stdout: "",
+            stderr: "",
+          });
+        } else if (cb) {
+          cb(err, { stdout: "", stderr: "" });
+        }
+        return undefined as never;
+      },
+    );
+
+    await sendMergeInstruction("DASH-42", "Fix the bug", testConfig);
+
+    expect(entries().has("DASH-42:merge")).toBe(false);
   });
 });

@@ -33,4 +33,4 @@ export interface LinearWebhookPayload {
   };
 }
 
-export type SpawnType = "code" | "test-gen";
+export type SpawnType = "code" | "test-gen" | "merge";

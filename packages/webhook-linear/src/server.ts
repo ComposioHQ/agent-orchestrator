@@ -2,7 +2,7 @@ import express from "express";
 import { loadConfig } from "./config.js";
 import { verifySignature } from "./verify.js";
 import { wasLabelAdded, wasMovedToCompleted } from "./events.js";
-import { spawnCodingAgent, spawnTestGenAgent } from "./spawn.js";
+import { spawnCodingAgent, sendMergeInstruction, spawnTestGenAgent } from "./spawn.js";
 import { cleanup, entries } from "./dedup.js";
 import type { LinearWebhookPayload } from "./types.js";
 
@@ -36,6 +36,7 @@ app.post("/webhook/linear", (req, res) => {
 
   const { identifier, title } = payload.data;
 
+  // Trigger 1: "agent-ready" label added → spawn coding agent
   if (wasLabelAdded(payload, config.triggerLabel)) {
     console.log(`[EVENT] ${identifier} — label "${config.triggerLabel}" added`);
     spawnCodingAgent(identifier, title, config).catch((err: unknown) =>
@@ -44,6 +45,16 @@ app.post("/webhook/linear", (req, res) => {
     return;
   }
 
+  // Trigger 2: "qa-passed" label added → send merge instruction to running agent
+  if (wasLabelAdded(payload, config.qaMergeLabel)) {
+    console.log(`[EVENT] ${identifier} — label "${config.qaMergeLabel}" added`);
+    sendMergeInstruction(identifier, title, config).catch((err: unknown) =>
+      console.error(`[ERROR] sendMergeInstruction(${identifier}):`, err),
+    );
+    return;
+  }
+
+  // Trigger 3: Issue moved to Done → spawn test-gen agent
   if (wasMovedToCompleted(payload)) {
     const stateName = payload.data.state?.name ?? "Done";
     const prevName = payload.updatedFrom?.state?.name ?? "unknown";
@@ -60,6 +71,7 @@ app.get("/health", (_req, res) => {
     project: config.aoProjectId,
     teamId: config.dashboardTeamId,
     triggerLabel: config.triggerLabel,
+    qaMergeLabel: config.qaMergeLabel,
     dryRun: config.dryRun,
     recentSpawns: Object.fromEntries(entries()),
   });
@@ -72,6 +84,7 @@ const server = app.listen(config.port, () => {
   console.log(`  Project:       ${config.aoProjectId}`);
   console.log(`  Team:          ${config.dashboardTeamId}`);
   console.log(`  Trigger label: ${config.triggerLabel}`);
+  console.log(`  QA merge:      ${config.qaMergeLabel}`);
   console.log(`  Dry run:       ${config.dryRun}`);
 });
 

@@ -11,6 +11,7 @@ export interface WebhookConfig {
   aoBin: string;
   dashboardTeamId: string;
   triggerLabel: string;
+  qaMergeLabel: string;
   dryRun: boolean;
   testGenPrompt: string;
 }
@@ -23,6 +24,7 @@ export function loadConfig(): WebhookConfig {
   const dashboardTeamId =
     process.env["DASHBOARD_TEAM_ID"] ?? "f65d8805-05b4-41d2-a90b-dffe27e24d0b";
   const triggerLabel = process.env["TRIGGER_LABEL"] ?? "agent-ready";
+  const qaMergeLabel = process.env["QA_MERGE_LABEL"] ?? "qa-passed";
   const dryRun = process.env["DRY_RUN"] === "true";
 
   const testGenPromptFile = resolve(
@@ -43,6 +45,7 @@ export function loadConfig(): WebhookConfig {
     aoBin,
     dashboardTeamId,
     triggerLabel,
+    qaMergeLabel,
     dryRun,
     testGenPrompt,
   };
