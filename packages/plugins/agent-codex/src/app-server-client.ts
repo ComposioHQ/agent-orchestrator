@@ -174,7 +174,6 @@ export class CodexAppServerClient extends EventEmitter {
     if (this.connecting) throw new Error("Client is already connecting");
 
     this.connecting = true;
-    const wasClosedBefore = this.closed;
 
     try {
       this.process = spawn(this.binaryPath, ["app-server"], {
@@ -209,11 +208,9 @@ export class CodexAppServerClient extends EventEmitter {
       this.connecting = false;
       await this.close();
       // Reset closed flag so the client can retry connect() after a
-      // transient handshake failure — but only if close() wasn't already
-      // called externally before this connect() attempt.
-      if (!wasClosedBefore) {
-        this.closed = false;
-      }
+      // transient handshake failure. The guard on line 172 ensures
+      // this.closed is always false when we reach this point.
+      this.closed = false;
       throw err;
     }
 
@@ -449,19 +446,19 @@ export class CodexAppServerClient extends EventEmitter {
   }
 
   private async handleApprovalRequest(request: JsonRpcApprovalRequest): Promise<void> {
-    this.emit("approval", request.id, request.method, request.params);
+    try {
+      this.emit("approval", request.id, request.method, request.params);
 
-    if (this.onApproval) {
-      try {
+      if (this.onApproval) {
         const decision = await this.onApproval(request.id, request.method, request.params);
         this.sendApprovalResponse(request.id, decision);
-      } catch {
-        // On handler error, decline the request
-        this.sendApprovalResponse(request.id, "decline");
+      } else {
+        // Default: auto-accept all approvals
+        this.sendApprovalResponse(request.id, "accept");
       }
-    } else {
-      // Default: auto-accept all approvals
-      this.sendApprovalResponse(request.id, "accept");
+    } catch {
+      // On any error (listener throw or handler rejection), decline the request
+      this.sendApprovalResponse(request.id, "decline");
     }
   }
 
