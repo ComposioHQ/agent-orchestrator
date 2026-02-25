@@ -10,6 +10,7 @@ import { registerReviewCheck } from "./commands/review-check.js";
 import { registerDashboard } from "./commands/dashboard.js";
 import { registerOpen } from "./commands/open.js";
 import { registerStart, registerStop } from "./commands/start.js";
+import { registerSelfUpdate } from "./commands/self-update.js";
 
 const program = new Command();
 
@@ -29,5 +30,6 @@ registerSend(program);
 registerReviewCheck(program);
 registerDashboard(program);
 registerOpen(program);
+registerSelfUpdate(program);
 
 program.parse();
