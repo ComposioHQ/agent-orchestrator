@@ -144,8 +144,15 @@ export async function setupSystemdUnits(config: OrchestratorConfig): Promise<voi
   const directTerminalPort = config.directTerminalPort ?? 14801;
   const webDir = findWebDir();
 
-  // Lifecycle daemon entry point (compiled JS)
-  const lifecycleDaemonPath = resolve(repoRoot, "packages/cli/dist/commands/lifecycle-daemon.js");
+  // CLI entry point — lifecycle-daemon.js is a commander subcommand, not standalone.
+  // We must invoke it via the full ao CLI (which registers the command with commander).
+  let aoCliPath: string;
+  try {
+    const { stdout } = await exec("which", ["ao"]);
+    aoCliPath = stdout.trim();
+  } catch {
+    aoCliPath = resolve(home, ".npm-global/lib/node_modules/@composio/ao-cli/dist/index.js");
+  }
 
   // --- Secrets ---
   const existingSecrets = readExistingSecrets(secretsPath);
@@ -197,7 +204,7 @@ PartOf=ao.target
 
 [Service]
 Type=simple
-ExecStart=${nodePath} ${lifecycleDaemonPath}
+ExecStart=${nodePath} ${aoCliPath} lifecycle-daemon
 WorkingDirectory=${repoRoot}
 Environment=PATH=${envPath}
 Environment=HOME=${home}
