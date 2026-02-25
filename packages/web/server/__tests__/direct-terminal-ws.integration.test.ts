@@ -15,6 +15,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { execFileSync } from "node:child_process";
 import { request, type IncomingMessage } from "node:http";
 import { WebSocket } from "ws";
+import { spawn as ptySpawn } from "node-pty";
 import { findTmux } from "../tmux-utils.js";
 import { createDirectTerminalServer, type DirectTerminalServer } from "../direct-terminal-ws.js";
 
@@ -24,6 +25,25 @@ const TEST_HASH_SESSION = `abcdef123456-${TEST_SESSION}`;
 
 let terminal: DirectTerminalServer;
 let port: number;
+
+function supportsPtySpawning(): boolean {
+  try {
+    const pty = ptySpawn(TMUX, ["-V"], {
+      name: "xterm-256color",
+      cols: 80,
+      rows: 24,
+      cwd: process.cwd(),
+      env: process.env,
+    });
+    pty.kill();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const PTY_SUPPORTED = supportsPtySpawning();
+const describeIfPty = PTY_SUPPORTED ? describe : describe.skip;
 
 // =============================================================================
 // Helpers
@@ -102,6 +122,8 @@ function waitForMarker(ws: WebSocket, marker: string, timeoutMs = 3000): Promise
 // =============================================================================
 
 beforeAll(() => {
+  if (!PTY_SUPPORTED) return;
+
   // Create test tmux sessions
   execFileSync(TMUX, ["new-session", "-d", "-s", TEST_SESSION, "-x", "80", "-y", "24"], { timeout: 5000 });
   execFileSync(TMUX, ["new-session", "-d", "-s", TEST_HASH_SESSION, "-x", "80", "-y", "24"], { timeout: 5000 });
@@ -114,6 +136,8 @@ beforeAll(() => {
 });
 
 afterEach(() => {
+  if (!PTY_SUPPORTED || !terminal) return;
+
   // Clean up any active sessions from tests
   for (const [, session] of terminal.activeSessions) {
     session.pty.kill();
@@ -123,6 +147,8 @@ afterEach(() => {
 });
 
 afterAll(() => {
+  if (!PTY_SUPPORTED || !terminal) return;
+
   terminal.shutdown();
 
   // Kill test tmux sessions
@@ -134,7 +160,7 @@ afterAll(() => {
 // Health endpoint
 // =============================================================================
 
-describe("health endpoint", () => {
+describeIfPty("health endpoint", () => {
   it("GET /health returns 200 with JSON body", async () => {
     const res = await httpGet("/health");
 
@@ -211,7 +237,7 @@ describe("health endpoint", () => {
 // HTTP routing
 // =============================================================================
 
-describe("HTTP routing", () => {
+describeIfPty("HTTP routing", () => {
   it("returns 404 for unknown HTTP path", async () => {
     const res = await httpGet("/unknown-path");
     expect(res.status).toBe(404);
@@ -237,7 +263,7 @@ describe("HTTP routing", () => {
 // WebSocket connection validation
 // =============================================================================
 
-describe("WebSocket connection validation", () => {
+describeIfPty("WebSocket connection validation", () => {
   it("rejects connection with no session parameter", async () => {
     const ws = new WebSocket(`ws://localhost:${port}/ws`);
     const result = await waitForWsClose(ws);
@@ -333,7 +359,7 @@ describe("WebSocket connection validation", () => {
 // WebSocket terminal connection — basic
 // =============================================================================
 
-describe("WebSocket terminal connection", () => {
+describeIfPty("WebSocket terminal connection", () => {
   it("connects to a real tmux session and receives terminal output", async () => {
     const ws = await connectWs(TEST_SESSION);
 
@@ -447,7 +473,7 @@ describe("WebSocket terminal connection", () => {
 // Hash-prefixed session resolution (integration)
 // =============================================================================
 
-describe("hash-prefixed session resolution", () => {
+describeIfPty("hash-prefixed session resolution", () => {
   it("resolves hash-prefixed tmux session by suffix match", async () => {
     // Create a session that only exists with a hash prefix (no exact match)
     const hashOnlySession = `ao-hashtest-${process.pid}`;
@@ -535,7 +561,7 @@ describe("hash-prefixed session resolution", () => {
 // Terminal I/O
 // =============================================================================
 
-describe("terminal I/O", () => {
+describeIfPty("terminal I/O", () => {
   it("can run a command and get output", async () => {
     const ws = await connectWs(TEST_SESSION);
     await waitForWsData(ws);
@@ -653,7 +679,7 @@ describe("terminal I/O", () => {
 // Connection lifecycle
 // =============================================================================
 
-describe("connection lifecycle", () => {
+describeIfPty("connection lifecycle", () => {
   it("cleans up activeSessions on WebSocket close", async () => {
     // Use a dedicated session to avoid race conditions with afterEach cleanup
     const cleanupSession = `ao-test-cleanup-${process.pid}`;
@@ -733,7 +759,7 @@ describe("connection lifecycle", () => {
 // Server creation
 // =============================================================================
 
-describe("server creation", () => {
+describeIfPty("server creation", () => {
   it("createDirectTerminalServer returns all expected properties", () => {
     expect(terminal).toHaveProperty("server");
     expect(terminal).toHaveProperty("wss");

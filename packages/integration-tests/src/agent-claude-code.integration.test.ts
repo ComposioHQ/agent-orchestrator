@@ -161,9 +161,10 @@ describe.skipIf(!realProject)("path encoding & JSONL reading (real Claude data)"
     const session = makeSession("real-path-test", handle, realProject!.workspacePath);
     const state = await agent.getActivityState(session);
 
-    // Process is "not running" so should get "exited" — but the important thing
-    // is it didn't return null (which would mean the path didn't resolve)
-    expect(state).toBe("exited");
+    // Process is "not running" so should resolve to an exited activity object —
+    // and critically, not null (which would mean path resolution failed).
+    expect(state).not.toBeNull();
+    expect(state?.state).toBe("exited");
   });
 });
 
