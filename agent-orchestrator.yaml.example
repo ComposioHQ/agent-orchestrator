@@ -97,6 +97,14 @@ projects:
 #     action: notify
 #     priority: action
 #
+#   issue-commented:
+#     auto: true
+#     action: send-to-agent
+#     escalateAfter: 30m
+#     filter:
+#       labels: [agent]           # only react to issues with this label
+#       authors: [your-username]  # only react to comments from these users
+#
 #   agent-stuck:
 #     threshold: 10m
 #     action: notify

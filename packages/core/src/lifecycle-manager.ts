@@ -29,9 +29,11 @@ import {
   type Runtime,
   type Agent,
   type SCM,
+  type Tracker,
   type Notifier,
   type Session,
   type EventPriority,
+  type IssueComment,
   type ProjectConfig as _ProjectConfig,
 } from "./types.js";
 import { updateMetadata } from "./metadata.js";
@@ -152,6 +154,8 @@ function eventToReactionKey(eventType: EventType): string | null {
       return "agent-exited";
     case "review.pending":
       return "auto-review";
+    case "issue.comment_added":
+      return "issue-commented";
     case "summary.all_complete":
       return "all-complete";
     default:
@@ -185,10 +189,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       "Your PR has merge conflicts. Rebase onto the default branch, resolve conflicts, and push.",
     "bugbot-comments":
       "Automated review comments were posted on your PR. Run `gh pr view --comments` to read them and address the issues.",
+    "issue-commented":
+      "There is a new comment on the linked issue. Review the comment context above and address the feedback. Push your changes when done.",
   };
 
   const states = new Map<SessionId, SessionStatus>();
   const reactionTrackers = new Map<string, ReactionTracker>(); // "sessionId:reactionKey"
+  const lastCommentTimestamps = new Map<SessionId, Date>(); // track last-seen issue comment per session
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
@@ -430,7 +437,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const pr = session?.pr;
 
         const env: Record<string, string> = {
-          ...process.env as Record<string, string>,
+          ...(process.env as Record<string, string>),
           SESSION_ID: sessionId,
         };
         if (pr) {
@@ -462,6 +469,43 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             reactionType: reactionKey,
             success: false,
             action: "spawn-reviewer",
+            escalated: false,
+          };
+        }
+      }
+
+      case "spawn-agent": {
+        // Spawn a new agent session for the issue. The session manager handles
+        // workspace creation, agent launch, and prompt composition.
+        const session = await sessionManager.get(sessionId);
+        const project = session ? config.projects[session.projectId] : null;
+
+        if (!session || !project || !session.issueId) {
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action: "spawn-agent",
+            escalated: false,
+          };
+        }
+
+        try {
+          await sessionManager.spawn({
+            projectId: session.projectId,
+            issueId: session.issueId,
+          });
+
+          return {
+            reactionType: reactionKey,
+            success: true,
+            action: "spawn-agent",
+            escalated: false,
+          };
+        } catch {
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action: "spawn-agent",
             escalated: false,
           };
         }
@@ -579,6 +623,118 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       // No transition but track current state
       states.set(session.id, newStatus);
     }
+
+    // Check for new issue comments (independent of status transitions)
+    await checkIssueComments(session);
+  }
+
+  /** Check for new comments on the linked issue and trigger reactions. */
+  async function checkIssueComments(session: Session): Promise<void> {
+    if (!session.issueId) return;
+
+    const project = config.projects[session.projectId];
+    if (!project?.tracker) return;
+
+    const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
+    if (!tracker?.getIssueComments) return;
+
+    // Get reaction config — skip if not configured or disabled
+    const globalReaction = config.reactions["issue-commented"];
+    const projectReaction = project.reactions?.["issue-commented"];
+    const reactionConfig = projectReaction
+      ? { ...globalReaction, ...projectReaction }
+      : globalReaction;
+    if (!reactionConfig || reactionConfig.auto === false) return;
+
+    // Apply label filter: only react to issues with matching labels
+    if (reactionConfig.filter?.labels && reactionConfig.filter.labels.length > 0) {
+      try {
+        const issue = await tracker.getIssue(session.issueId, project);
+        const hasLabel = reactionConfig.filter.labels.some((l) => issue.labels.includes(l));
+        if (!hasLabel) return;
+      } catch {
+        return; // Can't verify labels — skip this cycle
+      }
+    }
+
+    // Initialize timestamp on first check (skip initial comments)
+    if (!lastCommentTimestamps.has(session.id)) {
+      lastCommentTimestamps.set(session.id, new Date());
+      return;
+    }
+
+    const since = lastCommentTimestamps.get(session.id) ?? new Date();
+
+    let comments: IssueComment[];
+    try {
+      comments = await tracker.getIssueComments(session.issueId, project, since);
+    } catch {
+      return; // API call failed — will retry next poll
+    }
+
+    if (comments.length === 0) return;
+
+    // Apply author filter
+    const authorFilter = reactionConfig.filter?.authors;
+    const filteredComments =
+      authorFilter && authorFilter.length > 0
+        ? comments.filter((c) => authorFilter.includes(c.author))
+        : comments;
+
+    if (filteredComments.length === 0) {
+      // Update timestamp even if all comments were filtered out
+      const latestTimestamp = comments.reduce(
+        (latest, c) => (c.createdAt > latest ? c.createdAt : latest),
+        since,
+      );
+      lastCommentTimestamps.set(session.id, latestTimestamp);
+      return;
+    }
+
+    // Update last-seen timestamp to the newest comment
+    const latestTimestamp = filteredComments.reduce(
+      (latest, c) => (c.createdAt > latest ? c.createdAt : latest),
+      since,
+    );
+    lastCommentTimestamps.set(session.id, latestTimestamp);
+
+    // Build a message with the new comment(s) context
+    const commentContext = filteredComments
+      .map((c) => `**@${c.author}** commented:\n${c.body}`)
+      .join("\n\n---\n\n");
+
+    const message = reactionConfig.message
+      ? `${commentContext}\n\n${reactionConfig.message}`
+      : `${commentContext}\n\n${defaultMessages["issue-commented"]}`;
+
+    // Emit the event
+    const event = createEvent("issue.comment_added", {
+      sessionId: session.id,
+      projectId: session.projectId,
+      message: `New comment(s) on issue #${session.issueId}`,
+      data: {
+        issueId: session.issueId,
+        commentCount: filteredComments.length,
+        authors: filteredComments.map((c) => c.author),
+      },
+    });
+    await notifyHuman(event, reactionConfig.priority ?? "info");
+
+    // Send the comment context to the agent
+    if (reactionConfig.action === "send-to-agent") {
+      try {
+        await sessionManager.send(session.id, message);
+      } catch {
+        // Send failed — will escalate via normal reaction mechanism
+      }
+    } else {
+      await executeReaction(
+        session.id,
+        session.projectId,
+        "issue-commented",
+        reactionConfig as ReactionConfig,
+      );
+    }
   }
 
   /** Run one polling cycle across all sessions. */
@@ -614,6 +770,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const sessionId = trackerKey.split(":")[0];
         if (sessionId && !currentSessionIds.has(sessionId)) {
           reactionTrackers.delete(trackerKey);
+        }
+      }
+      for (const sessionId of lastCommentTimestamps.keys()) {
+        if (!currentSessionIds.has(sessionId)) {
+          lastCommentTimestamps.delete(sessionId);
         }
       }
 

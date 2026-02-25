@@ -448,6 +448,13 @@ export interface Tracker {
 
   /** Optional: create a new issue */
   createIssue?(input: CreateIssueInput, project: ProjectConfig): Promise<Issue>;
+
+  /** Optional: get comments on an issue since a given timestamp */
+  getIssueComments?(
+    identifier: string,
+    project: ProjectConfig,
+    since?: Date,
+  ): Promise<IssueComment[]>;
 }
 
 export interface Issue {
@@ -473,6 +480,14 @@ export interface IssueUpdate {
   labels?: string[];
   assignee?: string;
   comment?: string;
+}
+
+export interface IssueComment {
+  id: string;
+  author: string;
+  body: string;
+  createdAt: Date;
+  url: string;
 }
 
 export interface CreateIssueInput {
@@ -729,6 +744,8 @@ export type EventType =
   | "merge.ready"
   | "merge.conflicts"
   | "merge.completed"
+  // Issue events
+  | "issue.comment_added"
   // Reactions
   | "reaction.triggered"
   | "reaction.escalated"
@@ -756,8 +773,8 @@ export interface ReactionConfig {
   /** Whether this reaction is enabled */
   auto: boolean;
 
-  /** What to do: send message to agent, notify human, auto-merge */
-  action: "send-to-agent" | "notify" | "auto-merge" | "spawn-reviewer";
+  /** What to do: send message to agent, notify human, auto-merge, spawn agent */
+  action: "send-to-agent" | "notify" | "auto-merge" | "spawn-reviewer" | "spawn-agent";
 
   /** Message to send (for send-to-agent) */
   message?: string;
@@ -779,6 +796,17 @@ export interface ReactionConfig {
 
   /** Path to an external script to run (for spawn-reviewer action) */
   script?: string;
+
+  /** Filter criteria for event-based reactions (e.g. issue-commented) */
+  filter?: ReactionFilter;
+}
+
+/** Filter criteria for reactions — limits which events trigger the reaction */
+export interface ReactionFilter {
+  /** Only react to issues with these labels */
+  labels?: string[];
+  /** Only react to comments from these authors */
+  authors?: string[];
 }
 
 export interface ReactionResult {
