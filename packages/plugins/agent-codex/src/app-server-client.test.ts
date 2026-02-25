@@ -747,6 +747,28 @@ describe("CodexAppServerClient", () => {
       expect(client.isConnected).toBe(false);
     });
 
+    it("rejects pending requests before emitting error (no listener crash safe)", async () => {
+      const proc = createFakeProcess();
+      const client = new CodexAppServerClient({ requestTimeout: 5000 });
+
+      await connectClient(client, proc);
+
+      // Do NOT attach an error listener — emit("error") will throw
+      // Start a request that will be pending
+      const requestPromise = client.threadList();
+      await new Promise((r) => setTimeout(r, 10));
+
+      // Process emits error — without a listener, emit("error") throws.
+      // Pending requests must still be rejected before that throw.
+      try {
+        proc.emit("error", new Error("spawn ENOENT"));
+      } catch {
+        // Expected: uncaught error event from EventEmitter
+      }
+
+      await expect(requestPromise).rejects.toThrow("spawn ENOENT");
+    });
+
     it("handles malformed JSON lines gracefully", async () => {
       const proc = createFakeProcess();
       const client = new CodexAppServerClient({ requestTimeout: 500 });

@@ -494,13 +494,14 @@ export class CodexAppServerClient extends EventEmitter {
       this.readline = null;
     }
 
-    this.emit("error", err);
-
-    // Reject all pending requests
+    // Reject all pending requests before emitting "error" — emit("error")
+    // with no listeners throws synchronously, which would skip cleanup.
     for (const [id, pending] of this.pending) {
       clearTimeout(pending.timer);
       pending.reject(err);
       this.pending.delete(id);
     }
+
+    this.emit("error", err);
   }
 }
