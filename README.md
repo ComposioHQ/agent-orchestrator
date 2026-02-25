@@ -21,21 +21,22 @@ This fork runs on the OpenClaw instance with Claude Max, managing all projects v
 
 <!-- FORK_CHANGES_START -->
 
-> **10 commits** since fork (2026-02-24 — 2026-02-25) · 6 features · 2 fixes
+> **11 commits** since fork (2026-02-24 — 2026-02-25) · 7 features · 2 fixes
 
 **2026-02-25**
-- fix: add default messages for send-to-agent reactions (`ee4e742`)
-- config: add github tracker to all projects (`566c858`)
-- feat: add systemd user-units for reliable service management (`077c5f2`)
-- feat: auto-spawn agents for open issues on `ao start` (`168595d`)
-- feat: add agent-orchestrator as a managed project (`5140107`)
-- feat: add `ao self-update` for controlled self-deployment (`071637d`)
-- feat: add automatic PR code review on review_pending state (`4eb50ec`)
-- fix: pass notifier config to plugins via extractPluginConfig (`70b82b7`)
+- feat: add auto-updating fork changes section to README ([`d3090e6`](https://github.com/marcmantei/agent-orchestrator/commit/d3090e6))
+- fix: add default messages for send-to-agent reactions ([`ee4e742`](https://github.com/marcmantei/agent-orchestrator/commit/ee4e742))
+- config: add github tracker to all projects ([`566c858`](https://github.com/marcmantei/agent-orchestrator/commit/566c858))
+- feat: add systemd user-units for reliable service management ([`077c5f2`](https://github.com/marcmantei/agent-orchestrator/commit/077c5f2))
+- feat: auto-spawn agents for open issues on `ao start` ([`168595d`](https://github.com/marcmantei/agent-orchestrator/commit/168595d))
+- feat: add agent-orchestrator as a managed project ([`5140107`](https://github.com/marcmantei/agent-orchestrator/commit/5140107))
+- feat: add `ao self-update` for controlled self-deployment ([`071637d`](https://github.com/marcmantei/agent-orchestrator/commit/071637d))
+- feat: add automatic PR code review on review_pending state ([`4eb50ec`](https://github.com/marcmantei/agent-orchestrator/commit/4eb50ec))
+- fix: pass notifier config to plugins via extractPluginConfig ([`70b82b7`](https://github.com/marcmantei/agent-orchestrator/commit/70b82b7))
 
 **2026-02-24**
-- docs: add OpenClaw instance overview to README (`669b0ae`)
-- feat: bind dashboard and dev server to 0.0.0.0 for LAN access (`8282ee2`)
+- docs: add OpenClaw instance overview to README ([`669b0ae`](https://github.com/marcmantei/agent-orchestrator/commit/669b0ae))
+- feat: bind dashboard and dev server to 0.0.0.0 for LAN access ([`8282ee2`](https://github.com/marcmantei/agent-orchestrator/commit/8282ee2))
 
 <!-- FORK_CHANGES_END -->
 
