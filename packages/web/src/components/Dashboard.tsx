@@ -41,9 +41,16 @@ export function Dashboard({ sessions, stats, orchestratorId, projectName }: Dash
   }, [sessions]);
 
   const openPRs = useMemo(() => {
+    const seen = new Set<string>();
     return sessions
       .filter((s): s is DashboardSession & { pr: DashboardPR } => s.pr?.state === "open")
       .map((s) => s.pr)
+      .filter((pr) => {
+        const key = `${pr.owner}/${pr.repo}#${pr.number}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
       .sort((a, b) => mergeScore(a) - mergeScore(b));
   }, [sessions]);
 
@@ -208,7 +215,7 @@ export function Dashboard({ sessions, stats, orchestratorId, projectName }: Dash
               </thead>
               <tbody>
                 {openPRs.map((pr) => (
-                  <PRTableRow key={pr.number} pr={pr} />
+                  <PRTableRow key={`${pr.owner}/${pr.repo}#${pr.number}`} pr={pr} />
                 ))}
               </tbody>
             </table>
