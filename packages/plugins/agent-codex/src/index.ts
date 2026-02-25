@@ -538,6 +538,25 @@ function appendModelFlags(parts: string[], model: string | undefined): void {
   }
 }
 
+/** TTL for session file path cache (ms). Prevents redundant filesystem scans
+ *  when getActivityState and getSessionInfo are called in the same refresh cycle. */
+const SESSION_FILE_CACHE_TTL_MS = 30_000;
+
+/** Module-level session file cache shared across the agent instance lifetime.
+ *  Keyed by workspace path, stores the resolved file path and an expiry timestamp. */
+const sessionFileCache = new Map<string, { path: string | null; expiry: number }>();
+
+/** Find session file with caching to avoid double scans per refresh cycle */
+async function findCodexSessionFileCached(workspacePath: string): Promise<string | null> {
+  const cached = sessionFileCache.get(workspacePath);
+  if (cached && Date.now() < cached.expiry) {
+    return cached.path;
+  }
+  const result = await findCodexSessionFile(workspacePath);
+  sessionFileCache.set(workspacePath, { path: result, expiry: Date.now() + SESSION_FILE_CACHE_TTL_MS });
+  return result;
+}
+
 function createCodexAgent(): Agent {
   /** Cached resolved binary path (populated by init or first getLaunchCommand) */
   let resolvedBinary: string | null = null;
@@ -621,7 +640,7 @@ function createCodexAgent(): Agent {
       // modified file means the agent is active.
       if (!session.workspacePath) return null;
 
-      const sessionFile = await findCodexSessionFile(session.workspacePath);
+      const sessionFile = await findCodexSessionFileCached(session.workspacePath);
       if (!sessionFile) return null;
 
       try {
@@ -695,7 +714,7 @@ function createCodexAgent(): Agent {
     async getSessionInfo(session: Session): Promise<AgentSessionInfo | null> {
       if (!session.workspacePath) return null;
 
-      const sessionFile = await findCodexSessionFile(session.workspacePath);
+      const sessionFile = await findCodexSessionFileCached(session.workspacePath);
       if (!sessionFile) return null;
 
       // Stream the file line-by-line to avoid loading potentially huge
@@ -727,7 +746,7 @@ function createCodexAgent(): Agent {
       if (!session.workspacePath) return null;
 
       // Find the Codex session file for this workspace
-      const sessionFile = await findCodexSessionFile(session.workspacePath);
+      const sessionFile = await findCodexSessionFileCached(session.workspacePath);
       if (!sessionFile) return null;
 
       // Stream the file line-by-line to avoid loading potentially huge
@@ -780,6 +799,11 @@ function createCodexAgent(): Agent {
 
 export function create(): Agent {
   return createCodexAgent();
+}
+
+/** @internal Clear the session file cache. Exported for testing only. */
+export function _resetSessionFileCache(): void {
+  sessionFileCache.clear();
 }
 
 export { CodexAppServerClient } from "./app-server-client.js";

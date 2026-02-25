@@ -62,7 +62,7 @@ vi.mock("node:os", () => ({
 }));
 
 import { Readable } from "node:stream";
-import { create, manifest, default as defaultExport, resolveCodexBinary } from "./index.js";
+import { create, manifest, default as defaultExport, resolveCodexBinary, _resetSessionFileCache } from "./index.js";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -166,6 +166,7 @@ function setupMockStream(content: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  _resetSessionFileCache();
   mockHomedir.mockReturnValue("/mock/home");
   // Default: open() returns a handle with empty content (no session_meta match).
   // Session tests call setupMockOpen(content) to override.
