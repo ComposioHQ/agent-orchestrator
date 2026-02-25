@@ -22,6 +22,7 @@ import { exec } from "../lib/shell.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 import { findWebDir, buildDashboardEnv } from "../lib/web-dir.js";
 import { cleanNextCache } from "../lib/dashboard-rebuild.js";
+import { checkAndSpawnIssues } from "./check-issues.js";
 
 /**
  * Resolve project from config.
@@ -223,6 +224,43 @@ export function registerStart(program: Command): void {
           }
 
           console.log(chalk.dim(`Config: ${config.configPath}\n`));
+
+          // Auto-spawn agents for open issues without active sessions
+          try {
+            const issueSpinner = ora("Checking open issues").start();
+            const issueResult = await checkAndSpawnIssues(config, projectId, project);
+            issueSpinner.stop();
+
+            if (!issueResult.skippedNoTracker) {
+              const total = issueResult.spawned.length + issueResult.alreadyCovered.length;
+              if (total > 0) {
+                if (issueResult.spawned.length > 0) {
+                  console.log(
+                    chalk.green(`Spawned ${issueResult.spawned.length} agent(s) for open issues:`),
+                  );
+                  for (const id of issueResult.spawned) {
+                    console.log(chalk.dim(`  - ${id}`));
+                  }
+                }
+                if (issueResult.alreadyCovered.length > 0) {
+                  console.log(
+                    chalk.dim(`Already covered: ${issueResult.alreadyCovered.length} issue(s)`),
+                  );
+                }
+                if (issueResult.failed.length > 0) {
+                  console.log(chalk.yellow(`Failed to spawn: ${issueResult.failed.length}`));
+                  for (const f of issueResult.failed) {
+                    console.log(chalk.dim(`  - ${f.issueId}: ${f.error}`));
+                  }
+                }
+                console.log();
+              }
+            }
+          } catch (err) {
+            console.log(
+              chalk.yellow(`Could not check issues: ${err instanceof Error ? err.message : String(err)}`),
+            );
+          }
 
           // Keep dashboard process alive if it was started
           if (dashboardProcess) {
