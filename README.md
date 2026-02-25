@@ -25,7 +25,7 @@ Agent Orchestrator manages fleets of AI coding agents working in parallel on you
   <img src="docs/assets/demo-video-tweet.png" alt="Agent Orchestrator demo — AI agents building their own orchestrator" width="560">
 </a>
 
-<a href="https://x.com/agent_wrapper/status/2026329204405723180"><img src="https://img.shields.io/badge/%E2%96%B6%EF%B8%8F_Watch_the_demo_on_X-black?style=for-the-badge&logo=x&logoColor=white" alt="Watch the demo on X"></a>
+<a href="https://x.com/agent_wrapper/status/2026329204405723180"><img src="docs/assets/btn-watch-demo.svg" alt="Watch the Demo on X" height="48"></a>
 
 </div>
 
@@ -35,7 +35,7 @@ Agent Orchestrator manages fleets of AI coding agents working in parallel on you
   <img src="docs/assets/article-tweet.png" alt="The Self-Improving AI System That Built Itself" width="560">
 </a>
 
-<a href="https://x.com/agent_wrapper/status/2025986105485733945"><img src="https://img.shields.io/badge/%F0%9F%93%96_Read_the_full_article_on_X-black?style=for-the-badge&logo=x&logoColor=white" alt="Read the full article on X"></a>
+<a href="https://x.com/agent_wrapper/status/2025986105485733945"><img src="docs/assets/btn-read-article.svg" alt="Read the Full Article on X" height="48"></a>
 
 </div>
 
