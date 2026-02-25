@@ -204,3 +204,16 @@ a:hover {
     0 0 60px rgba(63,185,80,0.2),
     inset 0 1px 0 rgba(255,255,255,0.1);
 }
+
+/* ── Self-update badge ────────────────────────────────────────────────── */
+
+.update-badge {
+  background: rgba(63, 185, 80, 0.08);
+  border: 1px solid rgba(63, 185, 80, 0.2);
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.update-badge:hover {
+  background: rgba(63, 185, 80, 0.14);
+  border-color: rgba(63, 185, 80, 0.35);
+}

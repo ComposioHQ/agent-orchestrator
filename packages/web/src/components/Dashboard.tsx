@@ -13,6 +13,7 @@ import { CI_STATUS } from "@composio/ao-core/types";
 import { AttentionZone } from "./AttentionZone";
 import { PRTableRow } from "./PRStatus";
 import { DynamicFavicon } from "./DynamicFavicon";
+import { SelfUpdateIndicator } from "./SelfUpdateIndicator";
 
 interface DashboardProps {
   sessions: DashboardSession[];
@@ -102,6 +103,7 @@ export function Dashboard({ sessions, stats, orchestratorId, projectName }: Dash
             Orchestrator
           </h1>
           <StatusLine stats={stats} />
+          <SelfUpdateIndicator />
         </div>
         {orchestratorId && (
           <a
