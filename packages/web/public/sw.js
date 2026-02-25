@@ -81,13 +81,21 @@ self.addEventListener("fetch", (event) => {
   // Navigation — network-first with offline fallback
   if (request.mode === "navigate") {
     event.respondWith(
-      fetch(request).catch(() => caches.match(OFFLINE_URL)),
+      fetch(request).catch(() =>
+        caches.match(OFFLINE_URL).then(
+          (cached) => cached || new Response("Offline", { status: 503, headers: { "Content-Type": "text/html" } }),
+        ),
+      ),
     );
     return;
   }
 
   // Everything else — network with cache fallback
   event.respondWith(
-    fetch(request).catch(() => caches.match(request)),
+    fetch(request).catch(() =>
+      caches.match(request).then(
+        (cached) => cached || new Response("", { status: 504 }),
+      ),
+    ),
   );
 });
