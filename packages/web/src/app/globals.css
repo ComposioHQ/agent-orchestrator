@@ -163,11 +163,12 @@ a:hover {
   top: env(safe-area-inset-top);
 }
 
-/* Safe-area top padding for pages without a sticky nav (e.g. Dashboard).
-   Adds notch clearance in PWA standalone mode on notched devices. */
+/* Extra top padding for notch clearance in PWA standalone mode.
+   Uses margin-top so it stacks with Tailwind's padding utilities
+   instead of overriding them via cascade layer precedence. */
 .safe-area-top {
-  padding-top: 0;
-  padding-top: env(safe-area-inset-top);
+  margin-top: 0;
+  margin-top: env(safe-area-inset-top);
 }
 
 /* ── Detail page cards — subtle depth, no hover lift ─────────────────── */
