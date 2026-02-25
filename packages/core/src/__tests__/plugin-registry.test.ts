@@ -23,7 +23,23 @@ function makePlugin(slot: PluginManifest["slot"], name: string): PluginModule {
 
 function makeOrchestratorConfig(overrides?: Partial<OrchestratorConfig>): OrchestratorConfig {
   return {
+    configPath: "/tmp/agent-orchestrator.yaml",
+    readyThresholdMs: 300_000,
+    defaults: {
+      runtime: "tmux",
+      agent: "claude-code",
+      workspace: "worktree",
+      notifiers: ["desktop"],
+    },
     projects: {},
+    notifiers: {},
+    notificationRouting: {
+      urgent: ["desktop"],
+      action: ["desktop"],
+      warning: ["desktop"],
+      info: ["desktop"],
+    },
+    reactions: {},
     ...overrides,
   } as OrchestratorConfig;
 }
@@ -195,5 +211,78 @@ describe("loadFromConfig", () => {
     // loadFromConfig calls loadBuiltins internally, which may fail to
     // import packages in the test env — should still succeed gracefully
     await expect(registry.loadFromConfig(config)).resolves.toBeUndefined();
+  });
+
+  it("loads a non-builtin plugin referenced in project config", async () => {
+    const registry = createPluginRegistry();
+    const config = makeOrchestratorConfig({
+      projects: {
+        app: {
+          name: "app",
+          repo: "org/app",
+          path: "/tmp/app",
+          defaultBranch: "main",
+          sessionPrefix: "app",
+          scm: { plugin: "gitlab" },
+        },
+      },
+    });
+    const gitlabPlugin = makePlugin("scm", "gitlab");
+
+    await registry.loadFromConfig(config, async (pkg: string) => {
+      if (pkg === "@composio/ao-plugin-scm-gitlab") return gitlabPlugin;
+      throw new Error(`not found: ${pkg}`);
+    });
+
+    expect(registry.get("scm", "gitlab")).not.toBeNull();
+  });
+
+  it("passes notifier config (including webhook alias) to notifier plugin", async () => {
+    const registry = createPluginRegistry();
+    const config = makeOrchestratorConfig({
+      defaults: {
+        runtime: "tmux",
+        agent: "claude-code",
+        workspace: "worktree",
+        notifiers: ["slack"],
+      },
+      notifiers: {
+        slack: {
+          plugin: "slack",
+          webhook: "https://example.com/hook",
+          channel: "#alerts",
+        },
+      },
+    });
+    const slackPlugin = makePlugin("notifier", "slack");
+
+    await registry.loadFromConfig(config, async (pkg: string) => {
+      if (pkg === "@composio/ao-plugin-notifier-slack") return slackPlugin;
+      throw new Error(`not found: ${pkg}`);
+    });
+
+    expect(slackPlugin.create).toHaveBeenCalledWith({
+      plugin: "slack",
+      webhook: "https://example.com/hook",
+      webhookUrl: "https://example.com/hook",
+      channel: "#alerts",
+    });
+  });
+
+  it("passes dashboardUrl config to terminal-web plugin", async () => {
+    const registry = createPluginRegistry();
+    const config = makeOrchestratorConfig({
+      port: 4444,
+    });
+    const terminalWeb = makePlugin("terminal", "web");
+
+    await registry.loadFromConfig(config, async (pkg: string) => {
+      if (pkg === "@composio/ao-plugin-terminal-web") return terminalWeb;
+      throw new Error(`not found: ${pkg}`);
+    });
+
+    expect(terminalWeb.create).toHaveBeenCalledWith({
+      dashboardUrl: "http://localhost:4444",
+    });
   });
 });

@@ -13,13 +13,46 @@ import type {
   PluginModule,
   PluginRegistry,
   OrchestratorConfig,
+  NotifierConfig,
 } from "./types.js";
 
 /** Map from "slot:name" → plugin instance */
 type PluginMap = Map<string, { manifest: PluginManifest; instance: unknown }>;
+type PluginRef = { slot: PluginSlot; name: string };
 
 function makeKey(slot: PluginSlot, name: string): string {
   return `${slot}:${name}`;
+}
+
+function isPluginModule(mod: unknown): mod is PluginModule {
+  if (!mod || typeof mod !== "object") return false;
+  const candidate = mod as Partial<PluginModule>;
+  return Boolean(candidate.manifest && typeof candidate.create === "function");
+}
+
+function normalizeImportedModule(mod: unknown): PluginModule | null {
+  if (isPluginModule(mod)) return mod;
+  if (mod && typeof mod === "object" && "default" in mod) {
+    const fromDefault = (mod as { default?: unknown }).default;
+    if (isPluginModule(fromDefault)) return fromDefault;
+  }
+  return null;
+}
+
+function configForNotifier(name: string, config: OrchestratorConfig): Record<string, unknown> | undefined {
+  const direct = config.notifiers[name];
+  const byPlugin = Object.values(config.notifiers).find(
+    (notifierConfig: NotifierConfig) => notifierConfig.plugin === name,
+  );
+  const selected = direct ?? byPlugin;
+  if (!selected) return undefined;
+
+  const normalized = { ...selected } as Record<string, unknown>;
+  if (typeof normalized["webhook"] === "string" && normalized["webhookUrl"] === undefined) {
+    normalized["webhookUrl"] = normalized["webhook"];
+  }
+
+  return normalized;
 }
 
 /** Built-in plugin package names, mapped to their npm package */
@@ -51,12 +84,60 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
 
 /** Extract plugin-specific config from orchestrator config */
 function extractPluginConfig(
-  _slot: PluginSlot,
-  _name: string,
-  _config: OrchestratorConfig,
+  slot: PluginSlot,
+  name: string,
+  config: OrchestratorConfig,
 ): Record<string, unknown> | undefined {
-  // Reserved for future plugin-specific config mapping
+  if (slot === "notifier") {
+    return configForNotifier(name, config);
+  }
+
+  if (slot === "terminal" && name === "web") {
+    return {
+      dashboardUrl: `http://localhost:${config.port ?? 3000}`,
+    };
+  }
+
   return undefined;
+}
+
+function collectConfiguredPluginRefs(config: OrchestratorConfig): PluginRef[] {
+  const refs: PluginRef[] = [];
+
+  refs.push({ slot: "runtime", name: config.defaults.runtime });
+  refs.push({ slot: "agent", name: config.defaults.agent });
+  refs.push({ slot: "workspace", name: config.defaults.workspace });
+
+  for (const notifierName of config.defaults.notifiers) {
+    refs.push({ slot: "notifier", name: notifierName });
+  }
+
+  for (const project of Object.values(config.projects)) {
+    if (project.runtime) refs.push({ slot: "runtime", name: project.runtime });
+    if (project.agent) refs.push({ slot: "agent", name: project.agent });
+    if (project.workspace) refs.push({ slot: "workspace", name: project.workspace });
+    if (project.tracker?.plugin) refs.push({ slot: "tracker", name: project.tracker.plugin });
+    if (project.scm?.plugin) refs.push({ slot: "scm", name: project.scm.plugin });
+  }
+
+  for (const [notifierName, notifierConfig] of Object.entries(config.notifiers)) {
+    const configuredName =
+      typeof notifierConfig.plugin === "string" ? notifierConfig.plugin : notifierName;
+    refs.push({ slot: "notifier", name: configuredName });
+  }
+
+  const unique = new Map<string, PluginRef>();
+  for (const ref of refs) {
+    unique.set(makeKey(ref.slot, ref.name), ref);
+  }
+  return [...unique.values()];
+}
+
+function resolveImportTarget(slot: PluginSlot, name: string): string {
+  if (name.startsWith(".") || name.startsWith("/") || name.startsWith("@")) {
+    return name;
+  }
+  return `@composio/ao-plugin-${slot}-${name}`;
 }
 
 export function createPluginRegistry(): PluginRegistry {
@@ -92,8 +173,8 @@ export function createPluginRegistry(): PluginRegistry {
       const doImport = importFn ?? ((pkg: string) => import(pkg));
       for (const builtin of BUILTIN_PLUGINS) {
         try {
-          const mod = (await doImport(builtin.pkg)) as PluginModule;
-          if (mod.manifest && typeof mod.create === "function") {
+          const mod = normalizeImportedModule(await doImport(builtin.pkg));
+          if (mod) {
             const pluginConfig = orchestratorConfig
               ? extractPluginConfig(builtin.slot, builtin.name, orchestratorConfig)
               : undefined;
@@ -112,8 +193,26 @@ export function createPluginRegistry(): PluginRegistry {
       // Load built-ins with orchestrator config so plugins receive their settings
       await this.loadBuiltins(config, importFn);
 
-      // Then, load any additional plugins specified in project configs
-      // (future: support npm package names and local file paths)
+      // Then, load additional plugins referenced in config that are not built-ins.
+      // Supports:
+      // 1) bare names ("gitlab") -> @composio/ao-plugin-scm-gitlab
+      // 2) package names ("@org/ao-plugin-scm-gitlab")
+      // 3) local paths ("./plugins/scm-gitlab")
+      const doImport = importFn ?? ((pkg: string) => import(pkg));
+      const refs = collectConfiguredPluginRefs(config);
+
+      for (const ref of refs) {
+        if (this.get(ref.slot, ref.name)) continue;
+        const target = resolveImportTarget(ref.slot, ref.name);
+        try {
+          const mod = normalizeImportedModule(await doImport(target));
+          if (!mod) continue;
+          const pluginConfig = extractPluginConfig(ref.slot, ref.name, config);
+          this.register(mod, pluginConfig);
+        } catch {
+          // Plugin import failed — keep going so one missing plugin doesn't block startup.
+        }
+      }
     },
   };
 }
