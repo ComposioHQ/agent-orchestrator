@@ -26,11 +26,7 @@ Agent Orchestrator manages fleets of AI coding agents working in parallel on you
 </a>
 <br><br>
 <a href="https://x.com/agent_wrapper/status/2026329204405723180"><img src="docs/assets/btn-watch-demo.png" alt="Watch the Demo on X" height="48"></a>
-
-</div>
-
-<div align="center">
-
+<br><br><br>
 <a href="https://x.com/agent_wrapper/status/2025986105485733945">
   <img src="docs/assets/article-tweet.png" alt="The Self-Improving AI System That Built Itself" width="560">
 </a>
