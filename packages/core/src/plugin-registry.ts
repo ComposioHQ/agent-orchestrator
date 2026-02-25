@@ -64,6 +64,10 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
   { slot: "agent", name: "claude-code", pkg: "@composio/ao-plugin-agent-claude-code" },
   { slot: "agent", name: "codex", pkg: "@composio/ao-plugin-agent-codex" },
   { slot: "agent", name: "aider", pkg: "@composio/ao-plugin-agent-aider" },
+  { slot: "agent", name: "gemini", pkg: "@composio/ao-plugin-agent-gemini" },
+  { slot: "agent", name: "goose", pkg: "@composio/ao-plugin-agent-goose" },
+  { slot: "agent", name: "amazon-q", pkg: "@composio/ao-plugin-agent-amazon-q" },
+  { slot: "agent", name: "kiro", pkg: "@composio/ao-plugin-agent-kiro" },
   // Workspaces
   { slot: "workspace", name: "worktree", pkg: "@composio/ao-plugin-workspace-worktree" },
   { slot: "workspace", name: "clone", pkg: "@composio/ao-plugin-workspace-clone" },
@@ -77,9 +81,14 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
   { slot: "notifier", name: "desktop", pkg: "@composio/ao-plugin-notifier-desktop" },
   { slot: "notifier", name: "slack", pkg: "@composio/ao-plugin-notifier-slack" },
   { slot: "notifier", name: "webhook", pkg: "@composio/ao-plugin-notifier-webhook" },
+  { slot: "notifier", name: "discord", pkg: "@composio/ao-plugin-notifier-discord" },
+  { slot: "notifier", name: "teams", pkg: "@composio/ao-plugin-notifier-teams" },
+  { slot: "notifier", name: "telegram", pkg: "@composio/ao-plugin-notifier-telegram" },
   // Terminals
   { slot: "terminal", name: "iterm2", pkg: "@composio/ao-plugin-terminal-iterm2" },
   { slot: "terminal", name: "web", pkg: "@composio/ao-plugin-terminal-web" },
+  { slot: "terminal", name: "kitty", pkg: "@composio/ao-plugin-terminal-kitty" },
+  { slot: "terminal", name: "wezterm", pkg: "@composio/ao-plugin-terminal-wezterm" },
 ];
 
 /** Extract plugin-specific config from orchestrator config */

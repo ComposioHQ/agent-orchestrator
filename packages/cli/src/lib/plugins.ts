@@ -2,12 +2,20 @@ import type { Agent, OrchestratorConfig, SCM } from "@composio/ao-core";
 import claudeCodePlugin from "@composio/ao-plugin-agent-claude-code";
 import codexPlugin from "@composio/ao-plugin-agent-codex";
 import aiderPlugin from "@composio/ao-plugin-agent-aider";
+import geminiPlugin from "@composio/ao-plugin-agent-gemini";
+import goosePlugin from "@composio/ao-plugin-agent-goose";
+import amazonQPlugin from "@composio/ao-plugin-agent-amazon-q";
+import kiroPlugin from "@composio/ao-plugin-agent-kiro";
 import githubSCMPlugin from "@composio/ao-plugin-scm-github";
 
 const agentPlugins: Record<string, { create(): Agent }> = {
   "claude-code": claudeCodePlugin,
   codex: codexPlugin,
   aider: aiderPlugin,
+  gemini: geminiPlugin,
+  goose: goosePlugin,
+  "amazon-q": amazonQPlugin,
+  kiro: kiroPlugin,
 };
 
 const scmPlugins: Record<string, { create(): SCM }> = {

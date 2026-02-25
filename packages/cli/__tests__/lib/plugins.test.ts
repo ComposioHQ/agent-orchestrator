@@ -67,6 +67,22 @@ describe("getAgentByName", () => {
     expect(getAgentByName("aider").name).toBe("aider");
   });
 
+  it("returns agent for gemini", () => {
+    expect(getAgentByName("gemini").name).toBe("gemini");
+  });
+
+  it("returns agent for goose", () => {
+    expect(getAgentByName("goose").name).toBe("goose");
+  });
+
+  it("returns agent for amazon-q", () => {
+    expect(getAgentByName("amazon-q").name).toBe("amazon-q");
+  });
+
+  it("returns agent for kiro", () => {
+    expect(getAgentByName("kiro").name).toBe("kiro");
+  });
+
   it("throws on unknown name", () => {
     expect(() => getAgentByName("unknown")).toThrow("Unknown agent plugin: unknown");
   });
