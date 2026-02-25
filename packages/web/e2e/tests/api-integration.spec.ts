@@ -89,18 +89,19 @@ test.describe("API Integration via UI Actions", () => {
     const unresolvedHeading = page.getByText("Unresolved", { exact: false });
     await expect(unresolvedHeading.first()).toBeVisible();
 
-    // Click "Ask Agent to Fix" button
+    // Click "Ask Agent to Fix" button and verify the POST fires
     const fixButton = page.getByRole("button", { name: /Ask Agent to Fix/i });
     await expect(fixButton.first()).toBeVisible();
     await fixButton.first().click();
-    await page.waitForTimeout(1000);
-    expect(messageSent).toBe(true);
+    // Wait for the message POST to be intercepted by our route handler
+    await expect
+      .poll(() => messageSent, { timeout: 5000 })
+      .toBe(true);
   });
 
   test("session detail page uses polling interval", async ({ page }) => {
-    // Verify the page creates a polling interval by detecting repeated API calls
+    // Verify polling by detecting a second GET after the page has loaded
     const session = makeSession({ id: "api-poll", activity: "active" });
-    let fetchCount = 0;
 
     await page.route("**/api/sessions/api-poll", async (route) => {
       const url = new URL(route.request().url());
@@ -108,7 +109,6 @@ test.describe("API Integration via UI Actions", () => {
         route.request().method() === "GET" &&
         url.pathname === "/api/sessions/api-poll"
       ) {
-        fetchCount++;
         await route.fulfill({
           status: 200,
           headers: {
@@ -125,10 +125,14 @@ test.describe("API Integration via UI Actions", () => {
     await page.goto("/sessions/api-poll");
     await expect(page.getByRole("heading", { name: "api-poll" })).toBeVisible();
 
-    // Wait for at least one polling cycle (detail page polls every few seconds)
-    const initialCount = fetchCount;
-    await page.waitForTimeout(6000);
-    expect(fetchCount).toBeGreaterThan(initialCount);
+    // After initial load, wait for the next polling request (deterministic, no arbitrary timeout)
+    const pollingRequest = await page.waitForRequest(
+      (req) =>
+        req.url().includes("/api/sessions/api-poll") &&
+        req.method() === "GET",
+      { timeout: 10_000 },
+    );
+    expect(pollingRequest.url()).toContain("/api/sessions/api-poll");
   });
 
   test("kill action endpoint exists and returns JSON", async ({ page }) => {

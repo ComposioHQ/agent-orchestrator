@@ -93,7 +93,7 @@ export function Dashboard({ sessions, stats, orchestratorId, projectName }: Dash
   );
 
   return (
-    <div className="safe-area-top px-4 py-5 md:px-8 md:py-7">
+    <div className="px-4 py-5 md:px-8 md:py-7" style={{ marginTop: "env(safe-area-inset-top, 0px)" }}>
       <DynamicFavicon sessions={sessions} projectName={projectName} />
       {/* Header */}
       <div className="mb-6 flex flex-col gap-3 border-b border-[var(--color-border-subtle)] pb-5 sm:flex-row sm:items-center sm:justify-between md:mb-8 md:pb-6">

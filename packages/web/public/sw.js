@@ -1,21 +1,32 @@
 /* global self, caches, fetch, URL, Response */
 /// <reference lib="webworker" />
 
-const CACHE_NAME = "ao-v1";
+/**
+ * Service Worker for Agent Orchestrator PWA.
+ *
+ * Strategy overview:
+ *   SSE (/api/events)      → passthrough (not intercepted)
+ *   API (/api/*)            → network-only, 503 JSON fallback when offline
+ *   /_next/static/*         → cache-first (content-hashed, safe to cache forever)
+ *   Navigation              → network-first, offline.html fallback
+ *   Everything else         → network-first, no cache
+ *
+ * Cache versioning: bump CACHE_VERSION on deploy to purge stale entries.
+ */
+
+const CACHE_VERSION = 1;
+const CACHE_NAME = `ao-v${CACHE_VERSION}`;
 const OFFLINE_URL = "/offline.html";
 
-// Static assets to pre-cache
-const PRECACHE_URLS = [OFFLINE_URL];
-
-// Install — pre-cache offline page
+// ── Install ────────────────────────────────────────────────────────────
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(PRECACHE_URLS)),
+    caches.open(CACHE_NAME).then((cache) => cache.addAll([OFFLINE_URL])),
   );
   self.skipWaiting();
 });
 
-// Activate — clean old caches
+// ── Activate — purge caches from older versions ────────────────────────
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
@@ -29,23 +40,23 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
-// Fetch — network-first for API/navigation, cache-first for static assets
+// ── Fetch ──────────────────────────────────────────────────────────────
 self.addEventListener("fetch", (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // Skip non-GET requests
+  // Only handle GET — let POST/PUT/DELETE etc. pass through
   if (request.method !== "GET") return;
 
-  // Skip SSE/WebSocket endpoints
+  // SSE endpoint — let browser handle natively (EventSource manages reconnect)
   if (url.pathname.startsWith("/api/events")) return;
 
-  // API routes — network-only (API responses are not cached)
+  // API routes — network-only with offline JSON fallback
   if (url.pathname.startsWith("/api/")) {
     event.respondWith(
       fetch(request).catch(
         () =>
-          new Response("{}", {
+          new Response(JSON.stringify({ error: "offline" }), {
             status: 503,
             headers: { "Content-Type": "application/json" },
           }),
@@ -54,7 +65,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Content-hashed static assets — cache-first (safe because hash changes on update)
+  // Next.js content-hashed assets — cache-first (hash in URL guarantees freshness)
   if (url.pathname.startsWith("/_next/static/")) {
     event.respondWith(
       caches.match(request).then(
@@ -64,34 +75,42 @@ self.addEventListener("fetch", (event) => {
             .then((response) => {
               if (response.ok) {
                 const clone = response.clone();
-                caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+                caches.open(CACHE_NAME).then((c) => c.put(request, clone));
               }
               return response;
             })
-            .catch(() => new Response("", { status: 504 })),
+            .catch(
+              () => new Response("", { status: 504, statusText: "Offline" }),
+            ),
       ),
     );
     return;
   }
 
-  // Navigation — network-first with offline fallback
+  // Navigation — network-first with offline.html fallback
   if (request.mode === "navigate") {
     event.respondWith(
       fetch(request).catch(() =>
-        caches.match(OFFLINE_URL).then(
-          (cached) => cached || new Response("Offline", { status: 503, headers: { "Content-Type": "text/html" } }),
-        ),
+        caches
+          .match(OFFLINE_URL)
+          .then(
+            (cached) =>
+              cached ||
+              new Response("Offline", {
+                status: 503,
+                headers: { "Content-Type": "text/html" },
+              }),
+          ),
       ),
     );
     return;
   }
 
-  // Everything else — network with cache fallback
+  // Everything else — network-only (non-hashed assets like /public/ files
+  // should not be cached because we can't invalidate them)
   event.respondWith(
-    fetch(request).catch(() =>
-      caches.match(request).then(
-        (cached) => cached || new Response("", { status: 504 }),
-      ),
+    fetch(request).catch(
+      () => new Response("", { status: 504, statusText: "Offline" }),
     ),
   );
 });
