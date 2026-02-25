@@ -344,42 +344,26 @@ function createClineAgent(): Agent {
       parts.push("--yolo");
 
       // Build the prompt: concatenate systemPromptFile (if exists),
-      // systemPrompt, and prompt to ensure nothing is lost
+      // systemPrompt, and prompt as separate positional arguments
       // Note: Cline uses -p/--plan for plan mode, not for passing prompts.
       // Prompts are passed as positional arguments (after all flags).
-      let finalPrompt = "";
+      // Pass each part separately to prevent shell injection from user-provided prompts.
 
       // Add system prompt file content first (shell substitution)
-      // Keep unescaped to allow shell expansion of $(cat ...)
+      // Use separate positional argument so shell expansion happens safely
       // systemPromptFile takes precedence over systemPrompt per API contract
       if (config.systemPromptFile) {
         const escapedPath = shellEscape(config.systemPromptFile);
-        finalPrompt = `$(cat ${escapedPath})`;
+        // Use command substitution as separate arg to allow expansion
+        parts.push(`"$(cat ${escapedPath})"`);
       } else if (config.systemPrompt) {
         // Add system prompt (from orchestrator) only if systemPromptFile not provided
-        finalPrompt = config.systemPrompt;
+        parts.push(shellEscape(config.systemPrompt));
       }
 
-      // Add task prompt
+      // Add task prompt as separate positional argument
       if (config.prompt) {
-        if (finalPrompt) {
-          finalPrompt += "\n\n" + config.prompt;
-        } else {
-          finalPrompt = config.prompt;
-        }
-      }
-
-      // Pass combined prompt as a single positional argument (after all flags)
-      // If it contains shell substitution ($(...)), use double quotes to allow expansion
-      // Otherwise, use shellEscape for safety
-      if (finalPrompt) {
-        if (finalPrompt.includes("$(")) {
-          // Contains shell substitution - use double quotes to allow expansion
-          parts.push(`"${finalPrompt}"`);
-        } else {
-          // No shell substitution - safe to escape
-          parts.push(shellEscape(finalPrompt));
-        }
+        parts.push(shellEscape(config.prompt));
       }
 
       return parts.join(" ");
