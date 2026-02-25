@@ -13,9 +13,11 @@ import {
   type WorkspaceHooksConfig,
 } from "@composio/ao-core";
 import { execFile } from "node:child_process";
+import { createReadStream } from "node:fs";
 import { writeFile, mkdir, readFile, readdir, rename, stat, lstat, open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { randomBytes } from "node:crypto";
 
@@ -416,66 +418,54 @@ async function findCodexSessionFile(workspacePath: string): Promise<string | nul
   return bestMatch?.path ?? null;
 }
 
-/** Parse a Codex JSONL session file and extract all lines */
-function parseCodexJsonl(content: string): CodexJsonlLine[] {
-  const result: CodexJsonlLine[] = [];
-  for (const line of content.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      const parsed: unknown = JSON.parse(trimmed);
-      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-        result.push(parsed as CodexJsonlLine);
+/** Aggregated data extracted from a Codex session file via streaming */
+interface CodexSessionData {
+  model: string | null;
+  threadId: string | null;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+/**
+ * Stream a Codex JSONL session file line-by-line and aggregate the data
+ * we need (model, threadId, token counts) without loading the entire file
+ * into memory. This is critical because Codex rollout files can be 100 MB+.
+ */
+async function streamCodexSessionData(filePath: string): Promise<CodexSessionData | null> {
+  try {
+    const data: CodexSessionData = { model: null, threadId: null, inputTokens: 0, outputTokens: 0 };
+    const rl = createInterface({
+      input: createReadStream(filePath, { encoding: "utf-8" }),
+      crlfDelay: Infinity,
+    });
+
+    for await (const line of rl) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const parsed: unknown = JSON.parse(trimmed);
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) continue;
+        const entry = parsed as CodexJsonlLine;
+
+        if (entry.type === "session_meta" && typeof entry.model === "string") {
+          data.model = entry.model;
+        }
+        if (typeof entry.threadId === "string" && entry.threadId) {
+          data.threadId = entry.threadId;
+        }
+        if (entry.type === "event_msg" && entry.msg?.type === "token_count") {
+          data.inputTokens += entry.msg.input_tokens ?? 0;
+          data.outputTokens += entry.msg.output_tokens ?? 0;
+        }
+      } catch {
+        // Skip malformed lines
       }
-    } catch {
-      // Skip malformed lines
     }
+
+    return data;
+  } catch {
+    return null;
   }
-  return result;
-}
-
-/** Extract model name from Codex session_meta entry */
-function extractCodexModel(lines: CodexJsonlLine[]): string | null {
-  for (const line of lines) {
-    if (line.type === "session_meta" && typeof line.model === "string") {
-      return line.model;
-    }
-  }
-  return null;
-}
-
-/** Aggregate token usage from Codex token_count events */
-function extractCodexCost(lines: CodexJsonlLine[]): CostEstimate | undefined {
-  let inputTokens = 0;
-  let outputTokens = 0;
-
-  for (const line of lines) {
-    if (line.type === "event_msg" && line.msg?.type === "token_count") {
-      inputTokens += line.msg.input_tokens ?? 0;
-      // cached_tokens is a subset of input_tokens (not additive)
-      outputTokens += line.msg.output_tokens ?? 0;
-      // reasoning_tokens is a subset of output_tokens (not additive)
-    }
-  }
-
-  if (inputTokens === 0 && outputTokens === 0) return undefined;
-
-  // Rough cost estimate using GPT-4o pricing as baseline
-  // ($2.50/1M input, $10/1M output)
-  const estimatedCostUsd =
-    (inputTokens / 1_000_000) * 2.5 + (outputTokens / 1_000_000) * 10.0;
-
-  return { inputTokens, outputTokens, estimatedCostUsd };
-}
-
-/** Extract the Codex thread ID from JSONL (from thread_started or session_meta) */
-function extractCodexThreadId(lines: CodexJsonlLine[]): string | null {
-  for (const line of lines) {
-    if (typeof line.threadId === "string" && line.threadId) {
-      return line.threadId;
-    }
-  }
-  return null;
 }
 
 // =============================================================================
@@ -535,7 +525,7 @@ function createCodexAgent(): Agent {
 
     getLaunchCommand(config: AgentLaunchConfig): string {
       const binary = resolvedBinary ?? "codex";
-      const parts: string[] = [binary];
+      const parts: string[] = [shellEscape(binary)];
 
       // Approval policy mapping — cast to string for forward-compat with
       // extended permission values not yet in AgentLaunchConfig type.
@@ -688,24 +678,28 @@ function createCodexAgent(): Agent {
       const sessionFile = await findCodexSessionFile(session.workspacePath);
       if (!sessionFile) return null;
 
-      let content: string;
-      try {
-        content = await readFile(sessionFile, "utf-8");
-      } catch {
-        return null;
-      }
-
-      const lines = parseCodexJsonl(content);
-      if (lines.length === 0) return null;
+      // Stream the file line-by-line to avoid loading potentially huge
+      // rollout files (100 MB+) entirely into memory.
+      const data = await streamCodexSessionData(sessionFile);
+      if (!data) return null;
 
       const agentSessionId = basename(sessionFile, ".jsonl");
-      const model = extractCodexModel(lines);
+
+      const cost: CostEstimate | undefined =
+        data.inputTokens === 0 && data.outputTokens === 0
+          ? undefined
+          : {
+              inputTokens: data.inputTokens,
+              outputTokens: data.outputTokens,
+              estimatedCostUsd:
+                (data.inputTokens / 1_000_000) * 2.5 + (data.outputTokens / 1_000_000) * 10.0,
+            };
 
       return {
-        summary: model ? `Codex session (${model})` : null,
+        summary: data.model ? `Codex session (${data.model})` : null,
         summaryIsFallback: true,
         agentSessionId,
-        cost: extractCodexCost(lines),
+        cost,
       };
     },
 
@@ -716,25 +710,16 @@ function createCodexAgent(): Agent {
       const sessionFile = await findCodexSessionFile(session.workspacePath);
       if (!sessionFile) return null;
 
-      let content: string;
-      try {
-        content = await readFile(sessionFile, "utf-8");
-      } catch {
-        return null;
-      }
-
-      const lines = parseCodexJsonl(content);
-      if (lines.length === 0) return null;
-
-      // Extract the session/thread ID for native resume
-      const threadId = extractCodexThreadId(lines);
-      if (!threadId) return null;
+      // Stream the file line-by-line to avoid loading potentially huge
+      // rollout files (100 MB+) entirely into memory.
+      const data = await streamCodexSessionData(sessionFile);
+      if (!data?.threadId) return null;
 
       // Use Codex's native `resume` subcommand for proper conversation resume.
       // This restores the full thread state, not just a text prompt re-injection.
       // Flags are placed before the positional threadId for CLI parser compatibility.
       const binary = resolvedBinary ?? "codex";
-      const parts: string[] = [binary, "resume"];
+      const parts: string[] = [shellEscape(binary), "resume"];
 
       // Add approval policy flags from project config
       const perms = project.agentConfig?.permissions as string | undefined;
@@ -746,7 +731,7 @@ function createCodexAgent(): Agent {
         parts.push("--ask-for-approval", "untrusted");
       }
 
-      const effectiveModel = project.agentConfig?.model ?? extractCodexModel(lines);
+      const effectiveModel = project.agentConfig?.model ?? data.model;
       if (effectiveModel) {
         parts.push("--model", shellEscape(effectiveModel as string));
 
@@ -756,7 +741,7 @@ function createCodexAgent(): Agent {
       }
 
       // Positional threadId goes last, after all flags
-      parts.push(shellEscape(threadId));
+      parts.push(shellEscape(data.threadId));
 
       return parts.join(" ");
     },

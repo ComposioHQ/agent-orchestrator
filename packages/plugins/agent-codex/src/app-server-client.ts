@@ -174,6 +174,7 @@ export class CodexAppServerClient extends EventEmitter {
     if (this.connecting) throw new Error("Client is already connecting");
 
     this.connecting = true;
+    const wasClosedBefore = this.closed;
 
     try {
       this.process = spawn(this.binaryPath, ["app-server"], {
@@ -208,8 +209,11 @@ export class CodexAppServerClient extends EventEmitter {
       this.connecting = false;
       await this.close();
       // Reset closed flag so the client can retry connect() after a
-      // transient handshake failure instead of being permanently unusable.
-      this.closed = false;
+      // transient handshake failure — but only if close() wasn't already
+      // called externally before this connect() attempt.
+      if (!wasClosedBefore) {
+        this.closed = false;
+      }
       throw err;
     }
 

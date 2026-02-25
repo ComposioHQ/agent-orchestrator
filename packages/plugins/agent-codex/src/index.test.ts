@@ -14,6 +14,7 @@ const {
   mockStat,
   mockLstat,
   mockOpen,
+  mockCreateReadStream,
   mockHomedir,
 } = vi.hoisted(() => ({
   mockExecFileAsync: vi.fn(),
@@ -25,6 +26,7 @@ const {
   mockStat: vi.fn(),
   mockLstat: vi.fn(),
   mockOpen: vi.fn(),
+  mockCreateReadStream: vi.fn(),
   mockHomedir: vi.fn(() => "/mock/home"),
 }));
 
@@ -52,12 +54,14 @@ vi.mock("node:crypto", () => ({
 
 vi.mock("node:fs", () => ({
   existsSync: vi.fn(() => false),
+  createReadStream: mockCreateReadStream,
 }));
 
 vi.mock("node:os", () => ({
   homedir: mockHomedir,
 }));
 
+import { Readable } from "node:stream";
 import { create, manifest, default as defaultExport, resolveCodexBinary } from "./index.js";
 
 // ---------------------------------------------------------------------------
@@ -144,6 +148,22 @@ function setupMockOpen(content: string) {
   mockOpen.mockResolvedValue(makeFakeFileHandle(content));
 }
 
+/**
+ * Create a Readable stream from a string. Used to mock createReadStream
+ * for the streaming JSONL parser (streamCodexSessionData).
+ */
+function makeContentStream(content: string): Readable {
+  return Readable.from(Buffer.from(content, "utf-8"));
+}
+
+/**
+ * Set up mockCreateReadStream to return a readable stream with the given content.
+ * Used by getSessionInfo/getRestoreCommand which now stream files line-by-line.
+ */
+function setupMockStream(content: string) {
+  mockCreateReadStream.mockReturnValue(makeContentStream(content));
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockHomedir.mockReturnValue("/mock/home");
@@ -152,6 +172,9 @@ beforeEach(() => {
   mockOpen.mockResolvedValue(makeFakeFileHandle(""));
   // Default: lstat rejects (no subdirectories). Session tests override as needed.
   mockLstat.mockRejectedValue(new Error("ENOENT"));
+  // Default: createReadStream returns an empty stream. Session tests call
+  // setupMockStream(content) to override.
+  mockCreateReadStream.mockReturnValue(makeContentStream(""));
 });
 
 // =========================================================================
@@ -186,7 +209,7 @@ describe("getLaunchCommand", () => {
   const agent = create();
 
   it("generates base command", () => {
-    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("codex");
+    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("'codex'");
   });
 
   it("includes --dangerously-bypass-approvals-and-sandbox when permissions=skip", () => {
@@ -231,7 +254,7 @@ describe("getLaunchCommand", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ permissions: "skip", model: "o3", prompt: "Go" }),
     );
-    expect(cmd).toBe("codex --dangerously-bypass-approvals-and-sandbox --model 'o3' -c model_reasoning_effort=high -- 'Go'");
+    expect(cmd).toBe("'codex' --dangerously-bypass-approvals-and-sandbox --model 'o3' -c model_reasoning_effort=high -- 'Go'");
   });
 
   it("escapes single quotes in prompt (POSIX shell escaping)", () => {
@@ -633,6 +656,7 @@ describe("getSessionInfo", () => {
 
     mockReaddir.mockResolvedValue(["session-123.jsonl"]);
     setupMockOpen(sessionContent);
+    setupMockStream(sessionContent);
     mockReadFile.mockResolvedValue(sessionContent);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
@@ -670,6 +694,11 @@ describe("getSessionInfo", () => {
       if (path.includes("new-session")) return Promise.resolve(newContent);
       return Promise.reject(new Error("ENOENT"));
     });
+    mockCreateReadStream.mockImplementation((path: string) => {
+      if (path.includes("old-session")) return makeContentStream(oldContent);
+      if (path.includes("new-session")) return makeContentStream(newContent);
+      return makeContentStream("");
+    });
     mockStat.mockImplementation((path: string) => {
       if (path.includes("old-session")) return Promise.resolve({ mtimeMs: 1000 });
       if (path.includes("new-session")) return Promise.resolve({ mtimeMs: 2000 });
@@ -690,6 +719,7 @@ describe("getSessionInfo", () => {
 
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
+    setupMockStream(content);
     mockReadFile.mockResolvedValue(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
@@ -740,6 +770,7 @@ describe("getSessionInfo", () => {
     setupMockOpen(jsonl({ type: "session_meta", cwd: "/workspace/test" }));
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
     mockReadFile.mockRejectedValue(new Error("EACCES"));
+    mockCreateReadStream.mockImplementation(() => { throw new Error("EACCES"); });
 
     expect(await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }))).toBeNull();
   });
@@ -764,10 +795,15 @@ describe("getSessionInfo", () => {
     setupMockOpen(jsonl({ type: "session_meta", cwd: "/workspace/test" }));
     // readFile (full parse) returns only garbage
     mockReadFile.mockResolvedValue("not json\n\n   \n");
+    setupMockStream("not json\n\n   \n");
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
-    expect(result).toBeNull();
+    // With streaming parser, garbage lines are skipped gracefully and a result
+    // is returned with null summary and undefined cost (no valid data extracted).
+    expect(result).not.toBeNull();
+    expect(result!.summary).toBeNull();
+    expect(result!.cost).toBeUndefined();
   });
 
   it("finds session files in date-sharded subdirectories (YYYY/MM/DD)", async () => {
@@ -787,6 +823,7 @@ describe("getSessionInfo", () => {
       { type: "session_meta", cwd: "/workspace/test", model: "o3-mini" },
     );
     setupMockOpen(content);
+    setupMockStream(content);
     mockReadFile.mockResolvedValue(content);
 
     const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
@@ -801,6 +838,7 @@ describe("getSessionInfo", () => {
       { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
     );
     setupMockOpen(content);
+    setupMockStream(content);
     mockReadFile.mockResolvedValue(content);
     // Non-JSONL entries trigger lstat to check isDirectory()
     mockLstat.mockResolvedValue({ isDirectory: () => false });
@@ -809,11 +847,12 @@ describe("getSessionInfo", () => {
 
     const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
     expect(result).not.toBeNull();
-    // readFile should only be called once (full parse); cwd check uses open()
+    // With streaming parser, readFile is no longer used for full parse;
+    // cwd check uses open(), data extraction uses createReadStream.
     const readFileCalls = mockReadFile.mock.calls.filter(
       (call: string[]) => typeof call[0] === "string" && call[0].includes("sessions/"),
     );
-    expect(readFileCalls.length).toBe(1); // once for full parse (cwd check uses open())
+    expect(readFileCalls.length).toBe(0); // streaming replaces readFile for full parse
   });
 });
 
@@ -876,6 +915,7 @@ describe("getRestoreCommand", () => {
     );
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
+    setupMockStream(content);
     mockReadFile.mockResolvedValue(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
@@ -883,7 +923,7 @@ describe("getRestoreCommand", () => {
     const cmd = await agent.getRestoreCommand!(session, makeProjectConfig());
 
     expect(cmd).not.toBeNull();
-    expect(cmd).toContain("codex resume");
+    expect(cmd).toContain("'codex' resume");
     expect(cmd).toContain("thread-abc-123");
   });
 
@@ -894,6 +934,7 @@ describe("getRestoreCommand", () => {
     );
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
+    setupMockStream(content);
     mockReadFile.mockResolvedValue(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
@@ -912,6 +953,7 @@ describe("getRestoreCommand", () => {
     );
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
+    setupMockStream(content);
     mockReadFile.mockResolvedValue(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
@@ -931,6 +973,7 @@ describe("getRestoreCommand", () => {
     );
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
+    setupMockStream(content);
     mockReadFile.mockResolvedValue(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
@@ -949,6 +992,7 @@ describe("getRestoreCommand", () => {
     );
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
+    setupMockStream(content);
     mockReadFile.mockResolvedValue(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
@@ -973,6 +1017,7 @@ describe("getRestoreCommand", () => {
     );
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
+    setupMockStream(content);
     mockReadFile.mockResolvedValue(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
@@ -992,6 +1037,7 @@ describe("getRestoreCommand", () => {
     );
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
+    setupMockStream(content);
     mockReadFile.mockResolvedValue(content);
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
@@ -1008,6 +1054,7 @@ describe("getRestoreCommand", () => {
     setupMockOpen(jsonl({ type: "session_meta", cwd: "/workspace/test" }));
     // readFile (full parse) fails
     mockReadFile.mockRejectedValue(new Error("EACCES"));
+    mockCreateReadStream.mockImplementation(() => { throw new Error("EACCES"); });
     mockStat.mockResolvedValue({ mtimeMs: 1000 });
 
     const session = makeSession({ workspacePath: "/workspace/test" });
@@ -1128,13 +1175,13 @@ describe("postLaunchSetup", () => {
     mockReadFile.mockRejectedValue(new Error("ENOENT"));
 
     // Before postLaunchSetup, binary is "codex"
-    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("codex");
+    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("'codex'");
 
     // After postLaunchSetup resolves the binary
     await agent.postLaunchSetup!(makeSession({ workspacePath: "/workspace/test" }));
 
     // Now getLaunchCommand should use the resolved binary
-    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("/opt/bin/codex");
+    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("'/opt/bin/codex'");
   });
 });
 
