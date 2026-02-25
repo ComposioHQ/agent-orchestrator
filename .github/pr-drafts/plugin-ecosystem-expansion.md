@@ -5,7 +5,7 @@ Implements the foundation for plugin ecosystem expansion:
 - Test coverage for dynamic loading and config forwarding
 - Research distillation document with prioritized plugin roadmap
 
-Closes: <!-- replace with issue number after issue creation, e.g. #123 -->
+Issue tracking note: repository issues are currently disabled on `suraj-markup/agent-orchestrator`, so this PR links to `.github/issue-drafts/plugin-ecosystem-expansion.md` as the tracking artifact.
 
 ## Changes
 - `packages/core/src/plugin-registry.ts`
