@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
 import { getProjectName } from "@/lib/project-name";
+import { getSelfProjectId } from "@/lib/self-project";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import "./globals.css";
 
 const ibmPlexSans = IBM_Plex_Sans({
@@ -29,10 +31,14 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const selfProjectId = getSelfProjectId();
+
   return (
-    <html lang="en" className={`dark ${ibmPlexSans.variable} ${ibmPlexMono.variable}`}>
+    <html lang="en" suppressHydrationWarning className={`dark ${ibmPlexSans.variable} ${ibmPlexMono.variable}`}>
       <body className="bg-[var(--color-bg-base)] text-[var(--color-text-primary)] antialiased">
-        {children}
+        <ErrorBoundary selfProjectId={selfProjectId}>
+          {children}
+        </ErrorBoundary>
       </body>
     </html>
   );
