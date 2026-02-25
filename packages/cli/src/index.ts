@@ -12,6 +12,8 @@ import { registerOpen } from "./commands/open.js";
 import { registerStart, registerStop } from "./commands/start.js";
 import { registerCheckIssues } from "./commands/check-issues.js";
 import { registerSelfUpdate } from "./commands/self-update.js";
+import { registerSetupSystemd } from "./commands/setup-systemd.js";
+import { registerLifecycleDaemon } from "./commands/lifecycle-daemon.js";
 
 const program = new Command();
 
@@ -33,5 +35,7 @@ registerReviewCheck(program);
 registerDashboard(program);
 registerOpen(program);
 registerSelfUpdate(program);
+registerSetupSystemd(program);
+registerLifecycleDaemon(program);
 
 program.parse();

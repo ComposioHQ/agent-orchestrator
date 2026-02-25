@@ -23,6 +23,11 @@ import { getSessionManager } from "../lib/create-session-manager.js";
 import { findWebDir, buildDashboardEnv } from "../lib/web-dir.js";
 import { cleanNextCache } from "../lib/dashboard-rebuild.js";
 import { checkAndSpawnIssues } from "./check-issues.js";
+import {
+  hasSystemdUnits,
+  isSystemdAvailable,
+  setupSystemdUnits,
+} from "./setup-systemd.js";
 
 /**
  * Resolve project from config.
@@ -135,6 +140,59 @@ export function registerStart(program: Command): void {
       ) => {
         try {
           const config = loadConfig();
+
+          // --- systemd: auto-setup if systemd is available but units aren't installed ---
+          if (!hasSystemdUnits() && await isSystemdAvailable()) {
+            console.log(chalk.bold("\nFirst run — installing systemd units\n"));
+            await setupSystemdUnits(config);
+            console.log();
+          }
+
+          // --- systemd mode (no project arg required) ---
+          if (hasSystemdUnits()) {
+            console.log(chalk.bold("\nStarting orchestrator via systemd\n"));
+
+            const spinner = ora("Starting ao.target").start();
+            try {
+              await exec("systemctl", ["--user", "start", "ao.target"]);
+              spinner.succeed("ao.target started");
+            } catch (err) {
+              spinner.fail("Failed to start ao.target");
+              throw err;
+            }
+
+            // Show status
+            try {
+              const { stdout } = await exec("systemctl", [
+                "--user", "status",
+                "ao-telegram-bridge.service",
+                "ao-lifecycle.service",
+                "ao-dashboard.service",
+                "--no-pager", "--lines=0",
+              ]);
+              console.log(chalk.dim(stdout));
+            } catch {
+              // status exit code 3 = "inactive", just ignore
+            }
+
+            const port = config.port ?? 3000;
+            console.log(chalk.bold.green("\n✓ Startup complete\n"));
+            console.log(chalk.cyan("Dashboard:"), `http://localhost:${port}`);
+            console.log(chalk.dim(`Config: ${config.configPath}`));
+            console.log(chalk.dim("Logs: journalctl --user -u ao-lifecycle -f\n"));
+
+            // Auto-spawn agents for open issues (best-effort, needs project)
+            try {
+              const { projectId, project } = resolveProject(config, projectArg);
+              await checkAndSpawnIssues(config, projectId, project);
+            } catch {
+              // Non-critical — no project specified or issue check failed
+            }
+
+            return;
+          }
+
+          // --- fallback: in-process mode ---
           const { projectId, project } = resolveProject(config, projectArg);
           const sessionId = `${project.sessionPrefix}-orchestrator`;
           const port = config.port ?? 3000;
@@ -295,6 +353,25 @@ export function registerStop(program: Command): void {
     .action(async (projectArg?: string) => {
       try {
         const config = loadConfig();
+
+        // --- systemd mode (no project arg required) ---
+        if (hasSystemdUnits()) {
+          console.log(chalk.bold("\nStopping orchestrator via systemd\n"));
+
+          const spinner = ora("Stopping ao.target").start();
+          try {
+            await exec("systemctl", ["--user", "stop", "ao.target"]);
+            spinner.succeed("ao.target stopped");
+          } catch (err) {
+            spinner.fail("Failed to stop ao.target");
+            throw err;
+          }
+
+          console.log(chalk.bold.green("\n✓ Orchestrator stopped\n"));
+          return;
+        }
+
+        // --- fallback: in-process mode ---
         const { projectId: _projectId, project } = resolveProject(config, projectArg);
         const sessionId = `${project.sessionPrefix}-orchestrator`;
         const port = config.port ?? 3000;
