@@ -13,7 +13,7 @@ import {
 import { execFile } from "node:child_process";
 import { writeFile, mkdir, readFile, rename } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { promisify } from "node:util";
 import { randomBytes } from "node:crypto";
 
@@ -266,6 +266,7 @@ async function setupCodexWorkspace(workspacePath: string): Promise<void> {
     const content = existing
       ? existing.trimEnd() + "\n" + AO_AGENTS_MD_SECTION
       : AO_AGENTS_MD_SECTION.trimStart();
+    await mkdir(dirname(agentsMdPath), { recursive: true });
     await writeFile(agentsMdPath, content, "utf-8");
   }
 }
@@ -283,7 +284,7 @@ function createCodexAgent(): Agent {
       const parts: string[] = ["codex"];
 
       if (config.permissions === "skip") {
-        parts.push("--full-auto");
+        parts.push("--full-auto", "-a", "never");
       }
 
       if (config.model) {

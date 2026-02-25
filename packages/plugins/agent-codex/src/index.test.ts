@@ -148,9 +148,11 @@ describe("getLaunchCommand", () => {
     expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("codex");
   });
 
-  it("includes --full-auto when permissions=skip", () => {
+  it("includes --full-auto and -a never when permissions=skip", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "skip" }));
     expect(cmd).toContain("--full-auto");
+    expect(cmd).toContain("-a");
+    expect(cmd).toContain("never");
   });
 
   it("includes --model with shell-escaped value", () => {
@@ -167,7 +169,7 @@ describe("getLaunchCommand", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ permissions: "skip", model: "o3", prompt: "Go" }),
     );
-    expect(cmd).toBe("codex --full-auto --model 'o3' -- 'Go'");
+    expect(cmd).toBe("codex --full-auto -a never --model 'o3' -- 'Go'");
   });
 
   it("escapes single quotes in prompt (POSIX shell escaping)", () => {
