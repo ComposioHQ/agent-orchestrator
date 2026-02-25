@@ -468,12 +468,23 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       userPrompt: spawnConfig.prompt,
     });
 
+    // Write prompt to file to avoid shell/tmux quoting issues with arbitrary
+    // issue descriptions containing markdown, URLs, backslashes, etc.
+    const promptContent = composedPrompt ?? spawnConfig.prompt;
+    let promptFile: string | undefined;
+    if (promptContent) {
+      const baseDir = getProjectBaseDir(config.configPath, project.path);
+      mkdirSync(baseDir, { recursive: true });
+      promptFile = join(baseDir, `prompt-${sessionId}.md`);
+      writeFileSync(promptFile, promptContent, "utf-8");
+    }
+
     // Get agent launch config and create runtime — clean up workspace on failure
     const agentLaunchConfig = {
       sessionId,
       projectConfig: project,
       issueId: spawnConfig.issueId,
-      prompt: composedPrompt ?? spawnConfig.prompt,
+      promptFile,
       permissions: project.agentConfig?.permissions,
       model: project.agentConfig?.model,
     };

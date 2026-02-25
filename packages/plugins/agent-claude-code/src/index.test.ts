@@ -183,25 +183,18 @@ describe("getLaunchCommand", () => {
     expect(cmd).not.toContain("-p");
   });
 
-  it("includes --append-system-prompt alongside omitted -p", () => {
-    const cmd = agent.getLaunchCommand(
-      makeLaunchConfig({ systemPrompt: "You are a helper", prompt: "Do the task" }),
-    );
-    expect(cmd).toContain("--append-system-prompt");
-    expect(cmd).toContain("You are a helper");
-    // -p as a standalone flag (not substring of --append-system-prompt)
-    expect(cmd).not.toMatch(/\s-p\s/);
-    expect(cmd).not.toContain("Do the task");
+  it("reads prompt from file when promptFile is set", () => {
+    const cmd = agent.getLaunchCommand(makeLaunchConfig({ promptFile: "/tmp/test-prompt.md" }));
+    expect(cmd).toContain("-p");
+    expect(cmd).toContain("$(cat '/tmp/test-prompt.md')");
   });
 
-  it("uses systemPromptFile via shell substitution alongside omitted -p", () => {
+  it("prefers promptFile over prompt", () => {
     const cmd = agent.getLaunchCommand(
-      makeLaunchConfig({ systemPromptFile: "/tmp/prompt.md", prompt: "Do the task" }),
+      makeLaunchConfig({ prompt: "inline prompt", promptFile: "/tmp/test-prompt.md" }),
     );
-    expect(cmd).toContain('--append-system-prompt "$(cat');
-    expect(cmd).toContain("/tmp/prompt.md");
-    expect(cmd).not.toMatch(/\s-p\s/);
-    expect(cmd).not.toContain("Do the task");
+    expect(cmd).toContain("$(cat '/tmp/test-prompt.md')");
+    expect(cmd).not.toContain("inline prompt");
   });
 });
 
