@@ -1,0 +1,103 @@
+# Agent Orchestrator — Reboot Dashboard
+# Requires: LINEAR_API_KEY, GITHUB_TOKEN
+
+port: 3000
+
+defaults:
+  runtime: tmux
+  agent: claude-code
+  workspace: worktree
+  notifiers: [desktop]
+
+projects:
+  dashboard:
+    name: Reboot Dashboard
+    repo: twelvearrays/dashboard          # UPDATE to your actual repo
+    path: ~/dashboard                      # UPDATE to your local path
+    defaultBranch: main
+    sessionPrefix: dsh
+
+    # Linear integration — Dashboard team
+    tracker:
+      plugin: linear
+      teamId: "f65d8805-05b4-41d2-a90b-dffe27e24d0b"
+
+    defaultInputSource: linear
+    inputSources:
+      linear:
+        type: linear
+
+    # Agent config
+    agentConfig:
+      permissions: skip
+      model: sonnet
+
+    # Self-review rules injected into every agent prompt
+    agentRulesFile: .agent-rules.md
+
+    # Per-project reaction overrides
+    reactions:
+      ci-failed:
+        auto: true
+        action: send-to-agent
+        message: |
+          CI failed. FIRST: add the "ci-failed" label to your Linear issue.
+          Then follow this checklist:
+          1. Read the full CI log output
+          2. Identify every failing test and build error
+          3. Fix each failure — do NOT skip or disable tests
+          4. Run the build locally: pnpm build
+          5. Run tests locally: pnpm test
+          6. If both pass, push. If not, repeat from step 2.
+          7. AFTER CI passes: remove the "ci-failed" label from the Linear issue.
+        retries: 3
+        escalateAfter: 1h
+
+      changes-requested:
+        auto: true
+        action: send-to-agent
+        message: |
+          Review comments received. For each comment:
+          1. Read the comment carefully
+          2. If it's a code change request, implement it
+          3. If it's a question, reply with context
+          4. After all comments are addressed, run the full self-review checklist from .agent-rules.md
+          5. Push and reply to each comment thread
+          6. Update Linear labels if any changed (e.g., remove "ci-failed" if CI is green now)
+        escalateAfter: 2h
+
+      approved-and-green:
+        auto: false
+        action: notify
+        priority: action
+
+      agent-stuck:
+        threshold: 10m
+        action: notify
+        priority: urgent
+
+# Global reactions (apply to all projects unless overridden)
+reactions:
+  ci-failed:
+    auto: true
+    action: send-to-agent
+    retries: 2
+
+  changes-requested:
+    auto: true
+    action: send-to-agent
+    escalateAfter: 30m
+
+  approved-and-green:
+    auto: false
+    action: notify
+
+  agent-stuck:
+    threshold: 10m
+    action: notify
+    priority: urgent
+
+  all-complete:
+    auto: true
+    action: notify
+    priority: info
