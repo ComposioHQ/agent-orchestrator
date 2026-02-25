@@ -41,6 +41,12 @@ reactions:
     action: send-to-agent
     message: "Review comments were left on your PR. Run `gh pr view --comments` to read them, address the feedback, and push fixes."
     escalateAfter: 30m
+  issue-commented:
+    auto: true
+    action: send-to-agent
+    filter:
+      authors: ["marcmantei"]
+    escalateAfter: 30m
   auto-review:
     auto: true
     action: spawn-reviewer
