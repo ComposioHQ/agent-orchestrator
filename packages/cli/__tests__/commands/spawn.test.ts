@@ -44,6 +44,21 @@ vi.mock("@composio/ao-core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@composio/ao-core")>();
   return {
     ...actual,
+    createScheduler: ({ concurrencyCap }: { concurrencyCap: number }) => ({
+      getReadyQueue: (graph: { nodes: Record<string, { id: string; dependencies?: string[]; state: string }> }) => {
+        const nodes = Object.values(graph.nodes ?? {});
+        const activeRunning = nodes.filter((node) => node.state === "running").length;
+        const availableSlots = Math.max(0, concurrencyCap - activeRunning);
+        const readyQueue = nodes
+          .filter((node) => {
+            if (node.state !== "ready" && node.state !== "pending") return false;
+            const dependencies = Array.isArray(node.dependencies) ? node.dependencies : [];
+            return dependencies.every((dependencyId) => graph.nodes[dependencyId]?.state === "complete");
+          })
+          .slice(0, availableSlots);
+        return { readyQueue };
+      },
+    }),
     loadConfig: () => mockConfigRef.current,
     readPlanBlob: mockReadPlanBlob,
   };

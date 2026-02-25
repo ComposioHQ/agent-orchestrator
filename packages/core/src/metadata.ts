@@ -226,10 +226,12 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
     agent: raw["agent"],
     createdAt: raw["createdAt"],
     runtimeHandle: raw["runtimeHandle"],
+    planId: raw["planId"],
+    planTaskId: raw["planTaskId"],
+    planTaskValidated: raw["planTaskValidated"],
     dashboardPort: raw["dashboardPort"] ? Number(raw["dashboardPort"]) : undefined,
     terminalWsPort: raw["terminalWsPort"] ? Number(raw["terminalWsPort"]) : undefined,
     directTerminalWsPort: raw["directTerminalWsPort"] ? Number(raw["directTerminalWsPort"]) : undefined,
-    planId: raw["planId"],
     planVersion,
     planStatus,
     planPath: raw["planPath"],
@@ -280,6 +282,9 @@ export function writeMetadata(
   if (metadata.agent) data["agent"] = metadata.agent;
   if (metadata.createdAt) data["createdAt"] = metadata.createdAt;
   if (metadata.runtimeHandle) data["runtimeHandle"] = metadata.runtimeHandle;
+  if (metadata.planId) data["planId"] = metadata.planId;
+  if (metadata.planTaskId) data["planTaskId"] = metadata.planTaskId;
+  if (metadata.planTaskValidated) data["planTaskValidated"] = metadata.planTaskValidated;
   if (metadata.dashboardPort !== undefined)
     data["dashboardPort"] = String(metadata.dashboardPort);
   if (metadata.terminalWsPort !== undefined)

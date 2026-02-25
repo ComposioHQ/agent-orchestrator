@@ -398,6 +398,41 @@ describe("Config Defaults", () => {
     const validated = validateConfig(config);
     expect(validated.projects.proj1.tracker).toEqual({ plugin: "github" });
   });
+
+  it("applies default spawn policy when not configured", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.policies?.spawn.requireValidatedPlanTask).toBe(false);
+  });
+
+  it("accepts explicit spawn policy configuration", () => {
+    const config = {
+      policies: {
+        spawn: {
+          requireValidatedPlanTask: true,
+        },
+      },
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.policies?.spawn.requireValidatedPlanTask).toBe(true);
+  });
 });
 
 describe("Config Verifier Role Settings", () => {

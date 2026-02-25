@@ -252,6 +252,69 @@ describe("spawn", () => {
     await expect(sm.spawn({ projectId: "my-app" })).rejects.toThrow("not found");
   });
 
+  it("blocks spawn when policy requires a validated plan task and no planTask is provided", async () => {
+    config.policies = {
+      spawn: {
+        requireValidatedPlanTask: true,
+      },
+    };
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    await expect(sm.spawn({ projectId: "my-app" })).rejects.toThrow(
+      "require a validated plan task reference",
+    );
+    expect(mockWorkspace.create).not.toHaveBeenCalled();
+    expect(mockRuntime.create).not.toHaveBeenCalled();
+  });
+
+  it("blocks spawn when policy requires a validated plan task but task is unvalidated", async () => {
+    config.policies = {
+      spawn: {
+        requireValidatedPlanTask: true,
+      },
+    };
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    await expect(
+      sm.spawn({
+        projectId: "my-app",
+        planTask: {
+          planId: "plan-1",
+          taskId: "task-2",
+          validated: false,
+        },
+      }),
+    ).rejects.toThrow("is not validated");
+    expect(mockWorkspace.create).not.toHaveBeenCalled();
+    expect(mockRuntime.create).not.toHaveBeenCalled();
+  });
+
+  it("allows spawn when policy requires validated plan task and reference is validated", async () => {
+    config.policies = {
+      spawn: {
+        requireValidatedPlanTask: true,
+      },
+    };
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    await sm.spawn({
+      projectId: "my-app",
+      planTask: {
+        planId: "plan-1",
+        taskId: "task-2",
+        validated: true,
+      },
+    });
+
+    const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta).not.toBeNull();
+    expect(meta!["planId"]).toBe("plan-1");
+    expect(meta!["planTaskId"]).toBe("task-2");
+    expect(meta!["planTaskValidated"]).toBe("true");
+    expect(mockWorkspace.create).toHaveBeenCalled();
+    expect(mockRuntime.create).toHaveBeenCalled();
+  });
+
   describe("agent override", () => {
     let mockCodexAgent: Agent;
     let registryWithMultipleAgents: PluginRegistry;

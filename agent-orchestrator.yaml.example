@@ -26,6 +26,12 @@ defaults:
   #   runtime: process
   #   agent: codex
 
+# Policy toggles
+# policies:
+#   spawn:
+#     # When true, worker spawn requires planTask (planId/taskId + validated=true)
+#     requireValidatedPlanTask: false
+
 # Projects — at minimum, specify repo and path
 projects:
   my-app:

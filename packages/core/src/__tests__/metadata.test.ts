@@ -59,6 +59,9 @@ describe("writeMetadata + readMetadata", () => {
       evidenceTestsRun: "/tmp/w/.ao/evidence/app-2/tests-run.json",
       evidenceChangedPaths: "/tmp/w/.ao/evidence/app-2/changed-paths.json",
       evidenceKnownRisks: "/tmp/w/.ao/evidence/app-2/known-risks.json",
+      planId: "plan-1",
+      planTaskId: "task-7",
+      planTaskValidated: "true",
     });
 
     const meta = readMetadata(dataDir, "app-2");
@@ -75,6 +78,9 @@ describe("writeMetadata + readMetadata", () => {
     expect(meta!.evidenceTestsRun).toBe("/tmp/w/.ao/evidence/app-2/tests-run.json");
     expect(meta!.evidenceChangedPaths).toBe("/tmp/w/.ao/evidence/app-2/changed-paths.json");
     expect(meta!.evidenceKnownRisks).toBe("/tmp/w/.ao/evidence/app-2/known-risks.json");
+    expect(meta!.planId).toBe("plan-1");
+    expect(meta!.planTaskId).toBe("task-7");
+    expect(meta!.planTaskValidated).toBe("true");
   });
 
   it("returns null for nonexistent session", () => {

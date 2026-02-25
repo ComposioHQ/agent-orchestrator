@@ -120,6 +120,14 @@ const DefaultPluginsSchema = z.object({
   verifier: VerifierRoleConfigSchema.optional(),
 });
 
+const SpawnPolicySchema = z.object({
+  requireValidatedPlanTask: z.boolean().default(false),
+});
+
+const PolicyConfigSchema = z.object({
+  spawn: SpawnPolicySchema.default({}),
+});
+
 const OrchestratorConfigSchema = z.object({
   port: z.number().default(3000),
   terminalPort: z.number().optional(),
@@ -135,6 +143,7 @@ const OrchestratorConfigSchema = z.object({
     info: ["composio"],
   }),
   reactions: z.record(ReactionConfigSchema).default({}),
+  policies: PolicyConfigSchema.default({}),
 });
 
 // =============================================================================

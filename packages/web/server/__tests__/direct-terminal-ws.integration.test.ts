@@ -60,7 +60,6 @@ function hasPtySupport(): boolean {
 
 const ptySupported = hasPtySupport();
 const describeIfPty = ptySupported ? describe : describe.skip;
-
 let terminal: DirectTerminalServer;
 let port: number;
 

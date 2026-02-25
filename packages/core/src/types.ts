@@ -171,6 +171,16 @@ export interface Session {
 }
 
 /** Config for creating a new session */
+export interface PlanTaskReference {
+  /** Plan identifier that owns the task/node. */
+  planId: string;
+  /** Task/node identifier within the plan. */
+  taskId: string;
+  /** Must be true when validated by upstream planning flow. */
+  validated: boolean;
+}
+
+/** Config for creating a new session */
 export interface SessionSpawnConfig {
   projectId: string;
   issueId?: string;
@@ -178,6 +188,12 @@ export interface SessionSpawnConfig {
   prompt?: string;
   /** Override the agent plugin for this session (e.g. "codex", "claude-code") */
   agent?: string;
+  /**
+   * Optional plan task reference for policy-gated spawns.
+   * When `policies.spawn.requireValidatedPlanTask` is enabled,
+   * this must be provided with `validated: true`.
+   */
+  planTask?: PlanTaskReference;
 }
 
 /** Config for creating an orchestrator session */
@@ -913,6 +929,9 @@ export interface OrchestratorConfig {
 
   /** Default reaction configs */
   reactions: Record<string, ReactionConfig>;
+
+  /** Policy toggles for orchestrator behavior. */
+  policies?: PolicyConfig;
 }
 
 export interface DefaultPlugins {
@@ -930,6 +949,15 @@ export interface VerifierRoleConfig {
   runtime?: string;
   /** Agent plugin name for verifier sessions. */
   agent?: string;
+}
+
+export interface SpawnPolicyConfig {
+  /** Block worker spawn unless a validated plan task reference is provided. */
+  requireValidatedPlanTask: boolean;
+}
+
+export interface PolicyConfig {
+  spawn: SpawnPolicyConfig;
 }
 
 export interface ProjectConfig {
@@ -1131,10 +1159,12 @@ export interface SessionMetadata {
   createdAt?: string;
   runtimeHandle?: string;
   restoredAt?: string;
+  planId?: string;
+  planTaskId?: string;
+  planTaskValidated?: string;
   dashboardPort?: number;
   terminalWsPort?: number;
   directTerminalWsPort?: number;
-  planId?: string;
   planVersion?: number;
   planStatus?: PlanStatus;
   planPath?: string;

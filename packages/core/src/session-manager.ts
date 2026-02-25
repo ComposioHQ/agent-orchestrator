@@ -88,6 +88,35 @@ function safeJsonParse<T>(str: string): T | null {
   }
 }
 
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function validateSpawnPolicy(config: OrchestratorConfig, spawnConfig: SessionSpawnConfig): void {
+  const requiresValidatedPlanTask = config.policies?.spawn.requireValidatedPlanTask ?? false;
+  if (!requiresValidatedPlanTask) return;
+
+  const planTask = spawnConfig.planTask;
+  if (!planTask) {
+    throw new Error(
+      "Spawn denied by policy: worker sessions require a validated plan task reference " +
+        "(planTask.planId, planTask.taskId, planTask.validated=true).",
+    );
+  }
+
+  if (!isNonEmptyString(planTask.planId) || !isNonEmptyString(planTask.taskId)) {
+    throw new Error(
+      "Spawn denied by policy: planTask.planId and planTask.taskId must be non-empty strings.",
+    );
+  }
+
+  if (planTask.validated !== true) {
+    throw new Error(
+      `Spawn denied by policy: referenced plan task ${planTask.planId}/${planTask.taskId} is not validated.`,
+    );
+  }
+}
+
 /** Valid session statuses for validation. */
 const VALID_STATUSES: ReadonlySet<string> = new Set([
   "spawning",
@@ -322,6 +351,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       throw new Error(`Unknown project: ${spawnConfig.projectId}`);
     }
 
+    validateSpawnPolicy(config, spawnConfig);
+
     const plugins = resolvePlugins(project);
     if (!plugins.runtime) {
       throw new Error(`Runtime plugin '${project.runtime ?? config.defaults.runtime}' not found`);
@@ -544,6 +575,11 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         evidenceTestsRun: evidence.metadata["evidenceTestsRun"],
         evidenceChangedPaths: evidence.metadata["evidenceChangedPaths"],
         evidenceKnownRisks: evidence.metadata["evidenceKnownRisks"],
+        planId: spawnConfig.planTask?.planId,
+        planTaskId: spawnConfig.planTask?.taskId,
+        planTaskValidated: spawnConfig.planTask
+          ? String(spawnConfig.planTask.validated)
+          : undefined,
       });
 
       if (plugins.agent.postLaunchSetup) {
@@ -986,6 +1022,9 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         project: raw["project"],
         createdAt: raw["createdAt"],
         runtimeHandle: raw["runtimeHandle"],
+        planId: raw["planId"],
+        planTaskId: raw["planTaskId"],
+        planTaskValidated: raw["planTaskValidated"],
       });
     }
 
