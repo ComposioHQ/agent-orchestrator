@@ -27,6 +27,14 @@ projects:
       linear:
         type: linear
 
+    # Linear MCP — gives agents access to update issues, labels, and states
+    mcp:
+      - name: linear
+        url: https://mcp.linear.app/sse
+        scope: readwrite
+        env:
+          LINEAR_API_KEY: "${LINEAR_API_KEY}"
+
     # Agent config
     agentConfig:
       permissions: skip
@@ -67,9 +75,14 @@ projects:
         escalateAfter: 2h
 
       approved-and-green:
-        auto: false
-        action: notify
-        priority: action
+        auto: true
+        action: send-to-agent
+        message: |
+          PR is approved and CI is green. Do the following:
+          1. Remove the "agent-working" label from your Linear issue
+          2. Move the issue to "In QA" state
+          3. Post a comment on the Linear issue: "PR approved and CI green. Ready for QA."
+          4. Do NOT merge the PR — a human will merge after QA.
 
       agent-stuck:
         threshold: 10m
@@ -89,8 +102,13 @@ reactions:
     escalateAfter: 30m
 
   approved-and-green:
-    auto: false
-    action: notify
+    auto: true
+    action: send-to-agent
+    message: |
+      PR is approved and CI is green.
+      1. Remove "agent-working" label from your Linear issue
+      2. Move the issue to "In QA" state
+      3. Post a comment: "PR approved and CI green. Ready for QA."
 
   agent-stuck:
     threshold: 10m
