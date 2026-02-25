@@ -12,6 +12,7 @@ async function spawnSession(
   issueId?: string,
   openTab?: boolean,
   agent?: string,
+  baseBranch?: string,
 ): Promise<string> {
   const spinner = ora("Creating session").start();
 
@@ -23,6 +24,7 @@ async function spawnSession(
       projectId,
       issueId,
       agent,
+      baseBranch,
     });
 
     spinner.succeed(`Session ${chalk.green(session.id)} created`);
@@ -61,7 +63,8 @@ export function registerSpawn(program: Command): void {
     .argument("[issue]", "Issue identifier (e.g. INT-1234, #42) - must exist in tracker")
     .option("--open", "Open session in terminal tab")
     .option("--agent <name>", "Override the agent plugin (e.g. codex, claude-code)")
-    .action(async (projectId: string, issueId: string | undefined, opts: { open?: boolean; agent?: string }) => {
+    .option("--base-branch <name>", "Base branch to start from (instead of defaultBranch)")
+    .action(async (projectId: string, issueId: string | undefined, opts: { open?: boolean; agent?: string; baseBranch?: string }) => {
       const config = loadConfig();
       if (!config.projects[projectId]) {
         console.error(
@@ -73,7 +76,7 @@ export function registerSpawn(program: Command): void {
       }
 
       try {
-        await spawnSession(config, projectId, issueId, opts.open, opts.agent);
+        await spawnSession(config, projectId, issueId, opts.open, opts.agent, opts.baseBranch);
       } catch (err) {
         console.error(chalk.red(`✗ ${err}`));
         process.exit(1);
@@ -88,7 +91,8 @@ export function registerBatchSpawn(program: Command): void {
     .argument("<project>", "Project ID from config")
     .argument("<issues...>", "Issue identifiers")
     .option("--open", "Open sessions in terminal tabs")
-    .action(async (projectId: string, issues: string[], opts: { open?: boolean }) => {
+    .option("--base-branch <name>", "Base branch to start from (instead of defaultBranch)")
+    .action(async (projectId: string, issues: string[], opts: { open?: boolean; baseBranch?: string }) => {
       const config = loadConfig();
       if (!config.projects[projectId]) {
         console.error(
@@ -138,7 +142,7 @@ export function registerBatchSpawn(program: Command): void {
         }
 
         try {
-          const sessionName = await spawnSession(config, projectId, issue, opts.open);
+          const sessionName = await spawnSession(config, projectId, issue, opts.open, undefined, opts.baseBranch);
           created.push({ session: sessionName, issue });
           spawnedIssues.add(issue.toLowerCase());
         } catch (err) {

@@ -262,6 +262,69 @@ describe("workspace.create()", () => {
     );
   });
 
+  it("uses baseBranch as the starting point when provided", async () => {
+    const ws = create();
+
+    mockGitSuccess(""); // fetch
+    mockGitSuccess(""); // worktree add
+
+    await ws.create(makeCreateConfig({ baseBranch: "feat/existing-feature" }));
+
+    // worktree add should use origin/feat/existing-feature instead of origin/main
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      [
+        "worktree",
+        "add",
+        "-b",
+        "feat/TEST-1",
+        "/mock-home/.worktrees/myproject/session-1",
+        "origin/feat/existing-feature",
+      ],
+      { cwd: "/repo/path" },
+    );
+  });
+
+  it("falls back to defaultBranch when baseBranch is not provided", async () => {
+    const ws = create();
+
+    mockGitSuccess(""); // fetch
+    mockGitSuccess(""); // worktree add
+
+    await ws.create(makeCreateConfig());
+
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      [
+        "worktree",
+        "add",
+        "-b",
+        "feat/TEST-1",
+        "/mock-home/.worktrees/myproject/session-1",
+        "origin/main",
+      ],
+      { cwd: "/repo/path" },
+    );
+  });
+
+  it("uses baseBranch in fallback path when branch already exists", async () => {
+    const ws = create();
+
+    mockGitSuccess(""); // fetch
+    mockGitError("already exists"); // worktree add -b fails
+    mockGitSuccess(""); // worktree add (without -b)
+    mockGitSuccess(""); // checkout
+
+    await ws.create(makeCreateConfig({ baseBranch: "feat/existing-feature" }));
+
+    // Fallback worktree add should also use baseBranch
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      ["worktree", "add", "/mock-home/.worktrees/myproject/session-1", "origin/feat/existing-feature"],
+      { cwd: "/repo/path" },
+    );
+  });
+
   it("rejects invalid projectId", async () => {
     const ws = create();
 

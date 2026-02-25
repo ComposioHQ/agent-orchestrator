@@ -290,6 +290,62 @@ describe("spawn command", () => {
     });
   });
 
+  it("passes --base-branch flag to sessionManager.spawn()", async () => {
+    const fakeSession: Session = {
+      id: "app-1",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: "feat/INT-50",
+      issueId: "INT-50",
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "hash-app-1", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+
+    await program.parseAsync(["node", "test", "spawn", "my-app", "INT-50", "--base-branch", "feat/existing-feature"]);
+
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith({
+      projectId: "my-app",
+      issueId: "INT-50",
+      baseBranch: "feat/existing-feature",
+    });
+  });
+
+  it("passes --base-branch without issue ID", async () => {
+    const fakeSession: Session = {
+      id: "app-1",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: "session/app-1",
+      issueId: null,
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "hash-app-1", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+
+    await program.parseAsync(["node", "test", "spawn", "my-app", "--base-branch", "feat/existing-feature"]);
+
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith({
+      projectId: "my-app",
+      issueId: undefined,
+      baseBranch: "feat/existing-feature",
+    });
+  });
+
   it("rejects unknown project ID", async () => {
     await expect(
       program.parseAsync(["node", "test", "spawn", "nonexistent"]),

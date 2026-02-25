@@ -71,7 +71,9 @@ export function create(config?: Record<string, unknown>): Workspace {
         // Fetch may fail if offline — continue anyway
       }
 
-      const baseRef = `origin/${cfg.project.defaultBranch}`;
+      const baseRef = cfg.baseBranch
+        ? `origin/${cfg.baseBranch}`
+        : `origin/${cfg.project.defaultBranch}`;
 
       // Create worktree with a new branch
       try {
