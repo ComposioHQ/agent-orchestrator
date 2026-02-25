@@ -201,3 +201,37 @@ projects:
         threshold: 10m
         action: notify
         priority: urgent
+
+  agent-orchestrator:
+    name: Agent Orchestrator
+    repo: marcmantei/agent-orchestrator
+    path: ~/.openclaw/agent-orchestrator
+    defaultBranch: main
+    sessionPrefix: ao
+    scm:
+      plugin: github
+    symlinks: [.claude]
+    postCreate:
+      - "test -f package.json && pnpm install || true"
+    agentConfig:
+      permissions: skip
+      model: opus
+    agentRulesFile: .agent-rules.md
+    reactions:
+      ci-failed:
+        auto: true
+        action: send-to-agent
+        retries: 2
+        escalateAfter: 2
+      changes-requested:
+        auto: true
+        action: send-to-agent
+        escalateAfter: 30m
+      approved-and-green:
+        auto: false
+        action: notify
+        priority: action
+      agent-stuck:
+        threshold: 10m
+        action: notify
+        priority: urgent
