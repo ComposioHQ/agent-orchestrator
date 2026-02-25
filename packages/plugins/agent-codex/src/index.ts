@@ -283,7 +283,7 @@ function createCodexAgent(): Agent {
       const parts: string[] = ["codex"];
 
       if (config.permissions === "skip") {
-        parts.push("--full-auto");
+        parts.push("--dangerously-bypass-approvals-and-sandbox");
       }
 
       if (config.model) {
@@ -348,13 +348,18 @@ function createCodexAgent(): Agent {
       const running = await this.isProcessRunning(session.runtimeHandle);
       if (!running) return { state: "exited" };
 
-      // NOTE: Codex stores rollout files in a global ~/.codex/sessions/ directory
-      // without workspace-specific scoping. When multiple Codex sessions run in
-      // parallel, we cannot reliably determine which rollout file belongs to which
-      // session. Until Codex provides per-workspace session tracking, we return
-      // null (unknown) rather than guessing. See issue #13 for details.
-      //
-      // TODO: Implement proper per-session activity detection when Codex supports it.
+      // Use tmux terminal output for activity detection
+      if (session.runtimeHandle?.runtimeName === "tmux" && session.runtimeHandle?.id) {
+        try {
+          const { stdout } = await execFileAsync("tmux", [
+            "capture-pane", "-t", session.runtimeHandle.id, "-p", "-S", "-10"
+          ], { timeout: 5000 });
+          const state = this.detectActivity(stdout);
+          return { state };
+        } catch {
+          return { state: "active" };
+        }
+      }
       return null;
     },
 
