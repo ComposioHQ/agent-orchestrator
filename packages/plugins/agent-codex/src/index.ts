@@ -1,4 +1,5 @@
 import {
+  DEFAULT_READY_THRESHOLD_MS,
   shellEscape,
   type Agent,
   type AgentSessionInfo,
@@ -606,20 +607,38 @@ function createCodexAgent(): Agent {
       return "active";
     },
 
-    async getActivityState(session: Session, _readyThresholdMs?: number): Promise<ActivityDetection | null> {
-      // Check if process is running first
-      if (!session.runtimeHandle) return { state: "exited" };
-      const running = await this.isProcessRunning(session.runtimeHandle);
-      if (!running) return { state: "exited" };
+    async getActivityState(session: Session, readyThresholdMs?: number): Promise<ActivityDetection | null> {
+      const threshold = readyThresholdMs ?? DEFAULT_READY_THRESHOLD_MS;
 
-      // NOTE: Codex stores rollout files in a global ~/.codex/sessions/ directory
-      // without workspace-specific scoping. When multiple Codex sessions run in
-      // parallel, we cannot reliably determine which rollout file belongs to which
-      // session. Until Codex provides per-workspace session tracking, we return
-      // null (unknown) rather than guessing. See issue #13 for details.
-      //
-      // TODO: Implement proper per-session activity detection when Codex supports it.
-      return null;
+      // Check if process is running first
+      const exitedAt = new Date();
+      if (!session.runtimeHandle) return { state: "exited", timestamp: exitedAt };
+      const running = await this.isProcessRunning(session.runtimeHandle);
+      if (!running) return { state: "exited", timestamp: exitedAt };
+
+      // Use session file mtime as a proxy for activity. Codex continuously
+      // appends to its rollout JSONL file while working, so a recently
+      // modified file means the agent is active.
+      if (!session.workspacePath) return null;
+
+      const sessionFile = await findCodexSessionFile(session.workspacePath);
+      if (!sessionFile) return null;
+
+      try {
+        const s = await stat(sessionFile);
+        const timestamp = s.mtime;
+        const ageMs = Date.now() - s.mtimeMs;
+
+        if (ageMs <= threshold) {
+          // File was recently modified — agent is actively working
+          return { state: "active", timestamp };
+        }
+
+        // File is stale — agent finished or is idle
+        return { state: "idle", timestamp };
+      } catch {
+        return null;
+      }
     },
 
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {

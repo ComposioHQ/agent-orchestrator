@@ -575,20 +575,58 @@ describe("getActivityState", () => {
   it("returns exited when no runtimeHandle", async () => {
     const session = makeSession({ runtimeHandle: null });
     const result = await agent.getActivityState(session);
-    expect(result).toEqual({ state: "exited" });
+    expect(result?.state).toBe("exited");
+    expect(result?.timestamp).toBeInstanceOf(Date);
   });
 
   it("returns exited when process is not running", async () => {
     mockExecFileAsync.mockRejectedValue(new Error("tmux not running"));
     const session = makeSession({ runtimeHandle: makeTmuxHandle() });
     const result = await agent.getActivityState(session);
-    expect(result).toEqual({ state: "exited" });
+    expect(result?.state).toBe("exited");
+    expect(result?.timestamp).toBeInstanceOf(Date);
   });
 
-  it("returns null (unknown) when process is running", async () => {
+  it("returns null when process is running but no workspacePath", async () => {
     mockTmuxWithProcess("codex");
-    const session = makeSession({ runtimeHandle: makeTmuxHandle() });
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: undefined });
     expect(await agent.getActivityState(session)).toBeNull();
+  });
+
+  it("returns null when process is running but no session file found", async () => {
+    mockTmuxWithProcess("codex");
+    mockReaddir.mockRejectedValue(new Error("ENOENT"));
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    expect(await agent.getActivityState(session)).toBeNull();
+  });
+
+  it("returns active when session file was recently modified", async () => {
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    // mtime = now (just modified)
+    mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
+
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    const result = await agent.getActivityState(session);
+    expect(result?.state).toBe("active");
+    expect(result?.timestamp).toBeInstanceOf(Date);
+  });
+
+  it("returns idle when session file is stale", async () => {
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    // mtime = 10 minutes ago (past the 5-minute threshold)
+    const staleTime = Date.now() - 600_000;
+    mockStat.mockResolvedValue({ mtimeMs: staleTime, mtime: new Date(staleTime) });
+
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    const result = await agent.getActivityState(session);
+    expect(result?.state).toBe("idle");
+    expect(result?.timestamp).toBeInstanceOf(Date);
   });
 
   it("returns exited when process handle has dead PID", async () => {
@@ -597,16 +635,9 @@ describe("getActivityState", () => {
     });
     const session = makeSession({ runtimeHandle: makeProcessHandle(999) });
     const result = await agent.getActivityState(session);
-    expect(result).toEqual({ state: "exited" });
+    expect(result?.state).toBe("exited");
+    expect(result?.timestamp).toBeInstanceOf(Date);
     killSpy.mockRestore();
-  });
-
-  it("does not include timestamp in exited state", async () => {
-    const session = makeSession({ runtimeHandle: null });
-    const result = await agent.getActivityState(session);
-    // The Codex implementation returns { state: "exited" } without timestamp
-    expect(result).toEqual({ state: "exited" });
-    expect(result?.timestamp).toBeUndefined();
   });
 });
 
