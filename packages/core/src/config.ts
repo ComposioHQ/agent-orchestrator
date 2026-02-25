@@ -29,6 +29,26 @@ const ReactionConfigSchema = z.object({
   priority: z.enum(["urgent", "action", "warning", "info"]).optional(),
   retries: z.number().optional(),
   escalateAfter: z.union([z.number(), z.string()]).optional(),
+  escalationPolicy: z
+    .object({
+      retryCounts: z
+        .object({
+          worker: z.number().int().nonnegative().optional(),
+          verifier: z.number().int().nonnegative().optional(),
+          orchestrator: z.number().int().nonnegative().optional(),
+        })
+        .partial()
+        .optional(),
+      timeThresholds: z
+        .object({
+          worker: z.union([z.number().nonnegative(), z.string()]).optional(),
+          verifier: z.union([z.number().nonnegative(), z.string()]).optional(),
+          orchestrator: z.union([z.number().nonnegative(), z.string()]).optional(),
+        })
+        .partial()
+        .optional(),
+    })
+    .optional(),
   threshold: z.string().optional(),
   includeSummary: z.boolean().optional(),
 });

@@ -15,6 +15,7 @@ import {
   SESSION_STATUS,
   PR_STATE,
   CI_STATUS,
+  ESCALATION_LEVELS,
   type LifecycleManager,
   type SessionManager,
   type SessionId,
@@ -31,17 +32,21 @@ import {
   type Notifier,
   type Session,
   type EventPriority,
+  type EscalationLevel,
+  type ReactionEscalationState,
+  type EscalationHistoryEntry,
+  type EscalationTransitionReason,
   type ProjectConfig as _ProjectConfig,
 } from "./types.js";
-import { updateMetadata } from "./metadata.js";
+import { readMetadataRaw, updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
 import { buildReactionMessage } from "./reaction-message.js";
 import { parseWorkerEvidence } from "./evidence.js";
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
-function parseDuration(str: string): number {
+function parseDuration(str: string): number | null {
   const match = str.match(/^(\d+)(s|m|h)$/);
-  if (!match) return 0;
+  if (!match) return null;
   const value = parseInt(match[1], 10);
   switch (match[2]) {
     case "s":
@@ -51,8 +56,15 @@ function parseDuration(str: string): number {
     case "h":
       return value * 3_600_000;
     default:
-      return 0;
+      return null;
   }
+}
+
+type NonHumanEscalationLevel = Exclude<EscalationLevel, "human">;
+
+interface ResolvedEscalationPolicy {
+  retryCounts: Record<NonHumanEscalationLevel, number>;
+  timeThresholdsMs: Record<NonHumanEscalationLevel, number | null>;
 }
 
 /** Infer a reasonable priority from event type. */
@@ -164,10 +176,191 @@ export interface LifecycleManagerDeps {
   sessionManager: SessionManager;
 }
 
-/** Track attempt counts for reactions per session. */
+const ESCALATION_STATE_METADATA_KEY = "escalationState";
+
+/** Track reaction retry/escalation state per session + reaction key. */
 interface ReactionTracker {
-  attempts: number;
-  firstTriggered: Date;
+  escalation: ReactionEscalationState;
+  pendingRetry: boolean;
+}
+
+function getTrackerKey(sessionId: SessionId, reactionKey: string): string {
+  return `${sessionId}:${reactionKey}`;
+}
+
+function isEscalationLevel(value: unknown): value is EscalationLevel {
+  return typeof value === "string" && ESCALATION_LEVELS.includes(value as EscalationLevel);
+}
+
+function parseEscalationStateMap(raw: string | undefined): Record<string, ReactionEscalationState> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return {};
+    const out: Record<string, ReactionEscalationState> = {};
+    for (const [reactionKey, value] of Object.entries(parsed)) {
+      if (!value || typeof value !== "object") continue;
+      const candidate = value as Partial<ReactionEscalationState>;
+      if (
+        !isEscalationLevel(candidate.level) ||
+        typeof candidate.firstTriggeredAt !== "string" ||
+        typeof candidate.levelEnteredAt !== "string" ||
+        typeof candidate.lastTriggeredAt !== "string" ||
+        typeof candidate.attemptsInLevel !== "number" ||
+        typeof candidate.totalAttempts !== "number" ||
+        !Array.isArray(candidate.history)
+      ) {
+        continue;
+      }
+      const history: EscalationHistoryEntry[] = candidate.history
+        .filter((entry): entry is EscalationHistoryEntry => {
+          if (!entry || typeof entry !== "object") return false;
+          const maybe = entry as Partial<EscalationHistoryEntry>;
+          return (
+            isEscalationLevel(maybe.from) &&
+            isEscalationLevel(maybe.to) &&
+            typeof maybe.at === "string" &&
+            (maybe.reason === "retry_count" || maybe.reason === "time_threshold") &&
+            typeof maybe.attemptsInLevel === "number" &&
+            typeof maybe.totalAttempts === "number" &&
+            typeof maybe.elapsedMs === "number"
+          );
+        })
+        .map((entry) => ({ ...entry }));
+      out[reactionKey] = {
+        level: candidate.level,
+        firstTriggeredAt: candidate.firstTriggeredAt,
+        levelEnteredAt: candidate.levelEnteredAt,
+        lastTriggeredAt: candidate.lastTriggeredAt,
+        attemptsInLevel: candidate.attemptsInLevel,
+        totalAttempts: candidate.totalAttempts,
+        history,
+      };
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function cloneEscalationState(state: ReactionEscalationState): ReactionEscalationState {
+  return {
+    ...state,
+    history: state.history.map((entry) => ({ ...entry })),
+  };
+}
+
+function createInitialEscalationState(now: Date): ReactionEscalationState {
+  const iso = now.toISOString();
+  return {
+    level: "worker",
+    firstTriggeredAt: iso,
+    levelEnteredAt: iso,
+    lastTriggeredAt: iso,
+    attemptsInLevel: 0,
+    totalAttempts: 0,
+    history: [],
+  };
+}
+
+function nextEscalationLevel(level: EscalationLevel): EscalationLevel {
+  switch (level) {
+    case "worker":
+      return "verifier";
+    case "verifier":
+      return "orchestrator";
+    case "orchestrator":
+      return "human";
+    case "human":
+      return "human";
+  }
+}
+
+function parseTimeThresholdMs(value: number | string | undefined): number | null {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || value < 0) return null;
+    return value;
+  }
+  if (typeof value === "string") {
+    return parseDuration(value);
+  }
+  return null;
+}
+
+function resolveEscalationPolicy(reactionConfig: ReactionConfig): ResolvedEscalationPolicy {
+  const retries = reactionConfig.retries;
+  const escalateAfter = reactionConfig.escalateAfter;
+
+  const defaultWorkerRetries =
+    typeof retries === "number" && Number.isFinite(retries) && retries >= 0 ? retries : 2;
+
+  const retryCounts: Record<NonHumanEscalationLevel, number> = {
+    worker: defaultWorkerRetries,
+    verifier: 1,
+    orchestrator: 1,
+  };
+
+  if (typeof escalateAfter === "number" && Number.isFinite(escalateAfter) && escalateAfter >= 0) {
+    retryCounts.worker = Math.min(retryCounts.worker, escalateAfter);
+  }
+
+  const timeThresholdsMs: Record<NonHumanEscalationLevel, number | null> = {
+    worker: typeof escalateAfter === "string" ? parseTimeThresholdMs(escalateAfter) : null,
+    verifier: null,
+    orchestrator: null,
+  };
+
+  const retryOverrides = reactionConfig.escalationPolicy?.retryCounts;
+  if (retryOverrides) {
+    for (const level of ["worker", "verifier", "orchestrator"] as const) {
+      const value = retryOverrides[level];
+      if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+        retryCounts[level] = value;
+      }
+    }
+  }
+
+  const timeOverrides = reactionConfig.escalationPolicy?.timeThresholds;
+  if (timeOverrides) {
+    for (const level of ["worker", "verifier", "orchestrator"] as const) {
+      const parsed = parseTimeThresholdMs(timeOverrides[level]);
+      if (parsed !== null) {
+        timeThresholdsMs[level] = parsed;
+      }
+    }
+  }
+
+  return { retryCounts, timeThresholdsMs };
+}
+
+function getElapsedMs(sinceIso: string, now: Date): number {
+  const start = new Date(sinceIso).getTime();
+  if (!Number.isFinite(start)) return 0;
+  return Math.max(0, now.getTime() - start);
+}
+
+function applyEscalationTransition(
+  state: ReactionEscalationState,
+  reason: EscalationTransitionReason,
+  now: Date,
+): EscalationHistoryEntry | null {
+  if (state.level === "human") return null;
+  const from = state.level;
+  const to = nextEscalationLevel(from);
+  const entry: EscalationHistoryEntry = {
+    from,
+    to,
+    at: now.toISOString(),
+    reason,
+    attemptsInLevel: state.attemptsInLevel,
+    totalAttempts: state.totalAttempts,
+    elapsedMs: getElapsedMs(state.levelEnteredAt, now),
+  };
+  state.level = to;
+  state.levelEnteredAt = now.toISOString();
+  state.attemptsInLevel = 0;
+  state.history.push(entry);
+  return entry;
 }
 
 /** Create a LifecycleManager instance. */
@@ -180,6 +373,102 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
   const COMPLETE_STATUSES = new Set<SessionStatus>(["merged", "killed", "done"]);
+
+  function getProjectSessionsDir(projectId: string): string | null {
+    const project = config.projects[projectId];
+    if (!project) return null;
+    return getSessionsDir(config.configPath, project.path);
+  }
+
+  function persistEscalationState(
+    sessionId: SessionId,
+    projectId: string,
+    reactionKey: string,
+    nextState: ReactionEscalationState | null,
+  ): void {
+    const sessionsDir = getProjectSessionsDir(projectId);
+    if (!sessionsDir) return;
+    const existingRaw = readMetadataRaw(sessionsDir, sessionId);
+    let stateMap = parseEscalationStateMap(existingRaw?.[ESCALATION_STATE_METADATA_KEY]);
+    if (nextState) {
+      stateMap[reactionKey] = cloneEscalationState(nextState);
+    } else {
+      const { [reactionKey]: _removed, ...rest } = stateMap;
+      stateMap = rest;
+    }
+    if (Object.keys(stateMap).length === 0) {
+      updateMetadata(sessionsDir, sessionId, { [ESCALATION_STATE_METADATA_KEY]: "" });
+      return;
+    }
+    updateMetadata(sessionsDir, sessionId, {
+      [ESCALATION_STATE_METADATA_KEY]: JSON.stringify(stateMap),
+    });
+  }
+
+  function loadPersistedEscalationState(
+    sessionId: SessionId,
+    projectId: string,
+    reactionKey: string,
+  ): ReactionEscalationState | null {
+    const sessionsDir = getProjectSessionsDir(projectId);
+    if (!sessionsDir) return null;
+    const raw = readMetadataRaw(sessionsDir, sessionId);
+    const stateMap = parseEscalationStateMap(raw?.[ESCALATION_STATE_METADATA_KEY]);
+    return stateMap[reactionKey] ?? null;
+  }
+
+  function getOrCreateTracker(
+    sessionId: SessionId,
+    projectId: string,
+    reactionKey: string,
+  ): ReactionTracker {
+    const trackerKey = getTrackerKey(sessionId, reactionKey);
+    const existing = reactionTrackers.get(trackerKey);
+    if (existing) return existing;
+
+    const persisted = loadPersistedEscalationState(sessionId, projectId, reactionKey);
+    const tracker: ReactionTracker = {
+      escalation: persisted ?? createInitialEscalationState(new Date()),
+      pendingRetry: persisted ? persisted.level !== "human" : false,
+    };
+    reactionTrackers.set(trackerKey, tracker);
+    return tracker;
+  }
+
+  function getExistingTracker(
+    sessionId: SessionId,
+    projectId: string,
+    reactionKey: string,
+  ): ReactionTracker | null {
+    const trackerKey = getTrackerKey(sessionId, reactionKey);
+    const existing = reactionTrackers.get(trackerKey);
+    if (existing) return existing;
+
+    const persisted = loadPersistedEscalationState(sessionId, projectId, reactionKey);
+    if (!persisted) return null;
+    const tracker: ReactionTracker = {
+      escalation: persisted,
+      pendingRetry: persisted.level !== "human",
+    };
+    reactionTrackers.set(trackerKey, tracker);
+    return tracker;
+  }
+
+  function clearTracker(sessionId: SessionId, projectId: string, reactionKey: string): void {
+    reactionTrackers.delete(getTrackerKey(sessionId, reactionKey));
+    persistEscalationState(sessionId, projectId, reactionKey, null);
+  }
+
+  function resolveReactionConfig(
+    projectId: string,
+    reactionKey: string,
+  ): ReactionConfig | null {
+    const project = config.projects[projectId];
+    const globalReaction = config.reactions[reactionKey];
+    const projectReaction = project?.reactions?.[reactionKey];
+    const merged = projectReaction ? { ...globalReaction, ...projectReaction } : globalReaction;
+    return merged && merged.action ? (merged as ReactionConfig) : null;
+  }
 
   /** Determine current status for a session by polling plugins. */
   async function determineStatus(session: Session): Promise<SessionStatus> {
@@ -317,99 +606,126 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     reactionConfig: ReactionConfig,
     session?: Session,
   ): Promise<ReactionResult> {
-    const trackerKey = `${sessionId}:${reactionKey}`;
-    let tracker = reactionTrackers.get(trackerKey);
+    const action = reactionConfig.action ?? "notify";
+    const policy = resolveEscalationPolicy(reactionConfig);
 
-    if (!tracker) {
-      tracker = { attempts: 0, firstTriggered: new Date() };
-      reactionTrackers.set(trackerKey, tracker);
-    }
-
-    // Increment attempts before checking escalation
-    tracker.attempts++;
-
-    // Check if we should escalate
-    const maxRetries = reactionConfig.retries ?? Infinity;
-    const escalateAfter = reactionConfig.escalateAfter;
-    let shouldEscalate = false;
-
-    if (tracker.attempts > maxRetries) {
-      shouldEscalate = true;
-    }
-
-    if (typeof escalateAfter === "string") {
-      const durationMs = parseDuration(escalateAfter);
-      if (durationMs > 0 && Date.now() - tracker.firstTriggered.getTime() > durationMs) {
-        shouldEscalate = true;
-      }
-    }
-
-    if (typeof escalateAfter === "number" && tracker.attempts > escalateAfter) {
-      shouldEscalate = true;
-    }
-
-    if (shouldEscalate) {
-      // Escalate to human
+    async function handleEscalationTransition(
+      tracker: ReactionTracker,
+      reason: EscalationTransitionReason,
+      now: Date,
+    ): Promise<EscalationHistoryEntry | null> {
+      const entry = applyEscalationTransition(tracker.escalation, reason, now);
+      if (!entry) return null;
+      persistEscalationState(sessionId, projectId, reactionKey, tracker.escalation);
       const event = createEvent("reaction.escalated", {
         sessionId,
         projectId,
-        message: `Reaction '${reactionKey}' escalated after ${tracker.attempts} attempts`,
-        data: { reactionKey, attempts: tracker.attempts },
+        message: `Reaction '${reactionKey}' escalated ${entry.from} → ${entry.to}`,
+        data: {
+          reactionKey,
+          from: entry.from,
+          to: entry.to,
+          reason: entry.reason,
+          attemptsInLevel: entry.attemptsInLevel,
+          totalAttempts: entry.totalAttempts,
+          elapsedMs: entry.elapsedMs,
+        },
       });
-      await notifyHuman(event, reactionConfig.priority ?? "urgent");
-      return {
-        reactionType: reactionKey,
-        success: true,
-        action: "escalated",
-        escalated: true,
-      };
+      if (entry.to === "human") {
+        await notifyHuman(event, reactionConfig.priority ?? "urgent");
+        tracker.pendingRetry = false;
+      }
+      return entry;
     }
-
-    // Execute the reaction action
-    const action = reactionConfig.action ?? "notify";
 
     switch (action) {
       case "send-to-agent": {
-        if (reactionConfig.message) {
-          try {
-            const project = config.projects[projectId];
-            const scm = project?.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
-            const runtime = project
-              ? registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime)
-              : null;
-            const message = session
-              ? await buildReactionMessage({
-                  reactionKey,
-                  fallbackMessage: reactionConfig.message,
-                  session,
-                  scm,
-                  runtime,
-                })
-              : reactionConfig.message;
+        if (!reactionConfig.message) {
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action: "send-to-agent",
+            escalated: false,
+          };
+        }
 
-            await sessionManager.send(sessionId, message);
+        const tracker = getOrCreateTracker(sessionId, projectId, reactionKey);
+        const now = new Date();
+        tracker.escalation.lastTriggeredAt = now.toISOString();
 
-            return {
-              reactionType: reactionKey,
-              success: true,
-              action: "send-to-agent",
-              message,
-              escalated: false,
-            };
-          } catch {
-            // Send failed — allow retry on next poll cycle (don't escalate immediately)
-            return {
-              reactionType: reactionKey,
-              success: false,
-              action: "send-to-agent",
-              escalated: false,
-            };
+        // Time-based tier promotion applies even without a new failed send.
+        if (tracker.escalation.level !== "human") {
+          const level = tracker.escalation.level as NonHumanEscalationLevel;
+          const thresholdMs = policy.timeThresholdsMs[level];
+          if (thresholdMs !== null && getElapsedMs(tracker.escalation.levelEnteredAt, now) > thresholdMs) {
+            await handleEscalationTransition(tracker, "time_threshold", now);
           }
         }
-        break;
+
+        // Human is terminal in the escalation machine.
+        if (tracker.escalation.level === "human") {
+          persistEscalationState(sessionId, projectId, reactionKey, tracker.escalation);
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action: "send-to-agent",
+            escalated: true,
+            escalationLevel: "human",
+          };
+        }
+
+        try {
+          const project = config.projects[projectId];
+          const scm = project?.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+          const runtime = project
+            ? registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime)
+            : null;
+          const message = session
+            ? await buildReactionMessage({
+                reactionKey,
+                fallbackMessage: reactionConfig.message,
+                session,
+                scm,
+                runtime,
+              })
+            : reactionConfig.message;
+
+          await sessionManager.send(sessionId, message);
+          clearTracker(sessionId, projectId, reactionKey);
+          return {
+            reactionType: reactionKey,
+            success: true,
+            action: "send-to-agent",
+            message,
+            escalated: false,
+            escalationLevel: tracker.escalation.level,
+          };
+        } catch {
+          tracker.pendingRetry = true;
+          tracker.escalation.totalAttempts += 1;
+          tracker.escalation.attemptsInLevel += 1;
+          tracker.escalation.lastTriggeredAt = now.toISOString();
+
+          const currentLevel = tracker.escalation.level as NonHumanEscalationLevel;
+          const retryLimit = policy.retryCounts[currentLevel];
+          if (tracker.escalation.attemptsInLevel > retryLimit) {
+            await handleEscalationTransition(tracker, "retry_count", now);
+          }
+
+          const escalationLevel = tracker.escalation.level as EscalationLevel;
+          persistEscalationState(sessionId, projectId, reactionKey, tracker.escalation);
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action: "send-to-agent",
+            escalated: escalationLevel === "human",
+            escalationLevel,
+          };
+        }
       }
 
       case "notify": {
+        clearTracker(sessionId, projectId, reactionKey);
         const event = createEvent("reaction.triggered", {
           sessionId,
           projectId,
@@ -422,10 +738,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           success: true,
           action: "notify",
           escalated: false,
+          escalationLevel: "worker",
         };
       }
 
       case "auto-merge": {
+        clearTracker(sessionId, projectId, reactionKey);
         // Auto-merge is handled by the SCM plugin
         // For now, just notify
         const event = createEvent("reaction.triggered", {
@@ -440,6 +758,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           success: true,
           action: "auto-merge",
           escalated: false,
+          escalationLevel: "worker",
         };
       }
     }
@@ -449,6 +768,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       success: false,
       action,
       escalated: false,
+      escalationLevel: "worker",
     };
   }
 
@@ -500,7 +820,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       if (oldEventType) {
         const oldReactionKey = eventToReactionKey(oldEventType);
         if (oldReactionKey) {
-          reactionTrackers.delete(`${session.id}:${oldReactionKey}`);
+          clearTracker(session.id, session.projectId, oldReactionKey);
         }
       }
 
@@ -511,22 +831,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const reactionKey = eventToReactionKey(eventType);
 
         if (reactionKey) {
-          // Merge project-specific overrides with global defaults
-          const project = config.projects[session.projectId];
-          const globalReaction = config.reactions[reactionKey];
-          const projectReaction = project?.reactions?.[reactionKey];
-          const reactionConfig = projectReaction
-            ? { ...globalReaction, ...projectReaction }
-            : globalReaction;
-
-          if (reactionConfig && reactionConfig.action) {
+          const reactionConfig = resolveReactionConfig(session.projectId, reactionKey);
+          if (reactionConfig) {
             // auto: false skips automated agent actions but still allows notifications
             if (reactionConfig.auto !== false || reactionConfig.action === "notify") {
-              await executeReaction(
+              const result = await executeReaction(
                 session.id,
                 session.projectId,
                 reactionKey,
-                reactionConfig as ReactionConfig,
+                reactionConfig,
                 session,
               );
               // Reaction is handling this event — suppress immediate human notification.
@@ -534,6 +847,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
               // already call notifyHuman internally. Notifying here would bypass the
               // delayed escalation behaviour configured via retries/escalateAfter.
               reactionHandledNotify = true;
+              if (reactionConfig.action === "send-to-agent" && result.success) {
+                // Successful send-to-agent run is complete. No retries needed.
+                clearTracker(session.id, session.projectId, reactionKey);
+              }
             }
           }
         }
@@ -555,6 +872,24 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     } else {
       // No transition but track current state
       states.set(session.id, newStatus);
+
+      // Retry send-to-agent reactions even when status remains unchanged.
+      // This avoids silent loops where a previous send failed once and then
+      // never retried because no further state transitions occurred.
+      const currentEventType = statusToEventType(undefined, newStatus);
+      if (!currentEventType) return;
+      const reactionKey = eventToReactionKey(currentEventType);
+      if (!reactionKey) return;
+
+      const reactionConfig = resolveReactionConfig(session.projectId, reactionKey);
+      if (!reactionConfig || reactionConfig.action !== "send-to-agent" || reactionConfig.auto === false) {
+        return;
+      }
+
+      const tracker = getExistingTracker(session.id, session.projectId, reactionKey);
+      if (!tracker || !tracker.pendingRetry) return;
+
+      await executeReaction(session.id, session.projectId, reactionKey, reactionConfig, session);
     }
   }
 

@@ -239,6 +239,7 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
     evidenceTestsRun: raw["evidenceTestsRun"],
     evidenceChangedPaths: raw["evidenceChangedPaths"],
     evidenceKnownRisks: raw["evidenceKnownRisks"],
+    escalationState: raw["escalationState"],
   };
 }
 
@@ -297,6 +298,7 @@ export function writeMetadata(
   if (metadata.evidenceChangedPaths)
     data["evidenceChangedPaths"] = metadata.evidenceChangedPaths;
   if (metadata.evidenceKnownRisks) data["evidenceKnownRisks"] = metadata.evidenceKnownRisks;
+  if (metadata.escalationState) data["escalationState"] = metadata.escalationState;
 
   writeFileSync(path, serializeMetadata(data), "utf-8");
 }

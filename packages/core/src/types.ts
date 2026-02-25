@@ -784,6 +784,57 @@ export interface OrchestratorEvent {
 // REACTIONS
 // =============================================================================
 
+/** Escalation levels for reaction handling */
+export type EscalationLevel = "worker" | "verifier" | "orchestrator" | "human";
+
+/** Escalation levels ordered from lowest to highest */
+export const ESCALATION_LEVELS = [
+  "worker",
+  "verifier",
+  "orchestrator",
+  "human",
+] as const satisfies readonly EscalationLevel[];
+
+/** Escalation transition reasons */
+export type EscalationTransitionReason = "retry_count" | "time_threshold";
+
+/** Retry/time policy for tiered escalation */
+export interface EscalationPolicyConfig {
+  /**
+   * Maximum failed attempts allowed in each tier before escalating
+   * to the next tier.
+   */
+  retryCounts?: Partial<Record<Exclude<EscalationLevel, "human">, number>>;
+
+  /**
+   * Maximum time allowed in each tier before escalating.
+   * Number values are milliseconds. String values support "30s", "10m", "1h".
+   */
+  timeThresholds?: Partial<Record<Exclude<EscalationLevel, "human">, number | string>>;
+}
+
+/** Immutable audit entry for an escalation transition */
+export interface EscalationHistoryEntry {
+  from: EscalationLevel;
+  to: EscalationLevel;
+  at: string; // ISO timestamp
+  reason: EscalationTransitionReason;
+  attemptsInLevel: number;
+  totalAttempts: number;
+  elapsedMs: number;
+}
+
+/** Current escalation state for a reaction/session */
+export interface ReactionEscalationState {
+  level: EscalationLevel;
+  firstTriggeredAt: string; // ISO timestamp
+  levelEnteredAt: string; // ISO timestamp
+  lastTriggeredAt: string; // ISO timestamp
+  attemptsInLevel: number;
+  totalAttempts: number;
+  history: EscalationHistoryEntry[];
+}
+
 /** A configured automatic reaction to an event */
 export interface ReactionConfig {
   /** Whether this reaction is enabled */
@@ -804,6 +855,9 @@ export interface ReactionConfig {
   /** Escalate to human notification after this many failures or this duration */
   escalateAfter?: number | string;
 
+  /** Explicit tiered escalation policy controls */
+  escalationPolicy?: EscalationPolicyConfig;
+
   /** Threshold duration for time-based triggers (e.g. "10m" for stuck detection) */
   threshold?: string;
 
@@ -817,6 +871,7 @@ export interface ReactionResult {
   action: string;
   message?: string;
   escalated: boolean;
+  escalationLevel?: EscalationLevel;
 }
 
 // =============================================================================
@@ -1089,6 +1144,7 @@ export interface SessionMetadata {
   evidenceTestsRun?: string;
   evidenceChangedPaths?: string;
   evidenceKnownRisks?: string;
+  escalationState?: string; // Serialized per-reaction escalation state map (JSON)
 }
 
 /** Plan lifecycle status for orchestrator planning artifacts. */

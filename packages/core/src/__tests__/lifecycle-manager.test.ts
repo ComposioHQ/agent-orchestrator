@@ -929,6 +929,240 @@ describe("reactions", () => {
     expect(mockNotifier.notify).not.toHaveBeenCalled();
   });
 
+  it("retries send-to-agent on subsequent polls when status is unchanged", async () => {
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("failing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn(),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    config.reactions = {
+      "ci-failed": {
+        auto: true,
+        action: "send-to-agent",
+        message: "Retry CI fix",
+        escalationPolicy: {
+          retryCounts: { worker: 5, verifier: 5, orchestrator: 5 },
+        },
+      },
+    };
+
+    const session = makeSession({ status: "pr_open", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+    vi.mocked(mockSessionManager.send)
+      .mockRejectedValueOnce(new Error("tmux send failed"))
+      .mockResolvedValueOnce(undefined);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+    await lm.check("app-1");
+
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(2);
+    expect(mockSessionManager.send).toHaveBeenLastCalledWith("app-1", "Retry CI fix");
+  });
+
+  it("escalates deterministically across worker→verifier→orchestrator→human and persists history", async () => {
+    const mockNotifier: Notifier = {
+      name: "mock-notifier",
+      notify: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("failing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn(),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    const registryWithNotifier: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "notifier" && name === "desktop") return mockNotifier;
+        return null;
+      }),
+    };
+
+    config.reactions = {
+      "ci-failed": {
+        auto: true,
+        action: "send-to-agent",
+        message: "Fix CI now",
+        escalationPolicy: {
+          retryCounts: { worker: 0, verifier: 0, orchestrator: 0 },
+        },
+      },
+    };
+
+    const session = makeSession({ status: "pr_open", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+    vi.mocked(mockSessionManager.send).mockRejectedValue(new Error("send failed"));
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithNotifier,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+    await lm.check("app-1");
+    await lm.check("app-1");
+    await lm.check("app-1"); // Should not notify repeatedly once level=human
+
+    expect(mockNotifier.notify).toHaveBeenCalledTimes(1);
+    expect(mockNotifier.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "reaction.escalated" }),
+    );
+
+    const raw = readMetadataRaw(sessionsDir, "app-1");
+    const stateMap = JSON.parse(raw?.["escalationState"] ?? "{}") as Record<string, unknown>;
+    const ciFailedState = stateMap["ci-failed"] as {
+      level: string;
+      history: Array<{ from: string; to: string; reason: string }>;
+    };
+
+    expect(ciFailedState.level).toBe("human");
+    expect(ciFailedState.history).toHaveLength(3);
+    expect(ciFailedState.history[0]).toMatchObject({
+      from: "worker",
+      to: "verifier",
+      reason: "retry_count",
+    });
+    expect(ciFailedState.history[1]).toMatchObject({
+      from: "verifier",
+      to: "orchestrator",
+      reason: "retry_count",
+    });
+    expect(ciFailedState.history[2]).toMatchObject({
+      from: "orchestrator",
+      to: "human",
+      reason: "retry_count",
+    });
+  });
+
+  it("supports time-threshold escalation policies", async () => {
+    vi.useFakeTimers();
+    try {
+      const mockSCM: SCM = {
+        name: "mock-scm",
+        detectPR: vi.fn(),
+        getPRState: vi.fn().mockResolvedValue("open"),
+        mergePR: vi.fn(),
+        closePR: vi.fn(),
+        getCIChecks: vi.fn(),
+        getCISummary: vi.fn().mockResolvedValue("failing"),
+        getReviews: vi.fn(),
+        getReviewDecision: vi.fn(),
+        getPendingComments: vi.fn(),
+        getAutomatedComments: vi.fn(),
+        getMergeability: vi.fn(),
+      };
+
+      const registryWithSCM: PluginRegistry = {
+        ...mockRegistry,
+        get: vi.fn().mockImplementation((slot: string) => {
+          if (slot === "runtime") return mockRuntime;
+          if (slot === "agent") return mockAgent;
+          if (slot === "scm") return mockSCM;
+          return null;
+        }),
+      };
+
+      config.reactions = {
+        "ci-failed": {
+          auto: true,
+          action: "send-to-agent",
+          message: "Fix CI now",
+          escalationPolicy: {
+            retryCounts: { worker: 99, verifier: 99, orchestrator: 99 },
+            timeThresholds: { worker: "1s" },
+          },
+        },
+      };
+
+      const session = makeSession({ status: "pr_open", pr: makePR() });
+      vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+      vi.mocked(mockSessionManager.send).mockRejectedValue(new Error("send failed"));
+
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: "/tmp",
+        branch: "main",
+        status: "pr_open",
+        project: "my-app",
+      });
+
+      const lm = createLifecycleManager({
+        config,
+        registry: registryWithSCM,
+        sessionManager: mockSessionManager,
+      });
+
+      await lm.check("app-1");
+      vi.setSystemTime(new Date(Date.now() + 1500));
+      await lm.check("app-1");
+
+      const raw = readMetadataRaw(sessionsDir, "app-1");
+      const stateMap = JSON.parse(raw?.["escalationState"] ?? "{}") as Record<string, unknown>;
+      const ciFailedState = stateMap["ci-failed"] as {
+        level: string;
+        history: Array<{ reason: string }>;
+      };
+
+      expect(ciFailedState.level).toBe("verifier");
+      expect(ciFailedState.history[0]).toMatchObject({ reason: "time_threshold" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("notifies humans on significant transitions without reaction config", async () => {
     const mockNotifier: Notifier = {
       name: "mock-notifier",
