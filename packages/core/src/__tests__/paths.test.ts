@@ -23,7 +23,6 @@ import {
   getProjectBaseDir,
   getSessionsDir,
   getWorktreesDir,
-  getArchiveDir,
   getOriginFilePath,
   generateSessionName,
   generateTmuxName,
@@ -271,12 +270,6 @@ describe("Path Construction", () => {
     expect(worktreesDir).toMatch(/\.agent-orchestrator\/[a-f0-9]{12}-integrator\/worktrees$/);
   });
 
-  it("getArchiveDir returns {baseDir}/sessions/archive", () => {
-    const archiveDir = getArchiveDir(configPath, "/repos/integrator");
-
-    expect(archiveDir).toMatch(/\.agent-orchestrator\/[a-f0-9]{12}-integrator\/sessions\/archive$/);
-  });
-
   it("getOriginFilePath returns {baseDir}/.origin", () => {
     const originPath = getOriginFilePath(configPath, "/repos/integrator");
 
@@ -287,11 +280,9 @@ describe("Path Construction", () => {
     const baseDir = getProjectBaseDir(configPath, "/repos/integrator");
     const sessionsDir = getSessionsDir(configPath, "/repos/integrator");
     const worktreesDir = getWorktreesDir(configPath, "/repos/integrator");
-    const archiveDir = getArchiveDir(configPath, "/repos/integrator");
 
     expect(sessionsDir).toContain(baseDir);
     expect(worktreesDir).toContain(baseDir);
-    expect(archiveDir).toContain(baseDir);
   });
 });
 

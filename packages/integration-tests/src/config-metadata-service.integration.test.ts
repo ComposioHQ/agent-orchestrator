@@ -7,7 +7,7 @@
  */
 
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
-import { mkdirSync, existsSync, readdirSync } from "node:fs";
+import { mkdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -152,18 +152,12 @@ describe("config → metadata service integration (real filesystem)", () => {
     expect(ids).toContain("lifecycle-1");
     expect(ids).toContain("lifecycle-2");
 
-    // 5. Delete with archive
-    deleteMetadata(sessionsDir, "lifecycle-1", true);
+    // 5. Delete metadata
+    deleteMetadata(sessionsDir, "lifecycle-1");
     expect(readMetadata(sessionsDir, "lifecycle-1")).toBeNull();
 
-    // Verify archive exists
-    const archiveDir = join(sessionsDir, "archive");
-    expect(existsSync(archiveDir)).toBe(true);
-    const archived = readdirSync(archiveDir);
-    expect(archived.some((f) => f.startsWith("lifecycle-1_"))).toBe(true);
-
-    // 6. Delete without archive
-    deleteMetadata(sessionsDir, "lifecycle-2", false);
+    // 6. Delete second session
+    deleteMetadata(sessionsDir, "lifecycle-2");
     expect(readMetadata(sessionsDir, "lifecycle-2")).toBeNull();
   });
 
@@ -208,7 +202,7 @@ describe("config → metadata service integration (real filesystem)", () => {
     expect(listMetadata(dirB)).not.toContain("projA-session-1");
 
     // Cleanup
-    deleteMetadata(dirA, "projA-session-1", false);
-    deleteMetadata(dirB, "projB-session-1", false);
+    deleteMetadata(dirA, "projA-session-1");
+    deleteMetadata(dirB, "projB-session-1");
   });
 });

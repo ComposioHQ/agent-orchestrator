@@ -40,7 +40,6 @@ import {
 } from "./types.js";
 import {
   readMetadataRaw,
-  readArchivedMetadataRaw,
   writeMetadata,
   updateMetadata,
   deleteMetadata,
@@ -194,7 +193,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
       const files = readdirSync(sessionsDir);
       for (const file of files) {
-        if (file === "archive" || file.startsWith(".")) continue;
+        if (file.startsWith(".")) continue;
         const fullPath = join(sessionsDir, file);
         try {
           if (statSync(fullPath).isFile()) {
@@ -429,7 +428,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       } catch (err) {
         // Clean up reserved session ID on workspace failure
         try {
-          deleteMetadata(sessionsDir, sessionId, false);
+          deleteMetadata(sessionsDir, sessionId);
         } catch {
           /* best effort */
         }
@@ -493,7 +492,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         }
       }
       try {
-        deleteMetadata(sessionsDir, sessionId, false);
+        deleteMetadata(sessionsDir, sessionId);
       } catch {
         /* best effort */
       }
@@ -548,7 +547,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         }
       }
       try {
-        deleteMetadata(sessionsDir, sessionId, false);
+        deleteMetadata(sessionsDir, sessionId);
       } catch {
         /* best effort */
       }
@@ -669,7 +668,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         /* best effort */
       }
       try {
-        deleteMetadata(sessionsDir, sessionId, false);
+        deleteMetadata(sessionsDir, sessionId);
       } catch {
         /* best effort */
       }
@@ -803,8 +802,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       }
     }
 
-    // Archive metadata
-    deleteMetadata(sessionsDir, sessionId, true);
+    // Mark session as done (preserve metadata for dashboard visibility)
+    updateMetadata(sessionsDir, sessionId, { status: "done" });
   }
 
   async function cleanup(
@@ -918,12 +917,11 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   }
 
   async function restore(sessionId: SessionId): Promise<Session> {
-    // 1. Find session metadata across all projects (active first, then archive)
+    // 1. Find session metadata across all projects
     let raw: Record<string, string> | null = null;
     let sessionsDir: string | null = null;
     let project: ProjectConfig | undefined;
     let projectId: string | undefined;
-    let fromArchive = false;
 
     for (const [key, proj] of Object.entries(config.projects)) {
       const dir = getProjectSessionsDir(proj);
@@ -937,40 +935,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       }
     }
 
-    // Fall back to archived metadata (killed/cleaned sessions)
-    if (!raw) {
-      for (const [key, proj] of Object.entries(config.projects)) {
-        const dir = getProjectSessionsDir(proj);
-        const archived = readArchivedMetadataRaw(dir, sessionId);
-        if (archived) {
-          raw = archived;
-          sessionsDir = dir;
-          project = proj;
-          projectId = key;
-          fromArchive = true;
-          break;
-        }
-      }
-    }
-
     if (!raw || !sessionsDir || !project || !projectId) {
       throw new Error(`Session ${sessionId} not found`);
-    }
-
-    // If restored from archive, recreate the active metadata file
-    if (fromArchive) {
-      writeMetadata(sessionsDir, sessionId, {
-        worktree: raw["worktree"] ?? "",
-        branch: raw["branch"] ?? "",
-        status: raw["status"] ?? "killed",
-        tmuxName: raw["tmuxName"],
-        issue: raw["issue"],
-        pr: raw["pr"],
-        summary: raw["summary"],
-        project: raw["project"],
-        createdAt: raw["createdAt"],
-        runtimeHandle: raw["runtimeHandle"],
-      });
     }
 
     // 2. Reconstruct Session from metadata and enrich with live runtime state.

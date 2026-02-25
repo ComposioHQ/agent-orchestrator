@@ -127,7 +127,7 @@ function buildSessionsFromDir(
   activityOverride?: ActivityState | null,
 ): Session[] {
   if (!existsSync(dir)) return [];
-  const files = readdirSync(dir).filter((f) => !f.startsWith(".") && f !== "archive");
+  const files = readdirSync(dir).filter((f) => !f.startsWith("."));
   return files.map((name) => {
     const content = readFileSync(join(dir, name), "utf-8");
     const meta = parseMetadata(content);

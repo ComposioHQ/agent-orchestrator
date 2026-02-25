@@ -103,14 +103,6 @@ export function getWorktreesDir(configPath: string, projectPath: string): string
 }
 
 /**
- * Get the archive directory for a project.
- * Format: ~/.agent-orchestrator/{hash}-{projectId}/archive
- */
-export function getArchiveDir(configPath: string, projectPath: string): string {
-  return join(getSessionsDir(configPath, projectPath), "archive");
-}
-
-/**
  * Get the .origin file path for a project.
  * This file stores the config path for collision detection.
  */

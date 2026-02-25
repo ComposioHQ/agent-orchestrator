@@ -71,7 +71,6 @@ export {
   getProjectBaseDir,
   getSessionsDir,
   getWorktreesDir,
-  getArchiveDir,
   getOriginFilePath,
   generateSessionName,
   generateTmuxName,

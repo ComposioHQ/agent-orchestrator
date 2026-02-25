@@ -186,57 +186,11 @@ export function updateMetadata(
 
 /**
  * Delete a session's metadata file.
- * Optionally archive it to an `archive/` subdirectory.
  */
-export function deleteMetadata(dataDir: string, sessionId: SessionId, archive = true): void {
+export function deleteMetadata(dataDir: string, sessionId: SessionId): void {
   const path = metadataPath(dataDir, sessionId);
   if (!existsSync(path)) return;
-
-  if (archive) {
-    const archiveDir = join(dataDir, "archive");
-    mkdirSync(archiveDir, { recursive: true });
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const archivePath = join(archiveDir, `${sessionId}_${timestamp}`);
-    writeFileSync(archivePath, readFileSync(path, "utf-8"));
-  }
-
   unlinkSync(path);
-}
-
-/**
- * Read the latest archived metadata for a session.
- * Archive files are named `<sessionId>_<ISO-timestamp>` inside `<dataDir>/archive/`.
- * Returns null if no archived metadata exists.
- */
-export function readArchivedMetadataRaw(
-  dataDir: string,
-  sessionId: SessionId,
-): Record<string, string> | null {
-  validateSessionId(sessionId);
-  const archiveDir = join(dataDir, "archive");
-  if (!existsSync(archiveDir)) return null;
-
-  const prefix = `${sessionId}_`;
-  let latest: string | null = null;
-
-  for (const file of readdirSync(archiveDir)) {
-    if (!file.startsWith(prefix)) continue;
-    // Verify the separator is followed by a digit (start of ISO timestamp)
-    // to avoid prefix collisions (e.g., "app" matching "app_v2_...")
-    const charAfterPrefix = file[prefix.length];
-    if (!charAfterPrefix || charAfterPrefix < "0" || charAfterPrefix > "9") continue;
-    // Pick lexicographically last (ISO timestamps sort correctly)
-    if (!latest || file > latest) {
-      latest = file;
-    }
-  }
-
-  if (!latest) return null;
-  try {
-    return parseMetadataFile(readFileSync(join(archiveDir, latest), "utf-8"));
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -247,7 +201,7 @@ export function listMetadata(dataDir: string): SessionId[] {
   if (!existsSync(dir)) return [];
 
   return readdirSync(dir).filter((name) => {
-    if (name === "archive" || name.startsWith(".")) return false;
+    if (name.startsWith(".")) return false;
     if (!VALID_SESSION_ID.test(name)) return false;
     try {
       return statSync(join(dir, name)).isFile();

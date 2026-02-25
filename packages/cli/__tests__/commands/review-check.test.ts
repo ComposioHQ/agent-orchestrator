@@ -70,7 +70,7 @@ function parseMetadata(content: string): Record<string, string> {
 /** Build Session objects from metadata files in sessionsDir. */
 function buildSessionsFromDir(dir: string, projectId: string): Session[] {
   if (!existsSync(dir)) return [];
-  const files = readdirSync(dir).filter((f) => !f.startsWith(".") && f !== "archive");
+  const files = readdirSync(dir).filter((f) => !f.startsWith("."));
   return files.map((name) => {
     const content = readFileSync(join(dir, name), "utf-8");
     const meta = parseMetadata(content);

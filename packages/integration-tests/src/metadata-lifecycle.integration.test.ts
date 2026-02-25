@@ -1,13 +1,13 @@
 /**
  * Integration test for metadata lifecycle — real filesystem operations.
  *
- * Tests the full metadata CRUD cycle (write, read, update, list, delete/archive)
+ * Tests the full metadata CRUD cycle (write, read, update, list, delete)
  * and concurrent access patterns using @composio/ao-core metadata functions
  * with real filesystem I/O.
  */
 
 import { mkdtemp, rm } from "node:fs/promises";
-import { existsSync, readdirSync, readFileSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -154,7 +154,7 @@ describe("metadata lifecycle (real filesystem)", () => {
     expect(result!.status).toBe("spawning");
   });
 
-  it("listMetadata returns session IDs, excluding archive directory", () => {
+  it("listMetadata returns session IDs, excluding dotfiles", () => {
     const sessionsDir = join(tmpDir, "test-list");
     mkdirSync(sessionsDir, { recursive: true });
 
@@ -169,8 +169,8 @@ describe("metadata lifecycle (real filesystem)", () => {
     expect(ids).not.toContain("archive");
   });
 
-  it("deleteMetadata with archive=true moves file to archive/", () => {
-    const sessionsDir = join(tmpDir, "test-archive");
+  it("deleteMetadata permanently removes file", () => {
+    const sessionsDir = join(tmpDir, "test-delete");
     mkdirSync(sessionsDir, { recursive: true });
 
     writeMetadata(sessionsDir, "session-del", {
@@ -181,38 +181,9 @@ describe("metadata lifecycle (real filesystem)", () => {
 
     expect(existsSync(join(sessionsDir, "session-del"))).toBe(true);
 
-    deleteMetadata(sessionsDir, "session-del", true);
+    deleteMetadata(sessionsDir, "session-del");
 
-    // Original file removed
     expect(existsSync(join(sessionsDir, "session-del"))).toBe(false);
-
-    // Archive created
-    const archiveDir = join(sessionsDir, "archive");
-    expect(existsSync(archiveDir)).toBe(true);
-    const archived = readdirSync(archiveDir);
-    expect(archived.length).toBe(1);
-    expect(archived[0]).toMatch(/^session-del_/);
-
-    // Archive content matches original
-    const content = readFileSync(join(archiveDir, archived[0]), "utf-8");
-    expect(content).toContain("worktree=/w");
-    expect(content).toContain("branch=main");
-  });
-
-  it("deleteMetadata with archive=false permanently removes file", () => {
-    const sessionsDir = join(tmpDir, "test-permanent-delete");
-    mkdirSync(sessionsDir, { recursive: true });
-
-    writeMetadata(sessionsDir, "session-gone", {
-      worktree: "/w",
-      branch: "main",
-      status: "done",
-    });
-
-    deleteMetadata(sessionsDir, "session-gone", false);
-
-    expect(existsSync(join(sessionsDir, "session-gone"))).toBe(false);
-    expect(existsSync(join(sessionsDir, "archive"))).toBe(false);
   });
 
   it("deleteMetadata is a no-op for non-existent session", () => {
@@ -220,8 +191,7 @@ describe("metadata lifecycle (real filesystem)", () => {
     mkdirSync(sessionsDir, { recursive: true });
 
     // Should not throw
-    deleteMetadata(sessionsDir, "no-such-session", true);
-    deleteMetadata(sessionsDir, "no-such-session", false);
+    deleteMetadata(sessionsDir, "no-such-session");
   });
 
   it("validates session ID rejects path traversal attempts", () => {
