@@ -513,6 +513,30 @@ export async function resolveCodexBinary(): Promise<string> {
 // Agent Implementation
 // =============================================================================
 
+/** Append approval-policy flags to a command parts array */
+function appendApprovalFlags(parts: string[], permissions: string | undefined): void {
+  if (permissions === "skip") {
+    parts.push("--dangerously-bypass-approvals-and-sandbox");
+  } else if (permissions === "auto-edit") {
+    parts.push("--ask-for-approval", "never");
+  } else if (permissions === "suggest") {
+    parts.push("--ask-for-approval", "untrusted");
+  }
+}
+
+/** Append model and reasoning flags to a command parts array */
+function appendModelFlags(parts: string[], model: string | undefined): void {
+  if (!model) return;
+  parts.push("--model", shellEscape(model));
+
+  // Auto-detect o-series models and enable reasoning via config override.
+  // Codex does not have a --reasoning flag; reasoning is controlled via
+  // the model_reasoning_effort config key.
+  if (/^o[34]/i.test(model)) {
+    parts.push("-c", "model_reasoning_effort=high");
+  }
+}
+
 function createCodexAgent(): Agent {
   /** Cached resolved binary path (populated by init or first getLaunchCommand) */
   let resolvedBinary: string | null = null;
@@ -527,31 +551,8 @@ function createCodexAgent(): Agent {
       const binary = resolvedBinary ?? "codex";
       const parts: string[] = [shellEscape(binary)];
 
-      // Approval policy mapping — cast to string for forward-compat with
-      // extended permission values not yet in AgentLaunchConfig type.
-      // Codex CLI uses --ask-for-approval (-a) with values:
-      //   untrusted  — approve before any state-mutating command
-      //   on-request — approve only for privilege escalation
-      //   never      — no approval prompts (sandbox still applies)
-      const perms = config.permissions as string | undefined;
-      if (perms === "skip") {
-        parts.push("--dangerously-bypass-approvals-and-sandbox");
-      } else if (perms === "auto-edit") {
-        parts.push("--ask-for-approval", "never");
-      } else if (perms === "suggest") {
-        parts.push("--ask-for-approval", "untrusted");
-      }
-
-      if (config.model) {
-        parts.push("--model", shellEscape(config.model));
-
-        // Auto-detect o-series models and enable reasoning via config override.
-        // Codex does not have a --reasoning flag; reasoning is controlled via
-        // the model_reasoning_effort config key.
-        if (/^o[34]/i.test(config.model)) {
-          parts.push("-c", "model_reasoning_effort=high");
-        }
-      }
+      appendApprovalFlags(parts, config.permissions as string | undefined);
+      appendModelFlags(parts, config.model);
 
       if (config.systemPromptFile) {
         // Codex reads developer instructions from a file via config override
@@ -721,24 +722,9 @@ function createCodexAgent(): Agent {
       const binary = resolvedBinary ?? "codex";
       const parts: string[] = [shellEscape(binary), "resume"];
 
-      // Add approval policy flags from project config
-      const perms = project.agentConfig?.permissions as string | undefined;
-      if (perms === "skip") {
-        parts.push("--dangerously-bypass-approvals-and-sandbox");
-      } else if (perms === "auto-edit") {
-        parts.push("--ask-for-approval", "never");
-      } else if (perms === "suggest") {
-        parts.push("--ask-for-approval", "untrusted");
-      }
-
-      const effectiveModel = project.agentConfig?.model ?? data.model;
-      if (effectiveModel) {
-        parts.push("--model", shellEscape(effectiveModel as string));
-
-        if (/^o[34]/i.test(effectiveModel as string)) {
-          parts.push("-c", "model_reasoning_effort=high");
-        }
-      }
+      appendApprovalFlags(parts, project.agentConfig?.permissions as string | undefined);
+      const effectiveModel = (project.agentConfig?.model ?? data.model) as string | undefined;
+      appendModelFlags(parts, effectiveModel ?? undefined);
 
       // Positional threadId goes last, after all flags
       parts.push(shellEscape(data.threadId));
