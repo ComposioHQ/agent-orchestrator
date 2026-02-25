@@ -94,6 +94,7 @@ const OrchestratorConfigSchema = z.object({
   terminalPort: z.number().optional(),
   directTerminalPort: z.number().optional(),
   readyThresholdMs: z.number().nonnegative().default(300_000),
+  allowedUsers: z.array(z.string()).default([]),
   defaults: DefaultPluginsSchema.default({}),
   projects: z.record(ProjectConfigSchema),
   notifiers: z.record(NotifierConfigSchema).default({}),

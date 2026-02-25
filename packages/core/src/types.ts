@@ -828,6 +828,14 @@ export interface OrchestratorConfig {
 
   /** Default reaction configs */
   reactions: Record<string, ReactionConfig>;
+
+  /**
+   * GitHub usernames whose PR reviews and comments are trusted.
+   * When set, agents only see and react to comments from these users.
+   * Bot comments (CI, linters) are always allowed regardless of this setting.
+   * If empty or omitted, all non-bot users are allowed (backwards-compatible).
+   */
+  allowedUsers?: string[];
 }
 
 export interface DefaultPlugins {
