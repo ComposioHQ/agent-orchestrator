@@ -46,7 +46,7 @@ function createClineAgent(): Agent {
       }
 
       if (config.prompt) {
-        parts.push(shellEscape(config.prompt));
+        parts.push("-y", shellEscape(config.prompt));
       }
 
       return parts.join(" ");

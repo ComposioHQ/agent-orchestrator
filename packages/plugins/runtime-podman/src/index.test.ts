@@ -191,7 +191,7 @@ describe("runtime.destroy()", () => {
 });
 
 describe("runtime.sendMessage()", () => {
-  it("calls podman exec to echo message to /tmp/ao-input", async () => {
+  it("calls podman exec with shellEscape to write message to /tmp/ao-input", async () => {
     const runtime = create();
     const handle = makeHandle("msg-test");
 
@@ -201,8 +201,23 @@ describe("runtime.sendMessage()", () => {
 
     expect(mockExecFileCustom).toHaveBeenCalledWith("podman", [
       "exec", "ao-msg-test",
-      "sh", "-c", expect.stringContaining("hello world"),
+      "sh", "-c", "printf '%s\\n' 'hello world' >> /tmp/ao-input",
     ], { timeout: 30_000 });
+  });
+
+  it("uses shellEscape to prevent shell injection", async () => {
+    const runtime = create();
+    const handle = makeHandle("msg-test");
+
+    mockPodmanSuccess();
+
+    await runtime.sendMessage(handle, "$(evil) `cmd`");
+
+    const args = mockExecFileCustom.mock.calls[0][1] as string[];
+    const shCmd = args[4];
+    // shellEscape wraps in single quotes, preventing shell expansion
+    expect(shCmd).toContain("'$(evil) `cmd`'");
+    expect(shCmd).not.toContain("JSON");
   });
 
   it("uses handle.id fallback when containerName missing", async () => {

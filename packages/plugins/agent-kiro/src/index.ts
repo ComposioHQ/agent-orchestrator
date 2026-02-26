@@ -41,8 +41,10 @@ function createKiroAgent(): Agent {
         parts.push("--trust-all-tools");
       }
 
+      parts.push("--no-interactive");
+
       if (config.prompt) {
-        parts.push("--no-interactive", shellEscape(config.prompt));
+        parts.push(shellEscape(config.prompt));
       }
 
       return parts.join(" ");

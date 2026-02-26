@@ -29,7 +29,7 @@ function escapeMarkdownV2(text: string): string {
 function buildMessage(event: OrchestratorEvent): string {
   const emoji = PRIORITY_EMOJI[event.priority];
   const lines: string[] = [
-    `${emoji} *${escapeMarkdownV2(event.type)}* \\u2014 ${escapeMarkdownV2(event.sessionId)}`,
+    `${emoji} *${escapeMarkdownV2(event.type)}* \u2014 ${escapeMarkdownV2(event.sessionId)}`,
     "",
     escapeMarkdownV2(event.message),
     "",
@@ -77,15 +77,23 @@ async function sendTelegram(
     body.reply_markup = replyMarkup;
   }
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
 
-  if (!response.ok) {
-    const respBody = await response.text();
-    throw new Error(`Telegram API failed (${response.status}): ${respBody}`);
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const respBody = await response.text();
+      throw new Error(`Telegram API failed (${response.status}): ${respBody}`);
+    }
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

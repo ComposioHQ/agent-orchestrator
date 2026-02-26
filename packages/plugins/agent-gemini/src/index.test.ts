@@ -152,9 +152,9 @@ describe("getLaunchCommand", () => {
     expect(cmd).toContain("--system-instruction 'Be helpful'");
   });
 
-  it("includes --system-instruction with cat for systemPromptFile", () => {
+  it("includes --system-instruction-file for systemPromptFile", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ systemPromptFile: "/tmp/prompt.txt" }));
-    expect(cmd).toContain('--system-instruction "$(cat \'/tmp/prompt.txt\')"');
+    expect(cmd).toContain("--system-instruction-file '/tmp/prompt.txt'");
   });
 
   it("prefers systemPromptFile over systemPrompt", () => {
@@ -164,7 +164,7 @@ describe("getLaunchCommand", () => {
         systemPromptFile: "/tmp/prompt.txt",
       }),
     );
-    expect(cmd).toContain("$(cat");
+    expect(cmd).toContain("--system-instruction-file");
     expect(cmd).not.toContain("'Be helpful'");
   });
 

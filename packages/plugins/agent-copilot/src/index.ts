@@ -32,7 +32,7 @@ export const manifest = {
 function createCopilotAgent(): Agent {
   return {
     name: "copilot",
-    processName: "copilot",
+    processName: "gh",
 
     getLaunchCommand(config: AgentLaunchConfig): string {
       const parts: string[] = ["gh", "copilot"];
@@ -96,7 +96,7 @@ function createCopilotAgent(): Agent {
             timeout: 30_000,
           });
           const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
-          const processRe = /(?:^|\/)copilot(?:\s|$)/;
+          const processRe = /(?:^|\s|\/)(gh)\s+copilot(?:\s|$)/;
           for (const line of psOut.split("\n")) {
             const cols = line.trimStart().split(/\s+/);
             if (cols.length < 3 || !ttySet.has(cols[1] ?? "")) continue;

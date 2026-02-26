@@ -97,15 +97,23 @@ function buildAdaptiveCard(
 }
 
 async function postToWebhook(webhookUrl: string, payload: Record<string, unknown>): Promise<void> {
-  const response = await fetch(webhookUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
 
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Teams webhook failed (${response.status}): ${body}`);
+  try {
+    const response = await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Teams webhook failed (${response.status}): ${body}`);
+    }
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

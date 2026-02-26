@@ -132,9 +132,9 @@ describe("getLaunchCommand", () => {
     expect(cmd).toContain("--model 'claude-3.5-sonnet'");
   });
 
-  it("shell-escapes prompt argument (positional)", () => {
+  it("shell-escapes prompt argument with -y flag", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "Fix the bug" }));
-    expect(cmd).toContain("'Fix the bug'");
+    expect(cmd).toContain("-y 'Fix the bug'");
   });
 
   it("escapes dangerous characters in prompt", () => {
@@ -151,7 +151,7 @@ describe("getLaunchCommand", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ permissions: "skip", model: "opus", prompt: "Hello" }),
     );
-    expect(cmd).toBe("cline --yolo --model 'opus' 'Hello'");
+    expect(cmd).toBe("cline --yolo --model 'opus' -y 'Hello'");
   });
 
   it("omits optional flags when not provided", () => {

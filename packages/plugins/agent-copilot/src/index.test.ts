@@ -97,7 +97,7 @@ describe("plugin manifest & exports", () => {
   it("create() returns an agent with correct name and processName", () => {
     const agent = create();
     expect(agent.name).toBe("copilot");
-    expect(agent.processName).toBe("copilot");
+    expect(agent.processName).toBe("gh");
   });
 
   it("default export is a valid PluginModule", () => {
@@ -224,12 +224,12 @@ describe("detectActivity", () => {
 describe("isProcessRunning", () => {
   const agent = create();
 
-  it("returns true when copilot is found on tmux pane TTY", async () => {
-    mockTmuxWithProcess("copilot");
+  it("returns true when gh copilot is found on tmux pane TTY", async () => {
+    mockTmuxWithProcess("gh copilot");
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(true);
   });
 
-  it("returns false when no copilot process on tmux pane TTY", async () => {
+  it("returns false when no gh copilot process on tmux pane TTY", async () => {
     mockExecFileAsync.mockImplementation((cmd: string) => {
       if (cmd === "tmux") return Promise.resolve({ stdout: "/dev/ttys002\n", stderr: "" });
       if (cmd === "ps")
@@ -282,14 +282,14 @@ describe("isProcessRunning", () => {
     killSpy.mockRestore();
   });
 
-  it("finds copilot on any pane in multi-pane session", async () => {
+  it("finds gh copilot on any pane in multi-pane session", async () => {
     mockExecFileAsync.mockImplementation((cmd: string, args: string[]) => {
       if (cmd === "tmux" && args[0] === "list-panes") {
         return Promise.resolve({ stdout: "/dev/ttys001\n/dev/ttys002\n", stderr: "" });
       }
       if (cmd === "ps") {
         return Promise.resolve({
-          stdout: "  PID TT ARGS\n  100 ttys001  bash\n  200 ttys002  copilot -p test\n",
+          stdout: "  PID TT ARGS\n  100 ttys001  bash\n  200 ttys002  gh copilot -p test\n",
           stderr: "",
         });
       }

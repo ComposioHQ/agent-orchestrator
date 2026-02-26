@@ -46,7 +46,7 @@ function createGeminiAgent(): Agent {
       }
 
       if (config.systemPromptFile) {
-        parts.push("--system-instruction", `"$(cat ${shellEscape(config.systemPromptFile)})"`);
+        parts.push("--system-instruction-file", shellEscape(config.systemPromptFile));
       } else if (config.systemPrompt) {
         parts.push("--system-instruction", shellEscape(config.systemPrompt));
       }

@@ -333,8 +333,16 @@ function createJiraTracker(): Tracker {
       }
 
       if (update.assignee) {
-        // Jira requires accountId; search for user
-        updateFields["assignee"] = [{ set: { displayName: update.assignee } }];
+        // Jira requires accountId; search for user by displayName to resolve it
+        const users = await jiraFetch<Array<{ accountId: string; displayName: string }>>(
+          `/rest/api/3/user/search?query=${encodeURIComponent(update.assignee)}`,
+        );
+        const matchedUser = users.find((u) => u.displayName === update.assignee);
+        if (matchedUser) {
+          updateFields["assignee"] = { accountId: matchedUser.accountId };
+        } else if (users.length > 0 && users[0]) {
+          updateFields["assignee"] = { accountId: users[0].accountId };
+        }
       }
 
       if (Object.keys(updateFields).length > 0) {
@@ -342,7 +350,7 @@ function createJiraTracker(): Tracker {
           method: "PUT",
           body: {
             update: update.labels ? { labels: updateFields["labels"] } : undefined,
-            fields: update.assignee ? { assignee: (updateFields["assignee"] as Array<{ set: unknown }>)?.[0]?.set } : undefined,
+            fields: update.assignee ? { assignee: updateFields["assignee"] } : undefined,
           },
         });
       }

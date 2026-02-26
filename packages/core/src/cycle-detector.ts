@@ -307,10 +307,16 @@ export function createCycleDetector(config?: CycleDetectorConfig): CycleDetector
   }
 
   function judgeCycle(sessionId: string): CycleJudgment | null {
-    // Check for cycle first (more specific), then loop
-    const cycle = detectCycle(sessionId);
-    if (cycle) {
-      return judgePattern(cycle.pattern, cycle.repetitions, maxCycleReps);
+    // Check for cycle first (more specific), then loop.
+    // Use a lower threshold (2) to detect emerging cycles that haven't
+    // yet hit maxCycleReps — this allows "productive" verdicts for
+    // cycles that are still under the threshold.
+    const history = histories.get(sessionId);
+    if (history && history.length >= 4) {
+      const result = findCyclePattern(history, 2);
+      if (result) {
+        return judgePattern(result.pattern, result.repetitions, maxCycleReps);
+      }
     }
 
     const loop = detectLoop(sessionId);

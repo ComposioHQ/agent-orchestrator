@@ -112,9 +112,9 @@ describe("plugin manifest & exports", () => {
 describe("getLaunchCommand", () => {
   const agent = create();
 
-  it("generates base command 'kiro' with no extra flags", () => {
+  it("generates base command 'kiro --no-interactive'", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig());
-    expect(cmd).toBe("kiro");
+    expect(cmd).toBe("kiro --no-interactive");
   });
 
   it("includes --trust-all-tools when permissions=skip", () => {
@@ -155,10 +155,10 @@ describe("getLaunchCommand", () => {
     expect(cmd).not.toContain("--model");
   });
 
-  it("omits optional flags when not provided", () => {
+  it("always includes --no-interactive even without prompt", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig());
     expect(cmd).not.toContain("--trust-all-tools");
-    expect(cmd).not.toContain("--no-interactive");
+    expect(cmd).toContain("--no-interactive");
   });
 });
 

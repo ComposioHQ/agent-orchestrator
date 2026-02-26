@@ -1,12 +1,13 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type {
-  PluginModule,
-  Runtime,
-  RuntimeCreateConfig,
-  RuntimeHandle,
-  RuntimeMetrics,
-  AttachInfo,
+import {
+  shellEscape,
+  type PluginModule,
+  type Runtime,
+  type RuntimeCreateConfig,
+  type RuntimeHandle,
+  type RuntimeMetrics,
+  type AttachInfo,
 } from "@composio/ao-core";
 
 const execFileAsync = promisify(execFile);
@@ -90,9 +91,11 @@ export function create(): Runtime {
     async sendMessage(handle: RuntimeHandle, message: string): Promise<void> {
       const containerName = (handle.data["containerName"] as string) ?? handle.id;
 
+      // Use shellEscape (POSIX single-quote wrapping) instead of JSON.stringify
+      // to safely pass user-controlled message to sh -c
       await podman(
         "exec", containerName,
-        "sh", "-c", `echo ${JSON.stringify(message)} >> /tmp/ao-input`,
+        "sh", "-c", `printf '%s\\n' ${shellEscape(message)} >> /tmp/ao-input`,
       );
     },
 

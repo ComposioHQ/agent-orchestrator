@@ -561,12 +561,21 @@ describe("tracker-jira plugin", () => {
       expect(body.update.labels).toEqual([{ add: "bug" }, { add: "urgent" }]);
     });
 
-    it("updates assignee", async () => {
+    it("updates assignee by searching for accountId", async () => {
+      // 1: user search returns matching user
+      mockFetchOk([{ accountId: "acc-bob", displayName: "bob" }]);
+      // 2: issue update
       mockFetch204();
+
       await tracker.updateIssue!("INT-123", { assignee: "bob" }, project);
 
-      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-      expect(body.fields.assignee).toEqual({ displayName: "bob" });
+      // First call is user search
+      const searchUrl = fetchMock.mock.calls[0][0] as string;
+      expect(searchUrl).toContain("/rest/api/3/user/search?query=bob");
+
+      // Second call is the issue update with accountId
+      const body = JSON.parse(fetchMock.mock.calls[1][1].body);
+      expect(body.fields.assignee).toEqual({ accountId: "acc-bob" });
     });
 
     it("handles state change + comment together", async () => {
