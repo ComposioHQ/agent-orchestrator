@@ -37,7 +37,7 @@ function getJiraConfig(project: ProjectConfig): {
   projectKey: string;
   issueType?: string;
 } {
-  const tracker = project.tracker ?? {};
+  const tracker = (project.tracker ?? {}) as Record<string, unknown>;
   const baseUrl =
     (tracker["baseUrl"] as string | undefined) ??
     (process.env["JIRA_BASE_URL"] as string | undefined) ??
@@ -95,10 +95,10 @@ async function jiraRequest<T>(
 }
 
 function mapStatus(fields?: JiraFields): Issue["state"] {
-  const key = fields.status?.statusCategory?.key?.toLowerCase() ?? "";
+  const key = fields?.status?.statusCategory?.key?.toLowerCase() ?? "";
   if (key === "done") return "closed";
 
-  const name = fields.status?.name?.toLowerCase() ?? "";
+  const name = fields?.status?.name?.toLowerCase() ?? "";
   if (name.includes("progress")) return "in_progress";
   if (name.includes("cancel")) return "cancelled";
   return "open";
