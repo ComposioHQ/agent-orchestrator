@@ -6,6 +6,7 @@ import {
   enrichSessionPR,
   enrichSessionsMetadata,
 } from "@/lib/serialize";
+import { ensureSessionsHaveDetectedPRs } from "@/lib/session-pr-detection";
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -16,6 +17,12 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     if (!coreSession) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
+    await ensureSessionsHaveDetectedPRs({
+      sessions: [coreSession],
+      config,
+      registry,
+      sessionManager,
+    });
 
     const dashboardSession = sessionToDashboard(coreSession);
 

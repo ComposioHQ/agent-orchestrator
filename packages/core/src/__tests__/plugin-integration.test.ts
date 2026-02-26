@@ -445,6 +445,7 @@ describe("plugin integration", () => {
         kill: vi.fn().mockResolvedValue(undefined),
         send: vi.fn().mockResolvedValue(undefined),
         spawnOrchestrator: vi.fn(),
+        ensurePRDetected: vi.fn().mockResolvedValue(null),
       };
 
       const lm = createLifecycleManager({
@@ -475,6 +476,7 @@ describe("plugin integration", () => {
         kill: vi.fn().mockResolvedValue(undefined),
         send: vi.fn().mockResolvedValue(undefined),
         spawnOrchestrator: vi.fn(),
+        ensurePRDetected: vi.fn().mockResolvedValue(null),
       };
 
       const lm = createLifecycleManager({
@@ -502,6 +504,7 @@ describe("plugin integration", () => {
         kill: vi.fn().mockResolvedValue(undefined),
         send: vi.fn().mockResolvedValue(undefined),
         spawnOrchestrator: vi.fn(),
+        ensurePRDetected: vi.fn().mockResolvedValue(null),
       };
 
       const lm = createLifecycleManager({

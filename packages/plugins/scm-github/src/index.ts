@@ -77,7 +77,22 @@ function createGitHubSCM(): SCM {
     name: "github",
 
     async detectPR(session: Session, project: ProjectConfig): Promise<PRInfo | null> {
-      if (!session.branch) return null;
+      let branch = session.branch;
+      // Fallback: if branch is missing from metadata (e.g. agent ran gh pr create
+      // but metadata was never updated), read current branch from the workspace.
+      if (!branch && session.workspacePath) {
+        try {
+          const { stdout } = await execFileAsync(
+            "git",
+            ["rev-parse", "--abbrev-ref", "HEAD"],
+            { cwd: session.workspacePath, timeout: 5_000 },
+          );
+          branch = stdout.trim() || null;
+        } catch {
+          branch = null;
+        }
+      }
+      if (!branch) return null;
 
       const parts = project.repo.split("/");
       if (parts.length !== 2 || !parts[0] || !parts[1]) {
@@ -91,7 +106,7 @@ function createGitHubSCM(): SCM {
           "--repo",
           project.repo,
           "--head",
-          session.branch,
+          branch,
           "--json",
           "number,url,title,headRefName,baseRefName,isDraft",
           "--limit",

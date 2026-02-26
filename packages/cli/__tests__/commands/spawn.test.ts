@@ -15,6 +15,7 @@ const { mockExec, mockConfigRef, mockSessionManager } = vi.hoisted(() => ({
     spawn: vi.fn(),
     spawnOrchestrator: vi.fn(),
     send: vi.fn(),
+    ensurePRDetected: vi.fn().mockResolvedValue(null),
   },
 }));
 

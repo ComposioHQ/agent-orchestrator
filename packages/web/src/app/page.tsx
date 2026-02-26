@@ -11,6 +11,7 @@ import {
 } from "@/lib/serialize";
 import { prCache, prCacheKey } from "@/lib/cache";
 import { getProjectName } from "@/lib/project-name";
+import { ensureSessionsHaveDetectedPRs } from "@/lib/session-pr-detection";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +28,13 @@ export default async function Home() {
   try {
     const { config, registry, sessionManager } = await getServices();
     const allSessions = await sessionManager.list();
+
+    await ensureSessionsHaveDetectedPRs({
+      sessions: allSessions,
+      config,
+      registry,
+      sessionManager,
+    });
 
     // Find the orchestrator session (any session ending with -orchestrator)
     // Only set orchestratorId if an actual session exists (no fallback)

@@ -110,6 +110,7 @@ beforeEach(() => {
     kill: vi.fn().mockResolvedValue(undefined),
     cleanup: vi.fn(),
     send: vi.fn().mockResolvedValue(undefined),
+    ensurePRDetected: vi.fn().mockResolvedValue(null),
   };
 
   config = {
