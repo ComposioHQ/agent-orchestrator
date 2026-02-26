@@ -744,15 +744,19 @@ function createClaudeCodeAgent(): Agent {
       const sessionUuid = basename(sessionFile, ".jsonl");
       if (!sessionUuid) return null;
 
-      // Build resume command
+      // Build resume command with same config as original session
       const parts: string[] = ["claude", "--resume", shellEscape(sessionUuid)];
 
-      if (project.agentConfig?.permissions === "skip") {
+      // Check permissions: prefer metadata (persisted at spawn time), fall back to project config
+      const permissions = session.metadata?.["permissions"] ?? project.agentConfig?.permissions;
+      if (permissions === "skip") {
         parts.push("--dangerously-skip-permissions");
       }
 
-      if (project.agentConfig?.model) {
-        parts.push("--model", shellEscape(project.agentConfig.model as string));
+      // Check model: prefer metadata (persisted at spawn time), fall back to project config
+      const model = session.metadata?.["model"] ?? project.agentConfig?.model;
+      if (model) {
+        parts.push("--model", shellEscape(model as string));
       }
 
       return parts.join(" ");
