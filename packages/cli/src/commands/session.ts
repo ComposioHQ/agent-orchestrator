@@ -116,11 +116,14 @@ export function registerSession(program: Command): void {
           }
         }
 
-        if (result.killed.length === 0 && result.errors.length === 0) {
+        if (result.killed.length === 0 && result.errors.length === 0 && result.warnings.length === 0) {
           console.log(chalk.dim("  No sessions to clean up."));
         } else {
           for (const id of result.killed) {
             console.log(chalk.yellow(`  Would kill ${id}`));
+          }
+          for (const { sessionId, message } of result.warnings) {
+            console.log(chalk.yellow(`  Warning (${sessionId}): ${message}`));
           }
           if (result.killed.length > 0) {
             console.log(
@@ -133,13 +136,16 @@ export function registerSession(program: Command): void {
       } else {
         const result = await sm.cleanup(opts.project);
 
-        if (result.killed.length === 0 && result.errors.length === 0) {
+        if (result.killed.length === 0 && result.errors.length === 0 && result.warnings.length === 0) {
           console.log(chalk.dim("  No sessions to clean up."));
         } else {
           if (result.killed.length > 0) {
             for (const id of result.killed) {
               console.log(chalk.green(`  Cleaned: ${id}`));
             }
+          }
+          for (const { sessionId, message } of result.warnings) {
+            console.log(chalk.yellow(`  Warning (${sessionId}): ${message}`));
           }
           if (result.errors.length > 0) {
             for (const { sessionId, error } of result.errors) {

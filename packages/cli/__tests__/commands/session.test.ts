@@ -184,6 +184,7 @@ beforeEach(() => {
   mockSessionManager.cleanup.mockResolvedValue({
     killed: [],
     skipped: [],
+    warnings: [],
     errors: [],
   } satisfies CleanupResult);
 });
@@ -322,6 +323,7 @@ describe("session cleanup", () => {
     mockSessionManager.cleanup.mockResolvedValue({
       killed: ["app-1"],
       skipped: [],
+      warnings: [],
       errors: [],
     } satisfies CleanupResult);
 
@@ -341,6 +343,7 @@ describe("session cleanup", () => {
     mockSessionManager.cleanup.mockResolvedValue({
       killed: [],
       skipped: ["app-1"],
+      warnings: [],
       errors: [],
     } satisfies CleanupResult);
 
@@ -360,6 +363,7 @@ describe("session cleanup", () => {
     mockSessionManager.cleanup.mockResolvedValue({
       killed: ["app-1"],
       skipped: [],
+      warnings: [],
       errors: [],
     } satisfies CleanupResult);
 
@@ -388,6 +392,7 @@ describe("session cleanup", () => {
     mockSessionManager.cleanup.mockResolvedValue({
       killed: ["app-2"],
       skipped: [],
+      warnings: [],
       errors: [{ sessionId: "app-1", error: "tmux error" }],
     } satisfies CleanupResult);
 
@@ -409,6 +414,7 @@ describe("session cleanup", () => {
     mockSessionManager.cleanup.mockResolvedValue({
       killed: [],
       skipped: [],
+      warnings: [],
       errors: [],
     } satisfies CleanupResult);
 

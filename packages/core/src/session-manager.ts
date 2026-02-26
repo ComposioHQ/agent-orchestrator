@@ -811,7 +811,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     projectId?: string,
     options?: { dryRun?: boolean },
   ): Promise<CleanupResult> {
-    const result: CleanupResult = { killed: [], skipped: [], errors: [] };
+    const result: CleanupResult = { killed: [], skipped: [], warnings: [], errors: [] };
     const sessions = await list(projectId);
 
     for (const session of sessions) {
@@ -825,15 +825,25 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         const plugins = resolvePlugins(project);
         let shouldKill = false;
 
-        // Check if PR is merged
-        if (session.pr && plugins.scm) {
+        // Check PR state first — open PR means never clean up
+        if (session.pr) {
+          if (!plugins.scm) {
+            // Has PR but no SCM plugin — can't verify state, skip to be safe
+            result.skipped.push(session.id);
+            continue;
+          }
           try {
             const prState = await plugins.scm.getPRState(session.pr);
-            if (prState === PR_STATE.MERGED || prState === PR_STATE.CLOSED) {
-              shouldKill = true;
+            const isPrClosed = prState === PR_STATE.MERGED || prState === PR_STATE.CLOSED;
+            if (!isPrClosed) {
+              result.skipped.push(session.id);
+              continue;
             }
+            shouldKill = true;
           } catch {
-            // Can't check PR — skip
+            // Can't check PR — skip session to be safe
+            result.skipped.push(session.id);
+            continue;
           }
         }
 
@@ -843,17 +853,21 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
             const completed = await plugins.tracker.isCompleted(session.issueId, project);
             if (completed) shouldKill = true;
           } catch {
-            // Can't check issue — skip
+            // Can't check issue
           }
         }
 
-        // Check if runtime is dead
+        // Fallback: if no prior check resolved, check if runtime is dead.
+        let runtimeFallback = false;
         if (!shouldKill && session.runtimeHandle && plugins.runtime) {
           try {
             const alive = await plugins.runtime.isAlive(session.runtimeHandle);
-            if (!alive) shouldKill = true;
+            if (!alive) {
+              shouldKill = true;
+              runtimeFallback = true;
+            }
           } catch {
-            // Can't check — skip
+            // Can't check — assume alive to be safe
           }
         }
 
@@ -862,6 +876,12 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
             await kill(session.id);
           }
           result.killed.push(session.id);
+          if (runtimeFallback) {
+            result.warnings.push({
+              sessionId: session.id,
+              message: "Session cleaned up because runtime exited (no conclusive PR/issue status)",
+            });
+          }
         } else {
           result.skipped.push(session.id);
         }
