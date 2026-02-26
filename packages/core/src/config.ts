@@ -105,6 +105,7 @@ const ProjectConfigSchema = z.object({
         token: z.string(),
       }).optional(),
       toolMap: z.record(z.unknown()).optional(),
+      teams: z.array(z.string()).optional(),
     }),
   ).optional(),
 });

@@ -1,12 +1,4 @@
-import type { ProjectConfig } from "./types.js";
-
-export interface InputSourceConfig {
-  type: "linear" | "generic";
-  token?: string;
-  url?: string;
-  auth?: { type: "bearer"; token: string };
-  toolMap?: Record<string, unknown>;
-}
+import type { ProjectConfig, InputSourceConfig } from "./types.js";
 
 export interface ResolvedSource {
   name: string;

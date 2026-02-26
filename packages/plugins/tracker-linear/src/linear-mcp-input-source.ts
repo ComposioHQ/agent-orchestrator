@@ -12,7 +12,13 @@ export class LinearMcpInputSource implements McpInputSource {
   private connected = false;
   private toolNames: Map<string, string> = new Map();
 
-  constructor(private config: { accessToken: string }) {}
+  constructor(
+    private config: {
+      accessToken: string;
+      /** Linear team keys to include (e.g. ["POS", "ENG"]). Omit for all teams. */
+      teams?: string[];
+    },
+  ) {}
 
   async connect(): Promise<void> {
     this.client = new Client(
@@ -95,28 +101,35 @@ export class LinearMcpInputSource implements McpInputSource {
   }
 
   async listPending(projectKey: string): Promise<Resource[]> {
-    const result = await this.client.callTool({
-      name: this.resolveTool("list_issues"),
-      arguments: {
-        teamId: projectKey,
-        states: ["backlog", "unstarted", "started"],
-      },
-    });
-    const issues = this.parseResult(result);
-    const arr = Array.isArray(issues)
-      ? issues
-      : ((issues as Record<string, unknown>)?.nodes as unknown[]) ?? [];
-    return arr.map((item: unknown) => {
-      const i = item as Record<string, unknown>;
-      return {
-        id: String(i.id),
-        identifier: i.identifier as string | undefined,
-        title: String(i.title ?? ""),
-        status: String((i.state as Record<string, unknown>)?.name ?? ""),
-        priority: i.priority as number | undefined,
-        url: i.url as string | undefined,
-      };
-    });
+    // Use configured teams if available, otherwise fall back to projectKey
+    const teamKeys = this.config.teams ?? [projectKey];
+
+    const allResources: Resource[] = [];
+    for (const teamKey of teamKeys) {
+      const result = await this.client.callTool({
+        name: this.resolveTool("list_issues"),
+        arguments: {
+          teamId: teamKey,
+          states: ["backlog", "unstarted", "started"],
+        },
+      });
+      const issues = this.parseResult(result);
+      const arr = Array.isArray(issues)
+        ? issues
+        : ((issues as Record<string, unknown>)?.nodes as unknown[]) ?? [];
+      for (const item of arr) {
+        const i = item as Record<string, unknown>;
+        allResources.push({
+          id: String(i.id),
+          identifier: i.identifier as string | undefined,
+          title: String(i.title ?? ""),
+          status: String((i.state as Record<string, unknown>)?.name ?? ""),
+          priority: i.priority as number | undefined,
+          url: i.url as string | undefined,
+        });
+      }
+    }
+    return allResources;
   }
 
   /** Resolve tool name — use discovered name or fall back to assumed name */
