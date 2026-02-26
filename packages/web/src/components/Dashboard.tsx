@@ -70,9 +70,23 @@ export function Dashboard({ sessions, stats, orchestratorId, projectName }: Dash
 
   const handleMerge = async (prNumber: number) => {
     const res = await fetch(`/api/prs/${prNumber}/merge`, { method: "POST" });
-    if (!res.ok) {
-      console.error(`Failed to merge PR #${prNumber}:`, await res.text());
+    if (res.ok) {
+      // Re-fetch server-rendered state (PR status/session attention) after merge action.
+      window.location.reload();
+      return;
     }
+    let message = `HTTP ${res.status}`;
+    try {
+      const body = (await res.json()) as { error?: string };
+      if (body.error) message = body.error;
+    } catch {
+      try {
+        message = await res.text();
+      } catch {
+        // ignore
+      }
+    }
+    console.error(`Failed to merge PR #${prNumber}:`, message);
   };
 
   const handleRestore = async (sessionId: string) => {

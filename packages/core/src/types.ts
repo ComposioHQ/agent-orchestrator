@@ -905,7 +905,10 @@ export interface NotifierConfig {
 
 export interface AgentSpecificConfig {
   permissions?: "skip" | "default";
+  /** Model for worker agents (e.g. "gpt-4o", "o3"). Agent plugin default if unset. */
   model?: string;
+  /** Model for the orchestrator agent session. Falls back to `model` if unset. */
+  orchestratorModel?: string;
   [key: string]: unknown;
 }
 
@@ -988,6 +991,8 @@ export interface SessionManager {
   kill(sessionId: SessionId): Promise<void>;
   cleanup(projectId?: string, options?: { dryRun?: boolean }): Promise<CleanupResult>;
   send(sessionId: SessionId, message: string): Promise<void>;
+  /** If session has no pr but has branch or workspacePath, try to detect PR via SCM and persist. Returns session with pr set, or null. */
+  ensurePRDetected(session: Session, project: ProjectConfig): Promise<Session | null>;
 }
 
 export interface CleanupResult {

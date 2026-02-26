@@ -132,7 +132,11 @@ describe("scm-github plugin", () => {
     });
 
     it("returns null when session has no branch", async () => {
-      const result = await scm.detectPR(makeSession({ branch: null }), project);
+      // No branch and no workspacePath → cannot derive branch; return null without calling gh
+      const result = await scm.detectPR(
+        makeSession({ branch: null, workspacePath: null }),
+        project,
+      );
       expect(result).toBeNull();
       expect(ghMock).not.toHaveBeenCalled();
     });

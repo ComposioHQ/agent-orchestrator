@@ -44,8 +44,21 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
     await scm.mergePR(session.pr, "squash");
     return NextResponse.json({ ok: true, prNumber, method: "squash" });
   } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to merge PR";
+    const lower = message.toLowerCase();
+    // Treat merge races as idempotent success-ish responses.
+    if (
+      lower.includes("merge already in progress") ||
+      lower.includes("already merged") ||
+      lower.includes("pull request is in clean status")
+    ) {
+      return NextResponse.json(
+        { ok: true, prNumber, method: "squash", mergePending: true },
+        { status: 202 },
+      );
+    }
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Failed to merge PR" },
+      { error: message },
       { status: 500 },
     );
   }

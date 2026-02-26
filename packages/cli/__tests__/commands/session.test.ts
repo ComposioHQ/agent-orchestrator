@@ -33,6 +33,7 @@ const { mockTmux, mockGit, mockGh, mockExec, mockConfigRef, mockSessionManager, 
       spawn: vi.fn(),
       spawnOrchestrator: vi.fn(),
       send: vi.fn(),
+      ensurePRDetected: vi.fn().mockResolvedValue(null),
     },
     sessionsDirRef: { current: "" },
   }));

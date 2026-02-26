@@ -610,7 +610,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       sessionId,
       projectConfig: project,
       permissions: project.agentConfig?.permissions,
-      model: project.agentConfig?.model,
+      model: project.agentConfig?.orchestratorModel ?? project.agentConfig?.model,
       systemPromptFile,
     };
 
@@ -917,6 +917,28 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     await runtimePlugin.sendMessage(handle, message);
   }
 
+  /** If session has no pr but has branch or workspacePath, try to detect PR via SCM and persist. Returns session with pr set, or null. */
+  async function ensurePRDetected(session: Session, project: ProjectConfig): Promise<Session | null> {
+    if (session.pr) return session;
+    if (!session.branch && !session.workspacePath) return null;
+    const { scm } = resolvePlugins(project);
+    if (!scm) return null;
+    try {
+      const detectedPR = await scm.detectPR(session, project);
+      if (!detectedPR) return null;
+      const hadNoBranch = !session.branch;
+      session.pr = detectedPR;
+      if (hadNoBranch) session.branch = detectedPR.branch;
+      const sessionsDir = getProjectSessionsDir(project);
+      const metaUpdate: Record<string, string> = { pr: detectedPR.url };
+      if (hadNoBranch) metaUpdate.branch = detectedPR.branch;
+      updateMetadata(sessionsDir, session.id, metaUpdate);
+      return session;
+    } catch {
+      return null;
+    }
+  }
+
   async function restore(sessionId: SessionId): Promise<Session> {
     // 1. Find session metadata across all projects (active first, then archive)
     let raw: Record<string, string> | null = null;
@@ -1106,5 +1128,5 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     return restoredSession;
   }
 
-  return { spawn, spawnOrchestrator, restore, list, get, kill, cleanup, send };
+  return { spawn, spawnOrchestrator, restore, list, get, kill, cleanup, send, ensurePRDetected };
 }

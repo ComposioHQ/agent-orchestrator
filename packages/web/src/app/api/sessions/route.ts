@@ -8,6 +8,7 @@ import {
   enrichSessionsMetadata,
   computeStats,
 } from "@/lib/serialize";
+import { ensureSessionsHaveDetectedPRs } from "@/lib/session-pr-detection";
 
 /** GET /api/sessions — List all sessions with full state
  * Query params:
@@ -20,6 +21,13 @@ export async function GET(request: Request) {
 
     const { config, registry, sessionManager } = await getServices();
     const coreSessions = await sessionManager.list();
+
+    await ensureSessionsHaveDetectedPRs({
+      sessions: coreSessions,
+      config,
+      registry,
+      sessionManager,
+    });
 
     // Filter out orchestrator sessions — they get their own button, not a card
     let workerSessions = coreSessions.filter((s) => !s.id.endsWith("-orchestrator"));
