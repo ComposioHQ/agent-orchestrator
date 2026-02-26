@@ -8,12 +8,32 @@ defaults:
   runtime: tmux
   agent: claude-code
   workspace: worktree
-  notifiers: [desktop]
+  notifiers: [desktop, zeroclaw]
+
+# Route notifications by priority to different channels
+notificationRouting:
+  urgent: [desktop, zeroclaw]     # Escalation, agent crashed → desktop + Telegram
+  action: [desktop, zeroclaw]     # PR ready to merge, approved → desktop + Telegram
+  warning: [zeroclaw]             # CI failed, conflicts → Telegram only
+  info: []                        # Summary, merged → silent (check dashboard)
+
+# Notifier configurations
+notifiers:
+  desktop:
+    plugin: desktop
+    sound: true
+  zeroclaw:
+    plugin: webhook
+    url: http://localhost:8080/api/notify
+    headers:
+      Authorization: "Bearer zc_hooks_168e9e3b455462b32a9fbc4e3abec787"
+    retries: 1
+    retryDelayMs: 2000
 
 projects:
   blog:
     name: AI Content Factory Blog
-    repo: moneymaker-ux/blog
+    repo: moneymaker-ux/BLOG
     path: ~/BLOG
     defaultBranch: main
     sessionPrefix: blog
@@ -22,6 +42,62 @@ projects:
       permissions: skip
     postCreate:
       - "~/.ao/mcp-profiles.sh blog"
+    orchestratorRules: |-
+      You are the orchestrator for the AI Content Factory Blog project.
+      Your job:
+      1. Review open GitHub Issues: gh issue list --repo moneymaker-ux/BLOG --state open
+      2. Spawn worker agents for issues:
+         - Content/docs/planning tasks: ao spawn blog <N> (default minimal profile)
+         - Complex automation work: ao spawn blog <N> --env MCP_PROFILE=full
+      3. Monitor progress with tmux capture-pane (NOT ao status alone)
+      4. Handle stuck agents: ao send <session> "instructions"
+      5. Do NOT write code yourself — only coordinate workers
+      6. Max 3 concurrent agents to avoid overwhelming the system
+      7. All PRs target main branch
+
+      ## PRE-FLIGHT (MANDATORY before EVERY spawn)
+      Before spawning ANY agent, check all 3:
+      1. gh issue view <N> --json state --repo moneymaker-ux/BLOG   # CLOSED? → SKIP
+      2. gh pr list --json headRefName --repo moneymaker-ux/BLOG    # PR exists? → SKIP
+      3. git fetch origin && git log origin/main --oneline -10      # Already merged? → SKIP
+      If ANY check shows work is done — DO NOT spawn. Move to next issue.
+
+      ## MONITORING LOOP (MANDATORY)
+      After spawning agents, you MUST run a monitoring loop:
+
+      FIRST CHECK (20 seconds after spawn):
+      1. Wait: sleep 20
+      2. For EACH spawned session — verify it started:
+         tmux capture-pane -t <tmux-session-name> -p | tail -20
+      3. If agent is idle or hasn't started — nudge: ao send <session> "Start working on your assigned issue. Follow the full cycle: code → verify → commit → push → PR"
+      4. Wait another 20 seconds: sleep 20
+      5. Check again with tmux capture-pane. If STILL not working — kill and respawn: ao session kill <session> && ao spawn blog <issue#>
+      6. If all agents are running — proceed to regular loop
+
+      REGULAR LOOP (every 2 minutes):
+      1. Check each active session with: tmux capture-pane -t <session> -p | tail -30
+      2. Also verify process alive: ps -p <PID> -o pid,%cpu,etime
+      3. Check remote branches: git ls-remote origin 'refs/heads/feat/issue-*'
+      4. Check PRs: gh pr list --state open --repo moneymaker-ux/BLOG
+      5. If stuck or idle too long — nudge: ao send <session> "continue"
+      6. If PR is open and CI green — proceed to auto-merge
+      7. If PR has CI failures — send: ao send <session> "CI failed, fix and push"
+      8. Wait 2 minutes: sleep 120
+      9. Repeat from step 1
+
+      NEVER trust "ao status" alone — it shows "ready" for working agents.
+      NEVER kill agent without: ps check + remote branch check + PR check (all 3).
+      NEVER say "let's wait 10 minutes" — check NOW, report every 2-3 min.
+      Stop the loop ONLY when ALL sessions have merged PRs or are killed.
+
+      ## AUTO-MERGE (when agents are done)
+      When ALL spawned agents have finished (PRs open, CI green):
+      1. For each open PR targeting main:
+         - Verify CI checks passed: gh pr checks <pr#> --repo moneymaker-ux/BLOG
+         - If ALL checks green — merge: gh pr merge <pr#> --repo moneymaker-ux/BLOG --squash --delete-branch
+         - If checks failed — send agent to fix or fix manually
+      2. After merging ALL PRs — report completion summary
+      3. Cleanup: ao session cleanup
     agentRules: |-
       ## OMC PROHIBITION (CRITICAL)
       You are an ao-spawned agent. NEVER use oh-my-claudecode commands:
@@ -29,6 +105,30 @@ projects:
       /oh-my-claudecode:*, /omc-*
       These modes will trap you in an infinite re-arming loop with no human to cancel.
       DISABLE_OMC=1 is set in your environment — OMC hooks are disabled.
+
+      ## MANDATORY: Fresh Code Before Work
+      Before writing ANY code:
+        git fetch origin && git rebase origin/main
+
+      ## MANDATORY: Commit Early, Push Often
+      Agent crash rate is ~80% before first commit. To prevent work loss:
+      1. After writing first 2-3 files → git add + git commit immediately
+      2. Push after first commit → git push origin <branch>
+      3. Continue working → additional commits as needed
+      4. Create PR last → only after all work is committed and pushed
+      NEVER wait until "everything is done" to commit.
+
+      ## COMMITS & PRs
+      Use conventional commits (feat:, fix:, chore:, docs:, refactor:).
+      Link issue: "docs: add competitor analysis (#5)"
+      Every PR body must include "Closes #<N>" to auto-close the issue.
+      One PR per issue unless told otherwise.
+      PR base branch: main.
+
+      ## STRICT RULES
+      Push ONLY after verification passes.
+      If stuck — report the problem, do NOT silently stop.
+      Only modify files related to YOUR issue — stay in your lane.
 
   evasmm:
     name: EVASMM.io
@@ -143,15 +243,109 @@ projects:
       Only modify files related to YOUR issue — stay in your lane.
       Use EXACT script names from package.json (type-check, NOT typecheck).
 
+# ═══════════════════════════════════════════════════════════════
+# REACTIONS — automated responses to PR/agent lifecycle events
+# Polling: every 30s via LifecycleManager
+# Retry counters RESET on state transitions (CI fail → fix → fail = fresh retries)
+# ═══════════════════════════════════════════════════════════════
+
 reactions:
+  # CI checks failed → tell agent to fix and push
   ci-failed:
     auto: true
     action: send-to-agent
-    retries: 2
+    message: >-
+      CI is failing on your PR. Run `gh pr checks` to see which checks failed.
+      Read the error logs carefully, fix the root cause, and push.
+      Do NOT skip or disable failing tests. Do NOT retry without fixing.
+    retries: 3
+    escalateAfter: 30m
+    priority: warning
+
+  # Reviewer requested changes → forward to agent
   changes-requested:
     auto: true
     action: send-to-agent
+    message: >-
+      The reviewer requested changes on your PR. Run `gh pr view --comments`
+      to read ALL review comments. Address every comment, push fixes,
+      and reply to each comment to acknowledge.
+    retries: 2
     escalateAfter: 30m
+    priority: warning
+
+  # New unresolved review comments (re-triggers on new comments)
+  review-comments:
+    auto: true
+    action: send-to-agent
+    message: >-
+      There are new unresolved review comments on your PR.
+      Read each comment with `gh pr view --comments`, address the feedback,
+      push fixes, and reply to confirm resolution.
+    retries: 2
+    escalateAfter: 30m
+    priority: warning
+
+  # Automated bot comments (codecov, sonar, dependabot, etc.)
+  bugbot-comments:
+    auto: true
+    action: send-to-agent
+    message: >-
+      Automated review bots found issues on your PR.
+      Check bot comments, fix the flagged problems, and push.
+    retries: 2
+    priority: warning
+
+  # Merge conflicts with base branch
+  merge-conflicts:
+    auto: true
+    action: send-to-agent
+    message: >-
+      Your branch has merge conflicts with the base branch.
+      Run: git fetch origin && git rebase origin/<base-branch>
+      Resolve all conflicts manually, verify tests pass, then force-push.
+    escalateAfter: 30m
+    priority: warning
+
+  # Auto-rebase detected conflicts
+  rebase-conflicts:
+    auto: true
+    action: send-to-agent
+    message: >-
+      Auto-rebase detected conflicts on your branch.
+      Fetch latest base, rebase interactively, resolve each conflict,
+      verify the build passes, then force-push your branch.
+    escalateAfter: 30m
+    priority: warning
+
+  # PR approved + CI green → auto-merge with squash
   approved-and-green:
-    auto: false
+    auto: true
+    action: auto-merge
+    priority: action
+
+  # Agent inactive for too long
+  agent-stuck:
+    auto: true
     action: notify
+    priority: urgent
+    threshold: 10m
+
+  # Agent asking for input/permission
+  agent-needs-input:
+    auto: true
+    action: notify
+    priority: urgent
+
+  # Agent process exited unexpectedly
+  agent-exited:
+    auto: true
+    action: notify
+    priority: urgent
+
+  # All sessions finished (merged or killed)
+  all-complete:
+    auto: true
+    action: notify
+    priority: info
+    includeSummary: true

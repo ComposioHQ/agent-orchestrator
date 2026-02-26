@@ -51,11 +51,13 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
 
 /** Extract plugin-specific config from orchestrator config */
 function extractPluginConfig(
-  _slot: PluginSlot,
+  slot: PluginSlot,
   _name: string,
   _config: OrchestratorConfig,
 ): Record<string, unknown> | undefined {
-  // Reserved for future plugin-specific config mapping
+  // Notifiers are loaded separately in loadBuiltins (registered by config name)
+  if (slot === "notifier") return undefined;
+  // Other slots don't have plugin-specific config yet
   return undefined;
 }
 
@@ -90,7 +92,11 @@ export function createPluginRegistry(): PluginRegistry {
       importFn?: (pkg: string) => Promise<unknown>,
     ): Promise<void> {
       const doImport = importFn ?? ((pkg: string) => import(pkg));
+      const notifierBuiltins = BUILTIN_PLUGINS.filter((b) => b.slot === "notifier");
+
+      // Load non-notifier builtins normally (by plugin type name)
       for (const builtin of BUILTIN_PLUGINS) {
+        if (builtin.slot === "notifier") continue;
         try {
           const mod = (await doImport(builtin.pkg)) as PluginModule;
           if (mod.manifest && typeof mod.create === "function") {
@@ -101,6 +107,38 @@ export function createPluginRegistry(): PluginRegistry {
           }
         } catch {
           // Plugin not installed — that's fine, only load what's available
+        }
+      }
+
+      // Load notifiers from config entries (register by config name, not plugin type)
+      // This allows "zeroclaw" config with plugin: "webhook" to be found by
+      // registry.get("notifier", "zeroclaw") in the lifecycle manager
+      const notifierEntries = orchestratorConfig?.notifiers ?? {};
+      if (Object.keys(notifierEntries).length > 0) {
+        for (const [configName, notifierConfig] of Object.entries(notifierEntries)) {
+          const builtin = notifierBuiltins.find((b) => b.name === notifierConfig.plugin);
+          if (!builtin) continue;
+          try {
+            const mod = (await doImport(builtin.pkg)) as PluginModule;
+            if (mod.manifest && typeof mod.create === "function") {
+              const instance = mod.create(notifierConfig as Record<string, unknown>);
+              plugins.set(makeKey("notifier", configName), { manifest: mod.manifest, instance });
+            }
+          } catch {
+            // Plugin not installed
+          }
+        }
+      } else {
+        // No config — load all notifier builtins with default (no-op) config
+        for (const builtin of notifierBuiltins) {
+          try {
+            const mod = (await doImport(builtin.pkg)) as PluginModule;
+            if (mod.manifest && typeof mod.create === "function") {
+              this.register(mod);
+            }
+          } catch {
+            // Plugin not installed
+          }
         }
       }
     },

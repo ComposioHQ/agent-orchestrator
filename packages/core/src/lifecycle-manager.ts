@@ -192,10 +192,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
   // Cache pending comments per session during a poll cycle to avoid redundant API calls
-  const pendingCommentsCache = new Map<
-    SessionId,
-    Awaited<ReturnType<SCM["getPendingComments"]>>
-  >();
+  const pendingCommentsCache = new Map<SessionId, Awaited<ReturnType<SCM["getPendingComments"]>>>();
 
   /** Get merged reaction config (project overrides + global defaults). */
   function getReactionConfig(
@@ -239,7 +236,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         // empty output means the runtime probe failed, not that the agent exited.
         if (terminalOutput) {
           const activity = agent.detectActivity(terminalOutput);
-          if (activity === "waiting_input") return "needs_input";
+          // When the agent is waiting for input AND has a PR, do NOT return
+          // early — fall through to step 4 so CI/review status is checked.
+          // The reaction engine can then send the agent a message to fix CI.
+          if (activity === "waiting_input" && !session.pr) return "needs_input";
 
           // Check whether the agent process is still alive. Some agents
           // (codex, aider, opencode) return "active" for any non-empty
