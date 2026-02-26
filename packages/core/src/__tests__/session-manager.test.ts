@@ -975,6 +975,50 @@ describe("spawnOrchestrator", () => {
     );
   });
 
+  it("uses orchestratorAgentConfig when provided", async () => {
+    config.projects["my-app"].agentConfig = {
+      model: "gpt-worker",
+      permissions: "default",
+    };
+    config.projects["my-app"].orchestratorAgentConfig = {
+      model: "gpt-orchestrator",
+      permissions: "skip",
+    };
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.spawnOrchestrator({ projectId: "my-app" });
+
+    expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "gpt-orchestrator",
+        permissions: "skip",
+        projectConfig: expect.objectContaining({
+          agentConfig: expect.objectContaining({
+            model: "gpt-orchestrator",
+            permissions: "skip",
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("falls back to agentConfig when orchestratorAgentConfig is absent", async () => {
+    config.projects["my-app"].agentConfig = {
+      model: "gpt-worker",
+      permissions: "default",
+    };
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.spawnOrchestrator({ projectId: "my-app" });
+
+    expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "gpt-worker",
+        permissions: "default",
+      }),
+    );
+  });
+
   it("writes system prompt to file and passes systemPromptFile to agent", async () => {
     const sm = createSessionManager({ config, registry: mockRegistry });
 
@@ -1373,6 +1417,45 @@ describe("restore", () => {
     expect(meta!["pr"]).toBe("https://github.com/org/my-app/pull/99");
     expect(meta!["summary"]).toBe("Implementing feature X");
     expect(meta!["branch"]).toBe("feat/TEST-42");
+  });
+
+  it("restores orchestrator sessions with orchestratorAgentConfig", async () => {
+    const projectPath = join(tmpDir, "my-app");
+    mkdirSync(projectPath, { recursive: true });
+
+    config.projects["my-app"].agentConfig = {
+      model: "gpt-worker",
+      permissions: "default",
+    };
+    config.projects["my-app"].orchestratorAgentConfig = {
+      model: "gpt-orchestrator",
+      permissions: "skip",
+    };
+
+    writeMetadata(sessionsDir, "app-orchestrator", {
+      worktree: projectPath,
+      branch: "main",
+      status: "killed",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-old")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.restore("app-orchestrator");
+
+    expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "app-orchestrator",
+        model: "gpt-orchestrator",
+        permissions: "skip",
+        projectConfig: expect.objectContaining({
+          agentConfig: expect.objectContaining({
+            model: "gpt-orchestrator",
+            permissions: "skip",
+          }),
+        }),
+      }),
+    );
   });
 });
 

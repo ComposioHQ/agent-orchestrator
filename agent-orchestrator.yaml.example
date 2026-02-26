@@ -48,6 +48,10 @@ projects:
     #   permissions: skip    # --dangerously-skip-permissions
     #   model: opus
 
+    # Optional orchestrator-specific override (falls back to agentConfig)
+    # orchestratorAgentConfig:
+    #   model: sonnet
+
     # Inline rules included in every agent prompt for this project
     # agentRules: |
     #   Always run tests before pushing.

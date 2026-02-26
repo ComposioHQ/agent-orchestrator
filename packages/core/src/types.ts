@@ -874,6 +874,9 @@ export interface ProjectConfig {
   /** Agent-specific configuration */
   agentConfig?: AgentSpecificConfig;
 
+  /** Orchestrator-specific agent config (falls back to agentConfig when omitted) */
+  orchestratorAgentConfig?: AgentSpecificConfig;
+
   /** Per-project reaction overrides */
   reactions?: Record<string, Partial<ReactionConfig>>;
 

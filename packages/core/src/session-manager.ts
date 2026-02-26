@@ -225,6 +225,32 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     return { runtime, agent, workspace, tracker, scm };
   }
 
+  function getSessionKind(
+    project: ProjectConfig,
+    sessionId: string,
+  ): "worker" | "orchestrator" {
+    return sessionId === `${project.sessionPrefix}-orchestrator` ? "orchestrator" : "worker";
+  }
+
+  function getEffectiveAgentConfig(
+    project: ProjectConfig,
+    kind: "worker" | "orchestrator",
+  ): ProjectConfig["agentConfig"] {
+    if (kind === "orchestrator") {
+      return project.orchestratorAgentConfig ?? project.agentConfig;
+    }
+    return project.agentConfig;
+  }
+
+  function getProjectForAgentLaunch(
+    project: ProjectConfig,
+    kind: "worker" | "orchestrator",
+  ): ProjectConfig {
+    const effectiveAgentConfig = getEffectiveAgentConfig(project, kind);
+    if (effectiveAgentConfig === project.agentConfig) return project;
+    return { ...project, agentConfig: effectiveAgentConfig };
+  }
+
   /**
    * Ensure session has a runtime handle (fabricate one if missing) and enrich
    * with live runtime state + activity detection. Used by both list() and get().
@@ -457,13 +483,15 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     });
 
     // Get agent launch config and create runtime — clean up workspace on failure
+    const effectiveAgentConfig = getEffectiveAgentConfig(project, "worker");
+    const projectForAgentLaunch = getProjectForAgentLaunch(project, "worker");
     const agentLaunchConfig = {
       sessionId,
-      projectConfig: project,
+      projectConfig: projectForAgentLaunch,
       issueId: spawnConfig.issueId,
       prompt: composedPrompt ?? spawnConfig.prompt,
-      permissions: project.agentConfig?.permissions,
-      model: project.agentConfig?.model,
+      permissions: effectiveAgentConfig?.permissions,
+      model: effectiveAgentConfig?.model,
     };
 
     let handle: RuntimeHandle;
@@ -606,11 +634,13 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     }
 
     // Get agent launch config — uses systemPromptFile, no issue/tracker interaction
+    const effectiveAgentConfig = getEffectiveAgentConfig(project, "orchestrator");
+    const projectForAgentLaunch = getProjectForAgentLaunch(project, "orchestrator");
     const agentLaunchConfig = {
       sessionId,
-      projectConfig: project,
-      permissions: project.agentConfig?.permissions,
-      model: project.agentConfig?.model,
+      projectConfig: projectForAgentLaunch,
+      permissions: effectiveAgentConfig?.permissions,
+      model: effectiveAgentConfig?.model,
       systemPromptFile,
     };
 
@@ -1045,16 +1075,19 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
     // 7. Get launch command — try restore command first, fall back to fresh launch
     let launchCommand: string;
+    const sessionKind = getSessionKind(project, sessionId);
+    const effectiveAgentConfig = getEffectiveAgentConfig(project, sessionKind);
+    const projectForAgentLaunch = getProjectForAgentLaunch(project, sessionKind);
     const agentLaunchConfig = {
       sessionId,
-      projectConfig: project,
+      projectConfig: projectForAgentLaunch,
       issueId: session.issueId ?? undefined,
-      permissions: project.agentConfig?.permissions,
-      model: project.agentConfig?.model,
+      permissions: effectiveAgentConfig?.permissions,
+      model: effectiveAgentConfig?.model,
     };
 
     if (plugins.agent.getRestoreCommand) {
-      const restoreCmd = await plugins.agent.getRestoreCommand(session, project);
+      const restoreCmd = await plugins.agent.getRestoreCommand(session, projectForAgentLaunch);
       launchCommand = restoreCmd ?? plugins.agent.getLaunchCommand(agentLaunchConfig);
     } else {
       launchCommand = plugins.agent.getLaunchCommand(agentLaunchConfig);

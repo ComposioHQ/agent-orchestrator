@@ -336,6 +336,28 @@ describe("Config Schema Validation", () => {
     expect(validated.projects.proj1.sessionPrefix).toBeDefined();
     expect(validated.projects.proj1.sessionPrefix).toBe("test"); // "test" is 4 chars, used as-is
   });
+
+  it("accepts orchestratorAgentConfig field", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          agentConfig: {
+            model: "gpt-5.3-codex-spark",
+          },
+          orchestratorAgentConfig: {
+            model: "gpt-5.3-codex",
+          },
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.projects.proj1.agentConfig?.model).toBe("gpt-5.3-codex-spark");
+    expect(validated.projects.proj1.orchestratorAgentConfig?.model).toBe("gpt-5.3-codex");
+  });
 });
 
 describe("Config Defaults", () => {
