@@ -1045,12 +1045,16 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
     // 7. Get launch command — try restore command first, fall back to fresh launch
     let launchCommand: string;
+    const isOrchestratorSession = sessionId.endsWith("-orchestrator");
+    const model = isOrchestratorSession
+      ? (project.agentConfig?.orchestratorModel ?? project.agentConfig?.model)
+      : project.agentConfig?.model;
     const agentLaunchConfig = {
       sessionId,
       projectConfig: project,
       issueId: session.issueId ?? undefined,
       permissions: project.agentConfig?.permissions,
-      model: project.agentConfig?.model,
+      model,
     };
 
     if (plugins.agent.getRestoreCommand) {
