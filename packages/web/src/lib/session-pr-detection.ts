@@ -41,6 +41,8 @@ function ensureSessionBranchContext(
  * Detect and persist missing PR metadata for sessions.
  * Keeps heavy SCM calls out of SessionManager.list() while still allowing
  * callers that render PR state to opt in.
+ * Runs per-session detection in parallel with an aggregate timeout so SSR/API
+ * don't block for 35s × N (avoids sequential gh pr list / git rev-parse).
  */
 export async function ensureSessionsHaveDetectedPRs(args: {
   sessions: Session[];
@@ -49,6 +51,7 @@ export async function ensureSessionsHaveDetectedPRs(args: {
   sessionManager: SessionManager;
 }): Promise<void> {
   const { sessions, config, registry, sessionManager } = args;
+  const toEnrich: { index: number; session: Session; project: ProjectConfig }[] = [];
   for (let i = 0; i < sessions.length; i++) {
     const s = sessions[i];
     if (s.pr) continue;
@@ -56,11 +59,25 @@ export async function ensureSessionsHaveDetectedPRs(args: {
     if (!project?.scm) continue;
     ensureSessionBranchContext(s, project, registry);
     if (!s.branch && !s.workspacePath) continue;
-    try {
-      const updated = await sessionManager.ensurePRDetected(s, project);
-      if (updated) sessions[i] = updated;
-    } catch {
-      // Non-fatal; session can still render without PR.
+    toEnrich.push({ index: i, session: s, project });
+  }
+  if (toEnrich.length === 0) return;
+
+  const timeoutMs = 10_000;
+  const aggregateTimeout = new Promise<null>((resolve) =>
+    setTimeout(() => resolve(null), timeoutMs),
+  );
+  const settled = Promise.allSettled(
+    toEnrich.map(({ index, session, project }) =>
+      sessionManager.ensurePRDetected(session, project).then((updated) => ({ index, updated })),
+    ),
+  );
+  const results = await Promise.race([settled, aggregateTimeout]);
+  if (results !== null) {
+    for (const r of results) {
+      if (r.status === "fulfilled" && r.value?.updated) {
+        sessions[r.value.index] = r.value.updated;
+      }
     }
   }
 }
