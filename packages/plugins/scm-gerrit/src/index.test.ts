@@ -39,9 +39,9 @@ function makeProject(overrides: Partial<ProjectConfig> = {}): ProjectConfig {
   } as ProjectConfig;
 }
 
-/** Gerrit responses are prefixed with )]}\' */
+/** Gerrit responses are prefixed with )]}' */
 function gerritJson(data: unknown): string {
-  return `)]}\'\n${JSON.stringify(data)}`;
+  return `)]}'\n${JSON.stringify(data)}`;
 }
 
 function mockFetchOk(data: unknown) {

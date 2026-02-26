@@ -2,8 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   createMovementPermissions,
   type PermissionsConfig,
-  type MovementPermission,
-  type PermissionMode,
 } from "../movement-permissions.js";
 
 // =============================================================================

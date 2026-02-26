@@ -63,7 +63,7 @@ describe("openSession", () => {
 
     // has-session succeeds
     mockExecFile.mockImplementation(
-      (cmd: string, args: string[], _opts: unknown, cb: Function) => {
+      (cmd: string, args: string[], _opts: unknown, cb: (...args: unknown[]) => void) => {
         if (args.includes("has-session")) {
           cb(null, "", "");
           return;
@@ -95,7 +95,7 @@ describe("openSession", () => {
 
     // has-session fails
     mockExecFile.mockImplementation(
-      (_cmd: string, args: string[], _opts: unknown, cb: Function) => {
+      (_cmd: string, args: string[], _opts: unknown, cb: (...args: unknown[]) => void) => {
         if (args.includes("has-session")) {
           cb(new Error("no session"));
           return;
@@ -114,10 +114,10 @@ describe("openSession", () => {
 
   it("uses session.id when runtimeHandle is null", async () => {
     const terminal = create();
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
 
     mockExecFile.mockImplementation(
-      (_cmd: string, _args: string[], _opts: unknown, cb: Function) => {
+      (_cmd: string, _args: string[], _opts: unknown, cb: (...args: unknown[]) => void) => {
         cb(new Error("no session"));
       },
     );
@@ -145,7 +145,7 @@ describe("openAll", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     mockExecFile.mockImplementation(
-      (_cmd: string, _args: string[], _opts: unknown, cb: Function) => {
+      (_cmd: string, _args: string[], _opts: unknown, cb: (...args: unknown[]) => void) => {
         cb(new Error("no session"));
       },
     );
@@ -162,7 +162,7 @@ describe("isSessionOpen", () => {
   it("returns true when tmux client is attached", async () => {
     const terminal = create();
     mockExecFile.mockImplementation(
-      (_cmd: string, _args: string[], _opts: unknown, cb: Function) => {
+      (_cmd: string, _args: string[], _opts: unknown, cb: (...args: unknown[]) => void) => {
         cb(null, "/dev/pts/0\n", "");
       },
     );
@@ -174,7 +174,7 @@ describe("isSessionOpen", () => {
   it("returns false when no clients attached", async () => {
     const terminal = create();
     mockExecFile.mockImplementation(
-      (_cmd: string, _args: string[], _opts: unknown, cb: Function) => {
+      (_cmd: string, _args: string[], _opts: unknown, cb: (...args: unknown[]) => void) => {
         cb(null, "", "");
       },
     );
@@ -186,7 +186,7 @@ describe("isSessionOpen", () => {
   it("returns false when tmux command fails", async () => {
     const terminal = create();
     mockExecFile.mockImplementation(
-      (_cmd: string, _args: string[], _opts: unknown, cb: Function) => {
+      (_cmd: string, _args: string[], _opts: unknown, cb: (...args: unknown[]) => void) => {
         cb(new Error("no session"));
       },
     );
@@ -198,7 +198,7 @@ describe("isSessionOpen", () => {
   it("uses session.id when runtimeHandle is null", async () => {
     const terminal = create();
     mockExecFile.mockImplementation(
-      (_cmd: string, _args: string[], _opts: unknown, cb: Function) => {
+      (_cmd: string, _args: string[], _opts: unknown, cb: (...args: unknown[]) => void) => {
         cb(null, "/dev/pts/0\n", "");
       },
     );

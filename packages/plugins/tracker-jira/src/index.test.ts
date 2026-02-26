@@ -119,7 +119,7 @@ describe("tracker-jira plugin", () => {
       JIRA_HOST: savedHost,
     })) {
       if (val === undefined) {
-        delete process.env[key];
+        process.env[key] = undefined;
       } else {
         process.env[key] = val;
       }

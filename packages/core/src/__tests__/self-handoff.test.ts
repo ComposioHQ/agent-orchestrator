@@ -3,8 +3,7 @@ import { mkdirSync, rmSync, readFileSync, existsSync, writeFileSync, utimesSync 
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { createSelfHandoff } from "../self-handoff.js";
-import type { HandoffDocument, CreateHandoffParams } from "../self-handoff.js";
+import { createSelfHandoff, type HandoffDocument, type CreateHandoffParams } from "../self-handoff.js";
 
 let workspacePath: string;
 
@@ -844,8 +843,6 @@ describe("edge cases", () => {
 
   it("multiple handoffs for the same branch are all found", () => {
     const handoff = createSelfHandoff();
-    const handoffDir = join(workspacePath, ".ao", "handoffs");
-
     // Simulate multiple handoffs on same branch (multi-hop handoff)
     // Manually backdate earlier ones to ensure deterministic ordering
     const doc1 = handoff.createHandoffDocument({

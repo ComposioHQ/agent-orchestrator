@@ -151,7 +151,7 @@ export function create(config?: Record<string, unknown>): Workspace {
       if (!existsSync(workspacePath)) return false;
       // Check if the overlay is mounted by verifying mount point
       try {
-        const { stdout } = await execFileAsync(
+        await execFileAsync(
           "mountpoint",
           ["-q", workspacePath],
           { timeout: 30_000 },

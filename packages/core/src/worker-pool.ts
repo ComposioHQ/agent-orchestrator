@@ -6,8 +6,7 @@
  * and gives callers actionable info about why a spawn was denied.
  */
 
-import { TERMINAL_STATUSES } from "./types.js";
-import type { SessionStatus } from "./types.js";
+import { TERMINAL_STATUSES, type SessionStatus } from "./types.js";
 
 // =============================================================================
 // Types

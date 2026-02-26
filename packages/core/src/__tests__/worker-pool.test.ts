@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { createWorkerPool } from "../worker-pool.js";
-import type { WorkerPool } from "../worker-pool.js";
+import { createWorkerPool, type WorkerPool } from "../worker-pool.js";
 
 describe("createWorkerPool", () => {
   let pool: WorkerPool;

@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { createCycleDetector } from "../cycle-detector.js";
-import type { CycleDetector } from "../cycle-detector.js";
+import { createCycleDetector, type CycleDetector } from "../cycle-detector.js";
 
 describe("createCycleDetector", () => {
   let detector: CycleDetector;

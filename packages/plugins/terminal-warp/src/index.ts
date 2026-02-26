@@ -58,7 +58,6 @@ function isMacOS(): boolean {
  * On macOS, Warp supports AppleScript for tab/window management.
  */
 async function openWarpTab(sessionName: string): Promise<void> {
-  const safe = escapeAppleScript(sessionName);
   const shellSafe = shellEscapeLocal(sessionName);
   const shellInAppleScript = escapeAppleScript(shellSafe);
 

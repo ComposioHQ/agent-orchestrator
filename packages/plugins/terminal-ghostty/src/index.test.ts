@@ -69,7 +69,7 @@ describe("plugin manifest & exports", () => {
 describe("openSession", () => {
   it("runs AppleScript on macOS", async () => {
     mockExecFile.mockImplementation(
-      (_cmd: string, _args: string[], _opts: unknown, cb: Function) => {
+      (_cmd: string, _args: string[], _opts: unknown, cb: (...args: unknown[]) => void) => {
         cb(null, "", "");
       },
     );
@@ -97,7 +97,7 @@ describe("openSession", () => {
 
   it("uses session.id when runtimeHandle is null", async () => {
     mockExecFile.mockImplementation(
-      (_cmd: string, _args: string[], _opts: unknown, cb: Function) => {
+      (_cmd: string, _args: string[], _opts: unknown, cb: (...args: unknown[]) => void) => {
         cb(null, "", "");
       },
     );
@@ -132,7 +132,7 @@ describe("openAll", () => {
 
   it("opens tabs for all sessions on macOS", async () => {
     mockExecFile.mockImplementation(
-      (_cmd: string, _args: string[], _opts: unknown, cb: Function) => {
+      (_cmd: string, _args: string[], _opts: unknown, cb: (...args: unknown[]) => void) => {
         cb(null, "", "");
       },
     );

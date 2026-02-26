@@ -47,16 +47,6 @@ function mockFetchOk(data: unknown) {
   });
 }
 
-/** Create a mock fetch for 204 No Content. */
-function mockFetch204() {
-  return vi.fn().mockResolvedValue({
-    ok: true,
-    status: 204,
-    statusText: "No Content",
-    text: () => Promise.resolve(""),
-  });
-}
-
 /** Create a mock fetch that returns an error. */
 function mockFetchError(status: number, body = "error") {
   return vi.fn().mockResolvedValue({

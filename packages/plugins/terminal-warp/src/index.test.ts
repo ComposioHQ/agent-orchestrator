@@ -69,7 +69,7 @@ describe("plugin manifest & exports", () => {
 describe("openSession", () => {
   it("runs AppleScript on macOS", async () => {
     mockExecFile.mockImplementation(
-      (_cmd: string, _args: string[], _opts: unknown, cb: Function) => {
+      (_cmd: string, _args: string[], _opts: unknown, cb: (...args: unknown[]) => void) => {
         cb(null, "", "");
       },
     );
@@ -85,7 +85,7 @@ describe("openSession", () => {
   it("uses warp-cli on non-macOS", async () => {
     mockPlatform.mockReturnValue("linux");
     mockExecFile.mockImplementation(
-      (_cmd: string, _args: string[], _opts: unknown, cb: Function) => {
+      (_cmd: string, _args: string[], _opts: unknown, cb: (...args: unknown[]) => void) => {
         cb(null, "", "");
       },
     );
@@ -99,7 +99,7 @@ describe("openSession", () => {
 
   it("uses session.id when runtimeHandle is null", async () => {
     mockExecFile.mockImplementation(
-      (_cmd: string, _args: string[], _opts: unknown, cb: Function) => {
+      (_cmd: string, _args: string[], _opts: unknown, cb: (...args: unknown[]) => void) => {
         cb(null, "", "");
       },
     );
@@ -115,7 +115,7 @@ describe("openSession", () => {
 describe("openAll", () => {
   it("opens tabs for all sessions", async () => {
     mockExecFile.mockImplementation(
-      (_cmd: string, _args: string[], _opts: unknown, cb: Function) => {
+      (_cmd: string, _args: string[], _opts: unknown, cb: (...args: unknown[]) => void) => {
         cb(null, "", "");
       },
     );
@@ -137,7 +137,7 @@ describe("openAll", () => {
 describe("isSessionOpen", () => {
   it("returns true when tmux client is attached", async () => {
     mockExecFile.mockImplementation(
-      (_cmd: string, _args: string[], _opts: unknown, cb: Function) => {
+      (_cmd: string, _args: string[], _opts: unknown, cb: (...args: unknown[]) => void) => {
         cb(null, "/dev/pts/0\n", "");
       },
     );
@@ -149,7 +149,7 @@ describe("isSessionOpen", () => {
 
   it("returns false when no clients attached", async () => {
     mockExecFile.mockImplementation(
-      (_cmd: string, _args: string[], _opts: unknown, cb: Function) => {
+      (_cmd: string, _args: string[], _opts: unknown, cb: (...args: unknown[]) => void) => {
         cb(null, "", "");
       },
     );
@@ -161,7 +161,7 @@ describe("isSessionOpen", () => {
 
   it("returns false when tmux command fails", async () => {
     mockExecFile.mockImplementation(
-      (_cmd: string, _args: string[], _opts: unknown, cb: Function) => {
+      (_cmd: string, _args: string[], _opts: unknown, cb: (...args: unknown[]) => void) => {
         cb(new Error("no session"));
       },
     );

@@ -502,7 +502,7 @@ function createBitbucketSCM(): SCM {
         );
         // If diffstat succeeds, there are no conflicts at the API level
         // Bitbucket returns a conflict status in the PR itself
-        const prData = await bbFetch<{
+        await bbFetch<{
           state: string;
           merge_commit: unknown;
         }>(

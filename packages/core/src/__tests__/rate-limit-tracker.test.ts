@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
-import { createRateLimitTracker } from "../rate-limit-tracker.js";
-import type { RateLimitTracker } from "../rate-limit-tracker.js";
+import { createRateLimitTracker, type RateLimitTracker } from "../rate-limit-tracker.js";
 
 describe("createRateLimitTracker", () => {
   let tracker: RateLimitTracker;

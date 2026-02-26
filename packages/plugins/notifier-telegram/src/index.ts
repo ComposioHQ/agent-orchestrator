@@ -23,7 +23,7 @@ const PRIORITY_EMOJI: Record<EventPriority, string> = {
 
 /** Escape special chars for Telegram MarkdownV2 */
 function escapeMarkdownV2(text: string): string {
-  return text.replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, "\\$1");
+  return text.replace(/([_*[\]()~`>#+\-=|{}.!\\])/g, "\\$1");
 }
 
 function buildMessage(event: OrchestratorEvent): string {

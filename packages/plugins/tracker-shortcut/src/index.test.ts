@@ -58,14 +58,6 @@ function mockFetchOk(data: unknown, status = 200) {
   });
 }
 
-function mockFetch204() {
-  fetchMock.mockResolvedValueOnce({
-    ok: true,
-    status: 204,
-    text: () => Promise.resolve(""),
-  });
-}
-
 function mockFetchError(status: number, body = "Error") {
   fetchMock.mockResolvedValueOnce({
     ok: false,
