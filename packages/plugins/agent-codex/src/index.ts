@@ -283,7 +283,10 @@ function createCodexAgent(): Agent {
         // lets the model ask for approval mid-work. For ao-spawned agents
         // there's no human to respond, so use -a never (execution failures
         // are returned to the model, never escalated to the user).
-        parts.push("-a", "never", "--sandbox", "workspace-write");
+        // Use danger-full-access sandbox because git worktrees store .git
+        // data in the parent repo's .git/worktrees/ directory — workspace-write
+        // blocks git fetch/push/commit operations in worktree mode.
+        parts.push("-a", "never", "--sandbox", "danger-full-access");
       }
 
       if (config.model) {
