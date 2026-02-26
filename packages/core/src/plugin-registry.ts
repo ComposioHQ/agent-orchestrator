@@ -54,7 +54,7 @@ function configForNotifier(name: string, config: OrchestratorConfig): Record<str
     (notifierConfig: NotifierConfig) => notifierConfig.plugin === name,
   );
   const selected = direct ?? byPlugin;
-  if (!selected) return undefined;
+  if (!selected || typeof selected !== "object" || Array.isArray(selected)) return undefined;
 
   const normalized = { ...selected } as Record<string, unknown>;
   if (typeof normalized["webhook"] === "string" && normalized["webhookUrl"] === undefined) {

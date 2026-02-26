@@ -323,6 +323,23 @@ describe("loadFromConfig", () => {
     });
   });
 
+  it("ignores non-object notifier config entries", async () => {
+    const registry = createPluginRegistry();
+    const config = makeOrchestratorConfig({
+      notifiers: {
+        slack: "slack" as unknown as OrchestratorConfig["notifiers"][string],
+      },
+    });
+    const slackPlugin = makePlugin("notifier", "slack");
+
+    await registry.loadFromConfig(config, async (pkg: string) => {
+      if (pkg === "@composio/ao-plugin-notifier-slack") return slackPlugin;
+      throw new Error(`not found: ${pkg}`);
+    });
+
+    expect(slackPlugin.create).toHaveBeenCalledWith(undefined);
+  });
+
   it("passes dashboardUrl config to terminal-web plugin", async () => {
     const registry = createPluginRegistry();
     const config = makeOrchestratorConfig({

@@ -34,5 +34,12 @@ describe("composeFacetedPrompt", () => {
     expect(result.userMessage).toContain("...[truncated]");
     expect(result.userMessage).toContain(".takt/knowledge.md");
   });
-});
 
+  it("does not throw when a facet is missing content", () => {
+    expect(() =>
+      composeFacetedPrompt({
+        knowledge: [{ content: undefined as unknown as string, sourcePath: "knowledge.md" }],
+      }),
+    ).not.toThrow();
+  });
+});

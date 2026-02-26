@@ -31,6 +31,30 @@ function toTimestamp(value: unknown): number {
   return 0;
 }
 
+async function suspendWithRetry(
+  ops: PredecessorQueryOps,
+  sessionId: string,
+  attempts = 2,
+): Promise<void> {
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      await ops.suspend(sessionId);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+  }
+  throw new Error(
+    `Failed to suspend predecessor session '${sessionId}' after ${attempts} attempts: ${
+      lastError instanceof Error ? lastError.message : String(lastError)
+    }`,
+  );
+}
+
 export class PredecessorQueryService {
   constructor(
     private readonly sessionManager: SessionManager,
@@ -47,13 +71,21 @@ export class PredecessorQueryService {
 
     if (!predecessor) return null;
 
+    let primaryError: unknown = null;
     await this.ops.resume(predecessor.id);
     try {
       await this.ops.send(predecessor.id, request.question);
       const response = await this.ops.capture(predecessor.id);
       return { predecessorSessionId: predecessor.id, response };
+    } catch (error) {
+      primaryError = error;
+      throw error;
     } finally {
-      await this.ops.suspend(predecessor.id);
+      try {
+        await suspendWithRetry(this.ops, predecessor.id);
+      } catch (suspendError) {
+        if (!primaryError) throw suspendError;
+      }
     }
   }
 }

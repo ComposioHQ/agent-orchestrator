@@ -18,14 +18,20 @@ export interface FacetedPromptResult {
 }
 
 function normalizeFacet(facet: PromptFacet, maxChars: number): string {
-  if (facet.content.length <= maxChars) return facet.content.trim();
+  const content = typeof facet?.content === "string" ? facet.content : "";
+  if (!content.trim()) {
+    return facet?.sourcePath ? `[empty facet; full source: ${facet.sourcePath}]` : "";
+  }
+  if (content.length <= maxChars) return content.trim();
   const sourceHint = facet.sourcePath ? ` (full source: ${facet.sourcePath})` : "";
-  return `${facet.content.slice(0, maxChars).trim()}\n...[truncated]${sourceHint}`;
+  return `${content.slice(0, maxChars).trim()}\n...[truncated]${sourceHint}`;
 }
 
 function joinFacetBlock(title: string, facets: PromptFacet[] | undefined, maxChars: number): string {
   if (!facets || facets.length === 0) return "";
-  const body = facets.map((facet) => normalizeFacet(facet, maxChars)).join("\n\n---\n\n");
+  const normalized = facets.map((facet) => normalizeFacet(facet, maxChars)).filter(Boolean);
+  if (normalized.length === 0) return "";
+  const body = normalized.join("\n\n---\n\n");
   return `## ${title}\n${body}`;
 }
 
@@ -55,4 +61,3 @@ export function composeFacetedPrompt(input: FacetedPromptInput): FacetedPromptRe
     userMessage: userParts.join("\n\n"),
   };
 }
-

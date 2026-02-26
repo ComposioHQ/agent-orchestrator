@@ -78,6 +78,55 @@ describe("PredecessorQueryService", () => {
     expect(ops.resume).not.toHaveBeenCalled();
   });
 
+  it("retries suspend when first suspend attempt fails", async () => {
+    const sessions = [makeSession("old-1", new Date("2026-01-01T00:00:00Z"), { suspended: "true" })];
+    const sessionManager = {
+      list: vi.fn(async () => sessions),
+    } as unknown as SessionManager;
+    const ops = {
+      resume: vi.fn(async () => {}),
+      send: vi.fn(async () => {}),
+      capture: vi.fn(async () => "ok"),
+      suspend: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("temporary suspend failure"))
+        .mockResolvedValueOnce(undefined),
+    };
+    const service = new PredecessorQueryService(sessionManager, ops);
+
+    const result = await service.query({
+      currentSession: makeSession("new-1", new Date(), {}, "app"),
+      question: "ping",
+    });
+    expect(result?.response).toBe("ok");
+    expect(ops.suspend).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves primary error when suspend also fails", async () => {
+    const sessions = [makeSession("old-1", new Date("2026-01-01T00:00:00Z"), { suspended: "true" })];
+    const sessionManager = {
+      list: vi.fn(async () => sessions),
+    } as unknown as SessionManager;
+    const ops = {
+      resume: vi.fn(async () => {}),
+      send: vi.fn(async () => {}),
+      capture: vi.fn(async () => {
+        throw new Error("capture failed");
+      }),
+      suspend: vi.fn(async () => {
+        throw new Error("suspend failed");
+      }),
+    };
+    const service = new PredecessorQueryService(sessionManager, ops);
+
+    await expect(
+      service.query({
+        currentSession: makeSession("new-1", new Date(), {}, "app"),
+        question: "ping",
+      }),
+    ).rejects.toThrow("capture failed");
+  });
+
   it("handles string lastActivityAt values from serialized stores", async () => {
     const sessions = [
       {
