@@ -32,4 +32,10 @@ describe("agent-goose", () => {
     expect(cmd).toContain("run -t 'Implement feature'");
     expect(cmd).toContain("--model 'x-model'");
   });
+
+  it("stays non-interactive when prompt is missing", () => {
+    const agent = create();
+    const cmd = agent.getLaunchCommand(makeLaunchConfig({}));
+    expect(cmd).toContain("run -t");
+  });
 });

@@ -213,6 +213,15 @@ describe("loadFromConfig", () => {
     await expect(registry.loadFromConfig(config)).resolves.toBeUndefined();
   });
 
+  it("does not crash when defaults are missing/empty", async () => {
+    const registry = createPluginRegistry();
+    const config = makeOrchestratorConfig({
+      defaults: {} as OrchestratorConfig["defaults"],
+    });
+
+    await expect(registry.loadFromConfig(config)).resolves.toBeUndefined();
+  });
+
   it("loads a non-builtin plugin referenced in project config", async () => {
     const registry = createPluginRegistry();
     const config = makeOrchestratorConfig({
@@ -284,5 +293,34 @@ describe("loadFromConfig", () => {
     expect(terminalWeb.create).toHaveBeenCalledWith({
       dashboardUrl: "http://localhost:4444",
     });
+  });
+
+  it("resolves relative plugin paths from config directory", async () => {
+    const registry = createPluginRegistry();
+    const config = makeOrchestratorConfig({
+      configPath: "/Users/test/project/agent-orchestrator.yaml",
+      projects: {
+        app: {
+          name: "app",
+          repo: "org/app",
+          path: "/tmp/app",
+          defaultBranch: "main",
+          sessionPrefix: "app",
+          scm: { plugin: "./plugins/scm-custom/dist/index.js" },
+        },
+      },
+    });
+    const localScmPlugin = makePlugin("scm", "custom");
+    const calls: string[] = [];
+
+    await registry.loadFromConfig(config, async (pkg: string) => {
+      calls.push(pkg);
+      if (pkg === "file:///Users/test/project/plugins/scm-custom/dist/index.js") {
+        return localScmPlugin;
+      }
+      throw new Error(`not found: ${pkg}`);
+    });
+
+    expect(calls).toContain("file:///Users/test/project/plugins/scm-custom/dist/index.js");
   });
 });

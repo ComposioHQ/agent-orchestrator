@@ -29,14 +29,15 @@ function createAgent(): Agent {
     getLaunchCommand(config: AgentLaunchConfig): string {
       const parts: string[] = ["goose"];
 
-
       if (config.model) {
         parts.push("--model", shellEscape(config.model));
       }
 
-      if (config.prompt) {
-        parts.push("run", "-t", shellEscape(config.prompt));
-      }
+      // Keep Goose in non-interactive mode; without a task prompt it drops
+      // into interactive mode, which breaks orchestrated sessions.
+      const taskPrompt =
+        config.prompt ?? "Continue working on the assigned task in this repository.";
+      parts.push("run", "-t", shellEscape(taskPrompt));
 
       return parts.join(" ");
     },

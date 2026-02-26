@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { PluginModule, Terminal, Session } from "@composio/ao-core";
+import { shellEscape, type PluginModule, type Terminal, type Session } from "@composio/ao-core";
 
 const execFileAsync = promisify(execFile);
 
@@ -15,14 +15,25 @@ function sessionTarget(session: Session): string {
   return session.runtimeHandle?.id ?? session.id;
 }
 
-function shellEscape(value: string): string {
-  return value.replace(/'/g, "'\\''");
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function isTabPresent(sessionName: string): Promise<boolean> {
   try {
     const { stdout } = await execFileAsync("kitty", ["@", "ls"], { timeout: 15_000 });
-    return stdout.includes(sessionName);
+    const escaped = sessionName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    const titlePatterns = [
+      new RegExp(`"title"\\s*:\\s*"${escaped}"`),
+      new RegExp(`"tab_title"\\s*:\\s*"${escaped}"`),
+    ];
+    if (titlePatterns.some((p) => p.test(stdout))) return true;
+
+    // Fallback for non-JSON output modes: require token boundaries, not substring matches.
+    const boundaryPattern = new RegExp(`(^|\\s)${escapeRegExp(sessionName)}(\\s|$)`);
+    return stdout
+      .split("\n")
+      .some((line) => boundaryPattern.test(line));
   } catch {
     return false;
   }

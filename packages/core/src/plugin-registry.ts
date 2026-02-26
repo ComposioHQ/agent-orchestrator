@@ -15,6 +15,8 @@ import type {
   OrchestratorConfig,
   NotifierConfig,
 } from "./types.js";
+import { dirname, resolve, isAbsolute } from "node:path";
+import { pathToFileURL } from "node:url";
 
 /** Map from "slot:name" → plugin instance */
 type PluginMap = Map<string, { manifest: PluginManifest; instance: unknown }>;
@@ -40,8 +42,9 @@ function normalizeImportedModule(mod: unknown): PluginModule | null {
 }
 
 function configForNotifier(name: string, config: OrchestratorConfig): Record<string, unknown> | undefined {
-  const direct = config.notifiers[name];
-  const byPlugin = Object.values(config.notifiers).find(
+  const notifiers = config.notifiers ?? {};
+  const direct = notifiers[name];
+  const byPlugin = Object.values(notifiers).find(
     (notifierConfig: NotifierConfig) => notifierConfig.plugin === name,
   );
   const selected = direct ?? byPlugin;
@@ -112,16 +115,25 @@ function extractPluginConfig(
 
 function collectConfiguredPluginRefs(config: OrchestratorConfig): PluginRef[] {
   const refs: PluginRef[] = [];
+  const defaults = config.defaults ?? {
+    runtime: "tmux",
+    agent: "claude-code",
+    workspace: "worktree",
+    notifiers: ["composio", "desktop"],
+  };
+  const defaultNotifiers = Array.isArray(defaults.notifiers) ? defaults.notifiers : [];
+  const projects = config.projects ?? {};
+  const notifiers = config.notifiers ?? {};
 
-  refs.push({ slot: "runtime", name: config.defaults.runtime });
-  refs.push({ slot: "agent", name: config.defaults.agent });
-  refs.push({ slot: "workspace", name: config.defaults.workspace });
+  if (defaults.runtime) refs.push({ slot: "runtime", name: defaults.runtime });
+  if (defaults.agent) refs.push({ slot: "agent", name: defaults.agent });
+  if (defaults.workspace) refs.push({ slot: "workspace", name: defaults.workspace });
 
-  for (const notifierName of config.defaults.notifiers) {
+  for (const notifierName of defaultNotifiers) {
     refs.push({ slot: "notifier", name: notifierName });
   }
 
-  for (const project of Object.values(config.projects)) {
+  for (const project of Object.values(projects)) {
     if (project.runtime) refs.push({ slot: "runtime", name: project.runtime });
     if (project.agent) refs.push({ slot: "agent", name: project.agent });
     if (project.workspace) refs.push({ slot: "workspace", name: project.workspace });
@@ -129,7 +141,7 @@ function collectConfiguredPluginRefs(config: OrchestratorConfig): PluginRef[] {
     if (project.scm?.plugin) refs.push({ slot: "scm", name: project.scm.plugin });
   }
 
-  for (const [notifierName, notifierConfig] of Object.entries(config.notifiers)) {
+  for (const [notifierName, notifierConfig] of Object.entries(notifiers)) {
     const configuredName =
       typeof notifierConfig.plugin === "string" ? notifierConfig.plugin : notifierName;
     refs.push({ slot: "notifier", name: configuredName });
@@ -142,10 +154,18 @@ function collectConfiguredPluginRefs(config: OrchestratorConfig): PluginRef[] {
   return [...unique.values()];
 }
 
-function resolveImportTarget(slot: PluginSlot, name: string): string {
-  if (name.startsWith(".") || name.startsWith("/") || name.startsWith("@")) {
-    return name;
+function resolveImportTarget(slot: PluginSlot, name: string, configPath: string): string {
+  if (name.startsWith("@")) return name;
+
+  if (name.startsWith(".")) {
+    const absolute = resolve(dirname(configPath), name);
+    return pathToFileURL(absolute).href;
   }
+
+  if (isAbsolute(name)) {
+    return pathToFileURL(name).href;
+  }
+
   return `@composio/ao-plugin-${slot}-${name}`;
 }
 
@@ -212,7 +232,7 @@ export function createPluginRegistry(): PluginRegistry {
 
       for (const ref of refs) {
         if (this.get(ref.slot, ref.name)) continue;
-        const target = resolveImportTarget(ref.slot, ref.name);
+        const target = resolveImportTarget(ref.slot, ref.name, config.configPath);
         try {
           const mod = normalizeImportedModule(await doImport(target));
           if (!mod) continue;
