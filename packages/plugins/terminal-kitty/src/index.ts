@@ -19,6 +19,10 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function lineHasExactToken(line: string, token: string): boolean {
+  return line.trim().split(/\s+/).includes(token);
+}
+
 async function isTabPresent(sessionName: string): Promise<boolean> {
   try {
     const { stdout } = await execFileAsync("kitty", ["@", "ls"], { timeout: 15_000 });
@@ -30,11 +34,8 @@ async function isTabPresent(sessionName: string): Promise<boolean> {
     ];
     if (titlePatterns.some((p) => p.test(stdout))) return true;
 
-    // Fallback for non-JSON output modes: require token boundaries, not substring matches.
-    const boundaryPattern = new RegExp(`(^|\\s)${escapeRegExp(sessionName)}(\\s|$)`);
-    return stdout
-      .split("\n")
-      .some((line) => boundaryPattern.test(line));
+    // Fallback for non-JSON output modes: exact token match, never substring.
+    return stdout.split("\n").some((line) => lineHasExactToken(line, sessionName));
   } catch {
     return false;
   }

@@ -15,17 +15,14 @@ function sessionTarget(session: Session): string {
   return session.runtimeHandle?.id ?? session.id;
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function lineHasExactToken(line: string, token: string): boolean {
+  return line.trim().split(/\s+/).includes(token);
 }
 
 async function isTabPresent(sessionName: string): Promise<boolean> {
   try {
     const { stdout } = await execFileAsync("wezterm", ["cli", "list"], { timeout: 15_000 });
-    const boundaryPattern = new RegExp(`(^|\\s)${escapeRegExp(sessionName)}(\\s|$)`);
-    return stdout
-      .split("\n")
-      .some((line) => boundaryPattern.test(line));
+    return stdout.split("\n").some((line) => lineHasExactToken(line, sessionName));
   } catch {
     return false;
   }

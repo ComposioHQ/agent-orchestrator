@@ -21,6 +21,12 @@ import { pathToFileURL } from "node:url";
 /** Map from "slot:name" → plugin instance */
 type PluginMap = Map<string, { manifest: PluginManifest; instance: unknown }>;
 type PluginRef = { slot: PluginSlot; name: string };
+type DefaultsShape = Partial<{
+  runtime: unknown;
+  agent: unknown;
+  workspace: unknown;
+  notifiers: unknown;
+}>;
 
 function makeKey(slot: PluginSlot, name: string): string {
   return `${slot}:${name}`;
@@ -120,19 +126,24 @@ function extractPluginConfig(
 
 function collectConfiguredPluginRefs(config: OrchestratorConfig): PluginRef[] {
   const refs: PluginRef[] = [];
-  const defaults = config.defaults ?? {
+  const defaults: DefaultsShape = (config.defaults ?? {
     runtime: "tmux",
     agent: "claude-code",
     workspace: "worktree",
     notifiers: ["composio", "desktop"],
-  };
-  const defaultNotifiers = Array.isArray(defaults.notifiers) ? defaults.notifiers : [];
+  }) as DefaultsShape;
+  const defaultRuntime = typeof defaults.runtime === "string" ? defaults.runtime : undefined;
+  const defaultAgent = typeof defaults.agent === "string" ? defaults.agent : undefined;
+  const defaultWorkspace = typeof defaults.workspace === "string" ? defaults.workspace : undefined;
+  const defaultNotifiers = Array.isArray(defaults.notifiers)
+    ? defaults.notifiers.filter((name): name is string => typeof name === "string")
+    : [];
   const projects = config.projects ?? {};
   const notifiers = config.notifiers ?? {};
 
-  if (defaults.runtime) refs.push({ slot: "runtime", name: defaults.runtime });
-  if (defaults.agent) refs.push({ slot: "agent", name: defaults.agent });
-  if (defaults.workspace) refs.push({ slot: "workspace", name: defaults.workspace });
+  if (defaultRuntime) refs.push({ slot: "runtime", name: defaultRuntime });
+  if (defaultAgent) refs.push({ slot: "agent", name: defaultAgent });
+  if (defaultWorkspace) refs.push({ slot: "workspace", name: defaultWorkspace });
 
   for (const notifierName of defaultNotifiers) {
     refs.push({ slot: "notifier", name: notifierName });
@@ -160,9 +171,13 @@ function collectConfiguredPluginRefs(config: OrchestratorConfig): PluginRef[] {
 }
 
 function resolveImportTarget(slot: PluginSlot, name: string, configPath?: string): string {
+  const isRelativePathLike = name.startsWith(".") || (!name.startsWith("@") && /[\\/]/.test(name));
+  const isFileUrl = name.startsWith("file://");
+
+  if (isFileUrl) return name;
   if (name.startsWith("@")) return name;
 
-  if (name.startsWith(".")) {
+  if (isRelativePathLike) {
     const baseDir = configPath ? dirname(configPath) : process.cwd();
     const absolute = resolve(baseDir, name);
     return pathToFileURL(absolute).href;
