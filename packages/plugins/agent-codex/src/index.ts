@@ -227,11 +227,7 @@ async function setupCodexWorkspace(workspacePath: string): Promise<void> {
   // 1. Write shared wrappers to ~/.ao/bin/
   await mkdir(AO_BIN_DIR, { recursive: true });
 
-  await atomicWriteFile(
-    join(AO_BIN_DIR, "ao-metadata-helper.sh"),
-    AO_METADATA_HELPER,
-    0o755,
-  );
+  await atomicWriteFile(join(AO_BIN_DIR, "ao-metadata-helper.sh"), AO_METADATA_HELPER, 0o755);
 
   // Only write wrappers if they don't exist or are outdated (check marker)
   const markerPath = join(AO_BIN_DIR, ".ao-version");
@@ -315,6 +311,10 @@ function createCodexAgent(): Agent {
         env["AO_ISSUE_ID"] = config.issueId;
       }
 
+      // Pass ZeroClaw config dir so MCP server resolves the correct DB
+      // without depending on shell env or active_workspace.toml.
+      env["ZEROCLAW_CONFIG_DIR"] = process.env["ZEROCLAW_CONFIG_DIR"] || `${homedir()}/.zeroclaw`;
+
       // Prepend ~/.ao/bin to PATH so our gh/git wrappers intercept commands.
       // The wrappers strip this directory from PATH before calling the real
       // binary, so there's no infinite recursion.
@@ -342,7 +342,10 @@ function createCodexAgent(): Agent {
       return "active";
     },
 
-    async getActivityState(session: Session, _readyThresholdMs?: number): Promise<ActivityDetection | null> {
+    async getActivityState(
+      session: Session,
+      _readyThresholdMs?: number,
+    ): Promise<ActivityDetection | null> {
       // Check if process is running first
       if (!session.runtimeHandle) return { state: "exited" };
       const running = await this.isProcessRunning(session.runtimeHandle);

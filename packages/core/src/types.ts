@@ -180,6 +180,8 @@ export interface SessionSpawnConfig {
   prompt?: string;
   /** Override the agent plugin for this session (e.g. "codex", "claude-code") */
   agent?: string;
+  /** Extra environment variables to inject into postCreate commands and runtime */
+  extraEnv?: Record<string, string>;
 }
 
 /** Config for creating an orchestrator session */

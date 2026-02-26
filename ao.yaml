@@ -20,6 +20,15 @@ projects:
     symlinks: [.claude]
     agentConfig:
       permissions: skip
+    postCreate:
+      - "~/.ao/mcp-profiles.sh blog"
+    agentRules: |-
+      ## OMC PROHIBITION (CRITICAL)
+      You are an ao-spawned agent. NEVER use oh-my-claudecode commands:
+      /ralph, /autopilot, /ultrapilot, /ultrawork, /ultraqa, /pipeline, /swarm,
+      /oh-my-claudecode:*, /omc-*
+      These modes will trap you in an infinite re-arming loop with no human to cancel.
+      DISABLE_OMC=1 is set in your environment — OMC hooks are disabled.
 
   evasmm:
     name: EVASMM.io
@@ -30,12 +39,20 @@ projects:
     symlinks: [.claude]
     agentConfig:
       permissions: skip
+    postCreate:
+      - "~/.ao/mcp-profiles.sh evasmm"
+      - "cd frontend && npm ci"
+      - "cd backend && python3 -m venv .venv && source .venv/bin/activate && pip install -e '.[dev]' 2>/dev/null || true"
     orchestratorRules: |-
       You are the orchestrator for EVASMM.io project.
       Your job:
       1. Review open GitHub Issues: gh issue list --repo moneymaker-ux/EVASMM.io --state open
       2. Prioritize by phase number (Phase 7 before Phase 8, etc.)
-      3. Spawn worker agents for issues: ao spawn evasmm <issue#>
+      3. Spawn worker agents for issues with appropriate MCP profile:
+         - Frontend issues (React, CSS, UI): ao spawn evasmm <N> --env MCP_PROFILE=frontend
+         - Backend issues (Python, API, DB): ao spawn evasmm <N> --env MCP_PROFILE=backend
+         - Simple/docs tasks: ao spawn evasmm <N> (default minimal, no flag needed)
+         - Complex cross-stack: ao spawn evasmm <N> --env MCP_PROFILE=full
       4. Monitor progress with tmux capture-pane (NOT ao status alone)
       5. Handle stuck agents: ao send <session> "instructions"
       6. Do NOT write code yourself — only coordinate workers
@@ -86,6 +103,13 @@ projects:
       2. After merging ALL PRs — report completion summary
       3. Cleanup: ao session cleanup
     agentRules: |-
+      ## OMC PROHIBITION (CRITICAL)
+      You are an ao-spawned agent. NEVER use oh-my-claudecode commands:
+      /ralph, /autopilot, /ultrapilot, /ultrawork, /ultraqa, /pipeline, /swarm,
+      /oh-my-claudecode:*, /omc-*
+      These modes will trap you in an infinite re-arming loop with no human to cancel.
+      DISABLE_OMC=1 is set in your environment — OMC hooks are disabled.
+
       ## MANDATORY: Fresh Code Before Work
       Before writing ANY code:
         git fetch origin && git rebase origin/develop

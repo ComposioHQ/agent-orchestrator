@@ -13,6 +13,7 @@ async function spawnSession(
   openTab?: boolean,
   agent?: string,
   customPrompt?: string,
+  extraEnv?: Record<string, string>,
 ): Promise<string> {
   const spinner = ora("Creating session").start();
 
@@ -25,6 +26,7 @@ async function spawnSession(
       issueId,
       agent,
       prompt: customPrompt,
+      extraEnv,
     });
 
     spinner.succeed(`Session ${chalk.green(session.id)} created`);
@@ -65,11 +67,18 @@ export function registerSpawn(program: Command): void {
     .option("--agent <name>", "Override the agent plugin (e.g. codex, claude-code)")
     .option("--prompt <file>", "Read custom prompt from file")
     .option("--prompt-text <text>", "Use custom prompt (inline text)")
+    .option("--env <vars...>", "Environment variables (KEY=VALUE pairs)")
     .action(
       async (
         projectId: string,
         issueId: string | undefined,
-        opts: { open?: boolean; agent?: string; prompt?: string; promptText?: string },
+        opts: {
+          open?: boolean;
+          agent?: string;
+          prompt?: string;
+          promptText?: string;
+          env?: string[];
+        },
       ) => {
         const config = loadConfig();
         if (!config.projects[projectId]) {
@@ -96,8 +105,30 @@ export function registerSpawn(program: Command): void {
           }
         }
 
+        // Parse --env KEY=VALUE pairs
+        let extraEnv: Record<string, string> | undefined;
+        if (opts.env && opts.env.length > 0) {
+          extraEnv = {};
+          for (const pair of opts.env) {
+            const eqIdx = pair.indexOf("=");
+            if (eqIdx === -1) {
+              console.error(chalk.red(`Invalid env format: ${pair} (expected KEY=VALUE)`));
+              process.exit(1);
+            }
+            extraEnv[pair.slice(0, eqIdx)] = pair.slice(eqIdx + 1);
+          }
+        }
+
         try {
-          await spawnSession(config, projectId, issueId, opts.open, opts.agent, customPrompt);
+          await spawnSession(
+            config,
+            projectId,
+            issueId,
+            opts.open,
+            opts.agent,
+            customPrompt,
+            extraEnv,
+          );
         } catch (err) {
           console.error(chalk.red(`\u2717 ${err}`));
           process.exit(1);
@@ -113,92 +144,125 @@ export function registerBatchSpawn(program: Command): void {
     .argument("<project>", "Project ID from config")
     .argument("<issues...>", "Issue identifiers")
     .option("--open", "Open sessions in terminal tabs")
-    .action(async (projectId: string, issues: string[], opts: { open?: boolean }) => {
-      const config = loadConfig();
-      if (!config.projects[projectId]) {
-        console.error(
-          chalk.red(
-            `Unknown project: ${projectId}\nAvailable: ${Object.keys(config.projects).join(", ")}`,
-          ),
+    .option("--env <vars...>", "Environment variables (KEY=VALUE pairs)")
+    .action(
+      async (projectId: string, issues: string[], opts: { open?: boolean; env?: string[] }) => {
+        const config = loadConfig();
+        if (!config.projects[projectId]) {
+          console.error(
+            chalk.red(
+              `Unknown project: ${projectId}\nAvailable: ${Object.keys(config.projects).join(", ")}`,
+            ),
+          );
+          process.exit(1);
+        }
+
+        // Parse --env KEY=VALUE pairs
+        let extraEnv: Record<string, string> | undefined;
+        if (opts.env && opts.env.length > 0) {
+          extraEnv = {};
+          for (const pair of opts.env) {
+            const eqIdx = pair.indexOf("=");
+            if (eqIdx === -1) {
+              console.error(chalk.red(`Invalid env format: ${pair} (expected KEY=VALUE)`));
+              process.exit(1);
+            }
+            extraEnv[pair.slice(0, eqIdx)] = pair.slice(eqIdx + 1);
+          }
+        }
+
+        console.log(banner("BATCH SESSION SPAWNER"));
+        console.log();
+        console.log(`  Project: ${chalk.bold(projectId)}`);
+        console.log(`  Issues:  ${issues.join(", ")}`);
+        if (extraEnv)
+          console.log(
+            `  Env:     ${Object.entries(extraEnv)
+              .map(([k, v]) => `${k}=${v}`)
+              .join(", ")}`,
+          );
+        console.log();
+
+        const sm = await getSessionManager(config);
+        const created: Array<{ session: string; issue: string }> = [];
+        const skipped: Array<{ issue: string; existing: string }> = [];
+        const failed: Array<{ issue: string; error: string }> = [];
+        const spawnedIssues = new Set<string>();
+
+        // Load existing sessions once before the loop to avoid repeated reads + enrichment.
+        // Exclude dead/killed sessions so crashed sessions don't block respawning.
+        const deadStatuses = new Set(["killed", "done", "exited"]);
+        const existingSessions = await sm.list(projectId);
+        const existingIssueMap = new Map(
+          existingSessions
+            .filter((s) => s.issueId && !deadStatuses.has(s.status))
+            .map((s) => [s.issueId!.toLowerCase(), s.id]),
         );
-        process.exit(1);
-      }
 
-      console.log(banner("BATCH SESSION SPAWNER"));
-      console.log();
-      console.log(`  Project: ${chalk.bold(projectId)}`);
-      console.log(`  Issues:  ${issues.join(", ")}`);
-      console.log();
+        for (const issue of issues) {
+          // Duplicate detection — check both existing sessions and same-run duplicates
+          if (spawnedIssues.has(issue.toLowerCase())) {
+            console.log(chalk.yellow(`  Skip ${issue} — duplicate in this batch`));
+            skipped.push({ issue, existing: "(this batch)" });
+            continue;
+          }
 
-      const sm = await getSessionManager(config);
-      const created: Array<{ session: string; issue: string }> = [];
-      const skipped: Array<{ issue: string; existing: string }> = [];
-      const failed: Array<{ issue: string; error: string }> = [];
-      const spawnedIssues = new Set<string>();
+          // Check existing sessions (pre-loaded before loop)
+          const existingSessionId = existingIssueMap.get(issue.toLowerCase());
+          if (existingSessionId) {
+            console.log(
+              chalk.yellow(`  Skip ${issue} — already has session: ${existingSessionId}`),
+            );
+            skipped.push({ issue, existing: existingSessionId });
+            continue;
+          }
 
-      // Load existing sessions once before the loop to avoid repeated reads + enrichment.
-      // Exclude dead/killed sessions so crashed sessions don't block respawning.
-      const deadStatuses = new Set(["killed", "done", "exited"]);
-      const existingSessions = await sm.list(projectId);
-      const existingIssueMap = new Map(
-        existingSessions
-          .filter((s) => s.issueId && !deadStatuses.has(s.status))
-          .map((s) => [s.issueId!.toLowerCase(), s.id]),
-      );
+          try {
+            const sessionName = await spawnSession(
+              config,
+              projectId,
+              issue,
+              opts.open,
+              undefined,
+              undefined,
+              extraEnv,
+            );
+            created.push({ session: sessionName, issue });
+            spawnedIssues.add(issue.toLowerCase());
+          } catch (err) {
+            const message = String(err);
+            console.error(chalk.red(`  \u2717 ${issue} — ${err}`));
+            failed.push({ issue, error: message });
+          }
 
-      for (const issue of issues) {
-        // Duplicate detection — check both existing sessions and same-run duplicates
-        if (spawnedIssues.has(issue.toLowerCase())) {
-          console.log(chalk.yellow(`  Skip ${issue} — duplicate in this batch`));
-          skipped.push({ issue, existing: "(this batch)" });
-          continue;
+          // Small delay between spawns
+          await new Promise((r) => setTimeout(r, 500));
         }
 
-        // Check existing sessions (pre-loaded before loop)
-        const existingSessionId = existingIssueMap.get(issue.toLowerCase());
-        if (existingSessionId) {
-          console.log(chalk.yellow(`  Skip ${issue} — already has session: ${existingSessionId}`));
-          skipped.push({ issue, existing: existingSessionId });
-          continue;
-        }
+        console.log(chalk.bold("\nSummary:"));
+        console.log(`  Created: ${chalk.green(String(created.length))} sessions`);
+        console.log(`  Skipped: ${chalk.yellow(String(skipped.length))} (duplicate)`);
+        console.log(`  Failed:  ${chalk.red(String(failed.length))}`);
 
-        try {
-          const sessionName = await spawnSession(config, projectId, issue, opts.open);
-          created.push({ session: sessionName, issue });
-          spawnedIssues.add(issue.toLowerCase());
-        } catch (err) {
-          const message = String(err);
-          console.error(chalk.red(`  \u2717 ${issue} — ${err}`));
-          failed.push({ issue, error: message });
+        if (created.length > 0) {
+          console.log(chalk.bold("\nCreated sessions:"));
+          for (const { session, issue } of created) {
+            console.log(`  ${chalk.green(session)} -> ${issue}`);
+          }
         }
-
-        // Small delay between spawns
-        await new Promise((r) => setTimeout(r, 500));
-      }
-
-      console.log(chalk.bold("\nSummary:"));
-      console.log(`  Created: ${chalk.green(String(created.length))} sessions`);
-      console.log(`  Skipped: ${chalk.yellow(String(skipped.length))} (duplicate)`);
-      console.log(`  Failed:  ${chalk.red(String(failed.length))}`);
-
-      if (created.length > 0) {
-        console.log(chalk.bold("\nCreated sessions:"));
-        for (const { session, issue } of created) {
-          console.log(`  ${chalk.green(session)} -> ${issue}`);
+        if (skipped.length > 0) {
+          console.log(chalk.bold("\nSkipped (duplicate):"));
+          for (const { issue, existing } of skipped) {
+            console.log(`  ${issue} -> existing: ${existing}`);
+          }
         }
-      }
-      if (skipped.length > 0) {
-        console.log(chalk.bold("\nSkipped (duplicate):"));
-        for (const { issue, existing } of skipped) {
-          console.log(`  ${issue} -> existing: ${existing}`);
+        if (failed.length > 0) {
+          console.log(chalk.yellow(`\n${failed.length} failed:`));
+          failed.forEach((f) => {
+            console.log(chalk.dim(`  - ${f.issue}: ${f.error}`));
+          });
         }
-      }
-      if (failed.length > 0) {
-        console.log(chalk.yellow(`\n${failed.length} failed:`));
-        failed.forEach((f) => {
-          console.log(chalk.dim(`  - ${f.issue}: ${f.error}`));
-        });
-      }
-      console.log();
-    });
+        console.log();
+      },
+    );
 }

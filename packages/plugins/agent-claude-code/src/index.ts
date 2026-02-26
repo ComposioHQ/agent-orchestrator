@@ -648,6 +648,16 @@ function createClaudeCodeAgent(): Agent {
       // Unset CLAUDECODE to avoid nested agent conflicts
       env["CLAUDECODE"] = "";
 
+      // Disable oh-my-claudecode hooks for ao-spawned agents.
+      // OMC's keyword-detector, pre-tool-enforcer, and post-tool-verifier
+      // add unnecessary Node process overhead. Persistent-mode is already
+      // safe due to worktree isolation (no .omc/state/) and session scoping.
+      env["DISABLE_OMC"] = "1";
+
+      // Pass ZeroClaw config dir so MCP server resolves the correct DB
+      // without depending on shell env or active_workspace.toml.
+      env["ZEROCLAW_CONFIG_DIR"] = process.env["ZEROCLAW_CONFIG_DIR"] || `${homedir()}/.zeroclaw`;
+
       // Set session info for introspection
       env["AO_SESSION_ID"] = config.sessionId;
 

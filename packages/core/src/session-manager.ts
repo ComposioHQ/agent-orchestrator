@@ -55,6 +55,64 @@ import {
   validateAndStoreOrigin,
 } from "./paths.js";
 
+/** Small async sleep helper. */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Wait for an interactive CLI agent (e.g. Claude Code) to be ready for input.
+ *
+ * After `runtime.create()`, the agent process takes several seconds to start:
+ * - MCP server initialization
+ * - CLAUDE.md / settings loading
+ * - Trust prompt (first time for a new worktree directory)
+ *
+ * If we send the prompt before the agent is ready, the text gets consumed by
+ * the trust dialog and is silently lost — the agent sits idle forever.
+ *
+ * This function polls the terminal output and:
+ * 1. Detects and accepts the trust prompt (sends Enter)
+ * 2. Waits for the idle prompt indicator (❯) before returning
+ */
+async function waitForAgentReady(
+  runtime: Runtime,
+  handle: RuntimeHandle,
+  timeoutMs = 90_000,
+): Promise<void> {
+  const start = Date.now();
+  const pollInterval = 1_500;
+  let trustAccepted = false;
+
+  while (Date.now() - start < timeoutMs) {
+    const output = await runtime.getOutput(handle, 30);
+
+    // Detect trust prompt and accept it by pressing Enter
+    // (option 1 "Yes, I trust this folder" is pre-selected)
+    if (!trustAccepted && /Yes, I trust this folder/i.test(output)) {
+      await runtime.sendMessage(handle, "");
+      trustAccepted = true;
+      await sleep(3_000);
+      continue;
+    }
+
+    // Check for idle prompt indicators:
+    // - ❯ : Claude Code's prompt character
+    // - › : Codex's prompt character
+    // - > : fallback for other agents
+    if (/[❯›>]\s*(Try|Summarize|$)/m.test(output)) {
+      return; // Agent is ready
+    }
+
+    await sleep(pollInterval);
+  }
+
+  // Timeout — log warning but proceed anyway (prompt may still work)
+  console.warn(
+    `[session-manager] Agent did not reach ready state within ${timeoutMs / 1000}s — proceeding anyway`,
+  );
+}
+
 /** Escape regex metacharacters in a string. */
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -413,9 +471,20 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         workspacePath = wsInfo.path;
 
         // Run post-create hooks — clean up workspace on failure
+        // If extraEnv is provided, prefix each postCreate command with env exports
         if (plugins.workspace.postCreate) {
+          let postCreateProject = project;
+          if (spawnConfig.extraEnv && Object.keys(spawnConfig.extraEnv).length > 0) {
+            const envExports = Object.entries(spawnConfig.extraEnv)
+              .map(([k, v]) => `export ${k}='${v.replace(/'/g, "'\\''")}'`)
+              .join("; ");
+            postCreateProject = {
+              ...project,
+              postCreate: project.postCreate?.map((cmd) => `${envExports}; ${cmd}`),
+            };
+          }
           try {
-            await plugins.workspace.postCreate(wsInfo, project);
+            await plugins.workspace.postCreate(wsInfo, postCreateProject);
           } catch (err) {
             if (workspacePath !== project.path) {
               try {
@@ -480,6 +549,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         launchCommand,
         environment: {
           ...environment,
+          ...(spawnConfig.extraEnv ?? {}),
           AO_SESSION: sessionId,
           AO_DATA_DIR: sessionsDir, // Pass sessions directory (not root dataDir)
           AO_SESSION_NAME: sessionId, // User-facing session name
@@ -535,6 +605,13 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
       if (plugins.agent.postLaunchSetup) {
         await plugins.agent.postLaunchSetup(session);
+      }
+
+      // Wait for the agent to finish initializing (MCP servers, trust prompt,
+      // CLAUDE.md loading) before delivering the prompt. Without this, the
+      // prompt text gets consumed by the trust dialog and is silently lost.
+      if (composedPrompt) {
+        await waitForAgentReady(plugins.runtime, handle);
       }
 
       // Deliver the composed prompt interactively via runtime.sendMessage()
