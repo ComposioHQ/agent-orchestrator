@@ -56,6 +56,9 @@ importers:
       '@composio/ao-plugin-agent-auggie':
         specifier: workspace:*
         version: link:../plugins/agent-auggie
+      '@composio/ao-plugin-agent-cagent':
+        specifier: workspace:*
+        version: link:../plugins/agent-cagent
       '@composio/ao-plugin-agent-claude-code':
         specifier: workspace:*
         version: link:../plugins/agent-claude-code
@@ -83,6 +86,9 @@ importers:
       '@composio/ao-plugin-agent-kiro':
         specifier: workspace:*
         version: link:../plugins/agent-kiro
+      '@composio/ao-plugin-agent-ollama':
+        specifier: workspace:*
+        version: link:../plugins/agent-ollama
       '@composio/ao-plugin-agent-opencode':
         specifier: workspace:*
         version: link:../plugins/agent-opencode
@@ -143,6 +149,9 @@ importers:
       '@composio/ao-plugin-notifier-webhook':
         specifier: workspace:*
         version: link:../plugins/notifier-webhook
+      '@composio/ao-plugin-runtime-cloudflare':
+        specifier: workspace:*
+        version: link:../plugins/runtime-cloudflare
       '@composio/ao-plugin-runtime-daytona':
         specifier: workspace:*
         version: link:../plugins/runtime-daytona
@@ -152,9 +161,33 @@ importers:
       '@composio/ao-plugin-runtime-e2b':
         specifier: workspace:*
         version: link:../plugins/runtime-e2b
+      '@composio/ao-plugin-runtime-fly':
+        specifier: workspace:*
+        version: link:../plugins/runtime-fly
+      '@composio/ao-plugin-runtime-hetzner':
+        specifier: workspace:*
+        version: link:../plugins/runtime-hetzner
+      '@composio/ao-plugin-runtime-k8s-sandbox':
+        specifier: workspace:*
+        version: link:../plugins/runtime-k8s-sandbox
+      '@composio/ao-plugin-runtime-lxc':
+        specifier: workspace:*
+        version: link:../plugins/runtime-lxc
       '@composio/ao-plugin-runtime-modal':
         specifier: workspace:*
         version: link:../plugins/runtime-modal
+      '@composio/ao-plugin-runtime-morph':
+        specifier: workspace:*
+        version: link:../plugins/runtime-morph
+      '@composio/ao-plugin-runtime-nspawn':
+        specifier: workspace:*
+        version: link:../plugins/runtime-nspawn
+      '@composio/ao-plugin-runtime-opensandbox':
+        specifier: workspace:*
+        version: link:../plugins/runtime-opensandbox
+      '@composio/ao-plugin-runtime-podman':
+        specifier: workspace:*
+        version: link:../plugins/runtime-podman
       '@composio/ao-plugin-runtime-process':
         specifier: workspace:*
         version: link:../plugins/runtime-process
@@ -167,6 +200,9 @@ importers:
       '@composio/ao-plugin-scm-bitbucket':
         specifier: workspace:*
         version: link:../plugins/scm-bitbucket
+      '@composio/ao-plugin-scm-gerrit':
+        specifier: workspace:*
+        version: link:../plugins/scm-gerrit
       '@composio/ao-plugin-scm-gitea':
         specifier: workspace:*
         version: link:../plugins/scm-gitea
@@ -188,6 +224,12 @@ importers:
       '@composio/ao-plugin-terminal-kitty':
         specifier: workspace:*
         version: link:../plugins/terminal-kitty
+      '@composio/ao-plugin-terminal-tui':
+        specifier: workspace:*
+        version: link:../plugins/terminal-tui
+      '@composio/ao-plugin-terminal-warp':
+        specifier: workspace:*
+        version: link:../plugins/terminal-warp
       '@composio/ao-plugin-terminal-web':
         specifier: workspace:*
         version: link:../plugins/terminal-web
@@ -230,12 +272,24 @@ importers:
       '@composio/ao-plugin-tracker-shortcut':
         specifier: workspace:*
         version: link:../plugins/tracker-shortcut
+      '@composio/ao-plugin-tracker-trello':
+        specifier: workspace:*
+        version: link:../plugins/tracker-trello
+      '@composio/ao-plugin-tracker-youtrack':
+        specifier: workspace:*
+        version: link:../plugins/tracker-youtrack
       '@composio/ao-plugin-workspace-clone':
         specifier: workspace:*
         version: link:../plugins/workspace-clone
+      '@composio/ao-plugin-workspace-container-use':
+        specifier: workspace:*
+        version: link:../plugins/workspace-container-use
       '@composio/ao-plugin-workspace-devcontainer':
         specifier: workspace:*
         version: link:../plugins/workspace-devcontainer
+      '@composio/ao-plugin-workspace-docker-compose':
+        specifier: workspace:*
+        version: link:../plugins/workspace-docker-compose
       '@composio/ao-plugin-workspace-overlay':
         specifier: workspace:*
         version: link:../plugins/workspace-overlay
@@ -415,6 +469,22 @@ importers:
         specifier: ^3.0.0
         version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
 
+  packages/plugins/agent-cagent:
+    dependencies:
+      '@composio/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.2.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+
   packages/plugins/agent-claude-code:
     dependencies:
       '@composio/ao-core':
@@ -544,6 +614,22 @@ importers:
         version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
 
   packages/plugins/agent-kiro:
+    dependencies:
+      '@composio/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.2.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+
+  packages/plugins/agent-ollama:
     dependencies:
       '@composio/ao-core':
         specifier: workspace:*
@@ -882,6 +968,22 @@ importers:
         specifier: ^3.0.0
         version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
 
+  packages/plugins/runtime-cloudflare:
+    dependencies:
+      '@composio/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.2.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+
   packages/plugins/runtime-daytona:
     dependencies:
       '@composio/ao-core':
@@ -930,7 +1032,135 @@ importers:
         specifier: ^3.0.0
         version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
 
+  packages/plugins/runtime-fly:
+    dependencies:
+      '@composio/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.2.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+
+  packages/plugins/runtime-hetzner:
+    dependencies:
+      '@composio/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.2.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+
+  packages/plugins/runtime-k8s-sandbox:
+    dependencies:
+      '@composio/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.2.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+
+  packages/plugins/runtime-lxc:
+    dependencies:
+      '@composio/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.2.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+
   packages/plugins/runtime-modal:
+    dependencies:
+      '@composio/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.2.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+
+  packages/plugins/runtime-morph:
+    dependencies:
+      '@composio/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.2.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+
+  packages/plugins/runtime-nspawn:
+    dependencies:
+      '@composio/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.2.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+
+  packages/plugins/runtime-opensandbox:
+    dependencies:
+      '@composio/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.2.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+
+  packages/plugins/runtime-podman:
     dependencies:
       '@composio/ao-core':
         specifier: workspace:*
@@ -995,6 +1225,22 @@ importers:
         version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
 
   packages/plugins/scm-bitbucket:
+    dependencies:
+      '@composio/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.2.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+
+  packages/plugins/scm-gerrit:
     dependencies:
       '@composio/ao-core':
         specifier: workspace:*
@@ -1107,6 +1353,38 @@ importers:
         version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
 
   packages/plugins/terminal-kitty:
+    dependencies:
+      '@composio/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.2.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+
+  packages/plugins/terminal-tui:
+    dependencies:
+      '@composio/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.2.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+
+  packages/plugins/terminal-warp:
     dependencies:
       '@composio/ao-core':
         specifier: workspace:*
@@ -1346,6 +1624,38 @@ importers:
         specifier: ^3.0.0
         version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
 
+  packages/plugins/tracker-trello:
+    dependencies:
+      '@composio/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.2.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+
+  packages/plugins/tracker-youtrack:
+    dependencies:
+      '@composio/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.2.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+
   packages/plugins/workspace-clone:
     dependencies:
       '@composio/ao-core':
@@ -1362,7 +1672,39 @@ importers:
         specifier: ^3.0.0
         version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
 
+  packages/plugins/workspace-container-use:
+    dependencies:
+      '@composio/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.2.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+
   packages/plugins/workspace-devcontainer:
+    dependencies:
+      '@composio/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.2.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+
+  packages/plugins/workspace-docker-compose:
     dependencies:
       '@composio/ao-core':
         specifier: workspace:*
