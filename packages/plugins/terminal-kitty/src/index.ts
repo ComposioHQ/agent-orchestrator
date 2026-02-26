@@ -22,10 +22,11 @@ function escapeRegExp(value: string): string {
 async function isTabPresent(sessionName: string): Promise<boolean> {
   try {
     const { stdout } = await execFileAsync("kitty", ["@", "ls"], { timeout: 15_000 });
-    const escaped = sessionName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    const escapedForJson = sessionName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    const escapedForRegexInJson = escapeRegExp(escapedForJson);
     const titlePatterns = [
-      new RegExp(`"title"\\s*:\\s*"${escaped}"`),
-      new RegExp(`"tab_title"\\s*:\\s*"${escaped}"`),
+      new RegExp(`"title"\\s*:\\s*"${escapedForRegexInJson}"`),
+      new RegExp(`"tab_title"\\s*:\\s*"${escapedForRegexInJson}"`),
     ];
     if (titlePatterns.some((p) => p.test(stdout))) return true;
 

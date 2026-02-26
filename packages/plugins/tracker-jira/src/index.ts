@@ -35,6 +35,7 @@ function getJiraConfig(project: ProjectConfig): {
   email: string;
   apiToken: string;
   projectKey: string;
+  issueType?: string;
 } {
   const tracker = project.tracker ?? {};
   const baseUrl =
@@ -51,12 +52,15 @@ function getJiraConfig(project: ProjectConfig): {
     (tracker["projectKey"] as string | undefined) ??
     (process.env["JIRA_PROJECT_KEY"] as string | undefined) ??
     "";
+  const issueType =
+    (tracker["issueType"] as string | undefined) ??
+    (process.env["JIRA_ISSUE_TYPE"] as string | undefined);
 
   if (!baseUrl || !email || !apiToken || !projectKey) {
     throw new Error("Jira tracker requires baseUrl, email, apiToken, and projectKey");
   }
 
-  return { baseUrl: baseUrl.replace(/\/$/, ""), email, apiToken, projectKey };
+  return { baseUrl: baseUrl.replace(/\/$/, ""), email, apiToken, projectKey, issueType };
 }
 
 function authHeader(email: string, apiToken: string): string {
@@ -104,6 +108,37 @@ function descriptionToText(desc: unknown): string {
   if (typeof desc === "string") return desc;
   if (!desc || typeof desc !== "object") return "";
   return JSON.stringify(desc);
+}
+
+function quoteJqlLiteral(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+async function pickIssueTypeName(
+  baseUrl: string,
+  email: string,
+  apiToken: string,
+  projectKey: string,
+  configuredIssueType?: string,
+): Promise<string> {
+  if (configuredIssueType) return configuredIssueType;
+
+  try {
+    const data = await jiraRequest<{ issueTypes?: Array<{ name?: string }> }>(
+      "GET",
+      `${baseUrl}/rest/api/3/issue/createmeta/${encodeURIComponent(projectKey)}/issuetypes`,
+      email,
+      apiToken,
+    );
+    const names = (data.issueTypes ?? []).map((t) => t.name).filter((n): n is string => Boolean(n));
+    if (names.length === 0) return "Task";
+
+    if (names.includes("Task")) return "Task";
+    if (names.includes("Story")) return "Story";
+    return names[0]!;
+  } catch {
+    return "Task";
+  }
 }
 
 async function findTransitionId(
@@ -199,20 +234,19 @@ function createJiraTracker(): Tracker {
       const states: string[] = [];
       if (filters.state === "open") states.push("statusCategory != Done");
       if (filters.state === "closed") states.push("statusCategory = Done");
-      const assignee = filters.assignee ? `assignee = \"${filters.assignee}\"` : "";
+      const assignee = filters.assignee ? `assignee = \"${quoteJqlLiteral(filters.assignee)}\"` : "";
       const jqlParts = [`project = \"${projectKey}\"`, ...states, assignee].filter(Boolean);
       const jql = jqlParts.join(" AND ");
+      const params = new URLSearchParams();
+      params.set("jql", jql);
+      params.set("maxResults", String(filters.limit ?? 30));
+      params.set("fields", "summary,description,status,labels,assignee");
 
       const data = await jiraRequest<{ issues: JiraIssue[] }>(
-        "POST",
-        `${baseUrl}/rest/api/3/search/jql`,
+        "GET",
+        `${baseUrl}/rest/api/3/search?${params.toString()}`,
         email,
         apiToken,
-        {
-          jql,
-          maxResults: filters.limit ?? 30,
-          fields: ["summary", "description", "status", "labels", "assignee"],
-        },
       );
       return data.issues.map((i) => mapIssue(i, baseUrl));
     },
@@ -245,7 +279,14 @@ function createJiraTracker(): Tracker {
     },
 
     async createIssue(input: CreateIssueInput, project: ProjectConfig): Promise<Issue> {
-      const { baseUrl, email, apiToken, projectKey } = getJiraConfig(project);
+      const { baseUrl, email, apiToken, projectKey, issueType } = getJiraConfig(project);
+      const issueTypeName = await pickIssueTypeName(
+        baseUrl,
+        email,
+        apiToken,
+        projectKey,
+        issueType,
+      );
 
       const created = await jiraRequest<{ key: string }>(
         "POST",
@@ -257,7 +298,7 @@ function createJiraTracker(): Tracker {
             project: { key: projectKey },
             summary: input.title,
             description: input.description,
-            issuetype: { name: "Task" },
+            issuetype: { name: issueTypeName },
             labels: input.labels ?? [],
           },
         },

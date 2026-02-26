@@ -159,11 +159,12 @@ function collectConfiguredPluginRefs(config: OrchestratorConfig): PluginRef[] {
   return [...unique.values()];
 }
 
-function resolveImportTarget(slot: PluginSlot, name: string, configPath: string): string {
+function resolveImportTarget(slot: PluginSlot, name: string, configPath?: string): string {
   if (name.startsWith("@")) return name;
 
   if (name.startsWith(".")) {
-    const absolute = resolve(dirname(configPath), name);
+    const baseDir = configPath ? dirname(configPath) : process.cwd();
+    const absolute = resolve(baseDir, name);
     return pathToFileURL(absolute).href;
   }
 

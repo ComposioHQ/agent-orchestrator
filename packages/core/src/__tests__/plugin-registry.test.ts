@@ -323,4 +323,29 @@ describe("loadFromConfig", () => {
 
     expect(calls).toContain("file:///Users/test/project/plugins/scm-custom/dist/index.js");
   });
+
+  it("resolves relative plugin paths from cwd when configPath is missing", async () => {
+    const registry = createPluginRegistry();
+    const config = makeOrchestratorConfig({
+      configPath: undefined as unknown as string,
+      projects: {
+        app: {
+          name: "app",
+          repo: "org/app",
+          path: "/tmp/app",
+          defaultBranch: "main",
+          sessionPrefix: "app",
+          scm: { plugin: "./plugins/scm-custom/dist/index.js" },
+        },
+      },
+    });
+    const calls: string[] = [];
+
+    await registry.loadFromConfig(config, async (pkg: string) => {
+      calls.push(pkg);
+      throw new Error(`not found: ${pkg}`);
+    });
+
+    expect(calls.some((target) => target.startsWith("file://"))).toBe(true);
+  });
 });
