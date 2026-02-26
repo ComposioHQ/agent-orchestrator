@@ -610,7 +610,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       sessionId,
       projectConfig: project,
       permissions: project.agentConfig?.permissions,
-      model: project.agentConfig?.model,
+      model: project.agentConfig?.orchestratorModel ?? project.agentConfig?.model,
       systemPromptFile,
     };
 
