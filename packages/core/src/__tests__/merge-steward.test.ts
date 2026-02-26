@@ -41,6 +41,14 @@ describe("MergeStewardService", () => {
           (call[1] as string[]).includes("remove"),
       ),
     ).toBe(true);
+    expect(
+      calls.some(
+        (call) =>
+          Array.isArray(call[1]) &&
+          (call[1] as string[]).includes("merge-tree") &&
+          (call[1] as string[]).includes("origin/feature/test"),
+      ),
+    ).toBe(true);
   });
 
   it("runs test command without shell wrapping", async () => {
@@ -128,5 +136,55 @@ describe("MergeStewardService", () => {
     );
     const leaked = afterEntries.filter((name) => !beforeEntries.has(name));
     expect(leaked).toEqual([]);
+  });
+
+  it("uses origin/<sourceBranch> for merge method in detached worktree", async () => {
+    const exec = vi.fn(async () => {});
+    const service = new MergeStewardService(exec);
+
+    await service.testThenMerge({
+      repoPath: "/repo",
+      sourceBranch: "feature/remote-only",
+      targetBranch: "main",
+      testCommand: "pnpm test",
+      mergeMethod: "merge",
+    });
+
+    const calls = exec.mock.calls as unknown[][];
+    expect(
+      calls.some(
+        (call) =>
+          call[0] === "git" &&
+          Array.isArray(call[1]) &&
+          (call[1] as string[]).includes("merge") &&
+          (call[1] as string[]).includes("--no-ff") &&
+          (call[1] as string[]).includes("origin/feature/remote-only"),
+      ),
+    ).toBe(true);
+  });
+
+  it("reports cleanup failure alongside primary failure", async () => {
+    const exec = vi.fn(async (_cmd: string, args: string[]) => {
+      if (_cmd === "pnpm" && args[0] === "test") {
+        throw new Error("tests failed");
+      }
+      if (_cmd === "git" && args.includes("worktree") && args.includes("remove")) {
+        throw new Error("worktree remove failed");
+      }
+    });
+    const service = new MergeStewardService(exec);
+
+    await expect(
+      service.testThenMerge({
+        repoPath: "/repo",
+        sourceBranch: "feature/test",
+        targetBranch: "main",
+        testCommand: "pnpm test",
+      }),
+    ).rejects.toSatisfy((error: unknown) => {
+      if (!(error instanceof AggregateError)) return false;
+      const messages = error.errors.map((err) => (err instanceof Error ? err.message : String(err)));
+      return messages.includes("tests failed") && messages.includes("worktree remove failed");
+    });
   });
 });

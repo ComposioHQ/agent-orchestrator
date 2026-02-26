@@ -213,7 +213,6 @@ export function createPluginRegistry(): PluginRegistry {
     register(plugin: PluginModule, config?: Record<string, unknown>): void {
       const { manifest } = plugin;
       const key = makeKey(manifest.slot, manifest.name);
-      aliases.delete(key);
       const instance = plugin.create(config);
       plugins.set(key, { manifest, instance });
     },

@@ -83,11 +83,16 @@ export class MergeStewardService {
   async testThenMerge(options: MergeStewardOptions): Promise<MergeStewardResult> {
     const mergeMethod = options.mergeMethod ?? "squash";
     const autoPush = options.autoPushAfterMerge ?? true;
+    const sourceRef = options.sourceBranch.startsWith("origin/")
+      ? options.sourceBranch
+      : `origin/${options.sourceBranch}`;
     const tempWorktreePath = await mkdtemp(join(tmpdir(), "ao-merge-steward-"));
     let testCmd = "";
     let testArgs: string[] = [];
     let worktreeAdded = false;
+    let result: MergeStewardResult | null = null;
     let primaryError: unknown = null;
+    let cleanupError: unknown = null;
 
     try {
       [testCmd, ...testArgs] = parseCommandArgs(options.testCommand);
@@ -98,7 +103,7 @@ export class MergeStewardService {
         options.repoPath,
         "merge-tree",
         `origin/${options.targetBranch}`,
-        options.sourceBranch,
+        sourceRef,
       ]);
 
       await this.exec("git", [
@@ -115,7 +120,7 @@ export class MergeStewardService {
       await this.exec(testCmd, testArgs, tempWorktreePath);
 
       if (mergeMethod === "squash") {
-        await this.exec("git", ["-C", tempWorktreePath, "merge", "--squash", options.sourceBranch]);
+        await this.exec("git", ["-C", tempWorktreePath, "merge", "--squash", sourceRef]);
         await this.exec("git", [
           "-C",
           tempWorktreePath,
@@ -131,7 +136,7 @@ export class MergeStewardService {
           "--no-ff",
           "-m",
           options.commitMessage ?? `Merge ${options.sourceBranch} into ${options.targetBranch}`,
-          options.sourceBranch,
+          sourceRef,
         ]);
       }
 
@@ -145,19 +150,28 @@ export class MergeStewardService {
         ]);
       }
 
-      return { merged: true, tempWorktreePath };
+      result = { merged: true, tempWorktreePath };
     } catch (error) {
       primaryError = error;
-      throw error;
     } finally {
       if (worktreeAdded) {
         try {
           await this.exec("git", ["-C", options.repoPath, "worktree", "remove", "--force", tempWorktreePath]);
-        } catch (cleanupError) {
-          if (!primaryError) throw cleanupError;
+        } catch (error) {
+          cleanupError = error;
         }
       }
       await rm(tempWorktreePath, { recursive: true, force: true });
     }
+
+    if (primaryError && cleanupError) {
+      throw new AggregateError(
+        [primaryError, cleanupError],
+        "Merge failed and cleanup failed while removing temporary worktree",
+      );
+    }
+    if (primaryError) throw primaryError;
+    if (cleanupError) throw cleanupError;
+    return result ?? { merged: true, tempWorktreePath };
   }
 }
