@@ -27,7 +27,7 @@ type JiraIssue = {
   id: string;
   key: string;
   self?: string;
-  fields: JiraFields;
+  fields?: JiraFields;
 };
 
 function getJiraConfig(project: ProjectConfig): {
@@ -94,7 +94,7 @@ async function jiraRequest<T>(
   return (await res.json()) as T;
 }
 
-function mapStatus(fields: JiraFields): Issue["state"] {
+function mapStatus(fields?: JiraFields): Issue["state"] {
   const key = fields.status?.statusCategory?.key?.toLowerCase() ?? "";
   if (key === "done") return "closed";
 
@@ -148,7 +148,7 @@ async function findTransitionId(
   email: string,
   apiToken: string,
 ): Promise<string | null> {
-  const data = await jiraRequest<{ transitions: Array<{ id: string; name: string }> }>(
+  const data = await jiraRequest<{ transitions?: Array<{ id: string; name: string }> }>(
     "GET",
     `${baseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}/transitions`,
     email,
@@ -162,23 +162,24 @@ async function findTransitionId(
         ? ["in progress", "start", "doing"]
         : ["to do", "todo", "open", "reopen", "backlog"];
 
-  const found = data.transitions.find((t) => {
-    const n = t.name.toLowerCase();
+  const transitions = Array.isArray(data.transitions) ? data.transitions : [];
+  const found = transitions.find((t) => {
+    const n = (t.name ?? "").toLowerCase();
     return preferred.some((p) => n.includes(p));
   });
-
   return found?.id ?? null;
 }
 
 function mapIssue(issue: JiraIssue, baseUrl: string): Issue {
+  const fields = issue.fields ?? {};
   return {
     id: issue.key,
-    title: issue.fields.summary ?? issue.key,
-    description: descriptionToText(issue.fields.description),
+    title: fields.summary ?? issue.key,
+    description: descriptionToText(fields.description),
     url: `${baseUrl}/browse/${issue.key}`,
-    state: mapStatus(issue.fields),
-    labels: issue.fields.labels ?? [],
-    assignee: issue.fields.assignee?.displayName,
+    state: mapStatus(fields),
+    labels: fields.labels ?? [],
+    assignee: fields.assignee?.displayName,
   };
 }
 
@@ -242,13 +243,13 @@ function createJiraTracker(): Tracker {
       params.set("maxResults", String(filters.limit ?? 30));
       params.set("fields", "summary,description,status,labels,assignee");
 
-      const data = await jiraRequest<{ issues: JiraIssue[] }>(
+      const data = await jiraRequest<{ issues?: JiraIssue[] }>(
         "GET",
         `${baseUrl}/rest/api/3/search?${params.toString()}`,
         email,
         apiToken,
       );
-      return data.issues.map((i) => mapIssue(i, baseUrl));
+      return (data.issues ?? []).map((i) => mapIssue(i, baseUrl));
     },
 
     async updateIssue(identifier: string, update: IssueUpdate, project: ProjectConfig): Promise<void> {
