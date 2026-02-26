@@ -114,6 +114,19 @@ function quoteJqlLiteral(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
+function toAdfDoc(text: string): Record<string, unknown> {
+  return {
+    version: 1,
+    type: "doc",
+    content: [
+      {
+        type: "paragraph",
+        content: [{ type: "text", text }],
+      },
+    ],
+  };
+}
+
 async function pickIssueTypeName(
   baseUrl: string,
   email: string,
@@ -157,7 +170,7 @@ async function findTransitionId(
 
   const preferred =
     targetState === "closed"
-      ? ["done", "close", "closed", "resolve"]
+      ? ["done", "close", "closed", "resolve", "complete", "finished"]
       : targetState === "in_progress"
         ? ["in progress", "start", "doing"]
         : ["to do", "todo", "open", "reopen", "backlog"];
@@ -236,7 +249,8 @@ function createJiraTracker(): Tracker {
       if (filters.state === "open") states.push("statusCategory != Done");
       if (filters.state === "closed") states.push("statusCategory = Done");
       const assignee = filters.assignee ? `assignee = \"${quoteJqlLiteral(filters.assignee)}\"` : "";
-      const jqlParts = [`project = \"${projectKey}\"`, ...states, assignee].filter(Boolean);
+      const escapedProjectKey = quoteJqlLiteral(projectKey);
+      const jqlParts = [`project = \"${escapedProjectKey}\"`, ...states, assignee].filter(Boolean);
       const jql = jqlParts.join(" AND ");
       const params = new URLSearchParams();
       params.set("jql", jql);
@@ -274,7 +288,7 @@ function createJiraTracker(): Tracker {
           `${baseUrl}/rest/api/3/issue/${encodeURIComponent(identifier)}/comment`,
           email,
           apiToken,
-          { body: update.comment },
+          { body: toAdfDoc(update.comment) },
         );
       }
     },

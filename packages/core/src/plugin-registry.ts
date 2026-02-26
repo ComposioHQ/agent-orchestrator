@@ -150,11 +150,11 @@ function collectConfiguredPluginRefs(config: OrchestratorConfig): PluginRef[] {
   }
 
   for (const project of Object.values(projects)) {
-    if (project.runtime) refs.push({ slot: "runtime", name: project.runtime });
-    if (project.agent) refs.push({ slot: "agent", name: project.agent });
-    if (project.workspace) refs.push({ slot: "workspace", name: project.workspace });
-    if (project.tracker?.plugin) refs.push({ slot: "tracker", name: project.tracker.plugin });
-    if (project.scm?.plugin) refs.push({ slot: "scm", name: project.scm.plugin });
+    if (typeof project.runtime === "string") refs.push({ slot: "runtime", name: project.runtime });
+    if (typeof project.agent === "string") refs.push({ slot: "agent", name: project.agent });
+    if (typeof project.workspace === "string") refs.push({ slot: "workspace", name: project.workspace });
+    if (typeof project.tracker?.plugin === "string") refs.push({ slot: "tracker", name: project.tracker.plugin });
+    if (typeof project.scm?.plugin === "string") refs.push({ slot: "scm", name: project.scm.plugin });
   }
 
   for (const [notifierName, notifierConfig] of Object.entries(notifiers)) {

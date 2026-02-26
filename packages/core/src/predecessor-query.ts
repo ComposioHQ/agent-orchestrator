@@ -22,6 +22,15 @@ function isSuspendedSession(session: Session): boolean {
   return session.metadata["suspended"] === "true";
 }
 
+function toTimestamp(value: unknown): number {
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
 export class PredecessorQueryService {
   constructor(
     private readonly sessionManager: SessionManager,
@@ -34,7 +43,7 @@ export class PredecessorQueryService {
       .filter((session) => session.id !== request.currentSession.id)
       .filter(isSuspendedSession)
       .filter((session) => !request.role || session.metadata["role"] === request.role)
-      .sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime())[0];
+      .sort((a, b) => toTimestamp(b.lastActivityAt) - toTimestamp(a.lastActivityAt))[0];
 
     if (!predecessor) return null;
 
@@ -48,4 +57,3 @@ export class PredecessorQueryService {
     }
   }
 }
-

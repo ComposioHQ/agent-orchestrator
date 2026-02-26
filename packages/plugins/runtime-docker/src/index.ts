@@ -32,57 +32,6 @@ async function docker(args: string[]): Promise<string> {
   return stdout.trim();
 }
 
-function parseCommand(message: string): string[] {
-  const parts: string[] = [];
-  let current = "";
-  let quote: "'" | '"' | null = null;
-  let escaped = false;
-
-  for (const ch of message.trim()) {
-    if (escaped) {
-      current += ch;
-      escaped = false;
-      continue;
-    }
-
-    if (ch === "\\") {
-      escaped = true;
-      continue;
-    }
-
-    if (quote) {
-      if (ch === quote) {
-        quote = null;
-      } else {
-        current += ch;
-      }
-      continue;
-    }
-
-    if (ch === "'" || ch === '"') {
-      quote = ch;
-      continue;
-    }
-
-    if (/\s/.test(ch)) {
-      if (current) {
-        parts.push(current);
-        current = "";
-      }
-      continue;
-    }
-
-    current += ch;
-  }
-
-  if (escaped || quote) {
-    throw new Error("Invalid command: unterminated escape or quote sequence");
-  }
-  if (current) parts.push(current);
-
-  return parts;
-}
-
 export function create(config?: Record<string, unknown>): Runtime {
   const image = (config?.image as string | undefined) ?? process.env["AO_DOCKER_IMAGE"] ?? "node:20-bullseye";
   const createdAt = new Map<string, number>();
@@ -125,9 +74,9 @@ export function create(config?: Record<string, unknown>): Runtime {
     },
 
     async sendMessage(handle: RuntimeHandle, message: string): Promise<void> {
-      const command = parseCommand(message);
-      if (command.length === 0) return;
-      await docker(["exec", handle.id, ...command]);
+      const trimmed = message.trim();
+      if (!trimmed) return;
+      await docker(["exec", handle.id, "sh", "-lc", trimmed]);
     },
 
     async getOutput(handle: RuntimeHandle, lines = 50): Promise<string> {

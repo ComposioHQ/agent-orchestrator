@@ -236,6 +236,37 @@ describe("loadFromConfig", () => {
     await expect(registry.loadFromConfig(config)).resolves.toBeUndefined();
   });
 
+  it("ignores non-string project plugin refs", async () => {
+    const registry = createPluginRegistry();
+    const config = makeOrchestratorConfig({
+      projects: {
+        app: {
+          name: "app",
+          repo: "org/app",
+          path: "/tmp/app",
+          defaultBranch: "main",
+          sessionPrefix: "app",
+          runtime: 123 as unknown as string,
+          agent: { bad: true } as unknown as string,
+          workspace: null as unknown as string,
+          tracker: { plugin: 99 as unknown as string },
+          scm: { plugin: false as unknown as string },
+        },
+      },
+    });
+    const calls: string[] = [];
+
+    await expect(
+      registry.loadFromConfig(config, async (pkg: string) => {
+        calls.push(pkg);
+        throw new Error(`not found: ${pkg}`);
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(calls.some((target) => target.includes("123"))).toBe(false);
+    expect(calls.some((target) => target.includes("[object Object]"))).toBe(false);
+  });
+
   it("loads a non-builtin plugin referenced in project config", async () => {
     const registry = createPluginRegistry();
     const config = makeOrchestratorConfig({

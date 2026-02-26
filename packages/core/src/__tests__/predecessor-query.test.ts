@@ -77,5 +77,36 @@ describe("PredecessorQueryService", () => {
     expect(result).toBeNull();
     expect(ops.resume).not.toHaveBeenCalled();
   });
-});
 
+  it("handles string lastActivityAt values from serialized stores", async () => {
+    const sessions = [
+      {
+        ...makeSession("old-1", new Date("2026-01-01T00:00:00Z"), { suspended: "true", role: "coder" }),
+        lastActivityAt: "2026-01-01T00:00:00Z",
+      },
+      {
+        ...makeSession("old-2", new Date("2026-01-02T00:00:00Z"), { suspended: "true", role: "coder" }),
+        lastActivityAt: "2026-01-02T00:00:00Z",
+      },
+    ] as unknown as Session[];
+
+    const sessionManager = {
+      list: vi.fn(async () => sessions),
+    } as unknown as SessionManager;
+    const ops = {
+      resume: vi.fn(async () => {}),
+      send: vi.fn(async () => {}),
+      capture: vi.fn(async () => "from string timestamp"),
+      suspend: vi.fn(async () => {}),
+    };
+    const service = new PredecessorQueryService(sessionManager, ops);
+
+    const result = await service.query({
+      currentSession: makeSession("new-1", new Date(), {}, "app"),
+      question: "What changed?",
+      role: "coder",
+    });
+
+    expect(result?.predecessorSessionId).toBe("old-2");
+  });
+});

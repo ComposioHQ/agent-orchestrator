@@ -25,14 +25,7 @@ describe("MergeStewardService", () => {
           (call[1] as string[]).includes("add"),
       ),
     ).toBe(true);
-    expect(
-      calls.some(
-        (call) =>
-          Array.isArray(call[1]) &&
-          (call[1] as string[]).includes("merge") &&
-          (call[1] as string[]).includes("--squash"),
-      ),
-    ).toBe(true);
+    expect(calls.some((call) => Array.isArray(call[1]) && (call[1] as string[]).includes("--squash"))).toBe(true);
     expect(
       calls.some(
         (call) => Array.isArray(call[1]) && (call[1] as string[]).includes("push"),
@@ -48,9 +41,25 @@ describe("MergeStewardService", () => {
     ).toBe(true);
   });
 
+  it("runs test command without shell wrapping", async () => {
+    const exec = vi.fn(async () => {});
+    const service = new MergeStewardService(exec);
+
+    await service.testThenMerge({
+      repoPath: "/repo",
+      sourceBranch: "feature/test",
+      targetBranch: "main",
+      testCommand: "pnpm test",
+    });
+
+    expect(exec).toHaveBeenCalledWith("pnpm", ["test"], expect.any(String));
+    const calls = exec.mock.calls as unknown[][];
+    expect(calls.some((call) => call[0] === "sh")).toBe(false);
+  });
+
   it("always removes temp worktree even when tests fail", async () => {
     const exec = vi.fn(async (_cmd: string, args: string[]) => {
-      if (args[0] === "-lc" && args[1] === "pnpm test") {
+      if (_cmd === "pnpm" && args[0] === "test") {
         throw new Error("tests failed");
       }
     });
@@ -70,5 +79,30 @@ describe("MergeStewardService", () => {
       (call) => Array.isArray(call[1]) && (call[1] as string[]).includes("remove"),
     );
     expect(removeCall).toBeDefined();
+  });
+
+  it("preserves original error when worktree add fails", async () => {
+    const exec = vi.fn(async (_cmd: string, args: string[]) => {
+      if (args.includes("add")) {
+        throw new Error("worktree add failed");
+      }
+    });
+    const service = new MergeStewardService(exec);
+
+    await expect(
+      service.testThenMerge({
+        repoPath: "/repo",
+        sourceBranch: "feature/test",
+        targetBranch: "main",
+        testCommand: "pnpm test",
+      }),
+    ).rejects.toThrow("worktree add failed");
+
+    const calls = exec.mock.calls as unknown[][];
+    expect(
+      calls.some(
+        (call) => Array.isArray(call[1]) && (call[1] as string[]).includes("remove"),
+      ),
+    ).toBe(false);
   });
 });
