@@ -366,6 +366,23 @@ describe("loadFromConfig", () => {
     expect(slackPlugin.create).toHaveBeenCalledWith(undefined);
   });
 
+  it("does not crash on null notifier config entries", async () => {
+    const registry = createPluginRegistry();
+    const config = makeOrchestratorConfig({
+      notifiers: {
+        slack: null as unknown as OrchestratorConfig["notifiers"][string],
+      },
+    });
+    const slackPlugin = makePlugin("notifier", "slack");
+
+    await registry.loadFromConfig(config, async (pkg: string) => {
+      if (pkg === "@composio/ao-plugin-notifier-slack") return slackPlugin;
+      throw new Error(`not found: ${pkg}`);
+    });
+
+    expect(slackPlugin.create).toHaveBeenCalledWith(undefined);
+  });
+
   it("passes dashboardUrl config to terminal-web plugin", async () => {
     const registry = createPluginRegistry();
     const config = makeOrchestratorConfig({
@@ -410,6 +427,7 @@ describe("loadFromConfig", () => {
     });
 
     expect(calls).toContain("file:///Users/test/project/plugins/scm-custom/dist/index.js");
+    expect(registry.get("scm", "./plugins/scm-custom/dist/index.js")).not.toBeNull();
   });
 
   it("resolves slash-based local plugin paths from config directory", async () => {

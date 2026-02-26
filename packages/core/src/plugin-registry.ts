@@ -51,7 +51,14 @@ function configForNotifier(name: string, config: OrchestratorConfig): Record<str
   const notifiers = config.notifiers ?? {};
   const direct = notifiers[name];
   const byPlugin = Object.values(notifiers).find(
-    (notifierConfig: NotifierConfig) => notifierConfig.plugin === name,
+    (notifierConfig: NotifierConfig | null | undefined) =>
+      Boolean(
+        notifierConfig &&
+          typeof notifierConfig === "object" &&
+          !Array.isArray(notifierConfig) &&
+          typeof notifierConfig.plugin === "string" &&
+          notifierConfig.plugin === name,
+      ),
   );
   const selected = direct ?? byPlugin;
   if (!selected || typeof selected !== "object" || Array.isArray(selected)) return undefined;
@@ -159,8 +166,15 @@ function collectConfiguredPluginRefs(config: OrchestratorConfig): PluginRef[] {
   }
 
   for (const [notifierName, notifierConfig] of Object.entries(notifiers)) {
+    const pluginName =
+      notifierConfig &&
+      typeof notifierConfig === "object" &&
+      !Array.isArray(notifierConfig) &&
+      typeof notifierConfig.plugin === "string"
+        ? notifierConfig.plugin
+        : undefined;
     const configuredName =
-      typeof notifierConfig.plugin === "string" ? notifierConfig.plugin : notifierName;
+      typeof pluginName === "string" ? pluginName : notifierName;
     refs.push({ slot: "notifier", name: configuredName });
   }
 
@@ -193,17 +207,21 @@ function resolveImportTarget(slot: PluginSlot, name: string, configPath?: string
 
 export function createPluginRegistry(): PluginRegistry {
   const plugins: PluginMap = new Map();
+  const aliases = new Map<string, string>();
 
   return {
     register(plugin: PluginModule, config?: Record<string, unknown>): void {
       const { manifest } = plugin;
       const key = makeKey(manifest.slot, manifest.name);
+      aliases.delete(key);
       const instance = plugin.create(config);
       plugins.set(key, { manifest, instance });
     },
 
     get<T>(slot: PluginSlot, name: string): T | null {
-      const entry = plugins.get(makeKey(slot, name));
+      const key = makeKey(slot, name);
+      const resolvedKey = aliases.get(key) ?? key;
+      const entry = plugins.get(resolvedKey);
       return entry ? (entry.instance as T) : null;
     },
 
@@ -260,6 +278,11 @@ export function createPluginRegistry(): PluginRegistry {
           if (!mod) continue;
           const pluginConfig = extractPluginConfig(ref.slot, ref.name, config);
           this.register(mod, pluginConfig);
+          const aliasKey = makeKey(ref.slot, ref.name);
+          const canonicalKey = makeKey(mod.manifest.slot, mod.manifest.name);
+          if (aliasKey !== canonicalKey) {
+            aliases.set(aliasKey, canonicalKey);
+          }
         } catch {
           // Plugin import failed — keep going so one missing plugin doesn't block startup.
         }

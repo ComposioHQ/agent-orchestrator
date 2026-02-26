@@ -84,11 +84,14 @@ export class MergeStewardService {
     const mergeMethod = options.mergeMethod ?? "squash";
     const autoPush = options.autoPushAfterMerge ?? true;
     const tempWorktreePath = await mkdtemp(join(tmpdir(), "ao-merge-steward-"));
-    const [testCmd, ...testArgs] = parseCommandArgs(options.testCommand);
+    let testCmd = "";
+    let testArgs: string[] = [];
     let worktreeAdded = false;
     let primaryError: unknown = null;
 
     try {
+      [testCmd, ...testArgs] = parseCommandArgs(options.testCommand);
+
       await this.exec("git", ["-C", options.repoPath, "fetch", "origin"]);
       await this.exec("git", [
         "-C",

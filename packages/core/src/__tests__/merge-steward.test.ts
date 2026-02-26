@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { MergeStewardService } from "../merge-steward.js";
+import { readdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
 
 describe("MergeStewardService", () => {
   it("runs test then squash merge in temp worktree and pushes", async () => {
@@ -104,5 +106,27 @@ describe("MergeStewardService", () => {
         (call) => Array.isArray(call[1]) && (call[1] as string[]).includes("remove"),
       ),
     ).toBe(false);
+  });
+
+  it("removes temp directory when test command parsing fails", async () => {
+    const beforeEntries = new Set(
+      (await readdir(tmpdir())).filter((name) => name.startsWith("ao-merge-steward-")),
+    );
+    const service = new MergeStewardService(vi.fn(async () => {}));
+
+    await expect(
+      service.testThenMerge({
+        repoPath: "/repo",
+        sourceBranch: "feature/test",
+        targetBranch: "main",
+        testCommand: "\"unterminated",
+      }),
+    ).rejects.toThrow("Invalid test command");
+
+    const afterEntries = (await readdir(tmpdir())).filter((name) =>
+      name.startsWith("ao-merge-steward-"),
+    );
+    const leaked = afterEntries.filter((name) => !beforeEntries.has(name));
+    expect(leaked).toEqual([]);
   });
 });
