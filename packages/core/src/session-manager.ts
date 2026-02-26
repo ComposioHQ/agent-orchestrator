@@ -98,9 +98,14 @@ async function waitForAgentReady(
 
     // Check for idle prompt indicators:
     // - ❯ : Claude Code's prompt (followed by "Try", "Summarize", or empty)
-    // - › : Codex's prompt (followed by "Write tests for @filename" placeholder)
-    // - > : fallback for other agents
-    if (/[❯›>]\s*(Try|Summarize|Write|$)/m.test(output)) {
+    // - › : Codex's prompt (placeholder text rotates: "Write tests...",
+    //        "Find and fix a bug...", etc. — match › with any following text)
+    // - > : fallback for other agents (bare prompt)
+    if (
+      /❯\s*(Try|Summarize|$)/m.test(output) ||
+      /›\s+\S/m.test(output) ||
+      /^[>$#]\s*$/m.test(output)
+    ) {
       return; // Agent is ready
     }
 
