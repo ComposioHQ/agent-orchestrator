@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as childProcess from "node:child_process";
+import type { Session } from "@composio/ao-core";
 import { manifest, create } from "./index.js";
 
 vi.mock("node:child_process", () => {
   const mockExecFile = vi.fn();
-  (mockExecFile as { [k: symbol]: unknown })[Symbol.for("nodejs.util.promisify.custom")] = vi.fn();
+  (mockExecFile as unknown as { [k: symbol]: unknown })[Symbol.for("nodejs.util.promisify.custom")] =
+    vi.fn();
   return { execFile: mockExecFile };
 });
 
@@ -12,11 +14,11 @@ vi.mock("@composio/ao-core", () => ({
   shellEscape: (value: string) => value,
 }));
 
-const mockExecFileCustom = (childProcess.execFile as { [k: symbol]: unknown })[
+const mockExecFileCustom = (childProcess.execFile as unknown as { [k: symbol]: unknown })[
   Symbol.for("nodejs.util.promisify.custom")
 ] as ReturnType<typeof vi.fn>;
 
-function makeSession(id = "app-1") {
+function makeSession(id = "app-1"): Session {
   return {
     id,
     projectId: "app",
@@ -31,7 +33,7 @@ function makeSession(id = "app-1") {
     createdAt: new Date(),
     lastActivityAt: new Date(),
     metadata: {},
-  };
+  } satisfies Session;
 }
 
 describe("terminal-wezterm", () => {
@@ -56,7 +58,7 @@ describe("terminal-wezterm", () => {
     });
 
     const terminal = create();
-    await expect(terminal.isSessionOpen(makeSession("app-1"))).resolves.toBe(false);
+    await expect(terminal.isSessionOpen!(makeSession("app-1"))).resolves.toBe(false);
   });
 
   it("detects exact token matches from wezterm list output", async () => {
@@ -66,7 +68,7 @@ describe("terminal-wezterm", () => {
     });
 
     const terminal = create();
-    await expect(terminal.isSessionOpen(makeSession("app-1"))).resolves.toBe(true);
+    await expect(terminal.isSessionOpen!(makeSession("app-1"))).resolves.toBe(true);
   });
 
   it("returns false for empty output and missing tabs", async () => {
@@ -74,8 +76,8 @@ describe("terminal-wezterm", () => {
     mockExecFileCustom.mockResolvedValueOnce({ stdout: "pane-1 tab-1 app-10 workspace\n", stderr: "" });
 
     const terminal = create();
-    await expect(terminal.isSessionOpen(makeSession("app-1"))).resolves.toBe(false);
-    await expect(terminal.isSessionOpen(makeSession("app-1"))).resolves.toBe(false);
+    await expect(terminal.isSessionOpen!(makeSession("app-1"))).resolves.toBe(false);
+    await expect(terminal.isSessionOpen!(makeSession("app-1"))).resolves.toBe(false);
   });
 
   it("does not spawn a new tab when an exact match already exists", async () => {
