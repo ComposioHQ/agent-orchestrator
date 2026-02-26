@@ -89,7 +89,13 @@ export function createPluginRegistry(): PluginRegistry {
       orchestratorConfig?: OrchestratorConfig,
       importFn?: (pkg: string) => Promise<unknown>,
     ): Promise<void> {
-      const doImport = importFn ?? ((pkg: string) => import(pkg));
+      const doImport =
+        importFn ??
+        ((pkg: string) =>
+          // Next/Webpack server builds can traverse this dynamic import and emit
+          // a noisy "critical dependency" warning. Runtime plugin discovery
+          // intentionally happens in Node, so keep webpack out of this path.
+          import(/* webpackIgnore: true */ pkg));
       for (const builtin of BUILTIN_PLUGINS) {
         try {
           const mod = (await doImport(builtin.pkg)) as PluginModule;

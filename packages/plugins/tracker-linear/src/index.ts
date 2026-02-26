@@ -137,7 +137,10 @@ function createComposioTransport(apiKey: string, entityId: string): GraphQLTrans
     if (!clientPromise) {
       clientPromise = (async () => {
         try {
-          const { Composio } = await import("@composio/core");
+          const { Composio } = await import(
+            /* webpackIgnore: true */
+            "@composio/core"
+          );
           const client = new Composio({ apiKey });
           return client.tools;
         } catch (err: unknown) {
@@ -229,6 +232,17 @@ interface LinearIssueNode {
   team: {
     key: string;
   };
+}
+
+interface LinearCommentNode {
+  id: string;
+  body: string;
+  createdAt: string | null;
+  url: string | null;
+  user: {
+    displayName: string | null;
+    name: string | null;
+  } | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -380,7 +394,9 @@ function createLinearTracker(query: GraphQLTransport): Tracker {
       const filter: Record<string, unknown> = {};
       const variables: Record<string, unknown> = {};
 
-      if (filters.state === "closed") {
+      if (filters.workflowStateName) {
+        filter["state"] = { name: { eq: filters.workflowStateName } };
+      } else if (filters.state === "closed") {
         filter["state"] = { type: { in: ["completed", "canceled"] } };
       } else if (filters.state !== "all") {
         // Default to open (exclude completed/canceled) to match tracker-github
@@ -429,6 +445,42 @@ function createLinearTracker(query: GraphQLTransport): Tracker {
       }));
     },
 
+    async listComments(identifier: string, _project: ProjectConfig) {
+      const data = await query<{
+        issue: {
+          comments: {
+            nodes: LinearCommentNode[];
+          };
+        };
+      }>(
+        `query($id: String!) {
+          issue(id: $id) {
+            comments(first: 100) {
+              nodes {
+                id
+                body
+                createdAt
+                url
+                user {
+                  displayName
+                  name
+                }
+              }
+            }
+          }
+        }`,
+        { id: identifier },
+      );
+
+      return data.issue.comments.nodes.map((comment) => ({
+        id: comment.id,
+        body: comment.body,
+        author: comment.user?.displayName ?? comment.user?.name ?? undefined,
+        createdAt: comment.createdAt ? new Date(comment.createdAt) : undefined,
+        url: comment.url ?? undefined,
+      }));
+    },
+
     async updateIssue(
       identifier: string,
       update: IssueUpdate,
@@ -452,30 +504,50 @@ function createLinearTracker(query: GraphQLTransport): Tracker {
       const teamId = issueData.issue.team.id;
 
       // Handle state change
-      if (update.state) {
-        // Need to find the correct workflow state ID
-        const statesData = await query<{
-          workflowStates: { nodes: Array<{ id: string; name: string; type: string }> };
-        }>(
-          `query($teamId: ID!) {
-            workflowStates(filter: { team: { id: { eq: $teamId } } }) {
-              nodes { id name type }
+      if (update.workflowStateId || update.workflowStateName || update.state) {
+        let targetStateId = update.workflowStateId;
+
+        if (!targetStateId) {
+          const statesData = await query<{
+            workflowStates: { nodes: Array<{ id: string; name: string; type: string }> };
+          }>(
+            `query($teamId: ID!) {
+              workflowStates(filter: { team: { id: { eq: $teamId } } }) {
+                nodes { id name type }
+              }
+            }`,
+            { teamId },
+          );
+
+          if (update.workflowStateName) {
+            const explicitState = statesData.workflowStates.nodes.find(
+              (s) => s.name === update.workflowStateName,
+            );
+            if (!explicitState) {
+              throw new Error(
+                `No workflow state named "${update.workflowStateName}" found for team ${teamId}`,
+              );
             }
-          }`,
-          { teamId },
-        );
+            targetStateId = explicitState.id;
+          } else if (update.state) {
+            const targetType =
+              update.state === "closed"
+                ? "completed"
+                : update.state === "open"
+                  ? "unstarted"
+                  : "started";
 
-        const targetType =
-          update.state === "closed"
-            ? "completed"
-            : update.state === "open"
-              ? "unstarted"
-              : "started";
+            const targetState = statesData.workflowStates.nodes.find((s) => s.type === targetType);
 
-        const targetState = statesData.workflowStates.nodes.find((s) => s.type === targetType);
+            if (!targetState) {
+              throw new Error(`No workflow state of type "${targetType}" found for team ${teamId}`);
+            }
+            targetStateId = targetState.id;
+          }
+        }
 
-        if (!targetState) {
-          throw new Error(`No workflow state of type "${targetType}" found for team ${teamId}`);
+        if (!targetStateId) {
+          throw new Error("Unable to resolve target workflow state id");
         }
 
         await query(
@@ -484,7 +556,7 @@ function createLinearTracker(query: GraphQLTransport): Tracker {
               success
             }
           }`,
-          { id: issueUuid, stateId: targetState.id },
+          { id: issueUuid, stateId: targetStateId },
         );
       }
 
@@ -554,6 +626,18 @@ function createLinearTracker(query: GraphQLTransport): Tracker {
             }
           }`,
           { id: issueUuid, labelIds: [...existingIds] },
+        );
+      }
+
+      // Handle description update
+      if (update.description !== undefined) {
+        await query(
+          `mutation($id: String!, $description: String!) {
+            issueUpdate(id: $id, input: { description: $description }) {
+              success
+            }
+          }`,
+          { id: issueUuid, description: update.description },
         );
       }
 
