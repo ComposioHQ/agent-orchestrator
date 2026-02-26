@@ -267,6 +267,32 @@ describe("loadFromConfig", () => {
     expect(calls.some((target) => target.includes("[object Object]"))).toBe(false);
   });
 
+  it("ignores null/undefined project entries", async () => {
+    const registry = createPluginRegistry();
+    const config = makeOrchestratorConfig({
+      projects: {
+        app: {
+          name: "app",
+          repo: "org/app",
+          path: "/tmp/app",
+          defaultBranch: "main",
+          sessionPrefix: "app",
+          scm: { plugin: "gitlab" },
+        },
+        broken1: null as unknown as OrchestratorConfig["projects"][string],
+        broken2: undefined as unknown as OrchestratorConfig["projects"][string],
+      },
+    });
+
+    const gitlabPlugin = makePlugin("scm", "gitlab");
+    await expect(
+      registry.loadFromConfig(config, async (pkg: string) => {
+        if (pkg === "@composio/ao-plugin-scm-gitlab") return gitlabPlugin;
+        throw new Error(`not found: ${pkg}`);
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   it("loads a non-builtin plugin referenced in project config", async () => {
     const registry = createPluginRegistry();
     const config = makeOrchestratorConfig({

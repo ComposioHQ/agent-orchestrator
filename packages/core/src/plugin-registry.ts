@@ -150,6 +150,7 @@ function collectConfiguredPluginRefs(config: OrchestratorConfig): PluginRef[] {
   }
 
   for (const project of Object.values(projects)) {
+    if (!project || typeof project !== "object") continue;
     if (typeof project.runtime === "string") refs.push({ slot: "runtime", name: project.runtime });
     if (typeof project.agent === "string") refs.push({ slot: "agent", name: project.agent });
     if (typeof project.workspace === "string") refs.push({ slot: "workspace", name: project.workspace });

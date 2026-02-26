@@ -21,6 +21,12 @@ export const manifest = {
   version: "0.1.0",
 };
 
+function isAmazonQProcess(args: string): boolean {
+  const cmd = args.trim().split(/\s+/)[0] ?? "";
+  const base = cmd.split("/").pop() ?? cmd;
+  return base === "q";
+}
+
 function createAgent(): Agent {
   return {
     name: "amazon-q",
@@ -82,12 +88,11 @@ function createAgent(): Agent {
             timeout: 30_000,
           });
           const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
-          const processRe = /(?:^|\/)q(?:\s|$)/;
           for (const line of psOut.split("\n")) {
             const cols = line.trimStart().split(/\s+/);
             if (cols.length < 3 || !ttySet.has(cols[1] ?? "")) continue;
             const args = cols.slice(2).join(" ");
-            if (processRe.test(args)) {
+            if (isAmazonQProcess(args)) {
               return true;
             }
           }
