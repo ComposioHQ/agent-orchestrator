@@ -46,7 +46,8 @@ projects:
     # Agent-specific config
     # agentConfig:
     #   permissions: skip    # --dangerously-skip-permissions
-    #   model: opus
+    #   model: opus          # worker agents (e.g. gpt-4o, o3; agent plugin default if unset)
+    #   orchestratorModel: gpt-4o  # orchestrator session only (defaults to model if unset)
 
     # Inline rules included in every agent prompt for this project
     # agentRules: |

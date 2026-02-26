@@ -905,7 +905,10 @@ export interface NotifierConfig {
 
 export interface AgentSpecificConfig {
   permissions?: "skip" | "default";
+  /** Model for worker agents (e.g. "gpt-4o", "o3"). Agent plugin default if unset. */
   model?: string;
+  /** Model for the orchestrator agent session. Falls back to `model` if unset. */
+  orchestratorModel?: string;
   [key: string]: unknown;
 }
 
