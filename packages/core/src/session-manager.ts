@@ -97,10 +97,10 @@ async function waitForAgentReady(
     }
 
     // Check for idle prompt indicators:
-    // - ❯ : Claude Code's prompt character
-    // - › : Codex's prompt character
+    // - ❯ : Claude Code's prompt (followed by "Try", "Summarize", or empty)
+    // - › : Codex's prompt (followed by "Write tests for @filename" placeholder)
     // - > : fallback for other agents
-    if (/[❯›>]\s*(Try|Summarize|$)/m.test(output)) {
+    if (/[❯›>]\s*(Try|Summarize|Write|$)/m.test(output)) {
       return; // Agent is ready
     }
 
@@ -456,6 +456,15 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       branch = `feat/${spawnConfig.issueId}`;
     } else {
       branch = `session/${sessionId}`;
+    }
+
+    // Suffix branch with agent name when using a non-default agent to prevent
+    // worktree collision. E.g. two agents on issue #152 get separate branches:
+    //   claude-code → feat/issue-152
+    //   codex       → feat/issue-152-codex
+    const defaultAgent = project.agent ?? config.defaults.agent;
+    if (spawnConfig.agent && spawnConfig.agent !== defaultAgent && !spawnConfig.branch) {
+      branch = `${branch}-${spawnConfig.agent}`;
     }
 
     // Create workspace (if workspace plugin is available)

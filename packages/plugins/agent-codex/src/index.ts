@@ -279,7 +279,11 @@ function createCodexAgent(): Agent {
       const parts: string[] = ["codex"];
 
       if (config.permissions === "skip") {
-        parts.push("--full-auto");
+        // --full-auto = "-a on-request --sandbox workspace-write" which still
+        // lets the model ask for approval mid-work. For ao-spawned agents
+        // there's no human to respond, so use -a never (execution failures
+        // are returned to the model, never escalated to the user).
+        parts.push("-a", "never", "--sandbox", "workspace-write");
       }
 
       if (config.model) {
