@@ -95,9 +95,22 @@ function createGitLabSCM(): SCM {
     },
 
     async getPRState(pr: PRInfo): Promise<PRState> {
-      const raw = await glab(["mr", "view", String(pr.number), "--repo", `${pr.owner}/${pr.repo}`, "--output", "json"]);
-      const mr: { state: string } = JSON.parse(raw);
-      return mapMrState(mr.state);
+      try {
+        const raw = await glab([
+          "mr",
+          "view",
+          String(pr.number),
+          "--repo",
+          `${pr.owner}/${pr.repo}`,
+          "--output",
+          "json",
+        ]);
+        if (!raw) return "closed";
+        const mr: { state?: string } = JSON.parse(raw);
+        return mapMrState(mr.state ?? "closed");
+      } catch {
+        return "closed";
+      }
     },
 
     async mergePR(pr: PRInfo, method: MergeMethod = "squash"): Promise<void> {
