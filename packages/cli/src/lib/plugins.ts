@@ -7,6 +7,7 @@ import goosePlugin from "@composio/ao-plugin-agent-goose";
 import amazonQPlugin from "@composio/ao-plugin-agent-amazon-q";
 import kiroPlugin from "@composio/ao-plugin-agent-kiro";
 import githubSCMPlugin from "@composio/ao-plugin-scm-github";
+import gitlabSCMPlugin from "@composio/ao-plugin-scm-gitlab";
 
 const agentPlugins: Record<string, { create(): Agent }> = {
   "claude-code": claudeCodePlugin,
@@ -20,6 +21,7 @@ const agentPlugins: Record<string, { create(): Agent }> = {
 
 const scmPlugins: Record<string, { create(): SCM }> = {
   github: githubSCMPlugin,
+  gitlab: gitlabSCMPlugin,
 };
 
 /**

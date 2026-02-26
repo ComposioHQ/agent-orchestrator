@@ -63,6 +63,7 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
   // Runtimes
   { slot: "runtime", name: "tmux", pkg: "@composio/ao-plugin-runtime-tmux" },
   { slot: "runtime", name: "process", pkg: "@composio/ao-plugin-runtime-process" },
+  { slot: "runtime", name: "docker", pkg: "@composio/ao-plugin-runtime-docker" },
   // Agents
   { slot: "agent", name: "claude-code", pkg: "@composio/ao-plugin-agent-claude-code" },
   { slot: "agent", name: "codex", pkg: "@composio/ao-plugin-agent-codex" },
@@ -77,14 +78,17 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
   // Trackers
   { slot: "tracker", name: "github", pkg: "@composio/ao-plugin-tracker-github" },
   { slot: "tracker", name: "linear", pkg: "@composio/ao-plugin-tracker-linear" },
+  { slot: "tracker", name: "jira", pkg: "@composio/ao-plugin-tracker-jira" },
   // SCM
   { slot: "scm", name: "github", pkg: "@composio/ao-plugin-scm-github" },
+  { slot: "scm", name: "gitlab", pkg: "@composio/ao-plugin-scm-gitlab" },
   // Notifiers
   { slot: "notifier", name: "composio", pkg: "@composio/ao-plugin-notifier-composio" },
   { slot: "notifier", name: "desktop", pkg: "@composio/ao-plugin-notifier-desktop" },
   { slot: "notifier", name: "slack", pkg: "@composio/ao-plugin-notifier-slack" },
   { slot: "notifier", name: "webhook", pkg: "@composio/ao-plugin-notifier-webhook" },
   { slot: "notifier", name: "discord", pkg: "@composio/ao-plugin-notifier-discord" },
+  { slot: "notifier", name: "email", pkg: "@composio/ao-plugin-notifier-email" },
   { slot: "notifier", name: "teams", pkg: "@composio/ao-plugin-notifier-teams" },
   { slot: "notifier", name: "telegram", pkg: "@composio/ao-plugin-notifier-telegram" },
   // Terminals
@@ -92,6 +96,7 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
   { slot: "terminal", name: "web", pkg: "@composio/ao-plugin-terminal-web" },
   { slot: "terminal", name: "kitty", pkg: "@composio/ao-plugin-terminal-kitty" },
   { slot: "terminal", name: "wezterm", pkg: "@composio/ao-plugin-terminal-wezterm" },
+  { slot: "terminal", name: "zellij", pkg: "@composio/ao-plugin-terminal-zellij" },
 ];
 
 /** Extract plugin-specific config from orchestrator config */

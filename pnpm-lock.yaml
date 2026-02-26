@@ -74,6 +74,9 @@ importers:
       '@composio/ao-plugin-notifier-desktop':
         specifier: workspace:*
         version: link:../plugins/notifier-desktop
+      '@composio/ao-plugin-notifier-email':
+        specifier: workspace:*
+        version: link:../plugins/notifier-email
       '@composio/ao-plugin-notifier-slack':
         specifier: workspace:*
         version: link:../plugins/notifier-slack
@@ -86,6 +89,9 @@ importers:
       '@composio/ao-plugin-notifier-webhook':
         specifier: workspace:*
         version: link:../plugins/notifier-webhook
+      '@composio/ao-plugin-runtime-docker':
+        specifier: workspace:*
+        version: link:../plugins/runtime-docker
       '@composio/ao-plugin-runtime-process':
         specifier: workspace:*
         version: link:../plugins/runtime-process
@@ -95,6 +101,9 @@ importers:
       '@composio/ao-plugin-scm-github':
         specifier: workspace:*
         version: link:../plugins/scm-github
+      '@composio/ao-plugin-scm-gitlab':
+        specifier: workspace:*
+        version: link:../plugins/scm-gitlab
       '@composio/ao-plugin-terminal-iterm2':
         specifier: workspace:*
         version: link:../plugins/terminal-iterm2
@@ -107,9 +116,15 @@ importers:
       '@composio/ao-plugin-terminal-wezterm':
         specifier: workspace:*
         version: link:../plugins/terminal-wezterm
+      '@composio/ao-plugin-terminal-zellij':
+        specifier: workspace:*
+        version: link:../plugins/terminal-zellij
       '@composio/ao-plugin-tracker-github':
         specifier: workspace:*
         version: link:../plugins/tracker-github
+      '@composio/ao-plugin-tracker-jira':
+        specifier: workspace:*
+        version: link:../plugins/tracker-jira
       '@composio/ao-plugin-tracker-linear':
         specifier: workspace:*
         version: link:../plugins/tracker-linear
@@ -388,6 +403,22 @@ importers:
         specifier: ^3.0.0
         version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
 
+  packages/plugins/notifier-email:
+    dependencies:
+      '@composio/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.2.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+
   packages/plugins/notifier-discord:
     dependencies:
       '@composio/ao-core':
@@ -484,6 +515,22 @@ importers:
         specifier: ^3.0.0
         version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
 
+  packages/plugins/runtime-docker:
+    dependencies:
+      '@composio/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.2.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+
   packages/plugins/runtime-tmux:
     dependencies:
       '@composio/ao-core':
@@ -501,6 +548,22 @@ importers:
         version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
 
   packages/plugins/scm-github:
+    dependencies:
+      '@composio/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.2.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+
+  packages/plugins/scm-gitlab:
     dependencies:
       '@composio/ao-core':
         specifier: workspace:*
@@ -564,6 +627,22 @@ importers:
         specifier: ^3.0.0
         version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
 
+  packages/plugins/terminal-zellij:
+    dependencies:
+      '@composio/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.2.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+
   packages/plugins/terminal-web:
     dependencies:
       '@composio/ao-core':
@@ -597,6 +676,22 @@ importers:
         version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
 
   packages/plugins/tracker-linear:
+    dependencies:
+      '@composio/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.2.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+
+  packages/plugins/tracker-jira:
     dependencies:
       '@composio/ao-core':
         specifier: workspace:*

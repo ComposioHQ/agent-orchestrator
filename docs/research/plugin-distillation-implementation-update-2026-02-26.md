@@ -52,6 +52,25 @@ This yields broad ecosystem reach with minimal new external SDK dependencies.
 
 Total new plugins added: **9**
 
+## Batch-2 Implemented Plugins (this update)
+
+### Runtime
+- `runtime-docker`
+
+### Tracker
+- `tracker-jira`
+
+### SCM
+- `scm-gitlab`
+
+### Notifier
+- `notifier-email`
+
+### Terminal
+- `terminal-zellij`
+
+Additional plugins added in this update: **5** (cumulative added from distillation so far: **14**).
+
 ## Core Wiring Changes
 - Registered all 9 plugins in built-in plugin discovery:
   - `packages/core/src/plugin-registry.ts`

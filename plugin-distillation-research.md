@@ -36,6 +36,11 @@ Implemented from this distillation cycle:
 - Agent plugins: `gemini`, `goose`, `amazon-q`, `kiro`
 - Notifier plugins: `discord`, `teams`, `telegram`
 - Terminal plugins: `kitty`, `wezterm`
+- Runtime plugins: `docker`
+- Tracker plugins: `jira`
+- SCM plugins: `gitlab`
+- Notifier plugins: `email`
+- Terminal plugins: `zellij`
 
 These are fully wired as built-ins in the plugin registry and CLI dependency graph.
 

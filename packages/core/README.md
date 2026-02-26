@@ -92,13 +92,13 @@ Loads plugins and provides access to them:
 
 **Built-in plugins** (loaded by default):
 
-- runtime-tmux, runtime-process
+- runtime-tmux, runtime-process, runtime-docker
 - agent-claude-code, agent-codex, agent-aider, agent-opencode, agent-gemini, agent-goose, agent-amazon-q, agent-kiro
 - workspace-worktree, workspace-clone
-- tracker-github, tracker-linear
-- scm-github
-- notifier-desktop, notifier-slack, notifier-composio, notifier-webhook, notifier-discord, notifier-teams, notifier-telegram
-- terminal-iterm2, terminal-web, terminal-kitty, terminal-wezterm
+- tracker-github, tracker-linear, tracker-jira
+- scm-github, scm-gitlab
+- notifier-desktop, notifier-slack, notifier-composio, notifier-webhook, notifier-discord, notifier-email, notifier-teams, notifier-telegram
+- terminal-iterm2, terminal-web, terminal-kitty, terminal-wezterm, terminal-zellij
 
 ### `src/config.ts` — Configuration Loading
 

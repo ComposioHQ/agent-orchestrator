@@ -31,6 +31,11 @@ New plugins implemented in this cycle:
 - `notifier-telegram`
 - `terminal-kitty`
 - `terminal-wezterm`
+- `runtime-docker`
+- `tracker-jira`
+- `scm-gitlab`
+- `notifier-email`
+- `terminal-zellij`
 
 These were selected for maximum coverage with low-to-medium implementation complexity and are now wired into built-in plugin loading.
 

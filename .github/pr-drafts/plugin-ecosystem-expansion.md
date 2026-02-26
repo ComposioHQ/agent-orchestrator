@@ -22,6 +22,11 @@ Closes: #216
 - `packages/plugins/notifier-telegram/*`
 - `packages/plugins/terminal-kitty/*`
 - `packages/plugins/terminal-wezterm/*`
+- `packages/plugins/runtime-docker/*`
+- `packages/plugins/tracker-jira/*`
+- `packages/plugins/scm-gitlab/*`
+- `packages/plugins/notifier-email/*`
+- `packages/plugins/terminal-zellij/*`
 - `docs/research/orchestrator-plugin-distillation-2026-02-25.md`
 - `docs/research/plugin-distillation-implementation-update-2026-02-26.md`
 - `plugin-distillation-research.md`

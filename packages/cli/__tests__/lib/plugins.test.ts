@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getAgent, getAgentByName } from "../../src/lib/plugins.js";
+import { getAgent, getAgentByName, getSCM } from "../../src/lib/plugins.js";
 import type { OrchestratorConfig } from "@composio/ao-core";
 
 function makeConfig(
@@ -85,5 +85,20 @@ describe("getAgentByName", () => {
 
   it("throws on unknown name", () => {
     expect(() => getAgentByName("unknown")).toThrow("Unknown agent plugin: unknown");
+  });
+});
+
+describe("getSCM", () => {
+  it("returns github by default", () => {
+    const config = makeConfig("claude-code");
+    const scm = getSCM(config, "app");
+    expect(scm.name).toBe("github");
+  });
+
+  it("returns gitlab when project scm plugin is set", () => {
+    const config = makeConfig("claude-code") as OrchestratorConfig;
+    config.projects["app"]!.scm = { plugin: "gitlab" };
+    const scm = getSCM(config, "app");
+    expect(scm.name).toBe("gitlab");
   });
 });

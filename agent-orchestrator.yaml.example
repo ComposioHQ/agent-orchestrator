@@ -33,8 +33,16 @@ projects:
 
     # Issue tracker (defaults to github issues)
     # tracker:
-    #   plugin: linear
-    #   teamId: "your-team-id"
+    #   plugin: linear      # linear | github | jira
+    #   teamId: "your-team-id"      # linear
+    #   baseUrl: "https://your-org.atlassian.net"  # jira
+    #   email: "you@example.com"                  # jira
+    #   apiToken: "${JIRA_API_TOKEN}"             # jira
+    #   projectKey: "ENG"                         # jira
+
+    # SCM override (defaults to github)
+    # scm:
+    #   plugin: gitlab      # github | gitlab
 
     # Files to symlink into workspaces
     # symlinks: [.env, .claude]
