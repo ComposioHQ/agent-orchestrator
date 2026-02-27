@@ -430,7 +430,7 @@ describe("workspace.restore()", () => {
     await expect(
       ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1"),
     ).rejects.toThrow(
-      'Workspace path "/mock-home/.worktrees/myproject/session-1" already exists for session "session-1"',
+      'Workspace path "/mock-home/.worktrees/myproject/session-1" already exists for session "session-1" — destroy it before restoring',
     );
   });
 });
