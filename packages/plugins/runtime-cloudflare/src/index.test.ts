@@ -251,7 +251,7 @@ describe("runtime.destroy()", () => {
 });
 
 describe("runtime.sendMessage()", () => {
-  it("POSTs exec command with the message", async () => {
+  it("POSTs exec command with the message using printf", async () => {
     const fetchMock = mockCfOk({});
     vi.stubGlobal("fetch", fetchMock);
 
@@ -263,6 +263,23 @@ describe("runtime.sendMessage()", () => {
     expect(opts.method).toBe("POST");
     const body = JSON.parse(opts.body);
     expect(body.command[0]).toBe("sh");
+    expect(body.command[2]).toContain("printf");
+    expect(body.command[2]).not.toContain("echo");
+    expect(body.command[2]).toContain("'hello'");
+  });
+
+  it("wraps message in single quotes to prevent shell injection", async () => {
+    const fetchMock = mockCfOk({});
+    vi.stubGlobal("fetch", fetchMock);
+
+    const runtime = create();
+    await runtime.sendMessage(makeHandle("ctr-msg", "acct-123"), "$(rm -rf /)");
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    // shellEscape wraps in single quotes — $(rm -rf /) becomes '$(rm -rf /)'
+    // so the shell treats it as a literal string, not a command substitution
+    expect(body.command[2]).toContain("'$(rm -rf /)'");
+    expect(body.command[2]).toContain("printf");
   });
 
   it("throws when accountId is missing", async () => {
