@@ -125,6 +125,7 @@ describe("plugin manifest & exports", () => {
     const agent = create();
     expect(agent.name).toBe("claude-code");
     expect(agent.processName).toBe("claude");
+    expect(agent.promptDelivery).toBe("post-launch");
   });
 
   it("default export is a valid PluginModule", () => {
@@ -157,27 +158,17 @@ describe("getLaunchCommand", () => {
     expect(cmd).toContain("--model 'claude-opus-4-6'");
   });
 
-  it("shell-escapes prompt argument", () => {
+  it("does not include -p flag (prompt delivered post-launch)", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "Fix the bug" }));
-    expect(cmd).toContain("-p 'Fix the bug'");
+    expect(cmd).not.toContain("-p");
+    expect(cmd).not.toContain("Fix the bug");
   });
 
-  it("escapes dangerous characters in prompt", () => {
-    const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "$(rm -rf /); `evil`; $HOME" }));
-    // Single-quoted strings prevent shell expansion
-    expect(cmd).toContain("-p '$(rm -rf /); `evil`; $HOME'");
-  });
-
-  it("escapes single quotes in prompt using POSIX method", () => {
-    const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "it's a test" }));
-    expect(cmd).toContain("-p 'it'\\''s a test'");
-  });
-
-  it("combines all options", () => {
+  it("combines all options without prompt", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ permissions: "skip", model: "opus", prompt: "Hello" }),
     );
-    expect(cmd).toBe("claude --dangerously-skip-permissions --model 'opus' -p 'Hello'");
+    expect(cmd).toBe("claude --dangerously-skip-permissions --model 'opus'");
   });
 
   it("omits optional flags when not provided", () => {
@@ -185,6 +176,27 @@ describe("getLaunchCommand", () => {
     expect(cmd).not.toContain("--dangerously-skip-permissions");
     expect(cmd).not.toContain("--model");
     expect(cmd).not.toContain("-p");
+  });
+
+  it("includes --append-system-prompt alongside omitted -p", () => {
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({ systemPrompt: "You are a helper", prompt: "Do the task" }),
+    );
+    expect(cmd).toContain("--append-system-prompt");
+    expect(cmd).toContain("You are a helper");
+    // -p as a standalone flag (not substring of --append-system-prompt)
+    expect(cmd).not.toMatch(/\s-p\s/);
+    expect(cmd).not.toContain("Do the task");
+  });
+
+  it("uses systemPromptFile via shell substitution alongside omitted -p", () => {
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({ systemPromptFile: "/tmp/prompt.md", prompt: "Do the task" }),
+    );
+    expect(cmd).toContain('--append-system-prompt "$(cat');
+    expect(cmd).toContain("/tmp/prompt.md");
+    expect(cmd).not.toMatch(/\s-p\s/);
+    expect(cmd).not.toContain("Do the task");
   });
 });
 
