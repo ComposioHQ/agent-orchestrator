@@ -46,11 +46,38 @@ async function gatherSessionInfo(
   scm: SCM,
   projectConfig: ReturnType<typeof loadConfig>,
 ): Promise<SessionInfo> {
-  let branch = session.branch;
-  const status = session.status;
   const summary = session.metadata["summary"] ?? null;
   const prUrl = session.metadata["pr"] ?? null;
   const issue = session.issueId;
+
+  // Short-circuit for exited/archived sessions — skip expensive subprocess calls
+  // (git, tmux, agent introspection, SCM) since the runtime is dead.
+  if (session.activity === "exited") {
+    let prNumber: number | null = null;
+    if (prUrl) {
+      const prMatch = /\/pull\/(\d+)/.exec(prUrl);
+      if (prMatch) prNumber = parseInt(prMatch[1], 10);
+    }
+    return {
+      name: session.id,
+      branch: session.branch,
+      status: session.status,
+      summary,
+      claudeSummary: null,
+      pr: prUrl,
+      prNumber,
+      issue,
+      lastActivity: session.lastActivityAt ? formatAge(session.lastActivityAt.getTime()) : "-",
+      project: session.projectId,
+      ciStatus: null,
+      reviewDecision: null,
+      pendingThreads: null,
+      activity: "exited",
+    };
+  }
+
+  let branch = session.branch;
+  const status = session.status;
 
   // Get live branch from worktree if available
   if (session.workspacePath) {
@@ -159,13 +186,14 @@ function printTableHeader(): void {
   console.log(chalk.dim(`  ${"─".repeat(totalWidth)}`));
 }
 
-function printSessionRow(info: SessionInfo): void {
+function printSessionRow(info: SessionInfo, dimmed = false): void {
   const prStr = info.prNumber ? `#${info.prNumber}` : "-";
+  const nameStyle = dimmed ? chalk.dim : chalk.green;
 
   const row =
-    padCol(chalk.green(info.name), COL.session) +
-    padCol(info.branch ? chalk.cyan(info.branch) : chalk.dim("-"), COL.branch) +
-    padCol(info.prNumber ? chalk.blue(prStr) : chalk.dim(prStr), COL.pr) +
+    padCol(nameStyle(info.name), COL.session) +
+    padCol(info.branch ? (dimmed ? chalk.dim(info.branch) : chalk.cyan(info.branch)) : chalk.dim("-"), COL.branch) +
+    padCol(info.prNumber ? (dimmed ? chalk.dim(prStr) : chalk.blue(prStr)) : chalk.dim(prStr), COL.pr) +
     padCol(ciStatusIcon(info.ciStatus), COL.ci) +
     padCol(reviewDecisionIcon(info.reviewDecision), COL.review) +
     padCol(
@@ -186,13 +214,31 @@ function printSessionRow(info: SessionInfo): void {
   }
 }
 
+/** Check if a session matches a search query (case-insensitive). */
+function matchesSearch(info: SessionInfo, query: string): boolean {
+  const q = query.toLowerCase();
+  return (
+    info.name.toLowerCase().includes(q) ||
+    (info.branch?.toLowerCase().includes(q) ?? false) ||
+    (info.pr?.toLowerCase().includes(q) ?? false) ||
+    (info.prNumber !== null && String(info.prNumber).includes(q)) ||
+    (info.issue?.toLowerCase().includes(q) ?? false) ||
+    (info.summary?.toLowerCase().includes(q) ?? false) ||
+    (info.claudeSummary?.toLowerCase().includes(q) ?? false) ||
+    (info.project?.toLowerCase().includes(q) ?? false)
+  );
+}
+
 export function registerStatus(program: Command): void {
   program
     .command("status")
     .description("Show all sessions with branch, activity, PR, and CI status")
     .option("-p, --project <id>", "Filter by project ID")
     .option("--json", "Output as JSON")
-    .action(async (opts: { project?: string; json?: boolean }) => {
+    .option("-a, --all", "Include exited/archived sessions")
+    .option("--state <state>", "Filter by session state (active, exited)")
+    .option("-s, --search <query>", "Search sessions by PR, branch, issue, or summary")
+    .action(async (opts: { project?: string; json?: boolean; all?: boolean; state?: string; search?: string }) => {
       let config: ReturnType<typeof loadConfig>;
       try {
         config = loadConfig();
@@ -208,9 +254,14 @@ export function registerStatus(program: Command): void {
         process.exit(1);
       }
 
+      // Determine whether to include archived sessions
+      const includeArchived = opts.all || opts.state === "exited" || !!opts.search;
+
       // Use session manager to list sessions (metadata-based, not tmux-based)
       const sm = await getSessionManager(config);
-      const sessions = await sm.list(opts.project);
+      const sessions = includeArchived
+        ? await sm.listAll(opts.project)
+        : await sm.list(opts.project);
 
       if (!opts.json) {
         console.log(banner("AGENT ORCHESTRATOR STATUS"));
@@ -227,7 +278,8 @@ export function registerStatus(program: Command): void {
 
       // Show projects that have no sessions too (if not filtered)
       const projectIds = opts.project ? [opts.project] : Object.keys(config.projects);
-      let totalSessions = 0;
+      let totalActive = 0;
+      let totalExited = 0;
       const jsonOutput: SessionInfo[] = [];
 
       for (const projectId of projectIds) {
@@ -255,21 +307,75 @@ export function registerStatus(program: Command): void {
           continue;
         }
 
-        totalSessions += projectSessions.length;
-
-        if (!opts.json) {
-          printTableHeader();
-        }
-
         // Gather all session info in parallel
         const infoPromises = projectSessions.map((s) => gatherSessionInfo(s, agent, scm, config));
-        const sessionInfos = await Promise.all(infoPromises);
+        const allInfos = await Promise.all(infoPromises);
 
-        for (const info of sessionInfos) {
-          if (opts.json) {
-            jsonOutput.push(info);
-          } else {
-            printSessionRow(info);
+        // Apply search filter if specified
+        let filteredInfos = allInfos;
+        if (opts.search) {
+          filteredInfos = allInfos.filter((info) => matchesSearch(info, opts.search!));
+        }
+
+        // Apply state filter
+        if (opts.state === "exited") {
+          filteredInfos = filteredInfos.filter((info) => info.activity === "exited");
+        } else if (opts.state === "active") {
+          filteredInfos = filteredInfos.filter((info) => info.activity !== "exited");
+        }
+
+        // Separate active and exited sessions
+        const activeSessions = filteredInfos.filter((info) => info.activity !== "exited");
+        const exitedSessions = filteredInfos.filter((info) => info.activity === "exited");
+
+        totalActive += activeSessions.length;
+        totalExited += exitedSessions.length;
+
+        if (filteredInfos.length === 0) {
+          if (!opts.json) {
+            let label = "(no active sessions)";
+            if (opts.search) label = "(no matching sessions)";
+            else if (opts.state === "exited") label = "(no exited sessions)";
+            else if (opts.state === "active") label = "(no active sessions)";
+            console.log(chalk.dim(`  ${label}`));
+            console.log();
+          }
+          continue;
+        }
+
+        // Print active sessions
+        if (activeSessions.length > 0) {
+          if (!opts.json) {
+            printTableHeader();
+          }
+          for (const info of activeSessions) {
+            if (opts.json) {
+              jsonOutput.push(info);
+            } else {
+              printSessionRow(info);
+            }
+          }
+          if (!opts.json && exitedSessions.length > 0) {
+            console.log();
+          }
+        }
+
+        // Print exited sessions with dimmed styling
+        if (exitedSessions.length > 0) {
+          if (!opts.json) {
+            if (activeSessions.length > 0 || includeArchived) {
+              console.log(chalk.dim(`  ── exited sessions ──`));
+            }
+            if (activeSessions.length === 0) {
+              printTableHeader();
+            }
+          }
+          for (const info of exitedSessions) {
+            if (opts.json) {
+              jsonOutput.push(info);
+            } else {
+              printSessionRow(info, true);
+            }
           }
         }
 
@@ -281,9 +387,17 @@ export function registerStatus(program: Command): void {
       if (opts.json) {
         console.log(JSON.stringify(jsonOutput, null, 2));
       } else {
+        const parts: string[] = [];
+        if (totalActive > 0 || !includeArchived) {
+          parts.push(`${totalActive} active session${totalActive !== 1 ? "s" : ""}`);
+        }
+        if (totalExited > 0) {
+          parts.push(`${totalExited} exited session${totalExited !== 1 ? "s" : ""}`);
+        }
+        const summary = parts.length > 0 ? parts.join(", ") : "0 sessions";
         console.log(
           chalk.dim(
-            `  ${totalSessions} active session${totalSessions !== 1 ? "s" : ""} across ${projectIds.length} project${projectIds.length !== 1 ? "s" : ""}`,
+            `  ${summary} across ${projectIds.length} project${projectIds.length !== 1 ? "s" : ""}`,
           ),
         );
         console.log();

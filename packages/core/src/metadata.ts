@@ -260,6 +260,89 @@ export function listMetadata(dataDir: string): SessionId[] {
 }
 
 /**
+ * List all unique session IDs that have archived metadata files.
+ * Archive files are named `<sessionId>_<ISO-timestamp>` inside `<dataDir>/archive/`.
+ */
+export function listArchivedMetadata(dataDir: string): SessionId[] {
+  const archiveDir = join(dataDir, "archive");
+  if (!existsSync(archiveDir)) return [];
+
+  const seen = new Set<string>();
+  for (const file of readdirSync(archiveDir)) {
+    if (file.startsWith(".")) continue;
+    // Extract sessionId from `<sessionId>_<ISO-timestamp>` format
+    const lastUnderscoreIdx = file.lastIndexOf("_");
+    if (lastUnderscoreIdx === -1) continue;
+    const sessionId = file.slice(0, lastUnderscoreIdx);
+    // Verify the separator is followed by a digit (start of ISO timestamp)
+    const charAfterSep = file[lastUnderscoreIdx + 1];
+    if (!charAfterSep || charAfterSep < "0" || charAfterSep > "9") continue;
+    if (sessionId && VALID_SESSION_ID.test(sessionId)) {
+      seen.add(sessionId);
+    }
+  }
+  return Array.from(seen);
+}
+
+export interface ArchivedSessionEntry {
+  sessionId: SessionId;
+  raw: Record<string, string>;
+  createdAt: Date | undefined;
+  modifiedAt: Date | undefined;
+}
+
+/**
+ * Scan the archive directory once and return metadata + file timestamps
+ * for each unique session. Reads the directory only once (O(F) where F is
+ * the total number of archive files), avoiding the O(N×F) cost of calling
+ * listArchivedMetadata + readArchivedMetadataRaw + statSync per session.
+ */
+export function scanArchivedSessions(dataDir: string): ArchivedSessionEntry[] {
+  const archiveDir = join(dataDir, "archive");
+  if (!existsSync(archiveDir)) return [];
+
+  // Single directory read — build a map of sessionId → latest filename
+  const latestFiles = new Map<string, string>();
+  for (const file of readdirSync(archiveDir)) {
+    if (file.startsWith(".")) continue;
+    const lastUnderscoreIdx = file.lastIndexOf("_");
+    if (lastUnderscoreIdx === -1) continue;
+    const sessionId = file.slice(0, lastUnderscoreIdx);
+    const charAfterSep = file[lastUnderscoreIdx + 1];
+    if (!charAfterSep || charAfterSep < "0" || charAfterSep > "9") continue;
+    if (!sessionId || !VALID_SESSION_ID.test(sessionId)) continue;
+
+    const existing = latestFiles.get(sessionId);
+    if (!existing || file > existing) {
+      latestFiles.set(sessionId, file);
+    }
+  }
+
+  // Read metadata + stats for the latest file of each session
+  const results: ArchivedSessionEntry[] = [];
+  for (const [sessionId, latestFile] of latestFiles) {
+    const filePath = join(archiveDir, latestFile);
+    try {
+      const raw = parseMetadataFile(readFileSync(filePath, "utf-8"));
+      let createdAt: Date | undefined;
+      let modifiedAt: Date | undefined;
+      try {
+        const stats = statSync(filePath);
+        createdAt = stats.birthtime;
+        modifiedAt = stats.mtime;
+      } catch {
+        // stat failed — timestamps will default in caller
+      }
+      results.push({ sessionId, raw, createdAt, modifiedAt });
+    } catch {
+      // File read failed — skip this session
+    }
+  }
+
+  return results;
+}
+
+/**
  * Atomically reserve a session ID by creating its metadata file with O_EXCL.
  * Returns true if the ID was successfully reserved, false if it already exists.
  */
