@@ -181,8 +181,8 @@ export function create(config?: Record<string, unknown>): Workspace {
         // mountpoint -q returns 0 if it's a mountpoint
         return true;
       } catch {
-        // Not a mountpoint — directory exists but overlay is not mounted
-        return existsSync(workspacePath);
+        // Directory alone is not enough; unmounted overlays should be treated as missing.
+        return false;
       }
     },
 
@@ -191,6 +191,8 @@ export function create(config?: Record<string, unknown>): Workspace {
       workspacePath: string,
     ): Promise<WorkspaceInfo> {
       assertLinux();
+      assertSafePathSegment(cfg.projectId, "projectId");
+      assertSafePathSegment(cfg.sessionId, "sessionId");
       const sessionDir = assertManagedMergedPath(workspacePath);
 
       const projectPath = expandPath(cfg.project.path);

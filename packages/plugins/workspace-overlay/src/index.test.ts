@@ -279,13 +279,12 @@ describe("workspace.exists()", () => {
     expect(await ws.exists("/mock-home/.ao-overlays/myproject/session-1/merged")).toBe(true);
   });
 
-  it("returns existsSync value when mountpoint check fails", async () => {
+  it("returns false when mountpoint check fails", async () => {
     const ws = create();
-    mockExistsSync.mockReturnValueOnce(true); // first check
+    mockExistsSync.mockReturnValueOnce(true); // path exists
     mockCmdError("not a mountpoint"); // mountpoint fails
-    mockExistsSync.mockReturnValueOnce(true); // fallback check
 
-    expect(await ws.exists("/mock-home/.ao-overlays/myproject/session-1/merged")).toBe(true);
+    expect(await ws.exists("/mock-home/.ao-overlays/myproject/session-1/merged")).toBe(false);
   });
 });
 
@@ -324,6 +323,17 @@ describe("workspace.restore()", () => {
     await expect(
       ws.restore(makeCreateConfig(), "/tmp/random/merged"),
     ).rejects.toThrow('Refusing to manage overlay path outside "/mock-home/.ao-overlays"');
+  });
+
+  it("rejects invalid sessionId during restore", async () => {
+    const ws = create();
+
+    await expect(
+      ws.restore(
+        makeCreateConfig({ sessionId: "../escape" }),
+        "/mock-home/.ao-overlays/myproject/session-1/merged",
+      ),
+    ).rejects.toThrow('Invalid sessionId "../escape"');
   });
 });
 
