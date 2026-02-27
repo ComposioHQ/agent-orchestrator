@@ -744,7 +744,7 @@ describe("cleanup", () => {
     expect(result.skipped).toContain("app-1");
   });
 
-  it("skips orchestrator sessions even with dead runtimes", async () => {
+  it("skips orchestrator sessions by role metadata", async () => {
     const deadRuntime: Runtime = {
       ...mockRuntime,
       isAlive: vi.fn().mockResolvedValue(false),
@@ -759,6 +759,39 @@ describe("cleanup", () => {
       }),
     };
 
+    // Session with role=orchestrator but a non-standard name
+    writeMetadata(sessionsDir, "app-orchestrator", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      role: "orchestrator",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-orch")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithDead });
+    const result = await sm.cleanup();
+
+    expect(result.killed).toHaveLength(0);
+    expect(result.skipped).toContain("app-orchestrator");
+  });
+
+  it("skips orchestrator sessions by name fallback (no role metadata)", async () => {
+    const deadRuntime: Runtime = {
+      ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(false),
+    };
+    const registryWithDead: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return deadRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+
+    // Pre-existing orchestrator session without role field
     writeMetadata(sessionsDir, "app-orchestrator", {
       worktree: "/tmp",
       branch: "main",
