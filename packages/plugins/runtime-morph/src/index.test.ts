@@ -239,7 +239,7 @@ describe("runtime.destroy()", () => {
 });
 
 describe("runtime.sendMessage()", () => {
-  it("POSTs exec command with the message", async () => {
+  it("POSTs exec command with the message using printf", async () => {
     const fetchMock = mockMorphOk();
     vi.stubGlobal("fetch", fetchMock);
 
@@ -250,8 +250,23 @@ describe("runtime.sendMessage()", () => {
     expect(url).toContain("/sandboxes/sbx-msg/exec");
     expect(opts.method).toBe("POST");
     const body = JSON.parse(opts.body);
+    expect(body.command).toContain("printf");
     expect(body.command).toContain("hello world");
+    expect(body.command).not.toMatch(/echo\s+/);
     expect(body.workdir).toBe("/");
+  });
+
+  it("wraps message in single quotes to prevent shell injection", async () => {
+    const fetchMock = mockMorphOk();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const runtime = create();
+    await runtime.sendMessage(makeHandle("sbx-msg"), "$(rm -rf /)");
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    // shellEscape wraps in single quotes — $(rm -rf /) becomes '$(rm -rf /)'
+    expect(body.command).toContain("'$(rm -rf /)'");
+    expect(body.command).toContain("printf");
   });
 });
 
