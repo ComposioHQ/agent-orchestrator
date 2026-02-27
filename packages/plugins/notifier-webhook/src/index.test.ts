@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { OrchestratorEvent, NotifyAction } from "@composio/ao-core";
-import { manifest, create } from "./index.js";
+import pluginDefault, { manifest, create } from "./index.js";
 
 function makeEvent(overrides: Partial<OrchestratorEvent> = {}): OrchestratorEvent {
   return {
@@ -23,6 +23,13 @@ describe("notifier-webhook", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  describe("default export", () => {
+    it("is a valid PluginModule", () => {
+      expect(pluginDefault.manifest).toBe(manifest);
+      expect(typeof pluginDefault.create).toBe("function");
+    });
   });
 
   describe("manifest", () => {
