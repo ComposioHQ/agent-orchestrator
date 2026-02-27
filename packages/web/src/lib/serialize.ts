@@ -260,6 +260,17 @@ export function enrichSessionIssue(
 ): void {
   if (!dashboard.issueUrl) return;
 
+  // If issueUrl is a bare ID (e.g. "42" or "#42") rather than a full URL,
+  // construct the full URL via the tracker plugin.
+  // GitHub tracker stores the raw issue number; Linear stores the full URL.
+  if (!dashboard.issueUrl.startsWith("http") && tracker.issueUrl) {
+    try {
+      dashboard.issueUrl = tracker.issueUrl(dashboard.issueUrl, project);
+    } catch {
+      // Leave as-is if construction fails
+    }
+  }
+
   // Use tracker plugin to extract human-readable label from URL
   if (tracker.issueLabel) {
     try {
