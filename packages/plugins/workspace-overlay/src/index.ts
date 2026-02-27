@@ -151,7 +151,7 @@ export function create(config?: Record<string, unknown>): Workspace {
           const { stdout } = await execFileAsync(
             "git",
             ["branch", "--show-current"],
-            { cwd: mergedDir, timeout: 30_000 },
+            { cwd: mergedDir, timeout: MOUNT_TIMEOUT },
           );
           branch = stdout.trim() || "unknown";
         } catch {
@@ -176,7 +176,7 @@ export function create(config?: Record<string, unknown>): Workspace {
         await execFileAsync(
           "mountpoint",
           ["-q", workspacePath],
-          { timeout: 30_000 },
+          { timeout: MOUNT_TIMEOUT },
         );
         // mountpoint -q returns 0 if it's a mountpoint
         return true;
