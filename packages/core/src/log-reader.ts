@@ -261,8 +261,9 @@ export function computeApiStats(entries: ApiLogEntry[]): ApiPerfResult {
 
   let latestCacheStats: ApiLogEntry["cacheStats"] | null = null;
   for (let i = entries.length - 1; i >= 0; i--) {
-    if (entries[i].cacheStats) {
-      latestCacheStats = entries[i].cacheStats!;
+    const stats = entries[i].cacheStats;
+    if (stats) {
+      latestCacheStats = stats;
       break;
     }
   }

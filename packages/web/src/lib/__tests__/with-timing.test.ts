@@ -28,7 +28,7 @@ describe("withTiming", () => {
       new Response(JSON.stringify({ ok: true }), { status: 200 }),
     );
 
-    const wrapped = withTiming(innerHandler, "test-route");
+    const wrapped = withTiming(innerHandler);
     const req = new Request("http://localhost:3000/api/sessions");
     await wrapped(req);
 
@@ -42,7 +42,7 @@ describe("withTiming", () => {
     );
     const ctx = { params: { id: "abc" } };
 
-    const wrapped = withTiming(innerHandler, "test-route");
+    const wrapped = withTiming(innerHandler);
     const req = new Request("http://localhost:3000/api/sessions/abc");
     await wrapped(req, ctx);
 
@@ -57,7 +57,7 @@ describe("withTiming", () => {
     });
     const innerHandler = vi.fn().mockResolvedValue(originalResponse);
 
-    const wrapped = withTiming(innerHandler, "test-route");
+    const wrapped = withTiming(innerHandler);
     const req = new Request("http://localhost:3000/api/sessions");
     const result = await wrapped(req);
 
@@ -70,7 +70,7 @@ describe("withTiming", () => {
       new Response("ok", { status: 200 }),
     );
 
-    const wrapped = withTiming(innerHandler, "test-route");
+    const wrapped = withTiming(innerHandler);
     const req = new Request("http://localhost:3000/api/sessions");
     await wrapped(req);
 
@@ -91,7 +91,7 @@ describe("withTiming", () => {
       new Response("created", { status: 201 }),
     );
 
-    const wrapped = withTiming(innerHandler, "test-route");
+    const wrapped = withTiming(innerHandler);
     const req = new Request("http://localhost:3000/api/spawn", {
       method: "POST",
       body: JSON.stringify({ session: "ao-1" }),
@@ -108,7 +108,7 @@ describe("withTiming", () => {
       new Response("not found", { status: 404 }),
     );
 
-    const wrapped = withTiming(innerHandler, "test-route");
+    const wrapped = withTiming(innerHandler);
     const req = new Request("http://localhost:3000/api/sessions/unknown");
     await wrapped(req);
 
@@ -123,7 +123,7 @@ describe("withTiming", () => {
       new Response("internal error", { status: 500 }),
     );
 
-    const wrapped = withTiming(innerHandler, "test-route");
+    const wrapped = withTiming(innerHandler);
     const req = new Request("http://localhost:3000/api/sessions");
     await wrapped(req);
 
@@ -137,7 +137,7 @@ describe("withTiming", () => {
       new Error("database connection failed"),
     );
 
-    const wrapped = withTiming(innerHandler, "test-route");
+    const wrapped = withTiming(innerHandler);
     const req = new Request("http://localhost:3000/api/sessions");
     const result = await wrapped(req);
 
@@ -155,7 +155,7 @@ describe("withTiming", () => {
   it("handles non-Error thrown values", async () => {
     const innerHandler = vi.fn().mockRejectedValue("string error");
 
-    const wrapped = withTiming(innerHandler, "test-route");
+    const wrapped = withTiming(innerHandler);
     const req = new Request("http://localhost:3000/api/sessions");
     const result = await wrapped(req);
 
@@ -171,7 +171,7 @@ describe("withTiming", () => {
       return new Response("ok", { status: 200 });
     });
 
-    const wrapped = withTiming(innerHandler, "test-route");
+    const wrapped = withTiming(innerHandler);
     const req = new Request("http://localhost:3000/api/sessions");
     await wrapped(req);
 
@@ -188,7 +188,7 @@ describe("extractSessionId (indirect via withTiming)", () => {
       new Response("ok", { status: 200 }),
     );
 
-    const wrapped = withTiming(innerHandler, "test-route");
+    const wrapped = withTiming(innerHandler);
     const req = new Request("http://localhost:3000/api/sessions/abc123");
     await wrapped(req);
 
@@ -201,7 +201,7 @@ describe("extractSessionId (indirect via withTiming)", () => {
       new Response("ok", { status: 200 }),
     );
 
-    const wrapped = withTiming(innerHandler, "test-route");
+    const wrapped = withTiming(innerHandler);
     const req = new Request("http://localhost:3000/api/sessions/ao-1/kill");
     await wrapped(req);
 
@@ -214,7 +214,7 @@ describe("extractSessionId (indirect via withTiming)", () => {
       new Response("ok", { status: 200 }),
     );
 
-    const wrapped = withTiming(innerHandler, "test-route");
+    const wrapped = withTiming(innerHandler);
     const req = new Request("http://localhost:3000/api/sessions");
     await wrapped(req);
 
@@ -227,7 +227,7 @@ describe("extractSessionId (indirect via withTiming)", () => {
       new Response("ok", { status: 200 }),
     );
 
-    const wrapped = withTiming(innerHandler, "test-route");
+    const wrapped = withTiming(innerHandler);
     const req = new Request("http://localhost:3000/api/prs/42/merge");
     await wrapped(req);
 
@@ -240,7 +240,7 @@ describe("extractSessionId (indirect via withTiming)", () => {
       new Response("ok", { status: 200 }),
     );
 
-    const wrapped = withTiming(innerHandler, "test-route");
+    const wrapped = withTiming(innerHandler);
     const req = new Request("http://localhost:3000/api/config");
     await wrapped(req);
 
@@ -253,7 +253,7 @@ describe("extractSessionId (indirect via withTiming)", () => {
       new Response("ok", { status: 200 }),
     );
 
-    const wrapped = withTiming(innerHandler, "test-route");
+    const wrapped = withTiming(innerHandler);
     const req = new Request(
       "http://localhost:3000/api/sessions/session%20with%20spaces",
     );

@@ -20,7 +20,7 @@ function extractSessionId(path: string): string | null {
  * Wrap a route handler with timing instrumentation.
  * Logs method, path, status code, and duration for every request.
  */
-export function withTiming(handler: RouteHandler, _routeName: string): RouteHandler {
+export function withTiming(handler: RouteHandler): RouteHandler {
   return async (req: Request, ctx?: unknown) => {
     const start = Date.now();
     const url = new URL(req.url);
