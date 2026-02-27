@@ -19,7 +19,8 @@
     "@composio/ao-plugin-runtime-process": "workspace:*",
     "@composio/ao-plugin-workspace-worktree": "workspace:*",
     "@composio/ao-plugin-workspace-clone": "workspace:*",
-    "@composio/ao-plugin-tracker-linear": "workspace:*"
+    "@composio/ao-plugin-tracker-linear": "workspace:*",
+    "@composio/ao-plugin-tracker-jira": "workspace:*"
   },
   "devDependencies": {
     "@composio/ao-plugin-notifier-desktop": "workspace:*",
