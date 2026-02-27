@@ -13,8 +13,8 @@ import {
   type Session,
   type WorkspaceHooksConfig,
 } from "@composio/ao-core";
-import { execFile } from "node:child_process";
-import { createReadStream } from "node:fs";
+import { execFile, execFileSync } from "node:child_process";
+import { createReadStream, existsSync } from "node:fs";
 import { writeFile, mkdir, readFile, readdir, rename, stat, lstat, open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
@@ -391,32 +391,30 @@ async function sessionFileMatchesCwd(
   return false;
 }
 
-/**
- * Find Codex session files whose `session_meta` cwd matches the given workspace path.
- * Recursively scans ~/.codex/sessions/ (date-sharded: YYYY/MM/DD/rollout-*.jsonl).
- * Returns the path to the most recently modified matching file, or null.
- */
-async function findCodexSessionFile(workspacePath: string): Promise<string | null> {
+interface SessionFileMatch {
+  path: string;
+  mtimeMs: number;
+}
+
+/** Find all matching session files with mtimes for smarter per-session selection. */
+async function findCodexSessionFiles(workspacePath: string): Promise<SessionFileMatch[]> {
   const jsonlFiles = await collectJsonlFiles(CODEX_SESSIONS_DIR);
-  if (jsonlFiles.length === 0) return null;
+  if (jsonlFiles.length === 0) return [];
 
-  let bestMatch: { path: string; mtime: number } | null = null;
-
+  const matches: SessionFileMatch[] = [];
   for (const filePath of jsonlFiles) {
-    const matches = await sessionFileMatchesCwd(filePath, workspacePath);
-    if (matches) {
-      try {
-        const s = await stat(filePath);
-        if (!bestMatch || s.mtimeMs > bestMatch.mtime) {
-          bestMatch = { path: filePath, mtime: s.mtimeMs };
-        }
-      } catch {
-        // Skip if stat fails
-      }
+    const matchesCwd = await sessionFileMatchesCwd(filePath, workspacePath);
+    if (!matchesCwd) continue;
+    try {
+      const s = await stat(filePath);
+      matches.push({ path: filePath, mtimeMs: s.mtimeMs });
+    } catch {
+      // Skip unreadable files
     }
   }
 
-  return bestMatch?.path ?? null;
+  matches.sort((a, b) => a.mtimeMs - b.mtimeMs);
+  return matches;
 }
 
 /** Aggregated data extracted from a Codex session file via streaming */
@@ -473,6 +471,17 @@ async function streamCodexSessionData(filePath: string): Promise<CodexSessionDat
 // Binary Resolution
 // =============================================================================
 
+/** Common fallback locations for the Codex binary (npm global, Homebrew, Cargo). */
+function getCodexCandidates(): string[] {
+  const home = homedir();
+  return [
+    "/usr/local/bin/codex",
+    "/opt/homebrew/bin/codex",
+    join(home, ".cargo", "bin", "codex"),
+    join(home, ".npm", "bin", "codex"),
+  ];
+}
+
 /**
  * Resolve the Codex CLI binary path.
  * Checks (in order): which, common fallback locations.
@@ -489,15 +498,7 @@ export async function resolveCodexBinary(): Promise<string> {
   }
 
   // 2. Check common locations (npm global, Homebrew, Cargo — Codex is now Rust-based)
-  const home = homedir();
-  const candidates = [
-    "/usr/local/bin/codex",
-    "/opt/homebrew/bin/codex",
-    join(home, ".cargo", "bin", "codex"),
-    join(home, ".npm", "bin", "codex"),
-  ];
-
-  for (const candidate of candidates) {
+  for (const candidate of getCodexCandidates()) {
     try {
       await stat(candidate);
       return candidate;
@@ -507,6 +508,26 @@ export async function resolveCodexBinary(): Promise<string> {
   }
 
   // 3. Fallback: let the shell resolve it
+  return "codex";
+}
+
+/** Sync binary resolution for getLaunchCommand (must not be async). */
+function resolveCodexBinarySync(): string {
+  try {
+    const resolved = execFileSync("which", ["codex"], {
+      encoding: "utf-8",
+      timeout: 500,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    if (resolved) return resolved;
+  } catch {
+    // Not found via which
+  }
+
+  for (const candidate of getCodexCandidates()) {
+    if (existsSync(candidate)) return candidate;
+  }
+
   return "codex";
 }
 
@@ -544,17 +565,87 @@ const SESSION_FILE_CACHE_TTL_MS = 30_000;
 
 /** Module-level session file cache shared across the agent instance lifetime.
  *  Keyed by workspace path, stores the resolved file path and an expiry timestamp. */
-const sessionFileCache = new Map<string, { path: string | null; expiry: number }>();
+const sessionFileCache = new Map<string, { matches: SessionFileMatch[]; expiry: number }>();
+const sessionFileBySessionId = new Map<string, string>();
 
-/** Find session file with caching to avoid double scans per refresh cycle */
-async function findCodexSessionFileCached(workspacePath: string): Promise<string | null> {
+/** Find session files with caching to avoid double scans per refresh cycle */
+async function findCodexSessionFilesCached(workspacePath: string): Promise<SessionFileMatch[]> {
   const cached = sessionFileCache.get(workspacePath);
   if (cached && Date.now() < cached.expiry) {
-    return cached.path;
+    return cached.matches;
   }
-  const result = await findCodexSessionFile(workspacePath);
-  sessionFileCache.set(workspacePath, { path: result, expiry: Date.now() + SESSION_FILE_CACHE_TTL_MS });
-  return result;
+  const matches = await findCodexSessionFiles(workspacePath);
+  sessionFileCache.set(workspacePath, { matches, expiry: Date.now() + SESSION_FILE_CACHE_TTL_MS });
+  return matches;
+}
+
+/** Resolve and pin a session file per AO session to avoid cross-session mix-ups in shared workspaces. */
+async function findCodexSessionFileForSession(session: Session): Promise<string | null> {
+  if (!session.workspacePath) return null;
+
+  const pinned = sessionFileBySessionId.get(session.id);
+  if (pinned) {
+    try {
+      await stat(pinned);
+      return pinned;
+    } catch {
+      sessionFileBySessionId.delete(session.id);
+    }
+  }
+
+  const allMatches = await findCodexSessionFilesCached(session.workspacePath);
+  if (allMatches.length === 0) return null;
+
+  // Exclude files already pinned to OTHER sessions to prevent cross-session mix-ups.
+  const pinnedElsewhere = new Set(
+    [...sessionFileBySessionId.entries()]
+      .filter(([id]) => id !== session.id)
+      .map(([, path]) => path),
+  );
+  const matches = allMatches.filter((m) => !pinnedElsewhere.has(m.path));
+  // Fall back to all matches if every candidate is pinned (e.g. single-session workspace)
+  const candidates = matches.length > 0 ? matches : allMatches;
+
+  const createdAtMs = session.createdAt?.getTime();
+  const pickBestMatch = (candidates: SessionFileMatch[]): SessionFileMatch | undefined => {
+    if (candidates.length === 0) return undefined;
+
+    if (Number.isFinite(createdAtMs)) {
+      // Prefer files that appeared around this session's start time.
+      const startWindowMs = (createdAtMs as number) - 60_000;
+      const nearStart = candidates.filter((m) => m.mtimeMs >= startWindowMs);
+      if (nearStart.length > 0) {
+        nearStart.sort((a, b) => a.mtimeMs - b.mtimeMs);
+        return nearStart[0];
+      }
+    }
+
+    // Fallback to previous behavior: latest matching file.
+    return candidates[candidates.length - 1];
+  };
+
+  let selected = pickBestMatch(candidates);
+  if (!selected) return null;
+
+  // Cached matches can contain stale paths if files were deleted after the
+  // previous scan. Verify before pinning and refresh once if needed.
+  try {
+    await stat(selected.path);
+  } catch {
+    sessionFileCache.delete(session.workspacePath);
+    const freshAll = await findCodexSessionFilesCached(session.workspacePath);
+    const freshCandidates = freshAll.filter((m) => !pinnedElsewhere.has(m.path));
+    selected = pickBestMatch(freshCandidates.length > 0 ? freshCandidates : freshAll);
+    if (!selected) return null;
+    try {
+      await stat(selected.path);
+    } catch {
+      return null;
+    }
+  }
+
+  sessionFileBySessionId.set(session.id, selected.path);
+  return selected.path;
 }
 
 function createCodexAgent(): Agent {
@@ -568,7 +659,9 @@ function createCodexAgent(): Agent {
     processName: "codex",
 
     getLaunchCommand(config: AgentLaunchConfig): string {
-      const binary = resolvedBinary ?? "codex";
+      // Resolve eagerly for first launch (postLaunchSetup runs too late).
+      resolvedBinary ??= resolveCodexBinarySync();
+      const binary = resolvedBinary;
       const parts: string[] = [shellEscape(binary)];
 
       appendApprovalFlags(parts, config.permissions as string | undefined);
@@ -631,16 +724,22 @@ function createCodexAgent(): Agent {
 
       // Check if process is running first
       const exitedAt = new Date();
-      if (!session.runtimeHandle) return { state: "exited", timestamp: exitedAt };
+      if (!session.runtimeHandle) {
+        cleanupSessionFilePin(session.id);
+        return { state: "exited", timestamp: exitedAt };
+      }
       const running = await this.isProcessRunning(session.runtimeHandle);
-      if (!running) return { state: "exited", timestamp: exitedAt };
+      if (!running) {
+        cleanupSessionFilePin(session.id);
+        return { state: "exited", timestamp: exitedAt };
+      }
 
       // Use session file mtime as a proxy for activity. Codex continuously
       // appends to its rollout JSONL file while working, so a recently
       // modified file means the agent is active.
       if (!session.workspacePath) return null;
 
-      const sessionFile = await findCodexSessionFileCached(session.workspacePath);
+      const sessionFile = await findCodexSessionFileForSession(session);
       if (!sessionFile) return null;
 
       try {
@@ -714,7 +813,7 @@ function createCodexAgent(): Agent {
     async getSessionInfo(session: Session): Promise<AgentSessionInfo | null> {
       if (!session.workspacePath) return null;
 
-      const sessionFile = await findCodexSessionFileCached(session.workspacePath);
+      const sessionFile = await findCodexSessionFileForSession(session);
       if (!sessionFile) return null;
 
       // Stream the file line-by-line to avoid loading potentially huge
@@ -746,7 +845,7 @@ function createCodexAgent(): Agent {
       if (!session.workspacePath) return null;
 
       // Find the Codex session file for this workspace
-      const sessionFile = await findCodexSessionFileCached(session.workspacePath);
+      const sessionFile = await findCodexSessionFileForSession(session);
       if (!sessionFile) return null;
 
       // Stream the file line-by-line to avoid loading potentially huge
@@ -777,7 +876,7 @@ function createCodexAgent(): Agent {
     async postLaunchSetup(session: Session): Promise<void> {
       // Resolve binary path on first launch (cached for subsequent calls).
       // Uses a promise guard to prevent concurrent calls from racing.
-      if (!resolvedBinary) {
+      if (!resolvedBinary || resolvedBinary === "codex") {
         if (!resolvingBinary) {
           resolvingBinary = resolveCodexBinary();
         }
@@ -801,9 +900,18 @@ export function create(): Agent {
   return createCodexAgent();
 }
 
-/** @internal Clear the session file cache. Exported for testing only. */
+/**
+ * Remove a session's entry from the pinned-file map.
+ * Should be called when a session is destroyed to prevent unbounded map growth.
+ */
+export function cleanupSessionFilePin(sessionId: string): void {
+  sessionFileBySessionId.delete(sessionId);
+}
+
+/** @internal Clear the entire session file cache (testing only). */
 export function _resetSessionFileCache(): void {
   sessionFileCache.clear();
+  sessionFileBySessionId.clear();
 }
 
 export { CodexAppServerClient } from "./app-server-client.js";

@@ -84,8 +84,10 @@ export interface AppServerClientOptions {
   requestTimeout?: number;
   /** Handler for server notifications */
   onNotification?: NotificationHandler;
-  /** Handler for approval requests (auto-accepts if not provided) */
+  /** Handler for approval requests */
   onApproval?: ApprovalHandler;
+  /** Default decision when no approval handler is provided (default: "decline") */
+  defaultApprovalDecision?: ApprovalDecision;
 }
 
 /** Thread start parameters */
@@ -148,6 +150,7 @@ export class CodexAppServerClient extends EventEmitter {
   private readonly requestTimeout: number;
   private readonly onNotification: NotificationHandler | undefined;
   private readonly onApproval: ApprovalHandler | undefined;
+  private readonly defaultApprovalDecision: ApprovalDecision;
 
   constructor(options: AppServerClientOptions = {}) {
     super();
@@ -157,6 +160,7 @@ export class CodexAppServerClient extends EventEmitter {
     this.requestTimeout = options.requestTimeout ?? 60_000;
     this.onNotification = options.onNotification;
     this.onApproval = options.onApproval;
+    this.defaultApprovalDecision = options.defaultApprovalDecision ?? "decline";
   }
 
   /** Whether the client is connected and initialized */
@@ -206,11 +210,15 @@ export class CodexAppServerClient extends EventEmitter {
       await this.initialize();
     } catch (err) {
       this.connecting = false;
+      // Capture whether close() was called externally while we were awaiting
+      // initialize(). If it was, respect that and don't reset closed.
+      const wasExplicitlyClosed = this.closed;
       await this.close();
-      // Reset closed flag so the client can retry connect() after a
-      // transient handshake failure. The guard on line 172 ensures
-      // this.closed is always false when we reach this point.
-      this.closed = false;
+      // Only reset closed flag to allow retry after a transient handshake
+      // failure. If close() was called explicitly from outside, keep it closed.
+      if (!wasExplicitlyClosed) {
+        this.closed = false;
+      }
       throw err;
     }
 
@@ -438,9 +446,13 @@ export class CodexAppServerClient extends EventEmitter {
     // Notification (no id, has method)
     if ("method" in msg && typeof msg.method === "string" && !("id" in msg)) {
       const notification = msg as JsonRpcNotification;
-      this.emit("notification", notification.method, notification.params);
-      if (this.onNotification) {
-        this.onNotification(notification.method, notification.params);
+      try {
+        this.emit("notification", notification.method, notification.params);
+        if (this.onNotification) {
+          this.onNotification(notification.method, notification.params);
+        }
+      } catch {
+        // Swallow listener errors — a bad notification handler must not crash the client
       }
     }
   }
@@ -453,8 +465,7 @@ export class CodexAppServerClient extends EventEmitter {
         const decision = await this.onApproval(request.id, request.method, request.params);
         this.sendApprovalResponse(request.id, decision);
       } else {
-        // Default: auto-accept all approvals
-        this.sendApprovalResponse(request.id, "accept");
+        this.sendApprovalResponse(request.id, this.defaultApprovalDecision);
       }
     } catch {
       // On any error (listener throw or handler rejection), decline the request
