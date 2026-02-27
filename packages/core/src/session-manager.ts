@@ -620,11 +620,12 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       writeFileSync(systemPromptFile, orchestratorConfig.systemPrompt, "utf-8");
     }
 
-    // Get agent launch config — uses systemPromptFile, no issue/tracker interaction
+    // Get agent launch config — uses systemPromptFile, no issue/tracker interaction.
+    // Orchestrator ALWAYS gets skip permissions — it must run ao CLI commands autonomously.
     const agentLaunchConfig = {
       sessionId,
       projectConfig: project,
-      permissions: project.agentConfig?.permissions,
+      permissions: "skip" as const,
       model: project.agentConfig?.model,
       systemPromptFile,
     };
