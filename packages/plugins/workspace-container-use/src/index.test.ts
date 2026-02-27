@@ -346,6 +346,7 @@ describe("workspace.restore()", () => {
     mockCmdSuccess(""); // git worktree add
     mockCmdSuccess(""); // docker rm -f
     mockCmdError("docker run failed"); // docker run
+    mockCmdSuccess(""); // docker rm -f (cleanup)
     mockCmdSuccess(""); // git worktree remove
 
     await expect(
@@ -357,6 +358,11 @@ describe("workspace.restore()", () => {
       ["worktree", "remove", "--force", "/mock-home/.worktrees/myproject/session-1"],
       expect.objectContaining({ cwd: "/repo/path" }),
     );
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "docker",
+      ["rm", "-f", "ao-myproject-session-1"],
+      expect.anything(),
+    );
   });
 
   it("fails restore when workspace path already exists", async () => {
@@ -366,7 +372,7 @@ describe("workspace.restore()", () => {
     await expect(
       ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1"),
     ).rejects.toThrow(
-      'Workspace path "/mock-home/.worktrees/myproject/session-1" already exists for session "session-1"',
+      'Workspace path "/mock-home/.worktrees/myproject/session-1" already exists for session "session-1" — destroy it before restoring',
     );
   });
 });
