@@ -21,6 +21,22 @@ interface DirectTerminalProps {
   height?: string;
 }
 
+/** Copy text to clipboard using a hidden textarea (fallback for non-secure contexts). */
+function fallbackCopy(text: string): void {
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  try {
+    document.execCommand("copy");
+  } catch {
+    console.warn("[DirectTerminal] Fallback clipboard copy failed");
+  }
+  document.body.removeChild(textarea);
+}
+
 /**
  * Direct xterm.js terminal with native WebSocket connection.
  * Implements Extended Device Attributes (XDA) handler to enable
@@ -135,7 +151,7 @@ export function DirectTerminal({
 
         // **CRITICAL FIX**: Register XDA (Extended Device Attributes) handler
         // This makes tmux recognize our terminal and enable clipboard support
-        terminal.parser.registerCsiHandler(
+        const xdaDisposable = terminal.parser.registerCsiHandler(
           { prefix: ">", final: "q" }, // CSI > q is XTVERSION / XDA
           () => {
             // Respond with XTerm identification that tmux recognizes
@@ -147,6 +163,34 @@ export function DirectTerminal({
             return true; // Handled
           },
         );
+
+        // Register OSC 52 handler for clipboard integration
+        // tmux sends clipboard data as: OSC 52 ; c;<base64-data> ST
+        const osc52Disposable = terminal.parser.registerOscHandler(52, (data: string) => {
+          const semicolonIndex = data.indexOf(";");
+          if (semicolonIndex === -1) return false;
+
+          const base64Content = data.substring(semicolonIndex + 1);
+          if (base64Content === "?") {
+            // Query request — not supported, ignore
+            return true;
+          }
+
+          try {
+            const text = atob(base64Content);
+            if (navigator.clipboard && window.isSecureContext) {
+              navigator.clipboard.writeText(text).catch((err) => {
+                console.warn("[DirectTerminal] Clipboard write failed:", err);
+                fallbackCopy(text);
+              });
+            } else {
+              fallbackCopy(text);
+            }
+          } catch (err) {
+            console.warn("[DirectTerminal] Failed to decode OSC 52 data:", err);
+          }
+          return true;
+        });
 
         // Open terminal in DOM
         terminal.open(terminalRef.current);
@@ -229,6 +273,8 @@ export function DirectTerminal({
         cleanup = () => {
           window.removeEventListener("resize", handleResize);
           disposable.dispose();
+          xdaDisposable.dispose();
+          osc52Disposable.dispose();
           websocket.close();
           terminal.dispose();
         };
@@ -366,7 +412,7 @@ export function DirectTerminal({
         <span className={cn("text-[10px] font-medium uppercase tracking-[0.06em]", statusTextColor)}>
           {statusText}
         </span>
-        {/* XDA clipboard badge */}
+        {/* OSC 52 clipboard badge */}
         <span
           className="rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.06em]"
           style={{
@@ -374,7 +420,7 @@ export function DirectTerminal({
             background: `color-mix(in srgb, ${accentColor} 12%, transparent)`,
           }}
         >
-          XDA
+          OSC 52
         </span>
         <button
           onClick={() => setFullscreen(!fullscreen)}
