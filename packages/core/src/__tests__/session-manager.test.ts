@@ -759,8 +759,9 @@ describe("cleanup", () => {
       }),
     };
 
-    // Session with role=orchestrator but a non-standard name
-    writeMetadata(sessionsDir, "app-orchestrator", {
+    // Session with role=orchestrator but a name that does NOT end in "-orchestrator"
+    // so only the role metadata check can protect it (not the name fallback)
+    writeMetadata(sessionsDir, "app-99", {
       worktree: "/tmp",
       branch: "main",
       status: "working",
@@ -773,7 +774,7 @@ describe("cleanup", () => {
     const result = await sm.cleanup();
 
     expect(result.killed).toHaveLength(0);
-    expect(result.skipped).toContain("app-orchestrator");
+    expect(result.skipped).toContain("app-99");
   });
 
   it("skips orchestrator sessions by name fallback (no role metadata)", async () => {
