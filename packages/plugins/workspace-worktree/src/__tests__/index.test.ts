@@ -555,12 +555,37 @@ describe("workspace.list()", () => {
 
     expect(result).toHaveLength(1);
   });
+
+  it("does not include the project root worktree entry", async () => {
+    const ws = create();
+
+    mockExistsSync.mockReturnValueOnce(true);
+    mockReaddirSync.mockReturnValueOnce([{ name: "session-1", isDirectory: () => true }]);
+
+    const porcelainOutput = [
+      "worktree /mock-home/.worktrees/myproject",
+      "HEAD root123",
+      "branch refs/heads/main",
+      "",
+      "worktree /mock-home/.worktrees/myproject/session-1",
+      "HEAD sess123",
+      "branch refs/heads/feat/TEST-1",
+    ].join("\n");
+
+    mockGitSuccess(porcelainOutput);
+
+    const result = await ws.list("myproject");
+
+    expect(result).toHaveLength(1);
+    expect(result[0].path).toBe("/mock-home/.worktrees/myproject/session-1");
+  });
 });
 
 describe("workspace.restore()", () => {
   it("creates parent directory before restoring worktree", async () => {
     const ws = create();
 
+    mockExistsSync.mockReturnValue(false);
     mockGitSuccess(""); // git worktree prune
     mockGitSuccess(""); // git fetch
     mockGitSuccess(""); // git worktree add
@@ -580,6 +605,7 @@ describe("workspace.restore()", () => {
   it("falls back to creating branch from origin when local branch is missing", async () => {
     const ws = create();
 
+    mockExistsSync.mockReturnValue(false);
     mockGitSuccess(""); // git worktree prune
     mockGitSuccess(""); // git fetch
     mockGitError("branch not found"); // git worktree add <path> <branch>
@@ -599,6 +625,51 @@ describe("workspace.restore()", () => {
       ],
       { cwd: "/repo/path" },
     );
+  });
+
+  it("fails restore when workspace path already exists", async () => {
+    const ws = create();
+    mockExistsSync.mockReturnValue(true);
+
+    await expect(
+      ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1"),
+    ).rejects.toThrow(
+      'Workspace path "/mock-home/.worktrees/myproject/session-1" already exists for session "session-1"',
+    );
+  });
+
+  it("cleans up partial restore when all add attempts fail", async () => {
+    const ws = create();
+    mockExistsSync.mockReturnValue(false);
+    mockGitSuccess(""); // git worktree prune
+    mockGitSuccess(""); // git fetch
+    mockGitError("local branch missing"); // add existing branch
+    mockGitError("remote branch missing"); // add from origin
+    mockGitError("base ref missing"); // add from default branch
+    mockGitSuccess(""); // cleanup worktree remove
+
+    await expect(
+      ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1"),
+    ).rejects.toThrow('Failed to restore worktree for branch "feat/TEST-1"');
+
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      ["worktree", "remove", "--force", "/mock-home/.worktrees/myproject/session-1"],
+      { cwd: "/repo/path" },
+    );
+  });
+
+  it("fails restore when workspace path already exists", async () => {
+    const ws = create();
+    const restorePath = "/mock-home/.worktrees/myproject/session-1";
+
+    mockExistsSync.mockReturnValueOnce(true);
+
+    await expect(ws.restore!(makeCreateConfig(), restorePath)).rejects.toThrow(
+      `Workspace path "${restorePath}" already exists for session "session-1" — destroy it before restoring`,
+    );
+
+    expect(mockRmSync).not.toHaveBeenCalled();
   });
 });
 
