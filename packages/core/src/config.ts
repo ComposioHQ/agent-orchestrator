@@ -15,7 +15,7 @@ import { resolve, join, basename } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
-import type { OrchestratorConfig } from "./types.js";
+import type { AutomationConfig, OrchestratorConfig } from "./types.js";
 import { generateSessionPrefix } from "./paths.js";
 
 // =============================================================================
@@ -24,12 +24,21 @@ import { generateSessionPrefix } from "./paths.js";
 
 const ReactionConfigSchema = z.object({
   auto: z.boolean().default(true),
-  action: z.enum(["send-to-agent", "notify", "auto-merge"]).default("notify"),
+  action: z
+    .enum([
+      "send-to-agent",
+      "notify",
+      "auto-merge",
+      "complete-tracker-issue",
+      "update-tracker-progress",
+    ])
+    .default("notify"),
   message: z.string().optional(),
   priority: z.enum(["urgent", "action", "warning", "info"]).optional(),
   retries: z.number().optional(),
   escalateAfter: z.union([z.number(), z.string()]).optional(),
   threshold: z.string().optional(),
+  cooldown: z.string().optional(),
   includeSummary: z.boolean().optional(),
 });
 
@@ -58,6 +67,54 @@ const AgentSpecificConfigSchema = z
   })
   .passthrough();
 
+const QueuePickupAutomationConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  intervalSec: z.number().int().positive().optional(),
+  pickupStateName: z.string().min(1).optional(),
+  transitionStateName: z.string().min(1).optional(),
+  requireAoMetaQueued: z.boolean().optional(),
+  maxActiveSessions: z.number().int().positive().optional(),
+  maxSpawnPerCycle: z.number().int().positive().optional(),
+});
+
+const MergeGateStrictConfigSchema = z.object({
+  requireVerifyMarker: z.boolean().optional(),
+  requireBrowserMarker: z.boolean().optional(),
+  requireApprovedReviewOrNoRequests: z.boolean().optional(),
+  requireNoUnresolvedThreads: z.boolean().optional(),
+  requirePassingChecks: z.boolean().optional(),
+  requireCompletionDryRun: z.boolean().optional(),
+});
+
+const MergeGateAutomationConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  method: z.enum(["merge", "squash", "rebase"]).optional(),
+  retryCooldownSec: z.number().int().nonnegative().optional(),
+  strict: MergeGateStrictConfigSchema.optional(),
+});
+
+const CompletionGateAutomationConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  evidencePattern: z.string().min(1).optional(),
+  syncChecklistFromEvidence: z.boolean().optional(),
+});
+
+const StuckRecoveryAutomationConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  pattern: z.string().min(1).optional(),
+  thresholdSec: z.number().int().positive().optional(),
+  cooldownSec: z.number().int().nonnegative().optional(),
+  message: z.string().min(1).optional(),
+});
+
+const AutomationConfigSchema = z.object({
+  mode: z.enum(["standard", "local-only"]).optional(),
+  queuePickup: QueuePickupAutomationConfigSchema.optional(),
+  mergeGate: MergeGateAutomationConfigSchema.optional(),
+  completionGate: CompletionGateAutomationConfigSchema.optional(),
+  stuckRecovery: StuckRecoveryAutomationConfigSchema.optional(),
+});
+
 const ProjectConfigSchema = z.object({
   name: z.string().optional(),
   repo: z.string(),
@@ -75,10 +132,12 @@ const ProjectConfigSchema = z.object({
   symlinks: z.array(z.string()).optional(),
   postCreate: z.array(z.string()).optional(),
   agentConfig: AgentSpecificConfigSchema.optional(),
+  orchestratorAgentConfig: AgentSpecificConfigSchema.optional(),
   reactions: z.record(ReactionConfigSchema.partial()).optional(),
   agentRules: z.string().optional(),
   agentRulesFile: z.string().optional(),
   orchestratorRules: z.string().optional(),
+  automation: AutomationConfigSchema.optional(),
 });
 
 const DefaultPluginsSchema = z.object({
@@ -104,6 +163,44 @@ const OrchestratorConfigSchema = z.object({
   }),
   reactions: z.record(ReactionConfigSchema).default({}),
 });
+
+const DEFAULT_AUTOMATION_CONFIG: AutomationConfig = {
+  mode: "local-only",
+  queuePickup: {
+    enabled: true,
+    intervalSec: 60,
+    pickupStateName: "Todo",
+    requireAoMetaQueued: true,
+    maxActiveSessions: 8,
+    maxSpawnPerCycle: 4,
+  },
+  mergeGate: {
+    enabled: true,
+    method: "squash",
+    retryCooldownSec: 300,
+    strict: {
+      requireVerifyMarker: true,
+      requireBrowserMarker: true,
+      requireApprovedReviewOrNoRequests: true,
+      requireNoUnresolvedThreads: true,
+      requirePassingChecks: true,
+      requireCompletionDryRun: true,
+    },
+  },
+  completionGate: {
+    enabled: true,
+    evidencePattern: "AC Evidence:|검증 근거:",
+    syncChecklistFromEvidence: false,
+  },
+  stuckRecovery: {
+    enabled: true,
+    pattern: "Write tests for @filename",
+    thresholdSec: 600,
+    cooldownSec: 300,
+    message:
+      "Infer the concrete target file from issue context and proceed without asking for @filename.",
+  },
+};
 
 // =============================================================================
 // CONFIG LOADING
@@ -145,10 +242,45 @@ function applyProjectDefaults(config: OrchestratorConfig): OrchestratorConfig {
       project.scm = { plugin: "github" };
     }
 
-    // Infer tracker from repo if not set (default to github issues)
-    if (!project.tracker) {
+    const automation = project.automation;
+    const queuePickupOverrides = { ...(automation?.queuePickup ?? {}) };
+    // Backward compatibility: older configs used transitionStateName as the
+    // pickup filter state. If pickupStateName is omitted, promote transition.
+    if (!queuePickupOverrides.pickupStateName && queuePickupOverrides.transitionStateName) {
+      queuePickupOverrides.pickupStateName = queuePickupOverrides.transitionStateName;
+    }
+
+    const resolvedAutomation: AutomationConfig = {
+      mode: automation?.mode ?? DEFAULT_AUTOMATION_CONFIG.mode,
+      queuePickup: {
+        ...DEFAULT_AUTOMATION_CONFIG.queuePickup,
+        ...queuePickupOverrides,
+      },
+      mergeGate: {
+        ...DEFAULT_AUTOMATION_CONFIG.mergeGate,
+        ...(automation?.mergeGate ?? {}),
+        strict: {
+          ...DEFAULT_AUTOMATION_CONFIG.mergeGate.strict,
+          ...(automation?.mergeGate?.strict ?? {}),
+        },
+      },
+      completionGate: {
+        ...DEFAULT_AUTOMATION_CONFIG.completionGate,
+        ...(automation?.completionGate ?? {}),
+      },
+      stuckRecovery: {
+        ...DEFAULT_AUTOMATION_CONFIG.stuckRecovery,
+        ...(automation?.stuckRecovery ?? {}),
+      },
+    };
+
+    // Infer tracker for standard mode only (legacy behavior).
+    // local-only requires an explicit non-github tracker.
+    if (!project.tracker && resolvedAutomation.mode === "standard") {
       project.tracker = { plugin: "github" };
     }
+
+    project.automation = resolvedAutomation;
   }
 
   return config;
@@ -274,7 +406,63 @@ function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
   // Merge defaults with user-specified reactions (user wins)
   config.reactions = { ...defaults, ...config.reactions };
 
+  const localOnlyProjectDefaults: Record<string, (typeof config.reactions)[string]> = {
+    "issue-progress-pr-opened": {
+      auto: true,
+      action: "update-tracker-progress",
+      cooldown: "5m",
+      priority: "info",
+    },
+    "issue-progress-review-updated": {
+      auto: true,
+      action: "update-tracker-progress",
+      cooldown: "5m",
+      priority: "info",
+    },
+    "issue-completed": {
+      auto: true,
+      action: "complete-tracker-issue",
+      priority: "action",
+    },
+  };
+
+  // local-only defaults sit between global defaults and explicit project reactions:
+  // global defaults < local-only defaults < explicit project overrides.
+  for (const project of Object.values(config.projects)) {
+    if (project.automation?.mode !== "local-only") continue;
+    project.reactions = {
+      ...localOnlyProjectDefaults,
+      ...(project.reactions ?? {}),
+    };
+  }
+
   return config;
+}
+
+function validateLocalOnlyProjects(config: OrchestratorConfig): void {
+  for (const [projectId, project] of Object.entries(config.projects)) {
+    if (project.automation?.mode !== "local-only") continue;
+
+    if (!project.tracker) {
+      throw new Error(
+        `Project "${projectId}" is configured with automation.mode=local-only but has no tracker configured.\n` +
+          `Add an explicit non-GitHub tracker (recommended: linear), for example:\n\n` +
+          `projects:\n` +
+          `  ${projectId}:\n` +
+          `    tracker:\n` +
+          `      plugin: linear\n` +
+          `      teamId: your-linear-team-id`,
+      );
+    }
+
+    if (project.tracker.plugin === "github") {
+      throw new Error(
+        `Project "${projectId}" uses automation.mode=local-only but tracker.plugin=github.\n` +
+          `local-only requires a non-GitHub tracker (recommended: linear).\n` +
+          `Use "automation.mode: standard" to keep GitHub tracker behavior.`,
+      );
+    }
+  }
 }
 
 /**
@@ -293,6 +481,10 @@ export function findConfigFile(startDir?: string): string | null {
     if (existsSync(envPath)) {
       return envPath;
     }
+    throw new Error(
+      `AO_CONFIG_PATH points to a missing config file: ${envPath}\n` +
+        `Create that file or unset AO_CONFIG_PATH.`,
+    );
   }
 
   // 2. Search up directory tree from CWD (like git)
@@ -406,6 +598,7 @@ export function validateConfig(raw: unknown): OrchestratorConfig {
   config = expandPaths(config);
   config = applyProjectDefaults(config);
   config = applyDefaultReactions(config);
+  validateLocalOnlyProjects(config);
 
   // Validate project uniqueness and prefix collisions
   validateProjectUniqueness(config);

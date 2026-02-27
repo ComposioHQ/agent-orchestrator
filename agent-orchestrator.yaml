@@ -26,3 +26,58 @@ projects:
       - "pnpm install"
     agentConfig:
       permissions: skip
+
+  testdefensegame:
+    name: TestDefenseGame
+    repo: Mizelan/ProjectM
+    path: /Users/mizelan/Documents/GitHub/TestDefenseGame
+    defaultBranch: main
+    sessionPrefix: tdg
+    tracker:
+      plugin: linear
+      teamId: "41dc8b7c-4fab-4456-8685-e799388f412e"
+    automation:
+      queuePickup:
+        pickupStateName: Todo
+        transitionStateName: In Progress
+    reactions:
+      issue-progress-pr-opened:
+        auto: true
+        action: update-tracker-progress
+        cooldown: 5m
+        priority: info
+      issue-progress-review-updated:
+        auto: true
+        action: update-tracker-progress
+        cooldown: 5m
+        priority: info
+      issue-completed:
+        auto: false
+        action: complete-tracker-issue
+        priority: action
+    agentConfig:
+      model: gpt-5.3-codex-spark
+    orchestratorAgentConfig:
+      model: gpt-5.3-codex
+    agentRules: >-
+      Always run tests before pushing.
+
+      Use conventional commits (feat:, fix:, chore:, docs:, refactor:, test:).
+
+      Link issue numbers in commit messages.
+
+      Write clear commit messages that explain WHY, not just WHAT.
+
+      Use TypeScript strict mode.
+
+      Use ESM modules with .js extensions in imports.
+
+      Use node: prefix for built-in modules.
+
+      Prefer const over let, never use var.
+
+      Use type imports for type-only imports.
+
+      No any types - use unknown with type guards instead.
+
+      Before pushing, run: npm run typecheck, npm run lint, npm test.

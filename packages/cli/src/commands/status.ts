@@ -196,11 +196,16 @@ export function registerStatus(program: Command): void {
       let config: ReturnType<typeof loadConfig>;
       try {
         config = loadConfig();
-      } catch {
-        console.log(chalk.yellow("No config found. Run `ao init` first."));
-        console.log(chalk.dim("Falling back to session discovery...\n"));
-        await showFallbackStatus();
-        return;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes("No agent-orchestrator.yaml found")) {
+          console.log(chalk.yellow("No config found. Run `ao init` first."));
+          console.log(chalk.dim("Falling back to session discovery...\n"));
+          await showFallbackStatus();
+          return;
+        }
+        console.error(chalk.red(message));
+        process.exit(1);
       }
 
       if (opts.project && !config.projects[opts.project]) {

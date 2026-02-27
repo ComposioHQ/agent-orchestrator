@@ -13,6 +13,7 @@ import type {
   Session,
   Runtime,
   Agent,
+  Tracker,
   SCM,
   Notifier,
   ActivityState,
@@ -326,6 +327,129 @@ describe("check (single session)", () => {
     await lm.check("app-1");
 
     expect(lm.getStates().get("app-1")).toBe("needs_input");
+  });
+
+  it("auto-dismisses codex rate-limit prompt and keeps session working", async () => {
+    const codexAgent: Agent = {
+      ...mockAgent,
+      name: "codex",
+      detectActivity: vi.fn().mockReturnValue("waiting_input"),
+    };
+    const registryWithCodex: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return codexAgent;
+        return null;
+      }),
+    };
+
+    vi.mocked(mockRuntime.getOutput).mockResolvedValue(
+      [
+        "Approaching rate limits",
+        "Switch to gpt-5.1-codex-mini for lower credit usage?",
+        "Press enter to confirm or esc to go back",
+      ].join("\n"),
+    );
+
+    const session = makeSession({ status: "working" });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithCodex,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(session.runtimeHandle, "3\n");
+    expect(lm.getStates().get("app-1")).toBe("working");
+
+    const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta?.["codex_rate_limit_prompt_autodismiss_choice"]).toBe("3");
+    expect(meta?.["codex_rate_limit_prompt_autodismissed_at"]).toBeTruthy();
+  });
+
+  it("marks session stuck and sends stuck-recovery message after threshold", async () => {
+    config.projects["my-app"] = {
+      ...config.projects["my-app"],
+      automation: {
+        mode: "local-only",
+        queuePickup: {
+          enabled: true,
+          intervalSec: 60,
+          pickupStateName: "Todo",
+          requireAoMetaQueued: true,
+          maxActiveSessions: 8,
+          maxSpawnPerCycle: 4,
+        },
+        mergeGate: {
+          enabled: true,
+          method: "squash",
+          retryCooldownSec: 300,
+          strict: {
+            requireVerifyMarker: true,
+            requireBrowserMarker: true,
+            requireApprovedReviewOrNoRequests: true,
+            requireNoUnresolvedThreads: true,
+            requirePassingChecks: true,
+            requireCompletionDryRun: true,
+          },
+        },
+        completionGate: {
+          enabled: true,
+          evidencePattern: "AC Evidence:|검증 근거:",
+          syncChecklistFromEvidence: false,
+        },
+        stuckRecovery: {
+          enabled: true,
+          pattern: "Write tests for @filename",
+          thresholdSec: 1,
+          cooldownSec: 300,
+          message: "Write tests for @filename",
+        },
+      },
+    };
+
+    vi.mocked(mockRuntime.getOutput).mockResolvedValue("› Write tests for @filename");
+
+    const oldDetectedAt = new Date(Date.now() - 5_000).toISOString();
+    const session = makeSession({
+      status: "working",
+      metadata: {
+        stuck_recovery_detected_at: oldDetectedAt,
+      },
+    });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(mockSessionManager.send).toHaveBeenCalledWith("app-1", "Write tests for @filename");
+    expect(lm.getStates().get("app-1")).toBe("stuck");
+
+    const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta?.["stuck_recovery_last_sent_at"]).toBeTruthy();
   });
 
   it("preserves stuck state when detectActivity throws", async () => {
@@ -809,8 +933,8 @@ describe("reactions", () => {
       }),
     };
 
-    // merge.completed has "action" priority but NO reaction key mapping,
-    // so it must reach notifyHuman directly
+    // merge.completed -> issue-completed mapping exists, but without a configured
+    // issue-completed reaction it still falls back to direct notifyHuman.
     const session = makeSession({ status: "approved", pr: makePR() });
     vi.mocked(mockSessionManager.get).mockResolvedValue(session);
 
@@ -834,6 +958,902 @@ describe("reactions", () => {
     expect(mockNotifier.notify).toHaveBeenCalledWith(
       expect.objectContaining({ type: "merge.completed" }),
     );
+  });
+
+  it("completes tracker issue on merge when verify marker exists and all checklist items are checked", async () => {
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("merged"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn(),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn(),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    const mockTracker: Tracker = {
+      name: "mock-tracker",
+      getIssue: vi.fn().mockResolvedValue({
+        id: "PYO-26",
+        title: "Acceptance complete",
+        description:
+          "## Acceptance Criteria\n- [x] feature delivered\n* [x] regression covered\n1. [x] docs updated",
+        url: "https://tracker.local/PYO-26",
+        state: "in_progress",
+        labels: [],
+      }),
+      isCompleted: vi.fn(),
+      issueUrl: vi.fn().mockReturnValue("https://tracker.local/PYO-26"),
+      branchName: vi.fn().mockReturnValue("feat/PYO-26"),
+      generatePrompt: vi.fn(),
+      listComments: vi.fn().mockResolvedValue([
+        {
+          id: "comment-1",
+          body: "AC Evidence: verify pass",
+          author: "alice",
+        },
+      ]),
+      updateIssue: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const registryWithTracker: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "tracker" && name === "linear") return mockTracker;
+        return null;
+      }),
+    };
+
+    config.reactions = {
+      "issue-completed": {
+        auto: true,
+        action: "complete-tracker-issue",
+        priority: "action",
+      },
+    };
+    config.projects["my-app"] = {
+      ...config.projects["my-app"],
+      tracker: { plugin: "linear", teamId: "team-id" },
+    };
+
+    const session = makeSession({
+      status: "approved",
+      pr: makePR(),
+      issueId: "PYO-26",
+      metadata: {
+        verify_status: "work_verify_pass_full",
+        verify_browser_status: "work_verify_browser_pass",
+      },
+    });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "approved",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithTracker,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("merged");
+    expect(mockTracker.updateIssue).toHaveBeenCalledTimes(1);
+    expect(mockTracker.updateIssue).toHaveBeenCalledWith(
+      "PYO-26",
+      expect.objectContaining({
+        state: "closed",
+        comment: expect.stringContaining("work-verify"),
+      }),
+      config.projects["my-app"],
+    );
+
+    const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta?.["acceptance_total"]).toBe("3");
+    expect(meta?.["acceptance_checked"]).toBe("3");
+    expect(meta?.["acceptance_unchecked"]).toBe("0");
+    expect(meta?.["acceptance_status"]).toBe("passed");
+    expect(meta?.["acceptance_checked_at"]).toBeTruthy();
+  });
+
+  it("blocks tracker completion and notifies when work-verify full marker is missing", async () => {
+    const mockNotifier: Notifier = {
+      name: "mock-notifier",
+      notify: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("merged"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn(),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn(),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    const mockTracker: Tracker = {
+      name: "mock-tracker",
+      getIssue: vi.fn(),
+      isCompleted: vi.fn(),
+      issueUrl: vi.fn().mockReturnValue("https://tracker.local/PYO-26"),
+      branchName: vi.fn().mockReturnValue("feat/PYO-26"),
+      generatePrompt: vi.fn(),
+      updateIssue: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const registryWithNotifier: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "tracker" && name === "linear") return mockTracker;
+        if (slot === "notifier" && name === "desktop") return mockNotifier;
+        return null;
+      }),
+    };
+
+    config.reactions = {
+      "issue-completed": {
+        auto: true,
+        action: "complete-tracker-issue",
+        priority: "action",
+      },
+    };
+    config.projects["my-app"] = {
+      ...config.projects["my-app"],
+      tracker: { plugin: "linear", teamId: "team-id" },
+    };
+
+    const session = makeSession({
+      status: "approved",
+      pr: makePR(),
+      issueId: "PYO-26",
+      metadata: {},
+    });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "approved",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithNotifier,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("merged");
+    expect(mockTracker.updateIssue).not.toHaveBeenCalled();
+    expect(mockNotifier.notify).toHaveBeenCalledTimes(1);
+    expect(mockNotifier.notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "reaction.triggered",
+        priority: "action",
+      }),
+    );
+  });
+
+  it("blocks tracker completion when work-verify browser verification marker is missing", async () => {
+    const mockNotifier: Notifier = {
+      name: "mock-notifier",
+      notify: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("merged"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn(),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn(),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    const mockTracker: Tracker = {
+      name: "mock-tracker",
+      getIssue: vi.fn(),
+      isCompleted: vi.fn(),
+      issueUrl: vi.fn().mockReturnValue("https://tracker.local/PYO-26"),
+      branchName: vi.fn().mockReturnValue("feat/PYO-26"),
+      generatePrompt: vi.fn(),
+      updateIssue: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const registryWithNotifier: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "tracker" && name === "linear") return mockTracker;
+        if (slot === "notifier" && name === "desktop") return mockNotifier;
+        return null;
+      }),
+    };
+
+    config.reactions = {
+      "issue-completed": {
+        auto: true,
+        action: "complete-tracker-issue",
+        priority: "action",
+      },
+    };
+    config.projects["my-app"] = {
+      ...config.projects["my-app"],
+      tracker: { plugin: "linear", teamId: "team-id" },
+    };
+
+    const session = makeSession({
+      status: "approved",
+      pr: makePR(),
+      issueId: "PYO-26",
+      metadata: { verify_status: "work_verify_pass_full" },
+    });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "approved",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithNotifier,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("merged");
+    expect(mockTracker.updateIssue).not.toHaveBeenCalled();
+    expect(mockNotifier.notify).toHaveBeenCalledTimes(1);
+    expect(mockNotifier.notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "reaction.triggered",
+        data: expect.objectContaining({
+          browserVerifyKey: "verify_browser_status",
+        }),
+      }),
+    );
+  });
+
+  it("auto-checks unchecked checklist items before closing linear issue", async () => {
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("merged"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn(),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn(),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    const mockTracker: Tracker = {
+      name: "mock-tracker",
+      getIssue: vi.fn().mockResolvedValue({
+        id: "PYO-29",
+        title: "Needs checkbox sync",
+        description:
+          "## Acceptance Criteria\n- [ ] checklist a\n* [x] checklist b\n1. [ ] checklist c\n```md\n- [ ] fenced should be ignored\n```",
+        url: "https://tracker.local/PYO-29",
+        state: "in_progress",
+        labels: [],
+      }),
+      isCompleted: vi.fn(),
+      issueUrl: vi.fn().mockReturnValue("https://tracker.local/PYO-29"),
+      branchName: vi.fn().mockReturnValue("feat/PYO-29"),
+      generatePrompt: vi.fn(),
+      listComments: vi.fn().mockResolvedValue([
+        {
+          id: "comment-1",
+          body: "검증 근거: 수동 브라우저 검증 완료",
+          author: "alice",
+        },
+      ]),
+      updateIssue: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const registryWithTracker: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "tracker" && name === "linear") return mockTracker;
+        return null;
+      }),
+    };
+
+    config.reactions = {
+      "issue-completed": {
+        auto: true,
+        action: "complete-tracker-issue",
+        priority: "action",
+      },
+    };
+    config.projects["my-app"] = {
+      ...config.projects["my-app"],
+      tracker: { plugin: "linear", teamId: "team-id" },
+      automation: {
+        mode: "local-only",
+        queuePickup: {
+          enabled: true,
+          intervalSec: 60,
+          pickupStateName: "In Progress",
+          requireAoMetaQueued: true,
+          maxActiveSessions: 8,
+          maxSpawnPerCycle: 4,
+        },
+        mergeGate: {
+          enabled: true,
+          method: "squash",
+          retryCooldownSec: 300,
+          strict: {
+            requireVerifyMarker: true,
+            requireBrowserMarker: true,
+            requireApprovedReviewOrNoRequests: true,
+            requireNoUnresolvedThreads: true,
+            requirePassingChecks: true,
+            requireCompletionDryRun: true,
+          },
+        },
+        completionGate: {
+          enabled: true,
+          evidencePattern: "AC Evidence:|검증 근거:",
+          syncChecklistFromEvidence: true,
+        },
+        stuckRecovery: {
+          enabled: true,
+          pattern: "Write tests for @filename",
+          thresholdSec: 600,
+          cooldownSec: 300,
+          message: "Write tests for @filename",
+        },
+      },
+    };
+
+    const session = makeSession({
+      status: "approved",
+      pr: makePR(),
+      issueId: "PYO-29",
+      metadata: {
+        verify_status: "work_verify_pass_full",
+        verify_browser_status: "work_verify_browser_pass",
+      },
+    });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "approved",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithTracker,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(mockTracker.updateIssue).toHaveBeenCalledTimes(2);
+    expect(mockTracker.updateIssue).toHaveBeenNthCalledWith(
+      1,
+      "PYO-29",
+      expect.objectContaining({
+        description: expect.stringContaining("- [x] checklist a"),
+        comment: expect.stringContaining("Automatically checked"),
+      }),
+      config.projects["my-app"],
+    );
+    expect(mockTracker.updateIssue).toHaveBeenNthCalledWith(
+      2,
+      "PYO-29",
+      expect.objectContaining({
+        state: "closed",
+      }),
+      config.projects["my-app"],
+    );
+
+    const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta?.["acceptance_total"]).toBe("3");
+    expect(meta?.["acceptance_checked"]).toBe("3");
+    expect(meta?.["acceptance_unchecked"]).toBe("0");
+    expect(meta?.["acceptance_status"]).toBe("auto_checked");
+    expect(meta?.["acceptance_checked_at"]).toBeTruthy();
+  });
+
+  it("blocks tracker completion when checklist checkboxes do not exist", async () => {
+    const mockNotifier: Notifier = {
+      name: "mock-notifier",
+      notify: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("merged"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn(),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn(),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    const mockTracker: Tracker = {
+      name: "mock-tracker",
+      getIssue: vi.fn().mockResolvedValue({
+        id: "PYO-30",
+        title: "No checklist",
+        description: "No task list here.",
+        url: "https://tracker.local/PYO-30",
+        state: "in_progress",
+        labels: [],
+      }),
+      isCompleted: vi.fn(),
+      issueUrl: vi.fn().mockReturnValue("https://tracker.local/PYO-30"),
+      branchName: vi.fn().mockReturnValue("feat/PYO-30"),
+      generatePrompt: vi.fn(),
+      updateIssue: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const registryWithNotifier: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "tracker" && name === "linear") return mockTracker;
+        if (slot === "notifier" && name === "desktop") return mockNotifier;
+        return null;
+      }),
+    };
+
+    config.reactions = {
+      "issue-completed": {
+        auto: true,
+        action: "complete-tracker-issue",
+        priority: "action",
+      },
+    };
+    config.projects["my-app"] = {
+      ...config.projects["my-app"],
+      tracker: { plugin: "linear", teamId: "team-id" },
+    };
+
+    const session = makeSession({
+      status: "approved",
+      pr: makePR(),
+      issueId: "PYO-30",
+      metadata: {
+        verify_status: "work_verify_pass_full",
+        verify_browser_status: "work_verify_browser_pass",
+      },
+    });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "approved",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithNotifier,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("merged");
+    expect(mockTracker.updateIssue).not.toHaveBeenCalled();
+    expect(mockNotifier.notify).toHaveBeenCalledTimes(1);
+    expect(mockNotifier.notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "reaction.triggered",
+      }),
+    );
+
+    const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta?.["acceptance_total"]).toBe("0");
+    expect(meta?.["acceptance_checked"]).toBe("0");
+    expect(meta?.["acceptance_unchecked"]).toBe("0");
+    expect(meta?.["acceptance_status"]).toBe("blocked_no_checkboxes");
+  });
+
+  it("updates tracker progress on pr.created and review transitions with stage-aware metadata", async () => {
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("passing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi
+        .fn()
+        .mockResolvedValueOnce("none")
+        .mockResolvedValueOnce("pending"),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    const mockTracker: Tracker = {
+      name: "mock-tracker",
+      getIssue: vi.fn(),
+      isCompleted: vi.fn(),
+      issueUrl: vi.fn().mockReturnValue("https://tracker.local/PYO-27"),
+      branchName: vi.fn().mockReturnValue("feat/PYO-27"),
+      generatePrompt: vi.fn(),
+      updateIssue: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const registryWithTracker: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "tracker" && name === "linear") return mockTracker;
+        return null;
+      }),
+    };
+
+    config.reactions = {
+      "issue-progress-pr-opened": {
+        auto: true,
+        action: "update-tracker-progress",
+        cooldown: "5m",
+      },
+      "issue-progress-review-updated": {
+        auto: true,
+        action: "update-tracker-progress",
+        cooldown: "5m",
+      },
+    };
+    config.projects["my-app"] = {
+      ...config.projects["my-app"],
+      tracker: { plugin: "linear", teamId: "team-id" },
+    };
+
+    const session = makeSession({
+      status: "working",
+      issueId: "PYO-27",
+      pr: makePR(),
+      metadata: { verify_status: "work_verify_pass_full" },
+    });
+    vi.mocked(mockRuntime.getOutput).mockResolvedValue(
+      [
+        "개발 요약:",
+        "- 에너미 선택 전환 시 패널 상태 동기화 안정화",
+        "",
+        "개발 구현:",
+        "- tests/editor/PalettePanel.test.ts 회귀 케이스 보강",
+        "",
+        "검증:",
+        "- npm test 통과",
+      ].join("\n"),
+    );
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      issue: "PYO-27",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithTracker,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+    await lm.check("app-1");
+
+    expect(mockTracker.updateIssue).toHaveBeenCalledTimes(2);
+    expect(mockTracker.updateIssue).toHaveBeenNthCalledWith(
+      1,
+      "PYO-27",
+      expect.objectContaining({
+        state: "in_progress",
+        comment: expect.stringMatching(
+          /PR is now open\.[\s\S]*GitHub PR page:[\s\S]*Development summary:[\s\S]*Implementation details:/,
+        ),
+      }),
+      config.projects["my-app"],
+    );
+    const updateIssueMock = vi.mocked(mockTracker.updateIssue!);
+    const firstCall = updateIssueMock.mock.calls[0];
+    expect(firstCall).toBeDefined();
+    if (!firstCall) throw new Error("Expected first tracker update call");
+    const firstUpdatePayload = firstCall[1];
+    expect(firstUpdatePayload).toBeDefined();
+    if (!firstUpdatePayload) throw new Error("Expected tracker update payload");
+    const firstComment = firstUpdatePayload.comment;
+    expect(firstComment).toBeDefined();
+    if (!firstComment) throw new Error("Expected tracker progress comment on first update call");
+    expect(firstComment).toContain("Development summary: 에너미 선택 전환 시 패널 상태 동기화 안정화");
+    expect(firstComment).toContain(
+      "Implementation details: tests/editor/PalettePanel.test.ts 회귀 케이스 보강",
+    );
+    expect(mockTracker.updateIssue).toHaveBeenNthCalledWith(
+      2,
+      "PYO-27",
+      expect.objectContaining({
+        state: "in_progress",
+        workflowStateName: "In Review",
+        comment: expect.stringContaining("review pending"),
+      }),
+      config.projects["my-app"],
+    );
+
+    const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta?.["progress_stage"]).toBe("review_updated");
+    expect(meta?.["progress_updated_at"]).toBeTruthy();
+  });
+
+  it("suppresses repeated review-stage updates inside cooldown and resumes after cooldown", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    try {
+      const mockSCM: SCM = {
+        name: "mock-scm",
+        detectPR: vi.fn(),
+        getPRState: vi.fn().mockResolvedValue("open"),
+        mergePR: vi.fn(),
+        closePR: vi.fn(),
+        getCIChecks: vi.fn(),
+        getCISummary: vi.fn().mockResolvedValue("passing"),
+        getReviews: vi.fn(),
+        getReviewDecision: vi
+          .fn()
+          .mockResolvedValueOnce("pending")
+          .mockResolvedValueOnce("approved")
+          .mockResolvedValueOnce("approved"),
+        getPendingComments: vi.fn(),
+        getAutomatedComments: vi.fn(),
+        getMergeability: vi
+          .fn()
+          .mockResolvedValueOnce({ mergeable: false })
+          .mockResolvedValueOnce({ mergeable: true }),
+      };
+
+      const mockTracker: Tracker = {
+        name: "mock-tracker",
+        getIssue: vi.fn(),
+        isCompleted: vi.fn(),
+        issueUrl: vi.fn().mockReturnValue("https://tracker.local/PYO-28"),
+        branchName: vi.fn().mockReturnValue("feat/PYO-28"),
+        generatePrompt: vi.fn(),
+        updateIssue: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const registryWithTracker: PluginRegistry = {
+        ...mockRegistry,
+        get: vi.fn().mockImplementation((slot: string, name: string) => {
+          if (slot === "runtime") return mockRuntime;
+          if (slot === "agent") return mockAgent;
+          if (slot === "scm") return mockSCM;
+          if (slot === "tracker" && name === "linear") return mockTracker;
+          return null;
+        }),
+      };
+
+      config.reactions = {
+        "issue-progress-review-updated": {
+          auto: true,
+          action: "update-tracker-progress",
+          cooldown: "5m",
+        },
+      };
+      config.projects["my-app"] = {
+        ...config.projects["my-app"],
+        tracker: { plugin: "linear", teamId: "team-id" },
+      };
+
+      const session = makeSession({
+        status: "pr_open",
+        issueId: "PYO-28",
+        pr: makePR(),
+        metadata: {},
+      });
+      vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: "/tmp",
+        branch: "main",
+        status: "pr_open",
+        project: "my-app",
+        issue: "PYO-28",
+      });
+
+      const lm = createLifecycleManager({
+        config,
+        registry: registryWithTracker,
+        sessionManager: mockSessionManager,
+      });
+
+      await lm.check("app-1");
+      expect(mockTracker.updateIssue).toHaveBeenCalledTimes(1);
+
+      vi.setSystemTime(new Date("2026-01-01T00:01:00.000Z"));
+      await lm.check("app-1");
+      expect(mockTracker.updateIssue).toHaveBeenCalledTimes(1);
+
+      vi.setSystemTime(new Date("2026-01-01T00:07:00.000Z"));
+      await lm.check("app-1");
+      expect(mockTracker.updateIssue).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("switches workflow target state immediately on changes_requested", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-02T00:00:00.000Z"));
+    try {
+      const mockSCM: SCM = {
+        name: "mock-scm",
+        detectPR: vi.fn(),
+        getPRState: vi.fn().mockResolvedValue("open"),
+        mergePR: vi.fn(),
+        closePR: vi.fn(),
+        getCIChecks: vi.fn(),
+        getCISummary: vi.fn().mockResolvedValue("passing"),
+        getReviews: vi.fn(),
+        getReviewDecision: vi
+          .fn()
+          .mockResolvedValueOnce("pending")
+          .mockResolvedValueOnce("changes_requested")
+          .mockResolvedValueOnce("pending"),
+        getPendingComments: vi.fn(),
+        getAutomatedComments: vi.fn(),
+        getMergeability: vi.fn(),
+      };
+
+      const mockTracker: Tracker = {
+        name: "mock-tracker",
+        getIssue: vi.fn(),
+        isCompleted: vi.fn(),
+        issueUrl: vi.fn().mockReturnValue("https://tracker.local/PYO-29"),
+        branchName: vi.fn().mockReturnValue("feat/PYO-29"),
+        generatePrompt: vi.fn(),
+        updateIssue: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const registryWithTracker: PluginRegistry = {
+        ...mockRegistry,
+        get: vi.fn().mockImplementation((slot: string, name: string) => {
+          if (slot === "runtime") return mockRuntime;
+          if (slot === "agent") return mockAgent;
+          if (slot === "scm") return mockSCM;
+          if (slot === "tracker" && name === "linear") return mockTracker;
+          return null;
+        }),
+      };
+
+      config.reactions = {
+        "issue-progress-review-updated": {
+          auto: true,
+          action: "update-tracker-progress",
+          cooldown: "5m",
+        },
+      };
+      config.projects["my-app"] = {
+        ...config.projects["my-app"],
+        tracker: { plugin: "linear", teamId: "team-id" },
+      };
+
+      const session = makeSession({
+        status: "pr_open",
+        issueId: "PYO-29",
+        pr: makePR(),
+        metadata: { verify_status: "work_verify_pass_full" },
+      });
+      vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: "/tmp",
+        branch: "main",
+        status: "pr_open",
+        project: "my-app",
+        issue: "PYO-29",
+      });
+
+      const lm = createLifecycleManager({
+        config,
+        registry: registryWithTracker,
+        sessionManager: mockSessionManager,
+      });
+
+      await lm.check("app-1");
+      expect(mockTracker.updateIssue).toHaveBeenNthCalledWith(
+        1,
+        "PYO-29",
+        expect.objectContaining({
+          state: "in_progress",
+          workflowStateName: "In Review",
+        }),
+        config.projects["my-app"],
+      );
+
+      vi.setSystemTime(new Date("2026-01-02T00:01:00.000Z"));
+      await lm.check("app-1");
+      expect(mockTracker.updateIssue).toHaveBeenNthCalledWith(
+        2,
+        "PYO-29",
+        expect.objectContaining({
+          state: "in_progress",
+          workflowStateName: "In Progress",
+        }),
+        config.projects["my-app"],
+      );
+
+      vi.setSystemTime(new Date("2026-01-02T00:02:00.000Z"));
+      await lm.check("app-1");
+      expect(mockTracker.updateIssue).toHaveBeenNthCalledWith(
+        3,
+        "PYO-29",
+        expect.objectContaining({
+          state: "in_progress",
+          workflowStateName: "In Review",
+        }),
+        config.projects["my-app"],
+      );
+      expect(mockTracker.updateIssue).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

@@ -67,6 +67,12 @@ describe("Config Loading", () => {
       const found = findConfigFile();
       expect(found).toBeNull();
     });
+
+    it("should throw when AO_CONFIG_PATH points to a missing file", () => {
+      process.env["AO_CONFIG_PATH"] = join(testDir, "missing-config.yaml");
+
+      expect(() => findConfigFile()).toThrow(/AO_CONFIG_PATH points to a missing config file/);
+    });
   });
 
   describe("loadConfig", () => {
@@ -81,6 +87,8 @@ projects:
     repo: test/repo
     path: ${testDir}
     defaultBranch: main
+    automation:
+      mode: standard
 `,
       );
 
@@ -102,6 +110,8 @@ projects:
     repo: test/repo
     path: ${testDir}
     defaultBranch: main
+    automation:
+      mode: standard
 `,
       );
 
@@ -111,6 +121,12 @@ projects:
 
     it("should throw error if config not found", () => {
       expect(() => loadConfig()).toThrow("No agent-orchestrator.yaml found");
+    });
+
+    it("should throw error when AO_CONFIG_PATH points to a missing file", () => {
+      process.env["AO_CONFIG_PATH"] = join(testDir, "missing-config.yaml");
+
+      expect(() => loadConfig()).toThrow(/AO_CONFIG_PATH points to a missing config file/);
     });
   });
 

@@ -13,11 +13,13 @@ describe("Config Validation - Project Uniqueness", () => {
           path: "/repos/integrator",
           repo: "org/integrator",
           defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
         },
         proj2: {
           path: "/other/integrator", // Same basename!
           repo: "org/integrator",
           defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
         },
       },
     };
@@ -33,11 +35,13 @@ describe("Config Validation - Project Uniqueness", () => {
           path: "/repos/integrator",
           repo: "org/integrator",
           defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
         },
         proj2: {
           path: "/other/integrator",
           repo: "org/integrator",
           defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
         },
       },
     };
@@ -59,11 +63,13 @@ describe("Config Validation - Project Uniqueness", () => {
           path: "/repos/integrator",
           repo: "org/integrator",
           defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
         },
         proj2: {
           path: "/repos/backend",
           repo: "org/backend",
           defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
         },
       },
     };
@@ -80,12 +86,14 @@ describe("Config Validation - Session Prefix Uniqueness", () => {
           path: "/repos/integrator",
           repo: "org/integrator",
           defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
           sessionPrefix: "app",
         },
         proj2: {
           path: "/repos/backend",
           repo: "org/backend",
           defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
           sessionPrefix: "app", // Same prefix!
         },
       },
@@ -102,12 +110,14 @@ describe("Config Validation - Session Prefix Uniqueness", () => {
           path: "/repos/integrator",
           repo: "org/integrator",
           defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
           // Auto-generates: "int"
         },
         proj2: {
           path: "/repos/international",
           repo: "org/international",
           defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
           // Auto-generates: "int" (collision!)
         },
       },
@@ -124,11 +134,13 @@ describe("Config Validation - Session Prefix Uniqueness", () => {
           path: "/repos/integrator",
           repo: "org/integrator",
           defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
         },
         proj2: {
           path: "/repos/international",
           repo: "org/international",
           defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
         },
       },
     };
@@ -150,12 +162,14 @@ describe("Config Validation - Session Prefix Uniqueness", () => {
           path: "/repos/integrator",
           repo: "org/integrator",
           defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
           sessionPrefix: "app",
         },
         proj2: {
           path: "/repos/backend",
           repo: "org/backend",
           defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
           sessionPrefix: "app",
         },
       },
@@ -177,12 +191,14 @@ describe("Config Validation - Session Prefix Uniqueness", () => {
           path: "/repos/integrator",
           repo: "org/integrator",
           defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
           sessionPrefix: "int",
         },
         proj2: {
           path: "/repos/backend",
           repo: "org/backend",
           defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
           sessionPrefix: "be",
         },
       },
@@ -198,12 +214,14 @@ describe("Config Validation - Session Prefix Uniqueness", () => {
           path: "/repos/integrator",
           repo: "org/integrator",
           defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
           sessionPrefix: "int", // Explicit
         },
         proj2: {
           path: "/repos/backend",
           repo: "org/backend",
           defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
           // Auto-generates: "bac"
         },
       },
@@ -219,12 +237,14 @@ describe("Config Validation - Session Prefix Uniqueness", () => {
           path: "/repos/integrator",
           repo: "org/integrator",
           defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
           // Auto-generates: "int"
         },
         proj2: {
           path: "/repos/backend",
           repo: "org/backend",
           defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
           sessionPrefix: "int", // Explicit collision with auto-generated
         },
       },
@@ -245,6 +265,7 @@ describe("Config Validation - Session Prefix Regex", () => {
             path: "/repos/test",
             repo: "org/test",
             defaultBranch: "main",
+            tracker: { plugin: "linear", teamId: "team-1" },
             sessionPrefix: prefix,
           },
         },
@@ -264,6 +285,7 @@ describe("Config Validation - Session Prefix Regex", () => {
             path: "/repos/test",
             repo: "org/test",
             defaultBranch: "main",
+            tracker: { plugin: "linear", teamId: "team-1" },
             sessionPrefix: prefix,
           },
         },
@@ -289,6 +311,7 @@ describe("Config Schema Validation", () => {
         proj1: {
           repo: "org/test",
           defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
           // Missing path
         },
       },
@@ -299,6 +322,7 @@ describe("Config Schema Validation", () => {
         proj1: {
           path: "/repos/test",
           defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
           // Missing repo
         },
       },
@@ -310,6 +334,9 @@ describe("Config Schema Validation", () => {
           path: "/repos/test",
           repo: "org/test",
           // Missing defaultBranch (should use default)
+          automation: {
+            mode: "standard",
+          },
         },
       },
     };
@@ -327,6 +354,7 @@ describe("Config Schema Validation", () => {
           path: "/repos/test",
           repo: "org/test",
           defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
           // No sessionPrefix - will be auto-generated
         },
       },
@@ -335,6 +363,29 @@ describe("Config Schema Validation", () => {
     const validated = validateConfig(config);
     expect(validated.projects.proj1.sessionPrefix).toBeDefined();
     expect(validated.projects.proj1.sessionPrefix).toBe("test"); // "test" is 4 chars, used as-is
+  });
+
+  it("accepts orchestratorAgentConfig field", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
+          agentConfig: {
+            model: "gpt-5.3-codex-spark",
+          },
+          orchestratorAgentConfig: {
+            model: "gpt-5.3-codex",
+          },
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.projects.proj1.agentConfig?.model).toBe("gpt-5.3-codex-spark");
+    expect(validated.projects.proj1.orchestratorAgentConfig?.model).toBe("gpt-5.3-codex");
   });
 });
 
@@ -346,6 +397,7 @@ describe("Config Defaults", () => {
           path: "/repos/integrator",
           repo: "org/integrator",
           defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
         },
       },
     };
@@ -361,6 +413,7 @@ describe("Config Defaults", () => {
           path: "/repos/test",
           repo: "org/test",
           defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
         },
       },
     };
@@ -376,6 +429,7 @@ describe("Config Defaults", () => {
           path: "/repos/test",
           repo: "org/test", // Contains "/" → GitHub
           defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
         },
       },
     };
@@ -384,18 +438,379 @@ describe("Config Defaults", () => {
     expect(validated.projects.proj1.scm).toEqual({ plugin: "github" });
   });
 
-  it("applies default tracker (GitHub issues)", () => {
+  it("applies default tracker (GitHub issues) only in standard mode", () => {
     const config = {
       projects: {
         proj1: {
           path: "/repos/test",
           repo: "org/test",
           defaultBranch: "main",
+          automation: {
+            mode: "standard",
+          },
         },
       },
     };
 
     const validated = validateConfig(config);
     expect(validated.projects.proj1.tracker).toEqual({ plugin: "github" });
+  });
+
+  it("fails local-only mode when tracker is missing", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          automation: {
+            mode: "local-only",
+          },
+        },
+      },
+    };
+
+    expect(() => validateConfig(config)).toThrow(/automation\.mode=local-only/);
+  });
+
+  it("fails local-only mode when tracker plugin is github", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: { plugin: "github" },
+          automation: {
+            mode: "local-only",
+          },
+        },
+      },
+    };
+
+    expect(() => validateConfig(config)).toThrow(/tracker\.plugin=github/);
+  });
+
+  it("accepts local-only mode with explicit non-github tracker", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
+          automation: {
+            mode: "local-only",
+          },
+        },
+      },
+    };
+
+    expect(() => validateConfig(config)).not.toThrow();
+  });
+});
+
+describe("Config Validation - Reactions", () => {
+  it("accepts complete-tracker-issue reaction action", () => {
+    const config = {
+      reactions: {
+        "issue-completed": {
+          auto: true,
+          action: "complete-tracker-issue",
+          priority: "action",
+        },
+      },
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
+        },
+      },
+    };
+
+    expect(() => validateConfig(config)).not.toThrow();
+  });
+
+  it("accepts update-tracker-progress reaction action with cooldown", () => {
+    const config = {
+      reactions: {
+        "issue-progress-pr-opened": {
+          auto: true,
+          action: "update-tracker-progress",
+          cooldown: "5m",
+          priority: "info",
+        },
+      },
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
+        },
+      },
+    };
+
+    expect(() => validateConfig(config)).not.toThrow();
+  });
+
+  it("injects local-only tracker progress/complete reactions by default", () => {
+    const validated = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
+        },
+      },
+    });
+
+    expect(validated.projects.proj1.reactions?.["issue-progress-pr-opened"]).toMatchObject({
+      auto: true,
+      action: "update-tracker-progress",
+      cooldown: "5m",
+    });
+    expect(validated.projects.proj1.reactions?.["issue-progress-review-updated"]).toMatchObject({
+      auto: true,
+      action: "update-tracker-progress",
+      cooldown: "5m",
+    });
+    expect(validated.projects.proj1.reactions?.["issue-completed"]).toMatchObject({
+      auto: true,
+      action: "complete-tracker-issue",
+      priority: "action",
+    });
+  });
+
+  it("lets explicit project reactions override injected local-only defaults", () => {
+    const validated = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
+          reactions: {
+            "issue-completed": {
+              auto: true,
+              action: "notify",
+              priority: "warning",
+            },
+          },
+        },
+      },
+    });
+
+    expect(validated.projects.proj1.reactions?.["issue-completed"]).toMatchObject({
+      auto: true,
+      action: "notify",
+      priority: "warning",
+    });
+  });
+});
+
+describe("Config Validation - Automation", () => {
+  it("applies automation defaults", () => {
+    const validated = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
+        },
+      },
+    });
+
+    expect(validated.projects.proj1.automation).toEqual({
+      mode: "local-only",
+      queuePickup: {
+        enabled: true,
+        intervalSec: 60,
+        pickupStateName: "Todo",
+        requireAoMetaQueued: true,
+        maxActiveSessions: 8,
+        maxSpawnPerCycle: 4,
+      },
+      mergeGate: {
+        enabled: true,
+        method: "squash",
+        retryCooldownSec: 300,
+        strict: {
+          requireVerifyMarker: true,
+          requireBrowserMarker: true,
+          requireApprovedReviewOrNoRequests: true,
+          requireNoUnresolvedThreads: true,
+          requirePassingChecks: true,
+          requireCompletionDryRun: true,
+        },
+      },
+      completionGate: {
+        enabled: true,
+        evidencePattern: "AC Evidence:|검증 근거:",
+        syncChecklistFromEvidence: false,
+      },
+      stuckRecovery: {
+        enabled: true,
+        pattern: "Write tests for @filename",
+        thresholdSec: 600,
+        cooldownSec: 300,
+        message:
+          "Infer the concrete target file from issue context and proceed without asking for @filename.",
+      },
+    });
+  });
+
+  it("accepts custom automation overrides", () => {
+    const validated = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
+          automation: {
+            mode: "standard",
+            queuePickup: {
+              enabled: false,
+              intervalSec: 120,
+              pickupStateName: "Todo",
+              transitionStateName: "In Progress",
+              requireAoMetaQueued: false,
+              maxActiveSessions: 16,
+              maxSpawnPerCycle: 2,
+            },
+            mergeGate: {
+              enabled: true,
+              method: "rebase",
+              retryCooldownSec: 45,
+              strict: {
+                requireVerifyMarker: true,
+                requireBrowserMarker: false,
+                requireApprovedReviewOrNoRequests: true,
+                requireNoUnresolvedThreads: true,
+                requirePassingChecks: true,
+                requireCompletionDryRun: false,
+              },
+            },
+            completionGate: {
+              enabled: true,
+              evidencePattern: "Evidence:",
+              syncChecklistFromEvidence: true,
+            },
+            stuckRecovery: {
+              enabled: false,
+              pattern: "ping",
+              thresholdSec: 30,
+              cooldownSec: 15,
+              message: "ping",
+            },
+          },
+        },
+      },
+    });
+
+    expect(validated.projects.proj1.automation?.queuePickup?.enabled).toBe(false);
+    expect(validated.projects.proj1.automation?.queuePickup?.intervalSec).toBe(120);
+    expect(validated.projects.proj1.automation?.queuePickup?.transitionStateName).toBe(
+      "In Progress",
+    );
+    expect(validated.projects.proj1.automation?.queuePickup?.maxActiveSessions).toBe(16);
+    expect(validated.projects.proj1.automation?.queuePickup?.maxSpawnPerCycle).toBe(2);
+    expect(validated.projects.proj1.automation?.mode).toBe("standard");
+    expect(validated.projects.proj1.automation?.mergeGate?.method).toBe("rebase");
+    expect(validated.projects.proj1.automation?.mergeGate?.retryCooldownSec).toBe(45);
+    expect(validated.projects.proj1.automation?.completionGate?.syncChecklistFromEvidence).toBe(
+      true,
+    );
+    expect(validated.projects.proj1.automation?.stuckRecovery?.enabled).toBe(false);
+  });
+
+  it("promotes transitionStateName to pickupStateName for legacy configs", () => {
+    const validated = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
+          automation: {
+            queuePickup: {
+              transitionStateName: "In Progress",
+            },
+          },
+        },
+      },
+    });
+
+    expect(validated.projects.proj1.automation?.queuePickup?.pickupStateName).toBe("In Progress");
+    expect(validated.projects.proj1.automation?.queuePickup?.transitionStateName).toBe(
+      "In Progress",
+    );
+  });
+
+  it("keeps explicit pickupStateName when both pickup and transition are set", () => {
+    const validated = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: { plugin: "linear", teamId: "team-1" },
+          automation: {
+            queuePickup: {
+              pickupStateName: "Todo",
+              transitionStateName: "In Progress",
+            },
+          },
+        },
+      },
+    });
+
+    expect(validated.projects.proj1.automation?.queuePickup?.pickupStateName).toBe("Todo");
+    expect(validated.projects.proj1.automation?.queuePickup?.transitionStateName).toBe(
+      "In Progress",
+    );
+  });
+
+  it("rejects invalid queue pickup limits", () => {
+    expect(() =>
+      validateConfig({
+        projects: {
+          proj1: {
+            path: "/repos/test",
+            repo: "org/test",
+            defaultBranch: "main",
+            tracker: { plugin: "linear", teamId: "team-1" },
+            automation: {
+              queuePickup: {
+                maxActiveSessions: 0,
+              },
+            },
+          },
+        },
+      }),
+    ).toThrow();
+
+    expect(() =>
+      validateConfig({
+        projects: {
+          proj1: {
+            path: "/repos/test",
+            repo: "org/test",
+            defaultBranch: "main",
+            tracker: { plugin: "linear", teamId: "team-1" },
+            automation: {
+              queuePickup: {
+                maxSpawnPerCycle: 1.5,
+              },
+            },
+          },
+        },
+      }),
+    ).toThrow();
   });
 });
