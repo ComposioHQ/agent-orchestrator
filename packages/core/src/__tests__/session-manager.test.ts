@@ -199,6 +199,20 @@ describe("spawn", () => {
     expect(session.branch!.replace("feat/", "").length).toBeLessThanOrEqual(60);
   });
 
+  it("does not leave trailing dash after truncation", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    // Craft input where the 60th char falls on a word boundary (dash)
+    const session = await sm.spawn({
+      projectId: "my-app",
+      issueId: "ab ".repeat(30), // "ab ab ab ..." → "ab-ab-ab-..." truncated at 60
+    });
+
+    const slug = session.branch!.replace("feat/", "");
+    expect(slug).not.toMatch(/-$/);
+    expect(slug).not.toMatch(/^-/);
+  });
+
   it("falls back to sessionId when issueId sanitizes to empty string", async () => {
     const sm = createSessionManager({ config, registry: mockRegistry });
 
