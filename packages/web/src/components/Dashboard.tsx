@@ -125,7 +125,7 @@ export function Dashboard({ sessions, stats, orchestratorId, projectName }: Dash
             <path d="M12 8v4M12 16h.01" />
           </svg>
           <span className="flex-1">
-            GitHub API rate limited — PR data (CI status, review state, sizes) may be stale.
+            PR data may be unavailable — CI status, review state, and sizes may be stale (GitHub API rate limited or enrichment timed out).
             {" "}Will retry automatically on next refresh.
           </span>
           <button

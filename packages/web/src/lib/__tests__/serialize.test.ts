@@ -980,7 +980,6 @@ describe("basicPRToDashboard defaults", () => {
 
 // ── computeStats ──────────────────────────────────────────────────────
 
-import { computeStats } from "../serialize";
 import { makeSession, makePR } from "../../__tests__/helpers";
 
 describe("computeStats", () => {

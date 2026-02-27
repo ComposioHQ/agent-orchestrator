@@ -667,13 +667,13 @@ describe("Dashboard", () => {
     });
     const session = makeSession({ pr: rateLimitedPR });
     render(<Dashboard sessions={[session]} stats={makeStats({ totalSessions: 1 })} />);
-    expect(screen.getByText(/GitHub API rate limited/)).toBeInTheDocument();
+    expect(screen.getByText(/PR data may be unavailable/)).toBeInTheDocument();
   });
 
   it("hides rate limit banner when no sessions are rate-limited", () => {
     const session = makeSession({ pr: makePR() }); // clean PR
     render(<Dashboard sessions={[session]} stats={makeStats({ totalSessions: 1 })} />);
-    expect(screen.queryByText(/GitHub API rate limited/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/PR data may be unavailable/)).not.toBeInTheDocument();
   });
 
   it("dismisses rate limit banner when X is clicked", () => {
@@ -683,9 +683,9 @@ describe("Dashboard", () => {
     const session = makeSession({ pr: rateLimitedPR });
     render(<Dashboard sessions={[session]} stats={makeStats({ totalSessions: 1 })} />);
 
-    expect(screen.getByText(/GitHub API rate limited/)).toBeInTheDocument();
+    expect(screen.getByText(/PR data may be unavailable/)).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText("Dismiss"));
-    expect(screen.queryByText(/GitHub API rate limited/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/PR data may be unavailable/)).not.toBeInTheDocument();
   });
 
   it("shows PR table for sessions with open PRs", () => {
