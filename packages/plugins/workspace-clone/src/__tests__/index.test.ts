@@ -669,6 +669,7 @@ describe("workspace.restore()", () => {
   it("throws when restore path already exists", async () => {
     const workspace = create();
     (fs.existsSync as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    const restorePath = "/mock-home/.ao-clones/proj/sess";
 
     await expect(
       workspace.restore!(
@@ -678,11 +679,13 @@ describe("workspace.restore()", () => {
           branch: "feat/branch",
           project: makeProject(),
         },
-        "/mock-home/.ao-clones/proj/sess",
+        restorePath,
       ),
     ).rejects.toThrow(
-      'Workspace path "/mock-home/.ao-clones/proj/sess" already exists for session "sess"',
+      `Workspace path "${restorePath}" already exists for session "sess" — destroy it before restoring`,
     );
+
+    expect(fs.rmSync).not.toHaveBeenCalled();
   });
 });
 
