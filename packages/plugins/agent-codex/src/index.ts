@@ -512,7 +512,13 @@ export async function resolveCodexBinary(): Promise<string> {
 }
 
 /** Sync binary resolution for getLaunchCommand (must not be async). */
-function resolveCodexBinarySync(): string {
+/**
+ * Resolve the Codex binary path synchronously.
+ * Checks `which` first, then falls back to common install locations
+ * (Homebrew, Cargo, npm global). Exported so callers such as a preflight
+ * binary check can use the same resolution logic instead of PATH-only lookup.
+ */
+export function resolveCodexBinarySync(): string {
   try {
     const resolved = execFileSync("which", ["codex"], {
       encoding: "utf-8",
