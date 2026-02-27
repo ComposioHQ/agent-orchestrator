@@ -1,7 +1,15 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { join, resolve } from "node:path";
 import { tmpdir, homedir } from "node:os";
 import type {
   PluginModule,
@@ -80,6 +88,43 @@ export function create(config?: Record<string, unknown>): Workspace {
   const trackingDir = config?.trackingDir
     ? expandPath(config.trackingDir as string)
     : join(homedir(), ".ao-tempdir");
+  const trackingFileName = "sessions.json";
+
+  function projectTrackingPath(projectId: string): string {
+    return join(trackingDir, projectId, trackingFileName);
+  }
+
+  function setTracking(projectId: string, sessionId: string, workspacePath: string): void {
+    const projectTrackingDir = join(trackingDir, projectId);
+    mkdirSync(projectTrackingDir, { recursive: true });
+    const trackingPath = projectTrackingPath(projectId);
+    const tracking = readTrackingFile(trackingPath);
+    tracking[sessionId] = workspacePath;
+    writeTrackingFile(trackingPath, tracking);
+  }
+
+  function removeTrackingByWorkspacePath(workspacePath: string): void {
+    if (!existsSync(trackingDir)) return;
+
+    const projectDirs = readdirSync(trackingDir, { withFileTypes: true });
+    for (const entry of projectDirs) {
+      if (!entry.isDirectory()) continue;
+      const trackingPath = projectTrackingPath(entry.name);
+      const tracking = readTrackingFile(trackingPath);
+      let changed = false;
+
+      for (const [sessionId, trackedPath] of Object.entries(tracking)) {
+        if (trackedPath === workspacePath) {
+          delete tracking[sessionId];
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        writeTrackingFile(trackingPath, tracking);
+      }
+    }
+  }
 
   return {
     name: "tempdir",
@@ -132,13 +177,7 @@ export function create(config?: Record<string, unknown>): Workspace {
       }
 
       // Track the mapping from sessionId to tmpDir
-      const { mkdirSync } = await import("node:fs");
-      const projectTrackingDir = join(trackingDir, cfg.projectId);
-      mkdirSync(projectTrackingDir, { recursive: true });
-      const trackingPath = join(projectTrackingDir, "sessions.json");
-      const tracking = readTrackingFile(trackingPath);
-      tracking[cfg.sessionId] = tmpDir;
-      writeTrackingFile(trackingPath, tracking);
+      setTracking(cfg.projectId, cfg.sessionId, tmpDir);
 
       return {
         path: tmpDir,
@@ -149,6 +188,8 @@ export function create(config?: Record<string, unknown>): Workspace {
     },
 
     async destroy(workspacePath: string): Promise<void> {
+      removeTrackingByWorkspacePath(workspacePath);
+
       if (existsSync(workspacePath)) {
         rmSync(workspacePath, { recursive: true, force: true });
       }
@@ -157,7 +198,7 @@ export function create(config?: Record<string, unknown>): Workspace {
     async list(projectId: string): Promise<WorkspaceInfo[]> {
       assertSafePathSegment(projectId, "projectId");
       const projectTrackingDir = join(trackingDir, projectId);
-      const trackingPath = join(projectTrackingDir, "sessions.json");
+      const trackingPath = join(projectTrackingDir, trackingFileName);
       const tracking = readTrackingFile(trackingPath);
       const infos: WorkspaceInfo[] = [];
 
@@ -200,6 +241,9 @@ export function create(config?: Record<string, unknown>): Workspace {
       workspacePath: string,
     ): Promise<WorkspaceInfo> {
       const repoPath = expandPath(cfg.project.path);
+      const workspaceParentDir = resolve(workspacePath, "..");
+
+      mkdirSync(workspaceParentDir, { recursive: true });
 
       // Clone fresh into the workspace path
       try {
@@ -237,6 +281,8 @@ export function create(config?: Record<string, unknown>): Workspace {
           );
         }
       }
+
+      setTracking(cfg.projectId, cfg.sessionId, workspacePath);
 
       return {
         path: workspacePath,

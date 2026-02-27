@@ -31,7 +31,15 @@ vi.mock("node:os", () => ({
 // ---------------------------------------------------------------------------
 
 import * as childProcess from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { create, manifest, default as defaultExport } from "./index.js";
 
 // ---------------------------------------------------------------------------
@@ -43,7 +51,9 @@ const mockExecFileAsync = (childProcess.execFile as any)[
 ] as ReturnType<typeof vi.fn>;
 
 const mockExistsSync = existsSync as ReturnType<typeof vi.fn>;
+const mockMkdirSync = mkdirSync as ReturnType<typeof vi.fn>;
 const mockMkdtempSync = mkdtempSync as ReturnType<typeof vi.fn>;
+const mockReaddirSync = readdirSync as ReturnType<typeof vi.fn>;
 const mockRmSync = rmSync as ReturnType<typeof vi.fn>;
 const mockReadFileSync = readFileSync as ReturnType<typeof vi.fn>;
 const mockWriteFileSync = writeFileSync as ReturnType<typeof vi.fn>;
@@ -214,7 +224,8 @@ describe("workspace.create()", () => {
 describe("workspace.destroy()", () => {
   it("removes the workspace directory", async () => {
     const ws = create();
-    mockExistsSync.mockReturnValueOnce(true);
+    mockExistsSync.mockReturnValueOnce(false); // tracking dir missing
+    mockExistsSync.mockReturnValueOnce(true); // workspace exists
 
     await ws.destroy("/tmp/ao-myproject-session-1-xyz");
 
@@ -226,11 +237,31 @@ describe("workspace.destroy()", () => {
 
   it("does nothing if directory does not exist", async () => {
     const ws = create();
-    mockExistsSync.mockReturnValueOnce(false);
+    mockExistsSync.mockReturnValueOnce(false); // tracking dir missing
+    mockExistsSync.mockReturnValueOnce(false); // workspace missing
 
     await ws.destroy("/nonexistent");
 
     expect(mockRmSync).not.toHaveBeenCalled();
+  });
+
+  it("removes matching tracking entries by workspace path", async () => {
+    const ws = create();
+
+    mockExistsSync.mockReturnValueOnce(true); // tracking dir exists
+    mockReaddirSync.mockReturnValueOnce([{ name: "myproject", isDirectory: () => true }]);
+    mockReadFileSync.mockReturnValueOnce(
+      JSON.stringify({ "session-1": "/tmp/ao-myproject-session-1-xyz" }),
+    );
+    mockExistsSync.mockReturnValueOnce(false); // workspace already gone
+
+    await ws.destroy("/tmp/ao-myproject-session-1-xyz");
+
+    expect(mockWriteFileSync).toHaveBeenCalledWith(
+      expect.stringContaining("/myproject/sessions.json"),
+      "{}",
+      "utf-8",
+    );
   });
 });
 
@@ -331,6 +362,12 @@ describe("workspace.restore()", () => {
 
     expect(info.path).toBe("/tmp/ao-myproject-session-1-xyz");
     expect(info.branch).toBe("feat/TEST-1");
+    expect(mockMkdirSync).toHaveBeenCalledWith("/tmp", { recursive: true });
+    expect(mockWriteFileSync).toHaveBeenCalledWith(
+      expect.stringContaining("/myproject/sessions.json"),
+      expect.stringContaining("session-1"),
+      "utf-8",
+    );
   });
 
   it("creates branch if checkout fails", async () => {
