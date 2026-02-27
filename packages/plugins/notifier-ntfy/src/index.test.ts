@@ -235,6 +235,27 @@ describe("notifier-ntfy", () => {
       const headers = fetchMock.mock.calls[0][1].headers;
       expect(headers.Actions).toContain("Merge");
       expect(headers.Actions).not.toContain("No-op");
+      // Must not end with a trailing semicolon
+      expect(headers.Actions).not.toMatch(/;$/);
+    });
+
+    it("uses correct semicolon separator between multiple actions", async () => {
+      const fetchMock = mockFetchOk();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const notifier = create({ topic: "ao-alerts" });
+      const actions: NotifyAction[] = [
+        { label: "No-op" },
+        { label: "Merge", url: "https://example.com/merge" },
+        { label: "Open", url: "https://example.com/open" },
+      ];
+      await notifier.notifyWithActions!(makeEvent(), actions);
+
+      const headers = fetchMock.mock.calls[0][1].headers;
+      // "No-op" has no URL so only 2 actions; must end with the last action URL, no trailing ";"
+      expect(headers.Actions).toBe(
+        "view, Merge, https://example.com/merge; view, Open, https://example.com/open",
+      );
     });
 
     it("does nothing when no topic", async () => {

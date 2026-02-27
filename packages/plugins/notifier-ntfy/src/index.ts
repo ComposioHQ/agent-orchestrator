@@ -54,8 +54,8 @@ async function postToNtfy(
   if (actions && actions.length > 0) {
     const ntfyActions = actions
       .filter((a) => a.url)
-      .map((a, i) => `view, ${a.label}, ${a.url}${i < actions.length - 1 ? ";" : ""}`)
-      .join(" ");
+      .map((a) => `view, ${a.label}, ${a.url}`)
+      .join("; ");
     if (ntfyActions) {
       headers.Actions = ntfyActions;
     }
@@ -78,6 +78,7 @@ export function create(config?: Record<string, unknown>): Notifier {
   const topic = config?.topic as string | undefined;
 
   if (!topic) {
+    // eslint-disable-next-line no-console
     console.warn("[notifier-ntfy] No topic configured \u2014 notifications will be no-ops");
   }
 
