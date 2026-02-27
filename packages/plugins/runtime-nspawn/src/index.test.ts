@@ -247,7 +247,7 @@ describe("runtime.destroy()", () => {
 });
 
 describe("runtime.sendMessage()", () => {
-  it("executes echo command via machinectl shell", async () => {
+  it("executes printf command via machinectl shell", async () => {
     const runtime = create();
     mockCmdSuccess("");
 
@@ -258,6 +258,23 @@ describe("runtime.sendMessage()", () => {
     expect(args[0]).toBe("shell");
     expect(args[1]).toBe("ao-test-session");
     expect(args).toContain("/bin/sh");
+    const cmdArg = args[args.length - 1];
+    expect(cmdArg).toContain("printf");
+    expect(cmdArg).toContain("'hello world'");
+    expect(cmdArg).not.toMatch(/echo\s+/);
+  });
+
+  it("wraps message in single quotes to prevent shell injection", async () => {
+    const runtime = create();
+    mockCmdSuccess("");
+
+    await runtime.sendMessage(makeHandle(), "$(rm -rf /)");
+
+    const args = mockExecFileCustom.mock.calls[0][1] as string[];
+    const cmdArg = args[args.length - 1];
+    // shellEscape wraps in single quotes — $(rm -rf /) becomes '$(rm -rf /)'
+    expect(cmdArg).toContain("'$(rm -rf /)'");
+    expect(cmdArg).toContain("printf");
   });
 });
 

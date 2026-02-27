@@ -1,12 +1,13 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type {
-  PluginModule,
-  Runtime,
-  RuntimeCreateConfig,
-  RuntimeHandle,
-  RuntimeMetrics,
-  AttachInfo,
+import {
+  shellEscape,
+  type PluginModule,
+  type Runtime,
+  type RuntimeCreateConfig,
+  type RuntimeHandle,
+  type RuntimeMetrics,
+  type AttachInfo,
 } from "@composio/ao-core";
 
 const execFileAsync = promisify(execFile);
@@ -145,7 +146,7 @@ export function create(): Runtime {
       // Execute the launch command inside the container
       await nspawnExec(
         machineName,
-        `cd ${JSON.stringify(config.workspacePath)} && nohup sh -c ${JSON.stringify(config.launchCommand)} > /tmp/ao-output 2>&1 &`,
+        `cd ${shellEscape(config.workspacePath)} && nohup sh -c ${shellEscape(config.launchCommand)} > /tmp/ao-output 2>&1 &`,
       );
 
       return {
@@ -194,7 +195,7 @@ export function create(): Runtime {
     async sendMessage(handle: RuntimeHandle, message: string): Promise<void> {
       await nspawnExec(
         handle.id,
-        `echo ${JSON.stringify(message)} >> /tmp/ao-input`,
+        `printf '%s\\n' ${shellEscape(message)} >> /tmp/ao-input`,
       );
     },
 
