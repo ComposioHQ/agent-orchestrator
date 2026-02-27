@@ -73,9 +73,11 @@ describe("notifier-webhook", () => {
     it("does nothing when no url", async () => {
       const fetchMock = vi.fn();
       vi.stubGlobal("fetch", fetchMock);
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
       const notifier = create();
       await notifier.notify(makeEvent());
       expect(fetchMock).not.toHaveBeenCalled();
+      warnSpy.mockRestore();
     });
 
     it("POSTs event as JSON to the configured URL", async () => {
