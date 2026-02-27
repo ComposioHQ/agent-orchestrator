@@ -85,6 +85,7 @@ export function create(config?: Record<string, unknown>): Notifier {
   const from = config?.from as string | undefined;
 
   if (!accountSid || !authToken || !to || !from) {
+    // eslint-disable-next-line no-console
     console.warn(
       "[notifier-sms] Missing TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, to, or from \u2014 notifications will be no-ops",
     );
