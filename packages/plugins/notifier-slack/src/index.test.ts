@@ -71,9 +71,11 @@ describe("notifier-slack", () => {
     it("does nothing when no webhookUrl", async () => {
       const fetchMock = mockFetchOk();
       vi.stubGlobal("fetch", fetchMock);
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
       const notifier = create();
       await notifier.notify(makeEvent());
       expect(fetchMock).not.toHaveBeenCalled();
+      warnSpy.mockRestore();
     });
 
     it("POSTs to the webhook URL", async () => {
@@ -391,11 +393,12 @@ describe("notifier-slack", () => {
     it("returns null when no webhookUrl", async () => {
       const fetchMock = mockFetchOk();
       vi.stubGlobal("fetch", fetchMock);
-
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
       const notifier = create();
       const result = await notifier.post!("test");
       expect(result).toBeNull();
       expect(fetchMock).not.toHaveBeenCalled();
+      warnSpy.mockRestore();
     });
   });
 });
