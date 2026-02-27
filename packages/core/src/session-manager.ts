@@ -11,8 +11,16 @@
  * Reference: scripts/claude-ao-session, scripts/send-to-session
  */
 
-import { statSync, existsSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import {
+  statSync,
+  existsSync,
+  readdirSync,
+  writeFileSync,
+  mkdirSync,
+  accessSync,
+  constants,
+} from "node:fs";
+import { join, delimiter } from "node:path";
 import {
   isIssueNotFoundError,
   isRestorable,
@@ -82,6 +90,49 @@ function safeJsonParse<T>(str: string): T | null {
   } catch {
     return null;
   }
+}
+
+async function assertAgentBinaryAvailable(agent: Agent): Promise<void> {
+  const binary = agent.getBinaryName ? agent.getBinaryName() : undefined;
+  if (!binary) return;
+  const resolved = findExecutableOnPath(binary);
+  if (!resolved) {
+    throw new Error(
+      `Missing required agent binary: ${binary}. Install it and ensure "${binary}" is on PATH.`,
+    );
+  }
+}
+
+function isExecutable(filePath: string): boolean {
+  try {
+    const stats = statSync(filePath);
+    if (!stats.isFile()) return false;
+    accessSync(filePath, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function findExecutableOnPath(binary: string): string | null {
+  const pathEnv = process.env.PATH ?? process.env.Path ?? "";
+  const pathParts = pathEnv.split(delimiter).map((part) => (part === "" ? "." : part));
+  const isWindows = process.platform === "win32";
+  const pathExtRaw = process.env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM";
+  const pathExts = isWindows
+    ? pathExtRaw.split(";").filter(Boolean)
+    : [""];
+
+  const hasExt = isWindows && /\.[^\\/]+$/.test(binary);
+  const candidates = hasExt ? [binary] : pathExts.map((ext) => `${binary}${ext}`);
+
+  for (const dir of pathParts) {
+    for (const candidate of candidates) {
+      const fullPath = join(dir, candidate);
+      if (isExecutable(fullPath)) return fullPath;
+    }
+  }
+  return null;
 }
 
 /** Valid session statuses for validation. */
@@ -336,6 +387,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       throw new Error(`Agent plugin '${project.agent ?? config.defaults.agent}' not found`);
     }
 
+    await assertAgentBinaryAvailable(plugins.agent);
+
     // Validate issue exists BEFORE creating any resources
     let resolvedIssue: Issue | undefined;
     if (spawnConfig.issueId && plugins.tracker) {
@@ -571,6 +624,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     if (!plugins.agent) {
       throw new Error(`Agent plugin '${project.agent ?? config.defaults.agent}' not found`);
     }
+
+    await assertAgentBinaryAvailable(plugins.agent);
 
     const sessionId = `${project.sessionPrefix}-orchestrator`;
 

@@ -33,6 +33,9 @@ function createOpenCodeAgent(): Agent {
   return {
     name: "opencode",
     processName: "opencode",
+    getBinaryName(): string {
+      return "opencode";
+    },
 
     getLaunchCommand(config: AgentLaunchConfig): string {
       const parts: string[] = ["opencode"];

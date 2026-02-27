@@ -265,6 +265,9 @@ export interface Agent {
   /** Process name to look for (e.g. "claude", "codex", "aider") */
   readonly processName: string;
 
+  /** Binary/command name to launch (used for PATH validation) */
+  getBinaryName?(): string;
+
   /** Get the shell command to launch this agent */
   getLaunchCommand(config: AgentLaunchConfig): string;
 
