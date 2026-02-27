@@ -29,7 +29,7 @@ vi.mock("node:os", () => ({
 // ---------------------------------------------------------------------------
 
 import * as childProcess from "node:child_process";
-import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { create, manifest, default as defaultExport } from "./index.js";
 
 // ---------------------------------------------------------------------------
@@ -41,6 +41,7 @@ const mockExecFileAsync = (childProcess.execFile as any)[
 ] as ReturnType<typeof vi.fn>;
 
 const mockExistsSync = existsSync as ReturnType<typeof vi.fn>;
+const mockMkdirSync = mkdirSync as ReturnType<typeof vi.fn>;
 const mockReaddirSync = readdirSync as ReturnType<typeof vi.fn>;
 const mockRmSync = rmSync as ReturnType<typeof vi.fn>;
 const mockStatSync = statSync as ReturnType<typeof vi.fn>;
@@ -187,6 +188,38 @@ describe("workspace.create()", () => {
     await expect(ws.create(makeCreateConfig())).rejects.toThrow("Failed to clone");
   });
 
+  it("runs compose down and removes workspace when compose up fails", async () => {
+    const ws = create();
+    mockComposeFileExists();
+
+    mockCmdSuccess("https://github.com/test/repo.git"); // git remote get-url origin
+    mockCmdSuccess(""); // git clone
+    mockCmdSuccess(""); // git checkout -b
+    mockCmdError("compose up failed"); // docker compose up
+    mockCmdSuccess(""); // docker compose down cleanup
+
+    await expect(ws.create(makeCreateConfig())).rejects.toThrow(
+      'Docker Compose up failed for session "session-1"',
+    );
+
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "docker",
+      expect.arrayContaining([
+        "compose",
+        "-p",
+        "ao-myproject-session-1",
+        "-f",
+        "docker-compose.yml",
+        "down",
+      ]),
+      expect.anything(),
+    );
+    expect(mockRmSync).toHaveBeenCalledWith(
+      "/mock-home/.ao-compose-workspaces/myproject/session-1",
+      { recursive: true, force: true },
+    );
+  });
+
   it("rejects invalid projectId", async () => {
     const ws = create();
     await expect(
@@ -304,6 +337,51 @@ describe("workspace.exists()", () => {
     mockCmdSuccess("service1"); // docker compose ps --services
 
     expect(await ws.exists("/mock-home/.ao-compose-workspaces/myproject/session-1")).toBe(true);
+  });
+});
+
+describe("workspace.restore()", () => {
+  it("restores repo and starts compose services", async () => {
+    const ws = create();
+    mockComposeFileExists();
+
+    mockCmdSuccess("https://github.com/test/repo.git"); // git remote get-url
+    mockCmdSuccess(""); // git clone
+    mockCmdSuccess(""); // git checkout
+    mockCmdSuccess(""); // docker compose down (pre-cleanup)
+    mockCmdSuccess(""); // docker compose up
+
+    const info = await ws.restore!(
+      makeCreateConfig(),
+      "/mock-home/.ao-compose-workspaces/myproject/session-1",
+    );
+
+    expect(mockMkdirSync).toHaveBeenCalledWith("/mock-home/.ao-compose-workspaces/myproject", {
+      recursive: true,
+    });
+    expect(info.path).toBe("/mock-home/.ao-compose-workspaces/myproject/session-1");
+    expect(info.branch).toBe("feat/TEST-1");
+  });
+
+  it("runs compose down and removes workspace on restore up failure", async () => {
+    const ws = create();
+    mockComposeFileExists();
+
+    mockCmdSuccess("https://github.com/test/repo.git"); // git remote get-url
+    mockCmdSuccess(""); // git clone
+    mockCmdSuccess(""); // git checkout
+    mockCmdSuccess(""); // docker compose down (pre-cleanup)
+    mockCmdError("compose up failed"); // docker compose up
+    mockCmdSuccess(""); // docker compose down cleanup
+
+    await expect(
+      ws.restore!(makeCreateConfig(), "/mock-home/.ao-compose-workspaces/myproject/session-1"),
+    ).rejects.toThrow('Docker Compose up failed during restore for "session-1"');
+
+    expect(mockRmSync).toHaveBeenCalledWith(
+      "/mock-home/.ao-compose-workspaces/myproject/session-1",
+      { recursive: true, force: true },
+    );
   });
 });
 

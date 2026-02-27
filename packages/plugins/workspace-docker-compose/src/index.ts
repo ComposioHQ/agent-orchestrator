@@ -222,7 +222,22 @@ export function create(config?: Record<string, unknown>): Workspace {
           "-d",
         );
       } catch (composeErr: unknown) {
-        // Compose failed — clean up
+        // Compose may have partially started containers/networks.
+        // Tear down first, then remove the workspace directory.
+        try {
+          await dockerCompose(
+            workspacePath,
+            "-p",
+            projectName,
+            "-f",
+            composeFileName,
+            "down",
+            "-v",
+            "--remove-orphans",
+          );
+        } catch {
+          // Best-effort cleanup
+        }
         rmSync(workspacePath, { recursive: true, force: true });
         const msg = composeErr instanceof Error ? composeErr.message : String(composeErr);
         throw new Error(`Docker Compose up failed for session "${cfg.sessionId}": ${msg}`, {
@@ -462,15 +477,37 @@ export function create(config?: Record<string, unknown>): Workspace {
       }
 
       // Start compose services
-      await dockerCompose(
-        workspacePath,
-        "-p",
-        projectName,
-        "-f",
-        composeFileName,
-        "up",
-        "-d",
-      );
+      try {
+        await dockerCompose(
+          workspacePath,
+          "-p",
+          projectName,
+          "-f",
+          composeFileName,
+          "up",
+          "-d",
+        );
+      } catch (composeErr: unknown) {
+        try {
+          await dockerCompose(
+            workspacePath,
+            "-p",
+            projectName,
+            "-f",
+            composeFileName,
+            "down",
+            "-v",
+            "--remove-orphans",
+          );
+        } catch {
+          // Best-effort cleanup
+        }
+        rmSync(workspacePath, { recursive: true, force: true });
+        const msg = composeErr instanceof Error ? composeErr.message : String(composeErr);
+        throw new Error(`Docker Compose up failed during restore for "${cfg.sessionId}": ${msg}`, {
+          cause: composeErr,
+        });
+      }
 
       return {
         path: workspacePath,
