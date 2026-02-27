@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { homedir, platform } from "node:os";
 import type {
   PluginModule,
@@ -56,6 +56,28 @@ export function create(config?: Record<string, unknown>): Workspace {
   const overlayBaseDir = config?.overlayDir
     ? expandPath(config.overlayDir as string)
     : join(homedir(), ".ao-overlays");
+  const resolvedOverlayBaseDir = resolve(overlayBaseDir);
+
+  function assertManagedMergedPath(workspacePath: string): string {
+    const resolvedWorkspacePath = resolve(workspacePath);
+    if (basename(resolvedWorkspacePath) !== "merged") {
+      throw new Error(
+        `Invalid overlay workspace path "${workspacePath}": expected path ending with /merged`,
+      );
+    }
+
+    const sessionDir = resolve(resolvedWorkspacePath, "..");
+    if (
+      sessionDir !== resolvedOverlayBaseDir &&
+      !sessionDir.startsWith(resolvedOverlayBaseDir + "/")
+    ) {
+      throw new Error(
+        `Refusing to manage overlay path outside "${resolvedOverlayBaseDir}": "${workspacePath}"`,
+      );
+    }
+
+    return sessionDir;
+  }
 
   return {
     name: "overlay",
@@ -93,6 +115,8 @@ export function create(config?: Record<string, unknown>): Workspace {
     },
 
     async destroy(workspacePath: string): Promise<void> {
+      const sessionDir = assertManagedMergedPath(workspacePath);
+
       // Unmount the overlay
       try {
         await execFileAsync("umount", [workspacePath], {
@@ -103,8 +127,6 @@ export function create(config?: Record<string, unknown>): Workspace {
       }
 
       // Remove the entire session directory (upper, work, merged)
-      // workspacePath is .../merged, parent is the session dir
-      const sessionDir = join(workspacePath, "..");
       if (existsSync(sessionDir)) {
         rmSync(sessionDir, { recursive: true, force: true });
       }
@@ -169,10 +191,9 @@ export function create(config?: Record<string, unknown>): Workspace {
       workspacePath: string,
     ): Promise<WorkspaceInfo> {
       assertLinux();
+      const sessionDir = assertManagedMergedPath(workspacePath);
 
       const projectPath = expandPath(cfg.project.path);
-      // workspacePath is .../merged, derive session dir structure
-      const sessionDir = join(workspacePath, "..");
       const upperDir = join(sessionDir, "upper");
       const workDir = join(sessionDir, "work");
 

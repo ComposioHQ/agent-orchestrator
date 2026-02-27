@@ -207,9 +207,17 @@ describe("workspace.destroy()", () => {
     mockCmdError("not mounted");
     mockExistsSync.mockReturnValueOnce(false);
 
-    await ws.destroy("/nonexistent/merged");
+    await ws.destroy("/mock-home/.ao-overlays/myproject/session-1/merged");
 
     expect(mockRmSync).not.toHaveBeenCalled();
+  });
+
+  it("rejects destroy outside managed overlay directory", async () => {
+    const ws = create();
+
+    await expect(ws.destroy("/tmp/random/merged")).rejects.toThrow(
+      'Refusing to manage overlay path outside "/mock-home/.ao-overlays"',
+    );
   });
 });
 
@@ -308,6 +316,14 @@ describe("workspace.restore()", () => {
     await expect(
       ws.restore(makeCreateConfig(), "/some/path/merged"),
     ).rejects.toThrow("workspace-overlay requires Linux");
+  });
+
+  it("rejects restore outside managed overlay directory", async () => {
+    const ws = create();
+
+    await expect(
+      ws.restore(makeCreateConfig(), "/tmp/random/merged"),
+    ).rejects.toThrow('Refusing to manage overlay path outside "/mock-home/.ao-overlays"');
   });
 });
 
