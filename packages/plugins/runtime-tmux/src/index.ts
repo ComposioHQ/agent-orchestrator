@@ -73,7 +73,14 @@ export function create(): Runtime {
               /* ignore cleanup errors */
             }
           }
-          await sleep(300);
+          // Scale delay: base 500ms + 100ms per KB (cap 3000ms).
+          // Long commands need more time for the TUI to process paste-buffer
+          // before Enter arrives — 300ms was too short for 80+ line prompts.
+          const launchDelayMs = Math.min(
+            500 + Math.ceil(config.launchCommand.length / 1024) * 100,
+            3000,
+          );
+          await sleep(launchDelayMs);
           await tmux("send-keys", "-t", sessionName, "Enter");
         } else {
           await tmux("send-keys", "-t", sessionName, config.launchCommand, "Enter");
@@ -141,9 +148,11 @@ export function create(): Runtime {
         await tmux("send-keys", "-t", handle.id, "-l", message);
       }
 
-      // Small delay to let tmux process the pasted text before pressing Enter.
-      // Without this, Enter can arrive before the text is fully rendered.
-      await sleep(300);
+      // Scale delay: base 500ms + 100ms per KB (cap 3000ms).
+      // Long prompts (4-8 KB) need more time for the TUI to process
+      // paste-buffer before Enter arrives — 300ms caused hangs on 80+ line prompts.
+      const pasteDelayMs = Math.min(500 + Math.ceil(message.length / 1024) * 100, 3000);
+      await sleep(pasteDelayMs);
       await tmux("send-keys", "-t", handle.id, "Enter");
     },
 
