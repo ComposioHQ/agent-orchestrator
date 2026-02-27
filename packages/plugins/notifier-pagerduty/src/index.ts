@@ -83,6 +83,7 @@ export function create(_config?: Record<string, unknown>): Notifier {
   const routingKey = process.env.PAGERDUTY_ROUTING_KEY;
 
   if (!routingKey) {
+    // eslint-disable-next-line no-console
     console.warn(
       "[notifier-pagerduty] Missing PAGERDUTY_ROUTING_KEY \u2014 notifications will be no-ops",
     );
