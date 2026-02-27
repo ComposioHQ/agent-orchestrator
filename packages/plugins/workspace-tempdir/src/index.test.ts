@@ -352,6 +352,7 @@ describe("workspace.restore()", () => {
   it("clones into workspace path and checks out branch", async () => {
     const ws = create();
 
+    mockExistsSync.mockReturnValue(false);
     mockCmdSuccess(""); // git clone
     mockCmdSuccess(""); // git checkout
 
@@ -373,6 +374,7 @@ describe("workspace.restore()", () => {
   it("creates branch if checkout fails", async () => {
     const ws = create();
 
+    mockExistsSync.mockReturnValue(false);
     mockCmdSuccess(""); // git clone
     mockCmdError("pathspec did not match"); // git checkout fails
     mockCmdSuccess(""); // git checkout -b
@@ -388,6 +390,7 @@ describe("workspace.restore()", () => {
   it("throws and cleans up on clone failure", async () => {
     const ws = create();
 
+    mockExistsSync.mockReturnValueOnce(false).mockReturnValueOnce(true);
     mockCmdError("clone failed");
 
     await expect(
@@ -395,6 +398,17 @@ describe("workspace.restore()", () => {
     ).rejects.toThrow("Clone failed during restore");
 
     expect(mockRmSync).toHaveBeenCalled();
+  });
+
+  it("fails restore when workspace path already exists", async () => {
+    const ws = create();
+    mockExistsSync.mockReturnValue(true);
+
+    await expect(
+      ws.restore(makeCreateConfig(), "/tmp/ao-myproject-session-1-xyz"),
+    ).rejects.toThrow(
+      'Workspace path "/tmp/ao-myproject-session-1-xyz" already exists for session "session-1"',
+    );
   });
 });
 

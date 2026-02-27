@@ -240,10 +240,19 @@ export function create(config?: Record<string, unknown>): Workspace {
       cfg: WorkspaceCreateConfig,
       workspacePath: string,
     ): Promise<WorkspaceInfo> {
+      assertSafePathSegment(cfg.projectId, "projectId");
+      assertSafePathSegment(cfg.sessionId, "sessionId");
+
       const repoPath = expandPath(cfg.project.path);
       const workspaceParentDir = resolve(workspacePath, "..");
 
       mkdirSync(workspaceParentDir, { recursive: true });
+
+      if (existsSync(workspacePath)) {
+        throw new Error(
+          `Workspace path "${workspacePath}" already exists for session "${cfg.sessionId}" — destroy it before restore`,
+        );
+      }
 
       // Clone fresh into the workspace path
       try {
@@ -261,7 +270,9 @@ export function create(config?: Record<string, unknown>): Workspace {
           { timeout: GIT_TIMEOUT },
         );
       } catch (err: unknown) {
-        rmSync(workspacePath, { recursive: true, force: true });
+        if (existsSync(workspacePath)) {
+          rmSync(workspacePath, { recursive: true, force: true });
+        }
         const msg = err instanceof Error ? err.message : String(err);
         throw new Error(`Clone failed during restore: ${msg}`, { cause: err });
       }
