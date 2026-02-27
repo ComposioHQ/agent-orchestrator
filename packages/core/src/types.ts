@@ -1069,7 +1069,9 @@ export function isIssueNotFoundError(err: unknown): boolean {
     // GitHub: "no issue found" or "could not resolve to an Issue"
     message.includes("could not resolve to an issue") ||
     // Linear: "Issue <id> not found" or "No issue with identifier"
-    message.includes("no issue with identifier")
+    message.includes("no issue with identifier") ||
+    // GitHub: "invalid issue format" (ad-hoc free-text strings)
+    message.includes("invalid issue format")
   );
 }
 

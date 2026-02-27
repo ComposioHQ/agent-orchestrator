@@ -9,6 +9,7 @@ import { getSessionsDir, getProjectBaseDir } from "../paths.js";
 import {
   SessionNotRestorableError,
   WorkspaceMissingError,
+  isIssueNotFoundError,
   type OrchestratorConfig,
   type PluginRegistry,
   type Runtime,
@@ -158,6 +159,76 @@ describe("spawn", () => {
 
     expect(session.branch).toBe("feat/INT-100");
     expect(session.issueId).toBe("INT-100");
+  });
+
+  it("sanitizes free-text issueId into a valid branch slug", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    const session = await sm.spawn({ projectId: "my-app", issueId: "fix login bug" });
+
+    expect(session.branch).toBe("feat/fix-login-bug");
+  });
+
+  it("preserves casing for branch-safe issue IDs without tracker", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    const session = await sm.spawn({ projectId: "my-app", issueId: "INT-9999" });
+
+    expect(session.branch).toBe("feat/INT-9999");
+  });
+
+  it("sanitizes issueId with special characters", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    const session = await sm.spawn({
+      projectId: "my-app",
+      issueId: "Fix: user can't login (SSO)",
+    });
+
+    expect(session.branch).toBe("feat/fix-user-can-t-login-sso");
+  });
+
+  it("truncates long slugs to 60 characters", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    const session = await sm.spawn({
+      projectId: "my-app",
+      issueId: "this is a very long issue description that should be truncated to sixty characters maximum",
+    });
+
+    expect(session.branch!.replace("feat/", "").length).toBeLessThanOrEqual(60);
+  });
+
+  it("does not leave trailing dash after truncation", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    // Craft input where the 60th char falls on a word boundary (dash)
+    const session = await sm.spawn({
+      projectId: "my-app",
+      issueId: "ab ".repeat(30), // "ab ab ab ..." → "ab-ab-ab-..." truncated at 60
+    });
+
+    const slug = session.branch!.replace("feat/", "");
+    expect(slug).not.toMatch(/-$/);
+    expect(slug).not.toMatch(/^-/);
+  });
+
+  it("falls back to sessionId when issueId sanitizes to empty string", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    const session = await sm.spawn({ projectId: "my-app", issueId: "!!!" });
+
+    // Slug is empty after sanitization, falls back to sessionId
+    expect(session.branch).toMatch(/^feat\/app-\d+$/);
+  });
+
+  it("sanitizes issueId containing '..' (invalid in git branch names)", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    const session = await sm.spawn({ projectId: "my-app", issueId: "foo..bar" });
+
+    // '..' is invalid in git refs, so it should be slugified
+    expect(session.branch).toBe("feat/foo-bar");
   });
 
   it("uses tracker.branchName when tracker is available", async () => {
@@ -385,9 +456,46 @@ describe("spawn", () => {
 
     expect(session.issueId).toBe("INT-9999");
     expect(session.branch).toBe("feat/INT-9999");
+    // tracker.branchName and generatePrompt should NOT be called when issue wasn't resolved
+    expect(mockTracker.branchName).not.toHaveBeenCalled();
+    expect(mockTracker.generatePrompt).not.toHaveBeenCalled();
     // Workspace and runtime should still be created
     expect(mockWorkspace.create).toHaveBeenCalled();
     expect(mockRuntime.create).toHaveBeenCalled();
+  });
+
+  it("succeeds with ad-hoc free-text when tracker returns 'invalid issue format'", async () => {
+    const mockTracker: Tracker = {
+      name: "mock-tracker",
+      getIssue: vi.fn().mockRejectedValue(new Error("invalid issue format: fix login bug")),
+      isCompleted: vi.fn().mockResolvedValue(false),
+      issueUrl: vi.fn().mockReturnValue(""),
+      branchName: vi.fn().mockReturnValue(""),
+      generatePrompt: vi.fn().mockResolvedValue(""),
+    };
+
+    const registryWithTracker: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        if (slot === "tracker") return mockTracker;
+        return null;
+      }),
+    };
+
+    const sm = createSessionManager({
+      config,
+      registry: registryWithTracker,
+    });
+
+    const session = await sm.spawn({ projectId: "my-app", issueId: "fix login bug" });
+
+    expect(session.issueId).toBe("fix login bug");
+    expect(session.branch).toBe("feat/fix-login-bug");
+    expect(mockTracker.branchName).not.toHaveBeenCalled();
+    expect(mockWorkspace.create).toHaveBeenCalled();
   });
 
   it("fails on tracker auth errors", async () => {
@@ -1610,5 +1718,35 @@ describe("PluginRegistry.loadBuiltins importFn", () => {
     // Should have attempted to import builtin plugins via the provided importFn
     expect(importedPackages.length).toBeGreaterThan(0);
     expect(importedPackages).toContain("@composio/ao-plugin-runtime-tmux");
+  });
+});
+
+describe("isIssueNotFoundError", () => {
+  it("matches 'Issue X not found'", () => {
+    expect(isIssueNotFoundError(new Error("Issue INT-9999 not found"))).toBe(true);
+  });
+
+  it("matches 'could not resolve to an Issue'", () => {
+    expect(isIssueNotFoundError(new Error("Could not resolve to an Issue"))).toBe(true);
+  });
+
+  it("matches 'no issue with identifier'", () => {
+    expect(isIssueNotFoundError(new Error("No issue with identifier ABC-123"))).toBe(true);
+  });
+
+  it("matches 'invalid issue format'", () => {
+    expect(isIssueNotFoundError(new Error("Invalid issue format: fix login bug"))).toBe(true);
+  });
+
+  it("does not match unrelated errors", () => {
+    expect(isIssueNotFoundError(new Error("Unauthorized"))).toBe(false);
+    expect(isIssueNotFoundError(new Error("Network timeout"))).toBe(false);
+    expect(isIssueNotFoundError(new Error("API key not found"))).toBe(false);
+  });
+
+  it("returns false for non-error values", () => {
+    expect(isIssueNotFoundError(null)).toBe(false);
+    expect(isIssueNotFoundError(undefined)).toBe(false);
+    expect(isIssueNotFoundError("string")).toBe(false);
   });
 });
