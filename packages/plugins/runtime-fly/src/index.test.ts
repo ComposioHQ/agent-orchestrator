@@ -236,7 +236,7 @@ describe("runtime.destroy()", () => {
 });
 
 describe("runtime.sendMessage()", () => {
-  it("POSTs exec command with the message", async () => {
+  it("POSTs exec command with the message using printf", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ exit_code: 0 }),
@@ -252,6 +252,26 @@ describe("runtime.sendMessage()", () => {
     expect(opts.method).toBe("POST");
     const body = JSON.parse(opts.body);
     expect(body.cmd[0]).toBe("sh");
+    expect(body.cmd[2]).toContain("printf");
+    expect(body.cmd[2]).not.toContain("echo");
+    expect(body.cmd[2]).toContain("'hello'");
+  });
+
+  it("wraps message in single quotes to prevent shell injection", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ exit_code: 0 }),
+      text: () => Promise.resolve(""),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const runtime = create();
+    await runtime.sendMessage(makeHandle("mach-msg", "my-fly-app"), "$(rm -rf /)");
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    // shellEscape wraps in single quotes — $(rm -rf /) becomes '$(rm -rf /)'
+    expect(body.cmd[2]).toContain("'$(rm -rf /)'");
+    expect(body.cmd[2]).toContain("printf");
   });
 
   it("throws when exit_code is non-zero", async () => {

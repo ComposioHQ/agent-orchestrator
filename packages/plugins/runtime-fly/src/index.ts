@@ -1,10 +1,11 @@
-import type {
-  PluginModule,
-  Runtime,
-  RuntimeCreateConfig,
-  RuntimeHandle,
-  RuntimeMetrics,
-  AttachInfo,
+import {
+  shellEscape,
+  type PluginModule,
+  type Runtime,
+  type RuntimeCreateConfig,
+  type RuntimeHandle,
+  type RuntimeMetrics,
+  type AttachInfo,
 } from "@composio/ao-core";
 
 export const manifest = {
@@ -166,7 +167,7 @@ export function create(): Runtime {
         {
           method: "POST",
           body: JSON.stringify({
-            cmd: ["sh", "-c", `echo ${JSON.stringify(message)} >> /tmp/ao-input`],
+            cmd: ["sh", "-c", `printf '%s\\n' ${shellEscape(message)} >> /tmp/ao-input`],
             timeout: 10,
           }),
         },
