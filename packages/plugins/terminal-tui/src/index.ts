@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import type { PluginModule, Terminal, Session } from "@composio/ao-core";
 
 // =============================================================================
@@ -30,20 +30,23 @@ function getSessionName(session: Session): string {
  */
 function tmuxAttach(sessionName: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    // Spawn tmux attach in the foreground — this hands control to tmux
-    const child = execFile(
-      "tmux",
-      ["attach-session", "-t", sessionName],
-      { timeout: 0 },
-      (err) => {
-        if (err) reject(err);
-        else resolve();
-      },
-    );
-    // Inherit stdio so the user can interact with the tmux session
-    child.stdout?.pipe(process.stdout);
-    child.stderr?.pipe(process.stderr);
-    process.stdin.pipe(child.stdin ?? process.stdin);
+    // Attach requires a real TTY; use spawn with inherited stdio.
+    const child = spawn("tmux", ["attach-session", "-t", sessionName], {
+      stdio: "inherit",
+    });
+
+    child.once("error", (err) => reject(err));
+    child.once("exit", (code, signal) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      if (signal) {
+        reject(new Error(`tmux attach-session terminated by signal ${signal}`));
+        return;
+      }
+      reject(new Error(`tmux attach-session exited with code ${code ?? "unknown"}`));
+    });
   });
 }
 

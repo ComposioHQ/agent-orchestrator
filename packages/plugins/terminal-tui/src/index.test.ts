@@ -1,12 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Session } from "@composio/ao-core";
 
-const { mockExecFile } = vi.hoisted(() => ({
+const { mockExecFile, mockSpawn } = vi.hoisted(() => ({
   mockExecFile: vi.fn(),
+  mockSpawn: vi.fn(),
 }));
 
 vi.mock("node:child_process", () => ({
   execFile: mockExecFile,
+  spawn: mockSpawn,
 }));
 
 import { create, manifest, default as defaultExport } from "./index.js";
@@ -36,6 +38,22 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+function makeSpawnResult(
+  outcome: { error?: Error; code?: number | null; signal?: NodeJS.Signals | null } = {},
+): { once: (event: "error" | "exit", handler: (...args: unknown[]) => void) => unknown } {
+  return {
+    once(event, handler) {
+      if (event === "error" && outcome.error) {
+        handler(outcome.error);
+      }
+      if (event === "exit" && !outcome.error) {
+        handler(outcome.code ?? 0, outcome.signal ?? null);
+      }
+      return this;
+    },
+  };
+}
+
 describe("plugin manifest & exports", () => {
   it("has correct manifest metadata", () => {
     expect(manifest).toEqual({
@@ -60,22 +78,14 @@ describe("plugin manifest & exports", () => {
 describe("openSession", () => {
   it("attaches to tmux session when it exists", async () => {
     const terminal = create();
+    mockSpawn.mockReturnValue(makeSpawnResult());
 
     // has-session succeeds
     mockExecFile.mockImplementation(
       (cmd: string, args: string[], _opts: unknown, cb: (...args: unknown[]) => void) => {
         if (args.includes("has-session")) {
           cb(null, "", "");
-          return;
         }
-        // attach-session: simulate piping by resolving immediately
-        const child = {
-          stdout: { pipe: vi.fn() },
-          stderr: { pipe: vi.fn() },
-          stdin: null,
-        };
-        cb(null, "", "");
-        return child;
       },
     );
 
@@ -87,6 +97,25 @@ describe("openSession", () => {
       (c) => c[1]?.includes("has-session"),
     );
     expect(hasSessionCall).toBeDefined();
+    expect(mockSpawn).toHaveBeenCalledWith(
+      "tmux",
+      ["attach-session", "-t", "tmux-sess-1"],
+      { stdio: "inherit" },
+    );
+  });
+
+  it("propagates attach failure when tmux exits non-zero", async () => {
+    const terminal = create();
+    mockSpawn.mockReturnValue(makeSpawnResult({ code: 1 }));
+    mockExecFile.mockImplementation(
+      (_cmd: string, _args: string[], _opts: unknown, cb: (...args: unknown[]) => void) => {
+        cb(null, "", "");
+      },
+    );
+
+    await expect(terminal.openSession(makeSessionWithHandle("sess-1"))).rejects.toThrow(
+      "tmux attach-session exited with code 1",
+    );
   });
 
   it("warns and returns when tmux session does not exist", async () => {
@@ -110,6 +139,7 @@ describe("openSession", () => {
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("does not exist"),
     );
+    expect(mockSpawn).not.toHaveBeenCalled();
   });
 
   it("uses session.id when runtimeHandle is null", async () => {
