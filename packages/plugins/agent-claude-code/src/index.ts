@@ -648,11 +648,11 @@ function createClaudeCodeAgent(): Agent {
       // Unset CLAUDECODE to avoid nested agent conflicts
       env["CLAUDECODE"] = "";
 
-      // Disable oh-my-claudecode hooks for ao-spawned agents.
-      // OMC's keyword-detector, pre-tool-enforcer, and post-tool-verifier
-      // add unnecessary Node process overhead. Persistent-mode is already
-      // safe due to worktree isolation (no .omc/state/) and session scoping.
-      env["DISABLE_OMC"] = "1";
+      // Allow oh-my-claudecode but skip keyword-detector to prevent
+      // accidental activation of persistent modes (autopilot, ralph, etc.)
+      // which would trap the agent in an infinite loop with no human to cancel.
+      // OMC tools (ast-grep, python REPL, subagents) remain available.
+      env["OMC_SKIP_HOOKS"] = "keyword-detector";
 
       // Pass ZeroClaw config dir so MCP server resolves the correct DB
       // without depending on shell env or active_workspace.toml.
