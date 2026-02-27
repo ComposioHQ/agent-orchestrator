@@ -102,6 +102,7 @@ export function create(config?: Record<string, unknown>): Notifier {
   const token = process.env.TELEGRAM_BOT_TOKEN;
 
   if (!token || !chatId) {
+    // eslint-disable-next-line no-console
     console.warn(
       "[notifier-telegram] Missing TELEGRAM_BOT_TOKEN or chatId \u2014 notifications will be no-ops",
     );
