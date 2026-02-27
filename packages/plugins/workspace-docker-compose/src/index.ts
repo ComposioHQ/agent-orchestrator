@@ -391,6 +391,9 @@ export function create(config?: Record<string, unknown>): Workspace {
     },
 
     async restore(cfg: WorkspaceCreateConfig, workspacePath: string): Promise<WorkspaceInfo> {
+      assertSafePathSegment(cfg.projectId, "projectId");
+      assertSafePathSegment(cfg.sessionId, "sessionId");
+
       const repoPath = expandPath(cfg.project.path);
 
       // Find compose file in source project
@@ -413,6 +416,12 @@ export function create(config?: Record<string, unknown>): Workspace {
       // Ensure parent directory exists
       mkdirSync(resolve(workspacePath, ".."), { recursive: true });
 
+      if (existsSync(workspacePath)) {
+        throw new Error(
+          `Workspace path "${workspacePath}" already exists for session "${cfg.sessionId}" — destroy it before restore`,
+        );
+      }
+
       // Clone fresh
       try {
         await execFileAsync(
@@ -429,7 +438,9 @@ export function create(config?: Record<string, unknown>): Workspace {
           { timeout: CMD_TIMEOUT },
         );
       } catch (cloneErr: unknown) {
-        rmSync(workspacePath, { recursive: true, force: true });
+        if (existsSync(workspacePath)) {
+          rmSync(workspacePath, { recursive: true, force: true });
+        }
         const msg = cloneErr instanceof Error ? cloneErr.message : String(cloneErr);
         throw new Error(`Clone failed during restore: ${msg}`, { cause: cloneErr });
       }

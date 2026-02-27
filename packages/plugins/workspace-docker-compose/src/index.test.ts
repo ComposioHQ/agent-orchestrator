@@ -383,6 +383,22 @@ describe("workspace.restore()", () => {
       { recursive: true, force: true },
     );
   });
+
+  it("fails restore when workspace path already exists", async () => {
+    const ws = create();
+    mockExistsSync.mockImplementation((p: string) => {
+      if (typeof p === "string" && p.endsWith("docker-compose.yml")) return true;
+      if (typeof p === "string" && p.endsWith("/session-1")) return true;
+      return false;
+    });
+    mockStatSync.mockReturnValue({ isFile: () => true });
+
+    await expect(
+      ws.restore!(makeCreateConfig(), "/mock-home/.ao-compose-workspaces/myproject/session-1"),
+    ).rejects.toThrow(
+      'Workspace path "/mock-home/.ao-compose-workspaces/myproject/session-1" already exists for session "session-1"',
+    );
+  });
 });
 
 describe("workspace.postCreate()", () => {
