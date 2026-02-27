@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { OrchestratorEvent, NotifyAction, EventPriority } from "@composio/ao-core";
-import { manifest, create } from "./index.js";
+import pluginDefault, { manifest, create } from "./index.js";
+
+type SlackBlock = {
+  type: string;
+  text?: { type?: string; text?: string };
+  elements?: Array<{ type?: string; text?: string; action_id?: string; value?: string }>;
+};
 
 function makeEvent(overrides: Partial<OrchestratorEvent> = {}): OrchestratorEvent {
   return {
@@ -34,6 +40,13 @@ describe("notifier-slack", () => {
       expect(manifest.name).toBe("slack");
       expect(manifest.slot).toBe("notifier");
       expect(manifest.version).toBe("0.1.0");
+    });
+  });
+
+  describe("default export", () => {
+    it("is a valid PluginModule", () => {
+      expect(pluginDefault.manifest).toBe(manifest);
+      expect(typeof pluginDefault.create).toBe("function");
     });
   });
 
@@ -214,7 +227,7 @@ describe("notifier-slack", () => {
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
       const prBlock = body.blocks.find(
         (b: Record<string, unknown>) =>
-          b.type === "section" && (b as any).text?.text?.includes("View Pull Request"),
+          b.type === "section" && (b as SlackBlock).text?.text?.includes("View Pull Request"),
       );
       expect(prBlock).toBeDefined();
       expect(prBlock.text.text).toContain("https://github.com/org/repo/pull/42");
@@ -230,7 +243,7 @@ describe("notifier-slack", () => {
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
       const prBlock = body.blocks.find(
         (b: Record<string, unknown>) =>
-          b.type === "section" && (b as any).text?.text?.includes("View Pull Request"),
+          b.type === "section" && (b as SlackBlock).text?.text?.includes("View Pull Request"),
       );
       expect(prBlock).toBeUndefined();
     });
@@ -245,7 +258,7 @@ describe("notifier-slack", () => {
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
       const ciBlock = body.blocks.find(
         (b: Record<string, unknown>) =>
-          b.type === "context" && (b as any).elements?.[0]?.text?.includes("CI:"),
+          b.type === "context" && (b as SlackBlock).elements?.[0]?.text?.includes("CI:"),
       );
       expect(ciBlock).toBeUndefined();
     });
@@ -260,7 +273,7 @@ describe("notifier-slack", () => {
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
       const ciBlock = body.blocks.find(
         (b: Record<string, unknown>) =>
-          b.type === "context" && (b as any).elements?.[0]?.text?.includes("CI:"),
+          b.type === "context" && (b as SlackBlock).elements?.[0]?.text?.includes("CI:"),
       );
       expect(ciBlock).toBeDefined();
       expect(ciBlock.elements[0].text).toContain(":white_check_mark:");
@@ -276,7 +289,7 @@ describe("notifier-slack", () => {
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
       const ciBlock = body.blocks.find(
         (b: Record<string, unknown>) =>
-          b.type === "context" && (b as any).elements?.[0]?.text?.includes("CI:"),
+          b.type === "context" && (b as SlackBlock).elements?.[0]?.text?.includes("CI:"),
       );
       expect(ciBlock.elements[0].text).toContain(":x:");
     });
