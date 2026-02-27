@@ -27,7 +27,7 @@ vi.mock("node:os", () => ({
 // ---------------------------------------------------------------------------
 
 import * as childProcess from "node:child_process";
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { create, manifest, default as defaultExport } from "./index.js";
 
 // ---------------------------------------------------------------------------
@@ -39,6 +39,7 @@ const mockExecFileAsync = (childProcess.execFile as any)[
 ] as ReturnType<typeof vi.fn>;
 
 const mockExistsSync = existsSync as ReturnType<typeof vi.fn>;
+const mockMkdirSync = mkdirSync as ReturnType<typeof vi.fn>;
 const mockReaddirSync = readdirSync as ReturnType<typeof vi.fn>;
 const mockRmSync = rmSync as ReturnType<typeof vi.fn>;
 
@@ -310,6 +311,50 @@ describe("workspace.exists()", () => {
     mockCmdSuccess("true"); // git rev-parse
     mockCmdError("No such container"); // docker inspect fails
     expect(await ws.exists("/mock-home/.worktrees/myproject/session-1")).toBe(false);
+  });
+});
+
+describe("workspace.restore()", () => {
+  it("creates parent directory and starts container", async () => {
+    const ws = create();
+
+    mockCmdSuccess(""); // git worktree prune
+    mockCmdSuccess(""); // git fetch
+    mockCmdSuccess(""); // git worktree add
+    mockCmdSuccess(""); // docker rm -f
+    mockCmdSuccess(""); // docker run
+
+    const info = await ws.restore!(
+      makeCreateConfig(),
+      "/mock-home/.worktrees/myproject/session-1",
+    );
+
+    expect(mockMkdirSync).toHaveBeenCalledWith("/mock-home/.worktrees/myproject", {
+      recursive: true,
+    });
+    expect(info.path).toBe("/mock-home/.worktrees/myproject/session-1");
+    expect(info.branch).toBe("feat/TEST-1");
+  });
+
+  it("cleans up worktree when container start fails during restore", async () => {
+    const ws = create();
+
+    mockCmdSuccess(""); // git worktree prune
+    mockCmdSuccess(""); // git fetch
+    mockCmdSuccess(""); // git worktree add
+    mockCmdSuccess(""); // docker rm -f
+    mockCmdError("docker run failed"); // docker run
+    mockCmdSuccess(""); // git worktree remove
+
+    await expect(
+      ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1"),
+    ).rejects.toThrow("Failed to start Docker container");
+
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      ["worktree", "remove", "--force", "/mock-home/.worktrees/myproject/session-1"],
+      expect.objectContaining({ cwd: "/repo/path" }),
+    );
   });
 });
 

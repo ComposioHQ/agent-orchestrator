@@ -287,6 +287,9 @@ export function create(config?: Record<string, unknown>): Workspace {
 
     async restore(cfg: WorkspaceCreateConfig, workspacePath: string): Promise<WorkspaceInfo> {
       const repoPath = expandPath(cfg.project.path);
+      const workspaceParentDir = resolve(workspacePath, "..");
+
+      mkdirSync(workspaceParentDir, { recursive: true });
 
       // Prune stale worktree entries
       try {
@@ -325,23 +328,35 @@ export function create(config?: Record<string, unknown>): Workspace {
         // May not exist
       }
 
-      await docker(
-        "run",
-        "-d",
-        "--name",
-        name,
-        "-v",
-        `${workspacePath}:${CONTAINER_WORKSPACE_DIR}`,
-        "-w",
-        CONTAINER_WORKSPACE_DIR,
-        "--label",
-        `ao.project=${cfg.projectId}`,
-        "--label",
-        `ao.session=${cfg.sessionId}`,
-        (config?.image as string) ?? DEFAULT_IMAGE,
-        "sleep",
-        "infinity",
-      );
+      try {
+        await docker(
+          "run",
+          "-d",
+          "--name",
+          name,
+          "-v",
+          `${workspacePath}:${CONTAINER_WORKSPACE_DIR}`,
+          "-w",
+          CONTAINER_WORKSPACE_DIR,
+          "--label",
+          `ao.project=${cfg.projectId}`,
+          "--label",
+          `ao.session=${cfg.sessionId}`,
+          dockerImage,
+          "sleep",
+          "infinity",
+        );
+      } catch (dockerErr: unknown) {
+        try {
+          await git(repoPath, "worktree", "remove", "--force", workspacePath);
+        } catch {
+          // Best-effort cleanup
+        }
+        const msg = dockerErr instanceof Error ? dockerErr.message : String(dockerErr);
+        throw new Error(`Failed to start Docker container "${name}" during restore: ${msg}`, {
+          cause: dockerErr,
+        });
+      }
 
       return {
         path: workspacePath,
