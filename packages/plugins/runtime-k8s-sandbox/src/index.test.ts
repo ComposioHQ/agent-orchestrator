@@ -130,10 +130,8 @@ describe("runtime.create()", () => {
     process.env["K8S_SANDBOX_WARM_POOL"] = "true";
     const runtime = create();
 
-    // Two kubectl apply calls (the code has a redundant first apply before the file-based one)
-    mockKubectlSuccess("sandboxclaim/ao-test-session created");
     // kubectl apply -f tmpPath
-    mockKubectlSuccess("applied");
+    mockKubectlSuccess("sandboxclaim/ao-test-session created");
     // kubectl wait
     mockKubectlSuccess("condition met");
 

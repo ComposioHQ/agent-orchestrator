@@ -1,12 +1,13 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type {
-  PluginModule,
-  Runtime,
-  RuntimeCreateConfig,
-  RuntimeHandle,
-  RuntimeMetrics,
-  AttachInfo,
+import {
+  shellEscape,
+  type PluginModule,
+  type Runtime,
+  type RuntimeCreateConfig,
+  type RuntimeHandle,
+  type RuntimeMetrics,
+  type AttachInfo,
 } from "@composio/ao-core";
 
 const execFileAsync = promisify(execFile);
@@ -79,8 +80,6 @@ export function create(): Runtime {
           },
         });
 
-        await kubectl("apply", "-f", "-", "--namespace", namespace);
-        // Apply via stdin workaround: write to temp and apply
         const { writeFileSync, unlinkSync } = await import("node:fs");
         const { tmpdir } = await import("node:os");
         const { join } = await import("node:path");
@@ -205,7 +204,7 @@ export function create(): Runtime {
         "--namespace", namespace,
         "-c", "sandbox",
         "--",
-        "sh", "-c", `echo ${JSON.stringify(message)} >> /tmp/ao-input`,
+        "sh", "-c", `printf '%s\\n' ${shellEscape(message)} >> /tmp/ao-input`,
       );
     },
 
