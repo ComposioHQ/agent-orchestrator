@@ -82,6 +82,7 @@ export function create(config?: Record<string, unknown>): Notifier {
   const roomId = config?.roomId as string | undefined;
 
   if (!token || !roomId) {
+    // eslint-disable-next-line no-console
     console.warn(
       "[notifier-webex] Missing WEBEX_BOT_TOKEN or roomId \u2014 notifications will be no-ops",
     );
