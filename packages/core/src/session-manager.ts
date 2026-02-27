@@ -161,6 +161,122 @@ export interface SessionManagerDeps {
   registry: PluginRegistry;
 }
 
+// =============================================================================
+// Post-launch prompt delivery with ready-detection
+// =============================================================================
+
+/** Timeouts for post-launch prompt delivery polling */
+const PROCESS_POLL_TIMEOUT_MS = 30_000;
+const READY_POLL_TIMEOUT_MS = 60_000;
+const POLL_INTERVAL_MS = 2_000;
+const VERIFY_ATTEMPTS = 3;
+const VERIFY_DELAY_MS = 2_000;
+
+/**
+ * Deliver a prompt to an agent after launch, with ready-detection and verification.
+ *
+ * Instead of a blind 5-second wait, this:
+ * 1. Polls for the agent process to exist (up to 30s)
+ * 2. Polls for the agent to be idle/ready for input (up to 60s)
+ * 3. Sends the message
+ * 4. Verifies delivery by checking for active state (3 attempts)
+ *
+ * Non-fatal: logs warnings on failure. The session stays alive and the user
+ * can retry with `ao send`.
+ */
+async function deliverPostLaunchPrompt(
+  runtime: Runtime,
+  agent: Agent,
+  handle: RuntimeHandle,
+  prompt: string,
+  sessionId: string,
+): Promise<void> {
+  const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+  try {
+    // Step 1: Wait for the agent process to start (up to 30s)
+    const processDeadline = Date.now() + PROCESS_POLL_TIMEOUT_MS;
+    let processFound = false;
+    while (Date.now() < processDeadline) {
+      try {
+        if (await agent.isProcessRunning(handle)) {
+          processFound = true;
+          break;
+        }
+      } catch {
+        // isProcessRunning may fail if tmux session isn't ready yet
+      }
+      await sleep(POLL_INTERVAL_MS);
+    }
+    if (!processFound) {
+      console.warn(
+        `[ao] Session ${sessionId}: agent process not detected after ${PROCESS_POLL_TIMEOUT_MS / 1000}s. Sending prompt anyway.`,
+      );
+    }
+
+    // Step 2: Wait for the agent to be idle/ready for input (up to 60s)
+    const readyDeadline = Date.now() + READY_POLL_TIMEOUT_MS;
+    let agentReady = false;
+    while (Date.now() < readyDeadline) {
+      try {
+        const output = await runtime.getOutput(handle, 10);
+        const state = agent.detectActivity(output);
+        if (state === "idle") {
+          agentReady = true;
+          break;
+        }
+        // If waiting for input (permission/trust prompt), bail and send anyway —
+        // the agent may need the prompt to proceed
+        if (state === "waiting_input") {
+          break;
+        }
+      } catch {
+        // getOutput may fail transiently
+      }
+      await sleep(POLL_INTERVAL_MS);
+    }
+    if (!agentReady) {
+      console.warn(
+        `[ao] Session ${sessionId}: agent not idle after ${READY_POLL_TIMEOUT_MS / 1000}s. Sending prompt anyway.`,
+      );
+    }
+
+    // Step 3: Send the prompt
+    await runtime.sendMessage(handle, prompt);
+
+    // Step 4: Verify delivery — check for active state (agent processing the prompt)
+    for (let attempt = 1; attempt <= VERIFY_ATTEMPTS; attempt++) {
+      await sleep(VERIFY_DELAY_MS);
+      try {
+        const output = await runtime.getOutput(handle, 10);
+        const state = agent.detectActivity(output);
+        if (state === "active") {
+          return; // Confirmed: agent is processing the prompt
+        }
+      } catch {
+        // getOutput may fail transiently
+      }
+      // On non-final attempts, press Enter in case the message wasn't submitted
+      if (attempt < VERIFY_ATTEMPTS) {
+        try {
+          await runtime.sendMessage(handle, "");
+        } catch {
+          // best effort retry
+        }
+      }
+    }
+
+    // Could not confirm delivery, but message was sent — log and move on
+    console.warn(
+      `[ao] Session ${sessionId}: prompt sent but could not confirm delivery. Retry with: ao send ${sessionId}`,
+    );
+  } catch (err: unknown) {
+    // Non-fatal: agent is running but didn't receive the initial prompt.
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[ao] Session ${sessionId}: prompt delivery failed: ${msg}. Retry with: ao send ${sessionId}`);
+  }
+}
+
 /** Create a SessionManager instance. */
 export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   const { config, registry } = deps;
@@ -572,14 +688,13 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     // This is intentionally outside the try/catch above — a prompt delivery failure
     // should NOT destroy the session. The agent is running; user can retry with `ao send`.
     if (plugins.agent.promptDelivery === "post-launch" && agentLaunchConfig.prompt) {
-      try {
-        // Wait for agent to start and be ready for input
-        await new Promise((resolve) => setTimeout(resolve, 5_000));
-        await plugins.runtime.sendMessage(handle, agentLaunchConfig.prompt);
-      } catch {
-        // Non-fatal: agent is running but didn't receive the initial prompt.
-        // User can retry with `ao send`.
-      }
+      await deliverPostLaunchPrompt(
+        plugins.runtime,
+        plugins.agent,
+        handle,
+        agentLaunchConfig.prompt,
+        sessionId,
+      );
     }
 
     return session;
