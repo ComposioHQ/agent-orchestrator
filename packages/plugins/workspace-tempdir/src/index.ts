@@ -250,7 +250,7 @@ export function create(config?: Record<string, unknown>): Workspace {
 
       if (existsSync(workspacePath)) {
         throw new Error(
-          `Workspace path "${workspacePath}" already exists for session "${cfg.sessionId}" — destroy it before restore`,
+          `Workspace path "${workspacePath}" already exists for session "${cfg.sessionId}" — destroy it before restoring`,
         );
       }
 

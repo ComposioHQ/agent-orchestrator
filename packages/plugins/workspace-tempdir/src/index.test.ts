@@ -407,8 +407,10 @@ describe("workspace.restore()", () => {
     await expect(
       ws.restore(makeCreateConfig(), "/tmp/ao-myproject-session-1-xyz"),
     ).rejects.toThrow(
-      'Workspace path "/tmp/ao-myproject-session-1-xyz" already exists for session "session-1"',
+      'Workspace path "/tmp/ao-myproject-session-1-xyz" already exists for session "session-1" — destroy it before restoring',
     );
+
+    expect(mockRmSync).not.toHaveBeenCalled();
   });
 });
 
