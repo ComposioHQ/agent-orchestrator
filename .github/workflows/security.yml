@@ -34,7 +34,7 @@ jobs:
           rm gitleaks.tar.gz
 
       - name: Run Gitleaks
-        run: gitleaks detect --source . --verbose --redact
+        run: gitleaks detect --source . --config .gitleaks.toml --verbose --redact
 
   dependency-review:
     name: Dependency Review
