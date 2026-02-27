@@ -622,6 +622,7 @@ describe("workspace.restore()", () => {
   it("creates parent directory before cloning", async () => {
     const workspace = create();
 
+    (fs.existsSync as ReturnType<typeof vi.fn>).mockReturnValue(false);
     mockGitSuccess("https://github.com/test/repo.git");
     mockGitSuccess("");
     mockGitSuccess("");
@@ -643,6 +644,9 @@ describe("workspace.restore()", () => {
   it("cleans up when restore clone fails", async () => {
     const workspace = create();
 
+    (fs.existsSync as ReturnType<typeof vi.fn>)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
     mockGitSuccess("https://github.com/test/repo.git");
     mockGitError("fatal: clone failed");
 
@@ -660,6 +664,25 @@ describe("workspace.restore()", () => {
     ).rejects.toThrow("Clone failed during restore");
 
     expect(fs.rmSync).toHaveBeenCalledWith(restorePath, { recursive: true, force: true });
+  });
+
+  it("throws when restore path already exists", async () => {
+    const workspace = create();
+    (fs.existsSync as ReturnType<typeof vi.fn>).mockReturnValue(true);
+
+    await expect(
+      workspace.restore!(
+        {
+          projectId: "proj",
+          sessionId: "sess",
+          branch: "feat/branch",
+          project: makeProject(),
+        },
+        "/mock-home/.ao-clones/proj/sess",
+      ),
+    ).rejects.toThrow(
+      'Workspace path "/mock-home/.ao-clones/proj/sess" already exists for session "sess"',
+    );
   });
 });
 
