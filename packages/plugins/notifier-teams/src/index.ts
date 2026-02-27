@@ -121,6 +121,7 @@ export function create(config?: Record<string, unknown>): Notifier {
   const webhookUrl = config?.webhookUrl as string | undefined;
 
   if (!webhookUrl) {
+    // eslint-disable-next-line no-console
     console.warn("[notifier-teams] No webhookUrl configured \u2014 notifications will be no-ops");
   } else {
     validateUrl(webhookUrl, "notifier-teams");
