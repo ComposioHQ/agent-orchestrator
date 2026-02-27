@@ -93,6 +93,7 @@ export function create(config?: Record<string, unknown>): Notifier {
   const from = (config?.from as string) ?? "Agent Orchestrator <ao@notifications.example.com>";
 
   if (!apiKey || to.length === 0) {
+    // eslint-disable-next-line no-console
     console.warn(
       "[notifier-email] Missing RESEND_API_KEY or to addresses \u2014 notifications will be no-ops",
     );
