@@ -304,6 +304,42 @@ describe("plugin integration", () => {
       expect(session.branch).toBe("feat/99");
     });
 
+    it("cleanup() never kills orchestrator sessions even when issue is closed", async () => {
+      const registry = createTestRegistry();
+      const sm = createSessionManager({ config, registry });
+
+      // Seed an orchestrator session with a closed issue — it should still be skipped
+      writeMetadata(sessionsDir, "app-orchestrator", {
+        worktree: "/tmp/mock-ws/app-orchestrator",
+        branch: "main",
+        status: "working",
+        role: "orchestrator",
+        issue: "99",
+        project: "my-app",
+        runtimeHandle: JSON.stringify(makeHandle("rt-orch")),
+      });
+
+      // Also seed a regular session with the same closed issue — it SHOULD be killed
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: "/tmp/mock-ws/app-1",
+        branch: "feat/issue-99",
+        status: "working",
+        issue: "99",
+        project: "my-app",
+        runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+      });
+
+      // Mock gh: issue is closed
+      mockGh({ state: "CLOSED" });
+
+      const result = await sm.cleanup("my-app");
+
+      // Regular session killed, orchestrator skipped
+      expect(result.killed).toContain("app-1");
+      expect(result.killed).not.toContain("app-orchestrator");
+      expect(result.skipped).toContain("app-orchestrator");
+    });
+
     it("cleanup() calls tracker-github isCompleted() and kills completed sessions", async () => {
       const registry = createTestRegistry();
       const sm = createSessionManager({ config, registry });

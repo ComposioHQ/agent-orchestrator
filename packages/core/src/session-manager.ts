@@ -964,6 +964,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         worktree: raw["worktree"] ?? "",
         branch: raw["branch"] ?? "",
         status: raw["status"] ?? "killed",
+        role: raw["role"],
         tmuxName: raw["tmuxName"],
         issue: raw["issue"],
         pr: raw["pr"],
