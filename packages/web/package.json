@@ -21,6 +21,7 @@
   "dependencies": {
     "@composio/ao-core": "workspace:*",
     "@composio/ao-plugin-agent-claude-code": "workspace:*",
+    "@composio/ao-plugin-agent-opencode": "workspace:*",
     "@composio/ao-plugin-runtime-tmux": "workspace:*",
     "@composio/ao-plugin-scm-github": "workspace:*",
     "@composio/ao-plugin-tracker-github": "workspace:*",

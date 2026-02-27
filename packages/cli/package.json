@@ -37,6 +37,7 @@
     "@composio/ao-plugin-agent-aider": "workspace:*",
     "@composio/ao-plugin-agent-claude-code": "workspace:*",
     "@composio/ao-plugin-agent-codex": "workspace:*",
+    "@composio/ao-plugin-agent-opencode": "workspace:*",
     "@composio/ao-plugin-notifier-composio": "workspace:*",
     "@composio/ao-plugin-notifier-desktop": "workspace:*",
     "@composio/ao-plugin-notifier-slack": "workspace:*",

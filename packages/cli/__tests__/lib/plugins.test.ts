@@ -7,18 +7,25 @@ function makeConfig(
   projects?: Record<string, { agent?: string }>,
 ): OrchestratorConfig {
   return {
+    configPath: "/tmp/agent-orchestrator.yaml",
     dataDir: "/tmp",
     worktreeDir: "/tmp/wt",
     port: 3000,
+    readyThresholdMs: 300_000,
     defaults: { runtime: "tmux", agent: defaultAgent, workspace: "worktree", notifiers: [] },
     projects: Object.fromEntries(
       Object.entries(projects ?? { app: {} }).map(([id, p]) => [
         id,
-        { name: id, repo: "", path: "", defaultBranch: "main", ...p },
+        { name: id, repo: "", path: "", defaultBranch: "main", sessionPrefix: id, ...p },
       ]),
     ),
     notifiers: {},
-    notificationRouting: {},
+    notificationRouting: {
+      urgent: [],
+      action: [],
+      warning: [],
+      info: [],
+    },
     reactions: {},
   } as OrchestratorConfig;
 }
@@ -47,6 +54,12 @@ describe("getAgent", () => {
     expect(agent.name).toBe("aider");
   });
 
+  it("returns opencode agent when project overrides agent", () => {
+    const config = makeConfig("claude-code", { myapp: { agent: "opencode" } });
+    const agent = getAgent(config, "myapp");
+    expect(agent.name).toBe("opencode");
+  });
+
   it("falls back to config default when projectId does not exist", () => {
     const config = makeConfig("claude-code");
     const agent = getAgent(config, "nonexistent-project");
@@ -65,6 +78,10 @@ describe("getAgentByName", () => {
 
   it("returns agent for aider", () => {
     expect(getAgentByName("aider").name).toBe("aider");
+  });
+
+  it("returns agent for opencode", () => {
+    expect(getAgentByName("opencode").name).toBe("opencode");
   });
 
   it("throws on unknown name", () => {
