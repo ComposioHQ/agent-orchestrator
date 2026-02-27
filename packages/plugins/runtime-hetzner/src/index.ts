@@ -103,7 +103,7 @@ export function create(): Runtime {
       const sshKeyName = process.env["HETZNER_SSH_KEY_NAME"];
 
       // Build cloud-init user data to set up environment and run launch command
-      const envExports = Object.entries(config.environment)
+      const envExports = Object.entries(config.environment ?? {})
         .map(([key, value]) => `export ${key}=${shellEscape(value)}`)
         .join("\n");
 

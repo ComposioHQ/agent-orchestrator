@@ -126,6 +126,19 @@ describe("runtime.create()", () => {
     expect(createArgs).toContain("AO_SESSION_ID=env-session");
     expect(createArgs).toContain("AO_WORKSPACE=/tmp/ws");
   });
+
+  it("rejects invalid session IDs", async () => {
+    const runtime = create();
+
+    await expect(
+      runtime.create({
+        sessionId: "bad name!",
+        workspacePath: "/tmp",
+        launchCommand: "echo",
+        environment: {},
+      }),
+    ).rejects.toThrow("Cannot create valid Podman container name");
+  });
 });
 
 describe("runtime.destroy()", () => {

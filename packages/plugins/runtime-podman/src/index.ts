@@ -21,6 +21,19 @@ export const manifest = {
 
 const CMD_TIMEOUT_MS = 30_000;
 
+/** Only allow safe characters in container names */
+const SAFE_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/;
+
+function sanitizeName(sessionId: string): string {
+  const name = `ao-${sessionId}`;
+  if (!SAFE_NAME.test(name)) {
+    throw new Error(
+      `Cannot create valid Podman container name from session ID "${sessionId}"`,
+    );
+  }
+  return name;
+}
+
 /** Run a podman command and return stdout */
 async function podman(...args: string[]): Promise<string> {
   const { stdout } = await execFileAsync("podman", args, {
@@ -35,7 +48,7 @@ export function create(): Runtime {
 
     async create(config: RuntimeCreateConfig): Promise<RuntimeHandle> {
       const image = process.env["PODMAN_IMAGE"] ?? "ubuntu:22.04";
-      const containerName = `ao-${config.sessionId}`;
+      const containerName = sanitizeName(config.sessionId);
 
       // Build environment flags
       const envArgs: string[] = [];
