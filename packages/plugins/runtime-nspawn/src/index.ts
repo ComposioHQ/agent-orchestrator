@@ -242,7 +242,7 @@ export function create(): Runtime {
 
     async getAttachInfo(handle: RuntimeHandle): Promise<AttachInfo> {
       return {
-        type: "docker",
+        type: "nspawn",
         target: handle.id,
         command: `machinectl shell ${handle.id}`,
       };

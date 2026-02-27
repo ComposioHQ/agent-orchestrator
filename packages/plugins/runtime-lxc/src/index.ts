@@ -200,7 +200,7 @@ export function create(): Runtime {
     async getAttachInfo(handle: RuntimeHandle): Promise<AttachInfo> {
       const binary = getLxcBinary();
       return {
-        type: "docker",
+        type: "lxc",
         target: handle.id,
         command: `${binary} exec ${handle.id} -- /bin/bash`,
       };

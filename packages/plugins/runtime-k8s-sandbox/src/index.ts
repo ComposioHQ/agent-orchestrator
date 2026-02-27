@@ -285,7 +285,7 @@ export function create(): Runtime {
     async getAttachInfo(handle: RuntimeHandle): Promise<AttachInfo> {
       const namespace = (handle.data["namespace"] as string) ?? "ao-sandboxes";
       return {
-        type: "docker",
+        type: "k8s",
         target: handle.id,
         command: `kubectl exec -it ${handle.id} --namespace ${namespace} -c sandbox -- /bin/bash`,
       };

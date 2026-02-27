@@ -365,7 +365,7 @@ describe("runtime.getAttachInfo()", () => {
 
     const info = await runtime.getAttachInfo!(handle);
     expect(info).toEqual({
-      type: "docker",
+      type: "k8s",
       target: "ao-attach",
       command:
         "kubectl exec -it ao-attach --namespace my-ns -c sandbox -- /bin/bash",

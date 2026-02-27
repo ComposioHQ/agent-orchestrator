@@ -20,6 +20,11 @@ import type {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** Escape a value for safe inclusion in a JQL double-quoted string. */
+function escapeJql(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
 function getEnv(name: string): string {
   const val = process.env[name];
   if (!val) {
@@ -235,7 +240,7 @@ function createJiraTracker(): Tracker {
       // Determine project key from tracker config or identifier pattern
       const projectKey = project.tracker?.["projectKey"] as string | undefined;
       if (projectKey) {
-        jqlParts.push(`project = "${projectKey}"`);
+        jqlParts.push(`project = "${escapeJql(projectKey)}"`);
       }
 
       if (filters.state === "closed") {
@@ -246,12 +251,12 @@ function createJiraTracker(): Tracker {
       // "all" = no state filter
 
       if (filters.labels && filters.labels.length > 0) {
-        const labelClauses = filters.labels.map((l) => `labels = "${l}"`);
+        const labelClauses = filters.labels.map((l) => `labels = "${escapeJql(l)}"`);
         jqlParts.push(`(${labelClauses.join(" OR ")})`);
       }
 
       if (filters.assignee) {
-        jqlParts.push(`assignee = "${filters.assignee}"`);
+        jqlParts.push(`assignee = "${escapeJql(filters.assignee)}"`);
       }
 
       const jql = jqlParts.length > 0 ? jqlParts.join(" AND ") : "ORDER BY created DESC";

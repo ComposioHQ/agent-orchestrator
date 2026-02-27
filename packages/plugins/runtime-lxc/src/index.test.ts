@@ -376,13 +376,13 @@ describe("runtime.getMetrics()", () => {
 });
 
 describe("runtime.getAttachInfo()", () => {
-  it("returns docker type with lxc exec command", async () => {
+  it("returns lxc type with lxc exec command", async () => {
     const runtime = create();
     const handle = makeHandle("ao-attach");
 
     const info = await runtime.getAttachInfo!(handle);
     expect(info).toEqual({
-      type: "docker",
+      type: "lxc",
       target: "ao-attach",
       command: "lxc exec ao-attach -- /bin/bash",
     });

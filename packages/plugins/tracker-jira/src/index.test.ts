@@ -490,6 +490,20 @@ describe("tracker-jira plugin", () => {
       await tracker.listIssues!({}, project);
       expect(fetchMock.mock.calls[0][1].method).toBe("POST");
     });
+
+    it("escapes JQL special characters in filter values", async () => {
+      mockFetchOk({ issues: [] });
+      await tracker.listIssues!(
+        {
+          labels: ['bug" OR project = "SECRET'],
+          assignee: 'alice" OR assignee = "bob',
+        },
+        project,
+      );
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+      expect(body.jql).toContain('labels = "bug\\" OR project = \\"SECRET"');
+      expect(body.jql).toContain('assignee = "alice\\" OR assignee = \\"bob"');
+    });
   });
 
   // ---- updateIssue -------------------------------------------------------

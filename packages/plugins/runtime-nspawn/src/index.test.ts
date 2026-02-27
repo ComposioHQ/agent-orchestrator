@@ -391,13 +391,13 @@ describe("runtime.getMetrics()", () => {
 });
 
 describe("runtime.getAttachInfo()", () => {
-  it("returns docker type with machinectl shell command", async () => {
+  it("returns nspawn type with machinectl shell command", async () => {
     const runtime = create();
     const handle = makeHandle("ao-attach");
 
     const info = await runtime.getAttachInfo!(handle);
     expect(info).toEqual({
-      type: "docker",
+      type: "nspawn",
       target: "ao-attach",
       command: "machinectl shell ao-attach",
     });

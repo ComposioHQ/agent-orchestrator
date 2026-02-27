@@ -111,17 +111,19 @@ export function create(config?: Record<string, unknown>): Workspace {
       if (!entry.isDirectory()) continue;
       const trackingPath = projectTrackingPath(entry.name);
       const tracking = readTrackingFile(trackingPath);
+      const filtered: Record<string, string> = {};
       let changed = false;
 
       for (const [sessionId, trackedPath] of Object.entries(tracking)) {
         if (trackedPath === workspacePath) {
-          delete tracking[sessionId];
           changed = true;
+        } else {
+          filtered[sessionId] = trackedPath;
         }
       }
 
       if (changed) {
-        writeTrackingFile(trackingPath, tracking);
+        writeTrackingFile(trackingPath, filtered);
       }
     }
   }
