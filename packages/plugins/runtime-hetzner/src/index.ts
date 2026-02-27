@@ -1,12 +1,13 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type {
-  PluginModule,
-  Runtime,
-  RuntimeCreateConfig,
-  RuntimeHandle,
-  RuntimeMetrics,
-  AttachInfo,
+import {
+  shellEscape,
+  type PluginModule,
+  type Runtime,
+  type RuntimeCreateConfig,
+  type RuntimeHandle,
+  type RuntimeMetrics,
+  type AttachInfo,
 } from "@composio/ao-core";
 
 const execFileAsync = promisify(execFile);
@@ -103,17 +104,17 @@ export function create(): Runtime {
 
       // Build cloud-init user data to set up environment and run launch command
       const envExports = Object.entries(config.environment)
-        .map(([key, value]) => `export ${key}=${JSON.stringify(value)}`)
+        .map(([key, value]) => `export ${key}=${shellEscape(value)}`)
         .join("\n");
 
       const userData = [
         "#!/bin/bash",
-        `export AO_SESSION_ID=${JSON.stringify(config.sessionId)}`,
-        `export AO_WORKSPACE=${JSON.stringify(config.workspacePath)}`,
+        `export AO_SESSION_ID=${shellEscape(config.sessionId)}`,
+        `export AO_WORKSPACE=${shellEscape(config.workspacePath)}`,
         envExports,
-        `mkdir -p ${JSON.stringify(config.workspacePath)}`,
-        `cd ${JSON.stringify(config.workspacePath)}`,
-        `nohup sh -c ${JSON.stringify(config.launchCommand)} > /tmp/ao-output 2>&1 &`,
+        `mkdir -p ${shellEscape(config.workspacePath)}`,
+        `cd ${shellEscape(config.workspacePath)}`,
+        `nohup sh -c ${shellEscape(config.launchCommand)} > /tmp/ao-output 2>&1 &`,
       ].join("\n");
 
       const createBody: Record<string, unknown> = {
@@ -175,7 +176,7 @@ export function create(): Runtime {
 
       await sshExec(
         ipAddress,
-        `echo ${JSON.stringify(message)} >> /tmp/ao-input`,
+        `printf '%s\\n' ${shellEscape(message)} >> /tmp/ao-input`,
       );
     },
 

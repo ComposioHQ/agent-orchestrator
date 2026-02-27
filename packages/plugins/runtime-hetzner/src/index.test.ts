@@ -210,7 +210,7 @@ describe("runtime.destroy()", () => {
 });
 
 describe("runtime.sendMessage()", () => {
-  it("sends message via SSH to the server IP", async () => {
+  it("sends message via SSH using printf", async () => {
     const runtime = create();
     mockSshSuccess("");
 
@@ -220,9 +220,23 @@ describe("runtime.sendMessage()", () => {
     expect(mockExecFileCustom.mock.calls[0][0]).toBe("ssh");
     const args = mockExecFileCustom.mock.calls[0][1] as string[];
     expect(args).toContain("root@192.168.1.100");
-    // The last argument should be the echo command
     const cmdArg = args[args.length - 1];
-    expect(cmdArg).toContain("hello");
+    expect(cmdArg).toContain("printf");
+    expect(cmdArg).toContain("'hello'");
+    expect(cmdArg).not.toMatch(/echo\s+/);
+  });
+
+  it("wraps message in single quotes to prevent shell injection", async () => {
+    const runtime = create();
+    mockSshSuccess("");
+
+    await runtime.sendMessage(makeHandle("123", "192.168.1.100"), "$(rm -rf /)");
+
+    const args = mockExecFileCustom.mock.calls[0][1] as string[];
+    const cmdArg = args[args.length - 1];
+    // shellEscape wraps in single quotes — $(rm -rf /) becomes '$(rm -rf /)'
+    expect(cmdArg).toContain("'$(rm -rf /)'");
+    expect(cmdArg).toContain("printf");
   });
 
   it("uses custom SSH key from HETZNER_SSH_KEY_PATH", async () => {
