@@ -31,7 +31,7 @@ export class DispatchDaemon {
     if (this.timer) return;
     const intervalMs = this.options.pollIntervalMs ?? 1000;
     this.timer = setInterval(() => {
-      void this.pollOnce();
+      void this.pollOnce().catch(() => {});
     }, intervalMs);
   }
 
@@ -61,4 +61,3 @@ export class DispatchDaemon {
     }
   }
 }
-

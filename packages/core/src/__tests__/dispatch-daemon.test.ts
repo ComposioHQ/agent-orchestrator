@@ -31,5 +31,23 @@ describe("DispatchDaemon", () => {
 
     expect(store.assignTask).not.toHaveBeenCalled();
   });
-});
 
+  it("does not surface unhandled rejection from interval polling", async () => {
+    vi.useFakeTimers();
+    const store: DispatchDaemonStore = {
+      listPendingTasks: vi.fn(async () => {
+        throw new Error("transient store failure");
+      }),
+      listWorkers: vi.fn(async () => []),
+      assignTask: vi.fn(async () => {}),
+    };
+    const daemon = new DispatchDaemon(store, { pollIntervalMs: 10 });
+    daemon.start();
+
+    await vi.advanceTimersByTimeAsync(25);
+    daemon.stop();
+    vi.useRealTimers();
+
+    expect(store.listPendingTasks).toHaveBeenCalled();
+  });
+});

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { MergeStewardService } from "../merge-steward.js";
-import { readdir } from "node:fs/promises";
+import { readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 
 describe("MergeStewardService", () => {
@@ -65,6 +65,30 @@ describe("MergeStewardService", () => {
     expect(exec).toHaveBeenCalledWith("pnpm", ["test"], expect.any(String));
     const calls = exec.mock.calls as unknown[][];
     expect(calls.some((call) => call[0] === "sh")).toBe(false);
+  });
+
+  it("runs tests after merge preparation in temp worktree", async () => {
+    const exec = vi.fn(async () => {});
+    const service = new MergeStewardService(exec);
+
+    await service.testThenMerge({
+      repoPath: "/repo",
+      sourceBranch: "feature/test",
+      targetBranch: "main",
+      testCommand: "pnpm test",
+      mergeMethod: "squash",
+    });
+
+    const calls = exec.mock.calls as unknown[][];
+    const squashIdx = calls.findIndex(
+      (call) =>
+        call[0] === "git" &&
+        Array.isArray(call[1]) &&
+        (call[1] as string[]).includes("--squash"),
+    );
+    const testIdx = calls.findIndex((call) => call[0] === "pnpm");
+    expect(squashIdx).toBeGreaterThan(-1);
+    expect(testIdx).toBeGreaterThan(squashIdx);
   });
 
   it("always removes temp worktree even when tests fail", async () => {
@@ -186,5 +210,37 @@ describe("MergeStewardService", () => {
       const messages = error.errors.map((err) => (err instanceof Error ? err.message : String(err)));
       return messages.includes("tests failed") && messages.includes("worktree remove failed");
     });
+  });
+
+  it("keeps merged worktree when autoPushAfterMerge is false", async () => {
+    const exec = vi.fn(async () => {});
+    const service = new MergeStewardService(exec);
+
+    const result = await service.testThenMerge({
+      repoPath: "/repo",
+      sourceBranch: "feature/test",
+      targetBranch: "main",
+      testCommand: "pnpm test",
+      autoPushAfterMerge: false,
+    });
+
+    const calls = exec.mock.calls as unknown[][];
+    expect(
+      calls.some(
+        (call) => call[0] === "git" && Array.isArray(call[1]) && (call[1] as string[]).includes("push"),
+      ),
+    ).toBe(false);
+    expect(
+      calls.some(
+        (call) =>
+          call[0] === "git" &&
+          Array.isArray(call[1]) &&
+          (call[1] as string[]).includes("worktree") &&
+          (call[1] as string[]).includes("remove"),
+      ),
+    ).toBe(false);
+
+    await expect(readdir(result.tempWorktreePath)).resolves.toBeDefined();
+    await rm(result.tempWorktreePath, { recursive: true, force: true });
   });
 });

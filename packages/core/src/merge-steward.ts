@@ -90,6 +90,7 @@ export class MergeStewardService {
     let testCmd: string;
     let testArgs: string[];
     let worktreeAdded = false;
+    let shouldCleanup = true;
     let result: MergeStewardResult | null = null;
     let primaryError: unknown = null;
     let cleanupError: unknown = null;
@@ -117,26 +118,29 @@ export class MergeStewardService {
       ]);
       worktreeAdded = true;
 
-      await this.exec(testCmd, testArgs, tempWorktreePath);
-
       if (mergeMethod === "squash") {
         await this.exec("git", ["-C", tempWorktreePath, "merge", "--squash", sourceRef]);
-        await this.exec("git", [
-          "-C",
-          tempWorktreePath,
-          "commit",
-          "-m",
-          options.commitMessage ?? `Merge ${options.sourceBranch} into ${options.targetBranch}`,
-        ]);
       } else {
         await this.exec("git", [
           "-C",
           tempWorktreePath,
           "merge",
           "--no-ff",
+          "--no-commit",
+          sourceRef,
+        ]);
+      }
+
+      // Validate the merged result (not just target branch HEAD).
+      await this.exec(testCmd, testArgs, tempWorktreePath);
+
+      if (mergeMethod === "squash") {
+        await this.exec("git", [
+          "-C",
+          tempWorktreePath,
+          "commit",
           "-m",
           options.commitMessage ?? `Merge ${options.sourceBranch} into ${options.targetBranch}`,
-          sourceRef,
         ]);
       }
 
@@ -148,20 +152,25 @@ export class MergeStewardService {
           "origin",
           `HEAD:${options.targetBranch}`,
         ]);
+      } else {
+        // Caller may inspect/push manually using the returned worktree.
+        shouldCleanup = false;
       }
 
       result = { merged: true, tempWorktreePath };
     } catch (error) {
       primaryError = error;
     } finally {
-      if (worktreeAdded) {
+      if (shouldCleanup && worktreeAdded) {
         try {
           await this.exec("git", ["-C", options.repoPath, "worktree", "remove", "--force", tempWorktreePath]);
         } catch (error) {
           cleanupError = error;
         }
       }
-      await rm(tempWorktreePath, { recursive: true, force: true });
+      if (shouldCleanup) {
+        await rm(tempWorktreePath, { recursive: true, force: true });
+      }
     }
 
     if (primaryError && cleanupError) {
