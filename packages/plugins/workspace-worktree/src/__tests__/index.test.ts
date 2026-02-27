@@ -557,6 +557,51 @@ describe("workspace.list()", () => {
   });
 });
 
+describe("workspace.restore()", () => {
+  it("creates parent directory before restoring worktree", async () => {
+    const ws = create();
+
+    mockGitSuccess(""); // git worktree prune
+    mockGitSuccess(""); // git fetch
+    mockGitSuccess(""); // git worktree add
+
+    const info = await ws.restore!(
+      makeCreateConfig(),
+      "/mock-home/.worktrees/myproject/session-1",
+    );
+
+    expect(mockMkdirSync).toHaveBeenCalledWith("/mock-home/.worktrees/myproject", {
+      recursive: true,
+    });
+    expect(info.path).toBe("/mock-home/.worktrees/myproject/session-1");
+    expect(info.branch).toBe("feat/TEST-1");
+  });
+
+  it("falls back to creating branch from origin when local branch is missing", async () => {
+    const ws = create();
+
+    mockGitSuccess(""); // git worktree prune
+    mockGitSuccess(""); // git fetch
+    mockGitError("branch not found"); // git worktree add <path> <branch>
+    mockGitSuccess(""); // git worktree add -b <branch> <path> origin/<branch>
+
+    await ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1");
+
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      [
+        "worktree",
+        "add",
+        "-b",
+        "feat/TEST-1",
+        "/mock-home/.worktrees/myproject/session-1",
+        "origin/feat/TEST-1",
+      ],
+      { cwd: "/repo/path" },
+    );
+  });
+});
+
 describe("workspace.postCreate()", () => {
   const workspaceInfo: WorkspaceInfo = {
     path: "/mock-home/.worktrees/myproject/session-1",

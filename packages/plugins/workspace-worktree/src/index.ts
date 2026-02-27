@@ -208,6 +208,9 @@ export function create(config?: Record<string, unknown>): Workspace {
 
     async restore(cfg: WorkspaceCreateConfig, workspacePath: string): Promise<WorkspaceInfo> {
       const repoPath = expandPath(cfg.project.path);
+      const workspaceParentDir = resolve(workspacePath, "..");
+
+      mkdirSync(workspaceParentDir, { recursive: true });
 
       // Prune stale worktree entries
       try {
