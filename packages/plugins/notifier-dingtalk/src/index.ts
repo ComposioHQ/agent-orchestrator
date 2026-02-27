@@ -78,6 +78,7 @@ export function create(config?: Record<string, unknown>): Notifier {
   const secret = process.env.DINGTALK_SECRET;
 
   if (!webhookUrl) {
+    // eslint-disable-next-line no-console
     console.warn(
       "[notifier-dingtalk] No webhookUrl configured \u2014 notifications will be no-ops",
     );
