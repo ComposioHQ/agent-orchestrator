@@ -74,7 +74,7 @@ const ProjectConfigSchema = z.object({
   scm: SCMConfigSchema.optional(),
   symlinks: z.array(z.string()).optional(),
   postCreate: z.array(z.string()).optional(),
-  agentConfig: AgentSpecificConfigSchema.optional(),
+  agentConfig: AgentSpecificConfigSchema.default({}),
   reactions: z.record(ReactionConfigSchema.partial()).optional(),
   agentRules: z.string().optional(),
   agentRulesFile: z.string().optional(),
