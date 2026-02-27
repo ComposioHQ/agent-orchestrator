@@ -175,6 +175,8 @@ export interface SessionSpawnConfig {
   projectId: string;
   issueId?: string;
   branch?: string;
+  /** Base branch to start from instead of project.defaultBranch (e.g. an existing feature branch) */
+  baseBranch?: string;
   prompt?: string;
   /** Override the agent plugin for this session (e.g. "codex", "claude-code") */
   agent?: string;
@@ -412,6 +414,8 @@ export interface WorkspaceCreateConfig {
   project: ProjectConfig;
   sessionId: SessionId;
   branch: string;
+  /** Base branch to start from instead of project.defaultBranch */
+  baseBranch?: string;
 }
 
 export interface WorkspaceInfo {

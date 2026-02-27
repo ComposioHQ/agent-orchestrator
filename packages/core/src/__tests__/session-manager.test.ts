@@ -261,6 +261,32 @@ describe("spawn", () => {
     expect(session.branch).toBe("custom/INT-100-my-feature");
   });
 
+  it("passes baseBranch to workspace.create()", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    await sm.spawn({ projectId: "my-app", issueId: "INT-100", baseBranch: "feat/existing-feature" });
+
+    expect(mockWorkspace.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseBranch: "feat/existing-feature",
+        branch: "feat/INT-100",
+      }),
+    );
+  });
+
+  it("passes undefined baseBranch when not specified", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    await sm.spawn({ projectId: "my-app", issueId: "INT-100" });
+
+    expect(mockWorkspace.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseBranch: undefined,
+        branch: "feat/INT-100",
+      }),
+    );
+  });
+
   it("increments session numbers correctly", async () => {
     const sm = createSessionManager({ config, registry: mockRegistry });
 

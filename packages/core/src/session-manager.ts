@@ -420,6 +420,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
           project,
           sessionId,
           branch,
+          baseBranch: spawnConfig.baseBranch,
         });
         workspacePath = wsInfo.path;
 
