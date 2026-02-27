@@ -371,6 +371,7 @@ describe("workspace.restore()", () => {
   it("restores worktree and starts devcontainer", async () => {
     const ws = create();
 
+    mockExistsSync.mockReturnValue(false);
     mockCmdSuccess(""); // git worktree prune
     mockCmdSuccess(""); // git fetch
     mockCmdSuccess(""); // git worktree add
@@ -388,6 +389,7 @@ describe("workspace.restore()", () => {
   it("creates parent directory before restoring", async () => {
     const ws = create();
 
+    mockExistsSync.mockReturnValue(false);
     mockCmdSuccess(""); // git worktree prune
     mockCmdSuccess(""); // git fetch
     mockCmdSuccess(""); // git worktree add
@@ -403,6 +405,7 @@ describe("workspace.restore()", () => {
   it("cleans up worktree when devcontainer up fails during restore", async () => {
     const ws = create();
 
+    mockExistsSync.mockReturnValue(false);
     mockCmdSuccess(""); // git worktree prune
     mockCmdSuccess(""); // git fetch
     mockCmdSuccess(""); // git worktree add
@@ -417,6 +420,17 @@ describe("workspace.restore()", () => {
       "git",
       ["worktree", "remove", "--force", "/mock-home/.worktrees/myproject/session-1"],
       expect.objectContaining({ cwd: "/repo/path" }),
+    );
+  });
+
+  it("fails restore when workspace path already exists", async () => {
+    const ws = create();
+    mockExistsSync.mockReturnValue(true);
+
+    await expect(
+      ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1"),
+    ).rejects.toThrow(
+      'Workspace path "/mock-home/.worktrees/myproject/session-1" already exists for session "session-1"',
     );
   });
 });

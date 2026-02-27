@@ -219,10 +219,19 @@ export function create(config?: Record<string, unknown>): Workspace {
       cfg: WorkspaceCreateConfig,
       workspacePath: string,
     ): Promise<WorkspaceInfo> {
+      assertSafePathSegment(cfg.projectId, "projectId");
+      assertSafePathSegment(cfg.sessionId, "sessionId");
+
       const repoPath = expandPath(cfg.project.path);
       const workspaceParentDir = resolve(workspacePath, "..");
 
       mkdirSync(workspaceParentDir, { recursive: true });
+
+      if (existsSync(workspacePath)) {
+        throw new Error(
+          `Workspace path "${workspacePath}" already exists for session "${cfg.sessionId}" — destroy it before restore`,
+        );
+      }
 
       // Prune stale worktree entries
       try {
