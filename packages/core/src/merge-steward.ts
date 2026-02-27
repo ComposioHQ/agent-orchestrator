@@ -87,8 +87,8 @@ export class MergeStewardService {
       ? options.sourceBranch
       : `origin/${options.sourceBranch}`;
     const tempWorktreePath = await mkdtemp(join(tmpdir(), "ao-merge-steward-"));
-    let testCmd = "";
-    let testArgs: string[] = [];
+    let testCmd: string;
+    let testArgs: string[];
     let worktreeAdded = false;
     let result: MergeStewardResult | null = null;
     let primaryError: unknown = null;

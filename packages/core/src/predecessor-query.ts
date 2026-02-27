@@ -72,20 +72,27 @@ export class PredecessorQueryService {
     if (!predecessor) return null;
 
     let primaryError: unknown = null;
+    let suspendError: unknown = null;
+    let response: string | null = null;
     await this.ops.resume(predecessor.id);
     try {
       await this.ops.send(predecessor.id, request.question);
-      const response = await this.ops.capture(predecessor.id);
-      return { predecessorSessionId: predecessor.id, response };
+      response = await this.ops.capture(predecessor.id);
     } catch (error) {
       primaryError = error;
-      throw error;
     } finally {
       try {
         await suspendWithRetry(this.ops, predecessor.id);
-      } catch (suspendError) {
-        if (!primaryError) throw suspendError;
+      } catch (error) {
+        suspendError = error;
       }
     }
+
+    if (primaryError) throw primaryError;
+    if (suspendError) throw suspendError;
+    return {
+      predecessorSessionId: predecessor.id,
+      response: response ?? "",
+    };
   }
 }

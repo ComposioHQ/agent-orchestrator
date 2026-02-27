@@ -248,9 +248,9 @@ function createJiraTracker(): Tracker {
       const states: string[] = [];
       if (filters.state === "open") states.push("statusCategory != Done");
       if (filters.state === "closed") states.push("statusCategory = Done");
-      const assignee = filters.assignee ? `assignee = \"${quoteJqlLiteral(filters.assignee)}\"` : "";
+      const assignee = filters.assignee ? `assignee = "${quoteJqlLiteral(filters.assignee)}"` : "";
       const escapedProjectKey = quoteJqlLiteral(projectKey);
-      const jqlParts = [`project = \"${escapedProjectKey}\"`, ...states, assignee].filter(Boolean);
+      const jqlParts = [`project = "${escapedProjectKey}"`, ...states, assignee].filter(Boolean);
       const jql = jqlParts.join(" AND ");
       const params = new URLSearchParams();
       params.set("jql", jql);

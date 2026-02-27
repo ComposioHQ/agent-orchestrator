@@ -70,10 +70,9 @@ describe("create()", () => {
 
 describe("runtime.create()", () => {
   it("POSTs to Fly machines API and waits for started state", async () => {
-    let callCount = 0;
-    const fetchMock = vi.fn().mockImplementation((url: string) => {
-      callCount++;
-      if (callCount === 1) {
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => {
         // Create machine
         return Promise.resolve({
           ok: true,
@@ -81,14 +80,15 @@ describe("runtime.create()", () => {
             Promise.resolve({ id: "mach-1", state: "created" }),
           text: () => Promise.resolve(""),
         });
-      }
-      // Wait for started
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({}),
-        text: () => Promise.resolve(""),
+      })
+      .mockImplementation(() => {
+        // Wait for started
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({}),
+          text: () => Promise.resolve(""),
+        });
       });
-    });
     vi.stubGlobal("fetch", fetchMock);
 
     const runtime = create();
@@ -189,9 +189,7 @@ describe("runtime.create()", () => {
 
 describe("runtime.destroy()", () => {
   it("stops, waits, and deletes the machine", async () => {
-    let callCount = 0;
     const fetchMock = vi.fn().mockImplementation(() => {
-      callCount++;
       return Promise.resolve({
         ok: true,
         json: () => Promise.resolve({}),
