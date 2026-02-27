@@ -140,7 +140,7 @@ describe("getLaunchCommand", () => {
   const agent = create();
 
   it("generates base command without shell syntax", () => {
-    const cmd = agent.getLaunchCommand(makeLaunchConfig());
+    const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "default" }));
     expect(cmd).toBe("claude");
     // Must not contain shell operators (execFile-safe)
     expect(cmd).not.toContain("&&");
@@ -180,9 +180,13 @@ describe("getLaunchCommand", () => {
     expect(cmd).toBe("claude --dangerously-skip-permissions --model 'opus' -p 'Hello'");
   });
 
+  it("omits --dangerously-skip-permissions when permissions=default", () => {
+    const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "default" }));
+    expect(cmd).not.toContain("--dangerously-skip-permissions");
+  });
+
   it("omits optional flags when not provided", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig());
-    expect(cmd).not.toContain("--dangerously-skip-permissions");
     expect(cmd).not.toContain("--model");
     expect(cmd).not.toContain("-p");
   });

@@ -53,7 +53,7 @@ const NotifierConfigSchema = z
 
 const AgentSpecificConfigSchema = z
   .object({
-    permissions: z.enum(["skip", "default"]).optional(),
+    permissions: z.enum(["skip", "default"]).default("skip"),
     model: z.string().optional(),
   })
   .passthrough();
