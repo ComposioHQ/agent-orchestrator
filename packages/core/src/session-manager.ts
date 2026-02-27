@@ -667,6 +667,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         worktree: project.path,
         branch: project.defaultBranch,
         status: "working",
+        role: "orchestrator",
         tmuxName,
         project: orchestratorConfig.projectId,
         createdAt: new Date().toISOString(),
@@ -831,6 +832,17 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
     for (const session of sessions) {
       try {
+        // Never clean up orchestrator sessions — they manage the lifecycle.
+        // Check explicit role metadata first, fall back to naming convention
+        // for pre-existing sessions spawned before the role field was added.
+        if (
+          session.metadata["role"] === "orchestrator" ||
+          session.id.endsWith("-orchestrator")
+        ) {
+          result.skipped.push(session.id);
+          continue;
+        }
+
         const project = config.projects[session.projectId];
         if (!project) {
           result.skipped.push(session.id);
@@ -978,6 +990,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         worktree: raw["worktree"] ?? "",
         branch: raw["branch"] ?? "",
         status: raw["status"] ?? "killed",
+        role: raw["role"],
         tmuxName: raw["tmuxName"],
         issue: raw["issue"],
         pr: raw["pr"],

@@ -978,6 +978,7 @@ export interface SessionMetadata {
   createdAt?: string;
   runtimeHandle?: string;
   restoredAt?: string;
+  role?: string; // "orchestrator" for orchestrator sessions
   dashboardPort?: number;
   terminalWsPort?: number;
   directTerminalWsPort?: number;
