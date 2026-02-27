@@ -76,6 +76,7 @@ export function create(_config?: Record<string, unknown>): Notifier {
   const userKey = process.env.PUSHOVER_USER_KEY;
 
   if (!appToken || !userKey) {
+    // eslint-disable-next-line no-console
     console.warn(
       "[notifier-pushover] Missing PUSHOVER_APP_TOKEN or PUSHOVER_USER_KEY \u2014 notifications will be no-ops",
     );
