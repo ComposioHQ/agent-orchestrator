@@ -27,7 +27,7 @@ vi.mock("node:os", () => ({
 // ---------------------------------------------------------------------------
 
 import * as childProcess from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { create, manifest, default as defaultExport } from "./index.js";
 
 // ---------------------------------------------------------------------------
@@ -39,7 +39,9 @@ const mockExecFileAsync = (childProcess.execFile as any)[
 ] as ReturnType<typeof vi.fn>;
 
 const mockExistsSync = existsSync as ReturnType<typeof vi.fn>;
+const mockMkdirSync = mkdirSync as ReturnType<typeof vi.fn>;
 const mockReaddirSync = readdirSync as ReturnType<typeof vi.fn>;
+const mockRmSync = rmSync as ReturnType<typeof vi.fn>;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -156,6 +158,45 @@ describe("workspace.create()", () => {
     expect(info.branch).toBe("feat/TEST-1");
   });
 
+  it("cleans up worktree when checkout fails on existing branch fallback", async () => {
+    const ws = create();
+
+    mockCmdSuccess(""); // git fetch
+    mockCmdError("already exists"); // worktree add -b fails
+    mockCmdSuccess(""); // worktree add (without -b)
+    mockCmdError("checkout failed"); // git checkout
+    mockCmdSuccess(""); // git worktree remove
+
+    await expect(ws.create(makeCreateConfig())).rejects.toThrow(
+      'Failed to checkout branch "feat/TEST-1" in worktree',
+    );
+
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      ["worktree", "remove", "--force", "/mock-home/.worktrees/myproject/session-1"],
+      expect.objectContaining({ cwd: "/repo/path" }),
+    );
+  });
+
+  it("cleans up worktree when devcontainer up fails", async () => {
+    const ws = create();
+
+    mockCmdSuccess(""); // git fetch
+    mockCmdSuccess(""); // git worktree add
+    mockCmdError("devcontainer up failed");
+    mockCmdSuccess(""); // git worktree remove
+
+    await expect(ws.create(makeCreateConfig())).rejects.toThrow(
+      'Failed to start devcontainer for session "session-1"',
+    );
+
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      ["worktree", "remove", "--force", "/mock-home/.worktrees/myproject/session-1"],
+      expect.objectContaining({ cwd: "/repo/path" }),
+    );
+  });
+
   it("throws for non-already-exists worktree errors", async () => {
     const ws = create();
 
@@ -219,8 +260,10 @@ describe("workspace.destroy()", () => {
 
     await ws.destroy("/mock-home/.worktrees/myproject/session-1");
 
-    // rmSync imported dynamically inside destroy, but we check existsSync was called
-    expect(mockExistsSync).toHaveBeenCalled();
+    expect(mockRmSync).toHaveBeenCalledWith("/mock-home/.worktrees/myproject/session-1", {
+      recursive: true,
+      force: true,
+    });
   });
 });
 
@@ -340,5 +383,40 @@ describe("workspace.restore()", () => {
 
     expect(info.path).toBe("/mock-home/.worktrees/myproject/session-1");
     expect(info.branch).toBe("feat/TEST-1");
+  });
+
+  it("creates parent directory before restoring", async () => {
+    const ws = create();
+
+    mockCmdSuccess(""); // git worktree prune
+    mockCmdSuccess(""); // git fetch
+    mockCmdSuccess(""); // git worktree add
+    mockCmdSuccess(""); // devcontainer up
+
+    await ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1");
+
+    expect(mockMkdirSync).toHaveBeenCalledWith("/mock-home/.worktrees/myproject", {
+      recursive: true,
+    });
+  });
+
+  it("cleans up worktree when devcontainer up fails during restore", async () => {
+    const ws = create();
+
+    mockCmdSuccess(""); // git worktree prune
+    mockCmdSuccess(""); // git fetch
+    mockCmdSuccess(""); // git worktree add
+    mockCmdError("devcontainer up failed");
+    mockCmdSuccess(""); // git worktree remove
+
+    await expect(
+      ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1"),
+    ).rejects.toThrow('Failed to start devcontainer during restore for "session-1"');
+
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      ["worktree", "remove", "--force", "/mock-home/.worktrees/myproject/session-1"],
+      expect.objectContaining({ cwd: "/repo/path" }),
+    );
   });
 });

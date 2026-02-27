@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import type {
   PluginModule,
@@ -102,15 +102,39 @@ export function create(config?: Record<string, unknown>): Workspace {
         }
         // Branch already exists -- create worktree and check it out
         await git(repoPath, "worktree", "add", worktreePath, baseRef);
-        await git(worktreePath, "checkout", cfg.branch);
+        try {
+          await git(worktreePath, "checkout", cfg.branch);
+        } catch (checkoutErr: unknown) {
+          try {
+            await git(repoPath, "worktree", "remove", "--force", worktreePath);
+          } catch {
+            // Best-effort cleanup
+          }
+          const msg = checkoutErr instanceof Error ? checkoutErr.message : String(checkoutErr);
+          throw new Error(`Failed to checkout branch "${cfg.branch}" in worktree: ${msg}`, {
+            cause: checkoutErr,
+          });
+        }
       }
 
       // Start the devcontainer
-      await execFileAsync(
-        "devcontainer",
-        ["up", "--workspace-folder", worktreePath],
-        { timeout: DEVCONTAINER_TIMEOUT },
-      );
+      try {
+        await execFileAsync(
+          "devcontainer",
+          ["up", "--workspace-folder", worktreePath],
+          { timeout: DEVCONTAINER_TIMEOUT },
+        );
+      } catch (devcontainerErr: unknown) {
+        try {
+          await git(repoPath, "worktree", "remove", "--force", worktreePath);
+        } catch {
+          // Best-effort cleanup
+        }
+        const msg = devcontainerErr instanceof Error ? devcontainerErr.message : String(devcontainerErr);
+        throw new Error(`Failed to start devcontainer for session "${cfg.sessionId}": ${msg}`, {
+          cause: devcontainerErr,
+        });
+      }
 
       return {
         path: worktreePath,
@@ -140,12 +164,11 @@ export function create(config?: Record<string, unknown>): Workspace {
           "--path-format=absolute",
           "--git-common-dir",
         );
-        const repoPath = join(gitCommonDir, "..");
+        const repoPath = resolve(gitCommonDir, "..");
         await git(repoPath, "worktree", "remove", "--force", workspacePath);
       } catch {
         // If git commands fail, try to clean up the directory
         if (existsSync(workspacePath)) {
-          const { rmSync } = await import("node:fs");
           rmSync(workspacePath, { recursive: true, force: true });
         }
       }
@@ -197,6 +220,9 @@ export function create(config?: Record<string, unknown>): Workspace {
       workspacePath: string,
     ): Promise<WorkspaceInfo> {
       const repoPath = expandPath(cfg.project.path);
+      const workspaceParentDir = resolve(workspacePath, "..");
+
+      mkdirSync(workspaceParentDir, { recursive: true });
 
       // Prune stale worktree entries
       try {
@@ -242,11 +268,23 @@ export function create(config?: Record<string, unknown>): Workspace {
       }
 
       // Start the devcontainer
-      await execFileAsync(
-        "devcontainer",
-        ["up", "--workspace-folder", workspacePath],
-        { timeout: DEVCONTAINER_TIMEOUT },
-      );
+      try {
+        await execFileAsync(
+          "devcontainer",
+          ["up", "--workspace-folder", workspacePath],
+          { timeout: DEVCONTAINER_TIMEOUT },
+        );
+      } catch (devcontainerErr: unknown) {
+        try {
+          await git(repoPath, "worktree", "remove", "--force", workspacePath);
+        } catch {
+          // Best-effort cleanup
+        }
+        const msg = devcontainerErr instanceof Error ? devcontainerErr.message : String(devcontainerErr);
+        throw new Error(`Failed to start devcontainer during restore for "${cfg.sessionId}": ${msg}`, {
+          cause: devcontainerErr,
+        });
+      }
 
       return {
         path: workspacePath,
