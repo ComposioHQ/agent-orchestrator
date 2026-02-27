@@ -588,6 +588,82 @@ describe("workspace.list()", () => {
 });
 
 // ---------------------------------------------------------------------------
+// workspace.exists()
+// ---------------------------------------------------------------------------
+describe("workspace.exists()", () => {
+  it("returns false when path does not exist", async () => {
+    const workspace = create();
+    (fs.existsSync as ReturnType<typeof vi.fn>).mockReturnValueOnce(false);
+
+    await expect(workspace.exists!("/missing/path")).resolves.toBe(false);
+  });
+
+  it("returns true when git rev-parse succeeds", async () => {
+    const workspace = create();
+    (fs.existsSync as ReturnType<typeof vi.fn>).mockReturnValueOnce(true);
+    mockGitSuccess("true");
+
+    await expect(workspace.exists!("/mock-home/.ao-clones/proj/sess")).resolves.toBe(true);
+  });
+
+  it("returns false when git rev-parse fails", async () => {
+    const workspace = create();
+    (fs.existsSync as ReturnType<typeof vi.fn>).mockReturnValueOnce(true);
+    mockGitError("fatal: not a git repository");
+
+    await expect(workspace.exists!("/mock-home/.ao-clones/proj/sess")).resolves.toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// workspace.restore()
+// ---------------------------------------------------------------------------
+describe("workspace.restore()", () => {
+  it("creates parent directory before cloning", async () => {
+    const workspace = create();
+
+    mockGitSuccess("https://github.com/test/repo.git");
+    mockGitSuccess("");
+    mockGitSuccess("");
+
+    const restorePath = "/mock-home/.ao-clones/proj/sess";
+    await workspace.restore!(
+      {
+        projectId: "proj",
+        sessionId: "sess",
+        branch: "feat/branch",
+        project: makeProject(),
+      },
+      restorePath,
+    );
+
+    expect(fs.mkdirSync).toHaveBeenCalledWith("/mock-home/.ao-clones/proj", { recursive: true });
+  });
+
+  it("cleans up when restore clone fails", async () => {
+    const workspace = create();
+
+    mockGitSuccess("https://github.com/test/repo.git");
+    mockGitError("fatal: clone failed");
+
+    const restorePath = "/mock-home/.ao-clones/proj/sess";
+    await expect(
+      workspace.restore!(
+        {
+          projectId: "proj",
+          sessionId: "sess",
+          branch: "feat/branch",
+          project: makeProject(),
+        },
+        restorePath,
+      ),
+    ).rejects.toThrow("Clone failed during restore");
+
+    expect(fs.rmSync).toHaveBeenCalledWith(restorePath, { recursive: true, force: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // workspace.postCreate()
 // ---------------------------------------------------------------------------
 describe("workspace.postCreate()", () => {
