@@ -28,6 +28,8 @@ const mockExecFileCustom = (childProcess.execFile as any)[
   Symbol.for("nodejs.util.promisify.custom")
 ] as ReturnType<typeof vi.fn>;
 
+const TIMEOUT = { timeout: 30_000 };
+
 /** Queue a successful tmux command with the given stdout. */
 function mockTmuxSuccess(stdout = "") {
   mockExecFileCustom.mockResolvedValueOnce({ stdout: stdout + "\n", stderr: "" });
@@ -105,7 +107,7 @@ describe("runtime.create()", () => {
       "test-session",
       "-c",
       "/tmp/workspace",
-    ]);
+    ], TIMEOUT);
   });
 
   it("includes -e KEY=VALUE flags for environment variables", async () => {
@@ -149,7 +151,7 @@ describe("runtime.create()", () => {
       "launch-test",
       "claude --session abc",
       "Enter",
-    ]);
+    ], TIMEOUT);
   });
 
   it("cleans up session if send-keys fails", async () => {
@@ -172,7 +174,7 @@ describe("runtime.create()", () => {
     ).rejects.toThrow('Failed to send launch command to session "fail-session"');
 
     // Verify kill-session was called for cleanup
-    expect(mockExecFileCustom).toHaveBeenCalledWith("tmux", ["kill-session", "-t", "fail-session"]);
+    expect(mockExecFileCustom).toHaveBeenCalledWith("tmux", ["kill-session", "-t", "fail-session"], TIMEOUT);
   });
 
   it("rejects invalid session IDs with special characters", async () => {
@@ -244,7 +246,7 @@ describe("runtime.destroy()", () => {
 
     await runtime.destroy(handle);
 
-    expect(mockExecFileCustom).toHaveBeenCalledWith("tmux", ["kill-session", "-t", "destroy-test"]);
+    expect(mockExecFileCustom).toHaveBeenCalledWith("tmux", ["kill-session", "-t", "destroy-test"], TIMEOUT);
   });
 
   it("does not throw if session is already gone", async () => {
@@ -278,7 +280,7 @@ describe("runtime.sendMessage()", () => {
       "-t",
       "msg-short",
       "C-u",
-    ]);
+    ], TIMEOUT);
 
     // Call 1: Literal text
     expect(mockExecFileCustom).toHaveBeenNthCalledWith(2, "tmux", [
@@ -287,7 +289,7 @@ describe("runtime.sendMessage()", () => {
       "msg-short",
       "-l",
       "hello world",
-    ]);
+    ], TIMEOUT);
 
     // Call 2: Enter
     expect(mockExecFileCustom).toHaveBeenNthCalledWith(3, "tmux", [
@@ -295,7 +297,7 @@ describe("runtime.sendMessage()", () => {
       "-t",
       "msg-short",
       "Enter",
-    ]);
+    ], TIMEOUT);
   });
 
   it("uses load-buffer + paste-buffer for long text (> 200 chars)", async () => {
@@ -320,7 +322,7 @@ describe("runtime.sendMessage()", () => {
       "-t",
       "msg-long",
       "C-u",
-    ]);
+    ], TIMEOUT);
 
     // Call 1: load-buffer with named buffer
     expect(mockExecFileCustom).toHaveBeenNthCalledWith(2, "tmux", [
@@ -328,7 +330,7 @@ describe("runtime.sendMessage()", () => {
       "-b",
       "ao-test-uuid-1234",
       expect.stringContaining("ao-send-test-uuid-1234.txt"),
-    ]);
+    ], TIMEOUT);
 
     // Call 2: paste-buffer
     expect(mockExecFileCustom).toHaveBeenNthCalledWith(3, "tmux", [
@@ -338,7 +340,7 @@ describe("runtime.sendMessage()", () => {
       "-t",
       "msg-long",
       "-d",
-    ]);
+    ], TIMEOUT);
 
     // Verify writeFileSync was called with the message
     expect(fs.writeFileSync).toHaveBeenCalledWith(
@@ -371,7 +373,7 @@ describe("runtime.sendMessage()", () => {
       "-b",
       "ao-test-uuid-1234",
       expect.stringContaining("ao-send-test-uuid-1234.txt"),
-    ]);
+    ], TIMEOUT);
 
     expect(fs.writeFileSync).toHaveBeenCalledWith(
       expect.stringContaining("ao-send-test-uuid-1234.txt"),
@@ -405,7 +407,7 @@ describe("runtime.sendMessage()", () => {
       "delete-buffer",
       "-b",
       "ao-test-uuid-1234",
-    ]);
+    ], TIMEOUT);
   });
 });
 
@@ -426,7 +428,7 @@ describe("runtime.getOutput()", () => {
       "-p",
       "-S",
       "-50",
-    ]);
+    ], TIMEOUT);
   });
 
   it("passes custom line count", async () => {
@@ -444,7 +446,7 @@ describe("runtime.getOutput()", () => {
       "-p",
       "-S",
       "-100",
-    ]);
+    ], TIMEOUT);
   });
 
   it("returns empty string on error", async () => {
@@ -469,7 +471,7 @@ describe("runtime.isAlive()", () => {
     const alive = await runtime.isAlive(handle);
 
     expect(alive).toBe(true);
-    expect(mockExecFileCustom).toHaveBeenCalledWith("tmux", ["has-session", "-t", "alive-test"]);
+    expect(mockExecFileCustom).toHaveBeenCalledWith("tmux", ["has-session", "-t", "alive-test"], TIMEOUT);
   });
 
   it("returns false when has-session fails", async () => {

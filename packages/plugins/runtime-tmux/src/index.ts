@@ -34,7 +34,7 @@ function assertValidSessionId(id: string): void {
 
 /** Run a tmux command and return stdout */
 async function tmux(...args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync("tmux", args);
+  const { stdout } = await execFileAsync("tmux", args, { timeout: 30_000 });
   return stdout.trimEnd();
 }
 
