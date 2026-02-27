@@ -9,14 +9,24 @@ const {
   mockWriteFile,
   mockMkdir,
   mockReadFile,
+  mockReaddir,
   mockRename,
+  mockStat,
+  mockLstat,
+  mockOpen,
+  mockCreateReadStream,
   mockHomedir,
 } = vi.hoisted(() => ({
   mockExecFileAsync: vi.fn(),
   mockWriteFile: vi.fn().mockResolvedValue(undefined),
   mockMkdir: vi.fn().mockResolvedValue(undefined),
   mockReadFile: vi.fn(),
+  mockReaddir: vi.fn(),
   mockRename: vi.fn().mockResolvedValue(undefined),
+  mockStat: vi.fn(),
+  mockLstat: vi.fn(),
+  mockOpen: vi.fn(),
+  mockCreateReadStream: vi.fn(),
   mockHomedir: vi.fn(() => "/mock/home"),
 }));
 
@@ -31,7 +41,11 @@ vi.mock("node:fs/promises", () => ({
   writeFile: mockWriteFile,
   mkdir: mockMkdir,
   readFile: mockReadFile,
+  readdir: mockReaddir,
   rename: mockRename,
+  stat: mockStat,
+  lstat: mockLstat,
+  open: mockOpen,
 }));
 
 vi.mock("node:crypto", () => ({
@@ -40,13 +54,15 @@ vi.mock("node:crypto", () => ({
 
 vi.mock("node:fs", () => ({
   existsSync: vi.fn(() => false),
+  createReadStream: mockCreateReadStream,
 }));
 
 vi.mock("node:os", () => ({
   homedir: mockHomedir,
 }));
 
-import { create, manifest, default as defaultExport } from "./index.js";
+import { Readable } from "node:stream";
+import { create, manifest, default as defaultExport, resolveCodexBinary, _resetSessionFileCache } from "./index.js";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -108,9 +124,58 @@ function mockTmuxWithProcess(processName: string, found = true) {
   });
 }
 
+/**
+ * Create a mock file handle for `open()` that returns `content` from `read()`.
+ * Used by sessionFileMatchesCwd which reads only the first 4 KB.
+ */
+function makeFakeFileHandle(content: string) {
+  const buf = Buffer.from(content, "utf-8");
+  return {
+    read: vi.fn().mockImplementation((buffer: Buffer, offset: number, length: number, _position: number) => {
+      const bytesToCopy = Math.min(length, buf.length);
+      buf.copy(buffer, offset, 0, bytesToCopy);
+      return Promise.resolve({ bytesRead: bytesToCopy, buffer });
+    }),
+    close: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+/**
+ * Set up mockOpen so that any `open(path, "r")` call returns a fake handle
+ * reading `content`. This is used by sessionFileMatchesCwd.
+ */
+function setupMockOpen(content: string) {
+  mockOpen.mockResolvedValue(makeFakeFileHandle(content));
+}
+
+/**
+ * Create a Readable stream from a string. Used to mock createReadStream
+ * for the streaming JSONL parser (streamCodexSessionData).
+ */
+function makeContentStream(content: string): Readable {
+  return Readable.from(Buffer.from(content, "utf-8"));
+}
+
+/**
+ * Set up mockCreateReadStream to return a readable stream with the given content.
+ * Used by getSessionInfo/getRestoreCommand which now stream files line-by-line.
+ */
+function setupMockStream(content: string) {
+  mockCreateReadStream.mockReturnValue(makeContentStream(content));
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  _resetSessionFileCache();
   mockHomedir.mockReturnValue("/mock/home");
+  // Default: open() returns a handle with empty content (no session_meta match).
+  // Session tests call setupMockOpen(content) to override.
+  mockOpen.mockResolvedValue(makeFakeFileHandle(""));
+  // Default: lstat rejects (no subdirectories). Session tests override as needed.
+  mockLstat.mockRejectedValue(new Error("ENOENT"));
+  // Default: createReadStream returns an empty stream. Session tests call
+  // setupMockStream(content) to override.
+  mockCreateReadStream.mockReturnValue(makeContentStream(""));
 });
 
 // =========================================================================
@@ -145,12 +210,35 @@ describe("getLaunchCommand", () => {
   const agent = create();
 
   it("generates base command", () => {
-    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("codex");
+    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("'codex'");
   });
 
-  it("includes --full-auto when permissions=skip", () => {
+  it("includes --dangerously-bypass-approvals-and-sandbox when permissions=skip", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "skip" }));
-    expect(cmd).toContain("--full-auto");
+    expect(cmd).toContain("--dangerously-bypass-approvals-and-sandbox");
+    expect(cmd).not.toContain("--full-auto");
+  });
+
+  it("includes --ask-for-approval never when permissions=auto-edit", () => {
+    // Cast needed: "auto-edit" not yet in AgentLaunchConfig type union
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({ permissions: "auto-edit" as AgentLaunchConfig["permissions"] }),
+    );
+    expect(cmd).toContain("--ask-for-approval never");
+  });
+
+  it("includes --ask-for-approval untrusted when permissions=suggest", () => {
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({ permissions: "suggest" as AgentLaunchConfig["permissions"] }),
+    );
+    expect(cmd).toContain("--ask-for-approval untrusted");
+  });
+
+  it("omits approval flags when permissions=default", () => {
+    const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "default" }));
+    expect(cmd).not.toContain("--dangerously-bypass-approvals-and-sandbox");
+    expect(cmd).not.toContain("--ask-for-approval");
+    expect(cmd).not.toContain("--full-auto");
   });
 
   it("includes --model with shell-escaped value", () => {
@@ -167,7 +255,7 @@ describe("getLaunchCommand", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ permissions: "skip", model: "o3", prompt: "Go" }),
     );
-    expect(cmd).toBe("codex --full-auto --model 'o3' -- 'Go'");
+    expect(cmd).toBe("'codex' --dangerously-bypass-approvals-and-sandbox --model 'o3' -c model_reasoning_effort=high -- 'Go'");
   });
 
   it("escapes single quotes in prompt (POSIX shell escaping)", () => {
@@ -203,9 +291,54 @@ describe("getLaunchCommand", () => {
 
   it("omits optional flags when not provided", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig());
-    expect(cmd).not.toContain("--full-auto");
+    expect(cmd).not.toContain("--dangerously-bypass-approvals-and-sandbox");
+    expect(cmd).not.toContain("--ask-for-approval");
     expect(cmd).not.toContain("--model");
     expect(cmd).not.toContain("-c");
+    expect(cmd).not.toContain("model_reasoning_effort");
+  });
+
+  // -- Reasoning effort tests --
+  describe("reasoning effort", () => {
+    it("adds model_reasoning_effort=high for o3 model", () => {
+      const cmd = agent.getLaunchCommand(makeLaunchConfig({ model: "o3" }));
+      expect(cmd).toContain("-c model_reasoning_effort=high");
+    });
+
+    it("adds model_reasoning_effort=high for o3-mini model", () => {
+      const cmd = agent.getLaunchCommand(makeLaunchConfig({ model: "o3-mini" }));
+      expect(cmd).toContain("-c model_reasoning_effort=high");
+    });
+
+    it("adds model_reasoning_effort=high for o4-mini model", () => {
+      const cmd = agent.getLaunchCommand(makeLaunchConfig({ model: "o4-mini" }));
+      expect(cmd).toContain("-c model_reasoning_effort=high");
+    });
+
+    it("adds model_reasoning_effort=high for O3 (case-insensitive)", () => {
+      const cmd = agent.getLaunchCommand(makeLaunchConfig({ model: "O3" }));
+      expect(cmd).toContain("-c model_reasoning_effort=high");
+    });
+
+    it("adds model_reasoning_effort=high for O4-MINI (case-insensitive)", () => {
+      const cmd = agent.getLaunchCommand(makeLaunchConfig({ model: "O4-MINI" }));
+      expect(cmd).toContain("-c model_reasoning_effort=high");
+    });
+
+    it("does NOT add reasoning effort for gpt-4o model", () => {
+      const cmd = agent.getLaunchCommand(makeLaunchConfig({ model: "gpt-4o" }));
+      expect(cmd).not.toContain("model_reasoning_effort");
+    });
+
+    it("does NOT add reasoning effort for gpt-4.1 model", () => {
+      const cmd = agent.getLaunchCommand(makeLaunchConfig({ model: "gpt-4.1" }));
+      expect(cmd).not.toContain("model_reasoning_effort");
+    });
+
+    it("does NOT add reasoning effort when no model specified", () => {
+      const cmd = agent.getLaunchCommand(makeLaunchConfig());
+      expect(cmd).not.toContain("model_reasoning_effort");
+    });
   });
 });
 
@@ -443,20 +576,58 @@ describe("getActivityState", () => {
   it("returns exited when no runtimeHandle", async () => {
     const session = makeSession({ runtimeHandle: null });
     const result = await agent.getActivityState(session);
-    expect(result).toEqual({ state: "exited" });
+    expect(result?.state).toBe("exited");
+    expect(result?.timestamp).toBeInstanceOf(Date);
   });
 
   it("returns exited when process is not running", async () => {
     mockExecFileAsync.mockRejectedValue(new Error("tmux not running"));
     const session = makeSession({ runtimeHandle: makeTmuxHandle() });
     const result = await agent.getActivityState(session);
-    expect(result).toEqual({ state: "exited" });
+    expect(result?.state).toBe("exited");
+    expect(result?.timestamp).toBeInstanceOf(Date);
   });
 
-  it("returns null (unknown) when process is running", async () => {
+  it("returns null when process is running but no workspacePath", async () => {
     mockTmuxWithProcess("codex");
-    const session = makeSession({ runtimeHandle: makeTmuxHandle() });
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: undefined });
     expect(await agent.getActivityState(session)).toBeNull();
+  });
+
+  it("returns null when process is running but no session file found", async () => {
+    mockTmuxWithProcess("codex");
+    mockReaddir.mockRejectedValue(new Error("ENOENT"));
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    expect(await agent.getActivityState(session)).toBeNull();
+  });
+
+  it("returns active when session file was recently modified", async () => {
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    // mtime = now (just modified)
+    mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
+
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    const result = await agent.getActivityState(session);
+    expect(result?.state).toBe("active");
+    expect(result?.timestamp).toBeInstanceOf(Date);
+  });
+
+  it("returns idle when session file is stale", async () => {
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    // mtime = 10 minutes ago (past the 5-minute threshold)
+    const staleTime = Date.now() - 600_000;
+    mockStat.mockResolvedValue({ mtimeMs: staleTime, mtime: new Date(staleTime) });
+
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    const result = await agent.getActivityState(session);
+    expect(result?.state).toBe("idle");
+    expect(result?.timestamp).toBeInstanceOf(Date);
   });
 
   it("returns exited when process handle has dead PID", async () => {
@@ -465,32 +636,590 @@ describe("getActivityState", () => {
     });
     const session = makeSession({ runtimeHandle: makeProcessHandle(999) });
     const result = await agent.getActivityState(session);
-    expect(result).toEqual({ state: "exited" });
+    expect(result?.state).toBe("exited");
+    expect(result?.timestamp).toBeInstanceOf(Date);
     killSpy.mockRestore();
-  });
-
-  it("does not include timestamp in exited state", async () => {
-    const session = makeSession({ runtimeHandle: null });
-    const result = await agent.getActivityState(session);
-    // The Codex implementation returns { state: "exited" } without timestamp
-    expect(result).toEqual({ state: "exited" });
-    expect(result?.timestamp).toBeUndefined();
   });
 });
 
 // =========================================================================
-// getSessionInfo
+// getSessionInfo — Codex JSONL parsing
 // =========================================================================
 describe("getSessionInfo", () => {
   const agent = create();
 
-  it("always returns null (not implemented)", async () => {
-    expect(await agent.getSessionInfo(makeSession())).toBeNull();
-    expect(await agent.getSessionInfo(makeSession({ workspacePath: "/some/path" }))).toBeNull();
+  // Helper to build JSONL content from lines
+  function jsonl(...lines: Record<string, unknown>[]): string {
+    return lines.map((l) => JSON.stringify(l)).join("\n") + "\n";
+  }
+
+  it("returns null when workspacePath is null", async () => {
+    expect(await agent.getSessionInfo(makeSession({ workspacePath: null }))).toBeNull();
   });
 
-  it("returns null even with null workspacePath", async () => {
-    expect(await agent.getSessionInfo(makeSession({ workspacePath: null }))).toBeNull();
+  it("returns null when workspacePath is undefined", async () => {
+    expect(await agent.getSessionInfo(makeSession({ workspacePath: undefined }))).toBeNull();
+  });
+
+  it("returns null when ~/.codex/sessions/ directory does not exist", async () => {
+    mockReaddir.mockRejectedValue(new Error("ENOENT"));
+    expect(await agent.getSessionInfo(makeSession())).toBeNull();
+  });
+
+  it("returns null when sessions directory is empty", async () => {
+    mockReaddir.mockResolvedValue([]);
+    expect(await agent.getSessionInfo(makeSession())).toBeNull();
+  });
+
+  it("returns null when no session files match the workspace cwd", async () => {
+    mockReaddir.mockResolvedValue(["session-abc.jsonl"]);
+    const content = jsonl({ type: "session_meta", cwd: "/other/workspace", model: "gpt-4o" });
+    setupMockOpen(content);
+    mockReadFile.mockResolvedValue(content);
+    expect(await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }))).toBeNull();
+  });
+
+  it("returns session info with cost and model when matching session found", async () => {
+    const sessionContent = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "o3-mini" },
+      { type: "event_msg", msg: { type: "token_count", input_tokens: 1000, output_tokens: 500, cached_tokens: 200, reasoning_tokens: 100 } },
+      { type: "event_msg", msg: { type: "token_count", input_tokens: 2000, output_tokens: 300, cached_tokens: 0, reasoning_tokens: 0 } },
+    );
+
+    mockReaddir.mockResolvedValue(["session-123.jsonl"]);
+    setupMockOpen(sessionContent);
+    setupMockStream(sessionContent);
+    mockReadFile.mockResolvedValue(sessionContent);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
+
+    expect(result).not.toBeNull();
+    expect(result!.agentSessionId).toBe("session-123");
+    expect(result!.summary).toBe("Codex session (o3-mini)");
+    expect(result!.summaryIsFallback).toBe(true);
+    expect(result!.cost).toBeDefined();
+    // cached_tokens/reasoning_tokens are subsets, not additive
+    // input: 1000 + 2000 = 3000
+    // output: 500 + 300 = 800
+    expect(result!.cost!.inputTokens).toBe(3000);
+    expect(result!.cost!.outputTokens).toBe(800);
+    expect(result!.cost!.estimatedCostUsd).toBeGreaterThan(0);
+  });
+
+  it("picks the most recently modified matching session file", async () => {
+    const oldContent = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
+    );
+    const newContent = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "o3" },
+    );
+
+    mockReaddir.mockResolvedValue(["old-session.jsonl", "new-session.jsonl"]);
+    mockOpen.mockImplementation(async (path: string) => {
+      if (path.includes("old-session")) return makeFakeFileHandle(oldContent);
+      if (path.includes("new-session")) return makeFakeFileHandle(newContent);
+      throw new Error("ENOENT");
+    });
+    mockReadFile.mockImplementation((path: string) => {
+      if (path.includes("old-session")) return Promise.resolve(oldContent);
+      if (path.includes("new-session")) return Promise.resolve(newContent);
+      return Promise.reject(new Error("ENOENT"));
+    });
+    mockCreateReadStream.mockImplementation((path: string) => {
+      if (path.includes("old-session")) return makeContentStream(oldContent);
+      if (path.includes("new-session")) return makeContentStream(newContent);
+      return makeContentStream("");
+    });
+    mockStat.mockImplementation((path: string) => {
+      if (path.includes("old-session")) return Promise.resolve({ mtimeMs: 1000 });
+      if (path.includes("new-session")) return Promise.resolve({ mtimeMs: 2000 });
+      return Promise.reject(new Error("ENOENT"));
+    });
+
+    const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
+
+    expect(result).not.toBeNull();
+    expect(result!.agentSessionId).toBe("new-session");
+    expect(result!.summary).toBe("Codex session (o3)");
+  });
+
+  it("handles corrupt/malformed JSONL lines gracefully", async () => {
+    const content = '{"type":"session_meta","cwd":"/workspace/test","model":"gpt-4o"}\n' +
+      "not valid json\n" +
+      '{"type":"event_msg","msg":{"type":"token_count","input_tokens":500,"output_tokens":200}}\n';
+
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockReadFile.mockResolvedValue(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
+
+    expect(result).not.toBeNull();
+    expect(result!.cost!.inputTokens).toBe(500);
+    expect(result!.cost!.outputTokens).toBe(200);
+  });
+
+  it("returns null summary when no model in session_meta", async () => {
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test" },
+      { type: "event_msg", msg: { type: "token_count", input_tokens: 100, output_tokens: 50 } },
+    );
+
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
+
+    expect(result).not.toBeNull();
+    expect(result!.summary).toBeNull();
+    // Verify cost was actually parsed from the stream (not just defaulting to undefined)
+    expect(result!.cost).toBeDefined();
+    expect(result!.cost!.inputTokens).toBe(100);
+    expect(result!.cost!.outputTokens).toBe(50);
+  });
+
+  it("returns undefined cost when no token_count events", async () => {
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
+      { type: "event_msg", msg: { type: "other_event" } },
+    );
+
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
+
+    expect(result).not.toBeNull();
+    expect(result!.cost).toBeUndefined();
+    // Verify model was actually parsed from the stream (not just defaulting to null)
+    expect(result!.summary).toContain("gpt-4o");
+  });
+
+  it("handles unreadable session files gracefully", async () => {
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    // open() finds matching session_meta, but readFile fails for full parse
+    setupMockOpen(jsonl({ type: "session_meta", cwd: "/workspace/test" }));
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+    mockReadFile.mockRejectedValue(new Error("EACCES"));
+    mockCreateReadStream.mockImplementation(() => { throw new Error("EACCES"); });
+
+    expect(await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }))).toBeNull();
+  });
+
+  it("skips session files when stat throws", async () => {
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockReadFile.mockResolvedValue(content);
+    mockStat.mockRejectedValue(new Error("EACCES"));
+
+    const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
+    // stat failed so no bestMatch can be established
+    expect(result).toBeNull();
+  });
+
+  it("returns null when session JSONL has only empty/malformed lines", async () => {
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    // open() finds matching session_meta for cwd check
+    setupMockOpen(jsonl({ type: "session_meta", cwd: "/workspace/test" }));
+    // readFile (full parse) returns only garbage
+    mockReadFile.mockResolvedValue("not json\n\n   \n");
+    setupMockStream("not json\n\n   \n");
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
+    // With streaming parser, garbage lines are skipped gracefully and a result
+    // is returned with null summary and undefined cost (no valid data extracted).
+    expect(result).not.toBeNull();
+    expect(result!.summary).toBeNull();
+    expect(result!.cost).toBeUndefined();
+  });
+
+  it("finds session files in date-sharded subdirectories (YYYY/MM/DD)", async () => {
+    // Simulate ~/.codex/sessions/2026/02/24/rollout-abc.jsonl
+    mockReaddir.mockImplementation((dir: string) => {
+      if (dir.endsWith("sessions")) return Promise.resolve(["2026"]);
+      if (dir.endsWith("2026")) return Promise.resolve(["02"]);
+      if (dir.endsWith("02")) return Promise.resolve(["24"]);
+      if (dir.endsWith("24")) return Promise.resolve(["rollout-abc.jsonl"]);
+      return Promise.resolve([]);
+    });
+    // lstat is used by collectJsonlFiles to check subdirectories (avoids symlink cycles)
+    mockLstat.mockResolvedValue({ isDirectory: () => true });
+    // stat is used by findCodexSessionFile to get mtimeMs of matching JSONL files
+    mockStat.mockResolvedValue({ mtimeMs: 2000 });
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "o3-mini" },
+    );
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockReadFile.mockResolvedValue(content);
+
+    const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
+    expect(result).not.toBeNull();
+    expect(result!.agentSessionId).toBe("rollout-abc");
+    expect(result!.summary).toBe("Codex session (o3-mini)");
+  });
+
+  it("ignores non-JSONL files in sessions directory", async () => {
+    mockReaddir.mockResolvedValue(["notes.txt", "config.json", "sess.jsonl"]);
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
+    );
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockReadFile.mockResolvedValue(content);
+    // Non-JSONL entries trigger lstat to check isDirectory()
+    mockLstat.mockResolvedValue({ isDirectory: () => false });
+    // stat is used to get mtimeMs for matching JSONL files
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
+    expect(result).not.toBeNull();
+    // With streaming parser, readFile is no longer used for full parse;
+    // cwd check uses open(), data extraction uses createReadStream.
+    const readFileCalls = mockReadFile.mock.calls.filter(
+      (call: string[]) => typeof call[0] === "string" && call[0].includes("sessions/"),
+    );
+    expect(readFileCalls.length).toBe(0); // streaming replaces readFile for full parse
+  });
+});
+
+// =========================================================================
+// getRestoreCommand — conversation resume
+// =========================================================================
+describe("getRestoreCommand", () => {
+  const agent = create();
+
+  function jsonl(...lines: Record<string, unknown>[]): string {
+    return lines.map((l) => JSON.stringify(l)).join("\n") + "\n";
+  }
+
+  function makeProjectConfig(overrides: Record<string, unknown> = {}) {
+    return {
+      name: "test-project",
+      repo: "owner/repo",
+      path: "/workspace/repo",
+      defaultBranch: "main",
+      sessionPrefix: "test",
+      ...overrides,
+    };
+  }
+
+  it("returns null when workspacePath is null", async () => {
+    const session = makeSession({ workspacePath: null });
+    expect(await agent.getRestoreCommand!(session, makeProjectConfig())).toBeNull();
+  });
+
+  it("returns null when workspacePath is undefined", async () => {
+    const session = makeSession({ workspacePath: undefined });
+    expect(await agent.getRestoreCommand!(session, makeProjectConfig())).toBeNull();
+  });
+
+  it("returns null when no matching session file found", async () => {
+    mockReaddir.mockRejectedValue(new Error("ENOENT"));
+    const session = makeSession({ workspacePath: "/workspace/test" });
+    expect(await agent.getRestoreCommand!(session, makeProjectConfig())).toBeNull();
+  });
+
+  it("returns null when session has no threadId", async () => {
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
+      { role: "user", content: "Some prompt" },
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const session = makeSession({ workspacePath: "/workspace/test" });
+    // Native resume requires a threadId
+    expect(await agent.getRestoreCommand!(session, makeProjectConfig())).toBeNull();
+  });
+
+  it("builds native resume command with codex resume <threadId>", async () => {
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
+      { threadId: "thread-abc-123" },
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockReadFile.mockResolvedValue(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const session = makeSession({ workspacePath: "/workspace/test" });
+    const cmd = await agent.getRestoreCommand!(session, makeProjectConfig());
+
+    expect(cmd).not.toBeNull();
+    expect(cmd).toContain("'codex' resume");
+    expect(cmd).toContain("thread-abc-123");
+  });
+
+  it("includes --dangerously-bypass-approvals-and-sandbox from project config", async () => {
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
+      { threadId: "thread-1" },
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockReadFile.mockResolvedValue(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const session = makeSession({ workspacePath: "/workspace/test" });
+    const cmd = await agent.getRestoreCommand!(session, makeProjectConfig({
+      agentConfig: { permissions: "skip" },
+    }));
+
+    expect(cmd).toContain("--dangerously-bypass-approvals-and-sandbox");
+  });
+
+  it("includes --ask-for-approval never from project config", async () => {
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
+      { threadId: "thread-1" },
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockReadFile.mockResolvedValue(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const session = makeSession({ workspacePath: "/workspace/test" });
+    const cmd = await agent.getRestoreCommand!(session, makeProjectConfig({
+      agentConfig: { permissions: "auto-edit" },
+    }));
+
+    expect(cmd).toContain("--ask-for-approval never");
+    expect(cmd).not.toContain("--dangerously-bypass-approvals-and-sandbox");
+  });
+
+  it("includes --ask-for-approval untrusted from project config", async () => {
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
+      { threadId: "thread-1" },
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockReadFile.mockResolvedValue(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const session = makeSession({ workspacePath: "/workspace/test" });
+    const cmd = await agent.getRestoreCommand!(session, makeProjectConfig({
+      agentConfig: { permissions: "suggest" },
+    }));
+
+    expect(cmd).toContain("--ask-for-approval untrusted");
+  });
+
+  it("places flags before positional threadId in resume command", async () => {
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "o3-mini" },
+      { threadId: "thread-order-test" },
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockReadFile.mockResolvedValue(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const session = makeSession({ workspacePath: "/workspace/test" });
+    const cmd = await agent.getRestoreCommand!(session, makeProjectConfig({
+      agentConfig: { permissions: "auto-edit", model: "o3-mini" },
+    }));
+
+    expect(cmd).not.toBeNull();
+    // threadId should come after all flags
+    const threadIdIdx = cmd!.indexOf("thread-order-test");
+    const flagIdx = cmd!.indexOf("--ask-for-approval");
+    const modelIdx = cmd!.indexOf("--model");
+    expect(flagIdx).toBeLessThan(threadIdIdx);
+    expect(modelIdx).toBeLessThan(threadIdIdx);
+  });
+
+  it("includes model from project config (overrides session model)", async () => {
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
+      { threadId: "thread-1" },
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockReadFile.mockResolvedValue(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const session = makeSession({ workspacePath: "/workspace/test" });
+    const cmd = await agent.getRestoreCommand!(session, makeProjectConfig({
+      agentConfig: { model: "o3-mini" },
+    }));
+
+    expect(cmd).toContain("--model 'o3-mini'");
+    expect(cmd).toContain("-c model_reasoning_effort=high");
+  });
+
+  it("falls back to session model when project config has no model", async () => {
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "o4-mini" },
+      { threadId: "thread-1" },
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockReadFile.mockResolvedValue(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const session = makeSession({ workspacePath: "/workspace/test" });
+    const cmd = await agent.getRestoreCommand!(session, makeProjectConfig());
+
+    expect(cmd).toContain("--model 'o4-mini'");
+    expect(cmd).toContain("-c model_reasoning_effort=high");
+  });
+
+  it("handles unreadable session files gracefully", async () => {
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    // open() finds matching session_meta for cwd check
+    setupMockOpen(jsonl({ type: "session_meta", cwd: "/workspace/test" }));
+    // readFile (full parse) fails
+    mockReadFile.mockRejectedValue(new Error("EACCES"));
+    mockCreateReadStream.mockImplementation(() => { throw new Error("EACCES"); });
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const session = makeSession({ workspacePath: "/workspace/test" });
+    expect(await agent.getRestoreCommand!(session, makeProjectConfig())).toBeNull();
+  });
+});
+
+// =========================================================================
+// resolveCodexBinary
+// =========================================================================
+describe("resolveCodexBinary", () => {
+  it("returns path from `which` when codex is found", async () => {
+    mockExecFileAsync.mockResolvedValue({ stdout: "/usr/local/bin/codex\n", stderr: "" });
+    const result = await resolveCodexBinary();
+    expect(result).toBe("/usr/local/bin/codex");
+    expect(mockExecFileAsync).toHaveBeenCalledWith("which", ["codex"], { timeout: 10_000 });
+  });
+
+  it("falls back to common locations when `which` fails", async () => {
+    mockExecFileAsync.mockRejectedValue(new Error("not found"));
+    mockStat.mockImplementation((path: string) => {
+      if (path === "/usr/local/bin/codex") {
+        return Promise.resolve({ mtimeMs: 1000 });
+      }
+      return Promise.reject(new Error("ENOENT"));
+    });
+
+    const result = await resolveCodexBinary();
+    expect(result).toBe("/usr/local/bin/codex");
+  });
+
+  it("checks /opt/homebrew/bin/codex as fallback", async () => {
+    mockExecFileAsync.mockRejectedValue(new Error("not found"));
+    mockStat.mockImplementation((path: string) => {
+      if (path === "/opt/homebrew/bin/codex") {
+        return Promise.resolve({ mtimeMs: 1000 });
+      }
+      return Promise.reject(new Error("ENOENT"));
+    });
+
+    const result = await resolveCodexBinary();
+    expect(result).toBe("/opt/homebrew/bin/codex");
+  });
+
+  it("checks ~/.cargo/bin/codex as fallback (Rust-based codex)", async () => {
+    mockExecFileAsync.mockRejectedValue(new Error("not found"));
+    mockStat.mockImplementation((path: string) => {
+      if (path === "/mock/home/.cargo/bin/codex") {
+        return Promise.resolve({ mtimeMs: 1000 });
+      }
+      return Promise.reject(new Error("ENOENT"));
+    });
+
+    const result = await resolveCodexBinary();
+    expect(result).toBe("/mock/home/.cargo/bin/codex");
+  });
+
+  it("checks ~/.npm/bin/codex as fallback", async () => {
+    mockExecFileAsync.mockRejectedValue(new Error("not found"));
+    mockStat.mockImplementation((path: string) => {
+      if (path === "/mock/home/.npm/bin/codex") {
+        return Promise.resolve({ mtimeMs: 1000 });
+      }
+      return Promise.reject(new Error("ENOENT"));
+    });
+
+    const result = await resolveCodexBinary();
+    expect(result).toBe("/mock/home/.npm/bin/codex");
+  });
+
+  it("returns 'codex' when not found anywhere", async () => {
+    mockExecFileAsync.mockRejectedValue(new Error("not found"));
+    mockStat.mockRejectedValue(new Error("ENOENT"));
+
+    const result = await resolveCodexBinary();
+    expect(result).toBe("codex");
+  });
+
+  it("returns 'codex' when `which` returns empty stdout", async () => {
+    mockExecFileAsync.mockResolvedValue({ stdout: "", stderr: "" });
+    mockStat.mockRejectedValue(new Error("ENOENT"));
+
+    const result = await resolveCodexBinary();
+    expect(result).toBe("codex");
+  });
+});
+
+// =========================================================================
+// postLaunchSetup — binary resolution
+// =========================================================================
+describe("postLaunchSetup", () => {
+  it("has postLaunchSetup method", () => {
+    const agent = create();
+    expect(typeof agent.postLaunchSetup).toBe("function");
+  });
+
+  it("runs setup when session has workspacePath", async () => {
+    const agent = create();
+    // which fails, stat fails → resolves to "codex"
+    mockExecFileAsync.mockRejectedValue(new Error("not found"));
+    mockStat.mockRejectedValue(new Error("ENOENT"));
+    mockReadFile.mockRejectedValue(new Error("ENOENT"));
+    await agent.postLaunchSetup!(makeSession({ workspacePath: "/workspace/test" }));
+    expect(mockMkdir).toHaveBeenCalled();
+  });
+
+  it("returns early when session has no workspacePath", async () => {
+    const agent = create();
+    mockExecFileAsync.mockRejectedValue(new Error("not found"));
+    mockStat.mockRejectedValue(new Error("ENOENT"));
+    await agent.postLaunchSetup!(makeSession({ workspacePath: undefined }));
+    expect(mockMkdir).not.toHaveBeenCalled();
+  });
+
+  it("resolves binary and uses it in getLaunchCommand after postLaunchSetup", async () => {
+    const agent = create();
+    mockExecFileAsync.mockResolvedValue({ stdout: "/opt/bin/codex\n", stderr: "" });
+    mockReadFile.mockRejectedValue(new Error("ENOENT"));
+
+    // Before postLaunchSetup, binary is "codex"
+    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("'codex'");
+
+    // After postLaunchSetup resolves the binary
+    await agent.postLaunchSetup!(makeSession({ workspacePath: "/workspace/test" }));
+
+    // Now getLaunchCommand should use the resolved binary
+    expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("'/opt/bin/codex'");
   });
 });
 
@@ -744,28 +1473,6 @@ describe("setupWorkspaceHooks", () => {
     );
     // Should NOT write AGENTS.md since the section already exists
     expect(agentsMdCall).toBeUndefined();
-  });
-});
-
-// =========================================================================
-// postLaunchSetup
-// =========================================================================
-describe("postLaunchSetup", () => {
-  const agent = create();
-
-  it("has postLaunchSetup method", () => {
-    expect(typeof agent.postLaunchSetup).toBe("function");
-  });
-
-  it("runs setup when session has workspacePath", async () => {
-    mockReadFile.mockRejectedValue(new Error("ENOENT"));
-    await agent.postLaunchSetup!(makeSession({ workspacePath: "/workspace/test" }));
-    expect(mockMkdir).toHaveBeenCalled();
-  });
-
-  it("returns early when session has no workspacePath", async () => {
-    await agent.postLaunchSetup!(makeSession({ workspacePath: undefined }));
-    expect(mockMkdir).not.toHaveBeenCalled();
   });
 });
 

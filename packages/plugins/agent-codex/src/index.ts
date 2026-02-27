@@ -1,19 +1,24 @@
 import {
+  DEFAULT_READY_THRESHOLD_MS,
   shellEscape,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
   type ActivityState,
   type ActivityDetection,
+  type CostEstimate,
   type PluginModule,
+  type ProjectConfig,
   type RuntimeHandle,
   type Session,
   type WorkspaceHooksConfig,
 } from "@composio/ao-core";
 import { execFile } from "node:child_process";
-import { writeFile, mkdir, readFile, rename } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { writeFile, mkdir, readFile, readdir, rename, stat, lstat, open } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { randomBytes } from "node:crypto";
 
@@ -271,24 +276,303 @@ async function setupCodexWorkspace(workspacePath: string): Promise<void> {
 }
 
 // =============================================================================
+// Codex Session JSONL Parsing (for getSessionInfo)
+// =============================================================================
+
+/** Codex session directory: ~/.codex/sessions/ */
+const CODEX_SESSIONS_DIR = join(homedir(), ".codex", "sessions");
+
+/** Typed representation of a line in a Codex JSONL session file */
+interface CodexJsonlLine {
+  type?: string;
+  cwd?: string;
+  model?: string;
+  // Thread ID from thread_started notifications
+  threadId?: string;
+  // User message content (from user input events)
+  content?: string;
+  role?: string;
+  // event_msg with token_count subtype
+  msg?: {
+    type?: string;
+    input_tokens?: number;
+    output_tokens?: number;
+    cached_tokens?: number;
+    reasoning_tokens?: number;
+  };
+}
+
+/**
+ * Collect all JSONL files under a directory, recursively.
+ * Codex stores sessions in date-sharded directories:
+ *   ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl
+ *
+ * Uses lstat (not stat) so symlinks to directories are never followed,
+ * preventing infinite loops from symlink cycles. Max depth is capped at 4
+ * (YYYY/MM/DD + 1 buffer) as an additional safety guard.
+ */
+const MAX_SESSION_SCAN_DEPTH = 4;
+
+async function collectJsonlFiles(dir: string, depth = 0): Promise<string[]> {
+  if (depth > MAX_SESSION_SCAN_DEPTH) return [];
+
+  let entries: string[];
+  try {
+    entries = await readdir(dir);
+  } catch {
+    return [];
+  }
+
+  const results: string[] = [];
+  for (const entry of entries) {
+    const fullPath = join(dir, entry);
+    if (entry.endsWith(".jsonl")) {
+      results.push(fullPath);
+    } else {
+      // Recurse into subdirectories (YYYY/MM/DD structure).
+      // Use lstat to avoid following symlinks that could create cycles.
+      try {
+        const s = await lstat(fullPath);
+        if (s.isDirectory()) {
+          const nested = await collectJsonlFiles(fullPath, depth + 1);
+          results.push(...nested);
+        }
+      } catch {
+        // Skip inaccessible entries
+      }
+    }
+  }
+  return results;
+}
+
+/**
+ * Check if the first few lines of a JSONL file contain a session_meta
+ * entry matching the given workspace path. Reads only the first 4 KB
+ * to avoid loading large rollout files into memory.
+ */
+async function sessionFileMatchesCwd(
+  filePath: string,
+  workspacePath: string,
+): Promise<boolean> {
+  try {
+    // Read only the first 4 KB — session_meta is always in the first few lines.
+    // Avoids loading large rollout files (100 MB+) into memory.
+    const handle = await open(filePath, "r");
+    let content: string;
+    try {
+      const buffer = Buffer.allocUnsafe(4096);
+      const { bytesRead } = await handle.read(buffer, 0, 4096, 0);
+      content = buffer.subarray(0, bytesRead).toString("utf-8");
+    } finally {
+      await handle.close();
+    }
+    const lines = content.split("\n").slice(0, 10);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const parsed: unknown = JSON.parse(trimmed);
+        if (
+          typeof parsed === "object" &&
+          parsed !== null &&
+          !Array.isArray(parsed) &&
+          (parsed as CodexJsonlLine).type === "session_meta" &&
+          (parsed as CodexJsonlLine).cwd === workspacePath
+        ) {
+          return true;
+        }
+      } catch {
+        // Skip malformed lines
+      }
+    }
+  } catch {
+    // Unreadable file
+  }
+  return false;
+}
+
+/**
+ * Find Codex session files whose `session_meta` cwd matches the given workspace path.
+ * Recursively scans ~/.codex/sessions/ (date-sharded: YYYY/MM/DD/rollout-*.jsonl).
+ * Returns the path to the most recently modified matching file, or null.
+ */
+async function findCodexSessionFile(workspacePath: string): Promise<string | null> {
+  const jsonlFiles = await collectJsonlFiles(CODEX_SESSIONS_DIR);
+  if (jsonlFiles.length === 0) return null;
+
+  let bestMatch: { path: string; mtime: number } | null = null;
+
+  for (const filePath of jsonlFiles) {
+    const matches = await sessionFileMatchesCwd(filePath, workspacePath);
+    if (matches) {
+      try {
+        const s = await stat(filePath);
+        if (!bestMatch || s.mtimeMs > bestMatch.mtime) {
+          bestMatch = { path: filePath, mtime: s.mtimeMs };
+        }
+      } catch {
+        // Skip if stat fails
+      }
+    }
+  }
+
+  return bestMatch?.path ?? null;
+}
+
+/** Aggregated data extracted from a Codex session file via streaming */
+interface CodexSessionData {
+  model: string | null;
+  threadId: string | null;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+/**
+ * Stream a Codex JSONL session file line-by-line and aggregate the data
+ * we need (model, threadId, token counts) without loading the entire file
+ * into memory. This is critical because Codex rollout files can be 100 MB+.
+ */
+async function streamCodexSessionData(filePath: string): Promise<CodexSessionData | null> {
+  try {
+    const data: CodexSessionData = { model: null, threadId: null, inputTokens: 0, outputTokens: 0 };
+    const rl = createInterface({
+      input: createReadStream(filePath, { encoding: "utf-8" }),
+      crlfDelay: Infinity,
+    });
+
+    for await (const line of rl) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const parsed: unknown = JSON.parse(trimmed);
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) continue;
+        const entry = parsed as CodexJsonlLine;
+
+        if (entry.type === "session_meta" && typeof entry.model === "string") {
+          data.model = entry.model;
+        }
+        if (typeof entry.threadId === "string" && entry.threadId) {
+          data.threadId = entry.threadId;
+        }
+        if (entry.type === "event_msg" && entry.msg?.type === "token_count") {
+          data.inputTokens += entry.msg.input_tokens ?? 0;
+          data.outputTokens += entry.msg.output_tokens ?? 0;
+        }
+      } catch {
+        // Skip malformed lines
+      }
+    }
+
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+// =============================================================================
+// Binary Resolution
+// =============================================================================
+
+/**
+ * Resolve the Codex CLI binary path.
+ * Checks (in order): which, common fallback locations.
+ * Returns "codex" as final fallback (let the shell resolve it at runtime).
+ */
+export async function resolveCodexBinary(): Promise<string> {
+  // 1. Try `which codex`
+  try {
+    const { stdout } = await execFileAsync("which", ["codex"], { timeout: 10_000 });
+    const resolved = stdout.trim();
+    if (resolved) return resolved;
+  } catch {
+    // Not found via which
+  }
+
+  // 2. Check common locations (npm global, Homebrew, Cargo — Codex is now Rust-based)
+  const home = homedir();
+  const candidates = [
+    "/usr/local/bin/codex",
+    "/opt/homebrew/bin/codex",
+    join(home, ".cargo", "bin", "codex"),
+    join(home, ".npm", "bin", "codex"),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      await stat(candidate);
+      return candidate;
+    } catch {
+      // Not found at this location
+    }
+  }
+
+  // 3. Fallback: let the shell resolve it
+  return "codex";
+}
+
+// =============================================================================
 // Agent Implementation
 // =============================================================================
 
+/** Append approval-policy flags to a command parts array */
+function appendApprovalFlags(parts: string[], permissions: string | undefined): void {
+  if (permissions === "skip") {
+    parts.push("--dangerously-bypass-approvals-and-sandbox");
+  } else if (permissions === "auto-edit") {
+    parts.push("--ask-for-approval", "never");
+  } else if (permissions === "suggest") {
+    parts.push("--ask-for-approval", "untrusted");
+  }
+}
+
+/** Append model and reasoning flags to a command parts array */
+function appendModelFlags(parts: string[], model: string | undefined): void {
+  if (!model) return;
+  parts.push("--model", shellEscape(model));
+
+  // Auto-detect o-series models and enable reasoning via config override.
+  // Codex does not have a --reasoning flag; reasoning is controlled via
+  // the model_reasoning_effort config key.
+  if (/^o[34]/i.test(model)) {
+    parts.push("-c", "model_reasoning_effort=high");
+  }
+}
+
+/** TTL for session file path cache (ms). Prevents redundant filesystem scans
+ *  when getActivityState and getSessionInfo are called in the same refresh cycle. */
+const SESSION_FILE_CACHE_TTL_MS = 30_000;
+
+/** Module-level session file cache shared across the agent instance lifetime.
+ *  Keyed by workspace path, stores the resolved file path and an expiry timestamp. */
+const sessionFileCache = new Map<string, { path: string | null; expiry: number }>();
+
+/** Find session file with caching to avoid double scans per refresh cycle */
+async function findCodexSessionFileCached(workspacePath: string): Promise<string | null> {
+  const cached = sessionFileCache.get(workspacePath);
+  if (cached && Date.now() < cached.expiry) {
+    return cached.path;
+  }
+  const result = await findCodexSessionFile(workspacePath);
+  sessionFileCache.set(workspacePath, { path: result, expiry: Date.now() + SESSION_FILE_CACHE_TTL_MS });
+  return result;
+}
+
 function createCodexAgent(): Agent {
+  /** Cached resolved binary path (populated by init or first getLaunchCommand) */
+  let resolvedBinary: string | null = null;
+  /** Guard against concurrent resolveCodexBinary() calls */
+  let resolvingBinary: Promise<string> | null = null;
+
   return {
     name: "codex",
     processName: "codex",
 
     getLaunchCommand(config: AgentLaunchConfig): string {
-      const parts: string[] = ["codex"];
+      const binary = resolvedBinary ?? "codex";
+      const parts: string[] = [shellEscape(binary)];
 
-      if (config.permissions === "skip") {
-        parts.push("--full-auto");
-      }
-
-      if (config.model) {
-        parts.push("--model", shellEscape(config.model));
-      }
+      appendApprovalFlags(parts, config.permissions as string | undefined);
+      appendModelFlags(parts, config.model);
 
       if (config.systemPromptFile) {
         // Codex reads developer instructions from a file via config override
@@ -342,20 +626,38 @@ function createCodexAgent(): Agent {
       return "active";
     },
 
-    async getActivityState(session: Session, _readyThresholdMs?: number): Promise<ActivityDetection | null> {
-      // Check if process is running first
-      if (!session.runtimeHandle) return { state: "exited" };
-      const running = await this.isProcessRunning(session.runtimeHandle);
-      if (!running) return { state: "exited" };
+    async getActivityState(session: Session, readyThresholdMs?: number): Promise<ActivityDetection | null> {
+      const threshold = readyThresholdMs ?? DEFAULT_READY_THRESHOLD_MS;
 
-      // NOTE: Codex stores rollout files in a global ~/.codex/sessions/ directory
-      // without workspace-specific scoping. When multiple Codex sessions run in
-      // parallel, we cannot reliably determine which rollout file belongs to which
-      // session. Until Codex provides per-workspace session tracking, we return
-      // null (unknown) rather than guessing. See issue #13 for details.
-      //
-      // TODO: Implement proper per-session activity detection when Codex supports it.
-      return null;
+      // Check if process is running first
+      const exitedAt = new Date();
+      if (!session.runtimeHandle) return { state: "exited", timestamp: exitedAt };
+      const running = await this.isProcessRunning(session.runtimeHandle);
+      if (!running) return { state: "exited", timestamp: exitedAt };
+
+      // Use session file mtime as a proxy for activity. Codex continuously
+      // appends to its rollout JSONL file while working, so a recently
+      // modified file means the agent is active.
+      if (!session.workspacePath) return null;
+
+      const sessionFile = await findCodexSessionFileCached(session.workspacePath);
+      if (!sessionFile) return null;
+
+      try {
+        const s = await stat(sessionFile);
+        const timestamp = s.mtime;
+        const ageMs = Date.now() - s.mtimeMs;
+
+        if (ageMs <= threshold) {
+          // File was recently modified — agent is actively working
+          return { state: "active", timestamp };
+        }
+
+        // File is stale — agent finished or is idle
+        return { state: "idle", timestamp };
+      } catch {
+        return null;
+      }
     },
 
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
@@ -409,9 +711,63 @@ function createCodexAgent(): Agent {
       }
     },
 
-    async getSessionInfo(_session: Session): Promise<AgentSessionInfo | null> {
-      // Codex doesn't have JSONL session files for introspection yet
-      return null;
+    async getSessionInfo(session: Session): Promise<AgentSessionInfo | null> {
+      if (!session.workspacePath) return null;
+
+      const sessionFile = await findCodexSessionFileCached(session.workspacePath);
+      if (!sessionFile) return null;
+
+      // Stream the file line-by-line to avoid loading potentially huge
+      // rollout files (100 MB+) entirely into memory.
+      const data = await streamCodexSessionData(sessionFile);
+      if (!data) return null;
+
+      const agentSessionId = basename(sessionFile, ".jsonl");
+
+      const cost: CostEstimate | undefined =
+        data.inputTokens === 0 && data.outputTokens === 0
+          ? undefined
+          : {
+              inputTokens: data.inputTokens,
+              outputTokens: data.outputTokens,
+              estimatedCostUsd:
+                (data.inputTokens / 1_000_000) * 2.5 + (data.outputTokens / 1_000_000) * 10.0,
+            };
+
+      return {
+        summary: data.model ? `Codex session (${data.model})` : null,
+        summaryIsFallback: true,
+        agentSessionId,
+        cost,
+      };
+    },
+
+    async getRestoreCommand(session: Session, project: ProjectConfig): Promise<string | null> {
+      if (!session.workspacePath) return null;
+
+      // Find the Codex session file for this workspace
+      const sessionFile = await findCodexSessionFileCached(session.workspacePath);
+      if (!sessionFile) return null;
+
+      // Stream the file line-by-line to avoid loading potentially huge
+      // rollout files (100 MB+) entirely into memory.
+      const data = await streamCodexSessionData(sessionFile);
+      if (!data?.threadId) return null;
+
+      // Use Codex's native `resume` subcommand for proper conversation resume.
+      // This restores the full thread state, not just a text prompt re-injection.
+      // Flags are placed before the positional threadId for CLI parser compatibility.
+      const binary = resolvedBinary ?? "codex";
+      const parts: string[] = [shellEscape(binary), "resume"];
+
+      appendApprovalFlags(parts, project.agentConfig?.permissions as string | undefined);
+      const effectiveModel = (project.agentConfig?.model ?? data.model) as string | undefined;
+      appendModelFlags(parts, effectiveModel ?? undefined);
+
+      // Positional threadId goes last, after all flags
+      parts.push(shellEscape(data.threadId));
+
+      return parts.join(" ");
     },
 
     async setupWorkspaceHooks(workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
@@ -419,6 +775,18 @@ function createCodexAgent(): Agent {
     },
 
     async postLaunchSetup(session: Session): Promise<void> {
+      // Resolve binary path on first launch (cached for subsequent calls).
+      // Uses a promise guard to prevent concurrent calls from racing.
+      if (!resolvedBinary) {
+        if (!resolvingBinary) {
+          resolvingBinary = resolveCodexBinary();
+        }
+        try {
+          resolvedBinary = await resolvingBinary;
+        } finally {
+          resolvingBinary = null;
+        }
+      }
       if (!session.workspacePath) return;
       await setupCodexWorkspace(session.workspacePath);
     },
@@ -432,5 +800,20 @@ function createCodexAgent(): Agent {
 export function create(): Agent {
   return createCodexAgent();
 }
+
+/** @internal Clear the session file cache. Exported for testing only. */
+export function _resetSessionFileCache(): void {
+  sessionFileCache.clear();
+}
+
+export { CodexAppServerClient } from "./app-server-client.js";
+export type {
+  AppServerClientOptions,
+  ThreadStartParams,
+  TurnStartParams,
+  NotificationHandler,
+  ApprovalHandler,
+  ApprovalDecision,
+} from "./app-server-client.js";
 
 export default { manifest, create } satisfies PluginModule<Agent>;
