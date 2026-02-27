@@ -37,9 +37,17 @@ import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
 import { MainBranchTracker } from "./main-branch-tracker.js";
 
-/** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
+/**
+ * Parse a duration string like "10m", "30s", "1h" to milliseconds.
+ *
+ * @param str - Duration string with a numeric value followed by a unit (s/m/h).
+ * @returns Milliseconds, or 0 if the string does not match the expected format.
+ */
 function parseDuration(str: string): number {
-  const match = str.trim().toLowerCase().match(/^(\d+)(s|m|h)$/);
+  const match = str
+    .trim()
+    .toLowerCase()
+    .match(/^(\d+)(s|m|h)$/);
   if (!match) return 0;
   const value = parseInt(match[1], 10);
   switch (match[2]) {
@@ -56,6 +64,7 @@ function parseDuration(str: string): number {
 
 const SESSION_STATUS_VALUES: ReadonlySet<SessionStatus> = new Set(Object.values(SESSION_STATUS));
 
+/** Type guard: check whether an unknown value is a valid {@link SessionStatus}. */
 function isSessionStatus(value: unknown): value is SessionStatus {
   return typeof value === "string" && SESSION_STATUS_VALUES.has(value as SessionStatus);
 }
@@ -63,6 +72,7 @@ function isSessionStatus(value: unknown): value is SessionStatus {
 type ResolvedReactionConfig = Partial<ReactionConfig>;
 type ActionableReactionConfig = ResolvedReactionConfig & Pick<ReactionConfig, "action">;
 
+/** Type guard: check whether a resolved reaction config has an action defined. */
 function hasReactionAction(
   reactionConfig: ResolvedReactionConfig | null,
 ): reactionConfig is ActionableReactionConfig {
@@ -183,9 +193,18 @@ function eventToReactionKey(eventType: EventType): string | null {
   }
 }
 
+/**
+ * Dependencies required to create a lifecycle manager.
+ *
+ * All three fields are mandatory — the factory function validates their
+ * presence at runtime and throws {@link TypeError} if any are missing.
+ */
 export interface LifecycleManagerDeps {
+  /** Orchestrator configuration (projects, reactions, notification routing). */
   config: OrchestratorConfig;
+  /** Plugin registry for resolving runtime, agent, SCM, and notifier plugins. */
   registry: PluginRegistry;
+  /** Session manager used to list, get, and send messages to sessions. */
   sessionManager: SessionManager;
 }
 
@@ -462,28 +481,35 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     switch (action) {
       case "send-to-agent": {
-        if (reactionConfig.message) {
-          try {
-            await sessionManager.send(sessionId, reactionConfig.message);
-
-            return {
-              reactionType: reactionKey,
-              success: true,
-              action: "send-to-agent",
-              message: reactionConfig.message,
-              escalated: false,
-            };
-          } catch {
-            // Send failed — allow retry on next poll cycle (don't escalate immediately)
-            return {
-              reactionType: reactionKey,
-              success: false,
-              action: "send-to-agent",
-              escalated: false,
-            };
-          }
+        if (!reactionConfig.message) {
+          // No message configured — cannot send to agent, report as misconfiguration
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action: "send-to-agent",
+            message: `Reaction '${reactionKey}' has action 'send-to-agent' but no message configured`,
+            escalated: false,
+          };
         }
-        break;
+        try {
+          await sessionManager.send(sessionId, reactionConfig.message);
+
+          return {
+            reactionType: reactionKey,
+            success: true,
+            action: "send-to-agent",
+            message: reactionConfig.message,
+            escalated: false,
+          };
+        } catch {
+          // Send failed — allow retry on next poll cycle (don't escalate immediately)
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action: "send-to-agent",
+            escalated: false,
+          };
+        }
       }
 
       case "notify": {
@@ -520,13 +546,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         };
       }
     }
-
-    return {
-      reactionType: reactionKey,
-      success: false,
-      action,
-      escalated: false,
-    };
   }
 
   /** Send a notification to all configured notifiers. */
@@ -589,19 +608,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const reactionKey = eventToReactionKey(eventType);
 
         if (reactionKey) {
-          // Merge project-specific overrides with global defaults
-          const project = config.projects[session.projectId];
           const reactionConfig = getReactionConfig(reactionKey, project);
 
           if (hasReactionAction(reactionConfig)) {
             // auto: false skips automated agent actions but still allows notifications
             if (reactionConfig.auto !== false || reactionConfig.action === "notify") {
-              await executeReaction(
-                session.id,
-                session.projectId,
-                reactionKey,
-                reactionConfig,
-              );
+              await executeReaction(session.id, session.projectId, reactionKey, reactionConfig);
               // Reaction is handling this event — suppress immediate human notification.
               // "send-to-agent" retries + escalates on its own; "notify"/"auto-merge"
               // already call notifyHuman internally. Notifying here would bypass the
@@ -644,20 +656,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           // Only re-trigger if comment set changed (determineStatus already updated metadata)
           if (currentCommentIds !== seenIds) {
             const reactionKey = "review-comments";
-            const project = config.projects[session.projectId];
-            const globalReaction = config.reactions[reactionKey];
-            const projectReaction = project?.reactions?.[reactionKey];
-            const reactionConfig = projectReaction
-              ? { ...globalReaction, ...projectReaction }
-              : globalReaction;
+            const reactionConfig = getReactionConfig(
+              reactionKey,
+              config.projects[session.projectId],
+            );
             if (hasReactionAction(reactionConfig)) {
               if (reactionConfig.auto !== false || reactionConfig.action === "notify") {
-                await executeReaction(
-                  session.id,
-                  session.projectId,
-                  reactionKey,
-                  reactionConfig,
-                );
+                await executeReaction(session.id, session.projectId, reactionKey, reactionConfig);
               }
             }
           }
@@ -765,14 +770,9 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           const reactionKey = "rebase-conflicts";
           const reactionConfig = getReactionConfig(reactionKey, project);
 
-          if (reactionConfig && reactionConfig.action) {
+          if (hasReactionAction(reactionConfig)) {
             // Execute reaction (sends to agent, handles escalation)
-            await executeReaction(
-              session.id,
-              session.projectId,
-              reactionKey,
-              reactionConfig as ReactionConfig,
-            );
+            await executeReaction(session.id, session.projectId, reactionKey, reactionConfig);
           } else {
             // Fallback if reaction not configured
             const event = createEvent("pr.rebase_conflict", {
@@ -852,12 +852,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           }
 
           // Execute reaction (first time or ready to escalate)
-          await executeReaction(
-            session.id,
-            session.projectId,
-            reactionKey,
-            reactionConfig,
-          );
+          await executeReaction(session.id, session.projectId, reactionKey, reactionConfig);
         }
       } catch {
         // Continue with other sessions
