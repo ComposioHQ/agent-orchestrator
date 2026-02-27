@@ -34,7 +34,10 @@ vi.mock("node:child_process", () => {
   const fn = Object.assign((..._args: unknown[]) => {}, {
     [Symbol.for("nodejs.util.promisify.custom")]: mockExecFileAsync,
   });
-  return { execFile: fn };
+  // execFileSync used by resolveCodexBinarySync — default to throwing so
+  // sync resolution falls through to the existsSync candidates check.
+  const execFileSyncFn = vi.fn(() => { throw new Error("not found"); });
+  return { execFile: fn, execFileSync: execFileSyncFn };
 });
 
 vi.mock("node:fs/promises", () => ({
