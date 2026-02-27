@@ -173,6 +173,17 @@ describe("start / stop", () => {
     // Should not throw on double stop
     lm.stop();
   });
+
+  it("throws when start interval is invalid", () => {
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+    });
+
+    expect(() => lm.start(0)).toThrow("requires a positive number");
+    expect(() => lm.start(Number.NaN)).toThrow("requires a positive number");
+  });
 });
 
 describe("check (single session)", () => {
@@ -564,6 +575,17 @@ describe("check (single session)", () => {
     });
 
     await expect(lm.check("nonexistent")).rejects.toThrow("not found");
+  });
+
+  it("throws for empty session id", async () => {
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+    });
+
+    await expect(lm.check("")).rejects.toThrow("requires a non-empty session ID");
+    expect(mockSessionManager.get).not.toHaveBeenCalled();
   });
 
   it("does not change state when status is unchanged", async () => {

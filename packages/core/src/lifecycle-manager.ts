@@ -32,7 +32,6 @@ import {
   type Notifier,
   type Session,
   type EventPriority,
-  type ProjectConfig as _ProjectConfig,
 } from "./types.js";
 import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
@@ -40,7 +39,7 @@ import { MainBranchTracker } from "./main-branch-tracker.js";
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
-  const match = str.match(/^(\d+)(s|m|h)$/);
+  const match = str.trim().toLowerCase().match(/^(\d+)(s|m|h)$/);
   if (!match) return 0;
   const value = parseInt(match[1], 10);
   switch (match[2]) {
@@ -53,6 +52,21 @@ function parseDuration(str: string): number {
     default:
       return 0;
   }
+}
+
+const SESSION_STATUS_VALUES: ReadonlySet<SessionStatus> = new Set(Object.values(SESSION_STATUS));
+
+function isSessionStatus(value: unknown): value is SessionStatus {
+  return typeof value === "string" && SESSION_STATUS_VALUES.has(value as SessionStatus);
+}
+
+type ResolvedReactionConfig = Partial<ReactionConfig>;
+type ActionableReactionConfig = ResolvedReactionConfig & Pick<ReactionConfig, "action">;
+
+function hasReactionAction(
+  reactionConfig: ResolvedReactionConfig | null,
+): reactionConfig is ActionableReactionConfig {
+  return reactionConfig !== null && typeof reactionConfig.action === "string";
 }
 
 /** Infer a reasonable priority from event type. */
@@ -181,9 +195,28 @@ interface ReactionTracker {
   firstTriggered: Date;
 }
 
-/** Create a LifecycleManager instance. */
+/**
+ * Build a lifecycle manager for polling session state and triggering reactions.
+ *
+ * @param deps - Required orchestrator dependencies.
+ * @returns A lifecycle manager instance that can start/stop polling and force a session check.
+ * @throws {TypeError} When required dependencies are missing.
+ */
 export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleManager {
+  if (!deps || typeof deps !== "object") {
+    throw new TypeError("createLifecycleManager requires a dependency object.");
+  }
+
   const { config, registry, sessionManager } = deps;
+  if (!config) {
+    throw new TypeError("createLifecycleManager requires deps.config.");
+  }
+  if (!registry) {
+    throw new TypeError("createLifecycleManager requires deps.registry.");
+  }
+  if (!sessionManager) {
+    throw new TypeError("createLifecycleManager requires deps.sessionManager.");
+  }
 
   const states = new Map<SessionId, SessionStatus>();
   const reactionTrackers = new Map<string, ReactionTracker>(); // "sessionId:reactionKey"
@@ -198,7 +231,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   function getReactionConfig(
     reactionKey: string,
     project: ProjectConfig | undefined,
-  ): ReactionConfig | null {
+  ): ResolvedReactionConfig | null {
     const globalReaction = config.reactions[reactionKey];
     if (!project) return globalReaction ?? null;
     const projectReaction = project.reactions?.[reactionKey];
@@ -364,7 +397,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     sessionId: SessionId,
     projectId: string,
     reactionKey: string,
-    reactionConfig: ReactionConfig,
+    reactionConfig: ActionableReactionConfig,
   ): Promise<ReactionResult> {
     const trackerKey = `${sessionId}:${reactionKey}`;
     let tracker = reactionTrackers.get(trackerKey);
@@ -378,7 +411,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     tracker.attempts++;
 
     // Check if we should escalate
-    const maxRetries = reactionConfig.retries ?? Infinity;
+    const maxRetries =
+      typeof reactionConfig.retries === "number" &&
+      Number.isFinite(reactionConfig.retries) &&
+      reactionConfig.retries >= 0
+        ? Math.floor(reactionConfig.retries)
+        : Infinity;
     const escalateAfter = reactionConfig.escalateAfter;
     let shouldEscalate = false;
 
@@ -393,7 +431,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
     }
 
-    if (typeof escalateAfter === "number" && tracker.attempts > escalateAfter) {
+    if (
+      typeof escalateAfter === "number" &&
+      Number.isFinite(escalateAfter) &&
+      escalateAfter >= 0 &&
+      tracker.attempts > Math.floor(escalateAfter)
+    ) {
       shouldEscalate = true;
     }
 
@@ -415,7 +458,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
 
     // Execute the reaction action
-    const action = reactionConfig.action ?? "notify";
+    const action = reactionConfig.action;
 
     switch (action) {
       case "send-to-agent": {
@@ -509,8 +552,9 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     // (not session.status, which list() may have already overwritten for dead runtimes).
     // This ensures transitions are detected after a lifecycle manager restart.
     const tracked = states.get(session.id);
-    const oldStatus =
-      tracked ?? ((session.metadata?.["status"] as SessionStatus | undefined) || session.status);
+    const metadataStatus = session.metadata?.["status"];
+    const persistedStatus = isSessionStatus(metadataStatus) ? metadataStatus : undefined;
+    const oldStatus = tracked ?? persistedStatus ?? session.status;
     const newStatus = await determineStatus(session);
 
     if (newStatus !== oldStatus) {
@@ -549,14 +593,14 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           const project = config.projects[session.projectId];
           const reactionConfig = getReactionConfig(reactionKey, project);
 
-          if (reactionConfig && reactionConfig.action) {
+          if (hasReactionAction(reactionConfig)) {
             // auto: false skips automated agent actions but still allows notifications
             if (reactionConfig.auto !== false || reactionConfig.action === "notify") {
               await executeReaction(
                 session.id,
                 session.projectId,
                 reactionKey,
-                reactionConfig as ReactionConfig,
+                reactionConfig,
               );
               // Reaction is handling this event — suppress immediate human notification.
               // "send-to-agent" retries + escalates on its own; "notify"/"auto-merge"
@@ -606,13 +650,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             const reactionConfig = projectReaction
               ? { ...globalReaction, ...projectReaction }
               : globalReaction;
-            if (reactionConfig && reactionConfig.action) {
+            if (hasReactionAction(reactionConfig)) {
               if (reactionConfig.auto !== false || reactionConfig.action === "notify") {
                 await executeReaction(
                   session.id,
                   session.projectId,
                   reactionKey,
-                  reactionConfig as ReactionConfig,
+                  reactionConfig,
                 );
               }
             }
@@ -785,7 +829,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const reactionKey = "rebase-conflicts";
         const reactionConfig = getReactionConfig(reactionKey, project);
 
-        if (reactionConfig && reactionConfig.action) {
+        if (hasReactionAction(reactionConfig)) {
           // Check if reaction already triggered (to prevent spam)
           const trackerKey = `${session.id}:${reactionKey}`;
           const tracker = reactionTrackers.get(trackerKey);
@@ -812,7 +856,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             session.id,
             session.projectId,
             reactionKey,
-            reactionConfig as ReactionConfig,
+            reactionConfig,
           );
         }
       } catch {
@@ -876,9 +920,9 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const reactionKey = eventToReactionKey("summary.all_complete");
         if (reactionKey) {
           const reactionConfig = config.reactions[reactionKey];
-          if (reactionConfig && reactionConfig.action) {
+          if (hasReactionAction(reactionConfig)) {
             if (reactionConfig.auto !== false || reactionConfig.action === "notify") {
-              await executeReaction("system", "all", reactionKey, reactionConfig as ReactionConfig);
+              await executeReaction("system", "all", reactionKey, reactionConfig);
             }
           }
         }
@@ -894,6 +938,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   return {
     start(intervalMs = 30_000): void {
       if (pollTimer) return; // Already running
+      if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+        throw new RangeError(
+          `LifecycleManager.start(intervalMs) requires a positive number of milliseconds, received: ${String(intervalMs)}`,
+        );
+      }
       pollTimer = setInterval(() => void pollAll(), intervalMs);
       // Run immediately on start
       void pollAll();
@@ -911,8 +960,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     },
 
     async check(sessionId: SessionId): Promise<void> {
+      if (typeof sessionId !== "string" || sessionId.trim().length === 0) {
+        throw new Error("LifecycleManager.check(sessionId) requires a non-empty session ID.");
+      }
       const session = await sessionManager.get(sessionId);
-      if (!session) throw new Error(`Session ${sessionId} not found`);
+      if (!session) {
+        throw new Error(
+          `LifecycleManager.check("${sessionId}") failed: session was not found in session manager.`,
+        );
+      }
       await checkSession(session);
     },
   };
