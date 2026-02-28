@@ -11,7 +11,6 @@ const {
   mockReadFile,
   mockReaddir,
   mockRename,
-  mockStat,
   mockHomedir,
 } = vi.hoisted(() => ({
   mockExecFileAsync: vi.fn(),
@@ -20,7 +19,6 @@ const {
   mockReadFile: vi.fn(),
   mockReaddir: vi.fn(),
   mockRename: vi.fn().mockResolvedValue(undefined),
-  mockStat: vi.fn(),
   mockHomedir: vi.fn(() => "/mock/home"),
 }));
 
@@ -37,7 +35,6 @@ vi.mock("node:fs/promises", () => ({
   readFile: mockReadFile,
   readdir: mockReaddir,
   rename: mockRename,
-  stat: mockStat,
 }));
 
 vi.mock("node:crypto", () => ({
@@ -197,6 +194,34 @@ describe("getLaunchCommand", () => {
     expect(cmd).not.toContain("-p");
     expect(cmd).not.toContain("--yolo");
   });
+
+  it("prepends cp to write systemPromptFile to GEMINI.md", () => {
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({ systemPromptFile: "/tmp/ao-prompt.md", prompt: "Go" }),
+    );
+    expect(cmd).toBe("cp '/tmp/ao-prompt.md' GEMINI.md && gemini -p 'Go'");
+  });
+
+  it("prepends printf to write inline systemPrompt to GEMINI.md", () => {
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({ systemPrompt: "You are an agent", prompt: "Go" }),
+    );
+    expect(cmd).toBe("printf '%s' 'You are an agent' > GEMINI.md && gemini -p 'Go'");
+  });
+
+  it("prefers systemPromptFile over systemPrompt when both set", () => {
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({ systemPromptFile: "/tmp/prompt.md", systemPrompt: "ignored" }),
+    );
+    expect(cmd).toContain("cp '/tmp/prompt.md' GEMINI.md &&");
+    expect(cmd).not.toContain("printf");
+  });
+
+  it("does not prepend anything when no system prompt", () => {
+    const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "Go" }));
+    expect(cmd).toBe("gemini -p 'Go'");
+    expect(cmd).not.toContain("&&");
+  });
 });
 
 // =========================================================================
@@ -337,36 +362,8 @@ describe("getActivityState", () => {
     expect(result?.state).toBe("exited");
   });
 
-  it("returns active when session file was recently modified", async () => {
+  it("returns null when process is running (cannot scope sessions per workspace)", async () => {
     mockTmuxWithProcess("gemini");
-    mockReaddir.mockImplementation((dir: string) => {
-      if (dir.endsWith("chats")) return Promise.resolve(["session-1.json"]);
-      if (dir.includes(".gemini/tmp")) return Promise.resolve(["project-1"]);
-      return Promise.reject(new Error("ENOENT"));
-    });
-    mockStat.mockResolvedValue({ mtimeMs: Date.now() - 1000, mtime: new Date() });
-
-    const result = await agent.getActivityState(makeSession({ runtimeHandle: makeTmuxHandle() }));
-    expect(result?.state).toBe("active");
-  });
-
-  it("returns idle when session file is stale", async () => {
-    mockTmuxWithProcess("gemini");
-    mockReaddir.mockImplementation((dir: string) => {
-      if (dir.endsWith("chats")) return Promise.resolve(["session-1.json"]);
-      if (dir.includes(".gemini/tmp")) return Promise.resolve(["project-1"]);
-      return Promise.reject(new Error("ENOENT"));
-    });
-    mockStat.mockResolvedValue({ mtimeMs: Date.now() - 600_000, mtime: new Date(Date.now() - 600_000) });
-
-    const result = await agent.getActivityState(makeSession({ runtimeHandle: makeTmuxHandle() }));
-    expect(result?.state).toBe("idle");
-  });
-
-  it("returns null when no session files found", async () => {
-    mockTmuxWithProcess("gemini");
-    mockReaddir.mockRejectedValue(new Error("ENOENT"));
-
     const result = await agent.getActivityState(makeSession({ runtimeHandle: makeTmuxHandle() }));
     expect(result).toBeNull();
   });
@@ -378,43 +375,9 @@ describe("getActivityState", () => {
 describe("getSessionInfo", () => {
   const agent = create();
 
-  it("returns null when no session files found", async () => {
-    mockReaddir.mockRejectedValue(new Error("ENOENT"));
+  it("always returns null (cannot scope sessions per workspace)", async () => {
     expect(await agent.getSessionInfo(makeSession())).toBeNull();
-  });
-
-  it("returns session info with model when session file exists", async () => {
-    mockReaddir.mockImplementation((dir: string) => {
-      if (dir.endsWith("chats")) return Promise.resolve(["session-1.json"]);
-      if (dir.includes(".gemini/tmp")) return Promise.resolve(["project-1"]);
-      return Promise.reject(new Error("ENOENT"));
-    });
-    mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
-    mockReadFile.mockResolvedValue(JSON.stringify({ model: "gemini-2.5-pro" }));
-
-    const result = await agent.getSessionInfo(makeSession());
-    expect(result).toEqual({
-      summary: "Gemini session (gemini-2.5-pro)",
-      summaryIsFallback: true,
-      agentSessionId: null,
-    });
-  });
-
-  it("returns fallback summary when model is missing", async () => {
-    mockReaddir.mockImplementation((dir: string) => {
-      if (dir.endsWith("chats")) return Promise.resolve(["session-1.json"]);
-      if (dir.includes(".gemini/tmp")) return Promise.resolve(["project-1"]);
-      return Promise.reject(new Error("ENOENT"));
-    });
-    mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
-    mockReadFile.mockResolvedValue(JSON.stringify({}));
-
-    const result = await agent.getSessionInfo(makeSession());
-    expect(result).toEqual({
-      summary: "Gemini session",
-      summaryIsFallback: true,
-      agentSessionId: null,
-    });
+    expect(await agent.getSessionInfo(makeSession({ workspacePath: "/some/path" }))).toBeNull();
   });
 });
 
@@ -424,24 +387,34 @@ describe("getSessionInfo", () => {
 describe("getRestoreCommand", () => {
   const agent = create();
 
-  it("returns gemini -r latest", async () => {
+  it("returns null when no Gemini sessions exist", async () => {
+    mockReaddir.mockRejectedValue(new Error("ENOENT"));
+    const cmd = await agent.getRestoreCommand!(makeSession(), makeProjectConfig());
+    expect(cmd).toBeNull();
+  });
+
+  it("returns gemini -r latest when sessions exist", async () => {
+    mockReaddir.mockResolvedValue(["project-1"]);
     const cmd = await agent.getRestoreCommand!(makeSession(), makeProjectConfig());
     expect(cmd).toBe("gemini -r latest");
   });
 
   it("includes --yolo when permissions is skip", async () => {
+    mockReaddir.mockResolvedValue(["project-1"]);
     const project = makeProjectConfig({ agentConfig: { permissions: "skip" } });
     const cmd = await agent.getRestoreCommand!(makeSession(), project);
     expect(cmd).toBe("gemini --yolo -r latest");
   });
 
   it("includes -m when model is configured", async () => {
+    mockReaddir.mockResolvedValue(["project-1"]);
     const project = makeProjectConfig({ agentConfig: { model: "gemini-2.5-pro" } });
     const cmd = await agent.getRestoreCommand!(makeSession(), project);
     expect(cmd).toBe("gemini -m 'gemini-2.5-pro' -r latest");
   });
 
   it("includes both --yolo and -m when both configured", async () => {
+    mockReaddir.mockResolvedValue(["project-1"]);
     const project = makeProjectConfig({
       agentConfig: { permissions: "skip", model: "gemini-2.5-pro" },
     });

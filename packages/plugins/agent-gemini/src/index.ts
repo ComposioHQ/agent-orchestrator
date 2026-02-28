@@ -1,5 +1,4 @@
 import {
-  DEFAULT_READY_THRESHOLD_MS,
   shellEscape,
   type Agent,
   type AgentSessionInfo,
@@ -13,7 +12,7 @@ import {
   type WorkspaceHooksConfig,
 } from "@composio/ao-core";
 import { execFile } from "node:child_process";
-import { writeFile, mkdir, readFile, readdir, rename, stat } from "node:fs/promises";
+import { writeFile, mkdir, readFile, readdir, rename } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -296,44 +295,17 @@ async function setupGeminiWorkspace(workspacePath: string, systemPrompt?: string
 const GEMINI_TMP_DIR = join(homedir(), ".gemini", "tmp");
 
 /**
- * Find the most recently modified session JSON file under ~/.gemini/tmp/.
- * Gemini stores sessions as: ~/.gemini/tmp/{project-id}/chats/session-*.json
- * Returns the path to the newest session file, or null if none found.
+ * Check if any Gemini session data exists under ~/.gemini/tmp/.
+ * Used by getRestoreCommand to guard against `gemini -r latest` when no
+ * prior session exists.
  */
-async function findLatestGeminiSessionFile(): Promise<string | null> {
-  let projectDirs: string[];
+async function hasGeminiSessions(): Promise<boolean> {
   try {
-    projectDirs = await readdir(GEMINI_TMP_DIR);
+    const dirs = await readdir(GEMINI_TMP_DIR);
+    return dirs.length > 0;
   } catch {
-    return null;
+    return false;
   }
-
-  let bestMatch: { path: string; mtime: number } | null = null;
-
-  for (const projectDir of projectDirs) {
-    const chatsDir = join(GEMINI_TMP_DIR, projectDir, "chats");
-    let files: string[];
-    try {
-      files = await readdir(chatsDir);
-    } catch {
-      continue;
-    }
-
-    for (const file of files) {
-      if (!file.endsWith(".json")) continue;
-      const filePath = join(chatsDir, file);
-      try {
-        const s = await stat(filePath);
-        if (!bestMatch || s.mtimeMs > bestMatch.mtime) {
-          bestMatch = { path: filePath, mtime: s.mtimeMs };
-        }
-      } catch {
-        // Skip inaccessible files
-      }
-    }
-  }
-
-  return bestMatch?.path ?? null;
 }
 
 // =============================================================================
@@ -346,6 +318,18 @@ function createGeminiAgent(): Agent {
     processName: "gemini",
 
     getLaunchCommand(config: AgentLaunchConfig): string {
+      // Gemini CLI auto-reads GEMINI.md from workspace root as its system prompt.
+      // Since there's no --system-prompt CLI flag, we write the file before launching
+      // via a compound shell command. The tmux session is cd'd into the workspace,
+      // so relative paths work. systemPromptFile is preferred (avoids shell truncation
+      // for long prompts); inline systemPrompt is a fallback.
+      let prefix = "";
+      if (config.systemPromptFile) {
+        prefix = `cp ${shellEscape(config.systemPromptFile)} GEMINI.md && `;
+      } else if (config.systemPrompt) {
+        prefix = `printf '%s' ${shellEscape(config.systemPrompt)} > GEMINI.md && `;
+      }
+
       const parts: string[] = ["gemini"];
 
       // --yolo auto-approves all actions (equivalent to "skip" permissions)
@@ -362,7 +346,7 @@ function createGeminiAgent(): Agent {
         parts.push("-p", shellEscape(config.prompt));
       }
 
-      return parts.join(" ");
+      return prefix + parts.join(" ");
     },
 
     getEnvironment(config: AgentLaunchConfig): Record<string, string> {
@@ -396,32 +380,23 @@ function createGeminiAgent(): Agent {
       return "active";
     },
 
-    async getActivityState(session: Session, readyThresholdMs?: number): Promise<ActivityDetection | null> {
-      const threshold = readyThresholdMs ?? DEFAULT_READY_THRESHOLD_MS;
-
+    async getActivityState(session: Session, _readyThresholdMs?: number): Promise<ActivityDetection | null> {
       // Check if process is running first
       const exitedAt = new Date();
       if (!session.runtimeHandle) return { state: "exited", timestamp: exitedAt };
       const running = await this.isProcessRunning(session.runtimeHandle);
       if (!running) return { state: "exited", timestamp: exitedAt };
 
-      // Use latest session file mtime as a proxy for activity
-      const sessionFile = await findLatestGeminiSessionFile();
-      if (!sessionFile) return null;
-
-      try {
-        const s = await stat(sessionFile);
-        const timestamp = s.mtime;
-        const ageMs = Date.now() - s.mtimeMs;
-
-        if (ageMs <= threshold) {
-          return { state: "active", timestamp };
-        }
-
-        return { state: "idle", timestamp };
-      } catch {
-        return null;
-      }
+      // NOTE: Gemini stores sessions under ~/.gemini/tmp/{project-id}/chats/ but
+      // there is no documented mapping from workspace path to project-id. Scanning
+      // all projects and picking the globally newest file (as before) would attribute
+      // one session's activity to another when multiple Gemini sessions run in
+      // parallel. Until Gemini provides per-workspace session scoping, we return
+      // null (unknown) rather than returning potentially incorrect data.
+      //
+      // TODO: Implement proper per-session activity detection when Gemini exposes
+      //       a workspace-to-project-id mapping.
+      return null;
     },
 
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
@@ -476,28 +451,18 @@ function createGeminiAgent(): Agent {
     },
 
     async getSessionInfo(_session: Session): Promise<AgentSessionInfo | null> {
-      const sessionFile = await findLatestGeminiSessionFile();
-      if (!sessionFile) return null;
-
-      try {
-        const raw = await readFile(sessionFile, "utf-8");
-        const parsed: unknown = JSON.parse(raw);
-        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
-
-        const data = parsed as Record<string, unknown>;
-        const model = typeof data["model"] === "string" ? data["model"] : null;
-
-        return {
-          summary: model ? `Gemini session (${model})` : "Gemini session",
-          summaryIsFallback: true,
-          agentSessionId: null,
-        };
-      } catch {
-        return null;
-      }
+      // Cannot reliably scope session files to a specific workspace — see
+      // getActivityState comment. Return null to avoid cross-session data leaks.
+      return null;
     },
 
     async getRestoreCommand(_session: Session, project: ProjectConfig): Promise<string | null> {
+      // Check if any Gemini session exists before returning a restore command.
+      // Without this guard, `gemini -r latest` would fail when no prior session
+      // exists, and the caller couldn't fall back to getLaunchCommand.
+      const hasSession = await hasGeminiSessions();
+      if (!hasSession) return null;
+
       // Gemini CLI supports -r latest to resume the most recent session
       const parts: string[] = ["gemini"];
 
