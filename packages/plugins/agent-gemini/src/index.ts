@@ -224,7 +224,7 @@ async function atomicWriteFile(filePath: string, content: string, mode: number):
   await rename(tmpPath, filePath);
 }
 
-async function setupGeminiWorkspace(workspacePath: string, systemPrompt?: string): Promise<void> {
+async function setupGeminiWorkspace(workspacePath: string): Promise<void> {
   // 1. Write shared wrappers to ~/.ao/bin/
   await mkdir(AO_BIN_DIR, { recursive: true });
 
@@ -251,26 +251,10 @@ async function setupGeminiWorkspace(workspacePath: string, systemPrompt?: string
     await atomicWriteFile(markerPath, currentVersion, 0o644);
   }
 
-  // 2. Write GEMINI.md with system prompt (Gemini CLI auto-reads it from workspace root)
-  if (systemPrompt) {
-    const geminiMdPath = join(workspacePath, "GEMINI.md");
-    let existing = "";
-    try {
-      existing = await readFile(geminiMdPath, "utf-8");
-    } catch {
-      // File doesn't exist yet
-    }
-
-    if (!existing.includes("Agent Orchestrator (ao) Session")) {
-      const aoSection = `\n## Agent Orchestrator (ao) Session\n\n${systemPrompt}\n`;
-      const content = existing
-        ? existing.trimEnd() + aoSection
-        : aoSection.trimStart();
-      await writeFile(geminiMdPath, content, "utf-8");
-    }
-  }
-
-  // 3. Append ao section to AGENTS.md (create if missing, skip if already present)
+  // 2. Append ao section to AGENTS.md (create if missing, skip if already present)
+  // NOTE: GEMINI.md (system prompt) is written at launch time via getLaunchCommand's
+  // compound shell prefix (cp/printf), not here, because the system prompt content
+  // is only available from AgentLaunchConfig, not at workspace setup time.
   const agentsMdPath = join(workspacePath, "AGENTS.md");
   let existingAgentsMd = "";
   try {
