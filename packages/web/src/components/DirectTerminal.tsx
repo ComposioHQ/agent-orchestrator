@@ -125,7 +125,7 @@ export function DirectTerminal({
           cursorBlink: true,
           fontSize: 13,
           fontFamily: '"IBM Plex Mono", "SF Mono", Menlo, Monaco, "Courier New", monospace',
-          scrollOnUserInput: false,
+          scrollOnUserInput: true,
           theme: {
             background: "#0a0a0f",
             foreground: "#d4d4d8",
@@ -225,6 +225,7 @@ export function DirectTerminal({
 
         // Terminal input → WebSocket
         const disposable = terminal.onData((data) => {
+          terminal.scrollToBottom();
           if (websocket.readyState === WebSocket.OPEN) {
             websocket.send(data);
           }
@@ -246,7 +247,7 @@ export function DirectTerminal({
             if (key.code === "KeyV") {
               void navigator.clipboard.readText().then((text) => {
                 if (text && websocket.readyState === WebSocket.OPEN) {
-                  websocket.send(text);
+                  terminal.paste(text);
                 }
               }).catch(() => {});
               return false;
@@ -261,7 +262,7 @@ export function DirectTerminal({
             if (key.code === "KeyV") {
               void navigator.clipboard.readText().then((text) => {
                 if (text && websocket.readyState === WebSocket.OPEN) {
-                  websocket.send(text);
+                  terminal.paste(text);
                 }
               }).catch(() => {});
               return false;
