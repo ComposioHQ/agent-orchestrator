@@ -1,4 +1,5 @@
 import {
+  DEFAULT_READY_THRESHOLD_MS,
   shellEscape,
   type Agent,
   type AgentSessionInfo,
@@ -6,12 +7,13 @@ import {
   type ActivityDetection,
   type ActivityState,
   type PluginModule,
+  type ProjectConfig,
   type RuntimeHandle,
   type Session,
   type WorkspaceHooksConfig,
 } from "@composio/ao-core";
 import { execFile } from "node:child_process";
-import { writeFile, mkdir, readFile, rename } from "node:fs/promises";
+import { writeFile, mkdir, readFile, readdir, rename, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -27,9 +29,9 @@ const AO_BIN_DIR = join(homedir(), ".ao", "bin");
 // =============================================================================
 
 export const manifest = {
-  name: "opencode",
+  name: "gemini",
   slot: "agent" as const,
-  description: "Agent plugin: OpenCode",
+  description: "Agent plugin: Gemini CLI",
   version: "0.1.0",
 };
 
@@ -223,7 +225,7 @@ async function atomicWriteFile(filePath: string, content: string, mode: number):
   await rename(tmpPath, filePath);
 }
 
-async function setupOpenCodeWorkspace(workspacePath: string): Promise<void> {
+async function setupGeminiWorkspace(workspacePath: string, systemPrompt?: string): Promise<void> {
   // 1. Write shared wrappers to ~/.ao/bin/
   await mkdir(AO_BIN_DIR, { recursive: true });
 
@@ -250,44 +252,114 @@ async function setupOpenCodeWorkspace(workspacePath: string): Promise<void> {
     await atomicWriteFile(markerPath, currentVersion, 0o644);
   }
 
-  // 2. Append ao section to AGENTS.md (create if missing, skip if already present)
+  // 2. Write GEMINI.md with system prompt (Gemini CLI auto-reads it from workspace root)
+  if (systemPrompt) {
+    const geminiMdPath = join(workspacePath, "GEMINI.md");
+    let existing = "";
+    try {
+      existing = await readFile(geminiMdPath, "utf-8");
+    } catch {
+      // File doesn't exist yet
+    }
+
+    if (!existing.includes("Agent Orchestrator (ao) Session")) {
+      const aoSection = `\n## Agent Orchestrator (ao) Session\n\n${systemPrompt}\n`;
+      const content = existing
+        ? existing.trimEnd() + aoSection
+        : aoSection.trimStart();
+      await writeFile(geminiMdPath, content, "utf-8");
+    }
+  }
+
+  // 3. Append ao section to AGENTS.md (create if missing, skip if already present)
   const agentsMdPath = join(workspacePath, "AGENTS.md");
-  let existing = "";
+  let existingAgentsMd = "";
   try {
-    existing = await readFile(agentsMdPath, "utf-8");
+    existingAgentsMd = await readFile(agentsMdPath, "utf-8");
   } catch {
     // File doesn't exist yet
   }
 
-  if (!existing.includes("Agent Orchestrator (ao) Session")) {
-    const content = existing
-      ? existing.trimEnd() + "\n" + AO_AGENTS_MD_SECTION
+  if (!existingAgentsMd.includes("Agent Orchestrator (ao) Session")) {
+    const content = existingAgentsMd
+      ? existingAgentsMd.trimEnd() + "\n" + AO_AGENTS_MD_SECTION
       : AO_AGENTS_MD_SECTION.trimStart();
     await writeFile(agentsMdPath, content, "utf-8");
   }
 }
 
 // =============================================================================
+// Gemini Session Detection
+// =============================================================================
+
+/** Gemini session directory: ~/.gemini/tmp/ */
+const GEMINI_TMP_DIR = join(homedir(), ".gemini", "tmp");
+
+/**
+ * Find the most recently modified session JSON file under ~/.gemini/tmp/.
+ * Gemini stores sessions as: ~/.gemini/tmp/{project-id}/chats/session-*.json
+ * Returns the path to the newest session file, or null if none found.
+ */
+async function findLatestGeminiSessionFile(): Promise<string | null> {
+  let projectDirs: string[];
+  try {
+    projectDirs = await readdir(GEMINI_TMP_DIR);
+  } catch {
+    return null;
+  }
+
+  let bestMatch: { path: string; mtime: number } | null = null;
+
+  for (const projectDir of projectDirs) {
+    const chatsDir = join(GEMINI_TMP_DIR, projectDir, "chats");
+    let files: string[];
+    try {
+      files = await readdir(chatsDir);
+    } catch {
+      continue;
+    }
+
+    for (const file of files) {
+      if (!file.endsWith(".json")) continue;
+      const filePath = join(chatsDir, file);
+      try {
+        const s = await stat(filePath);
+        if (!bestMatch || s.mtimeMs > bestMatch.mtime) {
+          bestMatch = { path: filePath, mtime: s.mtimeMs };
+        }
+      } catch {
+        // Skip inaccessible files
+      }
+    }
+  }
+
+  return bestMatch?.path ?? null;
+}
+
+// =============================================================================
 // Agent Implementation
 // =============================================================================
 
-function createOpenCodeAgent(): Agent {
+function createGeminiAgent(): Agent {
   return {
-    name: "opencode",
-    processName: "opencode",
+    name: "gemini",
+    processName: "gemini",
 
     getLaunchCommand(config: AgentLaunchConfig): string {
-      const parts: string[] = ["opencode"];
+      const parts: string[] = ["gemini"];
 
-      // NOTE: OpenCode has no CLI flag to skip permissions / auto-approve.
-      // The `permissions` config is silently ignored for this agent.
-
-      if (config.prompt) {
-        parts.push("run", shellEscape(config.prompt));
+      // --yolo auto-approves all actions (equivalent to "skip" permissions)
+      if (config.permissions === "skip") {
+        parts.push("--yolo");
       }
 
       if (config.model) {
-        parts.push("--model", shellEscape(config.model));
+        parts.push("-m", shellEscape(config.model));
+      }
+
+      if (config.prompt) {
+        // -p <prompt> for headless mode
+        parts.push("-p", shellEscape(config.prompt));
       }
 
       return parts.join(" ");
@@ -302,8 +374,6 @@ function createOpenCodeAgent(): Agent {
       }
 
       // Prepend ~/.ao/bin to PATH so our gh/git wrappers intercept commands.
-      // The wrappers strip this directory from PATH before calling the real
-      // binary, so there's no infinite recursion.
       env["PATH"] = `${AO_BIN_DIR}:${process.env["PATH"] ?? "/usr/bin:/bin"}`;
 
       return env;
@@ -311,25 +381,47 @@ function createOpenCodeAgent(): Agent {
 
     detectActivity(terminalOutput: string): ActivityState {
       if (!terminalOutput.trim()) return "idle";
-      // OpenCode doesn't have rich terminal output patterns yet
+
+      const lines = terminalOutput.trim().split("\n");
+      const lastLine = lines[lines.length - 1]?.trim() ?? "";
+
+      // If Gemini is showing its input prompt, it's idle
+      if (/^[>$#]\s*$/.test(lastLine)) return "idle";
+
+      // Check last few lines for approval prompts
+      const tail = lines.slice(-5).join("\n");
+      if (/approve|confirm/i.test(tail)) return "waiting_input";
+      if (/\(y\)es.*\(n\)o/i.test(tail)) return "waiting_input";
+
       return "active";
     },
 
-    async getActivityState(session: Session, _readyThresholdMs?: number): Promise<ActivityDetection | null> {
+    async getActivityState(session: Session, readyThresholdMs?: number): Promise<ActivityDetection | null> {
+      const threshold = readyThresholdMs ?? DEFAULT_READY_THRESHOLD_MS;
+
       // Check if process is running first
       const exitedAt = new Date();
       if (!session.runtimeHandle) return { state: "exited", timestamp: exitedAt };
       const running = await this.isProcessRunning(session.runtimeHandle);
       if (!running) return { state: "exited", timestamp: exitedAt };
 
-      // NOTE: OpenCode stores all session data in a single global SQLite database
-      // at ~/.local/share/opencode/opencode.db without per-workspace scoping. When
-      // multiple OpenCode sessions run in parallel, database modifications from any
-      // session will cause all sessions to appear active. Until OpenCode provides
-      // per-workspace session tracking, we return null (unknown) rather than guessing.
-      //
-      // TODO: Implement proper per-session activity detection when OpenCode supports it.
-      return null;
+      // Use latest session file mtime as a proxy for activity
+      const sessionFile = await findLatestGeminiSessionFile();
+      if (!sessionFile) return null;
+
+      try {
+        const s = await stat(sessionFile);
+        const timestamp = s.mtime;
+        const ageMs = Date.now() - s.mtimeMs;
+
+        if (ageMs <= threshold) {
+          return { state: "active", timestamp };
+        }
+
+        return { state: "idle", timestamp };
+      } catch {
+        return null;
+      }
     },
 
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
@@ -351,7 +443,7 @@ function createOpenCodeAgent(): Agent {
             timeout: 30_000,
           });
           const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
-          const processRe = /(?:^|\/)opencode(?:\s|$)/;
+          const processRe = /(?:^|\/)gemini(?:\s|$)/;
           for (const line of psOut.split("\n")) {
             const cols = line.trimStart().split(/\s+/);
             if (cols.length < 3 || !ttySet.has(cols[1] ?? "")) continue;
@@ -384,17 +476,52 @@ function createOpenCodeAgent(): Agent {
     },
 
     async getSessionInfo(_session: Session): Promise<AgentSessionInfo | null> {
-      // OpenCode doesn't have JSONL session files for introspection yet
-      return null;
+      const sessionFile = await findLatestGeminiSessionFile();
+      if (!sessionFile) return null;
+
+      try {
+        const raw = await readFile(sessionFile, "utf-8");
+        const parsed: unknown = JSON.parse(raw);
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+
+        const data = parsed as Record<string, unknown>;
+        const model = typeof data["model"] === "string" ? data["model"] : null;
+
+        return {
+          summary: model ? `Gemini session (${model})` : "Gemini session",
+          summaryIsFallback: true,
+          agentSessionId: null,
+        };
+      } catch {
+        return null;
+      }
+    },
+
+    async getRestoreCommand(_session: Session, project: ProjectConfig): Promise<string | null> {
+      // Gemini CLI supports -r latest to resume the most recent session
+      const parts: string[] = ["gemini"];
+
+      if ((project.agentConfig?.permissions as string | undefined) === "skip") {
+        parts.push("--yolo");
+      }
+
+      const model = project.agentConfig?.model as string | undefined;
+      if (model) {
+        parts.push("-m", shellEscape(model));
+      }
+
+      parts.push("-r", "latest");
+
+      return parts.join(" ");
     },
 
     async setupWorkspaceHooks(workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
-      await setupOpenCodeWorkspace(workspacePath);
+      await setupGeminiWorkspace(workspacePath);
     },
 
     async postLaunchSetup(session: Session): Promise<void> {
       if (!session.workspacePath) return;
-      await setupOpenCodeWorkspace(session.workspacePath);
+      await setupGeminiWorkspace(session.workspacePath);
     },
   };
 }
@@ -404,7 +531,7 @@ function createOpenCodeAgent(): Agent {
 // =============================================================================
 
 export function create(): Agent {
-  return createOpenCodeAgent();
+  return createGeminiAgent();
 }
 
 export default { manifest, create } satisfies PluginModule<Agent>;
