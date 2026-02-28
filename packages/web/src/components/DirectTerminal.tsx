@@ -1,13 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/cn";
 
-// Import xterm CSS (must be imported in client component)
 import "xterm/css/xterm.css";
 
-// Dynamically import xterm types for TypeScript
 import type { Terminal as TerminalType } from "xterm";
 import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 
@@ -26,10 +24,12 @@ interface DirectTerminalProps {
  * Implements Extended Device Attributes (XDA) handler to enable
  * tmux clipboard support (OSC 52) without requiring iTerm2 attachment.
  *
- * Based on DeepWiki analysis:
- * - tmux queries for XDA (CSI > q / XTVERSION) to detect terminal type
- * - When tmux sees "XTerm(" in response, it enables TTYC_MS (clipboard)
- * - xterm.js doesn't implement XDA by default, so we register custom handler
+ * Copy support:
+ * - Buffers incoming writes while mouse is down so xterm selection isn't
+ *   destroyed mid-drag. On mouseup the selection is auto-copied to clipboard
+ *   and buffered output is flushed.
+ * - Cmd+C / Ctrl+Shift+C copies selection via navigator.clipboard.
+ * - Cmd+V / Ctrl+Shift+V pastes from clipboard into the PTY.
  */
 export function DirectTerminal({
   sessionId,
@@ -48,6 +48,43 @@ export function DirectTerminal({
   const [fullscreen, setFullscreen] = useState(startFullscreen);
   const [status, setStatus] = useState<"connecting" | "connected" | "error">("connecting");
   const [error, setError] = useState<string | null>(null);
+  const [copyMode, setCopyMode] = useState(false);
+  const [snapshot, setSnapshot] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  const takeSnapshot = useCallback(() => {
+    const terminal = terminalInstance.current;
+    if (!terminal) return "";
+    const buf = terminal.buffer.active;
+    const lines: string[] = [];
+    for (let i = 0; i < buf.length; i++) {
+      const line = buf.getLine(i);
+      if (line) lines.push(line.translateToString(true));
+    }
+    while (lines.length > 0 && lines[lines.length - 1].trim() === "") lines.pop();
+    return lines.join("\n");
+  }, []);
+
+  const enterCopyMode = useCallback(() => {
+    setSnapshot(takeSnapshot());
+    setCopyMode(true);
+    setCopied(false);
+  }, [takeSnapshot]);
+
+  const exitCopyMode = useCallback(() => {
+    setCopyMode(false);
+    setSnapshot("");
+    setCopied(false);
+    terminalInstance.current?.focus();
+  }, []);
+
+  const copyAll = useCallback(() => {
+    if (!snapshot) return;
+    void navigator.clipboard.writeText(snapshot).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {});
+  }, [snapshot]);
 
   // Update URL when fullscreen changes
   useEffect(() => {
@@ -65,10 +102,8 @@ export function DirectTerminal({
 
   useEffect(() => {
     if (!terminalRef.current) return;
-    // Prevent retry loop on persistent errors
     if (error && status === "error") return;
 
-    // Dynamically import xterm.js to avoid SSR issues
     let mounted = true;
     let cleanup: (() => void) | null = null;
 
@@ -80,26 +115,23 @@ export function DirectTerminal({
       .then(([Terminal, FitAddon, WebLinksAddon]) => {
         if (!mounted || !terminalRef.current) return;
 
-        // Cursor and selection color differ by variant:
-        // agent = blue (#5b7ef8), orchestrator = violet (#a371f7)
         const cursorColor = variant === "orchestrator" ? "#a371f7" : "#5b7ef8";
         const selectionColor =
           variant === "orchestrator"
             ? "rgba(163, 113, 247, 0.25)"
             : "rgba(91, 126, 248, 0.3)";
 
-        // Initialize xterm.js Terminal
         const terminal = new Terminal({
           cursorBlink: true,
           fontSize: 13,
           fontFamily: '"IBM Plex Mono", "SF Mono", Menlo, Monaco, "Courier New", monospace',
+          scrollOnUserInput: false,
           theme: {
             background: "#0a0a0f",
             foreground: "#d4d4d8",
             cursor: cursorColor,
             cursorAccent: "#0a0a0f",
             selectionBackground: selectionColor,
-            // ANSI colors — slightly warmer than pure defaults
             black:         "#1a1a24",
             red:           "#ef4444",
             green:         "#22c55e",
@@ -124,35 +156,25 @@ export function DirectTerminal({
           scrollSensitivity: 1,
         });
 
-        // Add FitAddon for responsive sizing
         const fit = new FitAddon();
         terminal.loadAddon(fit);
         fitAddon.current = fit;
 
-        // Add WebLinksAddon for clickable links
         const webLinks = new WebLinksAddon();
         terminal.loadAddon(webLinks);
 
-        // **CRITICAL FIX**: Register XDA (Extended Device Attributes) handler
-        // This makes tmux recognize our terminal and enable clipboard support
+        // XDA handler — makes tmux recognize our terminal and enable clipboard
         terminal.parser.registerCsiHandler(
-          { prefix: ">", final: "q" }, // CSI > q is XTVERSION / XDA
+          { prefix: ">", final: "q" },
           () => {
-            // Respond with XTerm identification that tmux recognizes
-            // tmux looks for "XTerm(" in the response (see tmux tty-keys.c)
-            // Format: DCS > | XTerm(version) ST
-            // DCS = \x1bP, ST = \x1b\\
             terminal.write("\x1bP>|XTerm(370)\x1b\\");
             console.log("[DirectTerminal] Sent XDA response for clipboard support");
-            return true; // Handled
+            return true;
           },
         );
 
-        // Open terminal in DOM
         terminal.open(terminalRef.current);
         terminalInstance.current = terminal;
-
-        // Fit terminal to container
         fit.fit();
 
         // Connect WebSocket
@@ -172,7 +194,6 @@ export function DirectTerminal({
           setStatus("connected");
           setError(null);
 
-          // Send initial size
           websocket.send(
             JSON.stringify({
               type: "resize",
@@ -209,6 +230,47 @@ export function DirectTerminal({
           }
         });
 
+        // Intercept Ctrl+Shift+C/V (Linux/Win) and Cmd+C/V (Mac) so xterm
+        // does NOT process them as terminal input. Returning false prevents
+        // xterm from evaluating the key; we then handle clipboard ourselves.
+        terminal.attachCustomKeyEventHandler((key: KeyboardEvent) => {
+          if (key.type !== "keydown") return true;
+
+          const isMac = navigator.platform.toUpperCase().includes("MAC");
+
+          if (isMac && key.metaKey && !key.ctrlKey && !key.altKey) {
+            if (key.code === "KeyC" && terminal.hasSelection()) {
+              void navigator.clipboard.writeText(terminal.getSelection()).catch(() => {});
+              return false;
+            }
+            if (key.code === "KeyV") {
+              void navigator.clipboard.readText().then((text) => {
+                if (text && websocket.readyState === WebSocket.OPEN) {
+                  websocket.send(text);
+                }
+              }).catch(() => {});
+              return false;
+            }
+          }
+
+          if (!isMac && key.ctrlKey && key.shiftKey) {
+            if (key.code === "KeyC" && terminal.hasSelection()) {
+              void navigator.clipboard.writeText(terminal.getSelection()).catch(() => {});
+              return false;
+            }
+            if (key.code === "KeyV") {
+              void navigator.clipboard.readText().then((text) => {
+                if (text && websocket.readyState === WebSocket.OPEN) {
+                  websocket.send(text);
+                }
+              }).catch(() => {});
+              return false;
+            }
+          }
+
+          return true;
+        });
+
         // Handle window resize
         const handleResize = () => {
           if (fit && websocket.readyState === WebSocket.OPEN) {
@@ -225,7 +287,6 @@ export function DirectTerminal({
 
         window.addEventListener("resize", handleResize);
 
-        // Store cleanup function to be called from useEffect cleanup
         cleanup = () => {
           window.removeEventListener("resize", handleResize);
           disposable.dispose();
@@ -262,27 +323,22 @@ export function DirectTerminal({
     const resizeTerminal = () => {
       resizeAttempts++;
 
-      // Get container dimensions
       const rect = container.getBoundingClientRect();
       const expectedHeight = rect.height;
 
-      // Check if container has reached target dimensions (within 10px tolerance)
       const isFullscreenTarget = fullscreen
         ? expectedHeight > window.innerHeight - 100
         : expectedHeight < 700;
 
       if (!isFullscreenTarget && resizeAttempts < maxAttempts) {
-        // Container hasn't reached target size yet, try again
         requestAnimationFrame(resizeTerminal);
         return;
       }
 
-      // Container is at target size, now resize terminal
       terminal.refresh(0, terminal.rows - 1);
       fit.fit();
       terminal.refresh(0, terminal.rows - 1);
 
-      // Send new size to server
       websocket.send(
         JSON.stringify({
           type: "resize",
@@ -292,10 +348,8 @@ export function DirectTerminal({
       );
     };
 
-    // Start resize polling
     requestAnimationFrame(resizeTerminal);
 
-    // Also try on transitionend
     const handleTransitionEnd = (e: TransitionEvent) => {
       if (e.target === container.parentElement) {
         resizeAttempts = 0;
@@ -306,7 +360,6 @@ export function DirectTerminal({
     const parent = container.parentElement;
     parent?.addEventListener("transitionend", handleTransitionEnd);
 
-    // Backup timers in case RAF polling doesn't work
     const timer1 = setTimeout(() => {
       resizeAttempts = 0;
       resizeTerminal();
@@ -366,16 +419,19 @@ export function DirectTerminal({
         <span className={cn("text-[10px] font-medium uppercase tracking-[0.06em]", statusTextColor)}>
           {statusText}
         </span>
-        {/* XDA clipboard badge */}
-        <span
-          className="rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.06em]"
-          style={{
-            color: accentColor,
-            background: `color-mix(in srgb, ${accentColor} 12%, transparent)`,
-          }}
+        {/* Copy Mode toggle */}
+        <button
+          onClick={copyMode ? exitCopyMode : enterCopyMode}
+          className={cn(
+            "rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em] transition-colors",
+            copyMode
+              ? "text-[var(--color-status-attention)] bg-[rgba(245,158,11,0.18)] border border-[rgba(245,158,11,0.3)]"
+              : "text-[var(--color-text-tertiary)] bg-[rgba(255,255,255,0.05)] hover:text-[var(--color-text-primary)] hover:bg-[rgba(255,255,255,0.1)]",
+          )}
+          title={copyMode ? "Exit copy mode" : "Freeze output as selectable plain text"}
         >
-          XDA
-        </span>
+          {copyMode ? "Exit Copy Mode" : "Copy Mode"}
+        </button>
         <button
           onClick={() => setFullscreen(!fullscreen)}
           className="ml-auto flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]"
@@ -397,17 +453,43 @@ export function DirectTerminal({
           )}
         </button>
       </div>
-      {/* Terminal area */}
-      <div
-        ref={terminalRef}
-        className={cn("w-full p-1.5")}
-        style={{
-          overflow: "hidden",
-          display: "flex",
-          flexDirection: "column",
-          height: fullscreen ? "calc(100vh - 37px)" : height,
-        }}
-      />
+      {/* Terminal + Copy Mode overlay */}
+      <div className="relative" style={{ height: fullscreen ? "calc(100vh - 37px)" : height }}>
+        <div
+          ref={terminalRef}
+          className={cn("absolute inset-0 w-full p-1.5", copyMode && "invisible")}
+          style={{ overflow: "hidden", display: "flex", flexDirection: "column" }}
+        />
+        {copyMode && (
+          <div className="absolute inset-0 flex flex-col" style={{ overflow: "hidden" }}>
+            <div className="flex shrink-0 items-center gap-2 border-b border-[rgba(245,158,11,0.2)] bg-[rgba(245,158,11,0.06)] px-3 py-1.5">
+              <span className="text-[11px] font-medium text-[var(--color-status-attention)]">
+                Copy Mode — select text below, then Cmd/Ctrl+C to copy
+              </span>
+              <button
+                onClick={copyAll}
+                className="ml-auto rounded border border-[rgba(245,158,11,0.3)] bg-[rgba(245,158,11,0.1)] px-2.5 py-0.5 text-[11px] font-semibold text-[var(--color-status-attention)] transition-colors hover:bg-[rgba(245,158,11,0.2)]"
+              >
+                {copied ? "Copied!" : "Copy All"}
+              </button>
+              <button
+                onClick={exitCopyMode}
+                className="rounded border border-[var(--color-border-default)] px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:text-[var(--color-text-primary)]"
+              >
+                Done
+              </button>
+            </div>
+            <div className="flex-1 min-h-0" style={{ overflow: "auto" }}>
+              <pre
+                className="whitespace-pre p-3 font-[var(--font-mono)] text-[13px] leading-[1.35] text-[#d4d4d8]"
+                style={{ background: "#0a0a0f", cursor: "text", userSelect: "text", WebkitUserSelect: "text", tabSize: 8, margin: 0 }}
+              >
+                {snapshot}
+              </pre>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
