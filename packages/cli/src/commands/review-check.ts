@@ -65,6 +65,11 @@ export function registerReviewCheck(program: Command): void {
     .argument("[project]", "Project ID (checks all if omitted)")
     .option("--dry-run", "Show what would be done without sending messages")
     .action(async (projectId: string | undefined, opts: { dryRun?: boolean }) => {
+      console.log(
+        chalk.yellow(
+          "NOTE: 'ao review-check' is deprecated. Use 'ao lifecycle start' for automated polling.\n",
+        ),
+      );
       const config = loadConfig();
 
       if (projectId && !config.projects[projectId]) {

@@ -418,7 +418,7 @@ describe("check (single session)", () => {
       getCISummary: vi.fn().mockResolvedValue("failing"),
       getReviews: vi.fn(),
       getReviewDecision: vi.fn().mockResolvedValue("none"),
-      getPendingComments: vi.fn(),
+      getPendingComments: vi.fn().mockResolvedValue([]),
       getAutomatedComments: vi.fn(),
       getMergeability: vi.fn(),
     };
@@ -465,7 +465,7 @@ describe("check (single session)", () => {
       getCISummary: vi.fn(),
       getReviews: vi.fn(),
       getReviewDecision: vi.fn(),
-      getPendingComments: vi.fn(),
+      getPendingComments: vi.fn().mockResolvedValue([]),
       getAutomatedComments: vi.fn(),
       getMergeability: vi.fn(),
     };
@@ -512,7 +512,7 @@ describe("check (single session)", () => {
       getCISummary: vi.fn().mockResolvedValue("passing"),
       getReviews: vi.fn(),
       getReviewDecision: vi.fn().mockResolvedValue("approved"),
-      getPendingComments: vi.fn(),
+      getPendingComments: vi.fn().mockResolvedValue([]),
       getAutomatedComments: vi.fn(),
       getMergeability: vi.fn().mockResolvedValue({
         mergeable: true,
@@ -614,7 +614,7 @@ describe("reactions", () => {
       getCISummary: vi.fn().mockResolvedValue("failing"),
       getReviews: vi.fn(),
       getReviewDecision: vi.fn().mockResolvedValue("none"),
-      getPendingComments: vi.fn(),
+      getPendingComments: vi.fn().mockResolvedValue([]),
       getAutomatedComments: vi.fn(),
       getMergeability: vi.fn(),
     };
@@ -669,7 +669,7 @@ describe("reactions", () => {
       getCISummary: vi.fn().mockResolvedValue("failing"),
       getReviews: vi.fn(),
       getReviewDecision: vi.fn().mockResolvedValue("none"),
-      getPendingComments: vi.fn(),
+      getPendingComments: vi.fn().mockResolvedValue([]),
       getAutomatedComments: vi.fn(),
       getMergeability: vi.fn(),
     };
@@ -720,7 +720,7 @@ describe("reactions", () => {
       getCISummary: vi.fn().mockResolvedValue("failing"),
       getReviews: vi.fn(),
       getReviewDecision: vi.fn(),
-      getPendingComments: vi.fn(),
+      getPendingComments: vi.fn().mockResolvedValue([]),
       getAutomatedComments: vi.fn(),
       getMergeability: vi.fn(),
     };
@@ -793,7 +793,7 @@ describe("reactions", () => {
       getCISummary: vi.fn(),
       getReviews: vi.fn(),
       getReviewDecision: vi.fn(),
-      getPendingComments: vi.fn(),
+      getPendingComments: vi.fn().mockResolvedValue([]),
       getAutomatedComments: vi.fn(),
       getMergeability: vi.fn(),
     };

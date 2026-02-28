@@ -92,6 +92,7 @@ const VALID_STATUSES: ReadonlySet<string> = new Set([
   "ci_failed",
   "review_pending",
   "changes_requested",
+  "review_comments_unresolved",
   "approved",
   "mergeable",
   "merged",
