@@ -13,6 +13,7 @@ import {
   formatProjectTypeForDisplay,
 } from "../lib/project-detection.js";
 
+const MIN_NODE_MAJOR = 20;
 const DEFAULT_PORT = 3000;
 const MAX_PORT_SCAN = 100;
 
@@ -161,6 +162,18 @@ export function registerInit(program: Command): void {
     )
     .action(async (opts: { output: string; auto?: boolean; smart?: boolean }) => {
       const outputPath = resolve(opts.output);
+
+      // Check Node.js version requirement
+      const nodeMajor = parseInt(process.versions.node.split(".")[0] ?? "0", 10);
+      if (nodeMajor < MIN_NODE_MAJOR) {
+        console.error(
+          chalk.red(`Error: Node.js ${MIN_NODE_MAJOR}+ is required (you have v${process.versions.node})`),
+        );
+        console.log(
+          chalk.dim(`  Upgrade with: nvm install ${MIN_NODE_MAJOR} && nvm use ${MIN_NODE_MAJOR}`),
+        );
+        process.exit(1);
+      }
 
       if (existsSync(outputPath)) {
         console.log(chalk.yellow(`Config already exists: ${outputPath}`));
