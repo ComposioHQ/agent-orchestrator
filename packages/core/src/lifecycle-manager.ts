@@ -518,6 +518,26 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       // No transition but track current state
       states.set(session.id, newStatus);
     }
+
+    // Update agent summary in metadata (persists across restarts).
+    // Only for active sessions — skip terminal states to avoid unnecessary I/O.
+    if (newStatus !== "merged" && newStatus !== "killed") {
+      const project = config.projects[session.projectId];
+      if (project) {
+        const agent = registry.get<Agent>("agent", project.agent ?? config.defaults.agent);
+        if (agent) {
+          try {
+            const info = await agent.getSessionInfo(session);
+            if (info?.summary && info.summary !== session.metadata?.["summary"]) {
+              const sessionsDir = getSessionsDir(config.configPath, project.path);
+              updateMetadata(sessionsDir, session.id, { summary: info.summary });
+            }
+          } catch {
+            // Agent info extraction failed — non-fatal, skip
+          }
+        }
+      }
+    }
   }
 
   /** Run one polling cycle across all sessions. */

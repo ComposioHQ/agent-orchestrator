@@ -185,9 +185,9 @@ export const manifest = {
  * Convert a workspace path to Claude's project directory path.
  * Claude stores sessions at ~/.claude/projects/{encoded-path}/
  *
- * Verified against Claude Code's actual encoding (as of v1.x):
- * the path has its leading / stripped, then all / and . are replaced with -.
- * e.g. /Users/dev/.worktrees/ao → Users-dev--worktrees-ao
+ * Claude Code's encoding simply replaces all / and . with -.
+ * The leading / becomes a leading - in the directory name.
+ * e.g. /Users/dev/.worktrees/ao → -Users-dev--worktrees-ao
  *
  * If Claude Code changes its encoding scheme this will silently break
  * introspection. The path can be validated at runtime by checking whether
