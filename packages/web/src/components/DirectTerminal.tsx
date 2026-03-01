@@ -189,13 +189,36 @@ export function DirectTerminal({
         const port = process.env.NEXT_PUBLIC_DIRECT_TERMINAL_PORT ?? "14801";
         const wsUrl = `${protocol}//${hostname}:${port}/ws?session=${encodeURIComponent(sessionId)}`;
 
-        // Auto-copy selection to clipboard whenever the user selects text.
-        // xterm.js clears the selection on incoming terminal.write(), so we
-        // copy eagerly — the text is in the clipboard even if the highlight
-        // disappears before the user presses Cmd+C.
+        // ── Preserve selection while terminal receives output ────────
+        // xterm.js clears the selection on every terminal.write(). We
+        // buffer incoming data while a selection is active so the
+        // highlight stays visible for Cmd+C. The buffer is flushed
+        // when the selection is cleared (click, keypress, etc.).
+        const writeBuffer: string[] = [];
+        let selectionActive = false;
+        let safetyTimer: ReturnType<typeof setTimeout> | null = null;
+
+        const flushWriteBuffer = () => {
+          if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null; }
+          if (writeBuffer.length > 0) {
+            terminal.write(writeBuffer.join(""));
+            writeBuffer.length = 0;
+          }
+        };
+
         const selectionDisposable = terminal.onSelectionChange(() => {
           if (terminal.hasSelection()) {
-            navigator.clipboard?.writeText(terminal.getSelection()).catch(() => {});
+            selectionActive = true;
+            // Safety: flush after 5s to prevent unbounded buffering
+            if (!safetyTimer) {
+              safetyTimer = setTimeout(() => {
+                selectionActive = false;
+                flushWriteBuffer();
+              }, 5_000);
+            }
+          } else {
+            selectionActive = false;
+            flushWriteBuffer();
           }
         });
 
@@ -292,7 +315,11 @@ export function DirectTerminal({
           websocket.onmessage = (event) => {
             const data =
               typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data);
-            terminal.write(data);
+            if (selectionActive) {
+              writeBuffer.push(data);
+            } else {
+              terminal.write(data);
+            }
           };
 
           websocket.onerror = (event) => {
@@ -330,6 +357,7 @@ export function DirectTerminal({
         // Store cleanup function to be called from useEffect cleanup
         cleanup = () => {
           selectionDisposable.dispose();
+          if (safetyTimer) clearTimeout(safetyTimer);
           termEl.removeEventListener("paste", handlePaste as EventListener);
           window.removeEventListener("resize", handleResize);
           inputDisposable?.dispose();
