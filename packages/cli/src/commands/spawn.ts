@@ -93,7 +93,7 @@ export function registerSpawn(program: Command): void {
         await runSpawnPreflight(config, projectId);
         await spawnSession(config, projectId, issueId, opts.open, opts.agent);
       } catch (err) {
-        console.error(chalk.red(`✗ ${err}`));
+        console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));
         process.exit(1);
       }
     });
