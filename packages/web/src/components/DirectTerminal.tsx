@@ -225,10 +225,9 @@ export function DirectTerminal({
           }
         });
 
-        // Intercept Cmd+C/V (Mac) and Ctrl+Shift+C/V (Linux/Win) for clipboard.
-        // Cmd+C is kept as a fallback (selection may still be alive).
-        // Cmd+V intercepts the key so xterm doesn't process it; the actual
-        // paste is handled by the DOM "paste" event listener below.
+        // Intercept Cmd+C (Mac) and Ctrl+Shift+C (Linux/Win) for copy.
+        // Paste (Cmd+V / Ctrl+Shift+V) is handled natively by xterm.js
+        // via its internal textarea — no custom handler needed.
         terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
           if (e.type !== "keydown") return true;
 
@@ -243,31 +242,8 @@ export function DirectTerminal({
             return false;
           }
 
-          // Cmd+V / Ctrl+Shift+V — trigger native paste event
-          const isPaste =
-            (e.metaKey && !e.ctrlKey && !e.altKey && e.code === "KeyV") ||
-            (e.ctrlKey && e.shiftKey && e.code === "KeyV");
-          if (isPaste) {
-            // Let the browser fire the "paste" event (handled below).
-            // Returning true allows the event to propagate normally.
-            return true;
-          }
-
           return true;
         });
-
-        // Handle paste via the DOM "paste" event — this provides clipboard
-        // content through ClipboardEvent.clipboardData without needing the
-        // Clipboard API "clipboard-read" permission.
-        const termEl = terminalRef.current!;
-        const handlePaste = (e: ClipboardEvent) => {
-          const text = e.clipboardData?.getData("text/plain");
-          if (text) {
-            e.preventDefault();
-            terminal.paste(text);
-          }
-        };
-        termEl.addEventListener("paste", handlePaste);
 
         // Handle window resize (works with whatever ws is current)
         const handleResize = () => {
@@ -369,7 +345,6 @@ export function DirectTerminal({
         cleanup = () => {
           selectionDisposable.dispose();
           if (safetyTimer) clearTimeout(safetyTimer);
-          termEl.removeEventListener("paste", handlePaste as EventListener);
           window.removeEventListener("resize", handleResize);
           inputDisposable?.dispose();
           inputDisposable = null;
