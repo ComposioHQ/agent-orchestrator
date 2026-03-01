@@ -120,9 +120,6 @@ importers:
 
   packages/core:
     dependencies:
-      ora:
-        specifier: ^8.1.0
-        version: 8.2.0
       yaml:
         specifier: ^2.7.0
         version: 2.8.2

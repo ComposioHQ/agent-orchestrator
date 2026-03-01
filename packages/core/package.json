@@ -39,7 +39,6 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "ora": "^8.1.0",
     "yaml": "^2.7.0",
     "zod": "^3.24.0"
   },

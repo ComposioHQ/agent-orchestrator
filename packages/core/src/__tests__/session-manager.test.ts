@@ -3,18 +3,6 @@ import { mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-
-const mockSpinner = vi.hoisted(() => ({
-  start: vi.fn().mockReturnThis(),
-  succeed: vi.fn().mockReturnThis(),
-  stop: vi.fn().mockReturnThis(),
-  fail: vi.fn().mockReturnThis(),
-}));
-
-vi.mock("ora", () => ({
-  default: vi.fn(() => mockSpinner),
-}));
-
 import { createSessionManager } from "../session-manager.js";
 import { writeMetadata, readMetadata, readMetadataRaw, deleteMetadata } from "../metadata.js";
 import { getSessionsDir, getProjectBaseDir } from "../paths.js";
@@ -46,11 +34,6 @@ function makeHandle(id: string): RuntimeHandle {
 }
 
 beforeEach(() => {
-  mockSpinner.start.mockClear();
-  mockSpinner.succeed.mockClear();
-  mockSpinner.stop.mockClear();
-  mockSpinner.fail.mockClear();
-
   tmpDir = join(tmpdir(), `ao-test-session-mgr-${randomUUID()}`);
   mkdirSync(tmpDir, { recursive: true });
 
@@ -686,7 +669,7 @@ describe("spawn", () => {
     vi.useRealTimers();
   });
 
-  it("shows spinner during post-launch prompt delivery wait", async () => {
+  it("calls onProgress during post-launch prompt delivery wait", async () => {
     vi.useFakeTimers();
     const postLaunchAgent = {
       ...mockAgent,
@@ -702,22 +685,23 @@ describe("spawn", () => {
       }),
     };
 
+    const onProgress = vi.fn();
     const sm = createSessionManager({ config, registry: registryWithPostLaunch });
-    const spawnPromise = sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
+    const spawnPromise = sm.spawn({ projectId: "my-app", prompt: "Fix the bug", onProgress });
     await vi.advanceTimersByTimeAsync(5_000);
     await spawnPromise;
 
-    // Spinner should have been started and succeeded
-    expect(mockSpinner.start).toHaveBeenCalled();
-    expect(mockSpinner.succeed).toHaveBeenCalledWith("Agent ready");
+    expect(onProgress).toHaveBeenCalledWith("Waiting for agent to start…");
+    expect(onProgress).toHaveBeenCalledWith("Agent ready");
     vi.useRealTimers();
   });
 
-  it("does not show spinner when promptDelivery is not post-launch", async () => {
+  it("does not call onProgress when promptDelivery is not post-launch", async () => {
+    const onProgress = vi.fn();
     const sm = createSessionManager({ config, registry: mockRegistry });
-    await sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
+    await sm.spawn({ projectId: "my-app", prompt: "Fix the bug", onProgress });
 
-    expect(mockSpinner.start).not.toHaveBeenCalled();
+    expect(onProgress).not.toHaveBeenCalled();
   });
 });
 
