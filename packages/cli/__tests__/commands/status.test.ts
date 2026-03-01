@@ -95,9 +95,7 @@ vi.mock("../../src/lib/plugins.js", () => ({
     getActivityState: mockGetActivityState,
   }),
   getAgentByName: (name: string) => {
-    if (mockGetAgentByName.mock.calls.length >= 0) {
-      mockGetAgentByName(name); // Track calls for assertions
-    }
+    mockGetAgentByName(name);
     return {
       name,
       processName: name === "codex" ? "codex" : "claude",
