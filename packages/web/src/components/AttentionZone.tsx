@@ -73,7 +73,7 @@ export function AttentionZone({
       <div className="flex flex-col">
         {/* Column header */}
         <button
-          className="mb-2.5 flex items-center gap-2 py-0.5 text-left"
+          className="mb-2.5 flex min-h-[44px] items-center gap-2 py-0.5 text-left md:min-h-0"
           onClick={() => setCollapsed(!collapsed)}
         >
           <div
@@ -124,7 +124,7 @@ export function AttentionZone({
     <div className="mb-7">
       {/* Zone header: [●] LABEL ──────────────────────────────── count [▾] */}
       <button
-        className="mb-3 flex w-full items-center gap-2.5 py-0.5 text-left"
+        className="mb-3 flex w-full min-h-[44px] items-center gap-2.5 py-0.5 text-left md:min-h-0"
         onClick={() => setCollapsed(!collapsed)}
       >
         {/* Semantic dot — only zone-colored element */}

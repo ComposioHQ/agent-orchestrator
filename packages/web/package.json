@@ -14,9 +14,13 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:install": "playwright install --with-deps chromium",
     "clean": "rm -rf .next",
     "screenshot": "tsx e2e/screenshot.ts",
-    "screenshot:install": "npx playwright install chromium"
+    "screenshot:install": "playwright install chromium"
   },
   "dependencies": {
     "@composio/ao-core": "workspace:*",
@@ -46,7 +50,7 @@
     "concurrently": "^9.2.1",
     "jsdom": "^25.0.0",
     "node-gyp": "^12.2.0",
-    "playwright": "^1.49.0",
+    "@playwright/test": "^1.49.0",
     "tailwindcss": "^4.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",

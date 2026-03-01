@@ -85,16 +85,16 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
       }}
     >
       {/* Header row: dot + session ID + terminal link */}
-      <div className="flex items-center gap-2 px-4 pt-4 pb-2">
+      <div className="flex items-center gap-2 px-3 pt-3 pb-1.5 md:px-4 md:pt-4 md:pb-2">
         <ActivityDot activity={session.activity} />
-        <span className="font-[var(--font-mono)] text-[11px] tracking-wide text-[var(--color-text-muted)]">
+        <span className="min-w-0 truncate font-[var(--font-mono)] text-[11px] tracking-wide text-[var(--color-text-muted)]">
           {session.id}
         </span>
         <div className="flex-1" />
         {isRestorable && (
           <button
             onClick={(e) => { e.stopPropagation(); onRestore?.(session.id); }}
-            className="rounded border border-[rgba(88,166,255,0.35)] px-2 py-0.5 text-[11px] text-[var(--color-accent)] transition-colors hover:bg-[rgba(88,166,255,0.1)]"
+            className="min-h-[44px] min-w-[44px] shrink-0 rounded border border-[rgba(88,166,255,0.35)] px-2 py-1.5 text-[11px] text-[var(--color-accent)] transition-colors hover:bg-[rgba(88,166,255,0.1)] md:min-h-0 md:min-w-0 md:py-0.5"
           >
             restore
           </button>
@@ -103,7 +103,7 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
           <a
             href={`/sessions/${encodeURIComponent(session.id)}`}
             onClick={(e) => e.stopPropagation()}
-            className="rounded border border-[var(--color-border-default)] bg-[var(--color-bg-subtle)] px-2.5 py-0.5 text-[11px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] hover:no-underline"
+            className="inline-flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded border border-[var(--color-border-default)] bg-[var(--color-bg-subtle)] px-2.5 py-1.5 text-[11px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] hover:no-underline md:min-h-0 md:min-w-0 md:py-0.5"
           >
             terminal
           </a>
@@ -111,21 +111,21 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
       </div>
 
       {/* Title — its own row, bigger, can wrap */}
-      <div className="px-4 pb-3">
+      <div className="px-3 pb-2.5 md:px-4 md:pb-3">
         <p className={cn(
-          "leading-snug [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:3] overflow-hidden",
+          "leading-snug [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:3] overflow-hidden break-words",
           level === "working"
             ? "text-[13px] font-medium text-[var(--color-text-secondary)]"
-            : "text-[14px] font-semibold text-[var(--color-text-primary)]"
+            : "text-[13px] font-semibold text-[var(--color-text-primary)] md:text-[14px]"
         )}>
           {title}
         </p>
       </div>
 
       {/* Meta row: branch + PR pills */}
-      <div className="flex flex-wrap items-center gap-1.5 px-4 pb-2.5">
+      <div className="flex flex-wrap items-center gap-1.5 px-3 pb-2 md:px-4 md:pb-2.5">
         {session.branch && (
-          <span className="font-[var(--font-mono)] text-[10px] text-[var(--color-text-muted)]">
+          <span className="max-w-full truncate font-[var(--font-mono)] text-[10px] text-[var(--color-text-muted)]">
             {session.branch}
           </span>
         )}
@@ -150,11 +150,11 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
 
       {/* Merge button or alert tags */}
       {!rateLimited && (alerts.length > 0 || isReadyToMerge) && (
-        <div className="px-4 pb-3.5 pt-0.5">
+        <div className="px-3 pb-3 pt-0.5 md:px-4 md:pb-3.5">
           {isReadyToMerge && pr ? (
             <button
               onClick={(e) => { e.stopPropagation(); onMerge?.(pr.number); }}
-              className="inline-flex items-center gap-1.5 rounded-[5px] border-0 bg-[var(--color-status-ready)] px-3 py-1.5 text-[12px] font-semibold text-[var(--color-text-inverse)] transition-[filter,transform] duration-[100ms] hover:-translate-y-px hover:brightness-110"
+              className="inline-flex min-h-[44px] items-center gap-1.5 rounded-[5px] border-0 bg-[var(--color-status-ready)] px-4 py-2 text-[12px] font-semibold text-[var(--color-text-inverse)] transition-[filter,transform] duration-[100ms] hover:-translate-y-px hover:brightness-110 md:min-h-0 md:px-3 md:py-1.5"
             >
               <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                 <path d="M5 12h14M12 5l7 7-7 7" />
@@ -182,7 +182,7 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
                     <button
                       onClick={(e) => { e.stopPropagation(); handleAction(alert.key, alert.actionMessage ?? ""); }}
                       disabled={sendingAction === alert.key}
-                      className="rounded border border-[rgba(88,166,255,0.25)] px-2 py-0.5 text-[11px] text-[var(--color-accent)] transition-colors hover:bg-[rgba(88,166,255,0.1)] disabled:opacity-50"
+                      className="min-h-[44px] rounded border border-[rgba(88,166,255,0.25)] px-3 py-1.5 text-[11px] text-[var(--color-accent)] transition-colors hover:bg-[rgba(88,166,255,0.1)] disabled:opacity-50 md:min-h-0 md:px-2 md:py-0.5"
                     >
                       {sendingAction === alert.key ? "sent!" : alert.actionLabel}
                     </button>
@@ -196,7 +196,7 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
 
       {/* Expandable detail panel */}
       {expanded && (
-        <div className="border-t border-[var(--color-border-subtle)] px-4 py-3.5">
+        <div className="border-t border-[var(--color-border-subtle)] px-3 py-3 md:px-4 md:py-3.5">
           {session.summary && pr?.title && session.summary !== pr.title && (
             <DetailSection label="Summary">
               <p className="text-[12px] leading-relaxed text-[var(--color-text-secondary)]">
@@ -260,11 +260,11 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
             <p className="text-[12px] text-[var(--color-text-tertiary)]">No PR associated with this session.</p>
           )}
 
-          <div className="mt-3 flex gap-2 border-t border-[var(--color-border-subtle)] pt-3">
+          <div className="mt-3 flex flex-wrap gap-2 border-t border-[var(--color-border-subtle)] pt-3">
             {isRestorable && (
               <button
                 onClick={(e) => { e.stopPropagation(); onRestore?.(session.id); }}
-                className="rounded border border-[rgba(88,166,255,0.35)] px-2.5 py-1 text-[11px] text-[var(--color-accent)] transition-colors hover:bg-[rgba(88,166,255,0.1)]"
+                className="min-h-[44px] rounded border border-[rgba(88,166,255,0.35)] px-3.5 py-2 text-[11px] text-[var(--color-accent)] transition-colors hover:bg-[rgba(88,166,255,0.1)] md:min-h-0 md:px-2.5 md:py-1"
               >
                 restore session
               </button>
@@ -272,7 +272,7 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
             {!isTerminal && (
               <button
                 onClick={(e) => { e.stopPropagation(); onKill?.(session.id); }}
-                className="rounded border border-[rgba(239,68,68,0.35)] px-2.5 py-1 text-[11px] text-[var(--color-status-error)] transition-colors hover:bg-[rgba(239,68,68,0.1)]"
+                className="min-h-[44px] rounded border border-[rgba(239,68,68,0.35)] px-3.5 py-2 text-[11px] text-[var(--color-status-error)] transition-colors hover:bg-[rgba(239,68,68,0.1)] md:min-h-0 md:px-2.5 md:py-1"
               >
                 terminate
               </button>

@@ -95,12 +95,12 @@ export function Dashboard({ initialSessions, stats, orchestratorId, projectName 
   );
 
   return (
-    <div className="px-8 py-7">
+    <div className="px-4 py-5 md:px-8 md:py-7" style={{ marginTop: "env(safe-area-inset-top, 0px)" }}>
       <DynamicFavicon sessions={sessions} projectName={projectName} />
       {/* Header */}
-      <div className="mb-8 flex items-center justify-between border-b border-[var(--color-border-subtle)] pb-6">
-        <div className="flex items-center gap-6">
-          <h1 className="text-[17px] font-semibold tracking-[-0.02em] text-[var(--color-text-primary)]">
+      <div className="mb-6 flex flex-col gap-3 border-b border-[var(--color-border-subtle)] pb-5 sm:flex-row sm:items-center sm:justify-between md:mb-8 md:pb-6">
+        <div className="flex items-center gap-4 md:gap-6">
+          <h1 className="text-[15px] font-semibold tracking-[-0.02em] text-[var(--color-text-primary)] md:text-[17px]">
             Orchestrator
           </h1>
           <StatusLine stats={stats} />
@@ -108,7 +108,7 @@ export function Dashboard({ initialSessions, stats, orchestratorId, projectName 
         {orchestratorId && (
           <a
             href={`/sessions/${encodeURIComponent(orchestratorId)}`}
-            className="orchestrator-btn flex items-center gap-2 rounded-[7px] px-4 py-2 text-[12px] font-semibold hover:no-underline"
+            className="orchestrator-btn flex w-fit items-center gap-2 rounded-[7px] px-4 py-2 text-[12px] font-semibold hover:no-underline"
           >
             <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] opacity-80" />
             orchestrator
@@ -144,10 +144,10 @@ export function Dashboard({ initialSessions, stats, orchestratorId, projectName 
 
       {/* Kanban columns for active zones */}
       {hasKanbanSessions && (
-        <div className="mb-8 flex gap-4 overflow-x-auto pb-2">
+        <div className="mb-6 flex flex-col gap-4 md:mb-8 md:flex-row md:overflow-x-auto md:pb-2">
           {KANBAN_LEVELS.map((level) =>
             grouped[level].length > 0 ? (
-              <div key={level} className="min-w-[200px] flex-1">
+              <div key={level} className="md:min-w-[200px] md:flex-1">
                 <AttentionZone
                   level={level}
                   sessions={grouped[level]}
@@ -184,7 +184,8 @@ export function Dashboard({ initialSessions, stats, orchestratorId, projectName 
           <h2 className="mb-3 px-1 text-[10px] font-bold uppercase tracking-[0.10em] text-[var(--color-text-tertiary)]">
             Pull Requests
           </h2>
-          <div className="overflow-hidden rounded-[6px] border border-[var(--color-border-default)]">
+          <div className="-mx-4 overflow-x-auto px-4 md:mx-0 md:px-0">
+          <div className="min-w-[600px] overflow-hidden rounded-[6px] border border-[var(--color-border-default)]">
             <table className="w-full border-collapse">
               <thead>
                 <tr className="border-b border-[var(--color-border-muted)]">
@@ -215,6 +216,7 @@ export function Dashboard({ initialSessions, stats, orchestratorId, projectName 
               </tbody>
             </table>
           </div>
+          </div>
         </div>
       )}
     </div>
@@ -238,19 +240,19 @@ function StatusLine({ stats }: { stats: DashboardStats }) {
   ];
 
   return (
-    <div className="flex items-baseline gap-0.5">
+    <div className="flex flex-wrap items-baseline gap-0.5">
       {parts.map((p, i) => (
         <span key={p.label} className="flex items-baseline">
           {i > 0 && (
-            <span className="mx-3 text-[11px] text-[var(--color-border-strong)]">·</span>
+            <span className="mx-1.5 text-[11px] text-[var(--color-border-strong)] md:mx-3">·</span>
           )}
           <span
-            className="text-[20px] font-bold tabular-nums tracking-tight"
+            className="text-[17px] font-bold tabular-nums tracking-tight md:text-[20px]"
             style={{ color: p.color ?? "var(--color-text-primary)" }}
           >
             {p.value}
           </span>
-          <span className="ml-1.5 text-[11px] text-[var(--color-text-muted)]">
+          <span className="ml-1 text-[10px] text-[var(--color-text-muted)] md:ml-1.5 md:text-[11px]">
             {p.label}
           </span>
         </span>

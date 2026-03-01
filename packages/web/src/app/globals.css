@@ -75,7 +75,13 @@ body {
     var(--color-bg-base);
   color: var(--color-text-primary);
   min-height: 100vh;
+  min-height: 100dvh;
   letter-spacing: -0.011em;
+}
+
+/* Touch optimization for mobile */
+@media (pointer: coarse) {
+  button, a { -webkit-tap-highlight-color: transparent; }
 }
 
 a {
@@ -148,6 +154,15 @@ a:hover {
   -webkit-backdrop-filter: blur(16px);
 }
 
+/* Sticky nav with safe-area offset for notched devices / PWA standalone.
+   Uses separate top declarations so browsers that don't support env()
+   fall back to 0 instead of dropping the property entirely. */
+.nav-sticky {
+  position: sticky;
+  top: 0;
+  top: env(safe-area-inset-top);
+}
+
 /* ── Detail page cards — subtle depth, no hover lift ─────────────────── */
 
 .detail-card {
@@ -177,12 +192,14 @@ a:hover {
   --color-text-tertiary:  #656d76;
 }
 
-.session-card:hover {
-  transform: translateY(-2px);
-  box-shadow:
-    0 4px 8px rgba(0,0,0,0.85),
-    0 14px 36px rgba(0,0,0,0.55),
-    inset 0 1px 0 rgba(255,255,255,0.1);
+@media (hover: hover) {
+  .session-card:hover {
+    transform: translateY(-2px);
+    box-shadow:
+      0 4px 8px rgba(0,0,0,0.85),
+      0 14px 36px rgba(0,0,0,0.55),
+      inset 0 1px 0 rgba(255,255,255,0.1);
+  }
 }
 
 .session-card.card-merge-ready {
@@ -195,12 +212,14 @@ a:hover {
     inset 0 1px 0 rgba(255,255,255,0.07);
 }
 
-.session-card.card-merge-ready:hover {
-  transform: translateY(-2px);
-  box-shadow:
-    0 0 0 1px rgba(63,185,80,0.35),
-    0 4px 8px rgba(0,0,0,0.85),
-    0 14px 36px rgba(0,0,0,0.55),
-    0 0 60px rgba(63,185,80,0.2),
-    inset 0 1px 0 rgba(255,255,255,0.1);
+@media (hover: hover) {
+  .session-card.card-merge-ready:hover {
+    transform: translateY(-2px);
+    box-shadow:
+      0 0 0 1px rgba(63,185,80,0.35),
+      0 4px 8px rgba(0,0,0,0.85),
+      0 14px 36px rgba(0,0,0,0.55),
+      0 0 60px rgba(63,185,80,0.2),
+      inset 0 1px 0 rgba(255,255,255,0.1);
+  }
 }
