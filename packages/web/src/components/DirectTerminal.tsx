@@ -201,10 +201,40 @@ export function DirectTerminal({
           );
         };
 
+        // Buffer incoming data while the user is selecting text so that
+        // terminal.write() doesn't clear the xterm.js selection mid-drag.
+        let selecting = false;
+        const writeBuffer: string[] = [];
+
+        const flushBuffer = () => {
+          if (writeBuffer.length > 0) {
+            terminal.write(writeBuffer.join(""));
+            writeBuffer.length = 0;
+          }
+        };
+
+        const onMouseDown = () => {
+          selecting = true;
+        };
+        const onMouseUp = () => {
+          selecting = false;
+          // Small delay so the selection is still visible when the user
+          // releases the mouse and can hit Cmd+C before the flush clears it.
+          setTimeout(flushBuffer, 150);
+        };
+
+        const el = terminalRef.current!;
+        el.addEventListener("mousedown", onMouseDown);
+        el.addEventListener("mouseup", onMouseUp);
+
         websocket.onmessage = (event) => {
           const data =
             typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data);
-          terminal.write(data);
+          if (selecting) {
+            writeBuffer.push(data);
+          } else {
+            terminal.write(data);
+          }
         };
 
         websocket.onerror = (event) => {
@@ -284,6 +314,8 @@ export function DirectTerminal({
 
         // Store cleanup function to be called from useEffect cleanup
         cleanup = () => {
+          el.removeEventListener("mousedown", onMouseDown);
+          el.removeEventListener("mouseup", onMouseUp);
           window.removeEventListener("resize", handleResize);
           disposable.dispose();
           websocket.close();
