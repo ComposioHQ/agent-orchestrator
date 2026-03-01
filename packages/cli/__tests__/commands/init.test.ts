@@ -87,6 +87,34 @@ describe("init command", () => {
     }
   });
 
+  it("auto mode tells user when default port is busy and which port it picked", async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "ao-init-test-"));
+    const outputPath = join(tmpDir, "agent-orchestrator.yaml");
+
+    // Occupy port 3000
+    const blocker = createServer();
+    await new Promise<void>((resolve) => {
+      blocker.listen(3000, "127.0.0.1", () => resolve());
+    });
+
+    try {
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+      const program = new Command();
+      program.exitOverride();
+      registerInit(program);
+
+      await program.parseAsync(["node", "test", "init", "--auto", "--output", outputPath]);
+
+      const logCalls = logSpy.mock.calls.map((args) => args.join(" "));
+      const busyMessage = logCalls.find((msg) => msg.includes("Port 3000 is busy"));
+      expect(busyMessage).toBeDefined();
+      expect(busyMessage).toContain("instead");
+    } finally {
+      await new Promise<void>((resolve) => blocker.close(() => resolve()));
+    }
+  });
+
   it("auto mode writes name and sessionPrefix to project config", async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "ao-init-test-"));
     const outputPath = join(tmpDir, "agent-orchestrator.yaml");

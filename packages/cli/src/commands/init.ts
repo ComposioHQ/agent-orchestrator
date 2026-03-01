@@ -252,6 +252,11 @@ export function registerInit(program: Command): void {
             ),
           );
           console.log(chalk.dim("  Please specify a port manually.\n"));
+        } else if (freePort !== DEFAULT_PORT) {
+          console.log(
+            chalk.yellow(`\n⚠ Port ${DEFAULT_PORT} is busy — suggesting ${freePort} instead.`),
+          );
+          console.log(chalk.dim("  Press Enter to accept, or type a different port.\n"));
         }
         const portStr = await prompt(rl, "Dashboard port", String(freePort ?? DEFAULT_PORT));
         const port = parseInt(portStr, 10);
@@ -462,6 +467,8 @@ async function handleAutoMode(outputPath: string, smart: boolean): Promise<void>
       ),
     );
     console.log(chalk.dim("    Set the port manually in the config before running ao start.\n"));
+  } else if (port !== DEFAULT_PORT) {
+    console.log(chalk.yellow(`  ⚠ Port ${DEFAULT_PORT} is busy — using ${port} instead.`));
   }
   const config: Record<string, unknown> = {
     dataDir: "~/.agent-orchestrator",
