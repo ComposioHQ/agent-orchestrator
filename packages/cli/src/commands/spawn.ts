@@ -7,14 +7,12 @@ import { banner } from "../lib/format.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 import { preflight } from "../lib/preflight.js";
 
-async function spawnSession(
-  config: OrchestratorConfig,
-  projectId: string,
-  issueId?: string,
-  openTab?: boolean,
-  agent?: string,
-): Promise<string> {
-  // Pre-flight: ensure tmux is available when using tmux runtime
+/**
+ * Run pre-flight checks for a project once, before any sessions are spawned.
+ * Validates runtime and tracker prerequisites so failures surface immediately
+ * rather than repeating per-session in a batch.
+ */
+async function runSpawnPreflight(config: OrchestratorConfig, projectId: string): Promise<void> {
   const project = config.projects[projectId];
   const runtime = project?.runtime ?? config.defaults.runtime;
   if (runtime === "tmux") {
@@ -23,7 +21,15 @@ async function spawnSession(
   if (project?.tracker?.plugin === "github") {
     await preflight.checkGhAuth();
   }
+}
 
+async function spawnSession(
+  config: OrchestratorConfig,
+  projectId: string,
+  issueId?: string,
+  openTab?: boolean,
+  agent?: string,
+): Promise<string> {
   const spinner = ora("Creating session").start();
 
   try {
@@ -84,6 +90,7 @@ export function registerSpawn(program: Command): void {
       }
 
       try {
+        await runSpawnPreflight(config, projectId);
         await spawnSession(config, projectId, issueId, opts.open, opts.agent);
       } catch (err) {
         console.error(chalk.red(`✗ ${err}`));
@@ -115,6 +122,9 @@ export function registerBatchSpawn(program: Command): void {
       console.log(`  Project: ${chalk.bold(projectId)}`);
       console.log(`  Issues:  ${issues.join(", ")}`);
       console.log();
+
+      // Pre-flight once before the loop so a missing prerequisite fails fast
+      await runSpawnPreflight(config, projectId);
 
       const sm = await getSessionManager(config);
       const created: Array<{ session: string; issue: string }> = [];
