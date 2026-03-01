@@ -152,6 +152,7 @@ function metadataToSession(
     agentInfo: meta["summary"] ? { summary: meta["summary"], agentSessionId: null } : null,
     createdAt: meta["createdAt"] ? new Date(meta["createdAt"]) : (createdAt ?? new Date()),
     lastActivityAt: modifiedAt ?? new Date(),
+    restoredAt: meta["restoredAt"] ? new Date(meta["restoredAt"]) : undefined,
     metadata: meta,
   };
 }
