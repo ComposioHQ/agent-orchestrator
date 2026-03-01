@@ -155,7 +155,12 @@ export function DirectTerminal({
           if (parts.length < 2) return false;
           const b64 = parts[parts.length - 1];
           try {
-            navigator.clipboard?.writeText(atob(b64)).catch(() => {});
+            // Decode base64 → binary string → Uint8Array → UTF-8 text
+            // atob() alone only handles Latin-1; TextDecoder is needed for UTF-8
+            const binary = atob(b64);
+            const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+            const text = new TextDecoder().decode(bytes);
+            navigator.clipboard?.writeText(text).catch(() => {});
           } catch {
             // Ignore decode errors
           }
@@ -272,8 +277,11 @@ export function DirectTerminal({
 
     let resizeAttempts = 0;
     const maxAttempts = 60;
+    let cancelled = false;
+    let rafId = 0;
 
     const resizeTerminal = () => {
+      if (cancelled) return;
       resizeAttempts++;
 
       // Get container dimensions
@@ -287,7 +295,7 @@ export function DirectTerminal({
 
       if (!isFullscreenTarget && resizeAttempts < maxAttempts) {
         // Container hasn't reached target size yet, try again
-        requestAnimationFrame(resizeTerminal);
+        rafId = requestAnimationFrame(resizeTerminal);
         return;
       }
 
@@ -307,13 +315,16 @@ export function DirectTerminal({
     };
 
     // Start resize polling
-    requestAnimationFrame(resizeTerminal);
+    rafId = requestAnimationFrame(resizeTerminal);
 
     // Also try on transitionend
     const handleTransitionEnd = (e: TransitionEvent) => {
+      if (cancelled) return;
       if (e.target === container.parentElement) {
         resizeAttempts = 0;
-        setTimeout(() => requestAnimationFrame(resizeTerminal), 50);
+        setTimeout(() => {
+          if (!cancelled) rafId = requestAnimationFrame(resizeTerminal);
+        }, 50);
       }
     };
 
@@ -322,15 +333,19 @@ export function DirectTerminal({
 
     // Backup timers in case RAF polling doesn't work
     const timer1 = setTimeout(() => {
+      if (cancelled) return;
       resizeAttempts = 0;
       resizeTerminal();
     }, 300);
     const timer2 = setTimeout(() => {
+      if (cancelled) return;
       resizeAttempts = 0;
       resizeTerminal();
     }, 600);
 
     return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafId);
       parent?.removeEventListener("transitionend", handleTransitionEnd);
       clearTimeout(timer1);
       clearTimeout(timer2);
