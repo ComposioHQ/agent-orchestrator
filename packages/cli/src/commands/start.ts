@@ -139,10 +139,6 @@ export function registerStart(program: Command): void {
           const sessionId = `${project.sessionPrefix}-orchestrator`;
           const port = config.port ?? 3000;
 
-          // Pre-flight checks
-          await preflight.checkPort(port);
-          await preflight.checkBuilt();
-
           console.log(chalk.bold(`\nStarting orchestrator for ${chalk.cyan(project.name)}\n`));
 
           // Start dashboard (unless --no-dashboard)
@@ -151,6 +147,9 @@ export function registerStart(program: Command): void {
           let exists = false; // Track whether orchestrator session already exists
 
           if (opts?.dashboard !== false) {
+            // Pre-flight: only check port/build when actually starting the dashboard
+            await preflight.checkPort(port);
+            await preflight.checkBuilt();
             const webDir = findWebDir();
             if (!existsSync(resolve(webDir, "package.json"))) {
               throw new Error("Could not find @composio/ao-web package. Run: pnpm install");

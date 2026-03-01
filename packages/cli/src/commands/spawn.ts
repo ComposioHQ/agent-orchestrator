@@ -14,11 +14,12 @@ async function spawnSession(
   openTab?: boolean,
   agent?: string,
 ): Promise<string> {
-  // Pre-flight: ensure tmux is available (default runtime)
-  await preflight.checkTmux();
-
-  // Pre-flight: ensure gh is authenticated if using github tracker
+  // Pre-flight: ensure tmux is available when using tmux runtime
   const project = config.projects[projectId];
+  const runtime = project?.runtime ?? config.defaults.runtime;
+  if (runtime === "tmux") {
+    await preflight.checkTmux();
+  }
   if (project?.tracker?.plugin === "github") {
     await preflight.checkGhAuth();
   }
