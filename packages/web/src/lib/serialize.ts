@@ -380,7 +380,7 @@ export async function enrichSessionsMetadata(
 export function computeStats(sessions: DashboardSession[]): DashboardStats {
   return {
     totalSessions: sessions.length,
-    workingSessions: sessions.filter((s) => s.activity === "active").length,
+    workingSessions: sessions.filter((s) => s.activity !== null && s.activity !== "exited").length,
     openPRs: sessions.filter((s) => s.pr?.state === "open").length,
     needsReview: sessions.filter((s) => s.pr && !s.pr.isDraft && s.pr.reviewDecision === "pending")
       .length,
