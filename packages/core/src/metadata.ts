@@ -255,6 +255,39 @@ export function readArchivedMetadataRaw(
 }
 
 /**
+ * List deduplicated session IDs from the archive directory.
+ * Returns one entry per session (the latest archive file wins).
+ * Uses the same `_` + digit separator detection as readArchivedMetadataRaw().
+ */
+export function listArchivedSessionIds(dataDir: string): SessionId[] {
+  const archiveDir = join(dataDir, "archive");
+  if (!existsSync(archiveDir)) return [];
+
+  const seen = new Set<string>();
+  for (const file of readdirSync(archiveDir)) {
+    // Find the last `_` followed by a digit (start of ISO timestamp)
+    // to split sessionId from timestamp suffix.
+    let splitIdx = -1;
+    for (let i = file.length - 1; i >= 0; i--) {
+      if (file[i] === "_") {
+        const next = file[i + 1];
+        if (next && next >= "0" && next <= "9") {
+          splitIdx = i;
+          break;
+        }
+      }
+    }
+    if (splitIdx === -1) continue;
+
+    const sessionId = file.slice(0, splitIdx);
+    if (!VALID_SESSION_ID.test(sessionId)) continue;
+    seen.add(sessionId);
+  }
+
+  return [...seen];
+}
+
+/**
  * List all session IDs that have metadata files.
  */
 export function listMetadata(dataDir: string): SessionId[] {
