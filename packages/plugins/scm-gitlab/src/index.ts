@@ -386,9 +386,13 @@ function createGitLabSCM(): SCM {
           "api",
           "graphql",
           "-f",
-          `query=query {
-            project(fullPath: "${repoFlag(pr)}") {
-              mergeRequest(iid: "${pr.number}") {
+          `fullPath=${repoFlag(pr)}`,
+          "-f",
+          `iid=${String(pr.number)}`,
+          "-f",
+          `query=query($fullPath: ID!, $iid: String!) {
+            project(fullPath: $fullPath) {
+              mergeRequest(iid: $iid) {
                 discussions(first: 100) {
                   nodes {
                     id

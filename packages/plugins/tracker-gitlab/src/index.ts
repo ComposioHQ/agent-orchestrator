@@ -42,6 +42,32 @@ function mapState(glState: string): Issue["state"] {
   return "open";
 }
 
+/** Cached GitLab hostname (resolved once from glab config). */
+let _cachedHost: string | null = null;
+
+async function getGitLabHost(): Promise<string> {
+  if (_cachedHost) return _cachedHost;
+  try {
+    // glab config get host returns the configured GitLab hostname
+    const host = await glab(["config", "get", "host"]);
+    _cachedHost = host.trim() || "gitlab.com";
+  } catch {
+    _cachedHost = "gitlab.com";
+  }
+  return _cachedHost;
+}
+
+/**
+ * Build GitLab issue URL. Since issueUrl is sync in the interface,
+ * we use the cached host (populated on first async call).
+ * Falls back to gitlab.com if cache is not yet populated.
+ */
+function gitlabIssueUrl(identifier: string, project: ProjectConfig): string {
+  const num = identifier.replace(/^#/, "");
+  const host = _cachedHost || "gitlab.com";
+  return `https://${host}/${project.repo}/-/issues/${num}`;
+}
+
 // ---------------------------------------------------------------------------
 // Tracker implementation
 // ---------------------------------------------------------------------------
@@ -51,6 +77,8 @@ function createGitLabTracker(): Tracker {
     name: "gitlab",
 
     async getIssue(identifier: string, project: ProjectConfig): Promise<Issue> {
+      // Populate host cache on first call for sync issueUrl()
+      await getGitLabHost();
       const raw = await glab([
         "issue",
         "view",
@@ -97,8 +125,7 @@ function createGitLabTracker(): Tracker {
     },
 
     issueUrl(identifier: string, project: ProjectConfig): string {
-      const num = identifier.replace(/^#/, "");
-      return `https://gitlab.com/${project.repo}/-/issues/${num}`;
+      return gitlabIssueUrl(identifier, project);
     },
 
     issueLabel(url: string, _project: ProjectConfig): string {
@@ -254,8 +281,6 @@ function createGitLabTracker(): Tracker {
         input.title,
         "--description",
         input.description ?? "",
-        "--output",
-        "json",
       ];
 
       if (input.labels && input.labels.length > 0) {
@@ -266,10 +291,16 @@ function createGitLabTracker(): Tracker {
         args.push("--assignee", input.assignee);
       }
 
-      const raw = await glab(args);
-      const data: { iid: number } = JSON.parse(raw);
+      // glab issue create outputs the URL of the new issue
+      const url = await glab(args);
 
-      return this.getIssue(String(data.iid), project);
+      // Extract issue number from URL (e.g. .../issues/42)
+      const match = url.match(/\/issues\/(\d+)/);
+      if (!match) {
+        throw new Error(`Failed to parse issue URL from glab output: ${url}`);
+      }
+
+      return this.getIssue(match[1], project);
     },
   };
 }
