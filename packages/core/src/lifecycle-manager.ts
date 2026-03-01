@@ -200,7 +200,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     if (agent && session.runtimeHandle) {
       try {
         // Try JSONL-based activity detection first (reads agent's session files directly)
-        const activityState = await agent.getActivityState(session);
+        const activityState = await agent.getActivityState(session, config.readyThresholdMs);
         if (activityState) {
           if (activityState.state === "waiting_input") return "needs_input";
           if (activityState.state === "exited") return "killed";

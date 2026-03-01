@@ -227,7 +227,7 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("killed");
   });
 
-  it("detects killed state when agent process exits (idle terminal + dead process)", async () => {
+  it("detects killed state when getActivityState returns exited", async () => {
     vi.mocked(mockAgent.getActivityState).mockResolvedValue({ state: "exited" });
 
     const session = makeSession({ status: "working" });
@@ -251,8 +251,10 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("killed");
   });
 
-  it("detects killed state when agent process exits (active terminal + dead process)", async () => {
-    vi.mocked(mockAgent.getActivityState).mockResolvedValue({ state: "exited" });
+  it("detects killed via terminal fallback when getActivityState returns null", async () => {
+    vi.mocked(mockAgent.getActivityState).mockResolvedValue(null);
+    vi.mocked(mockAgent.detectActivity).mockReturnValue("idle");
+    vi.mocked(mockAgent.isProcessRunning).mockResolvedValue(false);
 
     const session = makeSession({ status: "working" });
     vi.mocked(mockSessionManager.get).mockResolvedValue(session);
@@ -275,7 +277,8 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("killed");
   });
 
-  it("stays working when agent is idle but process is still running", async () => {
+  it("stays working when agent is idle but process is still running (fallback path)", async () => {
+    vi.mocked(mockAgent.getActivityState).mockResolvedValue(null);
     vi.mocked(mockAgent.detectActivity).mockReturnValue("idle");
     vi.mocked(mockAgent.isProcessRunning).mockResolvedValue(true);
 
