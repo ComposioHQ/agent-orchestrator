@@ -48,7 +48,6 @@
     "@composio/ao-plugin-terminal-iterm2": "workspace:*",
     "@composio/ao-plugin-terminal-web": "workspace:*",
     "@composio/ao-plugin-tracker-github": "workspace:*",
-    "@composio/ao-plugin-tracker-gitlab": "workspace:*",
     "@composio/ao-plugin-tracker-linear": "workspace:*",
     "@composio/ao-plugin-workspace-clone": "workspace:*",
     "@composio/ao-plugin-workspace-worktree": "workspace:*",

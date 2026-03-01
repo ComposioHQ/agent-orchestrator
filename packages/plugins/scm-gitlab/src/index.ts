@@ -81,7 +81,7 @@ function createGitLabSCM(): SCM {
       if (!session.branch) return null;
 
       const parts = project.repo.split("/");
-      if (parts.length < 2 || !parts[0] || !parts[1]) {
+      if (parts.length < 2 || !parts[0] || !parts[parts.length - 1]) {
         throw new Error(`Invalid repo format "${project.repo}", expected "group/project"`);
       }
       // GitLab supports nested groups: "group/subgroup/project"

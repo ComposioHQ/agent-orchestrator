@@ -86,9 +86,6 @@ importers:
       '@composio/ao-plugin-tracker-github':
         specifier: workspace:*
         version: link:../plugins/tracker-github
-      '@composio/ao-plugin-tracker-gitlab':
-        specifier: workspace:*
-        version: link:../plugins/tracker-gitlab
       '@composio/ao-plugin-tracker-linear':
         specifier: workspace:*
         version: link:../plugins/tracker-linear
