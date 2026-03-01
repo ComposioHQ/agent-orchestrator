@@ -81,6 +81,7 @@ const mockSessionManager: SessionManager = {
       throw new Error(`Session ${id} not found`);
     }
   }),
+  getAttachInfo: vi.fn(async () => null),
   cleanup: vi.fn(async () => ({ killed: [], skipped: [], errors: [] })),
   spawnOrchestrator: vi.fn(),
   restore: vi.fn(async (id: string) => {

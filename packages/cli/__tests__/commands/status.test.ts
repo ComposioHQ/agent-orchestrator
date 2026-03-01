@@ -39,6 +39,7 @@ const {
     spawn: vi.fn(),
     spawnOrchestrator: vi.fn(),
     send: vi.fn(),
+    getAttachInfo: vi.fn().mockResolvedValue(null),
   },
   sessionsDirRef: { current: "" },
 }));

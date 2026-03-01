@@ -7,14 +7,19 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, openSync, closeSync, mkdirSync } from "node:fs";
+import { resolve, join } from "node:path";
 import chalk from "chalk";
 import ora from "ora";
 import type { Command } from "commander";
 import {
   loadConfig,
   generateOrchestratorPrompt,
+  getLogsDir,
+  LogWriter,
+  readPidFile,
+  writePidFile,
+  removePidFile,
   type OrchestratorConfig,
   type ProjectConfig,
 } from "@composio/ao-core";
@@ -62,29 +67,96 @@ function resolveProject(
 }
 
 /**
- * Start dashboard server in the background.
- * Returns the child process handle for cleanup.
+ * Start dashboard server with log capture.
+ *
+ * Two modes:
+ * - Foreground (default): live output to terminal + logging to files
+ * - Background: daemonized, logs go to files only, process detached
  */
 async function startDashboard(
   port: number,
   webDir: string,
   configPath: string | null,
+  logDir: string | null,
+  background: boolean,
   terminalPort?: number,
   directTerminalPort?: number,
 ): Promise<ChildProcess> {
   const env = await buildDashboardEnv(port, configPath, terminalPort, directTerminalPort);
 
+  // In background mode, redirect stdout/stderr directly to a log file via
+  // file descriptors so logging continues after the parent process exits.
+  // In foreground mode, pipe through the parent to show output + log via LogWriter.
+  if (background && logDir) {
+    if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true });
+    const outFd = openSync(join(logDir, "dashboard.out.log"), "a");
+    const errFd = openSync(join(logDir, "dashboard.err.log"), "a");
+
+    const child = spawn("pnpm", ["run", "dev"], {
+      cwd: webDir,
+      stdio: ["ignore", outFd, errFd],
+      detached: true,
+      env,
+    });
+
+    // Close FDs in the parent — the child has its own copies via dup2
+    closeSync(outFd);
+    closeSync(errFd);
+
+    child.unref();
+
+    if (child.pid) {
+      writePidFile(logDir, child.pid);
+    }
+
+    return child;
+  }
+
+  // Foreground mode: pipe through parent for live output + structured logging
+  const logWriter = logDir
+    ? new LogWriter({ filePath: join(logDir, "dashboard.jsonl") })
+    : null;
+
   const child = spawn("pnpm", ["run", "dev"], {
     cwd: webDir,
-    stdio: "inherit",
-    detached: false,
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: background,
     env,
   });
 
+  child.stdout?.on("data", (chunk: Buffer) => {
+    if (!background) process.stdout.write(chunk);
+    if (logWriter) {
+      for (const line of chunk.toString().split("\n").filter(Boolean)) {
+        logWriter.appendLine(line, "stdout", "dashboard");
+      }
+    }
+  });
+
+  child.stderr?.on("data", (chunk: Buffer) => {
+    if (!background) process.stderr.write(chunk);
+    if (logWriter) {
+      for (const line of chunk.toString().split("\n").filter(Boolean)) {
+        logWriter.appendLine(line, "stderr", "dashboard");
+      }
+    }
+  });
+
+  if (background) {
+    child.unref();
+    // Write PID to file for `ao stop` to find it
+    if (logDir && child.pid) {
+      writePidFile(logDir, child.pid);
+    }
+  }
+
   child.on("error", (err) => {
     console.error(chalk.red("Dashboard failed to start:"), err.message);
-    // Emit synthetic exit so callers listening on "exit" can clean up
     child.emit("exit", 1, null);
+  });
+
+  child.once("exit", () => {
+    if (logWriter) logWriter.close();
   });
 
   return child;
@@ -92,12 +164,29 @@ async function startDashboard(
 
 /**
  * Stop dashboard server.
- * Uses lsof to find the process listening on the port, then kills it.
+ * First tries PID file (from background mode), then falls back to lsof.
  * Best effort — if it fails, just warn the user.
  */
-async function stopDashboard(port: number): Promise<void> {
+async function stopDashboard(port: number, logDir: string | null): Promise<void> {
+  // Try PID file first (from background mode).
+  // readPidFile validates the process is alive via kill(pid, 0) and cleans up stale files.
+  if (logDir) {
+    const pid = readPidFile(logDir);
+    if (pid !== null) {
+      try {
+        await exec("kill", [String(pid)]);
+        removePidFile(logDir);
+        console.log(chalk.green("Dashboard stopped (via PID file)"));
+        return;
+      } catch {
+        // Process gone between readPidFile and kill — clean up and fall through
+        removePidFile(logDir);
+      }
+    }
+  }
+
+  // Fallback: find via lsof
   try {
-    // Find PIDs listening on the port (can be multiple: parent + children)
     const { stdout } = await exec("lsof", ["-ti", `:${port}`]);
     const pids = stdout
       .trim()
@@ -105,7 +194,6 @@ async function stopDashboard(port: number): Promise<void> {
       .filter((p) => p.length > 0);
 
     if (pids.length > 0) {
-      // Kill all processes (pass PIDs as separate arguments)
       await exec("kill", pids);
       console.log(chalk.green("Dashboard stopped"));
     } else {
@@ -123,6 +211,7 @@ export function registerStart(program: Command): void {
     .option("--no-dashboard", "Skip starting the dashboard server")
     .option("--no-orchestrator", "Skip starting the orchestrator agent")
     .option("--rebuild", "Clean and rebuild dashboard before starting")
+    .option("-b, --background", "Run dashboard in background (logs to file only)")
     .action(
       async (
         projectArg?: string,
@@ -130,6 +219,7 @@ export function registerStart(program: Command): void {
           dashboard?: boolean;
           orchestrator?: boolean;
           rebuild?: boolean;
+          background?: boolean;
         },
       ) => {
         try {
@@ -137,6 +227,12 @@ export function registerStart(program: Command): void {
           const { projectId, project } = resolveProject(config, projectArg);
           const sessionId = `${project.sessionPrefix}-orchestrator`;
           const port = config.port ?? 3000;
+
+          // Resolve log directory for the project
+          const logDir = config.configPath
+            ? getLogsDir(config.configPath, project.path)
+            : null;
+          const background = opts?.background ?? false;
 
           console.log(chalk.bold(`\nStarting orchestrator for ${chalk.cyan(project.name)}\n`));
 
@@ -160,10 +256,17 @@ export function registerStart(program: Command): void {
               port,
               webDir,
               config.configPath,
+              logDir,
+              background,
               config.terminalPort,
               config.directTerminalPort,
             );
-            spinner.succeed(`Dashboard starting on http://localhost:${port}`);
+            spinner.succeed(
+              `Dashboard starting on http://localhost:${port}${background ? " (background)" : ""}`,
+            );
+            if (logDir) {
+              console.log(chalk.dim(`  Logs: ${logDir}/dashboard.jsonl`));
+            }
             console.log(chalk.dim("  (Dashboard will be ready in a few seconds)\n"));
           }
 
@@ -276,7 +379,10 @@ export function registerStop(program: Command): void {
         }
 
         // Stop dashboard
-        await stopDashboard(port);
+        const logDir = config.configPath
+          ? getLogsDir(config.configPath, project.path)
+          : null;
+        await stopDashboard(port, logDir);
 
         console.log(chalk.bold.green("\n✓ Orchestrator stopped\n"));
       } catch (err) {

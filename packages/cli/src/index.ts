@@ -10,6 +10,9 @@ import { registerReviewCheck } from "./commands/review-check.js";
 import { registerDashboard } from "./commands/dashboard.js";
 import { registerOpen } from "./commands/open.js";
 import { registerStart, registerStop } from "./commands/start.js";
+import { registerLogs } from "./commands/logs.js";
+import { registerRetrospective } from "./commands/retrospective.js";
+import { registerPerf } from "./commands/perf.js";
 
 const program = new Command();
 
@@ -29,5 +32,8 @@ registerSend(program);
 registerReviewCheck(program);
 registerDashboard(program);
 registerOpen(program);
+registerLogs(program);
+registerRetrospective(program);
+registerPerf(program);
 
 program.parse();

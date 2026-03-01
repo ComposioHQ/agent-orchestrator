@@ -47,11 +47,13 @@ packages/
 ## Key Files (Read These First)
 
 1. `packages/core/src/types.ts` — all interfaces (Runtime, Agent, Workspace, Tracker, SCM, Notifier, Terminal)
-2. `agent-orchestrator.yaml.example` — config format
-3. Plugin examples:
+2. `packages/core/src/session-manager.ts` — session CRUD (spawn, kill, list, get, restore)
+3. `packages/core/src/lifecycle-manager.ts` — state machine + reaction engine + event persistence
+4. `agent-orchestrator.yaml.example` — config format
+5. Plugin examples:
    - `packages/plugins/runtime-tmux/src/index.ts` — Runtime implementation
    - `packages/plugins/agent-claude-code/src/index.ts` — Agent implementation
-4. This file (CLAUDE.md) — code conventions
+6. This file (CLAUDE.md) — code conventions
 
 ## TypeScript Conventions (MUST follow)
 
@@ -145,6 +147,17 @@ pnpm test              # run tests
 
 # Before committing
 pnpm lint && pnpm typecheck
+
+# Logging & debugging (ao CLI)
+ao logs dashboard [--since T] [--level L] [--tail N]   # query dashboard logs
+ao logs events [--session S] [--type T]                # lifecycle event logs
+ao perf routes                                         # API response times p50/p95/p99
+ao perf slow [--limit N]                               # slowest requests with timing breakdown
+ao perf cache                                          # cache hit rates
+ao retro list [--project P]                            # session retrospectives
+ao retro show <session>                                # view retrospective
+ao dashboard restart [--clean] [--wait]                # restart dashboard (clean .next if needed)
+ao dashboard status                                    # dashboard process status
 ```
 
 ## Development Workflow
@@ -212,6 +225,66 @@ Then use `browser_navigate` as normal. If Playwright was previously used in the 
 
 Config loaded from `agent-orchestrator.yaml` (see `agent-orchestrator.yaml.example`). Paths support `~` expansion. Validated with Zod at load time. Per-project overrides for plugins and reactions.
 
+## Logging & Observability
+
+All system activity is logged to structured JSONL files for querying, debugging, and learning.
+
+### Log Files
+
+| File | Location | Content |
+|------|----------|---------|
+| `dashboard.jsonl` | `{logDir}/` | Dashboard stdout/stderr output |
+| `events.jsonl` | `{logDir}/` | Lifecycle state transitions (session spawned, CI failed, PR merged, etc.) |
+| `api.jsonl` | `{logDir}/` | API request timing with performance breakdowns |
+| `browser.jsonl` | `{logDir}/` | Client-side errors, web vitals, fetch timing |
+
+Log dir is at `~/.agent-orchestrator/{configHash}/{projectHash}/logs/`.
+
+### Key Modules
+
+| Module | Path | Purpose |
+|--------|------|---------|
+| `LogWriter` | `packages/core/src/log-writer.ts` | JSONL writer with size-based rotation |
+| `readLogs` / `tailLogs` | `packages/core/src/log-reader.ts` | Query/filter log files |
+| `generateReportCard` | `packages/core/src/session-report-card.ts` | Per-session metrics from event log |
+| `generateRetrospective` | `packages/core/src/retrospective.ts` | Post-session analysis and lessons |
+| `restartDashboard` | `packages/core/src/dashboard-manager.ts` | Programmatic dashboard process control |
+| `request-logger` | `packages/web/src/lib/request-logger.ts` | API request timing |
+| `client-logger` | `packages/web/src/lib/client-logger.ts` | Browser error/perf capture |
+| `cache.getStats()` | `packages/web/src/lib/cache.ts` | Cache hit/miss tracking |
+
+### LogEntry Format
+
+Every JSONL line follows this schema:
+
+```typescript
+interface LogEntry {
+  ts: string;       // ISO 8601
+  level: "stdout" | "stderr" | "info" | "warn" | "error";
+  source: "dashboard" | "lifecycle" | "cli" | "api" | "browser";
+  sessionId: string | null;
+  message: string;
+  data?: Record<string, unknown>;
+}
+```
+
+### Dashboard Pages
+
+- `/logs` — filterable log viewer (source, level, time range, session)
+- `/perf` — API performance dashboard (route stats, slow requests, cache hit rates, PR enrichment timing)
+
+### Environment Variables (in spawned sessions)
+
+- `AO_PROJECT_ID` — project identifier for this session
+- `AO_LOG_DIR` — path to the project's log directory
+
+### Debugging Tips for ao Development
+
+- **Dashboard not loading?** `ao dashboard status` then `ao dashboard restart --clean --wait`
+- **Slow API responses?** `ao perf routes` to find bottleneck, `ao perf slow` for details. PR enrichment in `packages/web/src/lib/serialize.ts` is the #1 bottleneck.
+- **Lifecycle events missing?** Check `ao logs events --since 1h` and verify `logDir` is set in `LifecycleManagerDeps`
+- **Session stuck?** `ao logs events --session <id>` to see state transitions, check if reaction fired
+
 ## Design Decisions
 
 1. **Stateless orchestrator** — no database, flat metadata files + event log
@@ -220,3 +293,5 @@ Config loaded from `agent-orchestrator.yaml` (see `agent-orchestrator.yaml.examp
 4. **Two-tier event handling** — auto-handle routine issues, notify human when judgment needed
 5. **Backwards-compatible metadata** — flat key=value files
 6. **Security first** — `execFile` not `exec`, validate all external input
+7. **Structured JSONL logging** — crash-safe append, size-based rotation, queryable
+8. **Auto-retrospectives** — generated on session merge/kill for learning from past sessions

@@ -119,3 +119,90 @@ describe("prCacheKey", () => {
     expect(key2).not.toBe(key3);
   });
 });
+
+describe("getStats", () => {
+  let cache: TTLCache<string>;
+
+  beforeEach(() => {
+    cache = new TTLCache<string>(1000); // 1 second TTL
+  });
+
+  afterEach(() => {
+    cache.clear(); // Clean up interval
+  });
+
+  it("should return initial stats with all zeros", () => {
+    const stats = cache.getStats();
+    expect(stats.hits).toBe(0);
+    expect(stats.misses).toBe(0);
+    expect(stats.hitRate).toBe(0);
+    expect(stats.size).toBe(0);
+  });
+
+  it("should increment hits after a cache hit", () => {
+    cache.set("key1", "value1");
+    cache.get("key1"); // hit
+
+    const stats = cache.getStats();
+    expect(stats.hits).toBe(1);
+  });
+
+  it("should increment misses after a cache miss", () => {
+    cache.get("nonexistent"); // miss
+
+    const stats = cache.getStats();
+    expect(stats.misses).toBe(1);
+  });
+
+  it("should calculate hit rate correctly", () => {
+    cache.set("key1", "value1");
+    cache.get("key1"); // hit
+    cache.get("key1"); // hit
+    cache.get("key1"); // hit
+    cache.get("nonexistent"); // miss
+
+    const stats = cache.getStats();
+    expect(stats.hits).toBe(3);
+    expect(stats.misses).toBe(1);
+    expect(stats.hitRate).toBe(0.75); // 3 / (3 + 1)
+  });
+
+  it("should track the number of entries via size", () => {
+    cache.set("key1", "value1");
+    cache.set("key2", "value2");
+    cache.set("key3", "value3");
+
+    const stats = cache.getStats();
+    expect(stats.size).toBe(3);
+  });
+
+  it("should reset size after clear but retain hit/miss counters", () => {
+    cache.set("key1", "value1");
+    cache.get("key1"); // hit
+    cache.get("nonexistent"); // miss
+
+    cache.clear();
+
+    const stats = cache.getStats();
+    expect(stats.size).toBe(0);
+    // hits and misses are NOT reset by clear()
+    expect(stats.hits).toBe(1);
+    expect(stats.misses).toBe(1);
+    expect(stats.hitRate).toBe(0.5);
+  });
+
+  it("should count expired entry access as a miss", () => {
+    vi.useFakeTimers();
+    cache.set("key1", "value1");
+
+    // Advance time past TTL
+    vi.advanceTimersByTime(1001);
+    cache.get("key1"); // miss (expired)
+
+    const stats = cache.getStats();
+    expect(stats.hits).toBe(0);
+    expect(stats.misses).toBe(1);
+
+    vi.useRealTimers();
+  });
+});

@@ -6,7 +6,7 @@ import { formatAge } from "../lib/format.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 
 export function registerSession(program: Command): void {
-  const session = program.command("session").description("Session management (ls, kill, cleanup)");
+  const session = program.command("session").description("Session management (ls, attach, kill, cleanup)");
 
   session
     .command("ls")
@@ -148,6 +148,45 @@ export function registerSession(program: Command): void {
           }
           console.log(chalk.green(`\nCleanup complete. ${result.killed.length} sessions cleaned.`));
         }
+      }
+    });
+
+  session
+    .command("attach")
+    .description("Attach to a running session (via runtime plugin)")
+    .argument("<session>", "Session name to attach to")
+    .action(async (sessionName: string) => {
+      const config = loadConfig();
+      const sm = await getSessionManager(config);
+
+      const info = await sm.getAttachInfo(sessionName);
+      if (!info) {
+        console.error(chalk.red(`Session "${sessionName}" not found or not running.`));
+        process.exit(1);
+      }
+
+      const { spawnSync } = await import("node:child_process");
+
+      switch (info.type) {
+        case "tmux":
+          spawnSync("tmux", ["attach", "-t", info.target], { stdio: "inherit" });
+          break;
+        case "docker":
+          spawnSync("docker", ["exec", "-it", info.target, "/bin/sh"], { stdio: "inherit" });
+          break;
+        case "ssh":
+          spawnSync("ssh", [info.target], { stdio: "inherit" });
+          break;
+        case "web":
+          console.log(chalk.cyan(`Open in browser: ${info.target}`));
+          break;
+        default:
+          if (info.command) {
+            console.log(chalk.dim(`Run: ${info.command}`));
+          } else {
+            console.log(chalk.yellow(`Cannot auto-attach to ${info.type} session.`));
+            console.log(chalk.dim(`Target: ${info.target}`));
+          }
       }
     });
 

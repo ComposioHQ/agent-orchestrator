@@ -37,7 +37,18 @@ export const BASE_AGENT_PROMPT = `You are an AI coding agent managed by the Agen
 - Write a clear PR title and description explaining what changed and why.
 - Link the issue in the PR description so it auto-closes when merged.
 - If the repo has CI checks, make sure they pass before requesting review.
-- Respond to every review comment, even if just to acknowledge it.`;
+- Respond to every review comment, even if just to acknowledge it.
+
+## Environment
+Your session has these environment variables available:
+- \`AO_PROJECT_ID\` — the project this session belongs to
+- \`AO_LOG_DIR\` — directory where structured logs are written (JSONL format)
+
+## Debugging
+If you're stuck or need to understand system behavior:
+- Check event logs: lifecycle events are written to \`$AO_LOG_DIR/events.jsonl\`
+- Check dashboard logs: \`$AO_LOG_DIR/dashboard.jsonl\` has dashboard output
+- These are JSONL files — each line is valid JSON with \`ts\`, \`level\`, \`source\`, \`sessionId\`, \`message\` fields`;
 
 // =============================================================================
 // TYPES

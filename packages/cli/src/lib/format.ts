@@ -1,5 +1,5 @@
 import chalk from "chalk";
-import type { CIStatus, ReviewDecision, ActivityState } from "@composio/ao-core";
+import type { CIStatus, ReviewDecision, ActivityState, LogEntry } from "@composio/ao-core";
 
 export function header(title: string): string {
   const line = "─".repeat(76);
@@ -102,6 +102,49 @@ export function activityIcon(activity: ActivityState | null): string {
     case null:
       return chalk.dim("unknown");
   }
+}
+
+/** Format milliseconds as human-readable duration. */
+export function formatMs(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+/** Parse a relative time string like "5m", "1h", "30s", "2d" into a Date. Also accepts ISO 8601. */
+export function parseSinceArg(since: string): Date {
+  const match = since.match(/^(\d+)(s|m|h|d)$/);
+  if (!match) {
+    const d = new Date(since);
+    if (!isNaN(d.getTime())) return d;
+    throw new Error(`Invalid time format: "${since}". Use "5m", "1h", "30s", or ISO 8601.`);
+  }
+  const value = parseInt(match[1], 10);
+  const unit = match[2];
+  const ms =
+    unit === "s" ? value * 1000 :
+    unit === "m" ? value * 60_000 :
+    unit === "h" ? value * 3_600_000 :
+    value * 86_400_000;
+  return new Date(Date.now() - ms);
+}
+
+/** Color-code log level for terminal display. */
+export function colorLevel(level: LogEntry["level"]): string {
+  switch (level) {
+    case "error": return chalk.red("ERR");
+    case "warn": return chalk.yellow("WRN");
+    case "stderr": return chalk.red("err");
+    case "stdout": return chalk.dim("out");
+    case "info": return chalk.blue("inf");
+  }
+}
+
+/** Format a log entry for terminal display. */
+export function formatLogEntry(entry: LogEntry): string {
+  const ts = new Date(entry.ts).toLocaleTimeString();
+  const level = colorLevel(entry.level);
+  const session = entry.sessionId ? chalk.cyan(entry.sessionId) + " " : "";
+  return `${chalk.dim(ts)} ${level} ${session}${entry.message}`;
 }
 
 // eslint-disable-next-line no-control-regex
