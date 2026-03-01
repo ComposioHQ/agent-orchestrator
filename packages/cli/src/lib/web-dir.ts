@@ -3,7 +3,7 @@
  * Shared utility to avoid duplication between dashboard.ts and start.ts.
  */
 
-import { createServer, Socket } from "node:net";
+import { Socket } from "node:net";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { resolve, dirname } from "node:path";

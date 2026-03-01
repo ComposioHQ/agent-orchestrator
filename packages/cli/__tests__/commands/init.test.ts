@@ -42,6 +42,10 @@ describe("init command", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "ao-init-test-"));
     const outputPath = join(tmpDir, "agent-orchestrator.yaml");
 
+    // Mock isPortAvailable so test doesn't depend on actual port 3000 being free
+    const webDirModule = await import("../../src/lib/web-dir.js");
+    vi.spyOn(webDirModule, "isPortAvailable").mockResolvedValue(true);
+
     const program = new Command();
     program.exitOverride();
     registerInit(program);
