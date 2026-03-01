@@ -639,6 +639,9 @@ function createClaudeCodeAgent(): Agent {
         parts.push("--dangerously-skip-permissions");
       }
 
+      // Enable tmux teammate mode so the TUI renders correctly in tmux sessions
+      parts.push("--teammate-mode", "tmux");
+
       if (config.model) {
         parts.push("--model", shellEscape(config.model));
       }
@@ -653,11 +656,12 @@ function createClaudeCodeAgent(): Agent {
       }
 
       if (config.promptFile) {
-        // Read prompt from file at launch time to avoid shell quoting issues
+        // Pass prompt as positional argument (not -p) to keep interactive TUI mode.
+        // Uses shell command substitution to read from file, avoiding quoting issues
         // with arbitrary content (issue descriptions, markdown, URLs, etc.)
-        parts.push("-p", `"$(cat ${shellEscape(config.promptFile)})"`);
+        parts.push(`"$(cat ${shellEscape(config.promptFile)})"`);
       } else if (config.prompt) {
-        parts.push("-p", shellEscape(config.prompt));
+        parts.push(shellEscape(config.prompt));
       }
 
       return parts.join(" ");
@@ -680,6 +684,11 @@ function createClaudeCodeAgent(): Agent {
 
       if (config.issueId) {
         env["AO_ISSUE_ID"] = config.issueId;
+      }
+
+      // Forward tracker API keys so the agent can update issue labels/state
+      if (process.env["LINEAR_API_KEY"]) {
+        env["LINEAR_API_KEY"] = process.env["LINEAR_API_KEY"];
       }
 
       return env;

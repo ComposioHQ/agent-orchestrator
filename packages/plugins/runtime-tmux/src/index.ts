@@ -52,40 +52,45 @@ export function create(): Runtime {
         envArgs.push("-e", `${key}=${value}`);
       }
 
-      // Create tmux session in detached mode
-      await tmux("new-session", "-d", "-s", sessionName, "-c", config.workspacePath, ...envArgs);
+      // Write the launch command to a script, then start an interactive shell
+      // and source it via send-keys. This gives claude a proper interactive TTY
+      // (needed for TUI rendering) while avoiding quoting issues with $(),
+      // special characters, etc. — the send-keys text is just "source /tmp/path".
+      const launcherPath = join(tmpdir(), `ao-launch-${randomUUID()}.sh`);
+      writeFileSync(launcherPath, config.launchCommand + "\n", { encoding: "utf-8", mode: 0o755 });
 
-      // Send the launch command — clean up the session if this fails.
-      // Use load-buffer + paste-buffer for long commands to avoid tmux/zsh
-      // truncation issues (commands >200 chars get mangled by send-keys).
       try {
-        if (config.launchCommand.length > 200) {
-          const bufferName = `ao-launch-${randomUUID().slice(0, 8)}`;
-          const tmpPath = join(tmpdir(), `ao-launch-${randomUUID()}.txt`);
-          writeFileSync(tmpPath, config.launchCommand, { encoding: "utf-8", mode: 0o600 });
-          try {
-            await tmux("load-buffer", "-b", bufferName, tmpPath);
-            await tmux("paste-buffer", "-b", bufferName, "-t", sessionName, "-d");
-          } finally {
-            try {
-              unlinkSync(tmpPath);
-            } catch {
-              /* ignore cleanup errors */
-            }
-          }
-          await sleep(300);
-          await tmux("send-keys", "-t", sessionName, "Enter");
-        } else {
-          await tmux("send-keys", "-t", sessionName, config.launchCommand, "Enter");
-        }
+        // 1. Create session with default interactive shell
+        await tmux(
+          "new-session", "-d", "-s", sessionName,
+          "-c", config.workspacePath,
+          ...envArgs,
+        );
+
+        // 2. Wait for shell to initialize (loads .zshrc, oh-my-zsh, etc.)
+        await sleep(1000);
+
+        // 3. Source the launcher script — this is simple text, no special chars
+        await tmux("send-keys", "-t", sessionName, "-l", `source ${launcherPath}`);
+        await tmux("send-keys", "-t", sessionName, "Enter");
+
+        // 4. Auto-accept workspace trust dialog (shown for new directories).
+        //    The Enter is harmless if no dialog appears.
+        await sleep(3000);
+        await tmux("send-keys", "-t", sessionName, "Enter");
       } catch (err: unknown) {
+        try {
+          unlinkSync(launcherPath);
+        } catch {
+          /* ignore cleanup errors */
+        }
         try {
           await tmux("kill-session", "-t", sessionName);
         } catch {
-          // Best-effort cleanup
+          /* ignore cleanup errors */
         }
         const msg = err instanceof Error ? err.message : String(err);
-        throw new Error(`Failed to send launch command to session "${sessionName}": ${msg}`, {
+        throw new Error(`Failed to create session "${sessionName}": ${msg}`, {
           cause: err,
         });
       }
