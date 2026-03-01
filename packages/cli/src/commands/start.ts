@@ -153,7 +153,7 @@ export function registerStart(program: Command): void {
             if (!existsSync(resolve(webDir, "package.json"))) {
               throw new Error("Could not find @composio/ao-web package. Run: pnpm install");
             }
-            await preflight.checkBuilt();
+            await preflight.checkBuilt(webDir);
 
             if (opts?.rebuild) {
               await cleanNextCache(webDir);
