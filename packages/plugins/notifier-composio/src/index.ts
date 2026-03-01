@@ -169,6 +169,7 @@ export function create(config?: Record<string, unknown>): Notifier {
 
     if (!apiKey) {
       if (!warnedNoKey) {
+        // eslint-disable-next-line no-console
         console.warn(
           "[notifier-composio] No composioApiKey or COMPOSIO_API_KEY configured — notifications will be no-ops",
         );

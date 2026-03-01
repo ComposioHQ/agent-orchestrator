@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { OrchestratorEvent, NotifyAction } from "@composio/ao-core";
-import { manifest, create } from "./index.js";
+import pluginDefault, { manifest, create } from "./index.js";
 
 function makeEvent(overrides: Partial<OrchestratorEvent> = {}): OrchestratorEvent {
   return {
@@ -23,6 +23,13 @@ describe("notifier-webhook", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  describe("default export", () => {
+    it("is a valid PluginModule", () => {
+      expect(pluginDefault.manifest).toBe(manifest);
+      expect(typeof pluginDefault.create).toBe("function");
+    });
   });
 
   describe("manifest", () => {
@@ -66,9 +73,11 @@ describe("notifier-webhook", () => {
     it("does nothing when no url", async () => {
       const fetchMock = vi.fn();
       vi.stubGlobal("fetch", fetchMock);
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
       const notifier = create();
       await notifier.notify(makeEvent());
       expect(fetchMock).not.toHaveBeenCalled();
+      warnSpy.mockRestore();
     });
 
     it("POSTs event as JSON to the configured URL", async () => {

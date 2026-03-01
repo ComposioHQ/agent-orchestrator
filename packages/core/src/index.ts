@@ -59,8 +59,58 @@ export type { PromptBuildConfig } from "./prompt-builder.js";
 export { generateOrchestratorPrompt } from "./orchestrator-prompt.js";
 export type { OrchestratorPromptConfig } from "./orchestrator-prompt.js";
 
+// Cycle detector — loop/cycle detection for session lifecycle
+export { createCycleDetector } from "./cycle-detector.js";
+export type {
+  CycleDetectorConfig,
+  CycleInfo,
+  LoopInfo,
+  CycleVerdict,
+  CycleJudgment,
+  CycleDetector,
+} from "./cycle-detector.js";
+
+// Self-handoff — context limit detection + session continuation
+export { createSelfHandoff } from "./self-handoff.js";
+export type {
+  HandoffDocument,
+  HandoffDetection,
+  SelfHandoffConfig,
+  CreateHandoffParams,
+  SelfHandoff,
+} from "./self-handoff.js";
+
 // Shared utilities
 export { shellEscape, escapeAppleScript, validateUrl, readLastJsonlEntry } from "./utils.js";
+
+// Rate limit tracker — tracks rate-limited executables with fallback chains
+export { createRateLimitTracker } from "./rate-limit-tracker.js";
+export type {
+  RateLimitEntry,
+  RateLimitTrackerConfig,
+  RateLimitDetection,
+  RateLimitTracker,
+} from "./rate-limit-tracker.js";
+
+// Worker pool — enforces concurrency limits for session spawning
+export { createWorkerPool } from "./worker-pool.js";
+export type {
+  WorkerPoolConfig,
+  PoolStatus,
+  SpawnCheck,
+  WorkerPool,
+} from "./worker-pool.js";
+
+// Movement permissions — per-phase permission service
+export { createMovementPermissions } from "./movement-permissions.js";
+export type {
+  PermissionMode,
+  MovementPhase,
+  MovementPermission,
+  PermissionsConfig,
+  PermissionCheck,
+  MovementPermissions,
+} from "./movement-permissions.js";
 
 // Path utilities — hash-based directory structure
 export {
