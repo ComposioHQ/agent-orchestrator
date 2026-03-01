@@ -15,11 +15,12 @@ import type { Command } from "commander";
 import {
   loadConfig,
   generateOrchestratorPrompt,
+  createLifecycleManager,
   type OrchestratorConfig,
   type ProjectConfig,
 } from "@composio/ao-core";
 import { exec } from "../lib/shell.js";
-import { getSessionManager } from "../lib/create-session-manager.js";
+import { getSessionManager, getRegistry } from "../lib/create-session-manager.js";
 import { findWebDir, buildDashboardEnv } from "../lib/web-dir.js";
 import { cleanNextCache } from "../lib/dashboard-rebuild.js";
 
@@ -209,6 +210,22 @@ export function registerStart(program: Command): void {
             }
           }
 
+          // Start lifecycle manager (CI reactions, PR merge detection, notifications)
+          const registry = await getRegistry(config);
+          const sessionManager = await getSessionManager(config);
+          const lifecycle = createLifecycleManager({
+            config,
+            registry,
+            sessionManager,
+          });
+          lifecycle.start(30_000);
+
+          process.on("SIGINT", () => {
+            lifecycle.stop();
+            if (dashboardProcess) dashboardProcess.kill();
+            process.exit(0);
+          });
+
           // Print summary based on what was actually started
           console.log(chalk.bold.green("\n✓ Startup complete\n"));
 
@@ -222,6 +239,7 @@ export function registerStart(program: Command): void {
             console.log(chalk.cyan("Orchestrator:"), `already running (${sessionId})`);
           }
 
+          console.log(chalk.cyan("Lifecycle:"), "running (30s poll interval)");
           console.log(chalk.dim(`Config: ${config.configPath}\n`));
 
           // Keep dashboard process alive if it was started
@@ -230,6 +248,7 @@ export function registerStart(program: Command): void {
               if (code !== 0 && code !== null) {
                 console.error(chalk.red(`Dashboard exited with code ${code}`));
               }
+              lifecycle.stop();
               process.exit(code ?? 0);
             });
           }

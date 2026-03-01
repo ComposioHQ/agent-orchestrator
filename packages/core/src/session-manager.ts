@@ -47,6 +47,7 @@ import {
   listMetadata,
   reserveSessionId,
 } from "./metadata.js";
+import ora from "ora";
 import { buildPrompt } from "./prompt-builder.js";
 import {
   getSessionsDir,
@@ -573,8 +574,9 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     // should NOT destroy the session. The agent is running; user can retry with `ao send`.
     if (plugins.agent.promptDelivery === "post-launch" && agentLaunchConfig.prompt) {
       try {
-        // Wait for agent to start and be ready for input
+        const spinner = ora("Waiting for agent to start…").start();
         await new Promise((resolve) => setTimeout(resolve, 5_000));
+        spinner.succeed("Agent ready");
         await plugins.runtime.sendMessage(handle, agentLaunchConfig.prompt);
       } catch {
         // Non-fatal: agent is running but didn't receive the initial prompt.
