@@ -387,6 +387,49 @@ function extractCost(lines: JsonlLine[]): CostEstimate | undefined {
 // =============================================================================
 
 /**
+ * TTL cache for `ps -eo pid,tty,args` output. Without this, listing N sessions
+ * would spawn N concurrent `ps` processes, each taking 30+ seconds on machines
+ * with many processes. The cache ensures `ps` is called at most once per TTL
+ * window regardless of how many sessions are being enriched.
+ */
+let psCache: { output: string; timestamp: number; promise?: Promise<string> } | null = null;
+const PS_CACHE_TTL_MS = 5_000;
+
+/** Reset the ps cache. Exported for testing only. */
+export function resetPsCache(): void {
+  psCache = null;
+}
+
+async function getCachedProcessList(): Promise<string> {
+  const now = Date.now();
+  if (psCache && now - psCache.timestamp < PS_CACHE_TTL_MS) {
+    // Cache hit — return resolved output or wait for in-flight request
+    if (psCache.promise) return psCache.promise;
+    return psCache.output;
+  }
+
+  // Cache miss or expired — start a single `ps` call and share the promise
+  const promise = execFileAsync("ps", ["-eo", "pid,tty,args"], {
+    timeout: 5_000,
+  }).then(({ stdout }) => {
+    // Resolve: store output, clear promise
+    psCache = { output: stdout, timestamp: Date.now() };
+    return stdout;
+  });
+
+  // Store the in-flight promise so concurrent callers share it
+  psCache = { output: "", timestamp: now, promise };
+
+  try {
+    return await promise;
+  } catch {
+    // On failure, clear cache so the next caller retries
+    psCache = null;
+    return "";
+  }
+}
+
+/**
  * Check if a process named "claude" is running in the given runtime handle's context.
  * Uses ps to find processes by TTY (for tmux) or by PID.
  */
@@ -397,7 +440,7 @@ async function findClaudeProcess(handle: RuntimeHandle): Promise<number | null> 
       const { stdout: ttyOut } = await execFileAsync(
         "tmux",
         ["list-panes", "-t", handle.id, "-F", "#{pane_tty}"],
-        { timeout: 30_000 },
+        { timeout: 5_000 },
       );
       // Iterate all pane TTYs (multi-pane sessions) — succeed on any match
       const ttys = ttyOut
@@ -407,12 +450,9 @@ async function findClaudeProcess(handle: RuntimeHandle): Promise<number | null> 
         .filter(Boolean);
       if (ttys.length === 0) return null;
 
-      // Use `args` instead of `comm` so we can match the CLI name even when
-      // the process runs via a wrapper (e.g. node, python).  `comm` would
-      // report "node" instead of "claude" in those cases.
-      const { stdout: psOut } = await execFileAsync("ps", ["-eo", "pid,tty,args"], {
-        timeout: 30_000,
-      });
+      const psOut = await getCachedProcessList();
+      if (!psOut) return null;
+
       const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
       // Match "claude" as a word boundary — prevents false positives on
       // names like "claude-code" or paths that merely contain the substring.
