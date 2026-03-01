@@ -228,6 +228,44 @@ export function DirectTerminal({
           }
         });
 
+        // Intercept Cmd+C/V (Mac) and Ctrl+Shift+C/V (Linux/Win) for clipboard
+        terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+          if (e.type !== "keydown") return true;
+          const isMac = navigator.platform.toUpperCase().includes("MAC");
+
+          if (isMac && e.metaKey && !e.ctrlKey && !e.altKey) {
+            if (e.code === "KeyC" && terminal.hasSelection()) {
+              navigator.clipboard?.writeText(terminal.getSelection()).catch(() => {});
+              return false;
+            }
+            if (e.code === "KeyV") {
+              navigator.clipboard?.readText().then((text) => {
+                if (text && websocket.readyState === WebSocket.OPEN) {
+                  terminal.paste(text);
+                }
+              }).catch(() => {});
+              return false;
+            }
+          }
+
+          if (!isMac && e.ctrlKey && e.shiftKey) {
+            if (e.code === "KeyC" && terminal.hasSelection()) {
+              navigator.clipboard?.writeText(terminal.getSelection()).catch(() => {});
+              return false;
+            }
+            if (e.code === "KeyV") {
+              navigator.clipboard?.readText().then((text) => {
+                if (text && websocket.readyState === WebSocket.OPEN) {
+                  terminal.paste(text);
+                }
+              }).catch(() => {});
+              return false;
+            }
+          }
+
+          return true;
+        });
+
         // Handle window resize
         const handleResize = () => {
           if (fit && websocket.readyState === WebSocket.OPEN) {
