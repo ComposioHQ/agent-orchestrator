@@ -187,16 +187,18 @@ export function getAttentionLevel(session: DashboardSession): AttentionLevel {
   }
 
   // ── Respond: agent is waiting for human input ─────────────────────
+  // Check status-based error conditions first — these are authoritative
+  // and should not be masked by a stale activity value.
   if (
-    session.activity === ACTIVITY_STATE.WAITING_INPUT ||
-    session.activity === ACTIVITY_STATE.BLOCKED
+    session.status === SESSION_STATUS.ERRORED ||
+    session.status === SESSION_STATUS.NEEDS_INPUT ||
+    session.status === SESSION_STATUS.STUCK
   ) {
     return "respond";
   }
   if (
-    session.status === SESSION_STATUS.NEEDS_INPUT ||
-    session.status === SESSION_STATUS.STUCK ||
-    session.status === SESSION_STATUS.ERRORED
+    session.activity === ACTIVITY_STATE.WAITING_INPUT ||
+    session.activity === ACTIVITY_STATE.BLOCKED
   ) {
     return "respond";
   }

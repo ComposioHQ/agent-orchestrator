@@ -3,7 +3,7 @@
  * Shared utility to avoid duplication between dashboard.ts and start.ts.
  */
 
-import { createServer } from "node:net";
+import { Socket } from "node:net";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { resolve, dirname } from "node:path";
@@ -17,19 +17,22 @@ const require = createRequire(import.meta.url);
 const DEFAULT_TERMINAL_PORT = 14800;
 
 /**
- * Check if a TCP port is available by attempting to bind to it.
- * Returns true if the port is free, false if in use.
+ * Check if a TCP port is available by attempting to connect to it on IPv4.
+ * A successful connect means something is already listening (port in use).
+ * ECONNREFUSED means nothing is listening (port free).
+ *
+ * Note: Only probes 127.0.0.1 (IPv4). Processes listening exclusively on
+ * IPv6 (::1 with IPV6_V6ONLY=1) will not be detected — this is acceptable
+ * since the dashboard binds to 0.0.0.0 by default.
  */
 export function isPortAvailable(port: number): Promise<boolean> {
   return new Promise((resolve) => {
-    const server = createServer();
-    server.once("error", () => {
-      resolve(false);
-    });
-    server.once("listening", () => {
-      server.close(() => resolve(true));
-    });
-    server.listen(port, "127.0.0.1");
+    const s = new Socket();
+    s.setTimeout(300);
+    s.once("connect", () => { s.destroy(); resolve(false); }); // something listening → in use
+    s.once("error", () => { s.destroy(); resolve(true); });    // ECONNREFUSED → free
+    s.once("timeout", () => { s.destroy(); resolve(true); });  // no response → free
+    s.connect(port, "127.0.0.1");
   });
 }
 

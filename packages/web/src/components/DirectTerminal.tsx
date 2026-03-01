@@ -45,6 +45,9 @@ export function DirectTerminal({
   const terminalInstance = useRef<TerminalType | null>(null);
   const fitAddon = useRef<FitAddonType | null>(null);
   const ws = useRef<WebSocket | null>(null);
+  const reconnectAttemptRef = useRef(0);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const permanentErrorRef = useRef(false);
   const [fullscreen, setFullscreen] = useState(startFullscreen);
   const [status, setStatus] = useState<"connecting" | "connected" | "error">("connecting");
   const [error, setError] = useState<string | null>(null);
@@ -65,12 +68,18 @@ export function DirectTerminal({
 
   useEffect(() => {
     if (!terminalRef.current) return;
-    // Prevent retry loop on persistent errors
-    if (error && status === "error") return;
+
+    // Reset reconnection state when sessionId changes
+    permanentErrorRef.current = false;
+    reconnectAttemptRef.current = 0;
 
     // Dynamically import xterm.js to avoid SSR issues
     let mounted = true;
     let cleanup: (() => void) | null = null;
+    let inputDisposable: { dispose(): void } | null = null;
+
+    const PERMANENT_CLOSE_CODES = new Set([4001, 4004]); // auth failure, session not found
+    const MAX_RECONNECT_DELAY = 15_000;
 
     Promise.all([
       import("xterm").then((mod) => mod.Terminal),
@@ -148,6 +157,25 @@ export function DirectTerminal({
           },
         );
 
+        // Register OSC 52 handler for clipboard support
+        // tmux sends OSC 52 with base64-encoded text when copying
+        terminal.parser.registerOscHandler(52, (data) => {
+          const parts = data.split(";");
+          if (parts.length < 2) return false;
+          const b64 = parts[parts.length - 1];
+          try {
+            // Decode base64 → binary string → Uint8Array → UTF-8 text
+            // atob() alone only handles Latin-1; TextDecoder is needed for UTF-8
+            const binary = atob(b64);
+            const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+            const text = new TextDecoder().decode(bytes);
+            navigator.clipboard?.writeText(text).catch(() => {});
+          } catch {
+            // Ignore decode errors
+          }
+          return true;
+        });
+
         // Open terminal in DOM
         terminal.open(terminalRef.current);
         terminalInstance.current = terminal;
@@ -155,65 +183,74 @@ export function DirectTerminal({
         // Fit terminal to container
         fit.fit();
 
-        // Connect WebSocket
+        // WebSocket URL (stable across reconnects)
         const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
         const hostname = window.location.hostname;
         const port = process.env.NEXT_PUBLIC_DIRECT_TERMINAL_PORT ?? "14801";
         const wsUrl = `${protocol}//${hostname}:${port}/ws?session=${encodeURIComponent(sessionId)}`;
 
-        console.log("[DirectTerminal] Connecting to:", wsUrl);
-        const websocket = new WebSocket(wsUrl);
-        ws.current = websocket;
+        // ── Preserve selection while terminal receives output ────────
+        // xterm.js clears the selection on every terminal.write(). We
+        // buffer incoming data while a selection is active so the
+        // highlight stays visible for Cmd+C. The buffer is flushed
+        // when the selection is cleared (click, keypress, etc.).
+        const writeBuffer: string[] = [];
+        let selectionActive = false;
+        let safetyTimer: ReturnType<typeof setTimeout> | null = null;
+        let bufferBytes = 0;
+        const MAX_BUFFER_BYTES = 1_048_576; // 1 MB
 
-        websocket.binaryType = "arraybuffer";
-
-        websocket.onopen = () => {
-          console.log("[DirectTerminal] WebSocket connected");
-          setStatus("connected");
-          setError(null);
-
-          // Send initial size
-          websocket.send(
-            JSON.stringify({
-              type: "resize",
-              cols: terminal.cols,
-              rows: terminal.rows,
-            }),
-          );
-        };
-
-        websocket.onmessage = (event) => {
-          const data =
-            typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data);
-          terminal.write(data);
-        };
-
-        websocket.onerror = (event) => {
-          console.error("[DirectTerminal] WebSocket error:", event);
-          setStatus("error");
-          setError("WebSocket connection error");
-        };
-
-        websocket.onclose = (event) => {
-          console.log("[DirectTerminal] WebSocket closed:", event.code, event.reason);
-          if (status === "connected") {
-            setStatus("error");
-            setError("Connection closed");
+        const flushWriteBuffer = () => {
+          if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null; }
+          if (writeBuffer.length > 0) {
+            terminal.write(writeBuffer.join(""));
+            writeBuffer.length = 0;
+            bufferBytes = 0;
           }
         };
 
-        // Terminal input → WebSocket
-        const disposable = terminal.onData((data) => {
-          if (websocket.readyState === WebSocket.OPEN) {
-            websocket.send(data);
+        const selectionDisposable = terminal.onSelectionChange(() => {
+          if (terminal.hasSelection()) {
+            selectionActive = true;
+            // Safety: flush after 5s to prevent unbounded buffering
+            if (!safetyTimer) {
+              safetyTimer = setTimeout(() => {
+                selectionActive = false;
+                flushWriteBuffer();
+              }, 5_000);
+            }
+          } else {
+            selectionActive = false;
+            flushWriteBuffer();
           }
         });
 
-        // Handle window resize
+        // Intercept Cmd+C (Mac) and Ctrl+Shift+C (Linux/Win) for copy.
+        // Paste (Cmd+V / Ctrl+Shift+V) is handled natively by xterm.js
+        // via its internal textarea — no custom handler needed.
+        terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+          if (e.type !== "keydown") return true;
+
+          // Cmd+C / Ctrl+Shift+C — copy selection
+          const isCopy =
+            (e.metaKey && !e.ctrlKey && !e.altKey && e.code === "KeyC") ||
+            (e.ctrlKey && e.shiftKey && e.code === "KeyC");
+          if (isCopy && terminal.hasSelection()) {
+            navigator.clipboard?.writeText(terminal.getSelection()).catch(() => {});
+            // Clear selection so the terminal resumes receiving output
+            terminal.clearSelection();
+            return false;
+          }
+
+          return true;
+        });
+
+        // Handle window resize (works with whatever ws is current)
         const handleResize = () => {
-          if (fit && websocket.readyState === WebSocket.OPEN) {
+          const currentWs = ws.current;
+          if (fit && currentWs?.readyState === WebSocket.OPEN) {
             fit.fit();
-            websocket.send(
+            currentWs.send(
               JSON.stringify({
                 type: "resize",
                 cols: terminal.cols,
@@ -225,22 +262,113 @@ export function DirectTerminal({
 
         window.addEventListener("resize", handleResize);
 
+        // Terminal input → current WebSocket
+        inputDisposable = terminal.onData((data) => {
+          if (ws.current?.readyState === WebSocket.OPEN) {
+            ws.current.send(data);
+          }
+        });
+
+        function connectWebSocket() {
+          if (!mounted) return;
+
+          console.log("[DirectTerminal] Connecting to:", wsUrl);
+          const websocket = new WebSocket(wsUrl);
+          ws.current = websocket;
+          websocket.binaryType = "arraybuffer";
+
+          websocket.onopen = () => {
+            console.log("[DirectTerminal] WebSocket connected");
+            reconnectAttemptRef.current = 0;
+            setStatus("connected");
+            setError(null);
+
+            // Send initial size
+            websocket.send(
+              JSON.stringify({
+                type: "resize",
+                cols: terminal.cols,
+                rows: terminal.rows,
+              }),
+            );
+          };
+
+          websocket.onmessage = (event) => {
+            const data =
+              typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data);
+            if (selectionActive) {
+              writeBuffer.push(data);
+              bufferBytes += data.length;
+              // Flush if buffer exceeds 1 MB to prevent OOM
+              if (bufferBytes > MAX_BUFFER_BYTES) {
+                selectionActive = false;
+                flushWriteBuffer();
+              }
+            } else {
+              terminal.write(data);
+            }
+          };
+
+          websocket.onerror = (event) => {
+            console.error("[DirectTerminal] WebSocket error:", event);
+          };
+
+          websocket.onclose = (event) => {
+            console.log("[DirectTerminal] WebSocket closed:", event.code, event.reason);
+
+            if (!mounted) return;
+
+            // Permanent errors — don't retry
+            if (PERMANENT_CLOSE_CODES.has(event.code)) {
+              permanentErrorRef.current = true;
+              setStatus("error");
+              setError(event.reason || `Connection refused (${event.code})`);
+              return;
+            }
+
+            // Transient failure — schedule reconnect with exponential backoff
+            const attempt = reconnectAttemptRef.current;
+            const delay = Math.min(1000 * Math.pow(2, attempt), MAX_RECONNECT_DELAY);
+            reconnectAttemptRef.current = attempt + 1;
+
+            console.log(`[DirectTerminal] Reconnecting in ${delay}ms (attempt ${attempt + 1})`);
+            setStatus("connecting");
+            setError(null);
+
+            reconnectTimerRef.current = setTimeout(connectWebSocket, delay);
+          };
+        }
+
+        connectWebSocket();
+
         // Store cleanup function to be called from useEffect cleanup
         cleanup = () => {
+          selectionDisposable.dispose();
+          if (safetyTimer) clearTimeout(safetyTimer);
           window.removeEventListener("resize", handleResize);
-          disposable.dispose();
-          websocket.close();
+          inputDisposable?.dispose();
+          inputDisposable = null;
+          if (reconnectTimerRef.current) {
+            clearTimeout(reconnectTimerRef.current);
+            reconnectTimerRef.current = null;
+          }
+          ws.current?.close();
           terminal.dispose();
         };
       })
       .catch((err) => {
         console.error("[DirectTerminal] Failed to load xterm.js:", err);
+        permanentErrorRef.current = true;
         setStatus("error");
         setError("Failed to load terminal");
       });
 
     return () => {
       mounted = false;
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
       cleanup?.();
     };
   }, [sessionId, variant]);
@@ -257,23 +385,23 @@ export function DirectTerminal({
     }
 
     let resizeAttempts = 0;
-    const maxAttempts = 10;
+    const maxAttempts = 60;
+    let cancelled = false;
+    let rafId = 0;
+    let lastHeight = -1;
 
     const resizeTerminal = () => {
+      if (cancelled) return;
       resizeAttempts++;
 
-      // Get container dimensions
-      const rect = container.getBoundingClientRect();
-      const expectedHeight = rect.height;
+      // Wait for the container height to stabilise (CSS transition finished)
+      const currentHeight = container.getBoundingClientRect().height;
+      const settled = lastHeight >= 0 && Math.abs(currentHeight - lastHeight) < 1;
+      lastHeight = currentHeight;
 
-      // Check if container has reached target dimensions (within 10px tolerance)
-      const isFullscreenTarget = fullscreen
-        ? expectedHeight > window.innerHeight - 100
-        : expectedHeight < 700;
-
-      if (!isFullscreenTarget && resizeAttempts < maxAttempts) {
-        // Container hasn't reached target size yet, try again
-        requestAnimationFrame(resizeTerminal);
+      if (!settled && resizeAttempts < maxAttempts) {
+        // Container is still transitioning, try again next frame
+        rafId = requestAnimationFrame(resizeTerminal);
         return;
       }
 
@@ -282,24 +410,31 @@ export function DirectTerminal({
       fit.fit();
       terminal.refresh(0, terminal.rows - 1);
 
-      // Send new size to server
-      websocket.send(
-        JSON.stringify({
-          type: "resize",
-          cols: terminal.cols,
-          rows: terminal.rows,
-        }),
-      );
+      // Send new size to server (use ws.current in case WebSocket reconnected)
+      const currentWs = ws.current;
+      if (currentWs?.readyState === WebSocket.OPEN) {
+        currentWs.send(
+          JSON.stringify({
+            type: "resize",
+            cols: terminal.cols,
+            rows: terminal.rows,
+          }),
+        );
+      }
     };
 
     // Start resize polling
-    requestAnimationFrame(resizeTerminal);
+    rafId = requestAnimationFrame(resizeTerminal);
 
     // Also try on transitionend
     const handleTransitionEnd = (e: TransitionEvent) => {
+      if (cancelled) return;
       if (e.target === container.parentElement) {
         resizeAttempts = 0;
-        setTimeout(() => requestAnimationFrame(resizeTerminal), 50);
+        lastHeight = -1;
+        setTimeout(() => {
+          if (!cancelled) rafId = requestAnimationFrame(resizeTerminal);
+        }, 50);
       }
     };
 
@@ -308,15 +443,21 @@ export function DirectTerminal({
 
     // Backup timers in case RAF polling doesn't work
     const timer1 = setTimeout(() => {
+      if (cancelled) return;
       resizeAttempts = 0;
+      lastHeight = -1;
       resizeTerminal();
     }, 300);
     const timer2 = setTimeout(() => {
+      if (cancelled) return;
       resizeAttempts = 0;
+      lastHeight = -1;
       resizeTerminal();
     }, 600);
 
     return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafId);
       parent?.removeEventListener("transitionend", handleTransitionEnd);
       clearTimeout(timer1);
       clearTimeout(timer2);

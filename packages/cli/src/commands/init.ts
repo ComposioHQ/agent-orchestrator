@@ -5,6 +5,7 @@ import { cwd } from "node:process";
 import { stringify as yamlStringify } from "yaml";
 import chalk from "chalk";
 import type { Command } from "commander";
+import { generateSessionPrefix } from "@composio/ao-core";
 import { git, gh, execSilent } from "../lib/shell.js";
 import { isPortAvailable } from "../lib/web-dir.js";
 import {
@@ -16,12 +17,12 @@ import {
 const DEFAULT_PORT = 3000;
 const MAX_PORT_SCAN = 100;
 
-/** Find the first available port starting from `start`, scanning upward. */
-async function findFreePort(start: number): Promise<number> {
+/** Find the first available port starting from `start`, scanning upward. Returns `null` if none found. */
+async function findFreePort(start: number): Promise<number | null> {
   for (let port = start; port < start + MAX_PORT_SCAN; port++) {
     if (await isPortAvailable(port)) return port;
   }
-  return start; // fallback — will fail at bind time with a clear error
+  return null;
 }
 
 async function prompt(
@@ -157,7 +158,7 @@ export function registerInit(program: Command): void {
     .option("--auto", "Auto-generate config with sensible defaults (no prompts)")
     .option(
       "--smart",
-      "Analyze project and generate custom rules (requires --auto, uses AI if available)",
+      "Analyze project and generate custom rules (coming soon — requires --auto)",
     )
     .action(async (opts: { output: string; auto?: boolean; smart?: boolean }) => {
       const outputPath = resolve(opts.output);
@@ -244,7 +245,20 @@ export function registerInit(program: Command): void {
         );
         const worktreeDir = await prompt(rl, "Worktree directory", "~/.worktrees");
         const freePort = await findFreePort(DEFAULT_PORT);
-        const portStr = await prompt(rl, "Dashboard port", String(freePort));
+        if (freePort === null) {
+          console.log(
+            chalk.yellow(
+              `\n⚠ No free port found in range ${DEFAULT_PORT}–${DEFAULT_PORT + MAX_PORT_SCAN - 1}.`,
+            ),
+          );
+          console.log(chalk.dim("  Please specify a port manually.\n"));
+        } else if (freePort !== DEFAULT_PORT) {
+          console.log(
+            chalk.yellow(`\n⚠ Port ${DEFAULT_PORT} is busy — suggesting ${freePort} instead.`),
+          );
+          console.log(chalk.dim("  Press Enter to accept, or type a different port.\n"));
+        }
+        const portStr = await prompt(rl, "Dashboard port", String(freePort ?? DEFAULT_PORT));
         const port = parseInt(portStr, 10);
         if (isNaN(port) || port < 1 || port > 65535) {
           console.error(chalk.red("\nInvalid port number. Must be 1-65535."));
@@ -303,6 +317,8 @@ export function registerInit(program: Command): void {
           );
 
           const projectConfig: Record<string, unknown> = {
+            name: projectId,
+            sessionPrefix: generateSessionPrefix(projectId),
             repo,
             path: projectPath,
             defaultBranch,
@@ -444,10 +460,20 @@ async function handleAutoMode(outputPath: string, smart: boolean): Promise<void>
   const defaultBranch = env.defaultBranch || "main";
 
   const port = await findFreePort(DEFAULT_PORT);
+  if (port === null) {
+    console.log(
+      chalk.yellow(
+        `  ⚠ No free port found in range ${DEFAULT_PORT}–${DEFAULT_PORT + MAX_PORT_SCAN - 1}.`,
+      ),
+    );
+    console.log(chalk.dim("    Set the port manually in the config before running ao start.\n"));
+  } else if (port !== DEFAULT_PORT) {
+    console.log(chalk.yellow(`  ⚠ Port ${DEFAULT_PORT} is busy — using ${port} instead.`));
+  }
   const config: Record<string, unknown> = {
     dataDir: "~/.agent-orchestrator",
     worktreeDir: "~/.worktrees",
-    port,
+    port: port ?? DEFAULT_PORT,
     defaults: {
       runtime: "tmux",
       agent: "claude-code",
@@ -456,6 +482,8 @@ async function handleAutoMode(outputPath: string, smart: boolean): Promise<void>
     },
     projects: {
       [projectId]: {
+        name: projectId,
+        sessionPrefix: generateSessionPrefix(projectId),
         repo,
         path,
         defaultBranch,
