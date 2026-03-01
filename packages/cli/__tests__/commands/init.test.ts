@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createServer, type Server } from "node:net";
+import { createServer } from "node:net";
 
 import { Command } from "commander";
 import { parse as yamlParse } from "yaml";
