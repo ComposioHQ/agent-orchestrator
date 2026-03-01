@@ -45,6 +45,9 @@ export function DirectTerminal({
   const terminalInstance = useRef<TerminalType | null>(null);
   const fitAddon = useRef<FitAddonType | null>(null);
   const ws = useRef<WebSocket | null>(null);
+  const reconnectAttemptRef = useRef(0);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const permanentErrorRef = useRef(false);
   const [fullscreen, setFullscreen] = useState(startFullscreen);
   const [status, setStatus] = useState<"connecting" | "connected" | "error">("connecting");
   const [error, setError] = useState<string | null>(null);
@@ -65,12 +68,16 @@ export function DirectTerminal({
 
   useEffect(() => {
     if (!terminalRef.current) return;
-    // Prevent retry loop on persistent errors
-    if (error && status === "error") return;
+    // Prevent retry loop on permanent errors only
+    if (permanentErrorRef.current) return;
 
     // Dynamically import xterm.js to avoid SSR issues
     let mounted = true;
     let cleanup: (() => void) | null = null;
+    let inputDisposable: { dispose(): void } | null = null;
+
+    const PERMANENT_CLOSE_CODES = new Set([4001, 4004]); // auth failure, session not found
+    const MAX_RECONNECT_DELAY = 15_000;
 
     Promise.all([
       import("xterm").then((mod) => mod.Terminal),
@@ -155,65 +162,18 @@ export function DirectTerminal({
         // Fit terminal to container
         fit.fit();
 
-        // Connect WebSocket
+        // WebSocket URL (stable across reconnects)
         const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
         const hostname = window.location.hostname;
         const port = process.env.NEXT_PUBLIC_DIRECT_TERMINAL_PORT ?? "14801";
         const wsUrl = `${protocol}//${hostname}:${port}/ws?session=${encodeURIComponent(sessionId)}`;
 
-        console.log("[DirectTerminal] Connecting to:", wsUrl);
-        const websocket = new WebSocket(wsUrl);
-        ws.current = websocket;
-
-        websocket.binaryType = "arraybuffer";
-
-        websocket.onopen = () => {
-          console.log("[DirectTerminal] WebSocket connected");
-          setStatus("connected");
-          setError(null);
-
-          // Send initial size
-          websocket.send(
-            JSON.stringify({
-              type: "resize",
-              cols: terminal.cols,
-              rows: terminal.rows,
-            }),
-          );
-        };
-
-        websocket.onmessage = (event) => {
-          const data =
-            typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data);
-          terminal.write(data);
-        };
-
-        websocket.onerror = (event) => {
-          console.error("[DirectTerminal] WebSocket error:", event);
-          setStatus("error");
-          setError("WebSocket connection error");
-        };
-
-        websocket.onclose = (event) => {
-          console.log("[DirectTerminal] WebSocket closed:", event.code, event.reason);
-          if (status === "connected") {
-            setStatus("error");
-            setError("Connection closed");
-          }
-        };
-
-        // Terminal input → WebSocket
-        const disposable = terminal.onData((data) => {
-          if (websocket.readyState === WebSocket.OPEN) {
-            websocket.send(data);
-          }
-        });
-
-        // Handle window resize
+        // Handle window resize (works with whatever ws is current)
         const handleResize = () => {
-          if (fit && websocket.readyState === WebSocket.OPEN) {
+          const currentWs = ws.current;
+          if (fit && currentWs?.readyState === WebSocket.OPEN) {
             fit.fit();
-            websocket.send(
+            currentWs.send(
               JSON.stringify({
                 type: "resize",
                 cols: terminal.cols,
@@ -225,22 +185,101 @@ export function DirectTerminal({
 
         window.addEventListener("resize", handleResize);
 
+        // Terminal input → current WebSocket
+        inputDisposable = terminal.onData((data) => {
+          if (ws.current?.readyState === WebSocket.OPEN) {
+            ws.current.send(data);
+          }
+        });
+
+        function connectWebSocket() {
+          if (!mounted) return;
+
+          console.log("[DirectTerminal] Connecting to:", wsUrl);
+          const websocket = new WebSocket(wsUrl);
+          ws.current = websocket;
+          websocket.binaryType = "arraybuffer";
+
+          websocket.onopen = () => {
+            console.log("[DirectTerminal] WebSocket connected");
+            reconnectAttemptRef.current = 0;
+            setStatus("connected");
+            setError(null);
+
+            // Send initial size
+            websocket.send(
+              JSON.stringify({
+                type: "resize",
+                cols: terminal.cols,
+                rows: terminal.rows,
+              }),
+            );
+          };
+
+          websocket.onmessage = (event) => {
+            const data =
+              typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data);
+            terminal.write(data);
+          };
+
+          websocket.onerror = (event) => {
+            console.error("[DirectTerminal] WebSocket error:", event);
+          };
+
+          websocket.onclose = (event) => {
+            console.log("[DirectTerminal] WebSocket closed:", event.code, event.reason);
+
+            if (!mounted) return;
+
+            // Permanent errors — don't retry
+            if (PERMANENT_CLOSE_CODES.has(event.code)) {
+              permanentErrorRef.current = true;
+              setStatus("error");
+              setError(event.reason || `Connection refused (${event.code})`);
+              return;
+            }
+
+            // Transient failure — schedule reconnect with exponential backoff
+            const attempt = reconnectAttemptRef.current;
+            const delay = Math.min(1000 * Math.pow(2, attempt), MAX_RECONNECT_DELAY);
+            reconnectAttemptRef.current = attempt + 1;
+
+            console.log(`[DirectTerminal] Reconnecting in ${delay}ms (attempt ${attempt + 1})`);
+            setStatus("connecting");
+            setError(null);
+
+            reconnectTimerRef.current = setTimeout(connectWebSocket, delay);
+          };
+        }
+
+        connectWebSocket();
+
         // Store cleanup function to be called from useEffect cleanup
         cleanup = () => {
           window.removeEventListener("resize", handleResize);
-          disposable.dispose();
-          websocket.close();
+          inputDisposable?.dispose();
+          inputDisposable = null;
+          if (reconnectTimerRef.current) {
+            clearTimeout(reconnectTimerRef.current);
+            reconnectTimerRef.current = null;
+          }
+          ws.current?.close();
           terminal.dispose();
         };
       })
       .catch((err) => {
         console.error("[DirectTerminal] Failed to load xterm.js:", err);
+        permanentErrorRef.current = true;
         setStatus("error");
         setError("Failed to load terminal");
       });
 
     return () => {
       mounted = false;
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
       cleanup?.();
     };
   }, [sessionId, variant]);
