@@ -196,27 +196,31 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
     }
 
-    // 2. Check agent activity via terminal output + process liveness
+    // 2. Check agent activity — prefer JSONL-based detection (runtime-agnostic)
     if (agent && session.runtimeHandle) {
       try {
-        const runtime = registry.get<Runtime>(
-          "runtime",
-          project.runtime ?? config.defaults.runtime,
-        );
-        const terminalOutput = runtime ? await runtime.getOutput(session.runtimeHandle, 10) : "";
-        // Only trust detectActivity when we actually have terminal output;
-        // empty output means the runtime probe failed, not that the agent exited.
-        if (terminalOutput) {
-          const activity = agent.detectActivity(terminalOutput);
-          if (activity === "waiting_input") return "needs_input";
+        // Try JSONL-based activity detection first (reads agent's session files directly)
+        const activityState = await agent.getActivityState(session);
+        if (activityState) {
+          if (activityState.state === "waiting_input") return "needs_input";
+          if (activityState.state === "exited") return "killed";
+          // active/ready/idle/blocked — proceed to PR checks below
+        } else {
+          // getActivityState returned null — fall back to terminal output parsing
+          const runtime = registry.get<Runtime>(
+            "runtime",
+            project.runtime ?? config.defaults.runtime,
+          );
+          const terminalOutput = runtime
+            ? await runtime.getOutput(session.runtimeHandle, 10)
+            : "";
+          if (terminalOutput) {
+            const activity = agent.detectActivity(terminalOutput);
+            if (activity === "waiting_input") return "needs_input";
 
-          // Check whether the agent process is still alive. Some agents
-          // (codex, aider, opencode) return "active" for any non-empty
-          // terminal output, including the shell prompt visible after exit.
-          // Checking isProcessRunning for both "idle" and "active" ensures
-          // exit detection works regardless of the agent's classifier.
-          const processAlive = await agent.isProcessRunning(session.runtimeHandle);
-          if (!processAlive) return "killed";
+            const processAlive = await agent.isProcessRunning(session.runtimeHandle);
+            if (!processAlive) return "killed";
+          }
         }
       } catch {
         // On probe failure, preserve current stuck/needs_input state rather
