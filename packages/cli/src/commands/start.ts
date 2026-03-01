@@ -61,6 +61,25 @@ function resolveProject(
   );
 }
 
+function getEffectiveRuntime(config: OrchestratorConfig, project: ProjectConfig): string {
+  return project.runtime ?? config.defaults?.runtime ?? "tmux";
+}
+
+async function ensureTmuxAvailable(): Promise<void> {
+  try {
+    await exec("tmux", ["-V"]);
+  } catch (err: unknown) {
+    const code = err && typeof err === "object" && "code" in err ? (err as NodeJS.ErrnoException).code : undefined;
+    const message = err instanceof Error ? err.message : String(err);
+    if (code === "ENOENT" || (typeof message === "string" && message.includes("ENOENT"))) {
+      throw new Error(
+        "tmux is required for the configured runtime but was not found. Install with: brew install tmux (macOS) or see SETUP.md for other platforms.",
+      );
+    }
+    throw err;
+  }
+}
+
 /**
  * Start dashboard server in the background.
  * Returns the child process handle for cleanup.
@@ -139,6 +158,10 @@ export function registerStart(program: Command): void {
           const port = config.port ?? 3000;
 
           console.log(chalk.bold(`\nStarting orchestrator for ${chalk.cyan(project.name)}\n`));
+
+          if (opts?.orchestrator !== false && getEffectiveRuntime(config, project) === "tmux") {
+            await ensureTmuxAvailable();
+          }
 
           // Start dashboard (unless --no-dashboard)
           const spinner = ora();
