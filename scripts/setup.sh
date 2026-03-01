@@ -105,12 +105,20 @@ fi
 
 echo ""
 
-# ─── Install pnpm via corepack ───────────────────────────────────────────────
+# ─── Install pnpm ────────────────────────────────────────────────────────────
 
-echo "Enabling corepack and preparing pnpm..."
-corepack enable
-corepack prepare --activate
-echo "[ok] pnpm $(pnpm --version)"
+if command -v pnpm &> /dev/null; then
+  echo "[ok] pnpm $(pnpm --version) (already installed)"
+else
+  echo "Installing pnpm via corepack..."
+  if corepack enable && corepack prepare --activate 2>/dev/null; then
+    echo "[ok] pnpm $(pnpm --version)"
+  else
+    echo "  corepack failed (likely permissions), falling back to npm install..."
+    npm install -g pnpm
+    echo "[ok] pnpm $(pnpm --version)"
+  fi
+fi
 
 # ─── Install, build, link ────────────────────────────────────────────────────
 
