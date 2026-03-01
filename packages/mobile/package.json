@@ -1,0 +1,33 @@
+{
+  "name": "@composio/ao-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web"
+  },
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "2.1.2",
+    "@react-navigation/native": "^6.1.18",
+    "@react-navigation/native-stack": "^6.11.0",
+    "expo": "~53.0.0",
+    "expo-application": "~6.1.5",
+    "expo-background-task": "~0.2.8",
+    "expo-notifications": "~0.31.5",
+    "expo-status-bar": "~2.2.3",
+    "expo-task-manager": "~13.1.6",
+    "react": "19.0.0",
+    "react-native": "0.79.6",
+    "react-native-safe-area-context": "5.4.0",
+    "react-native-screens": "~4.11.1",
+    "react-native-webview": "13.13.5"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.24.0",
+    "@types/react": "~19.0.10",
+    "typescript": "~5.8.3"
+  }
+}
