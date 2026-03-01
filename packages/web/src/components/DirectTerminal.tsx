@@ -189,43 +189,56 @@ export function DirectTerminal({
         const port = process.env.NEXT_PUBLIC_DIRECT_TERMINAL_PORT ?? "14801";
         const wsUrl = `${protocol}//${hostname}:${port}/ws?session=${encodeURIComponent(sessionId)}`;
 
-        // Intercept Cmd+C/V (Mac) and Ctrl+Shift+C/V (Linux/Win) for clipboard
+        // Auto-copy selection to clipboard whenever the user selects text.
+        // This avoids the race where incoming terminal.write() clears the
+        // selection before the user can press Cmd+C.
+        const selectionDisposable = terminal.onSelectionChange(() => {
+          if (terminal.hasSelection()) {
+            navigator.clipboard?.writeText(terminal.getSelection()).catch(() => {});
+          }
+        });
+
+        // Intercept Cmd+C/V (Mac) and Ctrl+Shift+C/V (Linux/Win) for clipboard.
+        // Cmd+C is kept as a fallback (selection may still be alive).
+        // Cmd+V intercepts the key so xterm doesn't process it; the actual
+        // paste is handled by the DOM "paste" event listener below.
         terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
           if (e.type !== "keydown") return true;
-          const isMac = navigator.platform.toUpperCase().includes("MAC");
 
-          if (isMac && e.metaKey && !e.ctrlKey && !e.altKey) {
-            if (e.code === "KeyC" && terminal.hasSelection()) {
-              navigator.clipboard?.writeText(terminal.getSelection()).catch(() => {});
-              return false;
-            }
-            if (e.code === "KeyV") {
-              navigator.clipboard?.readText().then((text) => {
-                if (text && ws.current?.readyState === WebSocket.OPEN) {
-                  terminal.paste(text);
-                }
-              }).catch(() => {});
-              return false;
-            }
+          // Cmd+C / Ctrl+Shift+C — copy selection
+          const isCopy =
+            (e.metaKey && !e.ctrlKey && !e.altKey && e.code === "KeyC") ||
+            (e.ctrlKey && e.shiftKey && e.code === "KeyC");
+          if (isCopy && terminal.hasSelection()) {
+            navigator.clipboard?.writeText(terminal.getSelection()).catch(() => {});
+            return false;
           }
 
-          if (!isMac && e.ctrlKey && e.shiftKey) {
-            if (e.code === "KeyC" && terminal.hasSelection()) {
-              navigator.clipboard?.writeText(terminal.getSelection()).catch(() => {});
-              return false;
-            }
-            if (e.code === "KeyV") {
-              navigator.clipboard?.readText().then((text) => {
-                if (text && ws.current?.readyState === WebSocket.OPEN) {
-                  terminal.paste(text);
-                }
-              }).catch(() => {});
-              return false;
-            }
+          // Cmd+V / Ctrl+Shift+V — trigger native paste event
+          const isPaste =
+            (e.metaKey && !e.ctrlKey && !e.altKey && e.code === "KeyV") ||
+            (e.ctrlKey && e.shiftKey && e.code === "KeyV");
+          if (isPaste) {
+            // Let the browser fire the "paste" event (handled below).
+            // Returning true allows the event to propagate normally.
+            return true;
           }
 
           return true;
         });
+
+        // Handle paste via the DOM "paste" event — this provides clipboard
+        // content through ClipboardEvent.clipboardData without needing the
+        // Clipboard API "clipboard-read" permission.
+        const termEl = terminalRef.current!;
+        const handlePaste = (e: ClipboardEvent) => {
+          const text = e.clipboardData?.getData("text/plain");
+          if (text) {
+            e.preventDefault();
+            terminal.paste(text);
+          }
+        };
+        termEl.addEventListener("paste", handlePaste);
 
         // Handle window resize (works with whatever ws is current)
         const handleResize = () => {
@@ -315,6 +328,8 @@ export function DirectTerminal({
 
         // Store cleanup function to be called from useEffect cleanup
         cleanup = () => {
+          selectionDisposable.dispose();
+          termEl.removeEventListener("paste", handlePaste as EventListener);
           window.removeEventListener("resize", handleResize);
           inputDisposable?.dispose();
           inputDisposable = null;
