@@ -197,12 +197,15 @@ export function DirectTerminal({
         const writeBuffer: string[] = [];
         let selectionActive = false;
         let safetyTimer: ReturnType<typeof setTimeout> | null = null;
+        let bufferBytes = 0;
+        const MAX_BUFFER_BYTES = 1_048_576; // 1 MB
 
         const flushWriteBuffer = () => {
           if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null; }
           if (writeBuffer.length > 0) {
             terminal.write(writeBuffer.join(""));
             writeBuffer.length = 0;
+            bufferBytes = 0;
           }
         };
 
@@ -235,6 +238,8 @@ export function DirectTerminal({
             (e.ctrlKey && e.shiftKey && e.code === "KeyC");
           if (isCopy && terminal.hasSelection()) {
             navigator.clipboard?.writeText(terminal.getSelection()).catch(() => {});
+            // Clear selection so the terminal resumes receiving output
+            terminal.clearSelection();
             return false;
           }
 
@@ -317,6 +322,12 @@ export function DirectTerminal({
               typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data);
             if (selectionActive) {
               writeBuffer.push(data);
+              bufferBytes += data.length;
+              // Flush if buffer exceeds 1 MB to prevent OOM
+              if (bufferBytes > MAX_BUFFER_BYTES) {
+                selectionActive = false;
+                flushWriteBuffer();
+              }
             } else {
               terminal.write(data);
             }
@@ -424,14 +435,17 @@ export function DirectTerminal({
       fit.fit();
       terminal.refresh(0, terminal.rows - 1);
 
-      // Send new size to server
-      websocket.send(
-        JSON.stringify({
-          type: "resize",
-          cols: terminal.cols,
-          rows: terminal.rows,
-        }),
-      );
+      // Send new size to server (use ws.current in case WebSocket reconnected)
+      const currentWs = ws.current;
+      if (currentWs?.readyState === WebSocket.OPEN) {
+        currentWs.send(
+          JSON.stringify({
+            type: "resize",
+            cols: terminal.cols,
+            rows: terminal.rows,
+          }),
+        );
+      }
     };
 
     // Start resize polling
