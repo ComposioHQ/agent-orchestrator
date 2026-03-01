@@ -22,6 +22,7 @@ import { exec } from "../lib/shell.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 import { findWebDir, buildDashboardEnv } from "../lib/web-dir.js";
 import { cleanNextCache } from "../lib/dashboard-rebuild.js";
+import { preflight } from "../lib/preflight.js";
 
 /**
  * Resolve project from config.
@@ -146,10 +147,13 @@ export function registerStart(program: Command): void {
           let exists = false; // Track whether orchestrator session already exists
 
           if (opts?.dashboard !== false) {
+            // Pre-flight: only check port/build when actually starting the dashboard
+            await preflight.checkPort(port);
             const webDir = findWebDir();
             if (!existsSync(resolve(webDir, "package.json"))) {
               throw new Error("Could not find @composio/ao-web package. Run: pnpm install");
             }
+            await preflight.checkBuilt(webDir);
 
             if (opts?.rebuild) {
               await cleanNextCache(webDir);

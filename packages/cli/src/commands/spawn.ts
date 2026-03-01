@@ -5,6 +5,23 @@ import { loadConfig, type OrchestratorConfig } from "@composio/ao-core";
 import { exec } from "../lib/shell.js";
 import { banner } from "../lib/format.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
+import { preflight } from "../lib/preflight.js";
+
+/**
+ * Run pre-flight checks for a project once, before any sessions are spawned.
+ * Validates runtime and tracker prerequisites so failures surface immediately
+ * rather than repeating per-session in a batch.
+ */
+async function runSpawnPreflight(config: OrchestratorConfig, projectId: string): Promise<void> {
+  const project = config.projects[projectId];
+  const runtime = project?.runtime ?? config.defaults.runtime;
+  if (runtime === "tmux") {
+    await preflight.checkTmux();
+  }
+  if (project?.tracker?.plugin === "github") {
+    await preflight.checkGhAuth();
+  }
+}
 
 async function spawnSession(
   config: OrchestratorConfig,
@@ -73,9 +90,10 @@ export function registerSpawn(program: Command): void {
       }
 
       try {
+        await runSpawnPreflight(config, projectId);
         await spawnSession(config, projectId, issueId, opts.open, opts.agent);
       } catch (err) {
-        console.error(chalk.red(`✗ ${err}`));
+        console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));
         process.exit(1);
       }
     });
@@ -104,6 +122,14 @@ export function registerBatchSpawn(program: Command): void {
       console.log(`  Project: ${chalk.bold(projectId)}`);
       console.log(`  Issues:  ${issues.join(", ")}`);
       console.log();
+
+      // Pre-flight once before the loop so a missing prerequisite fails fast
+      try {
+        await runSpawnPreflight(config, projectId);
+      } catch (err) {
+        console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));
+        process.exit(1);
+      }
 
       const sm = await getSessionManager(config);
       const created: Array<{ session: string; issue: string }> = [];

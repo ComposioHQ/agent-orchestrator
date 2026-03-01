@@ -304,3 +304,121 @@ describe("spawn command", () => {
     ).rejects.toThrow("process.exit(1)");
   });
 });
+
+describe("spawn pre-flight checks", () => {
+  it("fails with clear error when tmux is not installed (default runtime)", async () => {
+    mockExec.mockRejectedValue(new Error("ENOENT"));
+
+    await expect(
+      program.parseAsync(["node", "test", "spawn", "my-app"]),
+    ).rejects.toThrow("process.exit(1)");
+
+    const errors = vi.mocked(console.error).mock.calls.map((c) => String(c[0])).join("\n");
+    expect(errors).toContain("tmux");
+    // Should not attempt to spawn
+    expect(mockSessionManager.spawn).not.toHaveBeenCalled();
+  });
+
+  it("skips tmux check when runtime is not tmux", async () => {
+    const fakeSession: Session = {
+      id: "app-1",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: null,
+      issueId: null,
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "proc-1", runtimeName: "process", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+
+    // Set runtime to "process"
+    (mockConfigRef.current as Record<string, unknown>).defaults = {
+      runtime: "process",
+      agent: "claude-code",
+      workspace: "worktree",
+      notifiers: ["desktop"],
+    };
+
+    // exec would fail for tmux but should never be called
+    mockExec.mockRejectedValue(new Error("ENOENT"));
+
+    await program.parseAsync(["node", "test", "spawn", "my-app"]);
+
+    expect(mockSessionManager.spawn).toHaveBeenCalled();
+  });
+
+  it("checks gh auth when tracker is github", async () => {
+    const projects = (mockConfigRef.current as Record<string, unknown>).projects as Record<string, Record<string, unknown>>;
+    projects["my-app"].tracker = { plugin: "github" };
+
+    // tmux check passes, gh --version passes, gh auth status fails
+    mockExec
+      .mockResolvedValueOnce({ stdout: "tmux 3.3a", stderr: "" }) // tmux -V
+      .mockResolvedValueOnce({ stdout: "gh version 2.40", stderr: "" }) // gh --version
+      .mockRejectedValueOnce(new Error("not logged in")); // gh auth status
+
+    await expect(
+      program.parseAsync(["node", "test", "spawn", "my-app"]),
+    ).rejects.toThrow("process.exit(1)");
+
+    const errors = vi.mocked(console.error).mock.calls.map((c) => String(c[0])).join("\n");
+    expect(errors).toContain("not authenticated");
+    expect(mockSessionManager.spawn).not.toHaveBeenCalled();
+  });
+
+  it("skips gh auth check when tracker is not github", async () => {
+    const fakeSession: Session = {
+      id: "app-1",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: null,
+      issueId: null,
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "hash-1", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+
+    const projects = (mockConfigRef.current as Record<string, unknown>).projects as Record<string, Record<string, unknown>>;
+    projects["my-app"].tracker = { plugin: "linear" };
+
+    // tmux check passes — gh should never be called
+    mockExec.mockResolvedValue({ stdout: "tmux 3.3a", stderr: "" });
+
+    await program.parseAsync(["node", "test", "spawn", "my-app"]);
+
+    // Should only call tmux -V, not gh
+    expect(mockExec).toHaveBeenCalledWith("tmux", ["-V"]);
+    expect(mockExec).not.toHaveBeenCalledWith("gh", expect.anything());
+    expect(mockSessionManager.spawn).toHaveBeenCalled();
+  });
+
+  it("distinguishes gh not installed from gh not authenticated", async () => {
+    const projects = (mockConfigRef.current as Record<string, unknown>).projects as Record<string, Record<string, unknown>>;
+    projects["my-app"].tracker = { plugin: "github" };
+
+    // tmux passes, gh --version fails (not installed)
+    mockExec
+      .mockResolvedValueOnce({ stdout: "tmux 3.3a", stderr: "" }) // tmux -V
+      .mockRejectedValueOnce(new Error("ENOENT")); // gh --version fails
+
+    await expect(
+      program.parseAsync(["node", "test", "spawn", "my-app"]),
+    ).rejects.toThrow("process.exit(1)");
+
+    const errors = vi.mocked(console.error).mock.calls.map((c) => String(c[0])).join("\n");
+    expect(errors).toContain("not installed");
+    expect(errors).not.toContain("not authenticated");
+  });
+});
