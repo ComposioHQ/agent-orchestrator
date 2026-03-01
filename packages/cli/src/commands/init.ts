@@ -5,6 +5,7 @@ import { cwd } from "node:process";
 import { stringify as yamlStringify } from "yaml";
 import chalk from "chalk";
 import type { Command } from "commander";
+import { generateSessionPrefix } from "@composio/ao-core";
 import { git, gh, execSilent } from "../lib/shell.js";
 import { isPortAvailable } from "../lib/web-dir.js";
 import {
@@ -312,7 +313,7 @@ export function registerInit(program: Command): void {
 
           const projectConfig: Record<string, unknown> = {
             name: projectId,
-            sessionPrefix: projectId.slice(0, 8),
+            sessionPrefix: generateSessionPrefix(projectId),
             repo,
             path: projectPath,
             defaultBranch,
@@ -475,7 +476,7 @@ async function handleAutoMode(outputPath: string, smart: boolean): Promise<void>
     projects: {
       [projectId]: {
         name: projectId,
-        sessionPrefix: projectId.slice(0, 8),
+        sessionPrefix: generateSessionPrefix(projectId),
         repo,
         path,
         defaultBranch,
