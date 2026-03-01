@@ -22,6 +22,7 @@ import { exec } from "../lib/shell.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 import { findWebDir, buildDashboardEnv } from "../lib/web-dir.js";
 import { cleanNextCache } from "../lib/dashboard-rebuild.js";
+import { preflight } from "../lib/preflight.js";
 
 /**
  * Resolve project from config.
@@ -137,6 +138,10 @@ export function registerStart(program: Command): void {
           const { projectId, project } = resolveProject(config, projectArg);
           const sessionId = `${project.sessionPrefix}-orchestrator`;
           const port = config.port ?? 3000;
+
+          // Pre-flight checks
+          await preflight.checkPort(port);
+          await preflight.checkBuilt();
 
           console.log(chalk.bold(`\nStarting orchestrator for ${chalk.cyan(project.name)}\n`));
 

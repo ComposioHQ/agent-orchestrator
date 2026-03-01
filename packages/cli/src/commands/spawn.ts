@@ -5,6 +5,7 @@ import { loadConfig, type OrchestratorConfig } from "@composio/ao-core";
 import { exec } from "../lib/shell.js";
 import { banner } from "../lib/format.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
+import { preflight } from "../lib/preflight.js";
 
 async function spawnSession(
   config: OrchestratorConfig,
@@ -13,6 +14,15 @@ async function spawnSession(
   openTab?: boolean,
   agent?: string,
 ): Promise<string> {
+  // Pre-flight: ensure tmux is available (default runtime)
+  await preflight.checkTmux();
+
+  // Pre-flight: ensure gh is authenticated if using github tracker
+  const project = config.projects[projectId];
+  if (project?.tracker?.plugin === "github") {
+    await preflight.checkGhAuth();
+  }
+
   const spinner = ora("Creating session").start();
 
   try {
