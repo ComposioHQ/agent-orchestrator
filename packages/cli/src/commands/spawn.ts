@@ -124,7 +124,12 @@ export function registerBatchSpawn(program: Command): void {
       console.log();
 
       // Pre-flight once before the loop so a missing prerequisite fails fast
-      await runSpawnPreflight(config, projectId);
+      try {
+        await runSpawnPreflight(config, projectId);
+      } catch (err) {
+        console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));
+        process.exit(1);
+      }
 
       const sm = await getSessionManager(config);
       const created: Array<{ session: string; issue: string }> = [];
