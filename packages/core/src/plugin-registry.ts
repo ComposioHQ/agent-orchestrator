@@ -37,8 +37,10 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
   // Trackers
   { slot: "tracker", name: "github", pkg: "@composio/ao-plugin-tracker-github" },
   { slot: "tracker", name: "linear", pkg: "@composio/ao-plugin-tracker-linear" },
+  { slot: "tracker", name: "gitlab", pkg: "@composio/ao-plugin-tracker-gitlab" },
   // SCM
   { slot: "scm", name: "github", pkg: "@composio/ao-plugin-scm-github" },
+  { slot: "scm", name: "gitlab", pkg: "@composio/ao-plugin-scm-gitlab" },
   // Notifiers
   { slot: "notifier", name: "composio", pkg: "@composio/ao-plugin-notifier-composio" },
   { slot: "notifier", name: "desktop", pkg: "@composio/ao-plugin-notifier-desktop" },
