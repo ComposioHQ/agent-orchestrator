@@ -1,0 +1,33 @@
+# Example: Linear webhook server configuration
+#
+# Start the webhook server with:
+#   cd packages/webhook-linear
+#   LINEAR_WEBHOOK_SECRET=<your-secret> AO_PROJECT_ID=<your-project> pnpm start
+#
+# Then configure your Linear workspace to send webhooks to:
+#   https://your-server.example.com/webhook/linear
+
+# Environment variables:
+#   PORT                 - HTTP port (default: 3200)
+#   LINEAR_WEBHOOK_SECRET - Linear webhook signing secret (required in production)
+#   AO_PROJECT_ID        - The ao project to spawn agents under (default: dashboard)
+#   AO_BIN               - Path to the ao binary (default: ao)
+#   DASHBOARD_TEAM_ID    - Linear team ID to filter events for
+#   TRIGGER_LABEL        - Label name that triggers coding agent spawn (default: agent-ready)
+#   DRY_RUN              - Set to "true" to log without spawning (default: false)
+#   TEST_GEN_PROMPT_FILE - Path to test-gen prompt file (default: packages/webhook-linear/test-gen-prompt.md)
+
+# Example ao project config (agent-orchestrator.yaml):
+projects:
+  dashboard:
+    description: "Main dashboard project"
+    workspace:
+      plugin: worktree
+      repoPath: ~/code/my-app
+    agent:
+      plugin: claude-code
+    runtime:
+      plugin: tmux
+    tracker:
+      plugin: linear
+      teamId: "f65d8805-05b4-41d2-a90b-dffe27e24d0b"

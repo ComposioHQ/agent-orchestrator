@@ -86,6 +86,14 @@ export default tseslint.config(
     },
   },
 
+  // webhook-linear server uses console for operational logging
+  {
+    files: ["packages/webhook-linear/**/*.ts"],
+    rules: {
+      "no-console": "off",
+    },
+  },
+
   // Scripts directory - Node.js environment
   {
     files: ["scripts/**/*.js", "scripts/**/*.mjs"],
