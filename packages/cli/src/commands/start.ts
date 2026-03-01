@@ -149,11 +149,11 @@ export function registerStart(program: Command): void {
           if (opts?.dashboard !== false) {
             // Pre-flight: only check port/build when actually starting the dashboard
             await preflight.checkPort(port);
-            await preflight.checkBuilt();
             const webDir = findWebDir();
             if (!existsSync(resolve(webDir, "package.json"))) {
               throw new Error("Could not find @composio/ao-web package. Run: pnpm install");
             }
+            await preflight.checkBuilt();
 
             if (opts?.rebuild) {
               await cleanNextCache(webDir);
