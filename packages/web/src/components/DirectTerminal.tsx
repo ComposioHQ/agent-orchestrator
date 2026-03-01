@@ -68,8 +68,10 @@ export function DirectTerminal({
 
   useEffect(() => {
     if (!terminalRef.current) return;
-    // Prevent retry loop on permanent errors only
-    if (permanentErrorRef.current) return;
+
+    // Reset reconnection state when sessionId changes
+    permanentErrorRef.current = false;
+    reconnectAttemptRef.current = 0;
 
     // Dynamically import xterm.js to avoid SSR issues
     let mounted = true;
