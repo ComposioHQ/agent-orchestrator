@@ -408,12 +408,15 @@ async function getCachedProcessList(): Promise<string> {
     return psCache.output;
   }
 
-  // Cache miss or expired — start a single `ps` call and share the promise
+  // Cache miss or expired — start a single `ps` call and share the promise.
+  // Guard both callbacks so they only update psCache if it still belongs to
+  // this request — a newer request may have replaced it while we were waiting.
   const promise = execFileAsync("ps", ["-eo", "pid,tty,args"], {
     timeout: 5_000,
   }).then(({ stdout }) => {
-    // Resolve: store output, clear promise
-    psCache = { output: stdout, timestamp: Date.now() };
+    if (psCache?.promise === promise) {
+      psCache = { output: stdout, timestamp: Date.now() };
+    }
     return stdout;
   });
 
@@ -423,8 +426,11 @@ async function getCachedProcessList(): Promise<string> {
   try {
     return await promise;
   } catch {
-    // On failure, clear cache so the next caller retries
-    psCache = null;
+    // On failure, clear cache so the next caller retries — but only if
+    // psCache still points to this request (avoid clobbering a newer entry)
+    if (psCache?.promise === promise) {
+      psCache = null;
+    }
     return "";
   }
 }
