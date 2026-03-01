@@ -227,7 +227,7 @@ function StatusLine({ stats }: { stats: DashboardStats }) {
   const parts: Array<{ value: number; label: string; color?: string }> = [
     { value: stats.totalSessions, label: "sessions" },
     ...(stats.workingSessions > 0
-      ? [{ value: stats.workingSessions, label: "active", color: "var(--color-status-working)" }]
+      ? [{ value: stats.workingSessions, label: "working", color: "var(--color-status-working)" }]
       : []),
     ...(stats.openPRs > 0 ? [{ value: stats.openPRs, label: "PRs" }] : []),
     ...(stats.needsReview > 0
