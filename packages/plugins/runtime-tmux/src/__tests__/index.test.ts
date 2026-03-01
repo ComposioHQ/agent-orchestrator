@@ -23,6 +23,16 @@ vi.mock("node:fs", () => ({
   unlinkSync: vi.fn(),
 }));
 
+// Mock node:os to return a predictable tmpdir
+vi.mock("node:os", () => ({
+  tmpdir: () => "/tmp",
+}));
+
+// Mock node:timers/promises to make sleep instant in tests
+vi.mock("node:timers/promises", () => ({
+  setTimeout: vi.fn().mockResolvedValue(undefined),
+}));
+
 // Get reference to the promisify-custom mock — this is what the plugin actually calls
 const mockExecFileCustom = (childProcess.execFile as any)[
   Symbol.for("nodejs.util.promisify.custom")
@@ -79,10 +89,15 @@ describe("create()", () => {
 });
 
 describe("runtime.create()", () => {
+  // Launcher script path based on mocked UUID
+  const launcherPath = `/tmp/ao-launch-test-uuid-1234.sh`;
+
   it("calls new-session with correct args", async () => {
     const runtime = create();
 
-    // 1: new-session, 2: send-keys (launch command)
+    // 1: new-session, 2: send-keys source, 3: send-keys Enter, 4: send-keys trust-dialog Enter
+    mockTmuxSuccess();
+    mockTmuxSuccess();
     mockTmuxSuccess();
     mockTmuxSuccess();
 
@@ -106,11 +121,21 @@ describe("runtime.create()", () => {
       "-c",
       "/tmp/workspace",
     ]);
+
+    // Also verify the launcher script was written
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      launcherPath,
+      "echo hello\n",
+      { encoding: "utf-8", mode: 0o755 },
+    );
   });
 
   it("includes -e KEY=VALUE flags for environment variables", async () => {
     const runtime = create();
 
+    // 4 calls for the full flow
+    mockTmuxSuccess();
+    mockTmuxSuccess();
     mockTmuxSuccess();
     mockTmuxSuccess();
 
@@ -129,9 +154,12 @@ describe("runtime.create()", () => {
     expect(args).toContain("FOO=bar");
   });
 
-  it("sends launch command via send-keys", async () => {
+  it("sends launch command via launcher script and send-keys", async () => {
     const runtime = create();
 
+    // 4 calls for the full flow
+    mockTmuxSuccess();
+    mockTmuxSuccess();
     mockTmuxSuccess();
     mockTmuxSuccess();
 
@@ -142,12 +170,20 @@ describe("runtime.create()", () => {
       environment: {},
     });
 
-    // Second call: send-keys with the launch command
+    // Second call: send-keys to source the launcher script (with -l flag)
     expect(mockExecFileCustom).toHaveBeenCalledWith("tmux", [
       "send-keys",
       "-t",
       "launch-test",
-      "claude --session abc",
+      "-l",
+      `source ${launcherPath}`,
+    ]);
+
+    // Third call: send Enter to execute
+    expect(mockExecFileCustom).toHaveBeenCalledWith("tmux", [
+      "send-keys",
+      "-t",
+      "launch-test",
       "Enter",
     ]);
   });
@@ -157,7 +193,7 @@ describe("runtime.create()", () => {
 
     // 1: new-session succeeds
     mockTmuxSuccess();
-    // 2: send-keys fails
+    // 2: send-keys source fails
     mockTmuxError("send-keys failed");
     // 3: kill-session (cleanup attempt)
     mockTmuxSuccess();
@@ -169,7 +205,7 @@ describe("runtime.create()", () => {
         launchCommand: "bad-command",
         environment: {},
       }),
-    ).rejects.toThrow('Failed to send launch command to session "fail-session"');
+    ).rejects.toThrow('Failed to create session "fail-session": send-keys failed');
 
     // Verify kill-session was called for cleanup
     expect(mockExecFileCustom).toHaveBeenCalledWith("tmux", ["kill-session", "-t", "fail-session"]);
@@ -206,6 +242,8 @@ describe("runtime.create()", () => {
 
     mockTmuxSuccess();
     mockTmuxSuccess();
+    mockTmuxSuccess();
+    mockTmuxSuccess();
 
     const handle = await runtime.create({
       sessionId: "valid-session_123",
@@ -220,6 +258,8 @@ describe("runtime.create()", () => {
   it("handles no environment (undefined)", async () => {
     const runtime = create();
 
+    mockTmuxSuccess();
+    mockTmuxSuccess();
     mockTmuxSuccess();
     mockTmuxSuccess();
 

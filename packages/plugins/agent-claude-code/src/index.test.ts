@@ -143,7 +143,7 @@ describe("getLaunchCommand", () => {
 
   it("generates base command without shell syntax", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "default" }));
-    expect(cmd).toBe("claude");
+    expect(cmd).toBe("claude --teammate-mode tmux");
     // Must not contain shell operators (execFile-safe)
     expect(cmd).not.toContain("&&");
     expect(cmd).not.toContain("unset");
@@ -159,17 +159,16 @@ describe("getLaunchCommand", () => {
     expect(cmd).toContain("--model 'claude-opus-4-6'");
   });
 
-  it("does not include -p flag (prompt delivered post-launch)", () => {
+  it("includes prompt as positional argument", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "Fix the bug" }));
-    expect(cmd).not.toContain("-p");
-    expect(cmd).not.toContain("Fix the bug");
+    expect(cmd).toContain("'Fix the bug'");
   });
 
-  it("combines all options without prompt", () => {
+  it("combines all options with prompt", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ permissions: "skip", model: "opus", prompt: "Hello" }),
     );
-    expect(cmd).toBe("claude --dangerously-skip-permissions --model 'opus'");
+    expect(cmd).toBe("claude --dangerously-skip-permissions --teammate-mode tmux --model 'opus' 'Hello'");
   });
 
   it("omits --dangerously-skip-permissions when permissions=default", () => {
