@@ -279,22 +279,19 @@ export function DirectTerminal({
     const maxAttempts = 60;
     let cancelled = false;
     let rafId = 0;
+    let lastHeight = -1;
 
     const resizeTerminal = () => {
       if (cancelled) return;
       resizeAttempts++;
 
-      // Get container dimensions
-      const rect = container.getBoundingClientRect();
-      const expectedHeight = rect.height;
+      // Wait for the container height to stabilise (CSS transition finished)
+      const currentHeight = container.getBoundingClientRect().height;
+      const settled = lastHeight >= 0 && Math.abs(currentHeight - lastHeight) < 1;
+      lastHeight = currentHeight;
 
-      // Check if container has reached target dimensions (within 10px tolerance)
-      const isFullscreenTarget = fullscreen
-        ? expectedHeight > window.innerHeight - 100
-        : expectedHeight < 700;
-
-      if (!isFullscreenTarget && resizeAttempts < maxAttempts) {
-        // Container hasn't reached target size yet, try again
+      if (!settled && resizeAttempts < maxAttempts) {
+        // Container is still transitioning, try again next frame
         rafId = requestAnimationFrame(resizeTerminal);
         return;
       }
@@ -322,6 +319,7 @@ export function DirectTerminal({
       if (cancelled) return;
       if (e.target === container.parentElement) {
         resizeAttempts = 0;
+        lastHeight = -1;
         setTimeout(() => {
           if (!cancelled) rafId = requestAnimationFrame(resizeTerminal);
         }, 50);
@@ -335,11 +333,13 @@ export function DirectTerminal({
     const timer1 = setTimeout(() => {
       if (cancelled) return;
       resizeAttempts = 0;
+      lastHeight = -1;
       resizeTerminal();
     }, 300);
     const timer2 = setTimeout(() => {
       if (cancelled) return;
       resizeAttempts = 0;
+      lastHeight = -1;
       resizeTerminal();
     }, 600);
 
