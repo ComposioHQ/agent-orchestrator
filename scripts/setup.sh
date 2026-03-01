@@ -45,11 +45,17 @@ echo "[ok] git $GIT_VERSION"
 
 # ─── Soft requirements (warn + offer interactive fix) ─────────────────────────
 
+# Detect interactive terminal for optional prompts (skip in CI/Docker)
+INTERACTIVE=false
+if [ -t 0 ]; then
+  INTERACTIVE=true
+fi
+
 # tmux
 if ! command -v tmux &> /dev/null; then
   echo ""
   echo "WARNING: tmux is not installed (default runtime requires it)."
-  if command -v brew &> /dev/null; then
+  if [ "$INTERACTIVE" = true ] && command -v brew &> /dev/null; then
     read -r -p "  Install tmux via Homebrew? [Y/n] " response
     response=${response:-Y}
     if [[ "$response" =~ ^[Yy]$ ]]; then
@@ -74,12 +80,16 @@ else
   if ! gh auth status &> /dev/null; then
     echo ""
     echo "WARNING: GitHub CLI is not authenticated."
-    read -r -p "  Run 'gh auth login' now? [Y/n] " response
-    response=${response:-Y}
-    if [[ "$response" =~ ^[Yy]$ ]]; then
-      gh auth login
+    if [ "$INTERACTIVE" = true ]; then
+      read -r -p "  Run 'gh auth login' now? [Y/n] " response
+      response=${response:-Y}
+      if [[ "$response" =~ ^[Yy]$ ]]; then
+        gh auth login
+      else
+        echo "  Skipping. Authenticate later: gh auth login"
+      fi
     else
-      echo "  Skipping. Authenticate later: gh auth login"
+      echo "  Authenticate later: gh auth login"
     fi
   else
     echo "[ok] gh authenticated"
