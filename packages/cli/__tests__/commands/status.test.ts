@@ -21,6 +21,8 @@ const {
   mockGetPendingComments,
   mockSessionManager,
   sessionsDirRef,
+  mockGetAgentByName,
+  expandHomeOverride,
 } = vi.hoisted(() => ({
   mockTmux: vi.fn(),
   mockGit: vi.fn(),
@@ -41,6 +43,8 @@ const {
     send: vi.fn(),
   },
   sessionsDirRef: { current: "" },
+  mockGetAgentByName: vi.fn(),
+  expandHomeOverride: { current: null as string | null },
 }));
 
 vi.mock("../../src/lib/shell.js", () => ({
@@ -67,7 +71,18 @@ vi.mock("@composio/ao-core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@composio/ao-core")>();
   return {
     ...actual,
-    loadConfig: () => mockConfigRef.current,
+    loadConfig: () => {
+      if (mockConfigRef.current === null) {
+        throw new Error("No agent-orchestrator.yaml found");
+      }
+      return mockConfigRef.current;
+    },
+    expandHome: (filepath: string) => {
+      if (expandHomeOverride.current && filepath === "~/.agent-orchestrator") {
+        return expandHomeOverride.current;
+      }
+      return actual.expandHome(filepath);
+    },
   };
 });
 
@@ -79,13 +94,18 @@ vi.mock("../../src/lib/plugins.js", () => ({
     getSessionInfo: mockIntrospect,
     getActivityState: mockGetActivityState,
   }),
-  getAgentByName: () => ({
-    name: "claude-code",
-    processName: "claude",
-    detectActivity: () => "idle",
-    getSessionInfo: mockIntrospect,
-    getActivityState: mockGetActivityState,
-  }),
+  getAgentByName: (name: string) => {
+    if (mockGetAgentByName.mock.calls.length >= 0) {
+      mockGetAgentByName(name); // Track calls for assertions
+    }
+    return {
+      name,
+      processName: name === "codex" ? "codex" : "claude",
+      detectActivity: () => "idle",
+      getSessionInfo: mockIntrospect,
+      getActivityState: mockGetActivityState,
+    };
+  },
   getSCM: () => ({
     name: "github",
     detectPR: mockDetectPR,
@@ -208,6 +228,8 @@ beforeEach(() => {
   });
   mockTmux.mockReset();
   mockGit.mockReset();
+  mockGetAgentByName.mockReset();
+  expandHomeOverride.current = null;
   mockIntrospect.mockReset();
   mockIntrospect.mockResolvedValue(null);
   mockGetActivityState.mockReset();
@@ -682,5 +704,86 @@ describe("status command", () => {
     const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
     const parsed = JSON.parse(jsonCalls);
     expect(parsed[0].activity).toBe("exited");
+  });
+});
+
+describe("fallback status (no config)", () => {
+  it("uses agent from metadata for introspection", async () => {
+    // Trigger fallback path by removing config
+    mockConfigRef.current = null;
+
+    // Set up a fake ~/.agent-orchestrator directory with metadata
+    const aoDir = join(tmpDir, "agent-orchestrator-fallback");
+    const fakeSessionsDir = join(aoDir, "abc123-myproj", "sessions");
+    mkdirSync(fakeSessionsDir, { recursive: true });
+    writeFileSync(
+      join(fakeSessionsDir, "app-1"),
+      "worktree=/tmp/wt\nbranch=feat/test\nstatus=working\nagent=codex\ntmuxName=my-codex-session\n",
+    );
+
+    // Override expandHome to point to our temp dir
+    expandHomeOverride.current = aoDir;
+
+    mockTmux.mockImplementation(async (...args: string[]) => {
+      if (args[0] === "list-sessions") return "my-codex-session";
+      if (args[0] === "display-message") return String(Math.floor(Date.now() / 1000) - 60);
+      return null;
+    });
+
+    mockIntrospect.mockResolvedValue({ summary: "Working on codex task" });
+
+    await program.parseAsync(["node", "test", "status"]);
+
+    // Should have called getAgentByName with "codex" (from metadata)
+    expect(mockGetAgentByName).toHaveBeenCalledWith("codex");
+  });
+
+  it("falls back to claude-code when no metadata exists", async () => {
+    mockConfigRef.current = null;
+
+    // Empty agent-orchestrator directory
+    const aoDir = join(tmpDir, "agent-orchestrator-empty");
+    mkdirSync(aoDir, { recursive: true });
+    expandHomeOverride.current = aoDir;
+
+    mockTmux.mockImplementation(async (...args: string[]) => {
+      if (args[0] === "list-sessions") return "unknown-session";
+      if (args[0] === "display-message") return null;
+      return null;
+    });
+
+    await program.parseAsync(["node", "test", "status"]);
+
+    // Should default to claude-code when no metadata found
+    expect(mockGetAgentByName).toHaveBeenCalledWith("claude-code");
+  });
+
+  it("shows correct agent label in fallback output", async () => {
+    mockConfigRef.current = null;
+
+    const aoDir = join(tmpDir, "agent-orchestrator-label");
+    const fakeSessionsDir = join(aoDir, "def456-proj", "sessions");
+    mkdirSync(fakeSessionsDir, { recursive: true });
+    writeFileSync(
+      join(fakeSessionsDir, "proj-1"),
+      "worktree=/tmp/wt\nbranch=feat/x\nstatus=working\nagent=codex\ntmuxName=codex-session\n",
+    );
+
+    expandHomeOverride.current = aoDir;
+
+    mockTmux.mockImplementation(async (...args: string[]) => {
+      if (args[0] === "list-sessions") return "codex-session";
+      if (args[0] === "display-message") return String(Math.floor(Date.now() / 1000));
+      return null;
+    });
+
+    mockIntrospect.mockResolvedValue({ summary: "Building the feature" });
+
+    await program.parseAsync(["node", "test", "status"]);
+
+    const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+    // Should show "codex:" label, not "Claude:"
+    expect(output).toContain("codex:");
+    expect(output).toContain("Building the feature");
   });
 });
