@@ -30,7 +30,7 @@ vi.mock("node:os", () => ({
   homedir: mockHomedir,
 }));
 
-import { create, manifest, default as defaultExport } from "./index.js";
+import { create, manifest, default as defaultExport, resetPsCache } from "./index.js";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -108,6 +108,7 @@ function mockJsonlFiles(
 // ---------------------------------------------------------------------------
 beforeEach(() => {
   vi.clearAllMocks();
+  resetPsCache();
   mockHomedir.mockReturnValue("/mock/home");
 });
 
