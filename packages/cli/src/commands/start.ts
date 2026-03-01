@@ -211,14 +211,23 @@ export function registerStart(program: Command): void {
           }
 
           // Start lifecycle manager (CI reactions, PR merge detection, notifications)
-          const registry = await getRegistry(config);
-          const sessionManager = await getSessionManager(config);
-          const lifecycle = createLifecycleManager({
-            config,
-            registry,
-            sessionManager,
-          });
-          lifecycle.start(30_000);
+          let lifecycle: ReturnType<typeof createLifecycleManager>;
+          try {
+            const registry = await getRegistry(config);
+            const sessionManager = await getSessionManager(config);
+            lifecycle = createLifecycleManager({
+              config,
+              registry,
+              sessionManager,
+            });
+            lifecycle.start(30_000);
+          } catch (err) {
+            if (dashboardProcess) dashboardProcess.kill();
+            throw new Error(
+              `Failed to start lifecycle manager: ${err instanceof Error ? err.message : String(err)}`,
+              { cause: err },
+            );
+          }
 
           process.on("SIGINT", () => {
             lifecycle.stop();
