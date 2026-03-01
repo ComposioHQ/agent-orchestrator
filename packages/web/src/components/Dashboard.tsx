@@ -13,9 +13,10 @@ import { CI_STATUS } from "@composio/ao-core/types";
 import { AttentionZone } from "./AttentionZone";
 import { PRTableRow } from "./PRStatus";
 import { DynamicFavicon } from "./DynamicFavicon";
+import { useSessionEvents } from "@/hooks/useSessionEvents";
 
 interface DashboardProps {
-  sessions: DashboardSession[];
+  initialSessions: DashboardSession[];
   stats: DashboardStats;
   orchestratorId?: string | null;
   projectName?: string;
@@ -23,7 +24,8 @@ interface DashboardProps {
 
 const KANBAN_LEVELS = ["working", "pending", "review", "respond", "merge"] as const;
 
-export function Dashboard({ sessions, stats, orchestratorId, projectName }: DashboardProps) {
+export function Dashboard({ initialSessions, stats, orchestratorId, projectName }: DashboardProps) {
+  const sessions = useSessionEvents(initialSessions);
   const [rateLimitDismissed, setRateLimitDismissed] = useState(false);
   const grouped = useMemo(() => {
     const zones: Record<AttentionLevel, DashboardSession[]> = {

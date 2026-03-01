@@ -84,7 +84,7 @@ beforeEach(() => {
     getLaunchCommand: vi.fn(),
     getEnvironment: vi.fn(),
     detectActivity: vi.fn().mockReturnValue("active" as ActivityState),
-    getActivityState: vi.fn().mockResolvedValue("active" as ActivityState),
+    getActivityState: vi.fn().mockResolvedValue({ state: "active" as ActivityState }),
     isProcessRunning: vi.fn().mockResolvedValue(true),
     getSessionInfo: vi.fn().mockResolvedValue(null),
   };
@@ -227,7 +227,32 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("killed");
   });
 
-  it("detects killed state when agent process exits (idle terminal + dead process)", async () => {
+  it("detects killed state when getActivityState returns exited", async () => {
+    vi.mocked(mockAgent.getActivityState).mockResolvedValue({ state: "exited" });
+
+    const session = makeSession({ status: "working" });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("killed");
+  });
+
+  it("detects killed via terminal fallback when getActivityState returns null", async () => {
+    vi.mocked(mockAgent.getActivityState).mockResolvedValue(null);
     vi.mocked(mockAgent.detectActivity).mockReturnValue("idle");
     vi.mocked(mockAgent.isProcessRunning).mockResolvedValue(false);
 
@@ -252,34 +277,8 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("killed");
   });
 
-  it("detects killed state when agent process exits (active terminal + dead process)", async () => {
-    // Stub agents (codex, aider, opencode) return "active" for any non-empty
-    // terminal output, including the shell prompt after the agent exits.
-    vi.mocked(mockAgent.detectActivity).mockReturnValue("active");
-    vi.mocked(mockAgent.isProcessRunning).mockResolvedValue(false);
-
-    const session = makeSession({ status: "working" });
-    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
-
-    writeMetadata(sessionsDir, "app-1", {
-      worktree: "/tmp",
-      branch: "main",
-      status: "working",
-      project: "my-app",
-    });
-
-    const lm = createLifecycleManager({
-      config,
-      registry: mockRegistry,
-      sessionManager: mockSessionManager,
-    });
-
-    await lm.check("app-1");
-
-    expect(lm.getStates().get("app-1")).toBe("killed");
-  });
-
-  it("stays working when agent is idle but process is still running", async () => {
+  it("stays working when agent is idle but process is still running (fallback path)", async () => {
+    vi.mocked(mockAgent.getActivityState).mockResolvedValue(null);
     vi.mocked(mockAgent.detectActivity).mockReturnValue("idle");
     vi.mocked(mockAgent.isProcessRunning).mockResolvedValue(true);
 
@@ -305,7 +304,7 @@ describe("check (single session)", () => {
   });
 
   it("detects needs_input from agent", async () => {
-    vi.mocked(mockAgent.detectActivity).mockReturnValue("waiting_input");
+    vi.mocked(mockAgent.getActivityState).mockResolvedValue({ state: "waiting_input" });
 
     const session = makeSession({ status: "working" });
     vi.mocked(mockSessionManager.get).mockResolvedValue(session);
@@ -328,10 +327,8 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("needs_input");
   });
 
-  it("preserves stuck state when detectActivity throws", async () => {
-    vi.mocked(mockAgent.detectActivity).mockImplementation(() => {
-      throw new Error("probe failed");
-    });
+  it("preserves stuck state when getActivityState throws", async () => {
+    vi.mocked(mockAgent.getActivityState).mockRejectedValue(new Error("probe failed"));
 
     const session = makeSession({ status: "stuck" });
     vi.mocked(mockSessionManager.get).mockResolvedValue(session);
@@ -355,10 +352,8 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("stuck");
   });
 
-  it("preserves needs_input state when detectActivity throws", async () => {
-    vi.mocked(mockAgent.detectActivity).mockImplementation(() => {
-      throw new Error("probe failed");
-    });
+  it("preserves needs_input state when getActivityState throws", async () => {
+    vi.mocked(mockAgent.getActivityState).mockRejectedValue(new Error("probe failed"));
 
     const session = makeSession({ status: "needs_input" });
     vi.mocked(mockSessionManager.get).mockResolvedValue(session);
@@ -382,7 +377,8 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("needs_input");
   });
 
-  it("preserves stuck state when getOutput throws", async () => {
+  it("preserves stuck state when getActivityState returns null and getOutput throws", async () => {
+    vi.mocked(mockAgent.getActivityState).mockResolvedValue(null);
     vi.mocked(mockRuntime.getOutput).mockRejectedValue(new Error("tmux error"));
 
     const session = makeSession({ status: "stuck" });
