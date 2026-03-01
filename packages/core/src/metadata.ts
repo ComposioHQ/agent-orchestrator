@@ -22,6 +22,7 @@
 import {
   readFileSync,
   writeFileSync,
+  renameSync,
   existsSync,
   mkdirSync,
   unlinkSync,
@@ -63,6 +64,16 @@ function serializeMetadata(data: Record<string, string>): string {
   );
 }
 
+/**
+ * Atomically write a file by writing to a temp file then renaming.
+ * rename() is atomic on POSIX, so concurrent writers never produce torn data.
+ */
+function atomicWriteFileSync(filePath: string, content: string): void {
+  const tmpPath = `${filePath}.tmp.${process.pid}.${Date.now()}`;
+  writeFileSync(tmpPath, content, "utf-8");
+  renameSync(tmpPath, filePath);
+}
+
 /** Validate sessionId to prevent path traversal. */
 const VALID_SESSION_ID = /^[a-zA-Z0-9_-]+$/;
 
@@ -100,6 +111,7 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
     agent: raw["agent"],
     createdAt: raw["createdAt"],
     runtimeHandle: raw["runtimeHandle"],
+    restoredAt: raw["restoredAt"],
     role: raw["role"],
     dashboardPort: raw["dashboardPort"] ? Number(raw["dashboardPort"]) : undefined,
     terminalWsPort: raw["terminalWsPort"] ? Number(raw["terminalWsPort"]) : undefined,
@@ -144,6 +156,7 @@ export function writeMetadata(
   if (metadata.agent) data["agent"] = metadata.agent;
   if (metadata.createdAt) data["createdAt"] = metadata.createdAt;
   if (metadata.runtimeHandle) data["runtimeHandle"] = metadata.runtimeHandle;
+  if (metadata.restoredAt) data["restoredAt"] = metadata.restoredAt;
   if (metadata.role) data["role"] = metadata.role;
   if (metadata.dashboardPort !== undefined)
     data["dashboardPort"] = String(metadata.dashboardPort);
@@ -152,7 +165,7 @@ export function writeMetadata(
   if (metadata.directTerminalWsPort !== undefined)
     data["directTerminalWsPort"] = String(metadata.directTerminalWsPort);
 
-  writeFileSync(path, serializeMetadata(data), "utf-8");
+  atomicWriteFileSync(path, serializeMetadata(data));
 }
 
 /**
@@ -183,7 +196,7 @@ export function updateMetadata(
   }
 
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, serializeMetadata(existing), "utf-8");
+  atomicWriteFileSync(path, serializeMetadata(existing));
 }
 
 /**
