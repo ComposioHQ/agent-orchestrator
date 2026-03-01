@@ -26,3 +26,18 @@ projects:
       - "pnpm install"
     agentConfig:
       permissions: skip
+
+  dashboard:
+    name: Reboot Dashboard
+    repo: goodcodeworks/dashboard_
+    path: ~/code/good_code/dashboard_
+    defaultBranch: develop
+    sessionPrefix: dsh
+    scm:
+      plugin: github
+    tracker:
+      plugin: linear
+      teamId: "f65d8805-05b4-41d2-a90b-dffe27e24d0b"
+    agentRulesFile: .agent-rules.md
+    agentConfig:
+      permissions: skip
