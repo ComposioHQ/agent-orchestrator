@@ -9,7 +9,8 @@
 
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { isPortAvailable, findWebDir } from "./web-dir.js";
+import { createRequire } from "node:module";
+import { isPortAvailable } from "./web-dir.js";
 import { exec } from "./shell.js";
 
 /**
@@ -26,13 +27,17 @@ async function checkPort(port: number): Promise<void> {
 }
 
 /**
- * Check that packages have been built (the web .next directory exists).
- * Throws if not built.
+ * Check that workspace packages have been compiled (TypeScript → JavaScript).
+ * Verifies @composio/ao-core dist output exists, since a missing dist/ is the
+ * actual cause of module resolution errors when starting the dashboard.
+ * Works with both `next dev` and `next build` (unlike .next/BUILD_ID which
+ * is production-only).
  */
 async function checkBuilt(): Promise<void> {
-  const webDir = findWebDir();
-  const buildId = resolve(webDir, ".next", "BUILD_ID");
-  if (!existsSync(buildId)) {
+  const require = createRequire(import.meta.url);
+  try {
+    require.resolve("@composio/ao-core");
+  } catch {
     throw new Error("Packages not built. Run: pnpm build");
   }
 }
