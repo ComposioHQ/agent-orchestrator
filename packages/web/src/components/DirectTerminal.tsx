@@ -148,6 +148,20 @@ export function DirectTerminal({
           },
         );
 
+        // Register OSC 52 handler for clipboard support
+        // tmux sends OSC 52 with base64-encoded text when copying
+        terminal.parser.registerOscHandler(52, (data) => {
+          const parts = data.split(";");
+          if (parts.length < 2) return false;
+          const b64 = parts[parts.length - 1];
+          try {
+            navigator.clipboard?.writeText(atob(b64)).catch(() => {});
+          } catch {
+            // Ignore decode errors
+          }
+          return true;
+        });
+
         // Open terminal in DOM
         terminal.open(terminalRef.current);
         terminalInstance.current = terminal;
@@ -257,7 +271,7 @@ export function DirectTerminal({
     }
 
     let resizeAttempts = 0;
-    const maxAttempts = 10;
+    const maxAttempts = 60;
 
     const resizeTerminal = () => {
       resizeAttempts++;
