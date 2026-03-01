@@ -189,12 +189,47 @@ export function DirectTerminal({
         const port = process.env.NEXT_PUBLIC_DIRECT_TERMINAL_PORT ?? "14801";
         const wsUrl = `${protocol}//${hostname}:${port}/ws?session=${encodeURIComponent(sessionId)}`;
 
+        // ── Selection-aware write buffer ──────────────────────────────
+        // xterm.js clears the selection on every terminal.write(). To keep
+        // the selection visible while the terminal receives output, we
+        // buffer incoming data while a selection is active and flush once
+        // the selection is cleared (click, keypress, etc.).
+        const writeBuffer: string[] = [];
+        let selecting = false;       // true while mouse button is down
+        let hasSelection = false;    // true while a selection exists
+        let flushTimer: ReturnType<typeof setTimeout> | null = null;
+        const MAX_BUFFER_MS = 5_000; // safety cap
+
+        const flushBuffer = () => {
+          if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+          if (writeBuffer.length > 0) {
+            terminal.write(writeBuffer.join(""));
+            writeBuffer.length = 0;
+          }
+        };
+
+        const shouldBuffer = () => selecting || hasSelection;
+
+        const termEl = terminalRef.current!;
+        const onMouseDown = () => { selecting = true; };
+        const onMouseUp = () => { selecting = false; };
+        termEl.addEventListener("mousedown", onMouseDown);
+        termEl.addEventListener("mouseup", onMouseUp);
+
         // Auto-copy selection to clipboard whenever the user selects text.
-        // This avoids the race where incoming terminal.write() clears the
-        // selection before the user can press Cmd+C.
+        // Also track selection state for the write buffer.
         const selectionDisposable = terminal.onSelectionChange(() => {
           if (terminal.hasSelection()) {
+            hasSelection = true;
             navigator.clipboard?.writeText(terminal.getSelection()).catch(() => {});
+            // Safety: flush buffer after MAX_BUFFER_MS even if selection persists
+            if (!flushTimer) {
+              flushTimer = setTimeout(flushBuffer, MAX_BUFFER_MS);
+            }
+          } else {
+            hasSelection = false;
+            // Selection was cleared — flush buffered output
+            flushBuffer();
           }
         });
 
@@ -230,7 +265,6 @@ export function DirectTerminal({
         // Handle paste via the DOM "paste" event — this provides clipboard
         // content through ClipboardEvent.clipboardData without needing the
         // Clipboard API "clipboard-read" permission.
-        const termEl = terminalRef.current!;
         const handlePaste = (e: ClipboardEvent) => {
           const text = e.clipboardData?.getData("text/plain");
           if (text) {
@@ -291,7 +325,11 @@ export function DirectTerminal({
           websocket.onmessage = (event) => {
             const data =
               typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data);
-            terminal.write(data);
+            if (shouldBuffer()) {
+              writeBuffer.push(data);
+            } else {
+              terminal.write(data);
+            }
           };
 
           websocket.onerror = (event) => {
@@ -329,7 +367,10 @@ export function DirectTerminal({
         // Store cleanup function to be called from useEffect cleanup
         cleanup = () => {
           selectionDisposable.dispose();
+          termEl.removeEventListener("mousedown", onMouseDown);
+          termEl.removeEventListener("mouseup", onMouseUp);
           termEl.removeEventListener("paste", handlePaste as EventListener);
+          if (flushTimer) clearTimeout(flushTimer);
           window.removeEventListener("resize", handleResize);
           inputDisposable?.dispose();
           inputDisposable = null;
