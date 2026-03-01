@@ -1,3 +1,5 @@
+import { readdirSync, existsSync, statSync } from "node:fs";
+import { join } from "node:path";
 import chalk from "chalk";
 import type { Command } from "commander";
 import {
@@ -9,6 +11,9 @@ import {
   type ReviewDecision,
   type ActivityState,
   loadConfig,
+  expandHome,
+  readMetadataRaw,
+  listMetadata,
 } from "@composio/ao-core";
 import { git, getTmuxSessions, getTmuxActivity } from "../lib/shell.js";
 import {
@@ -291,6 +296,43 @@ export function registerStatus(program: Command): void {
     });
 }
 
+/**
+ * Build a map of tmuxName → agent plugin name by scanning all metadata files
+ * under ~/.agent-orchestrator/. Used by the fallback status path when no config is available.
+ */
+function buildTmuxAgentMap(): Map<string, string> {
+  const map = new Map<string, string>();
+  const aoDir = expandHome("~/.agent-orchestrator");
+  if (!existsSync(aoDir)) return map;
+
+  let entries: string[];
+  try {
+    entries = readdirSync(aoDir);
+  } catch {
+    return map;
+  }
+
+  for (const entry of entries) {
+    const sessionsDir = join(aoDir, entry, "sessions");
+    if (!existsSync(sessionsDir)) continue;
+    try {
+      if (!statSync(sessionsDir).isDirectory()) continue;
+    } catch {
+      continue;
+    }
+
+    const sessionIds = listMetadata(sessionsDir);
+    for (const sid of sessionIds) {
+      const raw = readMetadataRaw(sessionsDir, sid);
+      if (raw?.["tmuxName"] && raw["agent"]) {
+        map.set(raw["tmuxName"], raw["agent"]);
+      }
+    }
+  }
+
+  return map;
+}
+
 async function showFallbackStatus(): Promise<void> {
   const allTmux = await getTmuxSessions();
   if (allTmux.length === 0) {
@@ -304,13 +346,23 @@ async function showFallbackStatus(): Promise<void> {
     chalk.dim(`  ${allTmux.length} tmux session${allTmux.length !== 1 ? "s" : ""} found\n`),
   );
 
-  // Use claude-code as default agent for fallback introspection
-  const agent = getAgentByName("claude-code");
+  // Build map of tmux session name → agent plugin name from stored metadata
+  const tmuxAgentMap = buildTmuxAgentMap();
 
   for (const session of allTmux.sort()) {
     const activityTs = await getTmuxActivity(session);
     const lastActivity = activityTs ? formatAge(activityTs) : "-";
     console.log(`  ${chalk.green(session)} ${chalk.dim(`(${lastActivity})`)}`);
+
+    // Select the correct agent plugin based on session metadata
+    const agentName = tmuxAgentMap.get(session) ?? "claude-code";
+    let agent: Agent;
+    try {
+      agent = getAgentByName(agentName);
+    } catch {
+      // Unknown agent plugin — skip introspection
+      continue;
+    }
 
     // Try introspection even without config
     try {
@@ -331,7 +383,8 @@ async function showFallbackStatus(): Promise<void> {
       };
       const introspection = await agent.getSessionInfo(sessionObj);
       if (introspection?.summary) {
-        console.log(`     ${chalk.dim("Claude:")} ${introspection.summary.slice(0, 65)}`);
+        const label = agentName === "claude-code" ? "Claude" : agentName;
+        console.log(`     ${chalk.dim(`${label}:`)} ${introspection.summary.slice(0, 65)}`);
       }
     } catch {
       // Not critical

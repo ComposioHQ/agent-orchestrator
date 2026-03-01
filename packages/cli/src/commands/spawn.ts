@@ -23,6 +23,9 @@ async function spawnSession(
       projectId,
       issueId,
       agent,
+      onProgress: (message: string) => {
+        spinner.text = message;
+      },
     });
 
     spinner.succeed(`Session ${chalk.green(session.id)} created`);

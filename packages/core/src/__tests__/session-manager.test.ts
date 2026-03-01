@@ -668,6 +668,41 @@ describe("spawn", () => {
     expect(mockRuntime.sendMessage).toHaveBeenCalled();
     vi.useRealTimers();
   });
+
+  it("calls onProgress during post-launch prompt delivery wait", async () => {
+    vi.useFakeTimers();
+    const postLaunchAgent = {
+      ...mockAgent,
+      promptDelivery: "post-launch" as const,
+    };
+    const registryWithPostLaunch: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return postLaunchAgent;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+
+    const onProgress = vi.fn();
+    const sm = createSessionManager({ config, registry: registryWithPostLaunch });
+    const spawnPromise = sm.spawn({ projectId: "my-app", prompt: "Fix the bug", onProgress });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await spawnPromise;
+
+    expect(onProgress).toHaveBeenCalledWith("Waiting for agent to start…");
+    expect(onProgress).toHaveBeenCalledWith("Agent ready");
+    vi.useRealTimers();
+  });
+
+  it("does not call onProgress when promptDelivery is not post-launch", async () => {
+    const onProgress = vi.fn();
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.spawn({ projectId: "my-app", prompt: "Fix the bug", onProgress });
+
+    expect(onProgress).not.toHaveBeenCalled();
+  });
 });
 
 describe("list", () => {

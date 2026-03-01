@@ -575,7 +575,9 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     if (plugins.agent.promptDelivery === "post-launch" && agentLaunchConfig.prompt) {
       try {
         // Wait for agent to start and be ready for input
+        spawnConfig.onProgress?.("Waiting for agent to start…");
         await new Promise((resolve) => setTimeout(resolve, 5_000));
+        spawnConfig.onProgress?.("Agent ready");
         await plugins.runtime.sendMessage(handle, agentLaunchConfig.prompt);
       } catch {
         // Non-fatal: agent is running but didn't receive the initial prompt.
