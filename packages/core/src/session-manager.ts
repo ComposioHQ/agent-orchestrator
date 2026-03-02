@@ -574,7 +574,6 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     if (plugins.agent.promptDelivery === "post-launch" && agentLaunchConfig.prompt) {
       try {
         // Poll for the agent's ready indicator instead of a fixed sleep.
-        // Claude Code shows "❯" when it's ready for input.
         const POLL_INTERVAL_MS = 500;
         const TIMEOUT_MS = 30_000;
         const deadline = Date.now() + TIMEOUT_MS;
@@ -582,7 +581,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         while (Date.now() < deadline) {
           await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
           const output = await plugins.runtime.getOutput(handle, 10);
-          if (/[❯>]\s*$/.test(output.trimEnd())) {
+          if (plugins.agent.detectActivity(output) === "idle") {
             ready = true;
             break;
           }
