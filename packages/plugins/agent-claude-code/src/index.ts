@@ -652,6 +652,17 @@ function createClaudeCodeAgent(): Agent {
         parts.push("--append-system-prompt", shellEscape(config.systemPrompt));
       }
 
+      // Fire Team: prepend team composition instruction to system prompt
+      const dispatch = config.metadata?.["dispatch"];
+      if (dispatch?.startsWith("dispatch:cli-team-")) {
+        const teamSize = parseInt(dispatch.split("-").pop() ?? "3", 10);
+        const teamPrompt =
+          `You are the lead of a team of ${teamSize} agents. ` +
+          "Delegate sub-tasks to your team members using the Agent tool. " +
+          "Each team member should own specific files to avoid merge conflicts.";
+        parts.push("--append-system-prompt", shellEscape(teamPrompt));
+      }
+
       // NOTE: prompt is NOT included here — it's delivered post-launch via
       // runtime.sendMessage() to keep Claude in interactive mode.
       // Using -p causes one-shot mode (Claude exits after responding).
@@ -676,6 +687,12 @@ function createClaudeCodeAgent(): Agent {
 
       if (config.issueId) {
         env["AO_ISSUE_ID"] = config.issueId;
+      }
+
+      // Enable agent teams for Fire Team dispatch labels
+      const dispatch = config.metadata?.["dispatch"];
+      if (dispatch?.startsWith("dispatch:cli-team-")) {
+        env["CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"] = "1";
       }
 
       return env;
