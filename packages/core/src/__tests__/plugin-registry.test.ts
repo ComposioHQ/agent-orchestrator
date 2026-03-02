@@ -23,7 +23,23 @@ function makePlugin(slot: PluginManifest["slot"], name: string): PluginModule {
 
 function makeOrchestratorConfig(overrides?: Partial<OrchestratorConfig>): OrchestratorConfig {
   return {
+    configPath: "/tmp/agent-orchestrator.yaml",
+    readyThresholdMs: 300_000,
+    defaults: {
+      runtime: "tmux",
+      agent: "claude-code",
+      workspace: "worktree",
+      notifiers: ["desktop"],
+    },
     projects: {},
+    notifiers: {},
+    notificationRouting: {
+      urgent: ["desktop"],
+      action: ["desktop"],
+      warning: ["desktop"],
+      info: ["desktop"],
+    },
+    reactions: {},
     ...overrides,
   } as OrchestratorConfig;
 }
@@ -195,5 +211,272 @@ describe("loadFromConfig", () => {
     // loadFromConfig calls loadBuiltins internally, which may fail to
     // import packages in the test env — should still succeed gracefully
     await expect(registry.loadFromConfig(config)).resolves.toBeUndefined();
+  });
+
+  it("does not crash when defaults are missing/empty", async () => {
+    const registry = createPluginRegistry();
+    const config = makeOrchestratorConfig({
+      defaults: {} as OrchestratorConfig["defaults"],
+    });
+
+    await expect(registry.loadFromConfig(config)).resolves.toBeUndefined();
+  });
+
+  it("does not crash when defaults contain nullish/non-string values", async () => {
+    const registry = createPluginRegistry();
+    const config = makeOrchestratorConfig({
+      defaults: {
+        runtime: null,
+        agent: undefined,
+        workspace: 123,
+        notifiers: [null, "desktop"],
+      } as unknown as OrchestratorConfig["defaults"],
+    });
+
+    await expect(registry.loadFromConfig(config)).resolves.toBeUndefined();
+  });
+
+  it("ignores non-string project plugin refs", async () => {
+    const registry = createPluginRegistry();
+    const config = makeOrchestratorConfig({
+      projects: {
+        app: {
+          name: "app",
+          repo: "org/app",
+          path: "/tmp/app",
+          defaultBranch: "main",
+          sessionPrefix: "app",
+          runtime: 123 as unknown as string,
+          agent: { bad: true } as unknown as string,
+          workspace: null as unknown as string,
+          tracker: { plugin: 99 as unknown as string },
+          scm: { plugin: false as unknown as string },
+        },
+      },
+    });
+    const calls: string[] = [];
+
+    await expect(
+      registry.loadFromConfig(config, async (pkg: string) => {
+        calls.push(pkg);
+        throw new Error(`not found: ${pkg}`);
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(calls.some((target) => target.includes("123"))).toBe(false);
+    expect(calls.some((target) => target.includes("[object Object]"))).toBe(false);
+  });
+
+  it("ignores null/undefined project entries", async () => {
+    const registry = createPluginRegistry();
+    const config = makeOrchestratorConfig({
+      projects: {
+        app: {
+          name: "app",
+          repo: "org/app",
+          path: "/tmp/app",
+          defaultBranch: "main",
+          sessionPrefix: "app",
+          scm: { plugin: "gitlab" },
+        },
+        broken1: null as unknown as OrchestratorConfig["projects"][string],
+        broken2: undefined as unknown as OrchestratorConfig["projects"][string],
+      },
+    });
+
+    const gitlabPlugin = makePlugin("scm", "gitlab");
+    await expect(
+      registry.loadFromConfig(config, async (pkg: string) => {
+        if (pkg === "@composio/ao-plugin-scm-gitlab") return gitlabPlugin;
+        throw new Error(`not found: ${pkg}`);
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("loads a non-builtin plugin referenced in project config", async () => {
+    const registry = createPluginRegistry();
+    const config = makeOrchestratorConfig({
+      projects: {
+        app: {
+          name: "app",
+          repo: "org/app",
+          path: "/tmp/app",
+          defaultBranch: "main",
+          sessionPrefix: "app",
+          scm: { plugin: "gitlab" },
+        },
+      },
+    });
+    const gitlabPlugin = makePlugin("scm", "gitlab");
+
+    await registry.loadFromConfig(config, async (pkg: string) => {
+      if (pkg === "@composio/ao-plugin-scm-gitlab") return gitlabPlugin;
+      throw new Error(`not found: ${pkg}`);
+    });
+
+    expect(registry.get("scm", "gitlab")).not.toBeNull();
+  });
+
+  it("passes notifier config (including webhook alias) to notifier plugin", async () => {
+    const registry = createPluginRegistry();
+    const config = makeOrchestratorConfig({
+      defaults: {
+        runtime: "tmux",
+        agent: "claude-code",
+        workspace: "worktree",
+        notifiers: ["slack"],
+      },
+      notifiers: {
+        slack: {
+          plugin: "slack",
+          webhook: "https://example.com/hook",
+          channel: "#alerts",
+        },
+      },
+    });
+    const slackPlugin = makePlugin("notifier", "slack");
+
+    await registry.loadFromConfig(config, async (pkg: string) => {
+      if (pkg === "@composio/ao-plugin-notifier-slack") return slackPlugin;
+      throw new Error(`not found: ${pkg}`);
+    });
+
+    expect(slackPlugin.create).toHaveBeenCalledWith({
+      plugin: "slack",
+      webhook: "https://example.com/hook",
+      webhookUrl: "https://example.com/hook",
+      channel: "#alerts",
+    });
+  });
+
+  it("ignores non-object notifier config entries", async () => {
+    const registry = createPluginRegistry();
+    const config = makeOrchestratorConfig({
+      notifiers: {
+        slack: "slack" as unknown as OrchestratorConfig["notifiers"][string],
+      },
+    });
+    const slackPlugin = makePlugin("notifier", "slack");
+
+    await registry.loadFromConfig(config, async (pkg: string) => {
+      if (pkg === "@composio/ao-plugin-notifier-slack") return slackPlugin;
+      throw new Error(`not found: ${pkg}`);
+    });
+
+    expect(slackPlugin.create).toHaveBeenCalledWith(undefined);
+  });
+
+  it("does not crash on null notifier config entries", async () => {
+    const registry = createPluginRegistry();
+    const config = makeOrchestratorConfig({
+      notifiers: {
+        slack: null as unknown as OrchestratorConfig["notifiers"][string],
+      },
+    });
+    const slackPlugin = makePlugin("notifier", "slack");
+
+    await registry.loadFromConfig(config, async (pkg: string) => {
+      if (pkg === "@composio/ao-plugin-notifier-slack") return slackPlugin;
+      throw new Error(`not found: ${pkg}`);
+    });
+
+    expect(slackPlugin.create).toHaveBeenCalledWith(undefined);
+  });
+
+  it("passes dashboardUrl config to terminal-web plugin", async () => {
+    const registry = createPluginRegistry();
+    const config = makeOrchestratorConfig({
+      port: 4444,
+    });
+    const terminalWeb = makePlugin("terminal", "web");
+
+    await registry.loadFromConfig(config, async (pkg: string) => {
+      if (pkg === "@composio/ao-plugin-terminal-web") return terminalWeb;
+      throw new Error(`not found: ${pkg}`);
+    });
+
+    expect(terminalWeb.create).toHaveBeenCalledWith({
+      dashboardUrl: "http://localhost:4444",
+    });
+  });
+
+  it("resolves relative plugin paths from config directory", async () => {
+    const registry = createPluginRegistry();
+    const config = makeOrchestratorConfig({
+      configPath: "/Users/test/project/agent-orchestrator.yaml",
+      projects: {
+        app: {
+          name: "app",
+          repo: "org/app",
+          path: "/tmp/app",
+          defaultBranch: "main",
+          sessionPrefix: "app",
+          scm: { plugin: "./plugins/scm-custom/dist/index.js" },
+        },
+      },
+    });
+    const localScmPlugin = makePlugin("scm", "custom");
+    const calls: string[] = [];
+
+    await registry.loadFromConfig(config, async (pkg: string) => {
+      calls.push(pkg);
+      if (pkg === "file:///Users/test/project/plugins/scm-custom/dist/index.js") {
+        return localScmPlugin;
+      }
+      throw new Error(`not found: ${pkg}`);
+    });
+
+    expect(calls).toContain("file:///Users/test/project/plugins/scm-custom/dist/index.js");
+    expect(registry.get("scm", "./plugins/scm-custom/dist/index.js")).not.toBeNull();
+  });
+
+  it("resolves slash-based local plugin paths from config directory", async () => {
+    const registry = createPluginRegistry();
+    const config = makeOrchestratorConfig({
+      configPath: "/Users/test/project/agent-orchestrator.yaml",
+      projects: {
+        app: {
+          name: "app",
+          repo: "org/app",
+          path: "/tmp/app",
+          defaultBranch: "main",
+          sessionPrefix: "app",
+          scm: { plugin: "plugins/scm-custom/dist/index.js" },
+        },
+      },
+    });
+    const calls: string[] = [];
+
+    await registry.loadFromConfig(config, async (pkg: string) => {
+      calls.push(pkg);
+      throw new Error(`not found: ${pkg}`);
+    });
+
+    expect(calls).toContain("file:///Users/test/project/plugins/scm-custom/dist/index.js");
+  });
+
+  it("resolves relative plugin paths from cwd when configPath is missing", async () => {
+    const registry = createPluginRegistry();
+    const config = makeOrchestratorConfig({
+      configPath: undefined as unknown as string,
+      projects: {
+        app: {
+          name: "app",
+          repo: "org/app",
+          path: "/tmp/app",
+          defaultBranch: "main",
+          sessionPrefix: "app",
+          scm: { plugin: "./plugins/scm-custom/dist/index.js" },
+        },
+      },
+    });
+    const calls: string[] = [];
+
+    await registry.loadFromConfig(config, async (pkg: string) => {
+      calls.push(pkg);
+      throw new Error(`not found: ${pkg}`);
+    });
+
+    expect(calls.some((target) => target.startsWith("file://"))).toBe(true);
   });
 });

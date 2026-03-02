@@ -36,6 +36,10 @@ async function getRegistry(config: OrchestratorConfig): Promise<PluginRegistry> 
   return registryPromise;
 }
 
+export async function getPluginRegistry(config: OrchestratorConfig): Promise<PluginRegistry> {
+  return getRegistry(config);
+}
+
 /**
  * Create a SessionManager backed by core's implementation.
  * Initializes the plugin registry from config and wires everything up.
@@ -44,4 +48,3 @@ export async function getSessionManager(config: OrchestratorConfig): Promise<Ses
   const registry = await getRegistry(config);
   return createSessionManager({ config, registry });
 }
-

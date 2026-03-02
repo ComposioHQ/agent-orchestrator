@@ -1,17 +1,27 @@
-import type { Agent, OrchestratorConfig, SCM } from "@composio/ao-core";
+import type { Agent, OrchestratorConfig, SCM, PluginRegistry } from "@composio/ao-core";
 import claudeCodePlugin from "@composio/ao-plugin-agent-claude-code";
 import codexPlugin from "@composio/ao-plugin-agent-codex";
 import aiderPlugin from "@composio/ao-plugin-agent-aider";
+import geminiPlugin from "@composio/ao-plugin-agent-gemini";
+import goosePlugin from "@composio/ao-plugin-agent-goose";
+import amazonQPlugin from "@composio/ao-plugin-agent-amazon-q";
+import kiroPlugin from "@composio/ao-plugin-agent-kiro";
 import githubSCMPlugin from "@composio/ao-plugin-scm-github";
+import gitlabSCMPlugin from "@composio/ao-plugin-scm-gitlab";
 
 const agentPlugins: Record<string, { create(): Agent }> = {
   "claude-code": claudeCodePlugin,
   codex: codexPlugin,
   aider: aiderPlugin,
+  gemini: geminiPlugin,
+  goose: goosePlugin,
+  "amazon-q": amazonQPlugin,
+  kiro: kiroPlugin,
 };
 
 const scmPlugins: Record<string, { create(): SCM }> = {
   github: githubSCMPlugin,
+  gitlab: gitlabSCMPlugin,
 };
 
 /**
@@ -40,8 +50,16 @@ export function getAgentByName(name: string): Agent {
 /**
  * Resolve the SCM plugin for a project (or fall back to "github").
  */
-export function getSCM(config: OrchestratorConfig, projectId: string): SCM {
+export function getSCM(
+  config: OrchestratorConfig,
+  projectId: string,
+  registry?: Pick<PluginRegistry, "get">,
+): SCM {
   const scmName = config.projects[projectId]?.scm?.plugin || "github";
+  const registryPlugin = registry?.get<SCM>("scm", scmName);
+  if (registryPlugin) {
+    return registryPlugin;
+  }
   const plugin = scmPlugins[scmName];
   if (!plugin) {
     throw new Error(`Unknown SCM plugin: ${scmName}`);
