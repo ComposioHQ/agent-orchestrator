@@ -150,12 +150,16 @@ export interface SSEActivityEvent {
 }
 
 /**
- * Returns true when this PR's enrichment data couldn't be fetched due to
- * API rate limiting. When true, CI status / review decision / mergeability
- * may be stale defaults — don't make decisions based on them.
+ * Returns true when this PR's enrichment data is unavailable or stale.
+ * Covers both API rate-limiting and enrichment timeouts ("Data not loaded").
+ * When true, CI status / review decision / mergeability are unreliable defaults —
+ * don't make automated decisions based on them.
  */
 export function isPRRateLimited(pr: DashboardPR): boolean {
-  return pr.mergeability.blockers.includes("API rate limited or unavailable");
+  return (
+    pr.mergeability.blockers.includes("API rate limited or unavailable") ||
+    pr.mergeability.blockers.includes("Data not loaded")
+  );
 }
 
 /** Determines which attention zone a session belongs to */
