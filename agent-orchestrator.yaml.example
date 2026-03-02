@@ -47,6 +47,8 @@ projects:
     # agentConfig:
     #   permissions: skip    # --dangerously-skip-permissions
     #   model: opus
+    #   serverHostname: 127.0.0.1
+    #   serverPort: 4096
 
     # Inline rules included in every agent prompt for this project
     # agentRules: |

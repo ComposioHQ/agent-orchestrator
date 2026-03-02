@@ -55,6 +55,8 @@ const AgentSpecificConfigSchema = z
   .object({
     permissions: z.enum(["skip", "default"]).default("skip"),
     model: z.string().optional(),
+    serverHostname: z.string().optional(),
+    serverPort: z.number().int().min(1).max(65535).optional(),
   })
   .passthrough();
 

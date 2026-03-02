@@ -915,6 +915,8 @@ export interface NotifierConfig {
 export interface AgentSpecificConfig {
   permissions?: "skip" | "default";
   model?: string;
+  serverHostname?: string;
+  serverPort?: number;
   [key: string]: unknown;
 }
 
@@ -982,6 +984,13 @@ export interface SessionMetadata {
   dashboardPort?: number;
   terminalWsPort?: number;
   directTerminalWsPort?: number;
+  opencodeMode?: "sdk";
+  opencodeServerUrl?: string;
+  opencodeServerPid?: number;
+  opencodeServerHostname?: string;
+  opencodeServerPort?: number;
+  opencodeSessionId?: string;
+  terminalMode?: "opencode-attach" | "tmux";
 }
 
 // =============================================================================
