@@ -915,6 +915,9 @@ export interface OrchestratorConfig {
   /** Direct terminal WebSocket server port (defaults to 3003) */
   directTerminalPort?: number;
 
+  /** Internal inter-process signalling server port (defaults to 3101) */
+  internalPort?: number;
+
   /** Milliseconds before a "ready" session becomes "idle" (default: 300000 = 5 min) */
   readyThresholdMs: number;
 

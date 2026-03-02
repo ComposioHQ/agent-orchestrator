@@ -15,12 +15,18 @@ port: 3000
 # terminalPort: 14800
 # directTerminalPort: 14801
 
+# Internal inter-process signalling server port (used by Claude Code hooks to trigger
+# immediate lifecycle checks without waiting for the 30s poll cycle)
+# internalPort: 3101
+
 # Default plugins (these are the defaults — you can omit this section)
 defaults:
   runtime: tmux           # tmux | process | docker | kubernetes | ssh | e2b
   agent: claude-code      # claude-code | codex | aider | goose | custom
   workspace: worktree     # worktree | clone | copy
   notifiers: [desktop]    # desktop | slack | discord | webhook | email
+  # Add ntfy for push notifications to iOS/macOS:
+  # notifiers: [desktop, ntfy]
 
 # Projects — at minimum, specify repo and path
 projects:
@@ -71,6 +77,16 @@ projects:
 #     plugin: slack
 #     webhook: ${SLACK_WEBHOOK_URL}
 #     channel: "#agent-updates"
+#
+# Push notifications to iOS and macOS via ntfy.sh (https://ntfy.sh)
+# Install the ntfy app and subscribe to your topic.
+# Use a hard-to-guess topic string to keep it private (no account needed).
+#   ntfy:
+#     plugin: ntfy
+#     topic: "ao-your-private-topic-string"
+#     # baseUrl: https://ntfy.sh          # default, or your self-hosted instance
+#     # token: "tk_xxx"                   # for ntfy Pro / authenticated topics
+#     # dashboardUrl: "https://your-dashboard.example.com"  # tap notification → opens session
 
 # Notification routing by priority
 # notificationRouting:
