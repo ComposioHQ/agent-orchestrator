@@ -244,6 +244,7 @@ function createGitLabSCM(): SCM {
         const jobs: Array<{
           name: string;
           status: string;
+          allow_failure: boolean;
           web_url: string;
           started_at: string | null;
           finished_at: string | null;
@@ -253,7 +254,11 @@ function createGitLabSCM(): SCM {
           let status: CICheck["status"];
           const s = j.status?.toLowerCase();
 
-          if (s === "pending" || s === "waiting_for_resource" || s === "created") {
+          // GitLab jobs with allow_failure: true that fail should be
+          // treated as skipped (GitLab considers the pipeline passing)
+          if (j.allow_failure && s === "failed") {
+            status = "skipped";
+          } else if (s === "pending" || s === "waiting_for_resource" || s === "created") {
             status = "pending";
           } else if (s === "running") {
             status = "running";
@@ -265,7 +270,7 @@ function createGitLabSCM(): SCM {
             s === "cancelled"
           ) {
             status = "failed";
-          } else if (s === "skipped" || s === "manual" || s === "allowed_failure") {
+          } else if (s === "skipped" || s === "manual") {
             status = "skipped";
           } else {
             status = "failed";
