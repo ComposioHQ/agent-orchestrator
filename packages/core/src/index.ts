@@ -29,6 +29,7 @@ export {
   updateMetadata,
   deleteMetadata,
   listMetadata,
+  listArchivedSessionIds,
 } from "./metadata.js";
 
 // tmux — command wrappers

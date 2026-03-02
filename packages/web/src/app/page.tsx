@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import type { Tracker } from "@composio/ao-core";
 import { Dashboard } from "@/components/Dashboard";
 import type { DashboardSession } from "@/lib/types";
 import { getServices, getSCM } from "@/lib/services";
@@ -6,6 +7,7 @@ import {
   sessionToDashboard,
   resolveProject,
   enrichSessionPR,
+  enrichSessionIssue,
   enrichSessionsMetadata,
   computeStats,
 } from "@/lib/serialize";
@@ -22,6 +24,7 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export default async function Home() {
   let sessions: DashboardSession[] = [];
+  let stats = computeStats([]);
   let orchestratorId: string | null = null;
   const projectName = getProjectName();
   try {
@@ -96,11 +99,36 @@ export default async function Home() {
     // Cap enrichment at 4s — if GitHub is slow/rate-limited, serve stale data fast
     const enrichTimeout = new Promise<void>((resolve) => setTimeout(resolve, 4_000));
     await Promise.race([Promise.allSettled(enrichPromises), enrichTimeout]);
+
+    // Compute stats from active sessions only (before appending archived)
+    stats = computeStats(sessions);
+
+    // Append archived sessions (killed/cleaned up) — no expensive enrichment
+    const archivedSessions = await sessionManager.listArchived();
+    const activeIds = new Set(sessions.map((s) => s.id));
+    const archivedWorkers = archivedSessions.filter(
+      (s) => !s.id.endsWith("-orchestrator") && !activeIds.has(s.id),
+    );
+    const archivedDashboard = archivedWorkers.map(sessionToDashboard);
+
+    // Cheap issue label enrichment only (sync, no API calls)
+    for (const ds of archivedDashboard) {
+      if (!ds.issueUrl) continue;
+      const project = Object.values(config.projects).find((p) =>
+        ds.id.startsWith(p.sessionPrefix),
+      );
+      if (!project?.tracker) continue;
+      const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
+      if (!tracker) continue;
+      enrichSessionIssue(ds, tracker, project);
+    }
+
+    sessions.push(...archivedDashboard);
   } catch {
     // Config not found or services unavailable — show empty dashboard
   }
 
   return (
-    <Dashboard initialSessions={sessions} stats={computeStats(sessions)} orchestratorId={orchestratorId} projectName={projectName} />
+    <Dashboard initialSessions={sessions} stats={stats} orchestratorId={orchestratorId} projectName={projectName} />
   );
 }

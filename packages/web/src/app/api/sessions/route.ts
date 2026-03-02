@@ -1,10 +1,11 @@
-import { ACTIVITY_STATE } from "@composio/ao-core";
+import { ACTIVITY_STATE, type Tracker } from "@composio/ao-core";
 import { NextResponse } from "next/server";
 import { getServices, getSCM } from "@/lib/services";
 import {
   sessionToDashboard,
   resolveProject,
   enrichSessionPR,
+  enrichSessionIssue,
   enrichSessionsMetadata,
   computeStats,
 } from "@/lib/serialize";
@@ -12,11 +13,13 @@ import {
 /** GET /api/sessions — List all sessions with full state
  * Query params:
  * - active=true: Only return non-exited sessions
+ * - include=archived: Include archived (killed) sessions in the response
  */
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const activeOnly = searchParams.get("active") === "true";
+    const includeArchived = searchParams.get("include") === "archived";
 
     const { config, registry, sessionManager } = await getServices();
     const coreSessions = await sessionManager.list();
@@ -51,9 +54,37 @@ export async function GET(request: Request) {
     const enrichTimeout = new Promise<void>((resolve) => setTimeout(resolve, 4_000));
     await Promise.race([Promise.allSettled(enrichPromises), enrichTimeout]);
 
+    // Compute stats from active sessions only (before appending archived)
+    const stats = computeStats(dashboardSessions);
+
+    // Append archived sessions if requested
+    if (includeArchived) {
+      const archivedSessions = await sessionManager.listArchived();
+      const activeIds = new Set(dashboardSessions.map((s) => s.id));
+      const archivedWorkers = archivedSessions.filter(
+        (s) => !s.id.endsWith("-orchestrator") && !activeIds.has(s.id),
+      );
+      const archivedDashboard = archivedWorkers.map(sessionToDashboard);
+
+      // Cheap issue label enrichment only (sync, no API calls)
+      for (const ds of archivedDashboard) {
+        if (!ds.issueUrl) continue;
+        // Find the project for this archived session
+        const project = Object.values(config.projects).find((p) =>
+          ds.id.startsWith(p.sessionPrefix),
+        );
+        if (!project?.tracker) continue;
+        const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
+        if (!tracker) continue;
+        enrichSessionIssue(ds, tracker, project);
+      }
+
+      dashboardSessions.push(...archivedDashboard);
+    }
+
     return NextResponse.json({
       sessions: dashboardSessions,
-      stats: computeStats(dashboardSessions),
+      stats,
     });
   } catch (err) {
     return NextResponse.json(

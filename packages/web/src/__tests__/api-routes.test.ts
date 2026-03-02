@@ -62,6 +62,7 @@ const testSessions: Session[] = [
 
 const mockSessionManager: SessionManager = {
   list: vi.fn(async () => testSessions),
+  listArchived: vi.fn(async () => []),
   get: vi.fn(async (id: string) => testSessions.find((s) => s.id === id) ?? null),
   spawn: vi.fn(async (config) =>
     makeSession({

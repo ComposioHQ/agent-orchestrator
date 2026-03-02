@@ -45,6 +45,7 @@ import {
   updateMetadata,
   deleteMetadata,
   listMetadata,
+  listArchivedSessionIds,
   reserveSessionId,
 } from "./metadata.js";
 import { buildPrompt } from "./prompt-builder.js";
@@ -1148,5 +1149,36 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     return restoredSession;
   }
 
-  return { spawn, spawnOrchestrator, restore, list, get, kill, cleanup, send };
+  async function listArchived(projectId?: string): Promise<Session[]> {
+    const results: Session[] = [];
+
+    for (const [projectKey, project] of Object.entries(config.projects)) {
+      if (projectId && projectKey !== projectId) continue;
+
+      const sessionsDir = getProjectSessionsDir(project);
+      const archivedIds = listArchivedSessionIds(sessionsDir);
+
+      // Get active session IDs for this project to skip duplicates
+      const activeIds = new Set(listMetadata(sessionsDir));
+
+      for (const sessionId of archivedIds) {
+        if (activeIds.has(sessionId)) continue;
+
+        const raw = readArchivedMetadataRaw(sessionsDir, sessionId);
+        if (!raw) continue;
+
+        const session = metadataToSession(sessionId, raw);
+        session.activity = "exited";
+        if (!TERMINAL_SESSION_STATUSES.has(session.status)) {
+          session.status = "killed";
+        }
+
+        results.push(session);
+      }
+    }
+
+    return results;
+  }
+
+  return { spawn, spawnOrchestrator, restore, list, listArchived, get, kill, cleanup, send };
 }

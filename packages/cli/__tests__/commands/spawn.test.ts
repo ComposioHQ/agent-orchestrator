@@ -9,6 +9,7 @@ const { mockExec, mockConfigRef, mockSessionManager } = vi.hoisted(() => ({
   mockConfigRef: { current: null as Record<string, unknown> | null },
   mockSessionManager: {
     list: vi.fn(),
+    listArchived: vi.fn(),
     kill: vi.fn(),
     cleanup: vi.fn(),
     get: vi.fn(),
