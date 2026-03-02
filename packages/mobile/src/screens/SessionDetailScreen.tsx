@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -42,6 +42,7 @@ export default function SessionDetailScreen({ route, navigation }: Props) {
   const [merging, setMerging] = useState(false);
   const [ciFixState, setCiFixState] = useState<ActionButtonState>("idle");
   const [commentFixStates, setCommentFixStates] = useState<Record<string, ActionButtonState>>({});
+  const scrollRef = useRef<ScrollView>(null);
 
   const handleSend = useCallback(async () => {
     if (!message.trim()) return;
@@ -163,10 +164,10 @@ export default function SessionDetailScreen({ route, navigation }: Props) {
   return (
     <KeyboardAvoidingView
       style={styles.root}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-      keyboardVerticalOffset={88}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 88 : 0}
     >
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <ScrollView ref={scrollRef} style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         {/* Header row */}
         <View style={[styles.headerCard, { borderLeftColor: color }]}>
           <View style={styles.headerRow}>
@@ -346,6 +347,9 @@ export default function SessionDetailScreen({ route, navigation }: Props) {
             returnKeyType="send"
             onSubmitEditing={handleSend}
             blurOnSubmit={false}
+            onFocus={() => {
+              setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 300);
+            }}
           />
           <TouchableOpacity
             style={[styles.sendButton, (!message.trim() || sending) && styles.sendButtonDisabled]}
