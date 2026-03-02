@@ -1,0 +1,54 @@
+{
+  "expo": {
+    "name": "Agent Orchestrator",
+    "slug": "ao-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0d1117"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.composio.ao-mobile",
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "fetch",
+          "processing",
+          "remote-notification"
+        ]
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0d1117"
+      },
+      "package": "com.composio.aomobile"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-background-task",
+      [
+        "expo-notifications",
+        {
+          "color": "#f85149",
+          "defaultChannel": "ao-respond"
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "de59ca61-8fd4-47bb-bdea-6e1a50ade3df"
+      }
+    }
+  }
+}
