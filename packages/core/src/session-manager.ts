@@ -581,7 +581,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         while (Date.now() < deadline) {
           await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
           const output = await plugins.runtime.getOutput(handle, 10);
-          if (plugins.agent.detectActivity(output) === "idle") {
+          if (output.trim() && plugins.agent.detectActivity(output) === "idle") {
             ready = true;
             break;
           }
