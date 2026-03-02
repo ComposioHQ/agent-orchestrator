@@ -20,6 +20,8 @@ export class TTLCache<T> {
   private cache = new Map<string, CacheEntry<T>>();
   private readonly ttlMs: number;
   private cleanupInterval?: ReturnType<typeof setInterval>;
+  private hits = 0;
+  private misses = 0;
 
   constructor(ttlMs: number = DEFAULT_TTL_MS) {
     this.ttlMs = ttlMs;
@@ -34,13 +36,18 @@ export class TTLCache<T> {
   /** Get a cached value if it exists and isn't stale */
   get(key: string): T | null {
     const entry = this.cache.get(key);
-    if (!entry) return null;
-
-    if (Date.now() > entry.expiresAt) {
-      this.cache.delete(key);
+    if (!entry) {
+      this.misses++;
       return null;
     }
 
+    if (Date.now() > entry.expiresAt) {
+      this.cache.delete(key);
+      this.misses++;
+      return null;
+    }
+
+    this.hits++;
     return entry.value;
   }
 
@@ -74,6 +81,17 @@ export class TTLCache<T> {
   /** Get cache size (includes stale entries) */
   size(): number {
     return this.cache.size;
+  }
+
+  /** Get cache hit/miss statistics */
+  getStats(): { hits: number; misses: number; hitRate: number; size: number } {
+    const total = this.hits + this.misses;
+    return {
+      hits: this.hits,
+      misses: this.misses,
+      hitRate: total > 0 ? this.hits / total : 0,
+      size: this.cache.size,
+    };
   }
 }
 

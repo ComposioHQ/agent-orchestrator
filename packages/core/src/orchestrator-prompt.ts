@@ -72,11 +72,22 @@ ao open ${projectId}
 | \`ao spawn <project> [issue]\` | Spawn a single worker agent session |
 | \`ao batch-spawn <project> <issues...>\` | Spawn multiple sessions in parallel |
 | \`ao session ls [-p project]\` | List all sessions (optionally filter by project) |
-| \`ao session attach <session>\` | Attach to a session's tmux window |
+| \`ao session attach <session>\` | Attach to a running session |
 | \`ao session kill <session>\` | Kill a specific session |
 | \`ao session cleanup [-p project]\` | Kill completed/merged sessions |
 | \`ao send <session> <message>\` | Send a message to a running session |
 | \`ao dashboard\` | Start the web dashboard (http://localhost:${config.port ?? 3000}) |
+| \`ao dashboard restart [--clean] [--wait]\` | Restart the dashboard (optionally clean .next cache) |
+| \`ao dashboard status\` | Show dashboard process status, port, and .next cache info |
+| \`ao dashboard logs [--tail N] [--since T]\` | View dashboard log output |
+| \`ao logs dashboard [--since T] [--level L]\` | Query structured dashboard logs |
+| \`ao logs events [--session S] [--type T]\` | Query lifecycle event logs |
+| \`ao perf routes\` | Per-route API response times (p50/p95/p99) |
+| \`ao perf slow [--limit N]\` | Slowest recent API requests with timing breakdown |
+| \`ao perf cache\` | Cache hit rates and effectiveness |
+| \`ao retro list [--project P]\` | List session retrospectives |
+| \`ao retro show <session>\` | View a specific session retrospective |
+| \`ao retro generate <session>\` | Generate retrospective for a session |
 | \`ao open <project>\` | Open all project sessions in terminal tabs |`);
 
   // Session Management
@@ -124,7 +135,88 @@ Features:
 - PR table with CI checks and review state
 - Attention zones (merge ready, needs response, working, done)
 - One-click actions (send message, kill, merge PR)
-- Real-time updates via Server-Sent Events`);
+- Real-time updates via Server-Sent Events
+- **/logs** page — filterable log viewer (source, level, time range, session)
+- **/perf** page — API performance dashboard (route stats, slow requests, cache hit rates)
+
+### Dashboard Management
+
+\`\`\`bash
+# Check dashboard status
+ao dashboard status
+
+# Restart dashboard (e.g. after config changes)
+ao dashboard restart
+
+# Restart with .next cache clean (fixes compilation issues)
+ao dashboard restart --clean --wait
+
+# View recent dashboard output
+ao dashboard logs --tail 50
+\`\`\`
+
+You can also restart the dashboard programmatically from code:
+\`\`\`typescript
+import { restartDashboard, waitForHealthy } from "@composio/ao-core";
+
+const result = await restartDashboard({
+  clean: true,
+  webDir: "/path/to/packages/web",
+  logDir: "/path/to/logs",
+  port: ${config.port ?? 3000},
+});
+if (result.pid) await waitForHealthy(${config.port ?? 3000});
+\`\`\``);
+
+  // Logging & Debugging
+  sections.push(`## Logging & Debugging
+
+All system activity is logged to structured JSONL files for querying and analysis.
+
+### Querying Logs
+
+\`\`\`bash
+# Dashboard output logs
+ao logs dashboard --tail 20
+ao logs dashboard --since 30m --level error
+
+# Lifecycle event logs (state transitions, CI events, review events)
+ao logs events --session ${project.sessionPrefix}-1
+ao logs events --since 1h
+
+# Session-specific logs
+ao logs session ${project.sessionPrefix}-1
+\`\`\`
+
+### Performance Monitoring
+
+\`\`\`bash
+# Per-route response times
+ao perf routes
+
+# Find slowest API calls (enrichment bottlenecks, GitHub API latency)
+ao perf slow --limit 10
+
+# Cache effectiveness
+ao perf cache
+\`\`\`
+
+### Session Retrospectives
+
+After a session completes (merged or killed), a retrospective is auto-generated with timeline, metrics, and lessons learned.
+
+\`\`\`bash
+# List retrospectives
+ao retro list --project ${projectId}
+
+# View a specific retrospective
+ao retro show ${project.sessionPrefix}-1
+
+# Manually generate a retrospective
+ao retro generate ${project.sessionPrefix}-1
+\`\`\`
+
+Use retrospectives to identify patterns: which sessions take longest, where CI repeatedly fails, which review patterns cause delays.`);
 
   // Reactions (if configured)
   if (project.reactions && Object.keys(project.reactions).length > 0) {
@@ -179,7 +271,25 @@ When an agent needs human judgment:
 2. Check the dashboard or \`ao status\` for details
 3. Attach to the session if needed: \`ao session attach <session>\`
 4. Send instructions: \`ao send <session> '...'\`
-5. Or handle it yourself (merge PR, close issue, etc.)`);
+5. Or handle it yourself (merge PR, close issue, etc.)
+
+### Debugging a Failing Session
+1. Check logs: \`ao logs events --session <session-id>\` to see state transitions
+2. Look for CI failures: \`ao logs events --session <session-id>\` | grep ci
+3. Check the dashboard: \`ao logs dashboard --since 10m --level error\`
+4. Attach if needed: \`ao session attach <session>\`
+
+### Dashboard Not Loading
+1. Check status: \`ao dashboard status\`
+2. View errors: \`ao dashboard logs --tail 30\`
+3. Restart with clean cache: \`ao dashboard restart --clean --wait\`
+4. If still broken, check perf: \`ao perf routes\` for slow endpoints
+
+### Reviewing Past Performance
+1. \`ao retro list\` — see outcomes of completed sessions
+2. \`ao perf routes\` — identify slow API endpoints
+3. \`ao perf slow\` — find specific bottlenecks
+4. Use insights to tune reactions, improve agent prompts, or optimize code`);
 
   // Tips
   sections.push(`## Tips

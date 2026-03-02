@@ -33,6 +33,26 @@ export function validateUrl(url: string, label: string): void {
 }
 
 /**
+ * Compute a percentile value from a pre-sorted array of numbers.
+ * Returns 0 for empty arrays.
+ */
+export function percentile(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0;
+  const idx = Math.ceil((p / 100) * sorted.length) - 1;
+  return sorted[Math.max(0, idx)];
+}
+
+/**
+ * Normalize an API route path by replacing dynamic segments with `:id` placeholders.
+ * e.g. `/api/sessions/abc123` → `/api/sessions/:id`
+ */
+export function normalizeRoutePath(path: string): string {
+  return path
+    .replace(/\/sessions\/[^/]+/g, "/sessions/:id")
+    .replace(/\/prs\/[^/]+/g, "/prs/:id");
+}
+
+/**
  * Read the last line from a file by reading backwards from the end.
  * Pure Node.js — no external binaries. Handles any file size.
  */

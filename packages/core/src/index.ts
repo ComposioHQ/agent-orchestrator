@@ -60,7 +60,7 @@ export { generateOrchestratorPrompt } from "./orchestrator-prompt.js";
 export type { OrchestratorPromptConfig } from "./orchestrator-prompt.js";
 
 // Shared utilities
-export { shellEscape, escapeAppleScript, validateUrl, readLastJsonlEntry } from "./utils.js";
+export { shellEscape, escapeAppleScript, validateUrl, readLastJsonlEntry, percentile, normalizeRoutePath } from "./utils.js";
 
 // Path utilities — hash-based directory structure
 export {
@@ -72,6 +72,10 @@ export {
   getSessionsDir,
   getWorktreesDir,
   getArchiveDir,
+  getLogsDir,
+  getRetrospectivesDir,
+  resolveProjectLogDir,
+  resolveProjectRetroDir,
   getOriginFilePath,
   generateSessionName,
   generateTmuxName,
@@ -79,3 +83,21 @@ export {
   expandHome,
   validateAndStoreOrigin,
 } from "./paths.js";
+
+// Log writer — JSONL structured logging with rotation (default EventLogger implementation)
+export { LogWriter } from "./log-writer.js";
+export type { LogWriterOptions } from "./log-writer.js";
+
+// Log reader — query and filter JSONL logs
+export { readLogs, readLogsFromDir, tailLogs, parseApiLogs, computeApiStats } from "./log-reader.js";
+export type { ApiLogEntry, RouteStats, ApiPerfResult } from "./log-reader.js";
+
+// Session report card — per-session metrics
+export { generateReportCard } from "./session-report-card.js";
+
+// Retrospective — session analysis (includes default RetrospectiveStore implementation)
+export { generateRetrospective, saveRetrospective, loadRetrospectives, JsonlRetrospectiveStore } from "./retrospective.js";
+
+// Dashboard manager — programmatic dashboard process control
+export { restartDashboard, waitForHealthy, getDashboardStatus, stopDashboard, readPidFile, writePidFile, removePidFile } from "./dashboard-manager.js";
+export type { DashboardRestartOpts, DashboardRestartResult } from "./dashboard-manager.js";

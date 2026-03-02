@@ -985,6 +985,89 @@ export interface SessionMetadata {
 }
 
 // =============================================================================
+// LOGGING & OBSERVABILITY
+// =============================================================================
+
+/** Structured log entry written by the system. */
+export interface LogEntry {
+  ts: string;
+  level: "stdout" | "stderr" | "info" | "warn" | "error";
+  source: "dashboard" | "lifecycle" | "cli" | "api" | "browser";
+  sessionId: string | null;
+  message: string;
+  data?: Record<string, unknown>;
+}
+
+/** Options for querying log entries. */
+export interface LogQueryOptions {
+  since?: Date;
+  until?: Date;
+  level?: LogEntry["level"][];
+  sessionId?: string;
+  source?: LogEntry["source"];
+  limit?: number;
+  pattern?: string;
+}
+
+/** Per-session metrics extracted from event logs. */
+export interface SessionReportCard {
+  sessionId: string;
+  projectId: string;
+  duration: {
+    startedAt: string;
+    endedAt: string | null;
+    totalMs: number;
+  };
+  stateTransitions: Array<{ from: string; to: string; at: string }>;
+  ciAttempts: number;
+  reviewRounds: number;
+  outcome: "merged" | "killed" | "abandoned" | "active";
+  prUrl: string | null;
+}
+
+/** Structured analysis of a completed session. */
+export interface Retrospective {
+  sessionId: string;
+  projectId: string;
+  generatedAt: string;
+  outcome: "success" | "failure" | "partial";
+  timeline: Array<{ event: string; at: string; detail: string }>;
+  metrics: {
+    totalDurationMs: number;
+    ciFailures: number;
+    reviewRounds: number;
+  };
+  lessons: string[];
+  reportCard: SessionReportCard;
+}
+
+/**
+ * Event logger — writes structured log entries.
+ * Implement this interface to send logs to a custom backend
+ * (database, cloud logging service, etc.) instead of the default JSONL files.
+ */
+export interface EventLogger {
+  append(entry: LogEntry): void;
+  appendLine(
+    line: string,
+    level: LogEntry["level"],
+    source: LogEntry["source"],
+    sessionId?: string | null,
+  ): void;
+  close(): void;
+}
+
+/**
+ * Retrospective store — saves and loads session retrospectives.
+ * Implement this interface to store retrospectives in a database,
+ * cloud storage, or other backend instead of the default JSON files.
+ */
+export interface RetrospectiveStore {
+  save(retro: Retrospective): void;
+  load(opts?: { sessionId?: string; projectId?: string; limit?: number }): Retrospective[];
+}
+
+// =============================================================================
 // SERVICE INTERFACES (core, not pluggable)
 // =============================================================================
 
@@ -998,6 +1081,7 @@ export interface SessionManager {
   kill(sessionId: SessionId): Promise<void>;
   cleanup(projectId?: string, options?: { dryRun?: boolean }): Promise<CleanupResult>;
   send(sessionId: SessionId, message: string): Promise<void>;
+  getAttachInfo(sessionId: SessionId): Promise<AttachInfo | null>;
 }
 
 export interface CleanupResult {
