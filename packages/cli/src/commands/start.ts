@@ -124,6 +124,10 @@ export function registerStart(program: Command): void {
     .option("--no-dashboard", "Skip starting the dashboard server")
     .option("--no-orchestrator", "Skip starting the orchestrator agent")
     .option("--rebuild", "Clean and rebuild dashboard before starting")
+    .option(
+      "--continue",
+      "Continue the most recent orchestrator conversation (kills existing session first, preserves conversation history with fresh system prompt)",
+    )
     .action(
       async (
         projectArg?: string,
@@ -131,6 +135,7 @@ export function registerStart(program: Command): void {
           dashboard?: boolean;
           orchestrator?: boolean;
           rebuild?: boolean;
+          continue?: boolean;
         },
       ) => {
         try {
@@ -180,6 +185,15 @@ export function registerStart(program: Command): void {
             const existing = await sm.get(sessionId);
             exists = existing !== null && existing.status !== "killed";
 
+            // --continue: kill existing session so claude --continue picks up
+            // the most recent conversation with a fresh system prompt
+            if (opts?.continue && exists) {
+              spinner.start("Killing existing orchestrator session for --continue");
+              await sm.kill(sessionId);
+              spinner.succeed("Existing orchestrator session killed");
+              exists = false;
+            }
+
             if (exists) {
               if (existing?.runtimeHandle?.id) {
                 tmuxTarget = existing.runtimeHandle.id;
@@ -191,14 +205,26 @@ export function registerStart(program: Command): void {
               );
             } else {
               try {
-                spinner.start("Creating orchestrator session");
+                spinner.start(
+                  opts?.continue
+                    ? "Continuing orchestrator session"
+                    : "Creating orchestrator session",
+                );
                 const systemPrompt = generateOrchestratorPrompt({ config, projectId, project });
 
-                const session = await sm.spawnOrchestrator({ projectId, systemPrompt });
+                const session = await sm.spawnOrchestrator({
+                  projectId,
+                  systemPrompt,
+                  continue: opts?.continue,
+                });
                 if (session.runtimeHandle?.id) {
                   tmuxTarget = session.runtimeHandle.id;
                 }
-                spinner.succeed("Orchestrator session created");
+                spinner.succeed(
+                  opts?.continue
+                    ? "Orchestrator session continued"
+                    : "Orchestrator session created",
+                );
               } catch (err) {
                 spinner.fail("Orchestrator setup failed");
                 // Cleanup dashboard if orchestrator setup fails

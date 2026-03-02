@@ -184,6 +184,12 @@ export interface SessionSpawnConfig {
 export interface OrchestratorSpawnConfig {
   projectId: string;
   systemPrompt?: string;
+  /**
+   * Continue the most recent conversation in the project directory.
+   * When true, the agent is launched with --continue (or equivalent),
+   * preserving conversation history while loading fresh system prompts.
+   */
+  continue?: boolean;
 }
 
 // =============================================================================
@@ -352,6 +358,13 @@ export interface AgentLaunchConfig {
    * - Codex/Aider: similar shell substitution
    */
   systemPromptFile?: string;
+  /**
+   * Continue the most recent conversation in the project directory.
+   * Loads fresh system prompt while preserving conversation history.
+   * - Claude Code: --continue flag
+   * - Other agents: ignored if not supported
+   */
+  continue?: boolean;
 }
 
 export interface WorkspaceHooksConfig {
