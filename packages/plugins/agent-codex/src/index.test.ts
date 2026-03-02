@@ -384,6 +384,29 @@ describe("getEnvironment", () => {
       process.env["PATH"] = originalPath;
     }
   });
+
+  it("forwards OPENAI_API_KEY when set in process.env", () => {
+    const original = process.env["OPENAI_API_KEY"];
+    process.env["OPENAI_API_KEY"] = "sk-test-key";
+    try {
+      const env = agent.getEnvironment(makeLaunchConfig());
+      expect(env["OPENAI_API_KEY"]).toBe("sk-test-key");
+    } finally {
+      if (original === undefined) delete process.env["OPENAI_API_KEY"];
+      else process.env["OPENAI_API_KEY"] = original;
+    }
+  });
+
+  it("omits OPENAI_API_KEY when not set in process.env", () => {
+    const original = process.env["OPENAI_API_KEY"];
+    delete process.env["OPENAI_API_KEY"];
+    try {
+      const env = agent.getEnvironment(makeLaunchConfig());
+      expect(env["OPENAI_API_KEY"]).toBeUndefined();
+    } finally {
+      if (original !== undefined) process.env["OPENAI_API_KEY"] = original;
+    }
+  });
 });
 
 // =========================================================================

@@ -599,6 +599,12 @@ function createCodexAgent(): Agent {
         env["AO_ISSUE_ID"] = config.issueId;
       }
 
+      // Forward OpenAI API key so Codex can run without interactive login.
+      const openaiKey = process.env["OPENAI_API_KEY"];
+      if (openaiKey) {
+        env["OPENAI_API_KEY"] = openaiKey;
+      }
+
       // Prepend ~/.ao/bin to PATH so our gh/git wrappers intercept commands.
       // The wrappers strip this directory from PATH before calling the real
       // binary, so there's no infinite recursion.
