@@ -5,6 +5,7 @@ import { verifySignature } from "./verify.js";
 import { extractBranchAndRepo } from "./events.js";
 import { correlateSession } from "./correlate.js";
 import { isDuplicate, cleanup } from "./dedup.js";
+import { sendNtfy } from "./notify.js";
 
 const config = loadConfig();
 const app = express();
@@ -39,7 +40,9 @@ app.post("/webhook/github", (req, res) => {
   const dedupKey = `${eventType}:${extracted.repo}:${extracted.branch}`;
   if (isDuplicate(dedupKey)) return;
 
-  // Async: correlate + signal lifecycle manager
+  const action = (payload as Record<string, string>)["action"];
+
+  // Async: correlate + signal lifecycle manager + send notification
   correlateSession(extracted.branch, extracted.repo, config.dataDir)
     .then((sessionId) => {
       if (!sessionId) {
@@ -49,6 +52,7 @@ app.post("/webhook/github", (req, res) => {
         return;
       }
       console.log(`[EVENT] ${eventType} → check session ${sessionId}`);
+      sendNtfy(config, eventType, action, sessionId, extracted.branch);
       return signalLifecycle(sessionId);
     })
     .catch((err: unknown) => {
