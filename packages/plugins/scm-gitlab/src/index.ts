@@ -236,7 +236,7 @@ function createGitLabSCM(): SCM {
           // treated as skipped (GitLab considers the pipeline passing)
           if (j.allow_failure && s === "failed") {
             status = "skipped";
-          } else if (s === "pending" || s === "waiting_for_resource" || s === "created") {
+          } else if (s === "pending" || s === "waiting_for_resource" || s === "created" || s === "preparing" || s === "scheduled") {
             status = "pending";
           } else if (s === "running") {
             status = "running";
