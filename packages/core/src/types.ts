@@ -519,8 +519,8 @@ export interface SCM {
     deletions: number;
   }>;
 
-  /** Merge a PR */
-  mergePR(pr: PRInfo, method?: MergeMethod): Promise<void>;
+  /** Merge a PR. When options.useQueue is true, uses `--auto` for merge queue support. */
+  mergePR(pr: PRInfo, method?: MergeMethod, options?: MergeOptions): Promise<void>;
 
   /** Close a PR without merging */
   closePR(pr: PRInfo): Promise<void>;
@@ -576,6 +576,11 @@ export const PR_STATE = {
 } satisfies Record<string, PRState>;
 
 export type MergeMethod = "merge" | "squash" | "rebase";
+
+export interface MergeOptions {
+  /** When true, use `gh pr merge --auto` for merge queue support. */
+  useQueue?: boolean;
+}
 
 // --- CI Types ---
 
