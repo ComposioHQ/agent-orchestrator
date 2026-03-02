@@ -147,49 +147,27 @@ function createGitLabSCM(): SCM {
     },
 
     async getPRSummary(pr: PRInfo) {
+      // Single REST API call returns all needed fields
       const raw = await glab([
-        "mr",
-        "view",
-        String(pr.number),
-        "--repo",
-        repoFlag(pr),
-        "--output",
-        "json",
+        "api",
+        `projects/${encodeURIComponent(repoFlag(pr))}/merge_requests/${pr.number}`,
+        "--method",
+        "GET",
       ]);
       const data: {
         state: string;
         title: string;
-        changes_count: string;
+        additions?: number;
+        deletions?: number;
       } = JSON.parse(raw);
       const s = data.state.toLowerCase();
       const state: PRState = s === "merged" ? "merged" : s === "closed" ? "closed" : "open";
 
-      // GitLab API provides changes_count but not separate additions/deletions
-      // via glab. Use the REST API for detailed diff stats.
-      let additions = 0;
-      let deletions = 0;
-      try {
-        const diffRaw = await glab([
-          "api",
-          `projects/${encodeURIComponent(repoFlag(pr))}/merge_requests/${pr.number}`,
-          "--method",
-          "GET",
-        ]);
-        const diffData: {
-          additions?: number;
-          deletions?: number;
-        } = JSON.parse(diffRaw);
-        additions = diffData.additions ?? 0;
-        deletions = diffData.deletions ?? 0;
-      } catch {
-        // Fall back to 0 if API call fails
-      }
-
       return {
         state,
         title: data.title ?? "",
-        additions,
-        deletions,
+        additions: data.additions ?? 0,
+        deletions: data.deletions ?? 0,
       };
     },
 

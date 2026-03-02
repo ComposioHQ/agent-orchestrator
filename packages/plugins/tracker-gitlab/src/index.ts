@@ -50,7 +50,7 @@ async function getGitLabHost(): Promise<string> {
   try {
     // glab config get host returns the configured GitLab hostname
     const host = await glab(["config", "get", "host"]);
-    _cachedHost = host.trim() || "gitlab.com";
+    _cachedHost = host.trim().replace(/^https?:\/\//, "") || "gitlab.com";
   } catch {
     _cachedHost = "gitlab.com";
   }
