@@ -61,6 +61,25 @@ function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * Parse dispatch labels from issue labels.
+ * Recognises `dispatch:`, `mode:`, and `model:` prefixes.
+ * First occurrence wins when duplicates exist.
+ */
+export function parseDispatchLabels(labels: string[]): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const label of labels) {
+    if (label.startsWith("dispatch:") && !result["dispatch"]) {
+      result["dispatch"] = label;
+    } else if (label.startsWith("mode:") && !result["mode"]) {
+      result["mode"] = label;
+    } else if (label.startsWith("model:") && !result["model"]) {
+      result["model"] = label;
+    }
+  }
+  return result;
+}
+
 /** Get the next session number for a project. */
 function getNextSessionNumber(existingSessions: string[], prefix: string): number {
   let max = 0;
@@ -355,6 +374,11 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       }
     }
 
+    // Parse dispatch labels from issue (dispatch:, mode:, model:)
+    const dispatchMetadata = resolvedIssue?.labels
+      ? parseDispatchLabels(resolvedIssue.labels)
+      : {};
+
     // Get the sessions directory for this project
     const sessionsDir = getProjectSessionsDir(project);
 
@@ -476,7 +500,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       issueId: spawnConfig.issueId,
       prompt: composedPrompt ?? spawnConfig.prompt,
       permissions: project.agentConfig?.permissions,
-      model: project.agentConfig?.model,
+      model: dispatchMetadata["model"]?.replace("model:", "") ?? project.agentConfig?.model,
+      ...(Object.keys(dispatchMetadata).length > 0 ? { metadata: dispatchMetadata } : {}),
     };
 
     let handle: RuntimeHandle;

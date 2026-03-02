@@ -425,6 +425,134 @@ describe("spawn", () => {
     expect(session.issueId).toBe("INT-100");
   });
 
+  it("model label overrides project default model", async () => {
+    const mockTracker: Tracker = {
+      name: "mock-tracker",
+      getIssue: vi.fn().mockResolvedValue({
+        id: "INT-200",
+        title: "Test",
+        description: "",
+        url: "",
+        state: "open" as const,
+        labels: ["model:sonnet", "dispatch:cli-single"],
+      }),
+      isCompleted: vi.fn().mockResolvedValue(false),
+      issueUrl: vi.fn().mockReturnValue(""),
+      branchName: vi.fn().mockReturnValue("feat/INT-200"),
+      generatePrompt: vi.fn().mockResolvedValue(""),
+    };
+
+    const configWithModel: OrchestratorConfig = {
+      ...config,
+      projects: {
+        "my-app": {
+          ...config.projects["my-app"]!,
+          agentConfig: { model: "opus" },
+        },
+      },
+    };
+
+    const registryWithTracker: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        if (slot === "tracker") return mockTracker;
+        return null;
+      }),
+    };
+
+    const sm = createSessionManager({ config: configWithModel, registry: registryWithTracker });
+    await sm.spawn({ projectId: "my-app", issueId: "INT-200" });
+
+    expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "sonnet" }),
+    );
+  });
+
+  it("uses project default model when no model label present", async () => {
+    const mockTracker: Tracker = {
+      name: "mock-tracker",
+      getIssue: vi.fn().mockResolvedValue({
+        id: "INT-300",
+        title: "Test",
+        description: "",
+        url: "",
+        state: "open" as const,
+        labels: ["dispatch:cli-single"],
+      }),
+      isCompleted: vi.fn().mockResolvedValue(false),
+      issueUrl: vi.fn().mockReturnValue(""),
+      branchName: vi.fn().mockReturnValue("feat/INT-300"),
+      generatePrompt: vi.fn().mockResolvedValue(""),
+    };
+
+    const configWithModel: OrchestratorConfig = {
+      ...config,
+      projects: {
+        "my-app": {
+          ...config.projects["my-app"]!,
+          agentConfig: { model: "opus" },
+        },
+      },
+    };
+
+    const registryWithTracker: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        if (slot === "tracker") return mockTracker;
+        return null;
+      }),
+    };
+
+    const sm = createSessionManager({ config: configWithModel, registry: registryWithTracker });
+    await sm.spawn({ projectId: "my-app", issueId: "INT-300" });
+
+    expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "opus" }),
+    );
+  });
+
+  it("model label works when no project default model is set", async () => {
+    const mockTracker: Tracker = {
+      name: "mock-tracker",
+      getIssue: vi.fn().mockResolvedValue({
+        id: "INT-400",
+        title: "Test",
+        description: "",
+        url: "",
+        state: "open" as const,
+        labels: ["model:haiku"],
+      }),
+      isCompleted: vi.fn().mockResolvedValue(false),
+      issueUrl: vi.fn().mockReturnValue(""),
+      branchName: vi.fn().mockReturnValue("feat/INT-400"),
+      generatePrompt: vi.fn().mockResolvedValue(""),
+    };
+
+    const registryWithTracker: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        if (slot === "tracker") return mockTracker;
+        return null;
+      }),
+    };
+
+    const sm = createSessionManager({ config, registry: registryWithTracker });
+    await sm.spawn({ projectId: "my-app", issueId: "INT-400" });
+
+    expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "haiku" }),
+    );
+  });
+
   it("succeeds with ad-hoc issue string when tracker returns IssueNotFoundError", async () => {
     const mockTracker: Tracker = {
       name: "mock-tracker",
