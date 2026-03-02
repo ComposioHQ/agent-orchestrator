@@ -107,6 +107,56 @@ export default function SettingsScreen({ navigation }: Props) {
     }
   };
 
+  const handleTestReviewNotification = async () => {
+    const { status } = await Notifications.getPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert("Permission denied", "Notification permission is not granted. Enable it in your phone's Settings app.");
+      return;
+    }
+    try {
+      await scheduleNotification(
+        {
+          id: "ao-test-session",
+          projectId: "test",
+          status: "needs_review",
+          activity: "idle",
+          branch: "feat/test",
+          issueId: null,
+          issueUrl: null,
+          issueLabel: "TEST-1",
+          issueTitle: "Refactor database connection pool",
+          summary: "Changes requested on PR",
+          summaryIsFallback: false,
+          createdAt: new Date().toISOString(),
+          lastActivityAt: new Date().toISOString(),
+          pr: {
+            number: 99,
+            url: "",
+            title: "Refactor DB pool",
+            owner: "",
+            repo: "",
+            branch: "feat/test",
+            baseBranch: "main",
+            isDraft: false,
+            state: "open",
+            additions: 85,
+            deletions: 42,
+            ciStatus: "passing",
+            ciChecks: [],
+            reviewDecision: "changes_requested",
+            mergeability: { mergeable: true, ciPassing: true, approved: false, noConflicts: true, blockers: ["Changes requested"] },
+            unresolvedThreads: 2,
+          },
+          metadata: {},
+        },
+        "review",
+      );
+      Alert.alert("Sent", "A test 'review' notification was fired. Check your notification shade.");
+    } catch (err) {
+      Alert.alert("Failed", err instanceof Error ? err.message : "Could not schedule notification.");
+    }
+  };
+
   const handleSave = async () => {
     const trimmed = input.trim();
     if (!trimmed) {
@@ -189,12 +239,15 @@ export default function SettingsScreen({ navigation }: Props) {
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Test Notifications</Text>
-          <Text style={styles.hint}>Fire a test notification to verify permissions are working.</Text>
+          <Text style={styles.hint}>Fire a test notification to verify permissions are working. Tap the notification to navigate to the session.</Text>
           <TouchableOpacity style={[styles.testButton, { borderColor: "#f85149" }]} onPress={handleTestRespondNotification}>
             <Text style={[styles.testButtonText, { color: "#f85149" }]}>Test "Agent needs input" (respond)</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[styles.testButton, { borderColor: "#3fb950", marginTop: 8 }]} onPress={handleTestMergeNotification}>
             <Text style={[styles.testButtonText, { color: "#3fb950" }]}>Test "PR ready to merge" (merge)</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.testButton, { borderColor: "#d29922", marginTop: 8 }]} onPress={handleTestReviewNotification}>
+            <Text style={[styles.testButtonText, { color: "#d29922" }]}>Test "Session needs review" (review)</Text>
           </TouchableOpacity>
         </View>
 

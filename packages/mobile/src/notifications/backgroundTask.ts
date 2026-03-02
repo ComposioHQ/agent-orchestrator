@@ -52,6 +52,9 @@ TaskManager.defineTask(TASK_ID, async () => {
       } else if (level === "merge" && (prev !== "merge" || cooldownExpired)) {
         await scheduleNotification(session, "merge");
         timestamps[session.id] = now;
+      } else if (level === "review" && (prev !== "review" || cooldownExpired)) {
+        await scheduleNotification(session, "review");
+        timestamps[session.id] = now;
       }
     }
 

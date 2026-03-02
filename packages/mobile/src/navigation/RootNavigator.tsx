@@ -1,5 +1,5 @@
 import React from "react";
-import { NavigationContainer, DarkTheme } from "@react-navigation/native";
+import { NavigationContainer, DarkTheme, createNavigationContainerRef } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import HomeScreen from "../screens/HomeScreen";
 import SessionDetailScreen from "../screens/SessionDetailScreen";
@@ -17,6 +17,8 @@ export type RootStackParamList = {
   Orchestrator: undefined;
 };
 
+export const navigationRef = createNavigationContainerRef<RootStackParamList>();
+
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 const AoDarkTheme = {
@@ -33,7 +35,7 @@ const AoDarkTheme = {
 
 export default function RootNavigator() {
   return (
-    <NavigationContainer theme={AoDarkTheme}>
+    <NavigationContainer ref={navigationRef} theme={AoDarkTheme}>
       <Stack.Navigator
         initialRouteName="Home"
         screenOptions={{

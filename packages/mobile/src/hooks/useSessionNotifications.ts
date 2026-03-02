@@ -46,6 +46,11 @@ export function useSessionNotifications(sessions: DashboardSession[]): void {
             void scheduleNotification(session, "merge").catch(() => {});
             lastNotifiedAt.current[session.id] = now;
           }
+        } else if (level === "review" && (prev !== "review" || cooldownExpired)) {
+          if (isBackground || prev !== "review") {
+            void scheduleNotification(session, "review").catch(() => {});
+            lastNotifiedAt.current[session.id] = now;
+          }
         }
       }
     }

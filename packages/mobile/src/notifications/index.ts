@@ -41,7 +41,7 @@ export async function setupNotifications(): Promise<boolean> {
 /** Fire an immediate local notification for a session attention transition. */
 export async function scheduleNotification(
   session: DashboardSession,
-  level: "respond" | "merge",
+  level: "respond" | "merge" | "review",
 ): Promise<void> {
   const sessionLabel =
     session.issueLabel ??
@@ -53,22 +53,25 @@ export async function scheduleNotification(
     session.activity ??
     session.status;
 
-  const content: Notifications.NotificationContentInput =
-    level === "respond"
-      ? {
-          title: "Agent needs your input",
-          body: `${sessionLabel}: ${body}`,
-          data: { sessionId: session.id },
-          sound: true,
-          ...(Platform.OS === "android" && { channelId: ANDROID_CHANNEL_ID }),
-        }
-      : {
-          title: "PR ready to merge",
-          body: `${sessionLabel}${session.pr ? `: PR #${session.pr.number}` : ""}`,
-          data: { sessionId: session.id },
-          sound: true,
-          ...(Platform.OS === "android" && { channelId: ANDROID_CHANNEL_ID }),
-        };
+  const titles: Record<typeof level, string> = {
+    respond: "Agent needs your input",
+    merge: "PR ready to merge",
+    review: "Session needs review",
+  };
+
+  const bodies: Record<typeof level, string> = {
+    respond: `${sessionLabel}: ${body}`,
+    merge: `${sessionLabel}${session.pr ? `: PR #${session.pr.number}` : ""}`,
+    review: `${sessionLabel}: ${session.pr?.ciStatus === "failing" ? "CI failing" : session.pr?.reviewDecision === "changes_requested" ? "Changes requested" : body}`,
+  };
+
+  const content: Notifications.NotificationContentInput = {
+    title: titles[level],
+    body: bodies[level],
+    data: { sessionId: session.id },
+    sound: true,
+    ...(Platform.OS === "android" && { channelId: ANDROID_CHANNEL_ID }),
+  };
 
   // Use timeInterval trigger instead of null — trigger: null fails silently on Android in background tasks.
   // SDK 53 requires explicit `type` field on trigger objects.
