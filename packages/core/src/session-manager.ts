@@ -500,7 +500,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       issueId: spawnConfig.issueId,
       prompt: composedPrompt ?? spawnConfig.prompt,
       permissions: project.agentConfig?.permissions,
-      model: project.agentConfig?.model,
+      model: dispatchMetadata["model"]?.replace("model:", "") ?? project.agentConfig?.model,
       ...(Object.keys(dispatchMetadata).length > 0 ? { metadata: dispatchMetadata } : {}),
     };
 
