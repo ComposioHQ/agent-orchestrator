@@ -635,6 +635,10 @@ function createClaudeCodeAgent(): Agent {
       // This command must be safe for both shell and execFile contexts.
       const parts: string[] = ["claude"];
 
+      if (config.continue) {
+        parts.push("--continue");
+      }
+
       if (config.permissions === "skip") {
         parts.push("--dangerously-skip-permissions");
       }
