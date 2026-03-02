@@ -1,10 +1,11 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { CIBadge, CICheckList } from "@/components/CIBadge";
 import { PRStatus } from "@/components/PRStatus";
 import { SessionCard } from "@/components/SessionCard";
 import { AttentionZone } from "@/components/AttentionZone";
 import { ActivityDot } from "@/components/ActivityDot";
+import { ProxyDash } from "@/components/ProxyDash";
 import { makeSession, makePR } from "./helpers";
 
 // ── ActivityDot ───────────────────────────────────────────────────────
@@ -492,5 +493,73 @@ describe("AttentionZone", () => {
     render(<AttentionZone level="respond" sessions={sessions} onRestore={onRestore} />);
     fireEvent.click(screen.getByText("restore"));
     expect(onRestore).toHaveBeenCalledWith("s1");
+  });
+});
+
+// ── ProxyDash ────────────────────────────────────────────────────────
+
+describe("ProxyDash", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false }));
+  });
+
+  it("renders the proxydash heading and back link", () => {
+    render(<ProxyDash initialSessions={[]} projectName="myapp" />);
+    expect(screen.getByText("proxydash")).toBeInTheDocument();
+    expect(screen.getByText("← myapp")).toBeInTheDocument();
+  });
+
+  it("shows empty state when no sessions", () => {
+    render(<ProxyDash initialSessions={[]} projectName="myapp" />);
+    expect(screen.getByText("No sessions found")).toBeInTheDocument();
+    expect(screen.getByText("Go to dashboard")).toBeInTheDocument();
+  });
+
+  it("renders session rows for active sessions", () => {
+    const sessions = [
+      makeSession({ id: "scio-1", branch: "feat/auth", status: "working", activity: "active" }),
+      makeSession({ id: "scio-2", branch: "feat/search", status: "working", activity: "idle" }),
+    ];
+    render(<ProxyDash initialSessions={sessions} projectName="myapp" />);
+    expect(screen.getAllByText("scio-1").length).toBeGreaterThan(0);
+    expect(screen.getByText("scio-2")).toBeInTheDocument();
+  });
+
+  it("shows most urgent session in the Most Urgent section", () => {
+    const urgent = makeSession({
+      id: "scio-urgent",
+      status: "needs_input",
+      activity: "waiting_input",
+    });
+    const normal = makeSession({ id: "scio-normal", status: "working", activity: "active" });
+    render(<ProxyDash initialSessions={[normal, urgent]} projectName="myapp" />);
+    expect(screen.getByText("Most Urgent")).toBeInTheDocument();
+    // The urgent session id should appear in the Most Urgent section
+    expect(screen.getAllByText("scio-urgent").length).toBeGreaterThan(0);
+  });
+
+  it("links sessions to their terminal page", () => {
+    const session = makeSession({ id: "scio-3", status: "working", activity: "active" });
+    render(<ProxyDash initialSessions={[session]} projectName="myapp" />);
+    const links = screen.getAllByRole("link", { name: /scio-3/i });
+    expect(links[0]).toHaveAttribute("href", "/sessions/scio-3");
+  });
+
+  it("shows PR number with link when session has PR", () => {
+    const pr = makePR({ number: 42, url: "https://github.com/org/repo/pull/42" });
+    const session = makeSession({ id: "scio-4", pr, status: "working", activity: "active" });
+    render(<ProxyDash initialSessions={[session]} projectName="myapp" />);
+    // Session may appear in both "Most Urgent" and "Active" sections — use first match
+    const prLinks = screen.getAllByText("#42");
+    expect(prLinks.length).toBeGreaterThan(0);
+    expect(prLinks[0].closest("a")).toHaveAttribute("href", "https://github.com/org/repo/pull/42");
+  });
+
+  it("shows Active and Done section labels with counts", () => {
+    const active = makeSession({ id: "scio-a", status: "working", activity: "active" });
+    const done = makeSession({ id: "scio-d", status: "merged", activity: "idle" });
+    render(<ProxyDash initialSessions={[active, done]} projectName="myapp" />);
+    expect(screen.getByText(/Active · 1/)).toBeInTheDocument();
+    expect(screen.getByText(/Done · 1/)).toBeInTheDocument();
   });
 });
