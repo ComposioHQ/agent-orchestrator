@@ -96,6 +96,9 @@ export {
   UrlMcpToolPlugin,
 } from "./resolve-mcp-plugins.js";
 
+// Internal HTTP server for inter-process lifecycle signalling
+export { createInternalServer } from "./internal-server.js";
+
 // Resource argument parsing
 export { parseResourceArg } from "./parse-resource-arg.js";
 export type { ParsedResource } from "./parse-resource-arg.js";
