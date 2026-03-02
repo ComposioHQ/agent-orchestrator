@@ -20,6 +20,7 @@ import {
 } from "@composio/ao-core";
 import { exec } from "../lib/shell.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
+import { startInternalServer } from "../lib/internal-server-launcher.js";
 import { findWebDir, buildDashboardEnv } from "../lib/web-dir.js";
 import { cleanNextCache } from "../lib/dashboard-rebuild.js";
 
@@ -140,6 +141,21 @@ export function registerStart(program: Command): void {
 
           console.log(chalk.bold(`\nStarting orchestrator for ${chalk.cyan(project.name)}\n`));
 
+          // Start internal signal server (for Claude Code hook push + webhook relay)
+          const sm = await getSessionManager(config);
+          const internalPort = config.port ? config.port + 101 : 3101;
+          let internalServer: Awaited<ReturnType<typeof startInternalServer>> | null = null;
+          try {
+            internalServer = await startInternalServer(sm, internalPort);
+            console.log(
+              chalk.dim(`  Internal signal server on http://127.0.0.1:${internalPort}`),
+            );
+          } catch {
+            console.log(
+              chalk.yellow("  Could not start internal signal server (port may be in use)"),
+            );
+          }
+
           // Start dashboard (unless --no-dashboard)
           const spinner = ora();
           let dashboardProcess: ChildProcess | null = null;
@@ -170,7 +186,6 @@ export function registerStart(program: Command): void {
           // Create orchestrator session (unless --no-orchestrator or already exists)
           let tmuxTarget = sessionId; // For the attach hint — updated to hash-based name after spawn
           if (opts?.orchestrator !== false) {
-            const sm = await getSessionManager(config);
 
             // Check if orchestrator session already exists
             const existing = await sm.get(sessionId);
@@ -224,12 +239,20 @@ export function registerStart(program: Command): void {
 
           console.log(chalk.dim(`Config: ${config.configPath}\n`));
 
+          // Clean up internal server on exit
+          if (internalServer) {
+            const srv = internalServer;
+            process.once("SIGTERM", () => srv.close());
+            process.once("SIGINT", () => srv.close());
+          }
+
           // Keep dashboard process alive if it was started
           if (dashboardProcess) {
             dashboardProcess.on("exit", (code) => {
               if (code !== 0 && code !== null) {
                 console.error(chalk.red(`Dashboard exited with code ${code}`));
               }
+              internalServer?.close();
               process.exit(code ?? 0);
             });
           }
