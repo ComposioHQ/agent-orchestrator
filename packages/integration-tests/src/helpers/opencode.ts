@@ -4,6 +4,14 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const TIMEOUT = 30_000;
 
+export async function exportOpencodeSession(sessionId: string, cwd: string): Promise<string> {
+  const { stdout } = await execFileAsync("opencode", ["export", sessionId], {
+    timeout: 120_000,
+    cwd,
+  });
+  return stdout;
+}
+
 const CHEAP_MODEL_PREFERENCE = [
   "opencode/gpt-5-nano",
   "opencode/minimax-m2.5-free",

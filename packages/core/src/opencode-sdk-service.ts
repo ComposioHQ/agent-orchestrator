@@ -31,7 +31,7 @@ function parseModel(model: string | undefined): { providerID: string; modelID: s
 }
 
 async function getFreePort(hostname: string): Promise<number> {
-  return await new Promise((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     const srv = createServer();
     srv.once("error", reject);
     srv.listen(0, hostname, () => {
@@ -155,6 +155,8 @@ export async function promptOpenCodeSession(params: {
   });
 }
 
+const KNOWN_STATUSES = new Set<OpenCodeStatus>(["working", "idle", "waiting_input", "exited"]);
+
 export async function getOpenCodeSessionStatus(params: {
   baseUrl: string;
   sessionId: string;
@@ -163,25 +165,13 @@ export async function getOpenCodeSessionStatus(params: {
   const response = await client.session.status();
   const statusMap = response.data as Record<string, string> | undefined;
   const value = statusMap?.[params.sessionId];
-
-  switch (value) {
-    case "working":
-      return "working";
-    case "idle":
-      return "idle";
-    case "waiting_input":
-      return "waiting_input";
-    case "exited":
-      return "exited";
-    default:
-      return "unknown";
-  }
+  return KNOWN_STATUSES.has(value as OpenCodeStatus) ? (value as OpenCodeStatus) : "unknown";
 }
 
 export async function getOpenCodeSessionInfo(params: {
   baseUrl: string;
   sessionId: string;
-}): Promise<{ summary: string | null; costUsd?: number; inputTokens?: number; outputTokens?: number }> {
+}): Promise<{ summary: string | null }> {
   const client = getOpenCodeClient(params.baseUrl);
   const session = await client.session.get({ path: { id: params.sessionId } });
   const sessionData = session.data as { title?: string } | undefined;

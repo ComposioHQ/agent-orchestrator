@@ -987,8 +987,6 @@ export interface SessionMetadata {
   opencodeMode?: "sdk";
   opencodeServerUrl?: string;
   opencodeServerPid?: number;
-  opencodeServerHostname?: string;
-  opencodeServerPort?: number;
   opencodeSessionId?: string;
   terminalMode?: "opencode-attach" | "tmux";
 }
