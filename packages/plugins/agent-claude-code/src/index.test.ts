@@ -203,6 +203,24 @@ describe("getLaunchCommand", () => {
     expect(cmd).not.toMatch(/\s-p\s/);
     expect(cmd).not.toContain("Do the task");
   });
+
+  it("includes --continue when continue=true", () => {
+    const cmd = agent.getLaunchCommand(makeLaunchConfig({ continue: true }));
+    expect(cmd).toContain("--continue");
+    expect(cmd).toBe("claude --continue");
+  });
+
+  it("combines --continue with other flags", () => {
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({ continue: true, permissions: "skip", model: "opus" }),
+    );
+    expect(cmd).toBe("claude --continue --dangerously-skip-permissions --model 'opus'");
+  });
+
+  it("omits --continue when continue is not set", () => {
+    const cmd = agent.getLaunchCommand(makeLaunchConfig());
+    expect(cmd).not.toContain("--continue");
+  });
 });
 
 // =========================================================================

@@ -641,6 +641,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       permissions: "skip" as const,
       model: project.agentConfig?.model,
       systemPromptFile,
+      continue: orchestratorConfig.continue,
     };
 
     const launchCommand = plugins.agent.getLaunchCommand(agentLaunchConfig);
