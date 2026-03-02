@@ -18,12 +18,16 @@ export function Terminal({ sessionId }: TerminalProps) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const port = process.env.NEXT_PUBLIC_TERMINAL_PORT ?? "14800";
     // Use current hostname instead of hardcoded localhost
+    // When behind a reverse proxy (HTTPS), use path-based routing on same port.
     const protocol = window.location.protocol;
     const hostname = window.location.hostname;
+    const isProxied = protocol === "https:";
+    const baseUrl = isProxied
+      ? `${protocol}//${hostname}/terminal/ws`
+      : `${protocol}//${hostname}:${process.env.NEXT_PUBLIC_TERMINAL_PORT ?? "14800"}`;
     // URL-encode sessionId to prevent special characters from breaking the URL
-    fetch(`${protocol}//${hostname}:${port}/terminal?session=${encodeURIComponent(sessionId)}`)
+    fetch(`${baseUrl}/terminal?session=${encodeURIComponent(sessionId)}`)
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json() as Promise<{ url: string }>;

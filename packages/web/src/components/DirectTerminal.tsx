@@ -165,10 +165,14 @@ export function DirectTerminal({
         fit.fit();
 
         // WebSocket URL (stable across reconnects)
+        // When behind a reverse proxy (HTTPS), use path-based routing on same port.
+        // In local dev (HTTP), connect directly to the terminal port.
         const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
         const hostname = window.location.hostname;
-        const port = process.env.NEXT_PUBLIC_DIRECT_TERMINAL_PORT ?? "14801";
-        const wsUrl = `${protocol}//${hostname}:${port}/ws?session=${encodeURIComponent(sessionId)}`;
+        const isProxied = window.location.protocol === "https:";
+        const wsUrl = isProxied
+          ? `${protocol}//${hostname}/terminal/direct/ws?session=${encodeURIComponent(sessionId)}`
+          : `${protocol}//${hostname}:${process.env.NEXT_PUBLIC_DIRECT_TERMINAL_PORT ?? "14801"}/ws?session=${encodeURIComponent(sessionId)}`;
 
         // Handle window resize (works with whatever ws is current)
         const handleResize = () => {
