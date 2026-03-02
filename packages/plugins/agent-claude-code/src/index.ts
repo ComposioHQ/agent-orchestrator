@@ -123,6 +123,13 @@ if [[ "$command" =~ ^gh[[:space:]]+pr[[:space:]]+create ]]; then
   if [[ -n "$pr_url" ]]; then
     update_metadata_key "pr" "$pr_url"
     update_metadata_key "status" "pr_open"
+
+    # Signal lifecycle manager for immediate check (non-blocking, silent-fail)
+    if [[ -n "\${AO_INTERNAL_PORT:-}" ]] && [[ -n "\${AO_SESSION:-}" ]]; then
+      curl -sf -X POST "http://127.0.0.1:\${AO_INTERNAL_PORT}/internal/check/\${AO_SESSION}" \
+        -o /dev/null --max-time 2 2>/dev/null &
+    fi
+
     echo '{"systemMessage": "Updated metadata: PR created at '"$pr_url"'"}'
     exit 0
   fi
@@ -135,6 +142,13 @@ if [[ "$command" =~ ^git[[:space:]]+checkout[[:space:]]+-b[[:space:]]+([^[:space
 
   if [[ -n "$branch" ]]; then
     update_metadata_key "branch" "$branch"
+
+    # Signal lifecycle manager for immediate check (non-blocking, silent-fail)
+    if [[ -n "\${AO_INTERNAL_PORT:-}" ]] && [[ -n "\${AO_SESSION:-}" ]]; then
+      curl -sf -X POST "http://127.0.0.1:\${AO_INTERNAL_PORT}/internal/check/\${AO_SESSION}" \
+        -o /dev/null --max-time 2 2>/dev/null &
+    fi
+
     echo '{"systemMessage": "Updated metadata: branch = '"$branch"'"}'
     exit 0
   fi
@@ -157,6 +171,13 @@ fi
 # Detect: gh pr merge
 if [[ "$command" =~ ^gh[[:space:]]+pr[[:space:]]+merge ]]; then
   update_metadata_key "status" "merged"
+
+  # Signal lifecycle manager for immediate check (non-blocking, silent-fail)
+  if [[ -n "\${AO_INTERNAL_PORT:-}" ]] && [[ -n "\${AO_SESSION:-}" ]]; then
+    curl -sf -X POST "http://127.0.0.1:\${AO_INTERNAL_PORT}/internal/check/\${AO_SESSION}" \
+      -o /dev/null --max-time 2 2>/dev/null &
+  fi
+
   echo '{"systemMessage": "Updated metadata: status = merged"}'
   exit 0
 fi
@@ -614,6 +635,45 @@ async function setupHookInWorkspace(workspacePath: string, hookCommand: string):
   }
 
   hooks["PostToolUse"] = postToolUse;
+
+  // Add Stop hook — signals the internal server when the agent exits
+  const stopHooks = (hooks["Stop"] as Array<unknown>) ?? [];
+  const stopSignalCmd =
+    'if [ -n "${AO_INTERNAL_PORT:-}" ] && [ -n "${AO_SESSION:-}" ]; then ' +
+    'curl -sf -X POST "http://127.0.0.1:${AO_INTERNAL_PORT}/internal/check/${AO_SESSION}" ' +
+    "-o /dev/null --max-time 2 2>/dev/null || true; fi";
+
+  // Check if our stop hook is already registered
+  let hasStopHook = false;
+  for (const entry of stopHooks) {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) continue;
+    const e = entry as Record<string, unknown>;
+    const hooksList = e["hooks"];
+    if (!Array.isArray(hooksList)) continue;
+    for (const hDef of hooksList) {
+      if (typeof hDef !== "object" || hDef === null || Array.isArray(hDef)) continue;
+      const def = hDef as Record<string, unknown>;
+      if (typeof def["command"] === "string" && def["command"].includes("AO_INTERNAL_PORT")) {
+        hasStopHook = true;
+        break;
+      }
+    }
+    if (hasStopHook) break;
+  }
+
+  if (!hasStopHook) {
+    stopHooks.push({
+      hooks: [
+        {
+          type: "command",
+          command: stopSignalCmd,
+          timeout: 5000,
+        },
+      ],
+    });
+  }
+  hooks["Stop"] = stopHooks;
+
   existingSettings["hooks"] = hooks;
 
   // Write updated settings
@@ -684,6 +744,11 @@ function createClaudeCodeAgent(): Agent {
 
       if (config.issueId) {
         env["AO_ISSUE_ID"] = config.issueId;
+      }
+
+      // Forward internal signal server port so hooks can trigger immediate checks
+      if (process.env["AO_INTERNAL_PORT"]) {
+        env["AO_INTERNAL_PORT"] = process.env["AO_INTERNAL_PORT"];
       }
 
       // Forward tracker API keys so the agent can update issue labels/state
