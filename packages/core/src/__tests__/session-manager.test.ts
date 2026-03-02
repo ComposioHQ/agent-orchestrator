@@ -549,11 +549,16 @@ describe("spawn", () => {
     const postLaunchAgent = {
       ...mockAgent,
       promptDelivery: "post-launch" as const,
+      detectActivity: vi.fn().mockReturnValue("idle"),
+    };
+    const runtimeWithPrompt: Runtime = {
+      ...mockRuntime,
+      getOutput: vi.fn().mockResolvedValue("❯ "),
     };
     const registryWithPostLaunch: PluginRegistry = {
       ...mockRegistry,
       get: vi.fn().mockImplementation((slot: string) => {
-        if (slot === "runtime") return mockRuntime;
+        if (slot === "runtime") return runtimeWithPrompt;
         if (slot === "agent") return postLaunchAgent;
         if (slot === "workspace") return mockWorkspace;
         return null;
@@ -562,11 +567,11 @@ describe("spawn", () => {
 
     const sm = createSessionManager({ config, registry: registryWithPostLaunch });
     const spawnPromise = sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
-    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(500);
     await spawnPromise;
 
     // Prompt should be sent via runtime.sendMessage, not included in launch command
-    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
+    expect(runtimeWithPrompt.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({ id: expect.any(String) }),
       expect.stringContaining("Fix the bug"),
     );
@@ -610,11 +615,13 @@ describe("spawn", () => {
     vi.useFakeTimers();
     const failingRuntime: Runtime = {
       ...mockRuntime,
+      getOutput: vi.fn().mockResolvedValue("❯ "),
       sendMessage: vi.fn().mockRejectedValue(new Error("tmux send failed")),
     };
     const postLaunchAgent = {
       ...mockAgent,
       promptDelivery: "post-launch" as const,
+      detectActivity: vi.fn().mockReturnValue("idle"),
     };
     const registryWithFailingSend: PluginRegistry = {
       ...mockRegistry,
@@ -628,7 +635,7 @@ describe("spawn", () => {
 
     const sm = createSessionManager({ config, registry: registryWithFailingSend });
     const spawnPromise = sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
-    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(500);
     const session = await spawnPromise;
 
     // Session should still be returned successfully despite sendMessage failure
@@ -639,33 +646,87 @@ describe("spawn", () => {
     vi.useRealTimers();
   });
 
-  it("waits before sending post-launch prompt", async () => {
+  it("waits until agent signals ready before sending post-launch prompt", async () => {
     vi.useFakeTimers();
+    // First 3 polls return empty output (agent still starting), 4th returns the prompt
+    const getOutput = vi
+      .fn()
+      .mockResolvedValueOnce("")
+      .mockResolvedValueOnce("")
+      .mockResolvedValueOnce("")
+      .mockResolvedValue("❯ ");
+    const runtimeWithDelayedOutput: Runtime = {
+      ...mockRuntime,
+      getOutput,
+      sendMessage: vi.fn().mockResolvedValue(undefined),
+    };
     const postLaunchAgent = {
       ...mockAgent,
       promptDelivery: "post-launch" as const,
+      detectActivity: vi.fn().mockReturnValue("idle"),
     };
-    const registryWithPostLaunch: PluginRegistry = {
+    const registry: PluginRegistry = {
       ...mockRegistry,
       get: vi.fn().mockImplementation((slot: string) => {
-        if (slot === "runtime") return mockRuntime;
+        if (slot === "runtime") return runtimeWithDelayedOutput;
         if (slot === "agent") return postLaunchAgent;
         if (slot === "workspace") return mockWorkspace;
         return null;
       }),
     };
 
-    const sm = createSessionManager({ config, registry: registryWithPostLaunch });
+    const sm = createSessionManager({ config, registry });
     const spawnPromise = sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
 
-    // Advance only 4s — not enough, message should not have been sent yet
-    await vi.advanceTimersByTimeAsync(4_000);
-    expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
+    // After 3 poll cycles (1500ms) output is still empty — not sent yet
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(runtimeWithDelayedOutput.sendMessage).not.toHaveBeenCalled();
 
-    // Advance the remaining 1s — now it should fire
-    await vi.advanceTimersByTimeAsync(1_000);
+    // 4th poll (500ms more) returns the prompt — sends immediately
+    await vi.advanceTimersByTimeAsync(500);
     await spawnPromise;
-    expect(mockRuntime.sendMessage).toHaveBeenCalled();
+    expect(runtimeWithDelayedOutput.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: expect.any(String) }),
+      expect.stringContaining("Fix the bug"),
+    );
+    vi.useRealTimers();
+  });
+
+  it("does not treat empty terminal output as agent ready", async () => {
+    vi.useFakeTimers();
+    // detectActivity returns "idle" even for empty strings (real behavior),
+    // but the output.trim() guard must prevent a false positive
+    const postLaunchAgent = {
+      ...mockAgent,
+      promptDelivery: "post-launch" as const,
+      detectActivity: vi.fn().mockReturnValue("idle"),
+    };
+    const runtimeAlwaysEmpty: Runtime = {
+      ...mockRuntime,
+      getOutput: vi.fn().mockResolvedValue(""),
+      sendMessage: vi.fn().mockResolvedValue(undefined),
+    };
+    const registry: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return runtimeAlwaysEmpty;
+        if (slot === "agent") return postLaunchAgent;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+
+    const sm = createSessionManager({ config, registry });
+    const spawnPromise = sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
+
+    // Several poll cycles pass — empty output must not be treated as ready
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(runtimeAlwaysEmpty.sendMessage).not.toHaveBeenCalled();
+
+    // After the full 30s timeout the prompt is sent as best-effort fallback
+    await vi.advanceTimersByTimeAsync(28_500);
+    await spawnPromise;
+    expect(runtimeAlwaysEmpty.sendMessage).toHaveBeenCalled();
     vi.useRealTimers();
   });
 });
