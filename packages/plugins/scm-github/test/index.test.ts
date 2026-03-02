@@ -220,6 +220,34 @@ describe("scm-github plugin", () => {
         expect.any(Object),
       );
     });
+
+    it("uses --auto for merge queue when useQueue is true", async () => {
+      ghMock.mockResolvedValueOnce({ stdout: "" });
+      await scm.mergePR(pr, "squash", { useQueue: true });
+      expect(ghMock).toHaveBeenCalledWith(
+        "gh",
+        ["pr", "merge", "42", "--repo", "acme/repo", "--auto", "--squash"],
+        expect.any(Object),
+      );
+    });
+
+    it("uses --delete-branch without queue when useQueue is false", async () => {
+      ghMock.mockResolvedValueOnce({ stdout: "" });
+      await scm.mergePR(pr, "squash", { useQueue: false });
+      expect(ghMock).toHaveBeenCalledWith(
+        "gh",
+        ["pr", "merge", "42", "--repo", "acme/repo", "--squash", "--delete-branch"],
+        expect.any(Object),
+      );
+    });
+
+    it("defaults to non-queue (--delete-branch) when options omitted", async () => {
+      ghMock.mockResolvedValueOnce({ stdout: "" });
+      await scm.mergePR(pr);
+      const args = ghMock.mock.calls[0][1];
+      expect(args).toContain("--delete-branch");
+      expect(args).not.toContain("--auto");
+    });
   });
 
   // ---- closePR -----------------------------------------------------------

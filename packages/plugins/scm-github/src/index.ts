@@ -15,6 +15,7 @@ import {
   type PRInfo,
   type PRState,
   type MergeMethod,
+  type MergeOptions,
   type CICheck,
   type CIStatus,
   type Review,
@@ -168,10 +169,15 @@ function createGitHubSCM(): SCM {
       };
     },
 
-    async mergePR(pr: PRInfo, method: MergeMethod = "squash"): Promise<void> {
+    async mergePR(pr: PRInfo, method: MergeMethod = "squash", options?: MergeOptions): Promise<void> {
       const flag = method === "rebase" ? "--rebase" : method === "merge" ? "--merge" : "--squash";
+      const useQueue = options?.useQueue ?? false;
 
-      await gh(["pr", "merge", String(pr.number), "--repo", repoFlag(pr), flag, "--delete-branch"]);
+      if (useQueue) {
+        await gh(["pr", "merge", String(pr.number), "--repo", repoFlag(pr), "--auto", flag]);
+      } else {
+        await gh(["pr", "merge", String(pr.number), "--repo", repoFlag(pr), flag, "--delete-branch"]);
+      }
     },
 
     async closePR(pr: PRInfo): Promise<void> {
