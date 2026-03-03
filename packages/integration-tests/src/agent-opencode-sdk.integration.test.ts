@@ -350,5 +350,33 @@ describe.skipIf(!(tmuxOk && opencodeOk))("agent-opencode-sdk parity (integration
   it.todo("T09: web terminal attach mode uses opencode -s --attach");
   it.todo("T10: non-opencode terminal path remains tmux attach");
   it.todo("T11: /api/sessions/[id]/message delegates via session-manager");
-  it.todo("T12: full lifecycle smoke with metadata invariants");
+
+  it("T12: full lifecycle smoke with metadata invariants", async () => {
+    const smoke = await sessionManager.spawn({ projectId: "opencode-project" });
+    const sessionsDir = getSessionsDir(config.configPath, project.path);
+
+    const listed = await sessionManager.list("opencode-project");
+    expect(listed.some((s) => s.id === smoke.id)).toBe(true);
+
+    const smokeMeta = readMetadataRaw(sessionsDir, smoke.id);
+    expect(smokeMeta?.["opencodeMode"]).toBe("sdk");
+    expect(smokeMeta?.["opencodeServerUrl"]).toMatch(/^http:\/\//);
+    expect(smokeMeta?.["opencodeSessionId"]).toBeTruthy();
+    expect(smokeMeta?.["terminalMode"]).toBe("opencode-attach");
+
+    // restore path smoke: kill runtime shell, then restore from same OpenCode session.
+    if (smoke.runtimeHandle?.id) {
+      await execFileAsync("tmux", ["kill-session", "-t", smoke.runtimeHandle.id], {
+        timeout: 15_000,
+      }).catch(() => {});
+      await new Promise((r) => setTimeout(r, 500));
+    }
+
+    const restored = await sessionManager.restore(smoke.id);
+    const restoredMeta = readMetadataRaw(sessionsDir, restored.id);
+    expect(restoredMeta?.["opencodeSessionId"]).toBe(smokeMeta?.["opencodeSessionId"]);
+
+    await sessionManager.kill(smoke.id);
+    expect(readMetadataRaw(sessionsDir, smoke.id)).toBeNull();
+  }, 120_000);
 });
