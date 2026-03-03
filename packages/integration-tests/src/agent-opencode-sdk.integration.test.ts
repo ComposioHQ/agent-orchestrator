@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, realpath, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -18,41 +18,39 @@ import agentOpencode from "@composio/ao-plugin-agent-opencode";
 import workspaceWorktree from "@composio/ao-plugin-workspace-worktree";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { isTmuxAvailable } from "./helpers/tmux.js";
-import { isOpencodeAvailable, listOpencodeModels, pickCheapModel } from "./helpers/opencode.js";
-import { exportOpencodeSession } from "./helpers/opencode-export.js";
+import {
+  isOpencodeAvailable,
+  listOpencodeModels,
+  pickCheapModel,
+  exportOpencodeSession,
+} from "./helpers/opencode.js";
 
 const execFileAsync = promisify(execFile);
 
 async function git(cwd: string, ...args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync("git", args, { cwd });
+  const { stdout } = await execFileAsync("git", args, { cwd, timeout: 30_000 });
   return stdout.trimEnd();
-}
-
-async function isGitAvailable(): Promise<boolean> {
-  try {
-    await execFileAsync("git", ["--version"], { timeout: 5_000 });
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 const tmuxOk = await isTmuxAvailable();
 const opencodeOk = await isOpencodeAvailable();
-const gitOk = await isGitAvailable();
 
-describe.skipIf(!(tmuxOk && opencodeOk && gitOk))("agent-opencode-sdk parity (integration)", () => {
+const SESSION_PREFIX = `opencode-sdk-inttest-${Date.now()}`;
+const WORKTREE_DIR = join(tmpdir(), `ao-inttest-opencode-worktrees-${Date.now()}`);
+
+describe.skipIf(!(tmuxOk && opencodeOk))("agent-opencode-sdk parity (integration)", () => {
   let repoDir: string;
   let config: OrchestratorConfig;
   let project: ProjectConfig;
   let sessionManager: ReturnType<typeof createSessionManager>;
   let model: string | null = null;
+
   let spawnedSession: Session | null = null;
-  let configPath: string;
+  // Metadata cached from T01 so T02/T03 don't re-read disk independently.
+  let spawnedMetadata: Record<string, string> | null = null;
 
   beforeAll(async () => {
-    const rawRepo = await mkdtemp(join(tmpdir(), "ao-inttest-opencode-sdk-repo-"));
-    repoDir = await realpath(rawRepo);
+    repoDir = await mkdtemp(join(tmpdir(), "ao-inttest-opencode-sdk-repo-"));
 
     await git(repoDir, "init", "-b", "main");
     await git(repoDir, "config", "user.email", "test@test.com");
@@ -60,13 +58,15 @@ describe.skipIf(!(tmuxOk && opencodeOk && gitOk))("agent-opencode-sdk parity (in
     await execFileAsync("sh", ["-c", "echo hello > README.md"], { cwd: repoDir });
     await git(repoDir, "add", ".");
     await git(repoDir, "commit", "-m", "initial commit");
+    // Use the repo itself as its own remote so the worktree plugin can fetch.
     await git(repoDir, "remote", "add", "origin", repoDir);
     await git(repoDir, "fetch", "origin");
 
-    configPath = join(repoDir, "agent-orchestrator.inttest.yaml");
-    await writeFile(configPath, "inttest: true\n", "utf-8");
-
     model = await pickCheapModel();
+
+    const configPath = join(repoDir, "agent-orchestrator.inttest.yaml");
+    // realpathSync(configPath) inside paths.ts requires the file to exist.
+    await writeFile(configPath, "", "utf-8");
 
     config = {
       configPath,
@@ -84,7 +84,7 @@ describe.skipIf(!(tmuxOk && opencodeOk && gitOk))("agent-opencode-sdk parity (in
           repo: "test/opencode-inttest",
           path: repoDir,
           defaultBranch: "main",
-          sessionPrefix: `opencode-sdk-inttest-${Date.now()}`,
+          sessionPrefix: SESSION_PREFIX,
           agent: "opencode",
           runtime: "tmux",
           workspace: "worktree",
@@ -109,7 +109,7 @@ describe.skipIf(!(tmuxOk && opencodeOk && gitOk))("agent-opencode-sdk parity (in
     const registry = createPluginRegistry();
     registry.register(runtimeTmux);
     registry.register(agentOpencode);
-    registry.register(workspaceWorktree, { worktreeDir: join(tmpdir(), "ao-inttest-opencode-worktrees") });
+    registry.register(workspaceWorktree, { worktreeDir: WORKTREE_DIR });
 
     sessionManager = createSessionManager({ config, registry });
   }, 90_000);
@@ -119,21 +119,22 @@ describe.skipIf(!(tmuxOk && opencodeOk && gitOk))("agent-opencode-sdk parity (in
       try {
         await sessionManager.kill(spawnedSession.id);
       } catch {
-        // best effort cleanup
+        // best-effort; process may already be gone
       }
     }
-    if (repoDir) {
-      await rm(repoDir, { recursive: true, force: true }).catch(() => {});
-    }
+    await Promise.allSettled([
+      repoDir ? rm(repoDir, { recursive: true, force: true }) : Promise.resolve(),
+      rm(WORKTREE_DIR, { recursive: true, force: true }),
+    ]);
   }, 60_000);
 
   it("T00: discovers cheap live model candidate", async () => {
     const models = await listOpencodeModels();
     expect(models.length).toBeGreaterThan(0);
 
-    const model = await pickCheapModel();
-    expect(model).toBeTruthy();
-    expect(models).toContain(model as string);
+    const picked = await pickCheapModel();
+    expect(picked).toBeTruthy();
+    expect(models).toContain(picked as string);
   });
 
   it("T01: SDK bootstrap through sessionManager.spawn", async () => {
@@ -141,27 +142,27 @@ describe.skipIf(!(tmuxOk && opencodeOk && gitOk))("agent-opencode-sdk parity (in
       projectId: "opencode-project",
     });
 
-    expect(spawnedSession.id).toMatch(/^opencode-sdk-inttest-/);
+    expect(spawnedSession.id).toMatch(new RegExp(`^${SESSION_PREFIX}-\\d+$`));
     expect(spawnedSession.runtimeHandle).not.toBeNull();
 
     const sessionsDir = getSessionsDir(config.configPath, project.path);
-    const metadata = readMetadataRaw(sessionsDir, spawnedSession.id);
-    expect(metadata).not.toBeNull();
-    expect(metadata?.opencodeMode).toBe("sdk");
-    expect(metadata?.opencodeServerUrl).toMatch(/^http:\/\//);
-    expect(metadata?.opencodeSessionId).toBeTruthy();
+    spawnedMetadata = readMetadataRaw(sessionsDir, spawnedSession.id);
+
+    expect(spawnedMetadata).not.toBeNull();
+    expect(spawnedMetadata?.["opencodeMode"]).toBe("sdk");
+    expect(spawnedMetadata?.["opencodeServerUrl"]).toMatch(/^http:\/\//);
+    expect(spawnedMetadata?.["opencodeSessionId"]).toBeTruthy();
   }, 90_000);
 
   it("T02: server metadata and /global/health assertion", async () => {
-    expect(spawnedSession).not.toBeNull();
-    const sessionsDir = getSessionsDir(config.configPath, project.path);
-    const metadata = readMetadataRaw(sessionsDir, spawnedSession!.id);
-    expect(metadata).not.toBeNull();
-    expect(metadata?.opencodeServerUrl).toBeTruthy();
-    expect(Number(metadata?.opencodeServerPid)).toBeGreaterThan(0);
-    expect(metadata?.opencodeSessionId).toBeTruthy();
+    if (!spawnedSession || !spawnedMetadata) {
+      console.warn("T02 skipped: T01 did not produce a session");
+      return;
+    }
 
-    const healthResp = await fetch(`${metadata!.opencodeServerUrl}/global/health`);
+    expect(Number(spawnedMetadata["opencodeServerPid"])).toBeGreaterThan(0);
+
+    const healthResp = await fetch(`${spawnedMetadata["opencodeServerUrl"]}/global/health`);
     expect(healthResp.ok).toBe(true);
     const health = (await healthResp.json()) as { healthy?: boolean; version?: string };
     expect(health.healthy).toBe(true);
@@ -169,20 +170,25 @@ describe.skipIf(!(tmuxOk && opencodeOk && gitOk))("agent-opencode-sdk parity (in
   }, 30_000);
 
   it("T03: OpenCode session continuity via export/session.get", async () => {
-    expect(spawnedSession).not.toBeNull();
-    const sessionsDir = getSessionsDir(config.configPath, project.path);
-    const metadata = readMetadataRaw(sessionsDir, spawnedSession!.id);
-    expect(metadata?.opencodeServerUrl).toBeTruthy();
-    expect(metadata?.opencodeSessionId).toBeTruthy();
+    if (!spawnedSession || !spawnedMetadata) {
+      console.warn("T03 skipped: T01 did not produce a session");
+      return;
+    }
 
-    const client = getOpenCodeClient(metadata!.opencodeServerUrl!);
-    const session = await client.session.get({ path: { id: metadata!.opencodeSessionId! } });
+    const serverUrl = spawnedMetadata["opencodeServerUrl"];
+    const opencodeSessionId = spawnedMetadata["opencodeSessionId"];
+    expect(serverUrl).toBeTruthy();
+    expect(opencodeSessionId).toBeTruthy();
+
+    const client = getOpenCodeClient(serverUrl!);
+    const session = await client.session.get({ path: { id: opencodeSessionId! } });
     const sessionData = session.data as { id?: string };
-    expect(sessionData.id).toBe(metadata!.opencodeSessionId!);
+    expect(sessionData.id).toBe(opencodeSessionId);
 
-    const exported = await exportOpencodeSession(metadata!.opencodeSessionId!, project.path);
-    expect(exported).toContain(metadata!.opencodeSessionId!);
+    const exported = await exportOpencodeSession(opencodeSessionId!, project.path);
+    expect(exported).toContain(opencodeSessionId);
   }, 60_000);
+
   it.todo("T04: send() routes via SDK and appends assistant turn");
   it.todo("T05: activity state is non-null and session-specific");
   it.todo("T06: session info isolation across two sessions same workspace");
