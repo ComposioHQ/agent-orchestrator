@@ -12,8 +12,13 @@ import { spawn } from "node:child_process";
 import { WebSocketServer, WebSocket } from "ws";
 import { spawn as ptySpawn, type IPty } from "node-pty";
 import { homedir, userInfo } from "node:os";
-import { getSessionsDir, loadConfig, readMetadataRaw, type OrchestratorConfig } from "@composio/ao-core";
-import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
+import {
+  findTmux,
+  resolveTerminalAttachTarget,
+  tryLoadConfig,
+  validateSessionId,
+  type TerminalAttachTarget,
+} from "./tmux-utils.js";
 
 interface TerminalSession {
   sessionId: string;
@@ -28,54 +33,12 @@ export interface DirectTerminalServer {
   shutdown: () => void;
 }
 
-type TerminalAttachTarget =
-  | { mode: "tmux"; tmuxSessionId: string }
-  | {
-      mode: "opencode-attach";
-      opencodeSessionId: string;
-      opencodeServerUrl: string;
-      cwd: string;
-    };
-
-function tryLoadConfig(): OrchestratorConfig | null {
+function killPty(pty: IPty): void {
   try {
-    return loadConfig();
+    pty.kill();
   } catch {
-    return null;
+    // PTY may have already exited — ignore
   }
-}
-
-function resolveTerminalAttachTarget(
-  config: OrchestratorConfig | null,
-  sessionId: string,
-  tmuxBinary: string,
-): TerminalAttachTarget | null {
-  if (config) {
-    for (const project of Object.values(config.projects)) {
-      const sessionsDir = getSessionsDir(config.configPath, project.path);
-      const raw = readMetadataRaw(sessionsDir, sessionId);
-      if (!raw) continue;
-
-      if (
-        raw["terminalMode"] === "opencode-attach" &&
-        raw["opencodeSessionId"] &&
-        raw["opencodeServerUrl"]
-      ) {
-        return {
-          mode: "opencode-attach",
-          opencodeSessionId: raw["opencodeSessionId"],
-          opencodeServerUrl: raw["opencodeServerUrl"],
-          cwd: raw["worktree"] || project.path,
-        };
-      }
-
-      break;
-    }
-  }
-
-  const tmuxSessionId = resolveTmuxSession(sessionId, tmuxBinary);
-  if (!tmuxSessionId) return null;
-  return { mode: "tmux", tmuxSessionId };
 }
 
 /**
@@ -118,7 +81,6 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
       return;
     }
 
-    // Validate session ID format
     if (!validateSessionId(sessionId)) {
       console.error("[DirectTerminal] Invalid session ID:", sessionId);
       ws.close(1008, "Invalid session ID");
@@ -135,26 +97,9 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
     console.log(`[DirectTerminal] New connection for session: ${sessionId} (${target.mode})`);
 
     if (target.mode === "tmux") {
-      // Enable mouse mode for scrollback support
-      const mouseProc = spawn(TMUX, ["set-option", "-t", target.tmuxSessionId, "mouse", "on"]);
-      mouseProc.on("error", (err) => {
-        console.error(
-          `[DirectTerminal] Failed to set mouse mode for ${target.tmuxSessionId}:`,
-          err.message,
-        );
-      });
-
-      // Hide the green status bar for cleaner appearance
-      const statusProc = spawn(TMUX, ["set-option", "-t", target.tmuxSessionId, "status", "off"]);
-      statusProc.on("error", (err) => {
-        console.error(
-          `[DirectTerminal] Failed to hide status bar for ${target.tmuxSessionId}:`,
-          err.message,
-        );
-      });
+      applyTmuxOptions(TMUX, target.tmuxSessionId);
     }
 
-    // Build complete environment - node-pty requires proper env setup
     const homeDir = process.env.HOME || homedir();
     const currentUser = process.env.USER || userInfo().username;
     const env = {
@@ -169,19 +114,14 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
 
     let pty: IPty;
     try {
-      const isTmux = target.mode === "tmux";
-      const cmd = isTmux ? TMUX : "opencode";
-      const args = isTmux
-        ? ["attach-session", "-t", target.tmuxSessionId]
-        : ["-s", target.opencodeSessionId, "--attach", target.opencodeServerUrl];
-
+      const [cmd, args, cwd] = buildPtyCommand(target, TMUX, homeDir);
       console.log(`[DirectTerminal] Spawning PTY: ${cmd} ${args.join(" ")}`);
 
       pty = ptySpawn(cmd, args, {
         name: "xterm-256color",
         cols: 80,
         rows: 24,
-        cwd: target.mode === "opencode-attach" ? target.cwd : homeDir,
+        cwd,
         env,
       });
 
@@ -195,18 +135,14 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
     const session: TerminalSession = { sessionId, pty, ws };
     activeSessions.set(sessionId, session);
 
-    // PTY -> WebSocket
     pty.onData((data) => {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(data);
       }
     });
 
-    // PTY exit
     pty.onExit(({ exitCode }) => {
       console.log(`[DirectTerminal] PTY exited for ${sessionId} with code ${exitCode}`);
-      // Guard against stale exits: only delete if this pty is still the active one.
-      // A new connection may have already replaced this session entry.
       if (activeSessions.get(sessionId)?.pty === pty) {
         activeSessions.delete(sessionId);
       }
@@ -215,11 +151,9 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
       }
     });
 
-    // WebSocket -> PTY
     ws.on("message", (data) => {
       const message = data.toString("utf8");
 
-      // Handle resize messages (sent by xterm.js FitAddon)
       if (message.startsWith("{")) {
         try {
           const parsed = JSON.parse(message) as { type?: string; cols?: number; rows?: number };
@@ -232,40 +166,62 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
         }
       }
 
-      // Normal terminal input
       pty.write(message);
     });
 
-    // WebSocket close
     ws.on("close", () => {
       console.log(`[DirectTerminal] WebSocket closed for ${sessionId}`);
-      // Guard against stale closes replacing a newer session's entry
       if (activeSessions.get(sessionId)?.pty === pty) {
         activeSessions.delete(sessionId);
       }
-      pty.kill();
+      killPty(pty);
     });
 
-    // WebSocket error
     ws.on("error", (err) => {
       console.error(`[DirectTerminal] WebSocket error for ${sessionId}:`, err.message);
-      // Guard against stale error handlers replacing a newer session's entry
       if (activeSessions.get(sessionId)?.pty === pty) {
         activeSessions.delete(sessionId);
       }
-      pty.kill();
+      killPty(pty);
     });
   });
 
   function shutdown() {
     for (const [, session] of activeSessions) {
-      session.pty.kill();
+      killPty(session.pty);
       session.ws.close(1001, "Server shutting down");
     }
     server.close();
   }
 
   return { server, wss, activeSessions, shutdown };
+}
+
+function applyTmuxOptions(tmuxBinary: string, tmuxSessionId: string): void {
+  const mouseProc = spawn(tmuxBinary, ["set-option", "-t", tmuxSessionId, "mouse", "on"]);
+  mouseProc.on("error", (err) => {
+    console.error(`[DirectTerminal] Failed to set mouse mode for ${tmuxSessionId}:`, err.message);
+  });
+
+  const statusProc = spawn(tmuxBinary, ["set-option", "-t", tmuxSessionId, "status", "off"]);
+  statusProc.on("error", (err) => {
+    console.error(`[DirectTerminal] Failed to hide status bar for ${tmuxSessionId}:`, err.message);
+  });
+}
+
+function buildPtyCommand(
+  target: TerminalAttachTarget,
+  tmuxBinary: string,
+  homeDir: string,
+): [cmd: string, args: string[], cwd: string] {
+  if (target.mode === "tmux") {
+    return [tmuxBinary, ["attach-session", "-t", target.tmuxSessionId], homeDir];
+  }
+  return [
+    "opencode",
+    ["-s", target.opencodeSessionId, "--attach", target.opencodeServerUrl],
+    target.cwd,
+  ];
 }
 
 // --- Run as standalone script ---

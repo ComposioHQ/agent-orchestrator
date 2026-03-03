@@ -15,60 +15,19 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, request } from "node:http";
-import { getSessionsDir, loadConfig, readMetadataRaw, type OrchestratorConfig } from "@composio/ao-core";
-import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
+import {
+  findTmux,
+  resolveTerminalAttachTarget,
+  tryLoadConfig,
+  validateSessionId,
+  type TerminalAttachTarget,
+} from "./tmux-utils.js";
 
 /** Cached full path to tmux binary */
 const TMUX = findTmux();
 console.log(`[Terminal] Using tmux: ${TMUX}`);
 
-type TerminalTarget =
-  | { mode: "tmux"; tmuxSessionName: string }
-  | {
-      mode: "opencode-attach";
-      opencodeSessionId: string;
-      opencodeServerUrl: string;
-      cwd: string;
-    };
-
-function tryLoadConfig(): OrchestratorConfig | null {
-  try {
-    return loadConfig();
-  } catch {
-    return null;
-  }
-}
-
 const CONFIG = tryLoadConfig();
-
-function resolveTerminalTarget(sessionId: string): TerminalTarget | null {
-  if (CONFIG) {
-    for (const project of Object.values(CONFIG.projects)) {
-      const sessionsDir = getSessionsDir(CONFIG.configPath, project.path);
-      const raw = readMetadataRaw(sessionsDir, sessionId);
-      if (!raw) continue;
-
-      if (
-        raw["terminalMode"] === "opencode-attach" &&
-        raw["opencodeSessionId"] &&
-        raw["opencodeServerUrl"]
-      ) {
-        return {
-          mode: "opencode-attach",
-          opencodeSessionId: raw["opencodeSessionId"],
-          opencodeServerUrl: raw["opencodeServerUrl"],
-          cwd: raw["worktree"] || project.path,
-        };
-      }
-
-      break;
-    }
-  }
-
-  const tmuxSessionName = resolveTmuxSession(sessionId, TMUX);
-  if (!tmuxSessionName) return null;
-  return { mode: "tmux", tmuxSessionName };
-}
 
 interface TtydInstance {
   sessionId: string;
@@ -136,7 +95,6 @@ function waitForTtyd(port: number, sessionId: string, timeoutMs = 3000): Promise
         if (settled) return;
         req.destroy();
         pendingReq = null;
-        // Schedule retry but track the timeout ID
         timeoutId = setTimeout(checkReady, 100);
       });
 
@@ -154,24 +112,42 @@ function waitForTtyd(port: number, sessionId: string, timeoutMs = 3000): Promise
   });
 }
 
+function buildTtydArgs(sessionId: string, port: number, target: TerminalAttachTarget): string[] {
+  const base = ["--writable", "--port", String(port), "--base-path", `/${sessionId}`];
+  if (target.mode === "tmux") {
+    return [...base, TMUX, "attach-session", "-t", target.tmuxSessionId];
+  }
+  return [...base, "opencode", "-s", target.opencodeSessionId, "--attach", target.opencodeServerUrl];
+}
+
+function applyTmuxOptions(tmuxSessionName: string): void {
+  const mouseProc = spawn(TMUX, ["set-option", "-t", tmuxSessionName, "mouse", "on"]);
+  mouseProc.on("error", (err) => {
+    console.error(`[Terminal] Failed to set mouse mode for ${tmuxSessionName}:`, err.message);
+  });
+
+  const statusProc = spawn(TMUX, ["set-option", "-t", tmuxSessionName, "status", "off"]);
+  statusProc.on("error", (err) => {
+    console.error(`[Terminal] Failed to hide status bar for ${tmuxSessionName}:`, err.message);
+  });
+}
+
 /**
  * Spawn or reuse a ttyd instance for a tmux session.
  *
  * @param sessionId - User-facing session ID (used for base-path and URL)
  * @param target - Terminal attach target (tmux session or opencode attach)
  */
-function getOrSpawnTtyd(sessionId: string, target: TerminalTarget): TtydInstance {
+function getOrSpawnTtyd(sessionId: string, target: TerminalAttachTarget): TtydInstance {
   const existing = instances.get(sessionId);
   if (existing) return existing;
 
   // Allocate port: reuse from pool if available, otherwise increment
   let port: number;
   if (availablePorts.size > 0) {
-    // Reuse a recycled port
     port = availablePorts.values().next().value as number;
     availablePorts.delete(port);
   } else {
-    // Allocate new port
     if (nextPort >= MAX_PORT) {
       throw new Error(`Port exhaustion: reached maximum of ${MAX_PORT - 7800} terminal instances`);
     }
@@ -181,50 +157,15 @@ function getOrSpawnTtyd(sessionId: string, target: TerminalTarget): TtydInstance
   console.log(`[Terminal] Spawning ttyd for ${sessionId} (${target.mode}) on port ${port}`);
 
   if (target.mode === "tmux") {
-    // Enable mouse mode for scrollback support
-    const mouseProc = spawn(TMUX, ["set-option", "-t", target.tmuxSessionName, "mouse", "on"]);
-    mouseProc.on("error", (err) => {
-      console.error(`[Terminal] Failed to set mouse mode for ${target.tmuxSessionName}:`, err.message);
-    });
-
-    // Hide the green status bar for cleaner appearance
-    const statusProc = spawn(TMUX, ["set-option", "-t", target.tmuxSessionName, "status", "off"]);
-    statusProc.on("error", (err) => {
-      console.error(`[Terminal] Failed to hide status bar for ${target.tmuxSessionName}:`, err.message);
-    });
+    applyTmuxOptions(target.tmuxSessionId);
   }
 
-  // Use user-facing sessionId for base-path (matches URL the dashboard uses)
-  // Use tmuxSessionName for tmux attach (may be hash-prefixed)
   const proc = spawn(
     "ttyd",
-    target.mode === "tmux"
-      ? [
-          "--writable",
-          "--port",
-          String(port),
-          "--base-path",
-          `/${sessionId}`,
-          TMUX,
-          "attach-session",
-          "-t",
-          target.tmuxSessionName,
-        ]
-      : [
-          "--writable",
-          "--port",
-          String(port),
-          "--base-path",
-          `/${sessionId}`,
-          "opencode",
-          "-s",
-          target.opencodeSessionId,
-          "--attach",
-          target.opencodeServerUrl,
-        ],
+    buildTtydArgs(sessionId, port, target),
     {
       stdio: ["ignore", "pipe", "pipe"],
-      ...(target.mode === "opencode-attach" ? { cwd: target.cwd } : {}),
+      cwd: target.mode === "opencode-attach" ? target.cwd : undefined,
     },
   );
 
@@ -239,7 +180,6 @@ function getOrSpawnTtyd(sessionId: string, target: TerminalTarget): TtydInstance
   // Use once() for cleanup handlers to prevent race condition when both exit and error fire
   proc.once("exit", (code) => {
     console.log(`[Terminal] ttyd ${sessionId} exited with code ${code}`);
-    // Only delete if this is still the current instance (prevents race with error handler)
     const current = instances.get(sessionId);
     if (current?.process === proc) {
       instances.delete(sessionId);
@@ -253,13 +193,10 @@ function getOrSpawnTtyd(sessionId: string, target: TerminalTarget): TtydInstance
 
   proc.once("error", (err) => {
     console.error(`[Terminal] ttyd ${sessionId} error:`, err.message);
-    // Only delete if this is still the current instance (prevents race with exit handler)
     const current = instances.get(sessionId);
     if (current?.process === proc) {
       instances.delete(sessionId);
-      // Don't recycle port on error - may still be in use or TIME_WAIT
     }
-    // Kill any running process
     try {
       proc.kill();
     } catch {
@@ -313,14 +250,13 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    // Validate session ID to prevent path traversal and injection
     if (!validateSessionId(sessionId)) {
       res.writeHead(400, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Invalid session ID" }));
       return;
     }
 
-    const target = resolveTerminalTarget(sessionId);
+    const target = resolveTerminalAttachTarget(CONFIG, sessionId, TMUX);
     if (!target) {
       res.writeHead(404, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Session not found" }));
