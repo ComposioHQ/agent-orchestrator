@@ -358,8 +358,10 @@ describe.skipIf(!(tmuxOk && opencodeOk))("agent-opencode-sdk parity (integration
 
     const directServerPath = new URL("../../web/server/direct-terminal-ws.ts", import.meta.url);
     const ttydServerPath = new URL("../../web/server/terminal-websocket.ts", import.meta.url);
-    const directSource = await readFile(directServerPath, "utf-8");
-    const ttydSource = await readFile(ttydServerPath, "utf-8");
+    const [directSource, ttydSource] = await Promise.all([
+      readFile(directServerPath, "utf-8"),
+      readFile(ttydServerPath, "utf-8"),
+    ]);
 
     expect(directSource).toContain("buildPtyCommand(");
     expect(directSource).toContain("target.opencodeSessionId");
@@ -368,29 +370,6 @@ describe.skipIf(!(tmuxOk && opencodeOk))("agent-opencode-sdk parity (integration
     expect(ttydSource).toContain("\"--attach\"");
 
     await sessionManager.kill(session.id);
-  }, 90_000);
-
-  it("T10: non-opencode terminal path remains tmux attach", async () => {
-    const tmuxUtilsPath = new URL("../../web/server/tmux-utils.ts", import.meta.url);
-    const directServerPath = new URL("../../web/server/direct-terminal-ws.ts", import.meta.url);
-    const ttydServerPath = new URL("../../web/server/terminal-websocket.ts", import.meta.url);
-    const tmuxUtilsSource = await readFile(tmuxUtilsPath, "utf-8");
-    const directSource = await readFile(directServerPath, "utf-8");
-    const ttydSource = await readFile(ttydServerPath, "utf-8");
-
-    expect(tmuxUtilsSource).toContain('return { mode: "tmux", tmuxSessionId };');
-    expect(directSource).toContain('target.mode === "tmux"');
-    expect(directSource).toContain('"attach-session", "-t"');
-    expect(ttydSource).toContain('target.mode === "tmux"');
-    expect(ttydSource).toContain('"attach-session", "-t"');
-  });
-
-  it("T11: /api/sessions/[id]/message delegates via session-manager", async () => {
-    const routePath = new URL("../../web/src/app/api/sessions/[id]/message/route.ts", import.meta.url);
-    const routeSource = await readFile(routePath, "utf-8");
-
-    expect(routeSource).toContain("sessionManager.send(id, message)");
-    expect(routeSource).not.toContain("runtime.sendMessage(");
   });
 
   it("T12: full lifecycle smoke with metadata invariants", async () => {
@@ -445,4 +424,30 @@ describe.skipIf(!(tmuxOk && opencodeOk))("agent-opencode-sdk parity (integration
       } catch {}
     }
   }, 90_000);
+});
+
+describe("agent-opencode-sdk parity (static source checks)", () => {
+  it("T10: non-opencode terminal path remains tmux attach", async () => {
+    const [tmuxUtilsSource, directSource, ttydSource] = await Promise.all([
+      readFile(new URL("../../web/server/tmux-utils.ts", import.meta.url), "utf-8"),
+      readFile(new URL("../../web/server/direct-terminal-ws.ts", import.meta.url), "utf-8"),
+      readFile(new URL("../../web/server/terminal-websocket.ts", import.meta.url), "utf-8"),
+    ]);
+
+    expect(tmuxUtilsSource).toContain('return { mode: "tmux", tmuxSessionId };');
+    expect(directSource).toContain('target.mode === "tmux"');
+    expect(directSource).toContain('"attach-session", "-t"');
+    expect(ttydSource).toContain('target.mode === "tmux"');
+    expect(ttydSource).toContain('"attach-session", "-t"');
+  });
+
+  it("T11: /api/sessions/[id]/message delegates via session-manager", async () => {
+    const routeSource = await readFile(
+      new URL("../../web/src/app/api/sessions/[id]/message/route.ts", import.meta.url),
+      "utf-8",
+    );
+
+    expect(routeSource).toContain("sessionManager.send(id, message)");
+    expect(routeSource).not.toContain("runtime.sendMessage(");
+  });
 });
