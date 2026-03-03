@@ -1,6 +1,5 @@
 # Agent Orchestrator — self-hosting config (dog-fooding)
 
-dataDir: ~/.ao-sessions
 worktreeDir: ~/.worktrees/ao
 
 defaults:
@@ -13,16 +12,16 @@ projects:
   ao:
     name: Agent Orchestrator
     repo: ComposioHQ/agent-orchestrator
-    path: ~/agent-orchestrator
+    path: ~/Desktop/agent-orchestrator
     defaultBranch: main
     sessionPrefix: ao
     scm:
       plugin: github
     tracker:
-      plugin: linear
-      teamId: "2a6e9b1b-19cd-4e30-b5bd-7b34dc491c7e"
+      plugin: github
     symlinks: [.claude]
     postCreate:
       - "pnpm install"
+      - "pnpm build --filter @composio/ao-core --filter @composio/ao-cli --filter '@composio/ao-plugin-*'"
     agentConfig:
       permissions: skip
