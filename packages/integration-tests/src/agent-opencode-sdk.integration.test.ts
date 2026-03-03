@@ -355,28 +355,52 @@ describe.skipIf(!(tmuxOk && opencodeOk))("agent-opencode-sdk parity (integration
     const smoke = await sessionManager.spawn({ projectId: "opencode-project" });
     const sessionsDir = getSessionsDir(config.configPath, project.path);
 
-    const listed = await sessionManager.list("opencode-project");
-    expect(listed.some((s) => s.id === smoke.id)).toBe(true);
+    try {
+      const listed = await sessionManager.list("opencode-project");
+      expect(listed.some((s) => s.id === smoke.id)).toBe(true);
 
-    const smokeMeta = readMetadataRaw(sessionsDir, smoke.id);
-    expect(smokeMeta?.["opencodeMode"]).toBe("sdk");
-    expect(smokeMeta?.["opencodeServerUrl"]).toMatch(/^http:\/\//);
-    expect(smokeMeta?.["opencodeSessionId"]).toBeTruthy();
-    expect(smokeMeta?.["terminalMode"]).toBe("opencode-attach");
+      const smokeMeta = readMetadataRaw(sessionsDir, smoke.id);
+      expect(smokeMeta).not.toBeNull();
+      expect(smokeMeta!["opencodeMode"]).toBe("sdk");
+      expect(smokeMeta!["opencodeServerUrl"]).toMatch(/^http:\/\//);
+      expect(smokeMeta!["opencodeSessionId"]).toBeTruthy();
+      expect(smokeMeta!["terminalMode"]).toBe("opencode-attach");
 
-    // restore path smoke: kill runtime shell, then restore from same OpenCode session.
-    if (smoke.runtimeHandle?.id) {
-      await execFileAsync("tmux", ["kill-session", "-t", smoke.runtimeHandle.id], {
-        timeout: 15_000,
-      }).catch(() => {});
-      await new Promise((r) => setTimeout(r, 500));
+      // Capture before kill() deletes the file so the post-restore assertion
+      // is independent of metadata presence at that point.
+      const originalOpencodeSessionId = smokeMeta!["opencodeSessionId"];
+
+      if (smoke.runtimeHandle?.id) {
+        await execFileAsync("tmux", ["kill-session", "-t", smoke.runtimeHandle.id], {
+          timeout: 15_000,
+        }).catch(() => {});
+
+        // Poll has-session until gone (up to 2 s) instead of a fixed sleep.
+        const deadline = Date.now() + 2_000;
+        while (Date.now() < deadline) {
+          try {
+            await execFileAsync("tmux", ["has-session", "-t", smoke.runtimeHandle.id], {
+              timeout: 5_000,
+            });
+            await new Promise((r) => setTimeout(r, 200));
+          } catch {
+            break;
+          }
+        }
+
+        const restored = await sessionManager.restore(smoke.id);
+        const restoredMeta = readMetadataRaw(sessionsDir, restored.id);
+        expect(restoredMeta).not.toBeNull();
+        expect(restoredMeta!["opencodeSessionId"]).toBe(originalOpencodeSessionId);
+        expect(restoredMeta!["opencodeServerUrl"]).toMatch(/^http:\/\//);
+      }
+
+      await sessionManager.kill(smoke.id);
+      expect(readMetadataRaw(sessionsDir, smoke.id)).toBeNull();
+    } finally {
+      try {
+        await sessionManager.kill(smoke.id);
+      } catch {}
     }
-
-    const restored = await sessionManager.restore(smoke.id);
-    const restoredMeta = readMetadataRaw(sessionsDir, restored.id);
-    expect(restoredMeta?.["opencodeSessionId"]).toBe(smokeMeta?.["opencodeSessionId"]);
-
-    await sessionManager.kill(smoke.id);
-    expect(readMetadataRaw(sessionsDir, smoke.id)).toBeNull();
-  }, 120_000);
+  }, 90_000);
 });
