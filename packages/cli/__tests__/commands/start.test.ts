@@ -564,4 +564,32 @@ describe("stop command", () => {
     const output = vi.mocked(console.log).mock.calls.map((c) => c.join(" ")).join("\n");
     expect(output).toContain("is not running");
   });
+
+  it("shows 'not running' when no dashboard process is on port (fixes #92)", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockSessionManager.get.mockResolvedValue(null);
+    // lsof exits with code 1 when no process is found on port
+    mockExec.mockRejectedValue(new Error("lsof: no process found"));
+
+    await program.parseAsync(["node", "test", "stop"]);
+
+    const output = vi.mocked(console.log).mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(output).toContain("Dashboard not running on port");
+  });
+
+  it("shows 'Dashboard stopped' only when processes were killed", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockSessionManager.get.mockResolvedValue({ id: "app-orchestrator", status: "running" });
+    mockSessionManager.kill.mockResolvedValue(undefined);
+    // First exec call is lsof (returns PID), second is kill (succeeds)
+    mockExec
+      .mockResolvedValueOnce({ stdout: "12345", stderr: "" })  // lsof
+      .mockResolvedValueOnce({ stdout: "", stderr: "" });       // kill
+
+    await program.parseAsync(["node", "test", "stop"]);
+
+    const output = vi.mocked(console.log).mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(output).toContain("Dashboard stopped");
+    expect(output).not.toContain("not running on port");
+  });
 });
