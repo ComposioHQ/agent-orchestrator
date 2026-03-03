@@ -21,6 +21,9 @@ defaults:
   agent: claude-code      # claude-code | codex | aider | goose | custom
   workspace: worktree     # worktree | clone | copy
   notifiers: [desktop]    # desktop | slack | discord | webhook | email
+  # agentConfig:            # Agent-specific defaults (applied to all projects)
+  #   permissions: skip     # --dangerously-skip-permissions (skip trust dialogs)
+  #   model: opus           # Model to use
 
 # Projects — at minimum, specify repo and path
 projects:

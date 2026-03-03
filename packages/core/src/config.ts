@@ -86,6 +86,7 @@ const DefaultPluginsSchema = z.object({
   agent: z.string().default("claude-code"),
   workspace: z.string().default("worktree"),
   notifiers: z.array(z.string()).default(["composio", "desktop"]),
+  agentConfig: AgentSpecificConfigSchema.optional(),
 });
 
 const OrchestratorConfigSchema = z.object({
@@ -148,6 +149,16 @@ function applyProjectDefaults(config: OrchestratorConfig): OrchestratorConfig {
     // Infer tracker from repo if not set (default to github issues)
     if (!project.tracker) {
       project.tracker = { plugin: "github" };
+    }
+
+    // Merge defaults.agentConfig into project.agentConfig so that
+    // top-level defaults (e.g. permissions: skip) apply to all projects
+    // unless explicitly overridden per-project. (fixes #74)
+    if (config.defaults.agentConfig) {
+      project.agentConfig = {
+        ...config.defaults.agentConfig,
+        ...project.agentConfig,
+      };
     }
   }
 
