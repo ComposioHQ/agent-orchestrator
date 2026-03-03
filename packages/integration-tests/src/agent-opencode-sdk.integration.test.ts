@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -347,9 +347,51 @@ describe.skipIf(!(tmuxOk && opencodeOk))("agent-opencode-sdk parity (integration
     spawnedMetadata = null;
   }, 60_000);
 
-  it.todo("T09: web terminal attach mode uses opencode -s --attach");
-  it.todo("T10: non-opencode terminal path remains tmux attach");
-  it.todo("T11: /api/sessions/[id]/message delegates via session-manager");
+  it("T09: web terminal attach mode uses opencode -s --attach", async () => {
+    const session = await sessionManager.spawn({ projectId: "opencode-project" });
+    const sessionsDir = getSessionsDir(config.configPath, project.path);
+    const metadata = readMetadataRaw(sessionsDir, session.id);
+    expect(metadata).not.toBeNull();
+    expect(metadata?.["terminalMode"]).toBe("opencode-attach");
+    expect(metadata?.["opencodeSessionId"]).toBeTruthy();
+    expect(metadata?.["opencodeServerUrl"]).toMatch(/^http:\/\//);
+
+    const directServerPath = new URL("../../web/server/direct-terminal-ws.ts", import.meta.url);
+    const ttydServerPath = new URL("../../web/server/terminal-websocket.ts", import.meta.url);
+    const directSource = await readFile(directServerPath, "utf-8");
+    const ttydSource = await readFile(ttydServerPath, "utf-8");
+
+    expect(directSource).toContain("buildPtyCommand(");
+    expect(directSource).toContain("target.opencodeSessionId");
+    expect(directSource).toContain("\"--attach\"");
+    expect(ttydSource).toContain("target.mode === \"opencode-attach\"");
+    expect(ttydSource).toContain("\"--attach\"");
+
+    await sessionManager.kill(session.id);
+  }, 90_000);
+
+  it("T10: non-opencode terminal path remains tmux attach", async () => {
+    const tmuxUtilsPath = new URL("../../web/server/tmux-utils.ts", import.meta.url);
+    const directServerPath = new URL("../../web/server/direct-terminal-ws.ts", import.meta.url);
+    const ttydServerPath = new URL("../../web/server/terminal-websocket.ts", import.meta.url);
+    const tmuxUtilsSource = await readFile(tmuxUtilsPath, "utf-8");
+    const directSource = await readFile(directServerPath, "utf-8");
+    const ttydSource = await readFile(ttydServerPath, "utf-8");
+
+    expect(tmuxUtilsSource).toContain('return { mode: "tmux", tmuxSessionId };');
+    expect(directSource).toContain('target.mode === "tmux"');
+    expect(directSource).toContain('"attach-session", "-t"');
+    expect(ttydSource).toContain('target.mode === "tmux"');
+    expect(ttydSource).toContain('"attach-session", "-t"');
+  });
+
+  it("T11: /api/sessions/[id]/message delegates via session-manager", async () => {
+    const routePath = new URL("../../web/src/app/api/sessions/[id]/message/route.ts", import.meta.url);
+    const routeSource = await readFile(routePath, "utf-8");
+
+    expect(routeSource).toContain("sessionManager.send(id, message)");
+    expect(routeSource).not.toContain("runtime.sendMessage(");
+  });
 
   it("T12: full lifecycle smoke with metadata invariants", async () => {
     const smoke = await sessionManager.spawn({ projectId: "opencode-project" });
