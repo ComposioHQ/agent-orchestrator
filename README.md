@@ -37,16 +37,29 @@ Agent Orchestrator manages fleets of AI coding agents working in parallel on you
 
 ## Quick Start
 
+**Option A — From a repo URL (fastest):**
+
 ```bash
 # Install
 git clone https://github.com/ComposioHQ/agent-orchestrator.git
 cd agent-orchestrator && bash scripts/setup.sh
 
-# Configure your project
-cd ~/your-project && ao init --auto
+# One command to clone, configure, and launch
+ao start https://github.com/your-org/your-repo
+```
 
-# Launch and spawn an agent
+Auto-detects language, package manager, SCM platform, and default branch. Generates `agent-orchestrator.yaml` and starts the dashboard + orchestrator.
+
+**Option B — From an existing local repo:**
+
+```bash
+cd ~/your-project && ao init --auto
 ao start
+```
+
+Then spawn agents:
+
+```bash
 ao spawn my-project 123    # GitHub issue, Linear ticket, or ad-hoc
 ```
 

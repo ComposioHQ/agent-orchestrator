@@ -89,9 +89,34 @@ npm install -g pnpm
 
 ## First-Time Configuration
 
+### Quick Onboarding with `ao start <url>`
+
+The fastest way to get started with any repo:
+
+```bash
+ao start https://github.com/your-org/your-repo
+```
+
+This single command will:
+
+1. **Clone** the repo (or reuse an existing clone)
+2. **Auto-detect** language, package manager, SCM platform, and default branch
+3. **Generate** `agent-orchestrator.yaml` with smart defaults
+4. **Start** the dashboard and orchestrator agent
+
+Supports GitHub, GitLab, and Bitbucket URLs (HTTPS and SSH):
+
+```bash
+ao start https://github.com/owner/repo
+ao start https://gitlab.com/org/project
+ao start git@github.com:owner/repo.git
+```
+
+If the repo already has an `agent-orchestrator.yaml`, it will be used as-is.
+
 ### Quick Setup with `ao init`
 
-The easiest way to get started:
+For more control over configuration:
 
 ```bash
 cd ~/your-repo

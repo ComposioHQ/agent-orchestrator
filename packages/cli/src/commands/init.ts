@@ -7,7 +7,7 @@ import chalk from "chalk";
 import type { Command } from "commander";
 import { generateSessionPrefix } from "@composio/ao-core";
 import { git, gh, execSilent } from "../lib/shell.js";
-import { isPortAvailable } from "../lib/web-dir.js";
+import { findFreePort, MAX_PORT_SCAN } from "../lib/web-dir.js";
 import {
   detectProjectType,
   generateRulesFromTemplates,
@@ -15,15 +15,6 @@ import {
 } from "../lib/project-detection.js";
 
 const DEFAULT_PORT = 3000;
-const MAX_PORT_SCAN = 100;
-
-/** Find the first available port starting from `start`, scanning upward. Returns `null` if none found. */
-async function findFreePort(start: number): Promise<number | null> {
-  for (let port = start; port < start + MAX_PORT_SCAN; port++) {
-    if (await isPortAvailable(port)) return port;
-  }
-  return null;
-}
 
 async function prompt(
   rl: ReturnType<typeof createInterface>,
