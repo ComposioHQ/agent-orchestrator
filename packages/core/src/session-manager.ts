@@ -888,11 +888,27 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
           }
         }
 
-        // Check if runtime is dead
+        // Check if runtime is dead — but never kill a session with an open PR.
+        // A dead runtime with an open PR means the session crashed or failed to
+        // start; the PR is orphaned and needs human attention, not silent removal.
+        // (fixes #146)
         if (!shouldKill && session.runtimeHandle && plugins.runtime) {
           try {
             const alive = await plugins.runtime.isAlive(session.runtimeHandle);
-            if (!alive) shouldKill = true;
+            if (!alive) {
+              // Guard: if session has an open PR, skip cleanup
+              let hasOpenPR = false;
+              if (session.pr && plugins.scm) {
+                try {
+                  const prState = await plugins.scm.getPRState(session.pr);
+                  if (prState === PR_STATE.OPEN) hasOpenPR = true;
+                } catch {
+                  // Can't verify PR state — be conservative, assume open
+                  hasOpenPR = true;
+                }
+              }
+              if (!hasOpenPR) shouldKill = true;
+            }
           } catch {
             // Can't check — skip
           }

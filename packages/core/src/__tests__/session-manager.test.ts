@@ -1129,6 +1129,100 @@ describe("cleanup", () => {
     expect(result.skipped).toContain("app-orchestrator");
   });
 
+  it("skips dead-runtime sessions with open PRs (fixes #146)", async () => {
+    const deadRuntime: Runtime = {
+      ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(false),
+    };
+    const openPRSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn(),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn(),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+    const registryWithDeadAndSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return deadRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        if (slot === "scm") return openPRSCM;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "feat/create-from-scratch",
+      status: "starting",
+      project: "my-app",
+      pr: "https://github.com/org/repo/pull/99",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithDeadAndSCM });
+    const result = await sm.cleanup();
+
+    // Session with open PR should NOT be killed even though runtime is dead
+    expect(result.killed).toHaveLength(0);
+    expect(result.skipped).toContain("app-1");
+  });
+
+  it("conservatively skips dead-runtime sessions when PR state check fails", async () => {
+    const deadRuntime: Runtime = {
+      ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(false),
+    };
+    const failingSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockRejectedValue(new Error("API error")),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn(),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn(),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+    const registryWithDeadAndFailing: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return deadRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        if (slot === "scm") return failingSCM;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "feat/something",
+      status: "working",
+      project: "my-app",
+      pr: "https://github.com/org/repo/pull/50",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithDeadAndFailing });
+    const result = await sm.cleanup();
+
+    // When PR state can't be verified, be conservative and skip
+    expect(result.killed).toHaveLength(0);
+    expect(result.skipped).toContain("app-1");
+  });
+
   it("kills sessions with dead runtimes", async () => {
     const deadRuntime: Runtime = {
       ...mockRuntime,
