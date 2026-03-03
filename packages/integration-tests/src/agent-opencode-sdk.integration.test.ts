@@ -34,6 +34,12 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
 
 const tmuxOk = await isTmuxAvailable();
 const opencodeOk = await isOpencodeAvailable();
+const hasModelAuth = Boolean(
+  process.env.OPENAI_API_KEY ||
+    process.env.ANTHROPIC_API_KEY ||
+    process.env.OPENROUTER_API_KEY ||
+    process.env.GOOGLE_API_KEY,
+);
 
 const SESSION_PREFIX = `opencode-sdk-inttest-${Date.now()}`;
 const WORKTREE_DIR = join(tmpdir(), `ao-inttest-opencode-worktrees-${Date.now()}`);
@@ -189,7 +195,31 @@ describe.skipIf(!(tmuxOk && opencodeOk))("agent-opencode-sdk parity (integration
     expect(exported).toContain(opencodeSessionId);
   }, 60_000);
 
-  it.todo("T04: send() routes via SDK and appends assistant turn");
+  it("T04: send() routes via SDK and appends assistant turn", async () => {
+    if (!spawnedSession || !spawnedMetadata) {
+      console.warn("T04 skipped: T01 did not produce a session");
+      return;
+    }
+
+    if (!hasModelAuth) {
+      console.warn("T04 skipped: no provider API key configured in environment");
+      return;
+    }
+
+    const sessionId = spawnedMetadata["opencodeSessionId"];
+    if (!sessionId) {
+      throw new Error("Missing opencodeSessionId in spawned metadata");
+    }
+
+    const before = await exportOpencodeSession(sessionId, project.path);
+    const marker = `AO_E2E_MARKER_${Date.now()}`;
+
+    await sessionManager.send(spawnedSession.id, `Reply with exactly: ${marker}`);
+
+    const after = await exportOpencodeSession(sessionId, project.path);
+    expect(after.length).toBeGreaterThan(before.length);
+    expect(after).toContain(marker);
+  }, 120_000);
   it.todo("T05: activity state is non-null and session-specific");
   it.todo("T06: session info isolation across two sessions same workspace");
   it.todo("T07: restore keeps same OpenCode session timeline");
