@@ -53,8 +53,10 @@ describe.skipIf(!(tmuxOk && opencodeOk))("agent-opencode-sdk parity (integration
   let model: string | null = null;
 
   let spawnedSession: Session | null = null;
+  let secondarySession: Session | null = null;
   // Metadata cached from T01 so T02/T03 don't re-read disk independently.
   let spawnedMetadata: Record<string, string> | null = null;
+  let secondaryMetadata: Record<string, string> | null = null;
 
   beforeAll(async () => {
     repoDir = await mkdtemp(join(tmpdir(), "ao-inttest-opencode-sdk-repo-"));
@@ -125,6 +127,13 @@ describe.skipIf(!(tmuxOk && opencodeOk))("agent-opencode-sdk parity (integration
     if (spawnedSession) {
       try {
         await sessionManager.kill(spawnedSession.id);
+      } catch {
+        // best-effort; process may already be gone
+      }
+    }
+    if (secondarySession) {
+      try {
+        await sessionManager.kill(secondarySession.id);
       } catch {
         // best-effort; process may already be gone
       }
@@ -222,8 +231,51 @@ describe.skipIf(!(tmuxOk && opencodeOk))("agent-opencode-sdk parity (integration
     const after = await exportOpencodeSession(sessionId, project.path);
     expect(after.length).toBeGreaterThan(before.length);
   }, 120_000);
-  it.todo("T05: activity state is non-null and session-specific");
-  it.todo("T06: session info isolation across two sessions same workspace");
+
+  it("T05: activity state is non-null and session-specific", async () => {
+    if (!spawnedSession) {
+      console.warn("T05 skipped: T01 did not produce a session");
+      return;
+    }
+
+    const current = await sessionManager.get(spawnedSession.id);
+    expect(current).not.toBeNull();
+
+    const agent = agentOpencode.create();
+    const detection = await agent.getActivityState(current!);
+
+    expect(detection).not.toBeNull();
+    expect(["active", "ready", "idle", "waiting_input", "exited"]).toContain(detection?.state);
+  }, 60_000);
+
+  it("T06: session info isolation across two sessions same workspace", async () => {
+    if (!spawnedSession || !spawnedMetadata) {
+      console.warn("T06 skipped: T01 did not produce a session");
+      return;
+    }
+
+    secondarySession = await sessionManager.spawn({
+      projectId: "opencode-project",
+    });
+
+    const sessionsDir = getSessionsDir(config.configPath, project.path);
+    secondaryMetadata = readMetadataRaw(sessionsDir, secondarySession.id);
+
+    expect(secondaryMetadata).not.toBeNull();
+    expect(secondaryMetadata?.["opencodeSessionId"]).toBeTruthy();
+    expect(secondaryMetadata?.["opencodeSessionId"]).not.toBe(spawnedMetadata["opencodeSessionId"]);
+
+    const agent = agentOpencode.create();
+    const primaryInfo = await agent.getSessionInfo((await sessionManager.get(spawnedSession.id))!);
+    const secondInfo = await agent.getSessionInfo((await sessionManager.get(secondarySession.id))!);
+
+    expect(primaryInfo).not.toBeNull();
+    expect(secondInfo).not.toBeNull();
+    expect(primaryInfo?.agentSessionId).toBe(spawnedMetadata["opencodeSessionId"]);
+    expect(secondInfo?.agentSessionId).toBe(secondaryMetadata?.["opencodeSessionId"]);
+    expect(primaryInfo?.agentSessionId).not.toBe(secondInfo?.agentSessionId);
+  }, 120_000);
+
   it.todo("T07: restore keeps same OpenCode session timeline");
   it.todo("T08: kill aborts/deletes OpenCode session and server pid");
   it.todo("T09: web terminal attach mode uses opencode -s --attach");
