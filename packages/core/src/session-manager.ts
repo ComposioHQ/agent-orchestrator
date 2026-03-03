@@ -114,6 +114,26 @@ async function isOpenCodeServerHealthy(baseUrl: string): Promise<boolean> {
   }
 }
 
+async function cleanupOpenCode(
+  server: OpenCodeServerRef | null,
+  session: OpenCodeSessionRef | null,
+): Promise<void> {
+  if (session && server) {
+    try {
+      await deleteOpenCodeSession({ baseUrl: server.url, sessionId: session.sessionId });
+    } catch {
+      /* best effort */
+    }
+  }
+  if (server) {
+    try {
+      await stopOpenCodeServer(server.pid);
+    } catch {
+      /* best effort */
+    }
+  }
+}
+
 /** Valid session statuses for validation. */
 const VALID_STATUSES: ReadonlySet<string> = new Set([
   "spawning",
@@ -547,23 +567,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         },
       });
     } catch (err) {
-      if (openCodeSession && openCodeServer) {
-        try {
-          await deleteOpenCodeSession({
-            baseUrl: openCodeServer.url,
-            sessionId: openCodeSession.sessionId,
-          });
-        } catch {
-          /* best effort */
-        }
-      }
-      if (openCodeServer) {
-        try {
-          await stopOpenCodeServer(openCodeServer.pid);
-        } catch {
-          /* best effort */
-        }
-      }
+      await cleanupOpenCode(openCodeServer, openCodeSession);
 
       // Clean up workspace and reserved ID if agent config or runtime creation failed
       if (plugins.workspace && workspacePath !== project.path) {
@@ -642,24 +646,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       } catch {
         /* best effort */
       }
-
-      if (openCodeSession && openCodeServer) {
-        try {
-          await deleteOpenCodeSession({
-            baseUrl: openCodeServer.url,
-            sessionId: openCodeSession.sessionId,
-          });
-        } catch {
-          /* best effort */
-        }
-      }
-      if (openCodeServer) {
-        try {
-          await stopOpenCodeServer(openCodeServer.pid);
-        } catch {
-          /* best effort */
-        }
-      }
+      await cleanupOpenCode(openCodeServer, openCodeSession);
       throw err;
     }
 
@@ -1237,6 +1224,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
     // 7. Get launch command — try restore command first, fall back to fresh launch
     let launchCommand: string;
+    let resolvedOpenCodeServerUrl: string | undefined;
+    let resolvedOpenCodeServerPid: number | undefined;
     const agentLaunchConfig = {
       sessionId,
       projectConfig: project,
@@ -1252,8 +1241,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       let activeServerUrl = existingUrl;
       let activeServerPid: number | undefined;
 
-      const healthy = await isOpenCodeServerHealthy(existingUrl);
-      if (!healthy) {
+      if (!(await isOpenCodeServerHealthy(existingUrl))) {
         let hostname = project.agentConfig?.serverHostname;
         let port = project.agentConfig?.serverPort;
         try {
@@ -1267,20 +1255,14 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
           // fallback to configured values
         }
 
-        const server = await ensureOpenCodeServer({
-          workspacePath,
-          hostname,
-          port,
-        });
+        const server = await ensureOpenCodeServer({ workspacePath, hostname, port });
         activeServerUrl = server.url;
         activeServerPid = server.pid;
       }
 
       launchCommand = buildOpenCodeAttachCommand(opencodeSessionId, activeServerUrl);
-      raw["opencodeServerUrl"] = activeServerUrl;
-      if (activeServerPid) {
-        raw["opencodeServerPid"] = String(activeServerPid);
-      }
+      resolvedOpenCodeServerUrl = activeServerUrl;
+      resolvedOpenCodeServerPid = activeServerPid;
     } else {
       if (plugins.agent.getRestoreCommand) {
         const restoreCmd = await plugins.agent.getRestoreCommand(session, project);
@@ -1316,8 +1298,11 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       ...(restoringOpenCode
         ? {
             opencodeMode: "sdk",
-            opencodeServerUrl: raw["opencodeServerUrl"],
-            opencodeServerPid: raw["opencodeServerPid"],
+            opencodeServerUrl: resolvedOpenCodeServerUrl ?? raw["opencodeServerUrl"],
+            opencodeServerPid:
+              resolvedOpenCodeServerPid !== undefined
+                ? String(resolvedOpenCodeServerPid)
+                : raw["opencodeServerPid"],
             opencodeSessionId: raw["opencodeSessionId"],
             terminalMode: "opencode-attach",
           }

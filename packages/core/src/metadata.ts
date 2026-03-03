@@ -164,6 +164,12 @@ export function writeMetadata(
     data["terminalWsPort"] = String(metadata.terminalWsPort);
   if (metadata.directTerminalWsPort !== undefined)
     data["directTerminalWsPort"] = String(metadata.directTerminalWsPort);
+  if (metadata.opencodeMode) data["opencodeMode"] = metadata.opencodeMode;
+  if (metadata.opencodeServerUrl) data["opencodeServerUrl"] = metadata.opencodeServerUrl;
+  if (metadata.opencodeServerPid !== undefined)
+    data["opencodeServerPid"] = String(metadata.opencodeServerPid);
+  if (metadata.opencodeSessionId) data["opencodeSessionId"] = metadata.opencodeSessionId;
+  if (metadata.terminalMode) data["terminalMode"] = metadata.terminalMode;
 
   atomicWriteFileSync(path, serializeMetadata(data));
 }
