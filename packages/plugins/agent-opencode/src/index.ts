@@ -75,11 +75,9 @@ function createOpenCodeAgent(): Agent {
     },
 
     async getActivityState(session: Session, readyThresholdMs?: number): Promise<ActivityDetection | null> {
-      // Check if process is running first
-      const exitedAt = new Date();
-      if (!session.runtimeHandle) return { state: "exited", timestamp: exitedAt };
+      if (!session.runtimeHandle) return { state: "exited", timestamp: new Date() };
       const running = await this.isProcessRunning(session.runtimeHandle);
-      if (!running) return { state: "exited", timestamp: exitedAt };
+      if (!running) return { state: "exited", timestamp: new Date() };
 
       const refs = getOpenCodeRefs(session);
       if (!refs) return null;
@@ -93,24 +91,21 @@ function createOpenCodeAgent(): Agent {
         });
         const now = new Date();
 
-        if (status === "working") {
-          return { state: "active", timestamp: now };
+        switch (status) {
+          case "working":
+            return { state: "active", timestamp: now };
+          case "waiting_input":
+            return { state: "waiting_input", timestamp: now };
+          case "idle": {
+            const elapsed = now.getTime() - session.lastActivityAt.getTime();
+            return { state: elapsed <= threshold ? "ready" : "idle", timestamp: now };
+          }
+          case "exited":
+            return { state: "exited", timestamp: now };
+          default:
+            // "unknown" — SDK couldn't map the server's status; treat as indeterminate
+            return null;
         }
-        if (status === "waiting_input") {
-          return { state: "waiting_input", timestamp: now };
-        }
-        if (status === "idle") {
-          const elapsed = now.getTime() - session.lastActivityAt.getTime();
-          return {
-            state: elapsed <= threshold ? "ready" : "idle",
-            timestamp: now,
-          };
-        }
-        if (status === "exited") {
-          return { state: "exited", timestamp: now };
-        }
-
-        return null;
       } catch {
         return null;
       }
