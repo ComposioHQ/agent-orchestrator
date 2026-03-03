@@ -68,6 +68,13 @@ vi.mock("@composio/ao-core", async (importOriginal) => {
 
 vi.mock("../../src/lib/create-session-manager.js", () => ({
   getSessionManager: async (): Promise<SessionManager> => mockSessionManager as SessionManager,
+  getRegistry: async () => ({
+    register: vi.fn(),
+    get: vi.fn().mockReturnValue(null),
+    list: vi.fn().mockReturnValue([]),
+    loadBuiltins: vi.fn().mockResolvedValue(undefined),
+    loadFromConfig: vi.fn().mockResolvedValue(undefined),
+  }),
 }));
 
 vi.mock("../../src/lib/web-dir.js", () => ({

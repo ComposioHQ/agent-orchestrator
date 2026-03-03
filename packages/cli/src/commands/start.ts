@@ -18,6 +18,7 @@ import type { Command } from "commander";
 import {
   loadConfig,
   generateOrchestratorPrompt,
+  createLifecycleManager,
   isRepoUrl,
   parseRepoUrl,
   resolveCloneTarget,
@@ -29,7 +30,7 @@ import {
   type ParsedRepoUrl,
 } from "@composio/ao-core";
 import { exec, execSilent } from "../lib/shell.js";
-import { getSessionManager } from "../lib/create-session-manager.js";
+import { getSessionManager, getRegistry } from "../lib/create-session-manager.js";
 import { findWebDir, buildDashboardEnv, waitForPortAndOpen, isPortAvailable, findFreePort, MAX_PORT_SCAN } from "../lib/web-dir.js";
 import { cleanNextCache } from "../lib/dashboard-rebuild.js";
 import { preflight } from "../lib/preflight.js";
@@ -332,6 +333,20 @@ async function runStartup(
         );
       }
     }
+  }
+
+  // Start lifecycle manager — polls sessions and triggers reactions (CI fixes,
+  // review comment handling, notifications). Without this, the orchestrator is
+  // just a session launcher with zero automation. (fixes #239 BUG-17)
+  if (opts?.orchestrator !== false) {
+    const registry = await getRegistry(config);
+    const sm = await getSessionManager(config);
+    const lifecycle = createLifecycleManager({ config, registry, sessionManager: sm });
+    lifecycle.start(30_000);
+    process.on("SIGINT", () => {
+      lifecycle.stop();
+      process.exit(0);
+    });
   }
 
   // Print summary

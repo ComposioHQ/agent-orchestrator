@@ -545,7 +545,8 @@ describe("spawn", () => {
   });
 
   it("sends prompt post-launch when agent.promptDelivery is 'post-launch'", async () => {
-    vi.useFakeTimers();
+    // Make getOutput return ready indicator so polling exits immediately
+    mockRuntime.getOutput = vi.fn().mockResolvedValue("❯ ");
     const postLaunchAgent = {
       ...mockAgent,
       promptDelivery: "post-launch" as const,
@@ -561,16 +562,14 @@ describe("spawn", () => {
     };
 
     const sm = createSessionManager({ config, registry: registryWithPostLaunch });
-    const spawnPromise = sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
-    await vi.advanceTimersByTimeAsync(5_000);
-    await spawnPromise;
+    const session = await sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
 
     // Prompt should be sent via runtime.sendMessage, not included in launch command
     expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({ id: expect.any(String) }),
       expect.stringContaining("Fix the bug"),
     );
-    vi.useRealTimers();
+    expect(session.id).toBeTruthy();
   });
 
   it("does not send prompt post-launch when agent.promptDelivery is not set", async () => {
@@ -607,9 +606,10 @@ describe("spawn", () => {
   });
 
   it("does not destroy session when post-launch prompt delivery fails", async () => {
-    vi.useFakeTimers();
     const failingRuntime: Runtime = {
       ...mockRuntime,
+      // getOutput returns ready indicator so polling exits quickly
+      getOutput: vi.fn().mockResolvedValue("❯ "),
       sendMessage: vi.fn().mockRejectedValue(new Error("tmux send failed")),
     };
     const postLaunchAgent = {
@@ -627,20 +627,22 @@ describe("spawn", () => {
     };
 
     const sm = createSessionManager({ config, registry: registryWithFailingSend });
-    const spawnPromise = sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
-    await vi.advanceTimersByTimeAsync(5_000);
-    const session = await spawnPromise;
+    const session = await sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
 
     // Session should still be returned successfully despite sendMessage failure
     expect(session.id).toBe("app-1");
     expect(session.status).toBe("spawning");
     // Runtime should NOT have been destroyed
     expect(failingRuntime.destroy).not.toHaveBeenCalled();
-    vi.useRealTimers();
   });
 
-  it("waits before sending post-launch prompt", async () => {
-    vi.useFakeTimers();
+  it("polls for ready indicator before sending post-launch prompt", async () => {
+    // getOutput returns empty first, then the ready indicator on the 3rd call
+    let callCount = 0;
+    mockRuntime.getOutput = vi.fn().mockImplementation(() => {
+      callCount++;
+      return Promise.resolve(callCount >= 3 ? "❯ " : "Loading...");
+    });
     const postLaunchAgent = {
       ...mockAgent,
       promptDelivery: "post-launch" as const,
@@ -656,17 +658,12 @@ describe("spawn", () => {
     };
 
     const sm = createSessionManager({ config, registry: registryWithPostLaunch });
-    const spawnPromise = sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
+    await sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
 
-    // Advance only 4s — not enough, message should not have been sent yet
-    await vi.advanceTimersByTimeAsync(4_000);
-    expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
-
-    // Advance the remaining 1s — now it should fire
-    await vi.advanceTimersByTimeAsync(1_000);
-    await spawnPromise;
+    // getOutput should have been polled multiple times before ready indicator appeared
+    expect(mockRuntime.getOutput).toHaveBeenCalledTimes(3);
+    // sendMessage should have been called after polling detected readiness
     expect(mockRuntime.sendMessage).toHaveBeenCalled();
-    vi.useRealTimers();
   });
 });
 

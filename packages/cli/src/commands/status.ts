@@ -238,10 +238,9 @@ export function registerStatus(program: Command): void {
           a.id.localeCompare(b.id),
         );
 
-        // Resolve agent and SCM for this project
-        const agentName = projectConfig.agent ?? config.defaults.agent;
-        const agent = getAgentByName(agentName);
+        // Resolve SCM for this project (shared across sessions)
         const scm = getSCM(config, projectId);
+        const defaultAgentName = projectConfig.agent ?? config.defaults.agent;
 
         if (!opts.json) {
           console.log(header(projectConfig.name || projectId));
@@ -261,8 +260,14 @@ export function registerStatus(program: Command): void {
           printTableHeader();
         }
 
-        // Gather all session info in parallel
-        const infoPromises = projectSessions.map((s) => gatherSessionInfo(s, agent, scm, config));
+        // Gather all session info in parallel — resolve agent per session from
+        // metadata so Codex sessions use the Codex plugin, not claude-code.
+        // (fixes #239 BUG-27)
+        const infoPromises = projectSessions.map((s) => {
+          const sessionAgentName = s.metadata["agent"] ?? defaultAgentName;
+          const agent = getAgentByName(sessionAgentName);
+          return gatherSessionInfo(s, agent, scm, config);
+        });
         const sessionInfos = await Promise.all(infoPromises);
 
         for (const info of sessionInfos) {

@@ -34,7 +34,7 @@ async function spawnSession(
 
   try {
     const sm = await getSessionManager(config);
-    spinner.text = "Spawning session via core";
+    spinner.text = "Spawning session (waiting for agent to be ready)";
 
     const session = await sm.spawn({
       projectId,
