@@ -282,7 +282,69 @@ describe.skipIf(!(tmuxOk && opencodeOk))("agent-opencode-sdk parity (integration
   }, 120_000);
 
   it.todo("T07: restore keeps same OpenCode session timeline");
-  it.todo("T08: kill aborts/deletes OpenCode session and server pid");
+
+  it("T07: restore keeps same OpenCode session timeline", async () => {
+    if (!spawnedSession || !spawnedMetadata) {
+      console.warn("T07 skipped: T01 did not produce a session");
+      return;
+    }
+
+    const opencodeSessionId = spawnedMetadata["opencodeSessionId"];
+    const opencodeServerUrl = spawnedMetadata["opencodeServerUrl"];
+    if (!opencodeSessionId || !opencodeServerUrl) {
+      throw new Error("Missing opencode metadata for restore test");
+    }
+
+    const before = await exportOpencodeSession(opencodeSessionId, project.path);
+
+    // Force runtime to terminal state without deleting OpenCode session data.
+    if (spawnedSession.runtimeHandle?.id) {
+      await execFileAsync("tmux", ["kill-session", "-t", spawnedSession.runtimeHandle.id], {
+        timeout: 15_000,
+      }).catch(() => {});
+    }
+
+    const restored = await sessionManager.restore(spawnedSession.id);
+    const sessionsDir = getSessionsDir(config.configPath, project.path);
+    const restoredMeta = readMetadataRaw(sessionsDir, restored.id);
+
+    expect(restoredMeta?.["opencodeSessionId"]).toBe(opencodeSessionId);
+    expect(restoredMeta?.["opencodeServerUrl"]).toBeTruthy();
+
+    const after = await exportOpencodeSession(opencodeSessionId, project.path);
+    expect(after.length).toBeGreaterThanOrEqual(before.length);
+
+    spawnedSession = restored;
+    spawnedMetadata = restoredMeta;
+  }, 120_000);
+
+  it("T08: kill aborts/deletes OpenCode session and server pid", async () => {
+    if (!spawnedSession || !spawnedMetadata) {
+      console.warn("T08 skipped: no active spawned session");
+      return;
+    }
+
+    const opencodeSessionId = spawnedMetadata["opencodeSessionId"];
+    const opencodeServerUrl = spawnedMetadata["opencodeServerUrl"];
+    const opencodeServerPid = Number(spawnedMetadata["opencodeServerPid"]);
+    if (!opencodeSessionId || !opencodeServerUrl || !Number.isFinite(opencodeServerPid)) {
+      throw new Error("Missing opencode metadata for kill test");
+    }
+
+    await sessionManager.kill(spawnedSession.id);
+
+    const sessionsDir = getSessionsDir(config.configPath, project.path);
+    expect(readMetadataRaw(sessionsDir, spawnedSession.id)).toBeNull();
+
+    const client = getOpenCodeClient(opencodeServerUrl);
+    await expect(client.session.get({ path: { id: opencodeSessionId } })).rejects.toBeTruthy();
+
+    expect(() => process.kill(opencodeServerPid, 0)).toThrow();
+
+    spawnedSession = null;
+    spawnedMetadata = null;
+  }, 120_000);
+
   it.todo("T09: web terminal attach mode uses opencode -s --attach");
   it.todo("T10: non-opencode terminal path remains tmux attach");
   it.todo("T11: /api/sessions/[id]/message delegates via session-manager");
