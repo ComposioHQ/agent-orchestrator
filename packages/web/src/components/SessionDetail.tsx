@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
-import { type DashboardSession, type DashboardPR } from "@/lib/types";
+import { type DashboardSession, type DashboardPR, isPRMergeReady } from "@/lib/types";
 import { CI_STATUS } from "@composio/ao-core/types";
 import { cn } from "@/lib/cn";
 import { CICheckList } from "./CIBadge";
@@ -467,11 +467,7 @@ function PRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
     );
   };
 
-  const allGreen =
-    pr.mergeability.mergeable &&
-    pr.mergeability.ciPassing &&
-    pr.mergeability.approved &&
-    pr.mergeability.noConflicts;
+  const allGreen = isPRMergeReady(pr);
 
   const failedChecks = pr.ciChecks.filter((c) => c.status === "failed");
 

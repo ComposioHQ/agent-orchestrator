@@ -93,3 +93,23 @@ export {
   stopOpenCodeServer,
 } from "./opencode-sdk-service.js";
 export type { OpenCodeServerRef, OpenCodeSessionRef } from "./opencode-sdk-service.js";
+
+// Config generator — auto-generate config from repo URL
+export {
+  isRepoUrl,
+  parseRepoUrl,
+  detectScmPlatform,
+  detectDefaultBranchFromDir,
+  detectProjectInfo,
+  generateConfigFromUrl,
+  configToYaml,
+  isRepoAlreadyCloned,
+  resolveCloneTarget,
+  sanitizeProjectId,
+} from "./config-generator.js";
+export type {
+  ParsedRepoUrl,
+  ScmPlatform,
+  DetectedProjectInfo,
+  GenerateConfigOptions,
+} from "./config-generator.js";
