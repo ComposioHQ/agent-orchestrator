@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { getAgent, getAgentByName } from "../../src/lib/plugins.js";
+import { describe, it, expect, vi } from "vitest";
+import { getAgent, getAgentByName, getSCM } from "../../src/lib/plugins.js";
 import type { OrchestratorConfig } from "@composio/ao-core";
 
 function makeConfig(
@@ -67,7 +67,56 @@ describe("getAgentByName", () => {
     expect(getAgentByName("aider").name).toBe("aider");
   });
 
+  it("returns agent for gemini", () => {
+    expect(getAgentByName("gemini").name).toBe("gemini");
+  });
+
+  it("returns agent for goose", () => {
+    expect(getAgentByName("goose").name).toBe("goose");
+  });
+
+  it("returns agent for amazon-q", () => {
+    expect(getAgentByName("amazon-q").name).toBe("amazon-q");
+  });
+
+  it("returns agent for kiro", () => {
+    expect(getAgentByName("kiro").name).toBe("kiro");
+  });
+
   it("throws on unknown name", () => {
     expect(() => getAgentByName("unknown")).toThrow("Unknown agent plugin: unknown");
+  });
+});
+
+describe("getSCM", () => {
+  it("returns github by default", () => {
+    const config = makeConfig("claude-code");
+    const scm = getSCM(config, "app");
+    expect(scm.name).toBe("github");
+  });
+
+  it("returns gitlab when project scm plugin is set", () => {
+    const config = makeConfig("claude-code") as OrchestratorConfig;
+    config.projects["app"]!.scm = { plugin: "gitlab" };
+    const scm = getSCM(config, "app");
+    expect(scm.name).toBe("gitlab");
+  });
+
+  it("returns SCM from registry for config-driven plugin names", () => {
+    const config = makeConfig("claude-code") as OrchestratorConfig;
+    config.projects["app"]!.scm = { plugin: "./plugins/scm-custom/dist/index.js" };
+    const customScm = { name: "custom" } as unknown;
+    const registry = {
+      get: vi.fn((slot: string, name: string) =>
+        slot === "scm" && name === "./plugins/scm-custom/dist/index.js"
+          ? (customScm as { name: string })
+          : null,
+      ),
+    };
+
+    const scm = getSCM(config, "app", registry);
+
+    expect(registry.get).toHaveBeenCalledWith("scm", "./plugins/scm-custom/dist/index.js");
+    expect(scm).toBe(customScm);
   });
 });

@@ -21,7 +21,7 @@ import {
   padCol,
 } from "../lib/format.js";
 import { getAgentByName, getSCM } from "../lib/plugins.js";
-import { getSessionManager } from "../lib/create-session-manager.js";
+import { getSessionManager, getPluginRegistry } from "../lib/create-session-manager.js";
 
 interface SessionInfo {
   name: string;
@@ -210,6 +210,7 @@ export function registerStatus(program: Command): void {
 
       // Use session manager to list sessions (metadata-based, not tmux-based)
       const sm = await getSessionManager(config);
+      const registry = await getPluginRegistry(config);
       const sessions = await sm.list(opts.project);
 
       if (!opts.json) {
@@ -241,7 +242,7 @@ export function registerStatus(program: Command): void {
         // Resolve agent and SCM for this project
         const agentName = projectConfig.agent ?? config.defaults.agent;
         const agent = getAgentByName(agentName);
-        const scm = getSCM(config, projectId);
+        const scm = getSCM(config, projectId, registry);
 
         if (!opts.json) {
           console.log(header(projectConfig.name || projectId));

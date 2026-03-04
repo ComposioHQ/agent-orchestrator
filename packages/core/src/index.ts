@@ -55,6 +55,35 @@ export type { LifecycleManagerDeps } from "./lifecycle-manager.js";
 export { buildPrompt, BASE_AGENT_PROMPT } from "./prompt-builder.js";
 export type { PromptBuildConfig } from "./prompt-builder.js";
 
+// TAKT-inspired workflow + faceted prompting
+export { WorkflowEngine, parseWorkflowPieceYaml } from "./workflow-engine.js";
+export type {
+  WorkflowPiece,
+  WorkflowMovement,
+  WorkflowRule,
+  WorkflowRunnerDeps,
+  WorkflowRunResult,
+} from "./workflow-engine.js";
+export { composeFacetedPrompt } from "./faceted-prompting.js";
+export type { FacetedPromptInput, FacetedPromptResult, PromptFacet } from "./faceted-prompting.js";
+
+// Stoneforge-inspired lifecycle services
+export { MergeStewardService } from "./merge-steward.js";
+export type { MergeStewardOptions, MergeStewardResult, MergeStewardMethod } from "./merge-steward.js";
+export { DispatchDaemon } from "./dispatch-daemon.js";
+export type {
+  DispatchDaemonStore,
+  DispatchDaemonOptions,
+  DispatchTask,
+  DispatchWorker,
+} from "./dispatch-daemon.js";
+export { PredecessorQueryService } from "./predecessor-query.js";
+export type {
+  PredecessorQueryOps,
+  PredecessorQueryRequest,
+  PredecessorQueryResult,
+} from "./predecessor-query.js";
+
 // Orchestrator prompt — generates orchestrator context for `ao start`
 export { generateOrchestratorPrompt } from "./orchestrator-prompt.js";
 export type { OrchestratorPromptConfig } from "./orchestrator-prompt.js";
