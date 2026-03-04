@@ -12,7 +12,9 @@
  */
 
 import { statSync, existsSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
+import { execFile } from "node:child_process";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import {
   isIssueNotFoundError,
   isRestorable,
@@ -67,6 +69,8 @@ import {
   type OpenCodeSessionRef,
 } from "./opencode-sdk-service.js";
 import { shellEscape } from "./utils.js";
+
+const execFileAsync = promisify(execFile);
 
 /** Escape regex metacharacters in a string. */
 function escapeRegex(str: string): string {
@@ -124,6 +128,32 @@ function isPidAlive(pid: number): boolean {
       return true;
     }
     return false;
+  }
+}
+
+async function resolveListeningPidForUrl(baseUrl: string): Promise<number | undefined> {
+  let port: number;
+  try {
+    const parsed = new URL(baseUrl);
+    port = Number(parsed.port);
+  } catch {
+    return undefined;
+  }
+
+  if (!Number.isFinite(port) || port <= 0) {
+    return undefined;
+  }
+
+  try {
+    const { stdout } = await execFileAsync(
+      "lsof",
+      ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"],
+      { timeout: 5000 },
+    );
+    const pid = Number(stdout.split("\n").map((line) => line.trim()).find(Boolean));
+    return Number.isFinite(pid) && pid > 0 ? pid : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -928,9 +958,14 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       }
 
       const serverPid = Number(raw["opencodeServerPid"]);
-      if (Number.isFinite(serverPid) && serverPid > 0) {
+      const fallbackPid =
+        Number.isFinite(serverPid) && serverPid > 0
+          ? serverPid
+          : await resolveListeningPidForUrl(raw["opencodeServerUrl"] as string);
+
+      if (fallbackPid !== undefined) {
         try {
-          await stopOpenCodeServer(serverPid);
+          await stopOpenCodeServer(fallbackPid);
         } catch {
           // best effort
         }
@@ -1354,7 +1389,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
               opencodeServerPid:
                 resolvedOpenCodeServerPid !== undefined
                   ? String(resolvedOpenCodeServerPid)
-                  : "",
+                  : raw["opencodeServerPid"],
               opencodeSessionId: raw["opencodeSessionId"],
               terminalMode: "opencode-attach",
             }
