@@ -99,13 +99,30 @@ export default function SessionPage() {
     }
   }, [isOrchestrator]);
 
-  // Initial fetch — session first, zone counts after (avoids blocking on slow /api/sessions)
+  // Two-phase initial fetch:
+  // 1. Fast /meta endpoint for instant tab title (local metadata only, <50ms)
+  // 2. Full enriched session data for PR/CI details
   useEffect(() => {
+    // Phase 1: instant meta (sets title immediately)
+    void (async () => {
+      try {
+        const res = await fetch(`/api/sessions/${encodeURIComponent(id)}/meta`);
+        if (res.ok) {
+          const meta = (await res.json()) as DashboardSession;
+          setSession((prev) => prev ?? meta);
+          setLoading(false);
+        }
+      } catch {
+        // Non-critical — full fetch will handle errors
+      }
+    })();
+
+    // Phase 2: full enriched data (may take seconds due to GitHub API)
     fetchSession();
     // Delay zone counts so the heavy /api/sessions call doesn't contend with session load
     const t = setTimeout(fetchZoneCounts, 2000);
     return () => clearTimeout(t);
-  }, [fetchSession, fetchZoneCounts]);
+  }, [fetchSession, fetchZoneCounts, id]);
 
   // Poll every 5s
   useEffect(() => {
