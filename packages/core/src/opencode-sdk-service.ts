@@ -94,24 +94,22 @@ export async function ensureOpenCodeServer(params: {
     stdio: "ignore",
   });
 
-  let spawnError: unknown = null;
+  let rejectSpawnError: ((reason?: unknown) => void) | null = null;
+  const spawnErrorPromise = new Promise<never>((_, reject) => {
+    rejectSpawnError = reject;
+  });
   const onSpawnError = (err: unknown) => {
-    spawnError = err;
+    rejectSpawnError?.(err);
   };
   child.once("error", onSpawnError);
 
   if (!child.pid) {
-    const spawnErrorMessage = spawnError instanceof Error ? `: ${spawnError.message}` : "";
-    throw new Error(`Failed to start OpenCode server process${spawnErrorMessage}`);
+    throw new Error("Failed to start OpenCode server process");
   }
 
   child.unref();
   try {
-    await waitForHealth(url, timeoutMs);
-
-    if (spawnError) {
-      throw spawnError;
-    }
+    await Promise.race([waitForHealth(url, timeoutMs), spawnErrorPromise]);
   } catch (err) {
     await stopOpenCodeServer(child.pid);
     throw err;
