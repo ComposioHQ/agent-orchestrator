@@ -6,17 +6,84 @@ import {
   type AgentLaunchConfig,
   type ActivityDetection,
   type ActivityState,
+  type CostEstimate,
   type PluginModule,
   type RuntimeHandle,
   type Session,
 } from "@composio/ao-core";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { stat, access } from "node:fs/promises";
+import { stat, access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { constants } from "node:fs";
 
 const execFileAsync = promisify(execFile);
+
+// =============================================================================
+// Terminal Output Patterns for detectActivity
+// =============================================================================
+
+/** Classify Aider's activity state from terminal output (pure, sync).
+ *
+ *  Priority order (first match wins):
+ *  1. Empty output → idle
+ *  2. Last line is a shell/input prompt → idle
+ *  3. Tail contains approval/confirmation prompts → waiting_input
+ *  4. Tail contains error/blocked indicators → blocked
+ *  5. Completion indicators on last line → idle
+ *  6. Non-empty output → active (default)
+ */
+function classifyAiderTerminalOutput(terminalOutput: string): ActivityState {
+  // 1. Empty output — can't determine state
+  if (!terminalOutput.trim()) return "idle";
+
+  const lines = terminalOutput.trim().split("\n");
+  const lastLine = lines[lines.length - 1]?.trim() ?? "";
+
+  // 2. Shell/input prompt on the last line → idle
+  //    Aider shows its prompt as ">" or standard shell prompts when ready.
+  if (/^[❯>$#]\s*$/.test(lastLine)) return "idle";
+  //    Aider's input prompt pattern: colorized or plain "aider>" or just ">"
+  if (/^aider>\s*$/i.test(lastLine)) return "idle";
+
+  // 3. Check the bottom of the buffer for approval/confirmation prompts.
+  const tail = lines.slice(-5).join("\n");
+
+  // Aider edit confirmation prompts
+  if (/apply.*edit/i.test(tail) && /\?\s*$/.test(tail)) return "waiting_input";
+  if (/\(y\)es.*\(n\)o/i.test(tail)) return "waiting_input";
+  if (/\(Y\/n\)/i.test(tail)) return "waiting_input";
+  if (/\(y\/n\)/i.test(tail)) return "waiting_input";
+  if (/allow creation of/i.test(tail)) return "waiting_input";
+  if (/add.*to the chat\?/i.test(tail)) return "waiting_input";
+  if (/drop.*from the chat\?/i.test(tail)) return "waiting_input";
+  if (/create.*new file/i.test(tail) && /\?/i.test(tail)) return "waiting_input";
+  if (/run.*command/i.test(tail) && /\?/i.test(tail)) return "waiting_input";
+  if (/commit this change\?/i.test(tail)) return "waiting_input";
+
+  // 4. Check for blocked/error indicators in the tail
+  if (/rate limit/i.test(tail)) return "blocked";
+  if (/error.*authentication/i.test(tail)) return "blocked";
+  if (/api key.*invalid/i.test(tail)) return "blocked";
+  if (/token limit exceeded/i.test(tail)) return "blocked";
+  if (/context window/i.test(tail) && /exceed/i.test(tail)) return "blocked";
+  if (/connection refused/i.test(tail)) return "blocked";
+  if (/quota exceeded/i.test(tail)) return "blocked";
+  if (/429 Too Many Requests/i.test(tail)) return "blocked";
+  if (/retrying in/i.test(tail) && /seconds?/i.test(tail)) return "blocked";
+  if (/model.*not (found|available)/i.test(tail)) return "blocked";
+  if (/unauthorized/i.test(tail)) return "blocked";
+  if (/ECONNREFUSED/i.test(tail)) return "blocked";
+
+  // 5. Completion/done indicators on the last line → idle
+  if (/^Tokens:/i.test(lastLine)) return "idle";
+  if (/applied edit/i.test(lastLine) && /to\b/i.test(lastLine)) return "idle";
+  if (/commit [0-9a-f]{7}/i.test(lastLine)) return "idle";
+  if (/^done\.?$/i.test(lastLine)) return "idle";
+
+  // 6. Default to active — Aider is processing.
+  return "active";
+}
 
 // =============================================================================
 // Aider Activity Detection Helpers
@@ -50,6 +117,99 @@ async function getChatHistoryMtime(workspacePath: string): Promise<Date | null> 
   } catch {
     return null;
   }
+}
+
+// =============================================================================
+// Aider Session Info Parsing
+// =============================================================================
+
+/** Max bytes to read from chat history for summary extraction */
+const MAX_CHAT_HISTORY_BYTES = 32_768;
+
+/**
+ * Parse Aider's .aider.chat.history.md to extract session info.
+ *
+ * The file is a Markdown log of the conversation. Format:
+ * ```
+ * #### <user message>
+ *
+ * <assistant response>
+ * ```
+ *
+ * We extract:
+ * - summary: first user message (truncated) as fallback summary
+ * - cost: token usage from "Tokens:" lines if present
+ */
+async function parseAiderSessionInfo(workspacePath: string): Promise<AgentSessionInfo | null> {
+  const chatFile = join(workspacePath, ".aider.chat.history.md");
+  let content: string;
+  try {
+    content = await readFile(chatFile, "utf-8");
+  } catch {
+    return null;
+  }
+
+  if (!content.trim()) return null;
+
+  // Limit how much we parse for performance
+  const truncatedContent = content.length > MAX_CHAT_HISTORY_BYTES
+    ? content.slice(-MAX_CHAT_HISTORY_BYTES)
+    : content;
+
+  // Extract first user message as fallback summary
+  // Aider formats user messages as "#### <message>"
+  let summary: string | null = null;
+  const userMsgMatch = content.match(/^####\s+(.+)$/m);
+  if (userMsgMatch) {
+    summary = userMsgMatch[1].trim();
+    if (summary.length > 120) {
+      summary = summary.slice(0, 117) + "...";
+    }
+  }
+
+  // Extract token usage from "Tokens:" lines
+  // Format: "Tokens: 1.2k sent, 3.4k received. Cost: $0.01 message, $0.05 session."
+  // or: "Tokens: 12,345 sent, 67,890 received."
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  let totalCostUsd = 0;
+  const tokenLines = truncatedContent.match(/^Tokens:.*$/gm) ?? [];
+  for (const line of tokenLines) {
+    const sentMatch = line.match(/([\d,.]+)k?\s+sent/i);
+    const recvMatch = line.match(/([\d,.]+)k?\s+received/i);
+    if (sentMatch) {
+      const val = parseFloat(sentMatch[1].replace(/,/g, ""));
+      totalInputTokens += line.includes("k sent") ? val * 1000 : val;
+    }
+    if (recvMatch) {
+      const val = parseFloat(recvMatch[1].replace(/,/g, ""));
+      totalOutputTokens += line.includes("k received") ? val * 1000 : val;
+    }
+
+    // Extract session cost if available
+    const sessionCostMatch = line.match(/\$([\d.]+)\s+session/i);
+    if (sessionCostMatch) {
+      totalCostUsd = parseFloat(sessionCostMatch[1]);
+    }
+  }
+
+  const cost: CostEstimate | undefined =
+    totalInputTokens === 0 && totalOutputTokens === 0
+      ? undefined
+      : {
+          inputTokens: Math.round(totalInputTokens),
+          outputTokens: Math.round(totalOutputTokens),
+          estimatedCostUsd: totalCostUsd > 0
+            ? totalCostUsd
+            : (totalInputTokens / 1_000_000) * 3.0 + (totalOutputTokens / 1_000_000) * 15.0,
+        };
+
+  return {
+    summary,
+    summaryIsFallback: true,
+    agentSessionId: null,
+    cost,
+  };
 }
 
 // =============================================================================
@@ -107,9 +267,7 @@ function createAiderAgent(): Agent {
     },
 
     detectActivity(terminalOutput: string): ActivityState {
-      if (!terminalOutput.trim()) return "idle";
-      // Aider doesn't have rich terminal output patterns yet
-      return "active";
+      return classifyAiderTerminalOutput(terminalOutput);
     },
 
     async getActivityState(
@@ -197,9 +355,9 @@ function createAiderAgent(): Agent {
       }
     },
 
-    async getSessionInfo(_session: Session): Promise<AgentSessionInfo | null> {
-      // Aider doesn't have JSONL session files for introspection yet
-      return null;
+    async getSessionInfo(session: Session): Promise<AgentSessionInfo | null> {
+      if (!session.workspacePath) return null;
+      return parseAiderSessionInfo(session.workspacePath);
     },
   };
 }

@@ -4,8 +4,11 @@ import type { Session, RuntimeHandle, AgentLaunchConfig } from "@composio/ao-cor
 // ---------------------------------------------------------------------------
 // Hoisted mocks
 // ---------------------------------------------------------------------------
-const { mockExecFileAsync } = vi.hoisted(() => ({
+const { mockExecFileAsync, mockStat, mockAccess, mockReadFile } = vi.hoisted(() => ({
   mockExecFileAsync: vi.fn(),
+  mockStat: vi.fn(),
+  mockAccess: vi.fn(),
+  mockReadFile: vi.fn(),
 }));
 
 vi.mock("node:child_process", () => {
@@ -14,6 +17,16 @@ vi.mock("node:child_process", () => {
   });
   return { execFile: fn };
 });
+
+vi.mock("node:fs/promises", () => ({
+  stat: mockStat,
+  access: mockAccess,
+  readFile: mockReadFile,
+}));
+
+vi.mock("node:fs", () => ({
+  constants: { R_OK: 4 },
+}));
 
 import { create, manifest, default as defaultExport } from "./index.js";
 
@@ -77,6 +90,9 @@ function mockTmuxWithProcess(processName: string, found = true) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockStat.mockRejectedValue(new Error("ENOENT"));
+  mockAccess.mockRejectedValue(new Error("ENOENT"));
+  mockReadFile.mockRejectedValue(new Error("ENOENT"));
 });
 
 // =========================================================================
@@ -245,6 +261,7 @@ describe("isProcessRunning", () => {
 describe("detectActivity", () => {
   const agent = create();
 
+  // -- Idle states --
   it("returns idle for empty terminal output", () => {
     expect(agent.detectActivity("")).toBe("idle");
   });
@@ -253,8 +270,137 @@ describe("detectActivity", () => {
     expect(agent.detectActivity("   \n  ")).toBe("idle");
   });
 
-  it("returns active for non-empty terminal output", () => {
+  it("returns idle when last line is a bare > prompt", () => {
+    expect(agent.detectActivity("some output\n> ")).toBe("idle");
+  });
+
+  it("returns idle when last line is a bare $ prompt", () => {
+    expect(agent.detectActivity("some output\n$ ")).toBe("idle");
+  });
+
+  it("returns idle for aider> prompt", () => {
+    expect(agent.detectActivity("some output\naider>\n")).toBe("idle");
+    expect(agent.detectActivity("some output\naider> ")).toBe("idle");
+  });
+
+  it("returns idle when prompt follows historical activity", () => {
+    expect(agent.detectActivity("Editing files...\nDone.\n> ")).toBe("idle");
+  });
+
+  it("returns idle for Tokens: line (completion indicator)", () => {
+    expect(agent.detectActivity("some output\nTokens: 1.2k sent, 3.4k received.\n")).toBe("idle");
+  });
+
+  it("returns idle for applied edit indicator", () => {
+    expect(agent.detectActivity("Applied edit to src/index.ts\n")).toBe("idle");
+  });
+
+  it("returns idle for commit hash indicator", () => {
+    expect(agent.detectActivity("commit abc1234 fix: update logic\n")).toBe("idle");
+  });
+
+  it("returns idle for Done on last line", () => {
+    expect(agent.detectActivity("Processing...\nDone\n")).toBe("idle");
+  });
+
+  // -- Waiting input states --
+  it("returns waiting_input for apply edit prompt", () => {
+    expect(agent.detectActivity("Apply edit to src/main.ts?\n")).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for (y)es / (n)o prompt", () => {
+    expect(agent.detectActivity("Proceed?\n(y)es / (n)o\n")).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for (Y/n) prompt", () => {
+    expect(agent.detectActivity("Create new file? (Y/n)\n")).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for (y/n) prompt", () => {
+    expect(agent.detectActivity("Overwrite? (y/n)\n")).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for allow creation prompt", () => {
+    expect(agent.detectActivity("Allow creation of new-file.ts?\n")).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for add to chat prompt", () => {
+    expect(agent.detectActivity("Add src/utils.ts to the chat?\n")).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for drop from chat prompt", () => {
+    expect(agent.detectActivity("Drop old-file.ts from the chat?\n")).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for create new file prompt", () => {
+    expect(agent.detectActivity("Create a new file helpers.ts?\n")).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for run command prompt", () => {
+    expect(agent.detectActivity("Run this command: npm test?\n")).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for commit change prompt", () => {
+    expect(agent.detectActivity("Commit this change?\n")).toBe("waiting_input");
+  });
+
+  it("returns waiting_input when prompt follows historical activity", () => {
+    expect(agent.detectActivity("Editing files...\nDone.\nAdd src/main.ts to the chat?\n")).toBe("waiting_input");
+  });
+
+  // -- Blocked states --
+  it("returns blocked for rate limit errors", () => {
+    expect(agent.detectActivity("Error: rate limit exceeded\n")).toBe("blocked");
+  });
+
+  it("returns blocked for authentication errors", () => {
+    expect(agent.detectActivity("Error: authentication failed\n")).toBe("blocked");
+  });
+
+  it("returns blocked for invalid API key", () => {
+    expect(agent.detectActivity("API key is invalid\n")).toBe("blocked");
+  });
+
+  it("returns blocked for context window exceeded", () => {
+    expect(agent.detectActivity("Context window limit exceeded for model\n")).toBe("blocked");
+  });
+
+  it("returns blocked for 429 Too Many Requests", () => {
+    expect(agent.detectActivity("HTTP 429 Too Many Requests\n")).toBe("blocked");
+  });
+
+  it("returns blocked for retrying message", () => {
+    expect(agent.detectActivity("Retrying in 30 seconds...\n")).toBe("blocked");
+  });
+
+  it("returns blocked for model not found", () => {
+    expect(agent.detectActivity("Model gpt-5 not found\n")).toBe("blocked");
+  });
+
+  it("returns blocked for unauthorized", () => {
+    expect(agent.detectActivity("401 Unauthorized\n")).toBe("blocked");
+  });
+
+  // -- Active states --
+  it("returns active for non-empty terminal output with no special patterns", () => {
     expect(agent.detectActivity("aider is processing files\n")).toBe("active");
+  });
+
+  it("returns active for editing output", () => {
+    expect(agent.detectActivity("Editing src/index.ts...\n")).toBe("active");
+  });
+
+  // -- Priority order tests --
+  it("idle prompt takes priority over blocked text higher in buffer", () => {
+    expect(agent.detectActivity("rate limit hit\nretrying...\n> ")).toBe("idle");
+  });
+
+  it("waiting_input takes priority over blocked text higher in buffer", () => {
+    expect(agent.detectActivity("Connection refused\nRetried.\nAdd file.ts to the chat?\n")).toBe("waiting_input");
+  });
+
+  it("blocked takes priority over completion text", () => {
+    expect(agent.detectActivity("Done\nrate limit exceeded\n")).toBe("blocked");
   });
 });
 
@@ -264,8 +410,101 @@ describe("detectActivity", () => {
 describe("getSessionInfo", () => {
   const agent = create();
 
-  it("always returns null (not implemented)", async () => {
+  it("returns null when workspacePath is null", async () => {
+    expect(await agent.getSessionInfo(makeSession({ workspacePath: null }))).toBeNull();
+  });
+
+  it("returns null when workspacePath is undefined", async () => {
+    expect(await agent.getSessionInfo(makeSession({ workspacePath: undefined }))).toBeNull();
+  });
+
+  it("returns null when chat history file does not exist", async () => {
+    mockReadFile.mockRejectedValue(new Error("ENOENT"));
     expect(await agent.getSessionInfo(makeSession())).toBeNull();
-    expect(await agent.getSessionInfo(makeSession({ workspacePath: "/some/path" }))).toBeNull();
+  });
+
+  it("returns null when chat history is empty", async () => {
+    mockReadFile.mockResolvedValue("");
+    expect(await agent.getSessionInfo(makeSession())).toBeNull();
+  });
+
+  it("extracts summary from first user message", async () => {
+    mockReadFile.mockResolvedValue(
+      "#### Fix the login bug\n\nSure, I'll look at the login code...\n",
+    );
+    const result = await agent.getSessionInfo(makeSession());
+    expect(result).not.toBeNull();
+    expect(result!.summary).toBe("Fix the login bug");
+    expect(result!.summaryIsFallback).toBe(true);
+    expect(result!.agentSessionId).toBeNull();
+  });
+
+  it("truncates long summaries to 120 chars", async () => {
+    const longMsg = "A".repeat(200);
+    mockReadFile.mockResolvedValue(`#### ${longMsg}\n\nResponse...\n`);
+    const result = await agent.getSessionInfo(makeSession());
+    expect(result).not.toBeNull();
+    expect(result!.summary!.length).toBeLessThanOrEqual(120);
+    expect(result!.summary).toMatch(/\.\.\.$/); 
+  });
+
+  it("extracts token counts from Tokens: lines", async () => {
+    mockReadFile.mockResolvedValue(
+      "#### Fix bug\n\nDone.\n\nTokens: 1.2k sent, 3.4k received. Cost: $0.01 message, $0.05 session.\n",
+    );
+    const result = await agent.getSessionInfo(makeSession());
+    expect(result).not.toBeNull();
+    expect(result!.cost).toBeDefined();
+    expect(result!.cost!.inputTokens).toBe(1200);
+    expect(result!.cost!.outputTokens).toBe(3400);
+    expect(result!.cost!.estimatedCostUsd).toBe(0.05);
+  });
+
+  it("aggregates multiple Tokens: lines", async () => {
+    mockReadFile.mockResolvedValue(
+      "#### Fix bug\n\nDone.\n\n" +
+      "Tokens: 1k sent, 2k received.\n" +
+      "#### Another task\n\n" +
+      "Tokens: 3k sent, 4k received. Cost: $0.10 message, $0.20 session.\n",
+    );
+    const result = await agent.getSessionInfo(makeSession());
+    expect(result).not.toBeNull();
+    expect(result!.cost!.inputTokens).toBe(4000);
+    expect(result!.cost!.outputTokens).toBe(6000);
+    // Should use the last session cost
+    expect(result!.cost!.estimatedCostUsd).toBe(0.20);
+  });
+
+  it("returns undefined cost when no Tokens: lines present", async () => {
+    mockReadFile.mockResolvedValue(
+      "#### Fix the bug\n\nI fixed it.\n",
+    );
+    const result = await agent.getSessionInfo(makeSession());
+    expect(result).not.toBeNull();
+    expect(result!.cost).toBeUndefined();
+  });
+
+  it("handles plain numeric tokens (no k suffix)", async () => {
+    mockReadFile.mockResolvedValue(
+      "#### Fix\n\nTokens: 12,345 sent, 67,890 received.\n",
+    );
+    const result = await agent.getSessionInfo(makeSession());
+    expect(result).not.toBeNull();
+    expect(result!.cost!.inputTokens).toBe(12345);
+    expect(result!.cost!.outputTokens).toBe(67890);
+    // Fallback cost estimate (no $session line)
+    expect(result!.cost!.estimatedCostUsd).toBeGreaterThan(0);
+  });
+
+  it("handles chat history with only whitespace content", async () => {
+    mockReadFile.mockResolvedValue("   \n  \n  ");
+    expect(await agent.getSessionInfo(makeSession())).toBeNull();
+  });
+
+  it("returns summary with no user message match", async () => {
+    mockReadFile.mockResolvedValue("Some random content without headers\n");
+    const result = await agent.getSessionInfo(makeSession());
+    expect(result).not.toBeNull();
+    expect(result!.summary).toBeNull();
   });
 });
