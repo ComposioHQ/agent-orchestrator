@@ -110,7 +110,7 @@ async function checkAgentCli(name: string, binary: string): Promise<CheckResult>
 
 function checkConfigFile(): CheckResult {
   // Try common config file names
-  const names = ["agent-orchestrator.yaml", "agent-orchestrator.yml", "ao.yaml", "ao.yml"];
+  const names = ["agent-orchestrator.yaml", "agent-orchestrator.yml"];
   for (const name of names) {
     const fullPath = resolve(name);
     if (existsSync(fullPath)) {
