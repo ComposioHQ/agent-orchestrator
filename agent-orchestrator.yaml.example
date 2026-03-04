@@ -95,6 +95,30 @@ projects:
 #   warning: [slack]           # auto-fix failed
 #   info: [slack]              # summary, all done
 
+# Pre-PR pipeline — runs checks, tests, and reviews before a PR is opened.
+# When an agent becomes idle with commits but no PR, the pipeline triggers:
+#   1. Automated checks (lint, typecheck, build)
+#   2. Test agent (spawns a tester to write/run tests)
+#   3. Review agent (spawns a reviewer to code-review)
+# On failure, feedback is sent to the coder and the cycle retries.
+# pipeline:
+#   enabled: true
+#   checkCommands:
+#     - "pnpm lint"
+#     - "pnpm typecheck"
+#     - "pnpm build"
+#   testAgent:
+#     agent: claude-code
+#     model: sonnet
+#     maxRetries: 2
+#     # promptFile: .ao-test-prompt.md   # Custom test prompt (optional)
+#   reviewAgent:
+#     agent: claude-code
+#     model: sonnet
+#     maxRetries: 2
+#     # promptFile: .ao-review-prompt.md  # Custom review prompt (optional)
+#   maxIterations: 3
+
 # Reactions — auto-responses to events (these are the defaults)
 # reactions:
 #   ci-failed:

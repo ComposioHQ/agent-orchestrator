@@ -10,7 +10,9 @@
  * Reference: scripts/claude-session-status, scripts/claude-review-check
  */
 
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { promisify } from "node:util";
 import {
   SESSION_STATUS,
   PR_STATE,
@@ -34,8 +36,11 @@ import {
   type ProjectConfig as _ProjectConfig,
   type Tracker,
 } from "./types.js";
+import type { PipelineManager } from "./pipeline-manager.js";
 import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
+
+const execFileAsync = promisify(execFile);
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
@@ -104,6 +109,12 @@ function statusToEventType(_from: SessionStatus | undefined, to: SessionStatus):
   switch (to) {
     case "working":
       return "session.working";
+    case "checking":
+      return "pipeline.checking";
+    case "testing":
+      return "pipeline.testing";
+    case "reviewing":
+      return "pipeline.reviewing";
     case "pr_open":
       return "pr.created";
     case "ci_failed":
@@ -156,6 +167,12 @@ function eventToReactionKey(eventType: EventType): string | null {
       return "pr-opened";
     case "session.working":
       return "agent-working";
+    case "pipeline.checking":
+      return null;
+    case "pipeline.testing":
+      return null;
+    case "pipeline.reviewing":
+      return null;
     case "review.pending":
       return "review-pending";
     case "review.approved":
@@ -171,6 +188,7 @@ export interface LifecycleManagerDeps {
   config: OrchestratorConfig;
   registry: PluginRegistry;
   sessionManager: SessionManager;
+  pipelineManager?: PipelineManager;
 }
 
 /** Track attempt counts for reactions per session. */
@@ -181,7 +199,7 @@ interface ReactionTracker {
 
 /** Create a LifecycleManager instance. */
 export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleManager {
-  const { config, registry, sessionManager } = deps;
+  const { config, registry, sessionManager, pipelineManager } = deps;
 
   const states = new Map<SessionId, SessionStatus>();
   const reactionTrackers = new Map<string, ReactionTracker>(); // "sessionId:reactionKey"
@@ -241,6 +259,50 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           session.status === SESSION_STATUS.NEEDS_INPUT
         ) {
           return session.status;
+        }
+      }
+    }
+
+    // 2b. Pipeline trigger: detect idle coder with commits but no PR.
+    //     This kicks off the pre-PR pipeline (checks → tests → review).
+    const sessionRole = session.metadata["role"];
+    if (
+      pipelineManager &&
+      !session.pr &&
+      session.workspacePath &&
+      sessionRole !== "tester" &&
+      sessionRole !== "reviewer" &&
+      session.metadata["skipPipeline"] !== "true" &&
+      !pipelineManager.isRunning(session.id)
+    ) {
+      // Check if agent is idle/ready (finished its turn)
+      let agentIsIdle = false;
+      if (agent && session.runtimeHandle) {
+        try {
+          const activityState = await agent.getActivityState(session, config.readyThresholdMs);
+          if (activityState) {
+            agentIsIdle =
+              activityState.state === "ready" ||
+              activityState.state === "idle";
+          }
+        } catch {
+          // Probe failed — don't trigger pipeline
+        }
+      }
+
+      if (agentIsIdle) {
+        // Check for commits ahead of the default branch
+        try {
+          const { stdout } = await execFileAsync(
+            "git",
+            ["log", `origin/${project.defaultBranch}..HEAD`, "--oneline", "--max-count=1"],
+            { cwd: session.workspacePath, timeout: 10_000 },
+          );
+          if (stdout.trim().length > 0) {
+            return "checking";
+          }
+        } catch {
+          // git command failed — don't trigger pipeline
         }
       }
     }
@@ -559,6 +621,28 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         if (oldReactionKey) {
           reactionTrackers.delete(`${session.id}:${oldReactionKey}`);
         }
+      }
+
+      // Trigger pipeline when entering "checking" state
+      if (newStatus === "checking" && pipelineManager && !pipelineManager.isRunning(session.id)) {
+        // Fire pipeline in background — don't block the poll loop
+        void pipelineManager
+          .run(session)
+          .then((result) => {
+            if (result.success) {
+              console.log(
+                `[PIPELINE] Approved for ${session.id} after ${result.iteration} iterations`,
+              );
+              sessionManager
+                .send(session.id, "Your code has been reviewed and approved. Open a PR now.")
+                .catch(() => {});
+            } else {
+              console.log(`[PIPELINE] Failed for ${session.id}: ${result.message}`);
+            }
+          })
+          .catch((err: unknown) => {
+            console.error(`[PIPELINE] Error for ${session.id}:`, err);
+          });
       }
 
       // Handle transition: notify humans and/or trigger reactions

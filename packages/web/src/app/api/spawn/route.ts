@@ -28,6 +28,7 @@ export async function POST(request: NextRequest) {
     const session = await sessionManager.spawn({
       projectId: body.projectId as string,
       issueId: (body.issueId as string) ?? undefined,
+      skipPipeline: body.skipPipeline === true ? true : undefined,
     });
 
     // Fire agent-working reaction: move issue to configured tracker state

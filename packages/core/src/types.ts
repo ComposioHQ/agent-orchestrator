@@ -863,6 +863,10 @@ export type EventType =
   | "merge.ready"
   | "merge.conflicts"
   | "merge.completed"
+  // Pipeline
+  | "pipeline.checking"
+  | "pipeline.testing"
+  | "pipeline.reviewing"
   // Reactions
   | "reaction.triggered"
   | "reaction.escalated"

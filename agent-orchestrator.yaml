@@ -48,6 +48,23 @@ projects:
     agentConfig:
       permissions: skip
 
+# Pre-PR pipeline — disabled by default, enable per-project needs
+# pipeline:
+#   enabled: true
+#   checkCommands:
+#     - "pnpm lint"
+#     - "pnpm typecheck"
+#     - "pnpm build"
+#   testAgent:
+#     agent: claude-code
+#     model: sonnet
+#     maxRetries: 2
+#   reviewAgent:
+#     agent: claude-code
+#     model: sonnet
+#     maxRetries: 2
+#   maxIterations: 3
+
 reactions:
   agent-working:
     auto: true
