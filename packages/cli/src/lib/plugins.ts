@@ -28,12 +28,12 @@ export function getAgent(config: OrchestratorConfig, projectId?: string): Agent 
   return plugin.create();
 }
 
-/** Get an agent by name directly (for fallback/no-config scenarios). */
-export function getAgentByName(name: string): Agent {
+/** Get an agent by name directly (for fallback/no-config scenarios).
+ *  Returns null if the agent plugin is not available in the CLI bundle.
+ */
+export function getAgentByName(name: string): Agent | null {
   const plugin = agentPlugins[name];
-  if (!plugin) {
-    throw new Error(`Unknown agent plugin: ${name}`);
-  }
+  if (!plugin) return null;
   return plugin.create();
 }
 

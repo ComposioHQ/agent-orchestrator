@@ -23,12 +23,15 @@ async function resolveSessionContext(
       const tmuxTarget = session.runtimeHandle?.id ?? sessionName;
       const project = config.projects[session.projectId];
       const agentName = project?.agent ?? config.defaults.agent;
-      return { tmuxTarget, agent: getAgentByName(agentName), session };
+      const agent = getAgentByName(agentName);
+      if (agent) return { tmuxTarget, agent, session };
     }
   } catch {
     // No config or session not found — fall back to defaults
   }
-  return { tmuxTarget: sessionName, agent: getAgentByName("claude-code"), session: null };
+  const fallback = getAgentByName("claude-code");
+  if (!fallback) throw new Error("claude-code agent plugin not available");
+  return { tmuxTarget: sessionName, agent: fallback, session: null };
 }
 
 function isActive(agent: Agent, terminalOutput: string): boolean {

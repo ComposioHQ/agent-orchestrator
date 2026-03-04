@@ -56,18 +56,18 @@ describe("getAgent", () => {
 
 describe("getAgentByName", () => {
   it("returns agent for claude-code", () => {
-    expect(getAgentByName("claude-code").name).toBe("claude-code");
+    expect(getAgentByName("claude-code")?.name).toBe("claude-code");
   });
 
   it("returns agent for codex", () => {
-    expect(getAgentByName("codex").name).toBe("codex");
+    expect(getAgentByName("codex")?.name).toBe("codex");
   });
 
   it("returns agent for aider", () => {
-    expect(getAgentByName("aider").name).toBe("aider");
+    expect(getAgentByName("aider")?.name).toBe("aider");
   });
 
-  it("throws on unknown name", () => {
-    expect(() => getAgentByName("unknown")).toThrow("Unknown agent plugin: unknown");
+  it("returns null for unknown name", () => {
+    expect(getAgentByName("unknown")).toBeNull();
   });
 });

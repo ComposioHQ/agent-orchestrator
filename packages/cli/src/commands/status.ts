@@ -20,7 +20,7 @@ import {
   reviewDecisionIcon,
   padCol,
 } from "../lib/format.js";
-import { getAgentByName, getSCM } from "../lib/plugins.js";
+import { getAgent, getAgentByName, getSCM } from "../lib/plugins.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 
 interface SessionInfo {
@@ -265,7 +265,7 @@ export function registerStatus(program: Command): void {
         // (fixes #239 BUG-27)
         const infoPromises = projectSessions.map((s) => {
           const sessionAgentName = s.metadata["agent"] ?? defaultAgentName;
-          const agent = getAgentByName(sessionAgentName);
+          const agent = getAgentByName(sessionAgentName) ?? getAgent(config, projectId);
           return gatherSessionInfo(s, agent, scm, config);
         });
         const sessionInfos = await Promise.all(infoPromises);
@@ -334,7 +334,7 @@ async function showFallbackStatus(): Promise<void> {
         lastActivityAt: new Date(),
         metadata: {},
       };
-      const introspection = await agent.getSessionInfo(sessionObj);
+      const introspection = agent ? await agent.getSessionInfo(sessionObj) : null;
       if (introspection?.summary) {
         console.log(`     ${chalk.dim("Claude:")} ${introspection.summary.slice(0, 65)}`);
       }
