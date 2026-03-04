@@ -67,9 +67,10 @@ export function PRStatus({ pr }: PRStatusProps) {
 
 interface PRTableRowProps {
   pr: DashboardPR;
+  onAdopt?: (prNumber: number, prUrl: string, branch: string) => void;
 }
 
-export function PRTableRow({ pr }: PRTableRowProps) {
+export function PRTableRow({ pr, onAdopt }: PRTableRowProps) {
   const sizeLabel = getSizeLabel(pr.additions, pr.deletions);
   const rateLimited = isPRRateLimited(pr);
 
@@ -124,6 +125,17 @@ export function PRTableRow({ pr }: PRTableRowProps) {
         className={`px-3 py-2.5 text-center text-sm font-bold ${pr.unresolvedThreads > 0 ? "text-[var(--color-accent-red)]" : "text-[var(--color-border-default)]"}`}
       >
         {pr.unresolvedThreads}
+      </td>
+      <td className="px-3 py-2.5 text-right">
+        {onAdopt && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onAdopt(pr.number, pr.url, pr.branch); }}
+            className="rounded px-1.5 py-0.5 text-[10px] font-semibold text-[var(--color-accent)] transition-colors hover:bg-[rgba(88,166,255,0.1)]"
+            title={`Adopt PR #${pr.number}`}
+          >
+            Adopt
+          </button>
+        )}
       </td>
     </tr>
   );

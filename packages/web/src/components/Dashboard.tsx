@@ -23,6 +23,8 @@ import { CommandPalette } from "./CommandPalette";
 import { SpawnDialog } from "./SpawnDialog";
 import { ViewToggle } from "./ViewToggle";
 import { SessionRow } from "./SessionRow";
+import { IssueQueue } from "./IssueQueue";
+import type { DashboardIssue } from "@/app/api/issues/route";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
 import { useCommandPalette } from "@/hooks/useCommandPalette";
 import { useKeyboardNavigation } from "@/hooks/useKeyboardNavigation";
@@ -33,11 +35,12 @@ interface DashboardProps {
   orchestratorId?: string | null;
   projectName?: string;
   extraPRs?: DashboardPR[];
+  issues?: DashboardIssue[];
 }
 
 const BOARD_LEVELS: AttentionLevel[] = ["merge", "respond", "review", "pending", "working", "done"];
 
-export function Dashboard({ initialSessions, stats: _stats, orchestratorId, projectName, extraPRs }: DashboardProps) {
+export function Dashboard({ initialSessions, stats: _stats, orchestratorId, projectName, extraPRs, issues = [] }: DashboardProps) {
   const router = useRouter();
   const sessions = useSessionEvents(initialSessions);
   const [rateLimitDismissed, setRateLimitDismissed] = useState(false);
@@ -78,10 +81,12 @@ export function Dashboard({ initialSessions, stats: _stats, orchestratorId, proj
   }, [grouped]);
 
   // ── Open PRs for table ─────────────────────────────────────────────
-  const openPRs = useMemo(() => {
+  const { openPRs, unlinkedPRKeys } = useMemo(() => {
     const sessionPRs = sessions
       .filter((s): s is DashboardSession & { pr: DashboardPR } => s.pr?.state === "open")
       .map((s) => s.pr);
+    // Track which PRs are linked to sessions
+    const linkedKeys = new Set(sessionPRs.map((pr) => `${pr.owner}/${pr.repo}#${pr.number}`));
     const all = [...sessionPRs, ...(extraPRs ?? [])];
     // Deduplicate by number+repo, keep only open PRs
     const seen = new Set<string>();
@@ -92,7 +97,16 @@ export function Dashboard({ initialSessions, stats: _stats, orchestratorId, proj
       seen.add(key);
       return true;
     });
-    return unique.sort((a, b) => mergeScore(a) - mergeScore(b));
+    // Unlinked = in the final list but not linked to any session
+    const unlinked = new Set(
+      unique
+        .map((pr) => `${pr.owner}/${pr.repo}#${pr.number}`)
+        .filter((key) => !linkedKeys.has(key)),
+    );
+    return {
+      openPRs: unique.sort((a, b) => mergeScore(a) - mergeScore(b)),
+      unlinkedPRKeys: unlinked,
+    };
   }, [sessions, extraPRs]);
 
   // ── Actions ────────────────────────────────────────────────────────
@@ -124,6 +138,17 @@ export function Dashboard({ initialSessions, stats: _stats, orchestratorId, proj
     }
   };
 
+  const handleAssign = async (issueId: string) => {
+    const res = await fetch(`/api/issues/${encodeURIComponent(issueId)}/assign`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId: undefined }),
+    });
+    if (!res.ok) {
+      console.error(`Failed to assign issue ${issueId}:`, await res.text());
+    }
+  };
+
   const handleRestore = async (sessionId: string) => {
     if (!confirm(`Restore session ${sessionId}?`)) return;
     const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/restore`, {
@@ -132,6 +157,19 @@ export function Dashboard({ initialSessions, stats: _stats, orchestratorId, proj
     if (!res.ok) {
       console.error(`Failed to restore ${sessionId}:`, await res.text());
     }
+  };
+
+  const handleAdopt = async (prNumber: number, prUrl: string, branch: string) => {
+    const res = await fetch(`/api/prs/${prNumber}/adopt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prUrl, branch }),
+    });
+    if (!res.ok) {
+      console.error(`Failed to adopt PR #${prNumber}:`, await res.text());
+      return;
+    }
+    router.refresh();
   };
 
   // ── Keyboard navigation ────────────────────────────────────────────
@@ -177,6 +215,13 @@ export function Dashboard({ initialSessions, stats: _stats, orchestratorId, proj
         section: "actions",
         icon: "+",
         action: () => setSpawnOpen(true),
+      },
+      {
+        id: "issues",
+        label: "Issues",
+        section: "navigation",
+        icon: "\u2630",
+        action: () => router.push("/issues"),
       },
       {
         id: "settings",
@@ -311,6 +356,13 @@ export function Dashboard({ initialSessions, stats: _stats, orchestratorId, proj
           onFilterStage={setPipelineFilter}
         />
       </div>
+
+      {/* ── Zone 2b: Issue Queue ─────────────────────────────────── */}
+      {issues.length > 0 && (
+        <div className="px-6 pt-4 sm:px-8">
+          <IssueQueue issues={issues} onAssign={handleAssign} />
+        </div>
+      )}
 
       {/* ── Rate limit notice ─────────────────────────────────────── */}
       {anyRateLimited && !rateLimitDismissed && (
@@ -460,12 +512,20 @@ export function Dashboard({ initialSessions, stats: _stats, orchestratorId, proj
                     <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
                       Unresolved
                     </th>
+                    <th className="w-[60px] px-3 py-2" />
                   </tr>
                 </thead>
                 <tbody>
-                  {openPRs.map((pr) => (
-                    <PRTableRow key={`${pr.owner}/${pr.repo}#${pr.number}`} pr={pr} />
-                  ))}
+                  {openPRs.map((pr) => {
+                    const prKey = `${pr.owner}/${pr.repo}#${pr.number}`;
+                    return (
+                      <PRTableRow
+                        key={prKey}
+                        pr={pr}
+                        onAdopt={unlinkedPRKeys.has(prKey) ? handleAdopt : undefined}
+                      />
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
