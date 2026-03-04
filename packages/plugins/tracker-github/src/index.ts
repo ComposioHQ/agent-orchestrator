@@ -61,7 +61,7 @@ function createGitHubTracker(): Tracker {
         "--repo",
         project.repo,
         "--json",
-        "number,title,body,url,state,stateReason,labels,assignees",
+        "number,title,body,url,state,labels,assignees",
       ]);
 
       const data: {
@@ -70,7 +70,7 @@ function createGitHubTracker(): Tracker {
         body: string;
         url: string;
         state: string;
-        stateReason: string | null;
+        stateReason?: string | null;
         labels: Array<{ name: string }>;
         assignees: Array<{ login: string }>;
       } = JSON.parse(raw);
@@ -119,8 +119,9 @@ function createGitHubTracker(): Tracker {
     },
 
     branchName(identifier: string, _project: ProjectConfig): string {
-      const num = identifier.replace(/^#/, "");
-      return `feat/issue-${num}`;
+      const urlMatch = identifier.match(/\/issues\/(\d+)/);
+      const num = urlMatch ? urlMatch[1] : identifier.replace(/^#/, "");
+      return `feat/agent-${num}`;
     },
 
     async generatePrompt(identifier: string, project: ProjectConfig): Promise<string> {
@@ -154,7 +155,7 @@ function createGitHubTracker(): Tracker {
         "--repo",
         project.repo,
         "--json",
-        "number,title,body,url,state,stateReason,labels,assignees",
+        "number,title,body,url,state,labels,assignees",
         "--limit",
         String(filters.limit ?? 30),
       ];
@@ -182,7 +183,7 @@ function createGitHubTracker(): Tracker {
         body: string;
         url: string;
         state: string;
-        stateReason: string | null;
+        stateReason?: string | null;
         labels: Array<{ name: string }>;
         assignees: Array<{ login: string }>;
       }> = JSON.parse(raw);

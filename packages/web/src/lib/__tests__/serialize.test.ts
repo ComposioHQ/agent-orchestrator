@@ -590,7 +590,7 @@ describe("enrichSessionIssueTitle", () => {
       isCompleted: vi.fn().mockResolvedValue(false),
       issueUrl: vi.fn().mockReturnValue("https://github.com/test/repo/issues/42"),
       issueLabel: vi.fn().mockReturnValue("#42"),
-      branchName: vi.fn().mockReturnValue("feat/issue-42"),
+      branchName: vi.fn().mockReturnValue("feat/agent-42"),
       generatePrompt: vi.fn().mockResolvedValue("prompt"),
     };
   }
@@ -732,7 +732,7 @@ describe("enrichSessionsMetadata", () => {
       isCompleted: vi.fn().mockResolvedValue(false),
       issueUrl: vi.fn().mockReturnValue(`${urlBase}-default`),
       issueLabel: vi.fn().mockReturnValue("#42"),
-      branchName: vi.fn().mockReturnValue("feat/issue-42"),
+      branchName: vi.fn().mockReturnValue("feat/agent-42"),
       generatePrompt: vi.fn().mockResolvedValue("prompt"),
     };
   }

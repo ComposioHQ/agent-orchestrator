@@ -138,7 +138,7 @@ describe("getSessionTitle", () => {
       summary: "You are working on GitHub issue #42: Add authentication to API...",
       summaryIsFallback: true,
       issueTitle: "Add authentication to API",
-      branch: "feat/issue-42",
+      branch: "feat/agent-42",
     });
     expect(getSessionTitle(session)).toBe("Add authentication to API");
   });
@@ -148,7 +148,7 @@ describe("getSessionTitle", () => {
       summary: "You are working on GitHub issue #42: Add authentication to API...",
       summaryIsFallback: true,
       issueTitle: null,
-      branch: "feat/issue-42",
+      branch: "feat/agent-42",
     });
     expect(getSessionTitle(session)).toBe(
       "You are working on GitHub issue #42: Add authentication to API...",

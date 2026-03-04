@@ -164,12 +164,18 @@ describe("tracker-github plugin", () => {
   // ---- branchName --------------------------------------------------------
 
   describe("branchName", () => {
-    it("generates feat/issue-N format", () => {
-      expect(tracker.branchName("42", project)).toBe("feat/issue-42");
+    it("generates feat/agent-N format", () => {
+      expect(tracker.branchName("42", project)).toBe("feat/agent-42");
     });
 
     it("strips # prefix", () => {
-      expect(tracker.branchName("#42", project)).toBe("feat/issue-42");
+      expect(tracker.branchName("#42", project)).toBe("feat/agent-42");
+    });
+
+    it("extracts issue number from full GitHub URL", () => {
+      expect(tracker.branchName("https://github.com/owner/repo/issues/456", project)).toBe(
+        "feat/agent-456",
+      );
     });
   });
 

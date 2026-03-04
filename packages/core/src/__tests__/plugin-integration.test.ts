@@ -78,7 +78,7 @@ const pr: PRInfo = {
   title: "feat: add feature",
   owner: "acme",
   repo: "app",
-  branch: "feat/issue-99",
+  branch: "feat/agent-99",
   baseBranch: "main",
   isDraft: false,
 };
@@ -89,7 +89,7 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     projectId: "my-app",
     status: "working",
     activity: "active",
-    branch: "feat/issue-99",
+    branch: "feat/agent-99",
     issueId: null,
     pr: null,
     workspacePath: "/tmp/test-app",
@@ -150,7 +150,7 @@ beforeEach(() => {
     name: "mock-ws",
     create: vi.fn().mockResolvedValue({
       path: "/tmp/mock-ws/app-1",
-      branch: "feat/issue-99",
+      branch: "feat/agent-99",
       sessionId: "app-1",
       projectId: "my-app",
     }),
@@ -275,12 +275,12 @@ describe("plugin integration", () => {
         issueId: "99",
       });
 
-      // tracker-github.branchName("99", project) → "feat/issue-99"
-      expect(session.branch).toBe("feat/issue-99");
+      // tracker-github.branchName("99", project) → "feat/agent-99"
+      expect(session.branch).toBe("feat/agent-99");
 
       // Workspace should have been called with the tracker-derived branch
       expect(mockWorkspace.create).toHaveBeenCalledWith(
-        expect.objectContaining({ branch: "feat/issue-99" }),
+        expect.objectContaining({ branch: "feat/agent-99" }),
       );
     });
 
@@ -322,7 +322,7 @@ describe("plugin integration", () => {
       // Also seed a regular session with the same closed issue — it SHOULD be killed
       writeMetadata(sessionsDir, "app-1", {
         worktree: "/tmp/mock-ws/app-1",
-        branch: "feat/issue-99",
+        branch: "feat/agent-99",
         status: "working",
         issue: "99",
         project: "my-app",
@@ -347,7 +347,7 @@ describe("plugin integration", () => {
       // Seed a session with an issueId but no PR
       writeMetadata(sessionsDir, "app-1", {
         worktree: "/tmp/mock-ws/app-1",
-        branch: "feat/issue-99",
+        branch: "feat/agent-99",
         status: "working",
         issue: "99",
         project: "my-app",
@@ -374,7 +374,7 @@ describe("plugin integration", () => {
 
       writeMetadata(sessionsDir, "app-1", {
         worktree: "/tmp/mock-ws/app-1",
-        branch: "feat/issue-99",
+        branch: "feat/agent-99",
         status: "working",
         issue: "99",
         project: "my-app",
@@ -401,7 +401,7 @@ describe("plugin integration", () => {
       // and owner/repo stay empty — scm-github receives exactly that.
       writeMetadata(sessionsDir, "app-1", {
         worktree: "/tmp/mock-ws/app-1",
-        branch: "feat/issue-99",
+        branch: "feat/agent-99",
         status: "working",
         pr: pr.url,
         project: "my-app",
@@ -428,7 +428,7 @@ describe("plugin integration", () => {
 
       writeMetadata(sessionsDir, "app-1", {
         worktree: "/tmp/mock-ws/app-1",
-        branch: "feat/issue-99",
+        branch: "feat/agent-99",
         status: "working",
         pr: pr.url,
         project: "my-app",
@@ -459,7 +459,7 @@ describe("plugin integration", () => {
 
       writeMetadata(sessionsDir, session.id, {
         worktree: session.workspacePath ?? "/tmp/test-app",
-        branch: session.branch ?? "feat/issue-99",
+        branch: session.branch ?? "feat/agent-99",
         status: session.status,
         project: session.projectId,
         ...(session.pr ? { pr: JSON.stringify(session.pr) } : {}),
