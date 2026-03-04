@@ -175,15 +175,15 @@ async function parseAiderSessionInfo(workspacePath: string): Promise<AgentSessio
   let totalCostUsd = 0;
   const tokenLines = truncatedContent.match(/^Tokens:.*$/gm) ?? [];
   for (const line of tokenLines) {
-    const sentMatch = line.match(/([\d,.]+)k?\s+sent/i);
-    const recvMatch = line.match(/([\d,.]+)k?\s+received/i);
+    const sentMatch = line.match(/([\d,.]+)(k)?\s+sent/i);
+    const recvMatch = line.match(/([\d,.]+)(k)?\s+received/i);
     if (sentMatch) {
       const val = parseFloat(sentMatch[1].replace(/,/g, ""));
-      totalInputTokens += line.includes("k sent") ? val * 1000 : val;
+      totalInputTokens += sentMatch[2] ? val * 1000 : val;
     }
     if (recvMatch) {
       const val = parseFloat(recvMatch[1].replace(/,/g, ""));
-      totalOutputTokens += line.includes("k received") ? val * 1000 : val;
+      totalOutputTokens += recvMatch[2] ? val * 1000 : val;
     }
 
     // Extract session cost if available
