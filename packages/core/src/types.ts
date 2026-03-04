@@ -187,7 +187,7 @@ export interface SessionSpawnConfig {
   /** Use an existing workspace instead of creating one */
   workspacePath?: string;
   /** Role for this session */
-  role?: "coder" | "tester" | "reviewer";
+  role?: "coder" | "tester" | "reviewer" | "pipeline";
   /** Parent session ID for pipeline agents */
   parentSession?: string;
   /** Skip pipeline stages */
@@ -884,6 +884,8 @@ export type EventType =
   | "pipeline.checking"
   | "pipeline.testing"
   | "pipeline.reviewing"
+  // Issue lifecycle
+  | "issue.failed"
   // Reactions
   | "reaction.triggered"
   | "reaction.escalated"

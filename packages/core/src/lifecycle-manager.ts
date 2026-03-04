@@ -682,6 +682,47 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         updateMetadata(sessionsDir, session.id, { status: newStatus });
       }
 
+      // Failure guard: when a session with an issueId dies, swap agent-ready → agent-failed
+      // This prevents infinite respawn loops: the issue loses the agent label and gains failed.
+      const terminalStates: SessionStatus[] = ["stuck", "errored", "killed"];
+      if (terminalStates.includes(newStatus) && session.issueId && config.issueQueue) {
+        const { agentLabel, failedLabel } = config.issueQueue;
+        const project = config.projects[session.projectId];
+        if (project) {
+          const trackerName = project.tracker?.plugin ?? "linear";
+          const issueTracker = registry.get<Tracker>("tracker", trackerName);
+          if (issueTracker?.updateIssue) {
+            try {
+              await issueTracker.updateIssue(
+                session.issueId,
+                { labels: [failedLabel], removeLabels: [agentLabel] },
+                project,
+              );
+            } catch {
+              // Label swap failed — log but don't block lifecycle
+              console.error(
+                `[LIFECYCLE] Failed to swap labels on issue ${session.issueId} for session ${session.id}`,
+              );
+            }
+          }
+
+          // Fire issue.failed event and notify
+          const failEvent = createEvent("issue.failed", {
+            sessionId: session.id,
+            projectId: session.projectId,
+            message: `Session ${session.id} died (${newStatus}) — issue ${session.issueId} marked as failed`,
+            priority: "warning",
+            data: {
+              issueId: session.issueId,
+              terminalStatus: newStatus,
+              agentLabel,
+              failedLabel,
+            },
+          });
+          await notifyHuman(failEvent, "warning");
+        }
+      }
+
       // Reset allCompleteEmitted when any session becomes active again
       if (newStatus !== "merged" && newStatus !== "killed") {
         allCompleteEmitted = false;
