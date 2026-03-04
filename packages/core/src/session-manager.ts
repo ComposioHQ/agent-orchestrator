@@ -898,13 +898,18 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
             if (!alive) {
               // Guard: if session has an open PR, skip cleanup
               let hasOpenPR = false;
-              if (session.pr && plugins.scm) {
-                try {
-                  const prState = await plugins.scm.getPRState(session.pr);
-                  if (prState === PR_STATE.OPEN) hasOpenPR = true;
-                } catch {
-                  // Can't verify PR state — be conservative, assume open
+              if (session.pr) {
+                if (!plugins.scm) {
+                  // SCM plugin unavailable — be conservative, assume PR is open
                   hasOpenPR = true;
+                } else {
+                  try {
+                    const prState = await plugins.scm.getPRState(session.pr);
+                    if (prState === PR_STATE.OPEN) hasOpenPR = true;
+                  } catch {
+                    // Can't verify PR state — be conservative, assume open
+                    hasOpenPR = true;
+                  }
                 }
               }
               if (!hasOpenPR) shouldKill = true;
