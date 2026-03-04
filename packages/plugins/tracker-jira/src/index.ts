@@ -250,7 +250,8 @@ function createJiraTracker(): Tracker {
     async listIssues(filters: IssueFilters, project: ProjectConfig): Promise<Issue[]> {
       const config = getJiraConfig();
       const projectKey = getProjectKey(project);
-      const jqlParts: string[] = [`project = "${projectKey}"`];
+      const safeProjectKey = projectKey.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      const jqlParts: string[] = [`project = "${safeProjectKey}"`];
 
       if (filters.state === "closed") {
         jqlParts.push("statusCategory = Done");
