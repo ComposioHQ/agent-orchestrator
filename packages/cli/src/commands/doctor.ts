@@ -199,8 +199,11 @@ export function registerDoctor(program: Command): void {
 
       // Core prerequisites
       checks.push(await checkNodeVersion());
-      checks.push(await checkGit());
-      checks.push(await checkGitConfig());
+      const gitResult = await checkGit();
+      checks.push(gitResult);
+      if (gitResult.status !== "fail") {
+        checks.push(await checkGitConfig());
+      }
       checks.push(await checkTmux());
       checks.push(await checkGhCli());
 
@@ -213,8 +216,11 @@ export function registerDoctor(program: Command): void {
       }
 
       // Configuration
-      checks.push(checkConfigFile());
-      checks.push(await checkConfigValid());
+      const configFileResult = checkConfigFile();
+      checks.push(configFileResult);
+      if (configFileResult.status !== "warn") {
+        checks.push(await checkConfigValid());
+      }
       checks.push(checkDataDir());
 
       // Display results
