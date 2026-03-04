@@ -22,7 +22,7 @@ import { request } from "node:https";
 import type { ProjectConfig } from "@composio/ao-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import trackerLinear from "@composio/ao-plugin-tracker-linear";
-import { pollUntilEqual } from "./helpers/polling.js";
+import { pollUntil, pollUntilEqual } from "./helpers/polling.js";
 
 // ---------------------------------------------------------------------------
 // Prerequisites
@@ -219,9 +219,15 @@ describe.skipIf(!canRun)("tracker-linear (integration)", () => {
   });
 
   it("listIssues includes the created issue", async () => {
-    const issues = await tracker.listIssues!({ state: "open", limit: 50 }, project);
+    // Linear API has eventual consistency — poll until the issue appears in list results
+    const found = await pollUntil(
+      async () => {
+        const issues = await tracker.listIssues!({ state: "open", limit: 50 }, project);
+        return issues.find((i: { id: string }) => i.id === issueIdentifier);
+      },
+      { timeoutMs: 5_000, intervalMs: 500 },
+    );
 
-    const found = issues.find((i: { id: string }) => i.id === issueIdentifier);
     expect(found).toBeDefined();
     expect(found!.title).toContain("[AO Integration Test]");
   });

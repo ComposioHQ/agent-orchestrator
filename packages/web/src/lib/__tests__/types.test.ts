@@ -5,10 +5,12 @@
 import { describe, it, expect } from "vitest";
 import {
   getAttentionLevel,
+  isPRMergeReady,
   TERMINAL_STATUSES,
   TERMINAL_ACTIVITIES,
   NON_RESTORABLE_STATUSES,
   type DashboardSession,
+  type DashboardPR,
 } from "../types";
 import {
   TERMINAL_STATUSES as CORE_TERMINAL_STATUSES,
@@ -470,6 +472,105 @@ describe("getAttentionLevel", () => {
       });
       expect(getAttentionLevel(session)).toBe("working");
     });
+  });
+});
+
+// Helper to create a minimal DashboardPR for testing
+function createPR(overrides?: Partial<DashboardPR>): DashboardPR {
+  return {
+    number: 1,
+    url: "https://github.com/test/repo/pull/1",
+    title: "Test PR",
+    owner: "test",
+    repo: "repo",
+    branch: "feat/test",
+    baseBranch: "main",
+    isDraft: false,
+    state: "open",
+    additions: 10,
+    deletions: 5,
+    ciStatus: "passing",
+    ciChecks: [],
+    reviewDecision: "approved",
+    mergeability: {
+      mergeable: true,
+      ciPassing: true,
+      approved: true,
+      noConflicts: true,
+      blockers: [],
+    },
+    unresolvedThreads: 0,
+    unresolvedComments: [],
+    ...overrides,
+  };
+}
+
+describe("isPRMergeReady", () => {
+  it("returns true for open PR with all criteria met", () => {
+    const pr = createPR();
+    expect(isPRMergeReady(pr)).toBe(true);
+  });
+
+  it("returns false for merged PR even with all criteria met", () => {
+    const pr = createPR({ state: "merged" });
+    expect(isPRMergeReady(pr)).toBe(false);
+  });
+
+  it("returns false for closed PR even with all criteria met", () => {
+    const pr = createPR({ state: "closed" });
+    expect(isPRMergeReady(pr)).toBe(false);
+  });
+
+  it("returns false for open PR that is not mergeable", () => {
+    const pr = createPR({
+      mergeability: {
+        mergeable: false,
+        ciPassing: true,
+        approved: true,
+        noConflicts: true,
+        blockers: ["Not mergeable"],
+      },
+    });
+    expect(isPRMergeReady(pr)).toBe(false);
+  });
+
+  it("returns false for open PR with failing CI", () => {
+    const pr = createPR({
+      mergeability: {
+        mergeable: true,
+        ciPassing: false,
+        approved: true,
+        noConflicts: true,
+        blockers: [],
+      },
+    });
+    expect(isPRMergeReady(pr)).toBe(false);
+  });
+
+  it("returns false for open PR that is not approved", () => {
+    const pr = createPR({
+      mergeability: {
+        mergeable: true,
+        ciPassing: true,
+        approved: false,
+        noConflicts: true,
+        blockers: [],
+      },
+    });
+    expect(isPRMergeReady(pr)).toBe(false);
+  });
+
+  it("returns false for open PR with merge conflicts", () => {
+    const pr = createPR({
+      mergeability: {
+        mergeable: true,
+        ciPassing: true,
+        approved: true,
+        noConflicts: false,
+        blockers: [],
+      },
+    });
+    expect(isPRMergeReady(pr)).toBe(false);
   });
 });
 

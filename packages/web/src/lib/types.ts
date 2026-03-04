@@ -158,6 +158,20 @@ export function isPRRateLimited(pr: DashboardPR): boolean {
   return pr.mergeability.blockers.includes("API rate limited or unavailable");
 }
 
+/**
+ * Returns true when a PR is open and all merge criteria are met.
+ * Does NOT return true for merged or closed PRs — those are already done.
+ */
+export function isPRMergeReady(pr: DashboardPR): boolean {
+  return (
+    pr.state === "open" &&
+    pr.mergeability.mergeable &&
+    pr.mergeability.ciPassing &&
+    pr.mergeability.approved &&
+    pr.mergeability.noConflicts
+  );
+}
+
 /** Determines which attention zone a session belongs to */
 export function getAttentionLevel(session: DashboardSession): AttentionLevel {
   // ── Done: terminal states ─────────────────────────────────────────
