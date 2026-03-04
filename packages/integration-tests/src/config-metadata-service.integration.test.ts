@@ -167,6 +167,33 @@ describe("config → metadata service integration (real filesystem)", () => {
     expect(readMetadata(sessionsDir, "lifecycle-2")).toBeNull();
   });
 
+  it("readMetadata round-trips OpenCode metadata fields", () => {
+    const sessionsDir = getSessionsDir(configPath, repoPath);
+    mkdirSync(sessionsDir, { recursive: true });
+
+    writeMetadata(sessionsDir, "opencode-meta-1", {
+      worktree: join(tmpDir, "worktrees", "opencode-meta-1"),
+      branch: "feat/OPENCODE-1",
+      status: "working",
+      project: "test-project",
+      opencodeMode: "sdk",
+      opencodeServerUrl: "http://127.0.0.1:4567",
+      opencodeServerPid: 4242,
+      opencodeSessionId: "ses_123",
+      terminalMode: "opencode-attach",
+    });
+
+    const metadata = readMetadata(sessionsDir, "opencode-meta-1");
+    expect(metadata).not.toBeNull();
+    expect(metadata?.opencodeMode).toBe("sdk");
+    expect(metadata?.opencodeServerUrl).toBe("http://127.0.0.1:4567");
+    expect(metadata?.opencodeServerPid).toBe(4242);
+    expect(metadata?.opencodeSessionId).toBe("ses_123");
+    expect(metadata?.terminalMode).toBe("opencode-attach");
+
+    deleteMetadata(sessionsDir, "opencode-meta-1", false);
+  });
+
   it("origin validation stores and detects repo identity", () => {
     // validateAndStoreOrigin should not throw for a valid repo path
     // (even without a real git remote, it stores path-based identity)

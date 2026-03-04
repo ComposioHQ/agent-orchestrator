@@ -116,6 +116,14 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
     dashboardPort: raw["dashboardPort"] ? Number(raw["dashboardPort"]) : undefined,
     terminalWsPort: raw["terminalWsPort"] ? Number(raw["terminalWsPort"]) : undefined,
     directTerminalWsPort: raw["directTerminalWsPort"] ? Number(raw["directTerminalWsPort"]) : undefined,
+    opencodeMode: raw["opencodeMode"] === "sdk" ? "sdk" : undefined,
+    opencodeServerUrl: raw["opencodeServerUrl"],
+    opencodeServerPid: raw["opencodeServerPid"] ? Number(raw["opencodeServerPid"]) : undefined,
+    opencodeSessionId: raw["opencodeSessionId"],
+    terminalMode:
+      raw["terminalMode"] === "opencode-attach" || raw["terminalMode"] === "tmux"
+        ? raw["terminalMode"]
+        : undefined,
   };
 }
 
