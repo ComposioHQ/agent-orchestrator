@@ -135,6 +135,13 @@ const PipelineConfigSchema = z.object({
   maxIterations: z.number().default(5),
 });
 
+const IssueQueueSchema = z.object({
+  readyState: z.string().default("Todo"),
+  agentLabel: z.string().default("agent-ready"),
+  failedLabel: z.string().default("agent-failed"),
+  maxRetries: z.number().int().min(0).default(1),
+});
+
 const OrchestratorConfigSchema = z.object({
   port: z.number().default(3000),
   terminalPort: z.number().optional(),
@@ -152,6 +159,7 @@ const OrchestratorConfigSchema = z.object({
   }),
   reactions: z.record(ReactionConfigSchema).default({}),
   pipeline: PipelineConfigSchema.optional(),
+  issueQueue: IssueQueueSchema.optional(),
 });
 
 // =============================================================================

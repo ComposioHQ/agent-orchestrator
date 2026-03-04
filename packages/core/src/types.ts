@@ -550,6 +550,18 @@ export interface CreateIssueInput {
   priority?: number;
 }
 
+/** Configuration for the issue triage queue */
+export interface IssueQueueConfig {
+  /** Linear/tracker state name that means "ready for triage" */
+  readyState: string;
+  /** Label that triggers auto-spawn */
+  agentLabel: string;
+  /** Label applied on terminal failure */
+  failedLabel: string;
+  /** Max re-spawns before giving up (default 1 = no retry) */
+  maxRetries: number;
+}
+
 // =============================================================================
 // MCP INPUT SOURCE — Replaces Tracker
 // =============================================================================
@@ -993,6 +1005,9 @@ export interface OrchestratorConfig {
 
   /** Pre-PR pipeline configuration */
   pipeline?: PipelineConfig;
+
+  /** Issue triage queue configuration */
+  issueQueue?: IssueQueueConfig;
 }
 
 export interface DefaultPlugins {
