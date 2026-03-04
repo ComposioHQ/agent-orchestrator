@@ -799,6 +799,20 @@ export interface ReactionResult {
 // CONFIGURATION
 // =============================================================================
 
+/** Configuration for automatic cleanup of merged/stale branches and worktrees */
+export interface CleanupConfig {
+  enabled: boolean;
+  branchPrefix: string;
+  sweepInterval: number;
+}
+
+/** Configuration for backpressure — pausing new work when too much is in-flight */
+export interface BackpressureConfig {
+  enabled: boolean;
+  pauseOnOpenPrs: boolean;
+  pauseOnOpenIssues: boolean;
+}
+
 /** Top-level orchestrator configuration (from agent-orchestrator.yaml) */
 export interface OrchestratorConfig {
   /**
@@ -834,6 +848,12 @@ export interface OrchestratorConfig {
 
   /** Default reaction configs */
   reactions: Record<string, ReactionConfig>;
+
+  /** Cleanup configuration (branch/worktree sweeping) */
+  cleanup: CleanupConfig;
+
+  /** Backpressure configuration (pause when too much in-flight) */
+  backpressure: BackpressureConfig;
 }
 
 export interface DefaultPlugins {

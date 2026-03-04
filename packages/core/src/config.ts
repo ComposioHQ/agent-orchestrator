@@ -88,6 +88,22 @@ const DefaultPluginsSchema = z.object({
   notifiers: z.array(z.string()).default(["composio", "desktop"]),
 });
 
+const CleanupConfigSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    branchPrefix: z.string().default("feat/agent-"),
+    sweepInterval: z.number().positive().default(10),
+  })
+  .default({});
+
+const BackpressureConfigSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    pauseOnOpenPrs: z.boolean().default(true),
+    pauseOnOpenIssues: z.boolean().default(true),
+  })
+  .default({});
+
 const OrchestratorConfigSchema = z.object({
   port: z.number().default(3000),
   terminalPort: z.number().optional(),
@@ -103,6 +119,8 @@ const OrchestratorConfigSchema = z.object({
     info: ["composio"],
   }),
   reactions: z.record(ReactionConfigSchema).default({}),
+  cleanup: CleanupConfigSchema,
+  backpressure: BackpressureConfigSchema,
 });
 
 // =============================================================================
