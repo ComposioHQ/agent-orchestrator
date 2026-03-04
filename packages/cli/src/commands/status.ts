@@ -191,8 +191,10 @@ export function registerStatus(program: Command): void {
     .command("status")
     .description("Show all sessions with branch, activity, PR, and CI status")
     .option("-p, --project <id>", "Filter by project ID")
+    .option("--all", "Include archived/exited sessions")
+    .option("--search <query>", "Filter sessions by text (branch, PR, issue, summary)")
     .option("--json", "Output as JSON")
-    .action(async (opts: { project?: string; json?: boolean }) => {
+    .action(async (opts: { project?: string; all?: boolean; search?: string; json?: boolean }) => {
       let config: ReturnType<typeof loadConfig>;
       try {
         config = loadConfig();
@@ -210,7 +212,30 @@ export function registerStatus(program: Command): void {
 
       // Use session manager to list sessions (metadata-based, not tmux-based)
       const sm = await getSessionManager(config);
-      const sessions = await sm.list(opts.project);
+      let sessions = await sm.list(opts.project);
+
+      // Include archived sessions if --all is set (fixes #138)
+      if (opts.all) {
+        const archived = await sm.listArchived(opts.project);
+        sessions = [...sessions, ...archived];
+      }
+
+      // Filter by search query across metadata fields
+      if (opts.search) {
+        const q = opts.search.toLowerCase();
+        sessions = sessions.filter((s) => {
+          const fields = [
+            s.id,
+            s.branch,
+            s.status,
+            s.issueId,
+            s.projectId,
+            s.metadata["pr"],
+            s.metadata["summary"],
+          ];
+          return fields.some((f) => f?.toLowerCase().includes(q));
+        });
+      }
 
       if (!opts.json) {
         console.log(banner("AGENT ORCHESTRATOR STATUS"));
@@ -283,7 +308,7 @@ export function registerStatus(program: Command): void {
       } else {
         console.log(
           chalk.dim(
-            `  ${totalSessions} active session${totalSessions !== 1 ? "s" : ""} across ${projectIds.length} project${projectIds.length !== 1 ? "s" : ""}`,
+            `  ${totalSessions} session${totalSessions !== 1 ? "s" : ""}${opts.all ? " (including archived)" : ""} across ${projectIds.length} project${projectIds.length !== 1 ? "s" : ""}`,
           ),
         );
         console.log();

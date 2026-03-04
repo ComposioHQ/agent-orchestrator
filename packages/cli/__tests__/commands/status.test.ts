@@ -33,11 +33,13 @@ const {
   mockGetPendingComments: vi.fn(),
   mockSessionManager: {
     list: vi.fn(),
+    listArchived: vi.fn().mockResolvedValue([]),
     kill: vi.fn(),
     cleanup: vi.fn(),
     get: vi.fn(),
     spawn: vi.fn(),
     spawnOrchestrator: vi.fn(),
+    restore: vi.fn(),
     send: vi.fn(),
   },
   sessionsDirRef: { current: "" },
@@ -304,7 +306,7 @@ describe("status command", () => {
     await program.parseAsync(["node", "test", "status"]);
 
     const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
-    expect(output).toContain("1 active session");
+    expect(output).toContain("1 session");
   });
 
   it("shows plural for multiple sessions", async () => {
@@ -321,7 +323,7 @@ describe("status command", () => {
     await program.parseAsync(["node", "test", "status"]);
 
     const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
-    expect(output).toContain("2 active sessions");
+    expect(output).toContain("2 sessions");
   });
 
   it("prefers live branch over metadata branch", async () => {
