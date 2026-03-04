@@ -393,6 +393,21 @@ describe("tracker-jira plugin", () => {
       });
     });
 
+    it("throws when no matching transition is found", async () => {
+      mockFetch.mockResolvedValueOnce(
+        mockResponse({
+          transitions: [
+            { id: "21", name: "In Progress", to: { statusCategory: { key: "indeterminate" } } },
+          ],
+        }),
+      );
+
+      const tracker = create();
+      await expect(
+        tracker.updateIssue!("PROJ-42", { state: "closed" }, makeProject()),
+      ).rejects.toThrow(/No Jira transition found/);
+    });
+
     it("adds labels to issue", async () => {
       mockFetch.mockResolvedValueOnce(mockResponse(null, 204));
       const tracker = create();
@@ -476,7 +491,7 @@ describe("tracker-jira plugin", () => {
       const [, createInit] = mockFetch.mock.calls[0] as [string, RequestInit];
       const body = JSON.parse(createInit.body as string);
       expect(body.fields.labels).toEqual(["urgent"]);
-      expect(body.fields.assignee).toEqual({ name: "bob" });
+      expect(body.fields.assignee).toEqual({ accountId: "bob" });
     });
   });
 

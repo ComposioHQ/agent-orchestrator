@@ -260,12 +260,15 @@ function createJiraTracker(): Tracker {
       // "all" = no state filter
 
       if (filters.labels && filters.labels.length > 0) {
-        const labelClauses = filters.labels.map((label: string) => `labels = "${label}"`);
+        const labelClauses = filters.labels.map(
+          (label: string) => `labels = "${label.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`,
+        );
         jqlParts.push(`(${labelClauses.join(" OR ")})`);
       }
 
       if (filters.assignee) {
-        jqlParts.push(`assignee = "${filters.assignee}"`);
+        const safeAssignee = filters.assignee.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+        jqlParts.push(`assignee = "${safeAssignee}"`);
       }
 
       const jql = jqlParts.join(" AND ");
@@ -308,6 +311,11 @@ function createJiraTracker(): Tracker {
             method: "POST",
             body: { transition: { id: transition.id } },
           });
+        } else {
+          throw new Error(
+            `No Jira transition found for issue ${identifier} to status category "${targetCategory}". ` +
+            `Available transitions: ${transitionsData.transitions.map((t) => t.name).join(", ") || "none"}`,
+          );
         }
       }
 
@@ -327,7 +335,7 @@ function createJiraTracker(): Tracker {
       if (update.assignee) {
         await jiraFetch(`/issue/${encodeURIComponent(identifier)}`, {
           method: "PUT",
-          body: { fields: { assignee: { name: update.assignee } } },
+          body: { fields: { assignee: { accountId: update.assignee } } },
         });
       }
 
@@ -375,7 +383,7 @@ function createJiraTracker(): Tracker {
       }
 
       if (input.assignee) {
-        fields["assignee"] = { name: input.assignee };
+        fields["assignee"] = { accountId: input.assignee };
       }
 
       const data = (await jiraFetch("/issue", {
