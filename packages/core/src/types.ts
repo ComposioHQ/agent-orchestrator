@@ -551,6 +551,11 @@ export interface SCM {
 
   /** Check if PR is ready to merge */
   getMergeability(pr: PRInfo): Promise<MergeReadiness>;
+
+  // --- Listing ---
+
+  /** List all open PRs on a repo (used by backpressure checks) */
+  listOpenPRs?(project: ProjectConfig): Promise<PRInfo[]>;
 }
 
 // --- PR Types ---

@@ -863,4 +863,89 @@ describe("scm-github plugin", () => {
       expect(result.mergeable).toBe(false);
     });
   });
+
+  // ---- listOpenPRs -------------------------------------------------------
+
+  describe("listOpenPRs", () => {
+    it("has a listOpenPRs method", () => {
+      expect(typeof scm.listOpenPRs).toBe("function");
+    });
+
+    it("returns PRInfo[] for open PRs", async () => {
+      mockGh([
+        {
+          number: 10,
+          url: "https://github.com/acme/repo/pull/10",
+          title: "feat: first PR",
+          headRefName: "feat/first",
+          baseRefName: "main",
+          isDraft: false,
+        },
+        {
+          number: 11,
+          url: "https://github.com/acme/repo/pull/11",
+          title: "fix: second PR",
+          headRefName: "fix/second",
+          baseRefName: "main",
+          isDraft: true,
+        },
+      ]);
+
+      const result = await scm.listOpenPRs!(project);
+      expect(result).toHaveLength(2);
+      expect(result[0]).toEqual({
+        number: 10,
+        url: "https://github.com/acme/repo/pull/10",
+        title: "feat: first PR",
+        owner: "acme",
+        repo: "repo",
+        branch: "feat/first",
+        baseBranch: "main",
+        isDraft: false,
+      });
+      expect(result[1]).toMatchObject({
+        number: 11,
+        branch: "fix/second",
+        isDraft: true,
+      });
+    });
+
+    it("returns empty array when no open PRs", async () => {
+      mockGh([]);
+      const result = await scm.listOpenPRs!(project);
+      expect(result).toEqual([]);
+    });
+
+    it("returns empty array when gh returns empty string", async () => {
+      ghMock.mockResolvedValueOnce({ stdout: "  " });
+      const result = await scm.listOpenPRs!(project);
+      expect(result).toEqual([]);
+    });
+
+    it("throws on invalid repo format", async () => {
+      const badProject = { ...project, repo: "no-slash" };
+      await expect(scm.listOpenPRs!(badProject)).rejects.toThrow("Invalid repo format");
+    });
+
+    it("passes correct args to gh CLI", async () => {
+      mockGh([]);
+      await scm.listOpenPRs!(project);
+      expect(ghMock).toHaveBeenCalledWith(
+        "gh",
+        [
+          "pr",
+          "list",
+          "--repo",
+          "acme/repo",
+          "--state",
+          "open",
+          "--json",
+          "number,url,title,headRefName,baseRefName,isDraft",
+          "--limit",
+          "100",
+        ],
+        expect.any(Object),
+      );
+    });
+  });
 });
