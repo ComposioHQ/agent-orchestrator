@@ -8,6 +8,11 @@ import type { DashboardSession, SSESnapshotEvent } from "@/lib/types";
  * Subscribes to /api/events and patches the session's activity, status,
  * and lastActivityAt in real-time from snapshot events.
  *
+ * NOTE: This intentionally opens its own EventSource rather than reusing
+ * useSessionEvents, which is designed for the dashboard (manages an array
+ * of all sessions via useReducer). This hook is scoped to a single session
+ * and uses a simple callback, keeping the session detail page independent.
+ *
  * Returns nothing — mutates the session via the provided callback.
  */
 export function useSessionActivitySSE(

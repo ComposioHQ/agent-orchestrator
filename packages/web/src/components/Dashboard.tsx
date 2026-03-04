@@ -95,6 +95,9 @@ export function Dashboard({ initialSessions, stats, orchestratorId, projectName 
   useEffect(() => {
     const base = projectName ? `${projectName} | ao` : "ao";
     document.title = needsAttention > 0 ? `(${needsAttention}) ${base}` : base;
+    return () => {
+      document.title = "ao";
+    };
   }, [needsAttention, projectName]);
 
   const hasKanbanSessions = KANBAN_LEVELS.some((l) => grouped[l].length > 0);
