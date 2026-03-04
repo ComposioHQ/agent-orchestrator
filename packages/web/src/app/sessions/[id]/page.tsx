@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import { SessionDetail } from "@/components/SessionDetail";
 import { type DashboardSession, getAttentionLevel, type AttentionLevel } from "@/lib/types";
@@ -46,6 +46,7 @@ export default function SessionPage() {
   const isOrchestrator = id.endsWith("-orchestrator");
 
   const [session, setSession] = useState<DashboardSession | null>(null);
+  const sessionRef = useRef<DashboardSession | null>(null);
   const [zoneCounts, setZoneCounts] = useState<ZoneCounts | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -70,11 +71,16 @@ export default function SessionPage() {
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as DashboardSession;
+      sessionRef.current = data;
       setSession(data);
       setError(null);
     } catch (err) {
       console.error("Failed to fetch session:", err);
-      setError("Failed to load session");
+      // Only show error if we don't already have session data from Phase 1 (meta).
+      // When Phase 1 succeeded, keep showing the existing session instead of an error.
+      if (!sessionRef.current) {
+        setError("Failed to load session");
+      }
     } finally {
       setLoading(false);
     }
@@ -109,7 +115,10 @@ export default function SessionPage() {
         const res = await fetch(`/api/sessions/${encodeURIComponent(id)}/meta`);
         if (res.ok) {
           const meta = (await res.json()) as DashboardSession;
-          setSession((prev) => prev ?? meta);
+          setSession((prev) => {
+            if (!prev) sessionRef.current = meta;
+            return prev ?? meta;
+          });
           setLoading(false);
         }
       } catch {
