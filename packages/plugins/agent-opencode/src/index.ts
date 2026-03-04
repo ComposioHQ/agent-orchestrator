@@ -15,6 +15,69 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 // =============================================================================
+// Terminal Output Patterns for detectActivity
+// =============================================================================
+
+/** Classify OpenCode's activity state from terminal output (pure, sync).
+ *
+ *  Priority order (first match wins):
+ *  1. Empty output → idle
+ *  2. Last line is a shell/input prompt → idle
+ *  3. Tail contains approval/confirmation prompts → waiting_input
+ *  4. Tail contains error/blocked indicators → blocked
+ *  5. Completion indicators on last line → idle
+ *  6. Non-empty output → active (default)
+ */
+function classifyOpenCodeTerminalOutput(terminalOutput: string): ActivityState {
+  // 1. Empty output — can't determine state
+  if (!terminalOutput.trim()) return "idle";
+
+  const lines = terminalOutput.trim().split("\n");
+  const lastLine = lines[lines.length - 1]?.trim() ?? "";
+
+  // 2. Shell/input prompt on the last line → idle
+  if (/^[❯>$#]\s*$/.test(lastLine)) return "idle";
+
+  // 3. Check the bottom of the buffer for approval/confirmation prompts.
+  const tail = lines.slice(-5).join("\n");
+
+  // OpenCode confirmation prompts
+  if (/\(y\)es.*\(n\)o/i.test(tail)) return "waiting_input";
+  if (/\(Y\/n\)/i.test(tail)) return "waiting_input";
+  if (/\(y\/n\)/i.test(tail)) return "waiting_input";
+  if (/approve\?/i.test(tail)) return "waiting_input";
+  if (/allow.*tool/i.test(tail) && /\?/.test(tail)) return "waiting_input";
+  if (/confirm\?/i.test(tail)) return "waiting_input";
+  if (/do you want to proceed\?/i.test(tail)) return "waiting_input";
+  if (/press enter to confirm/i.test(tail)) return "waiting_input";
+  if (/accept changes\?/i.test(tail)) return "waiting_input";
+  if (/apply.*changes?\?/i.test(tail)) return "waiting_input";
+
+  // 4. Check for blocked/error indicators in the tail
+  if (/rate limit/i.test(tail)) return "blocked";
+  if (/error.*authentication/i.test(tail)) return "blocked";
+  if (/api key.*invalid/i.test(tail)) return "blocked";
+  if (/token limit exceeded/i.test(tail)) return "blocked";
+  if (/context.*window.*exceed/i.test(tail)) return "blocked";
+  if (/connection refused/i.test(tail)) return "blocked";
+  if (/quota exceeded/i.test(tail)) return "blocked";
+  if (/429 Too Many Requests/i.test(tail)) return "blocked";
+  if (/retrying in/i.test(tail) && /seconds?/i.test(tail)) return "blocked";
+  if (/model.*not (found|available)/i.test(tail)) return "blocked";
+  if (/unauthorized/i.test(tail)) return "blocked";
+  if (/ECONNREFUSED/i.test(tail)) return "blocked";
+
+  // 5. Completion/done indicators on the last line → idle
+  if (/^done\.?$/i.test(lastLine)) return "idle";
+  if (/task completed/i.test(lastLine)) return "idle";
+  if (/session ended/i.test(lastLine)) return "idle";
+  if (/exiting/i.test(lastLine)) return "idle";
+
+  // 6. Default to active — OpenCode is processing.
+  return "active";
+}
+
+// =============================================================================
 // Plugin Manifest
 // =============================================================================
 
@@ -59,9 +122,7 @@ function createOpenCodeAgent(): Agent {
     },
 
     detectActivity(terminalOutput: string): ActivityState {
-      if (!terminalOutput.trim()) return "idle";
-      // OpenCode doesn't have rich terminal output patterns yet
-      return "active";
+      return classifyOpenCodeTerminalOutput(terminalOutput);
     },
 
     async getActivityState(session: Session, _readyThresholdMs?: number): Promise<ActivityDetection | null> {
