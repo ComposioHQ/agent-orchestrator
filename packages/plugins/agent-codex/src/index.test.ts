@@ -541,6 +541,105 @@ describe("detectActivity", () => {
     ).toBe("waiting_input");
   });
 
+  // -- Additional waiting_input patterns --
+  it("returns waiting_input for 'Apply patch?' prompt", () => {
+    expect(agent.detectActivity("Proposed changes:\n  + new line\nApply patch?\n")).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for 'Approve?' prompt", () => {
+    expect(agent.detectActivity("Running command: rm -rf node_modules\nApprove?\n")).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for (y/n) prompt", () => {
+    expect(agent.detectActivity("Overwrite file? (y/n)\n")).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for 'Do you want to proceed?' prompt", () => {
+    expect(agent.detectActivity("This will modify 5 files.\nDo you want to proceed?\n")).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for 'press enter to confirm' prompt", () => {
+    expect(agent.detectActivity("Changes staged.\nPress enter to confirm\n")).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for 'accept changes?' prompt", () => {
+    expect(agent.detectActivity("Diff preview:\nAccept changes?\n")).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for 'allow this action?' prompt", () => {
+    expect(agent.detectActivity("Executing shell command\nAllow this action?\n")).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for 'confirm? [y/n]' prompt", () => {
+    expect(agent.detectActivity("Delete 3 files\nConfirm? [y/n]\n")).toBe("waiting_input");
+  });
+
+  // -- Blocked states --
+  it("returns blocked for rate limit errors", () => {
+    expect(agent.detectActivity("Error: rate limit exceeded, retrying in 60s\n")).toBe("blocked");
+  });
+
+  it("returns blocked for authentication errors", () => {
+    expect(agent.detectActivity("Error: authentication failed\n")).toBe("blocked");
+  });
+
+  it("returns blocked for invalid API key", () => {
+    expect(agent.detectActivity("API key is invalid or expired\n")).toBe("blocked");
+  });
+
+  it("returns blocked for token limit exceeded", () => {
+    expect(agent.detectActivity("Token limit exceeded for this model\n")).toBe("blocked");
+  });
+
+  it("returns blocked for connection refused", () => {
+    expect(agent.detectActivity("Connection refused to api.openai.com\n")).toBe("blocked");
+  });
+
+  it("returns blocked for quota exceeded", () => {
+    expect(agent.detectActivity("Quota exceeded for organization\n")).toBe("blocked");
+  });
+
+  it("returns blocked for ECONNREFUSED", () => {
+    expect(agent.detectActivity("FetchError: ECONNREFUSED\n")).toBe("blocked");
+  });
+
+  it("returns blocked for 429 Too Many Requests", () => {
+    expect(agent.detectActivity("HTTP 429 Too Many Requests\n")).toBe("blocked");
+  });
+
+  it("returns blocked for unauthorized", () => {
+    expect(agent.detectActivity("401 Unauthorized\n")).toBe("blocked");
+  });
+
+  it("returns blocked when error is in tail but not last line", () => {
+    expect(agent.detectActivity("Working...\nrate limit hit\nretrying...\n")).toBe("blocked");
+  });
+
+  // -- Completion/done idle states --
+  it("returns idle for 'Done' on last line", () => {
+    expect(agent.detectActivity("Applied all patches.\nDone\n")).toBe("idle");
+  });
+
+  it("returns idle for 'Done.' on last line", () => {
+    expect(agent.detectActivity("Finished writing files.\nDone.\n")).toBe("idle");
+  });
+
+  it("returns idle for 'task completed' on last line", () => {
+    expect(agent.detectActivity("All changes applied.\ntask completed\n")).toBe("idle");
+  });
+
+  it("returns idle for 'all changes applied' on last line", () => {
+    expect(agent.detectActivity("Summary: 3 files changed.\nAll changes applied\n")).toBe("idle");
+  });
+
+  it("returns idle for 'exiting' on last line", () => {
+    expect(agent.detectActivity("Goodbye!\nexiting\n")).toBe("idle");
+  });
+
+  it("returns idle for ❯ prompt character", () => {
+    expect(agent.detectActivity("some output\n❯ ")).toBe("idle");
+  });
+
   // -- Active states --
   it("returns active for non-empty terminal output with no special patterns", () => {
     expect(agent.detectActivity("codex is running some task\n")).toBe("active");
@@ -564,6 +663,23 @@ describe("detectActivity", () => {
 
   it("returns active for multi-line output with activity in the middle", () => {
     expect(agent.detectActivity("Starting\n(esc to interrupt)\nstill going\n")).toBe("active");
+  });
+
+  // -- Priority order tests --
+  it("idle prompt takes priority over blocked text higher in buffer", () => {
+    // Shell prompt on last line means agent returned to idle, even if
+    // error text is in the buffer from earlier.
+    expect(agent.detectActivity("rate limit hit\nretrying...\n> ")).toBe("idle");
+  });
+
+  it("waiting_input takes priority over blocked text higher in buffer", () => {
+    // Approval prompt at bottom overrides error text from earlier.
+    expect(agent.detectActivity("Connection refused\nRetried.\nApprove?\n")).toBe("waiting_input");
+  });
+
+  it("blocked takes priority over completion text on a different line", () => {
+    // Blocked errors in the tail should report blocked even if "Done" appears earlier.
+    expect(agent.detectActivity("Done\nrate limit exceeded\n")).toBe("blocked");
   });
 });
 
