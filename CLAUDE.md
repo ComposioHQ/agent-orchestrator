@@ -220,3 +220,11 @@ Config loaded from `agent-orchestrator.yaml` (see `agent-orchestrator.yaml.examp
 4. **Two-tier event handling** — auto-handle routine issues, notify human when judgment needed
 5. **Backwards-compatible metadata** — flat key=value files
 6. **Security first** — `execFile` not `exec`, validate all external input
+
+## Knowledge Base
+
+- Read `obsidian/_index.md` for project overview and architecture context
+- When you learn something significant about the codebase, add a journal entry to `obsidian/journal/YYYY-MM-DD-topic.md`
+- When architecture changes, update the relevant file in `obsidian/architecture/`
+- For design decisions, create an ADR in `obsidian/decisions/YYYY-MM-DD-topic.md`
+- Use `[[wikilinks]]` for cross-references, including to other repos (e.g., `[[github/three-sword-style-ai/obsidian/_index|Three Sword Style AI]]`)
