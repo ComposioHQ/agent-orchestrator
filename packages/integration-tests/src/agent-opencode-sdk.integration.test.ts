@@ -422,15 +422,11 @@ describe.skipIf(!(tmuxOk && opencodeOk))("agent-opencode-sdk parity (integration
       await sessionManager.kill(smoke.id);
       expect(readMetadataRaw(sessionsDir, smoke.id)).toBeNull();
 
-      // Restore from archive should retain OpenCode identity fields.
-      const restoredFromArchive = await sessionManager.restore(smoke.id);
-      const restoredArchiveMeta = readMetadataRaw(sessionsDir, restoredFromArchive.id);
-      expect(restoredArchiveMeta).not.toBeNull();
-      expect(restoredArchiveMeta!["opencodeMode"]).toBe("sdk");
-      expect(restoredArchiveMeta!["opencodeSessionId"]).toBe(originalOpencodeSessionId);
-
-      await sessionManager.kill(smoke.id);
-      expect(readMetadataRaw(sessionsDir, smoke.id)).toBeNull();
+      // Restore from archive should fail clearly if the OpenCode session no longer exists
+      // on a replacement server, instead of silently producing a broken runtime.
+      await expect(sessionManager.restore(smoke.id)).rejects.toThrow(
+        `Cannot restore OpenCode session ${originalOpencodeSessionId}`,
+      );
     } finally {
       try {
         await sessionManager.kill(smoke.id);

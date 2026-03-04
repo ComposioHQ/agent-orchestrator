@@ -60,6 +60,7 @@ import {
   createOpenCodeSession,
   deleteOpenCodeSession,
   ensureOpenCodeServer,
+  getOpenCodeClient,
   promptOpenCodeSession,
   stopOpenCodeServer,
   type OpenCodeServerRef,
@@ -110,6 +111,18 @@ async function isOpenCodeServerHealthy(baseUrl: string): Promise<boolean> {
     const body = (await res.json()) as { healthy?: boolean };
     return body.healthy === true;
   } catch {
+    return false;
+  }
+}
+
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    if (err && typeof err === "object" && "code" in err && err.code === "EPERM") {
+      return true;
+    }
     return false;
   }
 }
@@ -1249,9 +1262,14 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     if (restoringOpenCode) {
       const existingUrl = raw["opencodeServerUrl"] as string;
       const opencodeSessionId = raw["opencodeSessionId"] as string;
+      const existingPid = Number(raw["opencodeServerPid"]);
 
       let activeServerUrl = existingUrl;
       let activeServerPid: number | undefined;
+
+      if (Number.isFinite(existingPid) && existingPid > 0 && isPidAlive(existingPid)) {
+        activeServerPid = existingPid;
+      }
 
       if (!(await isOpenCodeServerHealthy(existingUrl))) {
         let hostname = project.agentConfig?.serverHostname;
@@ -1270,6 +1288,15 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         const server = await ensureOpenCodeServer({ workspacePath, hostname, port });
         activeServerUrl = server.url;
         activeServerPid = server.pid;
+
+        try {
+          const client = getOpenCodeClient(activeServerUrl);
+          await client.session.get({ path: { id: opencodeSessionId } });
+        } catch (err) {
+          await stopOpenCodeServer(server.pid);
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new Error(`Cannot restore OpenCode session ${opencodeSessionId}: ${msg}`);
+        }
       }
 
       launchCommand = buildOpenCodeAttachCommand(opencodeSessionId, activeServerUrl);
@@ -1327,7 +1354,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
               opencodeServerPid:
                 resolvedOpenCodeServerPid !== undefined
                   ? String(resolvedOpenCodeServerPid)
-                  : raw["opencodeServerPid"],
+                  : "",
               opencodeSessionId: raw["opencodeSessionId"],
               terminalMode: "opencode-attach",
             }
