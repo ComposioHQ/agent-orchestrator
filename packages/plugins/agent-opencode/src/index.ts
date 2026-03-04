@@ -43,7 +43,6 @@ function classifyOpenCodeTerminalOutput(terminalOutput: string): ActivityState {
 
   // OpenCode confirmation prompts
   if (/\(y\)es.*\(n\)o/i.test(tail)) return "waiting_input";
-  if (/\(Y\/n\)/i.test(tail)) return "waiting_input";
   if (/\(y\/n\)/i.test(tail)) return "waiting_input";
   if (/approve\?/i.test(tail)) return "waiting_input";
   if (/allow.*tool/i.test(tail) && /\?/.test(tail)) return "waiting_input";
