@@ -376,13 +376,14 @@ describe("agent-cline plugin", () => {
 
     it("picks the most recently modified task directory", async () => {
       const agent = create();
+      const now = Date.now();
       mockReaddir.mockResolvedValue([
         { name: "task-old", isDirectory: () => true },
         { name: "task-new", isDirectory: () => true },
       ]);
       mockStat
-        .mockResolvedValueOnce({ mtimeMs: 1000 }) // task-old
-        .mockResolvedValueOnce({ mtimeMs: 9000 }); // task-new
+        .mockResolvedValueOnce({ mtimeMs: now + 1000 }) // task-old
+        .mockResolvedValueOnce({ mtimeMs: now + 9000 }); // task-new
       mockReadFile.mockResolvedValue(
         JSON.stringify({ task: "New task" }),
       );

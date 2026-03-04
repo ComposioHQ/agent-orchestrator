@@ -46,8 +46,14 @@ interface ClineTaskMetadata {
 /**
  * Find the most recently modified Cline task directory.
  * Tasks are stored in ~/.cline/data/tasks/{taskId}/
+ *
+ * WARNING: Cline stores all tasks in a single global directory without
+ * per-workspace or per-session scoping. When multiple Cline sessions run
+ * in parallel, this may return a task from a different session. We mitigate
+ * this by optionally accepting a session creation time to filter tasks that
+ * were modified after the session started.
  */
-async function findLatestTask(): Promise<ClineTaskMetadata | null> {
+async function findLatestTask(sessionCreatedAt?: Date): Promise<ClineTaskMetadata | null> {
   try {
     const tasksDir = getClineTasksDir();
     const entries = await readdir(tasksDir, { withFileTypes: true });
@@ -58,10 +64,13 @@ async function findLatestTask(): Promise<ClineTaskMetadata | null> {
     let latestDir: string | null = null;
     let latestMtime = 0;
 
+    const sessionStartMs = sessionCreatedAt?.getTime() ?? 0;
     for (const dir of dirs) {
       try {
         const dirPath = join(tasksDir, dir.name);
         const stats = await stat(dirPath);
+        // Skip tasks modified before this session started (multi-session mitigation)
+        if (sessionStartMs > 0 && stats.mtimeMs < sessionStartMs) continue;
         if (stats.mtimeMs > latestMtime) {
           latestMtime = stats.mtimeMs;
           latestDir = dir.name;
@@ -185,7 +194,7 @@ function createClineAgent(): Agent {
       if (!running) return { state: "exited", timestamp: exitedAt };
 
       // Check latest task metadata for activity signals
-      const task = await findLatestTask();
+      const task = await findLatestTask(session.createdAt);
       if (!task?.updatedAt) return null;
 
       // Classify by age
@@ -247,8 +256,8 @@ function createClineAgent(): Agent {
       }
     },
 
-    async getSessionInfo(_session: Session): Promise<AgentSessionInfo | null> {
-      const task = await findLatestTask();
+    async getSessionInfo(session: Session): Promise<AgentSessionInfo | null> {
+      const task = await findLatestTask(session.createdAt);
       if (!task) return null;
 
       return {
