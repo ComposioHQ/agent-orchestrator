@@ -68,6 +68,21 @@ describe("getAttentionLevel", () => {
       expect(getAttentionLevel(session)).toBe("respond");
     });
 
+    it("returns respond when status is errored even if activity is active", () => {
+      const session = makeSession({ status: "errored", activity: "active" });
+      expect(getAttentionLevel(session)).toBe("respond");
+    });
+
+    it("returns respond when status is needs_input even if activity is active", () => {
+      const session = makeSession({ status: "needs_input", activity: "active" });
+      expect(getAttentionLevel(session)).toBe("respond");
+    });
+
+    it("returns respond when status is stuck even if activity is active", () => {
+      const session = makeSession({ status: "stuck", activity: "active" });
+      expect(getAttentionLevel(session)).toBe("respond");
+    });
+
     it("merge takes priority over respond (mergeable PR + blocked agent)", () => {
       const pr = makePR({
         mergeability: {

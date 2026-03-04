@@ -1,6 +1,12 @@
-<div align="center">
+<h1 align="center">Agent Orchestrator — The Orchestration Layer for Parallel AI Agents</h1>
 
-# Agent Orchestrator — The Orchestration Layer for Parallel AI Agents
+<p align="center">
+<a href="https://platform.composio.dev/?utm_source=Github&utm_medium=Banner&utm_content=AgentOrchestrator">
+  <img width="800" alt="Agent Orchestrator banner" src="docs/assets/agent_orchestrator_banner.png">
+</a>
+</p>
+
+<div align="center">
 
 Spawn parallel AI coding agents, each in its own git worktree. Agents autonomously fix CI failures, address review comments, and open PRs — you supervise from one dashboard.
 
@@ -37,16 +43,29 @@ Agent Orchestrator manages fleets of AI coding agents working in parallel on you
 
 ## Quick Start
 
+**Option A — From a repo URL (fastest):**
+
 ```bash
 # Install
 git clone https://github.com/ComposioHQ/agent-orchestrator.git
 cd agent-orchestrator && bash scripts/setup.sh
 
-# Configure your project
-cd ~/your-project && ao init --auto
+# One command to clone, configure, and launch
+ao start https://github.com/your-org/your-repo
+```
 
-# Launch and spawn an agent
+Auto-detects language, package manager, SCM platform, and default branch. Generates `agent-orchestrator.yaml` and starts the dashboard + orchestrator.
+
+**Option B — From an existing local repo:**
+
+```bash
+cd ~/your-project && ao init --auto
 ao start
+```
+
+Then spawn agents:
+
+```bash
 ao spawn my-project 123    # GitHub issue, Linear ticket, or ad-hoc
 ```
 

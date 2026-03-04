@@ -20,6 +20,7 @@ import {
   enrichSessionAgentSummary,
   enrichSessionIssueTitle,
   enrichSessionsMetadata,
+  computeStats,
 } from "../serialize";
 import { prCache, prCacheKey } from "../cache";
 import type { DashboardSession } from "../types";
@@ -944,6 +945,67 @@ describe("enrichSessionsMetadata", () => {
     // Falls back to config.defaults.agent
     expect(registry.get).toHaveBeenCalledWith("agent", "mock-agent");
     expect(dashboard.summary).toBe("From default agent");
+  });
+});
+
+describe("computeStats", () => {
+  function makeDashboard(overrides: Partial<DashboardSession> = {}): DashboardSession {
+    return {
+      id: "test-1",
+      projectId: "test",
+      status: "working",
+      activity: "active",
+      branch: "feat/test",
+      issueId: null,
+      issueUrl: null,
+      issueLabel: null,
+      issueTitle: null,
+      summary: null,
+      summaryIsFallback: false,
+      createdAt: new Date().toISOString(),
+      lastActivityAt: new Date().toISOString(),
+      pr: null,
+      metadata: {},
+      ...overrides,
+    };
+  }
+
+  it("counts active sessions as working", () => {
+    const sessions = [makeDashboard({ activity: "active" })];
+    expect(computeStats(sessions).workingSessions).toBe(1);
+  });
+
+  it("counts idle sessions as working", () => {
+    const sessions = [makeDashboard({ activity: "idle" })];
+    expect(computeStats(sessions).workingSessions).toBe(1);
+  });
+
+  it("counts ready sessions as working", () => {
+    const sessions = [makeDashboard({ activity: "ready" })];
+    expect(computeStats(sessions).workingSessions).toBe(1);
+  });
+
+  it("excludes exited sessions from working count", () => {
+    const sessions = [makeDashboard({ activity: "exited" })];
+    expect(computeStats(sessions).workingSessions).toBe(0);
+  });
+
+  it("excludes sessions with null activity from working count", () => {
+    const sessions = [makeDashboard({ activity: null })];
+    expect(computeStats(sessions).workingSessions).toBe(0);
+  });
+
+  it("counts mixed activity states correctly", () => {
+    const sessions = [
+      makeDashboard({ id: "s1", activity: "active" }),
+      makeDashboard({ id: "s2", activity: "idle" }),
+      makeDashboard({ id: "s3", activity: "ready" }),
+      makeDashboard({ id: "s4", activity: "exited" }),
+      makeDashboard({ id: "s5", activity: null }),
+    ];
+    const stats = computeStats(sessions);
+    expect(stats.totalSessions).toBe(5);
+    expect(stats.workingSessions).toBe(3); // active + idle + ready
   });
 });
 

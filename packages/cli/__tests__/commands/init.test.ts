@@ -42,9 +42,9 @@ describe("init command", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "ao-init-test-"));
     const outputPath = join(tmpDir, "agent-orchestrator.yaml");
 
-    // Mock isPortAvailable so test doesn't depend on actual port 3000 being free
+    // Mock findFreePort so test doesn't depend on actual port 3000 being free
     const webDirModule = await import("../../src/lib/web-dir.js");
-    vi.spyOn(webDirModule, "isPortAvailable").mockResolvedValue(true);
+    vi.spyOn(webDirModule, "findFreePort").mockResolvedValue(3000);
 
     const program = new Command();
     program.exitOverride();
@@ -154,9 +154,9 @@ describe("init command", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "ao-init-test-"));
     const outputPath = join(tmpDir, "agent-orchestrator.yaml");
 
-    // Mock isPortAvailable to always return false (all ports busy)
+    // Mock findFreePort to return null (all ports busy)
     const webDirModule = await import("../../src/lib/web-dir.js");
-    vi.spyOn(webDirModule, "isPortAvailable").mockResolvedValue(false);
+    vi.spyOn(webDirModule, "findFreePort").mockResolvedValue(null);
 
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 

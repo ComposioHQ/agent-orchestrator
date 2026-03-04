@@ -110,3 +110,23 @@ export type { ParsedResource } from "./parse-resource-arg.js";
 // Input source resolution
 export { resolveInputSource } from "./resolve-input-source.js";
 export type { ResolvedSource } from "./resolve-input-source.js";
+
+// Config generator — auto-generate config from repo URL
+export {
+  isRepoUrl,
+  parseRepoUrl,
+  detectScmPlatform,
+  detectDefaultBranchFromDir,
+  detectProjectInfo,
+  generateConfigFromUrl,
+  configToYaml,
+  isRepoAlreadyCloned,
+  resolveCloneTarget,
+  sanitizeProjectId,
+} from "./config-generator.js";
+export type {
+  ParsedRepoUrl,
+  ScmPlatform,
+  DetectedProjectInfo,
+  GenerateConfigOptions,
+} from "./config-generator.js";

@@ -26,6 +26,10 @@ export async function GET(request: Request) {
     const { config, registry, sessionManager } = await getServices();
     const coreSessions = await sessionManager.list();
 
+    // Find orchestrator session ID (if running) and expose to clients
+    const orchSession = coreSessions.find((s) => s.id.endsWith("-orchestrator"));
+    const orchestratorId = orchSession ? orchSession.id : null;
+
     // Filter out orchestrator sessions — they get their own button, not a card
     let workerSessions = coreSessions.filter((s) => !s.id.endsWith("-orchestrator"));
 
@@ -151,6 +155,7 @@ export async function GET(request: Request) {
       stats: computeStats(dashboardSessions),
       extraPRs,
       issues,
+      orchestratorId,
     });
   } catch (err) {
     return NextResponse.json(

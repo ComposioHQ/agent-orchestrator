@@ -15,6 +15,7 @@ export default tseslint.config(
       "packages/web/postcss.config.mjs",
       "test-clipboard*.mjs",
       "test-clipboard*.sh",
+      "packages/mobile/**",
     ],
   },
 

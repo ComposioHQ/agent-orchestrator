@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import chalk from "chalk";
 import type { Command } from "commander";
 import { loadConfig } from "@composio/ao-core";
-import { findWebDir, buildDashboardEnv } from "../lib/web-dir.js";
+import { findWebDir, buildDashboardEnv, waitForPortAndOpen } from "../lib/web-dir.js";
 import { cleanNextCache, findRunningDashboardPid, findProcessWebDir, waitForPortFree } from "../lib/dashboard-rebuild.js";
 
 export function registerDashboard(program: Command): void {
@@ -94,21 +94,15 @@ export function registerDashboard(program: Command): void {
         process.exit(1);
       });
 
-      let browserTimer: ReturnType<typeof setTimeout> | undefined;
+      let openAbort: AbortController | undefined;
 
       if (opts.open !== false) {
-        browserTimer = setTimeout(() => {
-          const browser = spawn("open", [`http://localhost:${port}`], {
-            stdio: "ignore",
-          });
-          browser.on("error", () => {
-            // Ignore — browser open is best-effort
-          });
-        }, 3000);
+        openAbort = new AbortController();
+        void waitForPortAndOpen(port, `http://localhost:${port}`, openAbort.signal);
       }
 
       child.on("exit", (code) => {
-        if (browserTimer) clearTimeout(browserTimer);
+        if (openAbort) openAbort.abort();
 
         if (code !== 0 && code !== null && !opts.rebuild) {
           const stderr = stderrChunks.join("");
