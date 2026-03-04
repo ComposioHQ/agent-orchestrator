@@ -345,7 +345,8 @@ async function runStartup(
     lifecycle.start(30_000);
     process.on("SIGINT", () => {
       lifecycle.stop();
-      process.exit(0);
+      // Let Node's default SIGINT behavior and other registered handlers run
+      // instead of calling process.exit(0) which would bypass cleanup.
     });
   }
 

@@ -23,7 +23,9 @@ async function resolveSessionContext(
       const tmuxTarget = session.runtimeHandle?.id ?? sessionName;
       const project = config.projects[session.projectId];
       const agentName = project?.agent ?? config.defaults.agent;
-      const agent = getAgentByName(agentName);
+      // Preserve session context even when agent plugin is unavailable —
+      // fall back only the agent, not the tmuxTarget or session.
+      const agent = getAgentByName(agentName) ?? getAgentByName("claude-code");
       if (agent) return { tmuxTarget, agent, session };
     }
   } catch {
