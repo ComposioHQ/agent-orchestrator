@@ -12,7 +12,9 @@
  */
 
 import { statSync, existsSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
+import { execFile } from "node:child_process";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import {
   isIssueNotFoundError,
   isRestorable,
@@ -55,6 +57,20 @@ import {
   generateConfigHash,
   validateAndStoreOrigin,
 } from "./paths.js";
+import {
+  abortOpenCodeSession,
+  createOpenCodeSession,
+  deleteOpenCodeSession,
+  ensureOpenCodeServer,
+  getOpenCodeClient,
+  promptOpenCodeSession,
+  stopOpenCodeServer,
+  type OpenCodeServerRef,
+  type OpenCodeSessionRef,
+} from "./opencode-sdk-service.js";
+import { shellEscape } from "./utils.js";
+
+const execFileAsync = promisify(execFile);
 
 /** Escape regex metacharacters in a string. */
 function escapeRegex(str: string): string {
@@ -81,6 +97,83 @@ function safeJsonParse<T>(str: string): T | null {
     return JSON.parse(str) as T;
   } catch {
     return null;
+  }
+}
+
+function isOpenCodeSession(raw: Record<string, string>): boolean {
+  return raw["opencodeMode"] === "sdk" && Boolean(raw["opencodeSessionId"] && raw["opencodeServerUrl"]);
+}
+
+function buildOpenCodeAttachCommand(opencodeSessionId: string, opencodeServerUrl: string): string {
+  return `opencode -s ${shellEscape(opencodeSessionId)} --attach ${shellEscape(opencodeServerUrl)}`;
+}
+
+async function isOpenCodeServerHealthy(baseUrl: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${baseUrl}/global/health`);
+    if (!res.ok) return false;
+    const body = (await res.json()) as { healthy?: boolean };
+    return body.healthy === true;
+  } catch {
+    return false;
+  }
+}
+
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    if (err && typeof err === "object" && "code" in err && err.code === "EPERM") {
+      return true;
+    }
+    return false;
+  }
+}
+
+async function resolveListeningPidForUrl(baseUrl: string): Promise<number | undefined> {
+  let port: number;
+  try {
+    const parsed = new URL(baseUrl);
+    port = Number(parsed.port);
+  } catch {
+    return undefined;
+  }
+
+  if (!Number.isFinite(port) || port <= 0) {
+    return undefined;
+  }
+
+  try {
+    const { stdout } = await execFileAsync(
+      "lsof",
+      ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"],
+      { timeout: 5000 },
+    );
+    const pid = Number(stdout.split("\n").map((line) => line.trim()).find(Boolean));
+    return Number.isFinite(pid) && pid > 0 ? pid : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function cleanupOpenCode(
+  server: OpenCodeServerRef | null,
+  session: OpenCodeSessionRef | null,
+): Promise<void> {
+  if (session && server) {
+    try {
+      await deleteOpenCodeSession({ baseUrl: server.url, sessionId: session.sessionId });
+    } catch {
+      /* best effort */
+    }
+  }
+  if (server) {
+    try {
+      await stopOpenCodeServer(server.pid);
+    } catch {
+      /* best effort */
+    }
   }
 }
 
@@ -470,19 +563,39 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     });
 
     // Get agent launch config and create runtime — clean up workspace on failure
+    const initialPrompt = composedPrompt ?? spawnConfig.prompt;
+    const isOpenCodeAgent = plugins.agent.name === "opencode";
+
     const agentLaunchConfig = {
       sessionId,
       projectConfig: project,
       issueId: spawnConfig.issueId,
-      prompt: composedPrompt ?? spawnConfig.prompt,
+      prompt: isOpenCodeAgent ? undefined : initialPrompt,
       permissions: project.agentConfig?.permissions,
       model: project.agentConfig?.model,
     };
 
     let handle: RuntimeHandle;
+    let openCodeServer: OpenCodeServerRef | null = null;
+    let openCodeSession: OpenCodeSessionRef | null = null;
     try {
-      const launchCommand = plugins.agent.getLaunchCommand(agentLaunchConfig);
+      let launchCommand = plugins.agent.getLaunchCommand(agentLaunchConfig);
       const environment = plugins.agent.getEnvironment(agentLaunchConfig);
+
+      if (isOpenCodeAgent) {
+        openCodeServer = await ensureOpenCodeServer({
+          workspacePath,
+          hostname: project.agentConfig?.serverHostname,
+          port: project.agentConfig?.serverPort,
+        });
+
+        openCodeSession = await createOpenCodeSession({
+          baseUrl: openCodeServer.url,
+          title: sessionId,
+        });
+
+        launchCommand = buildOpenCodeAttachCommand(openCodeSession.sessionId, openCodeServer.url);
+      }
 
       handle = await plugins.runtime.create({
         sessionId: tmuxName ?? sessionId, // Use tmux name for runtime if available
@@ -497,6 +610,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         },
       });
     } catch (err) {
+      await cleanupOpenCode(openCodeServer, openCodeSession);
+
       // Clean up workspace and reserved ID if agent config or runtime creation failed
       if (plugins.workspace && workspacePath !== project.path) {
         try {
@@ -541,7 +656,18 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         agent: plugins.agent.name, // Persist agent name for lifecycle manager
         createdAt: new Date().toISOString(),
         runtimeHandle: JSON.stringify(handle),
+        ...(openCodeServer && openCodeSession
+          ? {
+              opencodeMode: "sdk",
+              opencodeServerUrl: openCodeServer.url,
+              opencodeServerPid: openCodeServer.pid,
+              opencodeSessionId: openCodeSession.sessionId,
+              terminalMode: "opencode-attach",
+            }
+          : {}),
       });
+
+      session.metadata = readMetadataRaw(sessionsDir, sessionId) ?? {};
 
       if (plugins.agent.postLaunchSetup) {
         await plugins.agent.postLaunchSetup(session);
@@ -565,7 +691,21 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       } catch {
         /* best effort */
       }
+      await cleanupOpenCode(openCodeServer, openCodeSession);
       throw err;
+    }
+
+    if (isOpenCodeAgent && openCodeServer && openCodeSession && initialPrompt) {
+      try {
+        await promptOpenCodeSession({
+          baseUrl: openCodeServer.url,
+          sessionId: openCodeSession.sessionId,
+          text: initialPrompt,
+          model: project.agentConfig?.model,
+        });
+      } catch {
+        // Non-fatal: runtime is alive and session exists; user can resend.
+      }
     }
 
     // Send initial prompt post-launch for agents that need it (e.g. Claude Code
@@ -798,6 +938,40 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       throw new Error(`Session ${sessionId} not found`);
     }
 
+    if (isOpenCodeSession(raw)) {
+      try {
+        await abortOpenCodeSession({
+          baseUrl: raw["opencodeServerUrl"] as string,
+          sessionId: raw["opencodeSessionId"] as string,
+        });
+      } catch {
+        // best effort
+      }
+
+      try {
+        await deleteOpenCodeSession({
+          baseUrl: raw["opencodeServerUrl"] as string,
+          sessionId: raw["opencodeSessionId"] as string,
+        });
+      } catch {
+        // best effort
+      }
+
+      const serverPid = Number(raw["opencodeServerPid"]);
+      const fallbackPid =
+        Number.isFinite(serverPid) && serverPid > 0
+          ? serverPid
+          : await resolveListeningPidForUrl(raw["opencodeServerUrl"] as string);
+
+      if (fallbackPid !== undefined) {
+        try {
+          await stopOpenCodeServer(fallbackPid);
+        } catch {
+          // best effort
+        }
+      }
+    }
+
     // Destroy runtime — prefer handle.runtimeName to find the correct plugin
     if (raw["runtimeHandle"]) {
       const handle = safeJsonParse<RuntimeHandle>(raw["runtimeHandle"]);
@@ -931,6 +1105,17 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
     if (!raw) throw new Error(`Session ${sessionId} not found`);
 
+    if (isOpenCodeSession(raw)) {
+      const project = config.projects[raw["project"] ?? ""];
+      await promptOpenCodeSession({
+        baseUrl: raw["opencodeServerUrl"] as string,
+        sessionId: raw["opencodeSessionId"] as string,
+        text: message,
+        model: project?.agentConfig?.model,
+      });
+      return;
+    }
+
     // Build handle: use stored runtimeHandle, or fall back to session ID as tmux session name
     let handle: RuntimeHandle;
     if (raw["runtimeHandle"]) {
@@ -1010,8 +1195,18 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         pr: raw["pr"],
         summary: raw["summary"],
         project: raw["project"],
+        agent: raw["agent"],
         createdAt: raw["createdAt"],
         runtimeHandle: raw["runtimeHandle"],
+        restoredAt: raw["restoredAt"],
+        opencodeMode: raw["opencodeMode"] === "sdk" ? "sdk" : undefined,
+        opencodeServerUrl: raw["opencodeServerUrl"],
+        opencodeServerPid: raw["opencodeServerPid"] ? Number(raw["opencodeServerPid"]) : undefined,
+        opencodeSessionId: raw["opencodeSessionId"],
+        terminalMode:
+          raw["terminalMode"] === "opencode-attach" || raw["terminalMode"] === "tmux"
+            ? raw["terminalMode"]
+            : undefined,
       });
     }
 
@@ -1085,8 +1280,12 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       }
     }
 
+    const restoringOpenCode = isOpenCodeSession(raw);
+
     // 7. Get launch command — try restore command first, fall back to fresh launch
     let launchCommand: string;
+    let resolvedOpenCodeServerUrl: string | undefined;
+    let resolvedOpenCodeServerPid: number | undefined;
     const agentLaunchConfig = {
       sessionId,
       projectConfig: project,
@@ -1095,37 +1294,124 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       model: project.agentConfig?.model,
     };
 
-    if (plugins.agent.getRestoreCommand) {
-      const restoreCmd = await plugins.agent.getRestoreCommand(session, project);
-      launchCommand = restoreCmd ?? plugins.agent.getLaunchCommand(agentLaunchConfig);
+    if (restoringOpenCode) {
+      const existingUrl = raw["opencodeServerUrl"] as string;
+      const opencodeSessionId = raw["opencodeSessionId"] as string;
+      const existingPid = Number(raw["opencodeServerPid"]);
+
+      let activeServerUrl = existingUrl;
+      let activeServerPid: number | undefined;
+
+      if (Number.isFinite(existingPid) && existingPid > 0 && isPidAlive(existingPid)) {
+        activeServerPid = existingPid;
+      }
+
+      if (!(await isOpenCodeServerHealthy(existingUrl))) {
+        let hostname = project.agentConfig?.serverHostname;
+        let port = project.agentConfig?.serverPort;
+        try {
+          const parsed = new URL(existingUrl);
+          hostname = hostname ?? parsed.hostname;
+          const parsedPort = Number(parsed.port);
+          if (!port && Number.isFinite(parsedPort) && parsedPort > 0) {
+            port = parsedPort;
+          }
+        } catch {
+          // fallback to configured values
+        }
+
+        const server = await ensureOpenCodeServer({ workspacePath, hostname, port });
+        activeServerUrl = server.url;
+        activeServerPid = server.pid;
+
+        try {
+          const client = getOpenCodeClient(activeServerUrl);
+          await client.session.get({ path: { id: opencodeSessionId } });
+        } catch (err) {
+          await stopOpenCodeServer(server.pid);
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new Error(`Cannot restore OpenCode session ${opencodeSessionId}: ${msg}`);
+        }
+      }
+
+      launchCommand = buildOpenCodeAttachCommand(opencodeSessionId, activeServerUrl);
+      resolvedOpenCodeServerUrl = activeServerUrl;
+      resolvedOpenCodeServerPid = activeServerPid;
     } else {
-      launchCommand = plugins.agent.getLaunchCommand(agentLaunchConfig);
+      if (plugins.agent.getRestoreCommand) {
+        const restoreCmd = await plugins.agent.getRestoreCommand(session, project);
+        launchCommand = restoreCmd ?? plugins.agent.getLaunchCommand(agentLaunchConfig);
+      } else {
+        launchCommand = plugins.agent.getLaunchCommand(agentLaunchConfig);
+      }
     }
 
     const environment = plugins.agent.getEnvironment(agentLaunchConfig);
 
     // 8. Create runtime (reuse tmuxName from metadata)
     const tmuxName = raw["tmuxName"];
-    const handle = await plugins.runtime.create({
-      sessionId: tmuxName ?? sessionId,
-      workspacePath,
-      launchCommand,
-      environment: {
-        ...environment,
-        AO_SESSION: sessionId,
-        AO_DATA_DIR: sessionsDir,
-        AO_SESSION_NAME: sessionId,
-        ...(tmuxName && { AO_TMUX_NAME: tmuxName }),
-      },
-    });
+    let handle: RuntimeHandle;
+    try {
+      handle = await plugins.runtime.create({
+        sessionId: tmuxName ?? sessionId,
+        workspacePath,
+        launchCommand,
+        environment: {
+          ...environment,
+          AO_SESSION: sessionId,
+          AO_DATA_DIR: sessionsDir,
+          AO_SESSION_NAME: sessionId,
+          ...(tmuxName && { AO_TMUX_NAME: tmuxName }),
+        },
+      });
+    } catch (err) {
+      if (resolvedOpenCodeServerPid !== undefined) {
+        try {
+          await stopOpenCodeServer(resolvedOpenCodeServerPid);
+        } catch {
+          // best effort
+        }
+      }
+      throw err;
+    }
 
     // 9. Update metadata — merge updates, preserving existing fields
     const now = new Date().toISOString();
-    updateMetadata(sessionsDir, sessionId, {
-      status: "spawning",
-      runtimeHandle: JSON.stringify(handle),
-      restoredAt: now,
-    });
+    try {
+      updateMetadata(sessionsDir, sessionId, {
+        status: "spawning",
+        runtimeHandle: JSON.stringify(handle),
+        restoredAt: now,
+        ...(restoringOpenCode
+          ? {
+              opencodeMode: "sdk",
+              opencodeServerUrl: resolvedOpenCodeServerUrl ?? raw["opencodeServerUrl"],
+              opencodeServerPid:
+                resolvedOpenCodeServerPid !== undefined
+                  ? String(resolvedOpenCodeServerPid)
+                  : raw["opencodeServerPid"],
+              opencodeSessionId: raw["opencodeSessionId"],
+              terminalMode: "opencode-attach",
+            }
+          : {}),
+      });
+    } catch (err) {
+      try {
+        await plugins.runtime.destroy(handle);
+      } catch {
+        // best effort
+      }
+
+      if (resolvedOpenCodeServerPid !== undefined) {
+        try {
+          await stopOpenCodeServer(resolvedOpenCodeServerPid);
+        } catch {
+          // best effort
+        }
+      }
+
+      throw err;
+    }
 
     // 10. Run postLaunchSetup (non-fatal)
     const restoredSession: Session = {

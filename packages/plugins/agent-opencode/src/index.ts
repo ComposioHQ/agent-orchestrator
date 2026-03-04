@@ -1,4 +1,7 @@
 import {
+  DEFAULT_READY_THRESHOLD_MS,
+  getOpenCodeSessionInfo,
+  getOpenCodeSessionStatus,
   shellEscape,
   type Agent,
   type AgentSessionInfo,
@@ -13,6 +16,13 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+
+function getOpenCodeRefs(session: Session): { baseUrl: string; opencodeSessionId: string } | null {
+  const baseUrl = session.metadata["opencodeServerUrl"];
+  const opencodeSessionId = session.metadata["opencodeSessionId"];
+  if (!baseUrl || !opencodeSessionId) return null;
+  return { baseUrl, opencodeSessionId };
+}
 
 // =============================================================================
 // Plugin Manifest
@@ -64,21 +74,41 @@ function createOpenCodeAgent(): Agent {
       return "active";
     },
 
-    async getActivityState(session: Session, _readyThresholdMs?: number): Promise<ActivityDetection | null> {
-      // Check if process is running first
-      const exitedAt = new Date();
-      if (!session.runtimeHandle) return { state: "exited", timestamp: exitedAt };
+    async getActivityState(session: Session, readyThresholdMs?: number): Promise<ActivityDetection | null> {
+      if (!session.runtimeHandle) return { state: "exited", timestamp: new Date() };
       const running = await this.isProcessRunning(session.runtimeHandle);
-      if (!running) return { state: "exited", timestamp: exitedAt };
+      if (!running) return { state: "exited", timestamp: new Date() };
 
-      // NOTE: OpenCode stores all session data in a single global SQLite database
-      // at ~/.local/share/opencode/opencode.db without per-workspace scoping. When
-      // multiple OpenCode sessions run in parallel, database modifications from any
-      // session will cause all sessions to appear active. Until OpenCode provides
-      // per-workspace session tracking, we return null (unknown) rather than guessing.
-      //
-      // TODO: Implement proper per-session activity detection when OpenCode supports it.
-      return null;
+      const refs = getOpenCodeRefs(session);
+      if (!refs) return null;
+
+      const threshold = readyThresholdMs ?? DEFAULT_READY_THRESHOLD_MS;
+
+      try {
+        const status = await getOpenCodeSessionStatus({
+          baseUrl: refs.baseUrl,
+          sessionId: refs.opencodeSessionId,
+        });
+        const now = new Date();
+
+        switch (status) {
+          case "working":
+            return { state: "active", timestamp: now };
+          case "waiting_input":
+            return { state: "waiting_input", timestamp: now };
+          case "idle": {
+            const elapsed = now.getTime() - session.lastActivityAt.getTime();
+            return { state: elapsed <= threshold ? "ready" : "idle", timestamp: now };
+          }
+          case "exited":
+            return { state: "exited", timestamp: now };
+          default:
+            // "unknown" — SDK couldn't map the server's status; treat as indeterminate
+            return null;
+        }
+      } catch {
+        return null;
+      }
     },
 
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
@@ -132,9 +162,23 @@ function createOpenCodeAgent(): Agent {
       }
     },
 
-    async getSessionInfo(_session: Session): Promise<AgentSessionInfo | null> {
-      // OpenCode doesn't have JSONL session files for introspection yet
-      return null;
+    async getSessionInfo(session: Session): Promise<AgentSessionInfo | null> {
+      const refs = getOpenCodeRefs(session);
+      if (!refs) return null;
+
+      try {
+        const info = await getOpenCodeSessionInfo({
+          baseUrl: refs.baseUrl,
+          sessionId: refs.opencodeSessionId,
+        });
+
+        return {
+          summary: info.summary,
+          agentSessionId: refs.opencodeSessionId,
+        };
+      } catch {
+        return null;
+      }
     },
   };
 }

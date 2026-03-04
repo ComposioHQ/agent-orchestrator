@@ -116,6 +116,14 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
     dashboardPort: raw["dashboardPort"] ? Number(raw["dashboardPort"]) : undefined,
     terminalWsPort: raw["terminalWsPort"] ? Number(raw["terminalWsPort"]) : undefined,
     directTerminalWsPort: raw["directTerminalWsPort"] ? Number(raw["directTerminalWsPort"]) : undefined,
+    opencodeMode: raw["opencodeMode"] === "sdk" ? "sdk" : undefined,
+    opencodeServerUrl: raw["opencodeServerUrl"],
+    opencodeServerPid: raw["opencodeServerPid"] ? Number(raw["opencodeServerPid"]) : undefined,
+    opencodeSessionId: raw["opencodeSessionId"],
+    terminalMode:
+      raw["terminalMode"] === "opencode-attach" || raw["terminalMode"] === "tmux"
+        ? raw["terminalMode"]
+        : undefined,
   };
 }
 
@@ -164,6 +172,12 @@ export function writeMetadata(
     data["terminalWsPort"] = String(metadata.terminalWsPort);
   if (metadata.directTerminalWsPort !== undefined)
     data["directTerminalWsPort"] = String(metadata.directTerminalWsPort);
+  if (metadata.opencodeMode) data["opencodeMode"] = metadata.opencodeMode;
+  if (metadata.opencodeServerUrl) data["opencodeServerUrl"] = metadata.opencodeServerUrl;
+  if (metadata.opencodeServerPid !== undefined)
+    data["opencodeServerPid"] = String(metadata.opencodeServerPid);
+  if (metadata.opencodeSessionId) data["opencodeSessionId"] = metadata.opencodeSessionId;
+  if (metadata.terminalMode) data["terminalMode"] = metadata.terminalMode;
 
   atomicWriteFileSync(path, serializeMetadata(data));
 }

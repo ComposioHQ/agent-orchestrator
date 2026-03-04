@@ -120,6 +120,9 @@ importers:
 
   packages/core:
     dependencies:
+      '@opencode-ai/sdk':
+        specifier: ^1.2.15
+        version: 1.2.15
       yaml:
         specifier: ^2.7.0
         version: 2.8.2
@@ -1486,6 +1489,9 @@ packages:
   '@npmcli/fs@5.0.0':
     resolution: {integrity: sha512-7OsC1gNORBEawOa5+j2pXN9vsicaIOH5cPXxoR6fJOmH6/EXpJB2CajXOu1fPRFun2m1lktEFX11+P89hqO/og==}
     engines: {node: ^20.17.0 || >=22.9.0}
+
+  '@opencode-ai/sdk@1.2.15':
+    resolution: {integrity: sha512-NUJNlyBCdZ4R0EBLjJziEQOp2XbRPJosaMcTcWSWO5XJPKGUpz0u8ql+5cR8K+v2RJ+hp2NobtNwpjEYfe6BRQ==}
 
   '@opentelemetry/api@1.9.0':
     resolution: {integrity: sha512-3giAOQvZiH5F9bMlMiv8+GSPMeqg0dbaeo58/0SlA9sxSqZhnUtxzX9/2FzyhS9sWQf5S0GJE0AKBrFqjpeYcg==}
@@ -4745,6 +4751,8 @@ snapshots:
   '@npmcli/fs@5.0.0':
     dependencies:
       semver: 7.7.4
+
+  '@opencode-ai/sdk@1.2.15': {}
 
   '@opentelemetry/api@1.9.0': {}
 

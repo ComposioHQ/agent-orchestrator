@@ -80,6 +80,20 @@ export {
   validateAndStoreOrigin,
 } from "./paths.js";
 
+// OpenCode SDK service helpers
+export {
+  ensureOpenCodeServer,
+  getOpenCodeClient,
+  createOpenCodeSession,
+  promptOpenCodeSession,
+  getOpenCodeSessionStatus,
+  getOpenCodeSessionInfo,
+  abortOpenCodeSession,
+  deleteOpenCodeSession,
+  stopOpenCodeServer,
+} from "./opencode-sdk-service.js";
+export type { OpenCodeServerRef, OpenCodeSessionRef } from "./opencode-sdk-service.js";
+
 // Config generator — auto-generate config from repo URL
 export {
   isRepoUrl,
