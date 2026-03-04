@@ -160,6 +160,9 @@ describe.skipIf(!(tmuxOk && opencodeOk))("agent-opencode-sdk parity (integration
 
     expect(spawnedSession.id).toMatch(new RegExp(`^${SESSION_PREFIX}-\\d+$`));
     expect(spawnedSession.runtimeHandle).not.toBeNull();
+    expect(spawnedSession.metadata["opencodeMode"]).toBe("sdk");
+    expect(spawnedSession.metadata["opencodeServerUrl"]).toMatch(/^http:\/\//);
+    expect(spawnedSession.metadata["opencodeSessionId"]).toBeTruthy();
 
     const sessionsDir = getSessionsDir(config.configPath, project.path);
     spawnedMetadata = readMetadataRaw(sessionsDir, spawnedSession.id);
@@ -415,6 +418,16 @@ describe.skipIf(!(tmuxOk && opencodeOk))("agent-opencode-sdk parity (integration
         expect(restoredMeta!["opencodeSessionId"]).toBe(originalOpencodeSessionId);
         expect(restoredMeta!["opencodeServerUrl"]).toMatch(/^http:\/\//);
       }
+
+      await sessionManager.kill(smoke.id);
+      expect(readMetadataRaw(sessionsDir, smoke.id)).toBeNull();
+
+      // Restore from archive should retain OpenCode identity fields.
+      const restoredFromArchive = await sessionManager.restore(smoke.id);
+      const restoredArchiveMeta = readMetadataRaw(sessionsDir, restoredFromArchive.id);
+      expect(restoredArchiveMeta).not.toBeNull();
+      expect(restoredArchiveMeta!["opencodeMode"]).toBe("sdk");
+      expect(restoredArchiveMeta!["opencodeSessionId"]).toBe(originalOpencodeSessionId);
 
       await sessionManager.kill(smoke.id);
       expect(readMetadataRaw(sessionsDir, smoke.id)).toBeNull();

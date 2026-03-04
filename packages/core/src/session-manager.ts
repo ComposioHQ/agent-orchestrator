@@ -624,6 +624,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
           : {}),
       });
 
+      session.metadata = readMetadataRaw(sessionsDir, sessionId) ?? {};
+
       if (plugins.agent.postLaunchSetup) {
         await plugins.agent.postLaunchSetup(session);
       }
@@ -1145,8 +1147,18 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         pr: raw["pr"],
         summary: raw["summary"],
         project: raw["project"],
+        agent: raw["agent"],
         createdAt: raw["createdAt"],
         runtimeHandle: raw["runtimeHandle"],
+        restoredAt: raw["restoredAt"],
+        opencodeMode: raw["opencodeMode"] === "sdk" ? "sdk" : undefined,
+        opencodeServerUrl: raw["opencodeServerUrl"],
+        opencodeServerPid: raw["opencodeServerPid"] ? Number(raw["opencodeServerPid"]) : undefined,
+        opencodeSessionId: raw["opencodeSessionId"],
+        terminalMode:
+          raw["terminalMode"] === "opencode-attach" || raw["terminalMode"] === "tmux"
+            ? raw["terminalMode"]
+            : undefined,
       });
     }
 
