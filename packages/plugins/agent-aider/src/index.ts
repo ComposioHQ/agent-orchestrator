@@ -93,12 +93,13 @@ async function extractSummaryFromChatHistory(
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
       if (/^#{1,4}\s+(user|USER)/i.test(line)) {
-        const userContent = lines
-          .slice(i + 1)
-          .map((l) => l.trim())
-          .filter(Boolean);
-        if (userContent.length > 0) {
-          return { summary: userContent[0].slice(0, 120), isFallback: true };
+        // Gather content until the next section header
+        for (let j = i + 1; j < lines.length; j++) {
+          const nextLine = lines[j].trim();
+          if (/^#{1,4}\s+/i.test(nextLine)) break;
+          if (nextLine) {
+            return { summary: nextLine.slice(0, 120), isFallback: true };
+          }
         }
         break;
       }
