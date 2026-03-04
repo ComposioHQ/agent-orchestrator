@@ -5,6 +5,8 @@ import { useParams } from "next/navigation";
 import { SessionDetail } from "@/components/SessionDetail";
 import { type DashboardSession, getAttentionLevel, type AttentionLevel } from "@/lib/types";
 import { activityIcon } from "@/lib/activity-icons";
+import { useSessionActivitySSE } from "@/hooks/useSessionActivitySSE";
+import { DynamicFavicon } from "@/components/DynamicFavicon";
 
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + "..." : s;
@@ -107,7 +109,22 @@ export default function SessionPage() {
     return () => clearTimeout(t);
   }, [fetchSession, fetchZoneCounts]);
 
-  // Poll every 5s
+  // SSE: patch activity/status in real-time so the tab title updates instantly
+  useSessionActivitySSE(id, useCallback((patch) => {
+    setSession((prev) => {
+      if (!prev) return prev;
+      if (
+        prev.activity === patch.activity &&
+        prev.status === patch.status &&
+        prev.lastActivityAt === patch.lastActivityAt
+      ) {
+        return prev;
+      }
+      return { ...prev, ...patch };
+    });
+  }, []));
+
+  // Poll every 5s for full session data (PR info, CI status, etc.)
   useEffect(() => {
     const interval = setInterval(() => {
       fetchSession();
@@ -136,10 +153,13 @@ export default function SessionPage() {
   }
 
   return (
-    <SessionDetail
-      session={session}
-      isOrchestrator={isOrchestrator}
-      orchestratorZones={zoneCounts ?? undefined}
-    />
+    <>
+      <DynamicFavicon sessions={[session]} />
+      <SessionDetail
+        session={session}
+        isOrchestrator={isOrchestrator}
+        orchestratorZones={zoneCounts ?? undefined}
+      />
+    </>
   );
 }
