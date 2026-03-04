@@ -45,6 +45,7 @@ import {
   updateMetadata,
   deleteMetadata,
   listMetadata,
+  listArchivedSessionIds,
   reserveSessionId,
 } from "./metadata.js";
 import { buildPrompt } from "./prompt-builder.js";
@@ -1148,5 +1149,36 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     return restoredSession;
   }
 
-  return { spawn, spawnOrchestrator, restore, list, get, kill, cleanup, send };
+  async function listArchived(projectId?: string): Promise<Session[]> {
+    const sessions: Session[] = [];
+
+    const projectEntries = projectId
+      ? [[projectId, config.projects[projectId]] as const].filter(([, p]) => p)
+      : Object.entries(config.projects);
+
+    for (const [, project] of projectEntries) {
+      if (!project) continue;
+      const sessionsDir = getProjectSessionsDir(project);
+      const activeIds = new Set(listMetadata(sessionsDir));
+      const archivedIds = listArchivedSessionIds(sessionsDir);
+
+      for (const sessionId of archivedIds) {
+        // Skip if the session is still active (not truly archived)
+        if (activeIds.has(sessionId)) continue;
+
+        const raw = readArchivedMetadataRaw(sessionsDir, sessionId);
+        if (!raw) continue;
+
+        // Archived sessions don't have live timestamps — use metadata
+        // createdAt if available, otherwise fall back to current time
+        const createdAt = raw["createdAt"] ? new Date(raw["createdAt"]) : undefined;
+        const session = metadataToSession(sessionId, raw, createdAt, createdAt);
+        sessions.push(session);
+      }
+    }
+
+    return sessions;
+  }
+
+  return { spawn, spawnOrchestrator, restore, list, listArchived, get, kill, cleanup, send };
 }
