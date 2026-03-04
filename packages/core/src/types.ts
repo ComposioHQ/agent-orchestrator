@@ -650,6 +650,9 @@ export interface SCM {
   /** Close a PR without merging */
   closePR(pr: PRInfo): Promise<void>;
 
+  /** List all open PRs for a repo. Optional — returns [] if not implemented. */
+  listOpenPRs?(repo: string): Promise<PRInfo[]>;
+
   // --- CI Tracking ---
 
   /** Get individual CI check statuses */

@@ -178,6 +178,52 @@ function createGitHubSCM(): SCM {
       await gh(["pr", "close", String(pr.number), "--repo", repoFlag(pr)]);
     },
 
+    async listOpenPRs(repo: string): Promise<PRInfo[]> {
+      const parts = repo.split("/");
+      if (parts.length !== 2 || !parts[0] || !parts[1]) {
+        throw new Error(`Invalid repo format "${repo}", expected "owner/repo"`);
+      }
+      const [owner, repoName] = parts;
+      try {
+        const raw = await gh([
+          "pr",
+          "list",
+          "--repo",
+          repo,
+          "--state",
+          "open",
+          "--json",
+          "number,url,title,headRefName,baseRefName,isDraft,additions,deletions",
+          "--limit",
+          "50",
+        ]);
+
+        const prs: Array<{
+          number: number;
+          url: string;
+          title: string;
+          headRefName: string;
+          baseRefName: string;
+          isDraft: boolean;
+          additions: number;
+          deletions: number;
+        }> = JSON.parse(raw);
+
+        return prs.map((pr) => ({
+          number: pr.number,
+          url: pr.url,
+          title: pr.title,
+          owner,
+          repo: repoName,
+          branch: pr.headRefName,
+          baseBranch: pr.baseRefName,
+          isDraft: pr.isDraft,
+        }));
+      } catch {
+        return [];
+      }
+    },
+
     async getCIChecks(pr: PRInfo): Promise<CICheck[]> {
       try {
         const raw = await gh([

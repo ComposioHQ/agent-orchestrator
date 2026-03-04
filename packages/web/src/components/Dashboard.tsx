@@ -32,11 +32,12 @@ interface DashboardProps {
   stats: DashboardStats;
   orchestratorId?: string | null;
   projectName?: string;
+  extraPRs?: DashboardPR[];
 }
 
 const BOARD_LEVELS: AttentionLevel[] = ["merge", "respond", "review", "pending", "working", "done"];
 
-export function Dashboard({ initialSessions, stats: _stats, orchestratorId, projectName }: DashboardProps) {
+export function Dashboard({ initialSessions, stats: _stats, orchestratorId, projectName, extraPRs }: DashboardProps) {
   const router = useRouter();
   const sessions = useSessionEvents(initialSessions);
   const [rateLimitDismissed, setRateLimitDismissed] = useState(false);
@@ -78,11 +79,20 @@ export function Dashboard({ initialSessions, stats: _stats, orchestratorId, proj
 
   // ── Open PRs for table ─────────────────────────────────────────────
   const openPRs = useMemo(() => {
-    return sessions
+    const sessionPRs = sessions
       .filter((s): s is DashboardSession & { pr: DashboardPR } => s.pr?.state === "open")
-      .map((s) => s.pr)
-      .sort((a, b) => mergeScore(a) - mergeScore(b));
-  }, [sessions]);
+      .map((s) => s.pr);
+    const all = [...sessionPRs, ...(extraPRs ?? [])];
+    // Deduplicate by number+repo
+    const seen = new Set<string>();
+    const unique = all.filter((pr) => {
+      const key = `${pr.owner}/${pr.repo}#${pr.number}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    return unique.sort((a, b) => mergeScore(a) - mergeScore(b));
+  }, [sessions, extraPRs]);
 
   // ── Actions ────────────────────────────────────────────────────────
   const handleSend = async (sessionId: string, message: string) => {

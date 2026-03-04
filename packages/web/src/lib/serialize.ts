@@ -70,7 +70,7 @@ export function sessionToDashboard(session: Session): DashboardSession {
  * These defaults indicate "data not yet loaded" rather than "failing".
  * Use enrichSessionPR() to populate with live data from SCM.
  */
-function basicPRToDashboard(pr: PRInfo): DashboardPR {
+export function basicPRToDashboard(pr: PRInfo): DashboardPR {
   return {
     number: pr.number,
     url: pr.url,
@@ -96,6 +96,11 @@ function basicPRToDashboard(pr: PRInfo): DashboardPR {
     unresolvedThreads: 0,
     unresolvedComments: [],
   };
+}
+
+/** Convert a PRInfo (from listOpenPRs) to a DashboardPR with default enrichment values. */
+export function prInfoToDashboard(pr: PRInfo): DashboardPR {
+  return basicPRToDashboard(pr);
 }
 
 /**
@@ -250,6 +255,37 @@ export async function enrichSessionPR(
   };
   prCache.set(cacheKey, cacheData);
   return true;
+}
+
+/**
+ * Enrich a standalone DashboardPR with live SCM data.
+ * Works like enrichSessionPR but operates on a DashboardPR directly
+ * (no parent session required). Used for repo-level PRs not linked to sessions.
+ */
+export async function enrichDashboardPR(
+  dashboardPR: DashboardPR,
+  scm: SCM,
+  pr: PRInfo,
+): Promise<void> {
+  // Create a minimal wrapper session to reuse enrichSessionPR logic
+  const wrapper: DashboardSession = {
+    id: `_repo-pr-${pr.number}`,
+    projectId: "",
+    status: "pr_open",
+    activity: null,
+    branch: pr.branch,
+    issueId: null,
+    issueUrl: null,
+    issueLabel: null,
+    issueTitle: null,
+    summary: null,
+    summaryIsFallback: false,
+    createdAt: new Date().toISOString(),
+    lastActivityAt: new Date().toISOString(),
+    pr: dashboardPR,
+    metadata: {},
+  };
+  await enrichSessionPR(wrapper, scm, pr);
 }
 
 /** Enrich a DashboardSession's issue label using the tracker plugin. */

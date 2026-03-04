@@ -1,12 +1,15 @@
-import { ACTIVITY_STATE } from "@composio/ao-core";
+import { ACTIVITY_STATE, type SCM, type PRInfo } from "@composio/ao-core";
 import { NextResponse } from "next/server";
 import { getServices, getSCM } from "@/lib/services";
+import type { DashboardPR } from "@/lib/types";
 import {
   sessionToDashboard,
   resolveProject,
   enrichSessionPR,
+  enrichDashboardPR,
   enrichSessionsMetadata,
   computeStats,
+  prInfoToDashboard,
 } from "@/lib/serialize";
 
 /** GET /api/sessions — List all sessions with full state
@@ -51,9 +54,77 @@ export async function GET(request: Request) {
     const enrichTimeout = new Promise<void>((resolve) => setTimeout(resolve, 4_000));
     await Promise.race([Promise.allSettled(enrichPromises), enrichTimeout]);
 
+    // ── Fetch all open PRs from configured repos ──────────────────────
+    let extraPRs: DashboardPR[] = [];
+    const repoSCMs = new Map<string, SCM>();
+    for (const project of Object.values(config.projects)) {
+      if (!project.repo || repoSCMs.has(project.repo)) continue;
+      const scm = getSCM(registry, project);
+      if (scm?.listOpenPRs) {
+        repoSCMs.set(project.repo, scm);
+      }
+    }
+
+    if (repoSCMs.size > 0) {
+      const repoFetchTimeout = new Promise<void>((resolve) => setTimeout(resolve, 3_000));
+      const repoFetches = Array.from(repoSCMs.entries()).map(async ([repo, scm]) => {
+        try {
+          if (!scm.listOpenPRs) return [];
+          return await scm.listOpenPRs(repo);
+        } catch {
+          return [];
+        }
+      });
+
+      const repoResults = await Promise.race([
+        Promise.allSettled(repoFetches),
+        repoFetchTimeout.then(() => [] as PromiseSettledResult<never>[]),
+      ]);
+
+      const allRepoPRs = (repoResults as PromiseSettledResult<PRInfo[]>[])
+        .filter((r): r is PromiseFulfilledResult<PRInfo[]> => r.status === "fulfilled")
+        .flatMap((r) => r.value);
+
+      // Build set of session-linked PR keys for deduplication
+      const sessionPRKeys = new Set(
+        dashboardSessions
+          .filter((s): s is typeof s & { pr: DashboardPR } => s.pr !== null)
+          .map((s) => `${s.pr.owner}/${s.pr.repo}#${s.pr.number}`),
+      );
+
+      const newPRs = allRepoPRs
+        .filter((pr) => !sessionPRKeys.has(`${pr.owner}/${pr.repo}#${pr.number}`))
+        .map(prInfoToDashboard);
+
+      // Enrich extra PRs
+      if (newPRs.length > 0) {
+        const extraEnrichPromises = newPRs.map((dashPR) => {
+          const repo = `${dashPR.owner}/${dashPR.repo}`;
+          const scm = repoSCMs.get(repo);
+          if (!scm) return Promise.resolve();
+          const prInfo: PRInfo = {
+            number: dashPR.number,
+            url: dashPR.url,
+            title: dashPR.title,
+            owner: dashPR.owner,
+            repo: dashPR.repo,
+            branch: dashPR.branch,
+            baseBranch: dashPR.baseBranch,
+            isDraft: dashPR.isDraft,
+          };
+          return enrichDashboardPR(dashPR, scm, prInfo);
+        });
+        const extraEnrichTimeout = new Promise<void>((resolve) => setTimeout(resolve, 4_000));
+        await Promise.race([Promise.allSettled(extraEnrichPromises), extraEnrichTimeout]);
+      }
+
+      extraPRs = newPRs;
+    }
+
     return NextResponse.json({
       sessions: dashboardSessions,
       stats: computeStats(dashboardSessions),
+      extraPRs,
     });
   } catch (err) {
     return NextResponse.json(
