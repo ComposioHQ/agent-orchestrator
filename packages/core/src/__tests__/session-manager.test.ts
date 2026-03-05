@@ -18,6 +18,7 @@ import {
   type Tracker,
   type SCM,
   type RuntimeHandle,
+  type ExecFileFn,
 } from "../types.js";
 
 let tmpDir: string;
@@ -114,6 +115,16 @@ beforeEach(() => {
       info: [],
     },
     reactions: {},
+    cleanup: {
+      enabled: false,
+      branchPrefix: "feat/agent-",
+      sweepInterval: 300,
+    },
+    backpressure: {
+      enabled: false,
+      pauseOnOpenPrs: false,
+      pauseOnOpenIssues: false,
+    },
     readyThresholdMs: 300_000,
   };
 
@@ -1748,5 +1759,155 @@ describe("isIssueNotFoundError", () => {
     expect(isIssueNotFoundError(null)).toBe(false);
     expect(isIssueNotFoundError(undefined)).toBe(false);
     expect(isIssueNotFoundError("string")).toBe(false);
+  });
+});
+
+describe("cleanupSession", () => {
+  // Mock child_process for git branch deletion
+  let execFileMock: ExecFileFn;
+
+  beforeEach(() => {
+    execFileMock = vi.fn<ExecFileFn>(
+      (_cmd, _args, _opts, cb) => {
+        cb(null, "", "");
+      },
+    );
+  });
+
+  function makeConfigWithCleanup(enabled: boolean, branchPrefix = "feat/agent-"): typeof config {
+    return {
+      ...config,
+      cleanup: {
+        enabled,
+        branchPrefix,
+        sweepInterval: 300,
+      },
+      backpressure: {
+        enabled: false,
+        pauseOnOpenPrs: false,
+        pauseOnOpenIssues: false,
+      },
+    };
+  }
+
+  it("deletes branch matching branchPrefix after kill", async () => {
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/ws",
+      branch: "feat/agent-123",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const cleanupConfig = makeConfigWithCleanup(true);
+    const sm = createSessionManager({
+      config: cleanupConfig,
+      registry: mockRegistry,
+    });
+
+    await sm.cleanupSession("app-1", execFileMock);
+
+    // Verify kill behavior ran (runtime destroyed, workspace destroyed, metadata archived)
+    expect(mockRuntime.destroy).toHaveBeenCalledWith(makeHandle("rt-1"));
+    expect(mockWorkspace.destroy).toHaveBeenCalledWith("/tmp/ws");
+    expect(readMetadata(sessionsDir, "app-1")).toBeNull();
+
+    // Verify git branch -D was called for the matching branch
+    expect(execFileMock).toHaveBeenCalledWith(
+      "git",
+      ["-C", join(tmpDir, "my-app"), "branch", "-D", "feat/agent-123"],
+      expect.objectContaining({ timeout: 30_000 }),
+      expect.any(Function),
+    );
+  });
+
+  it("does NOT delete branch that does not match prefix", async () => {
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/ws",
+      branch: "feat/issue-123",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const cleanupConfig = makeConfigWithCleanup(true);
+    const sm = createSessionManager({
+      config: cleanupConfig,
+      registry: mockRegistry,
+    });
+
+    await sm.cleanupSession("app-1", execFileMock);
+
+    // Verify kill behavior still ran
+    expect(mockRuntime.destroy).toHaveBeenCalledWith(makeHandle("rt-1"));
+    expect(mockWorkspace.destroy).toHaveBeenCalledWith("/tmp/ws");
+    expect(readMetadata(sessionsDir, "app-1")).toBeNull();
+
+    // Verify git branch -D was NOT called
+    expect(execFileMock).not.toHaveBeenCalled();
+  });
+
+  it("does NOT delete branch when cleanup is disabled", async () => {
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/ws",
+      branch: "feat/agent-456",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const cleanupConfig = makeConfigWithCleanup(false);
+    const sm = createSessionManager({
+      config: cleanupConfig,
+      registry: mockRegistry,
+    });
+
+    await sm.cleanupSession("app-1", execFileMock);
+
+    // Verify kill behavior still ran
+    expect(mockRuntime.destroy).toHaveBeenCalledWith(makeHandle("rt-1"));
+
+    // Verify git branch -D was NOT called
+    expect(execFileMock).not.toHaveBeenCalled();
+  });
+
+  it("handles branch deletion failure gracefully", async () => {
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/ws",
+      branch: "feat/agent-456",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    // Make git branch -D fail
+    execFileMock = vi.fn<ExecFileFn>(
+      (_cmd, _args, _opts, cb) => {
+        cb(new Error("error: branch 'feat/agent-456' not found."), "", "");
+      },
+    );
+
+    const cleanupConfig = makeConfigWithCleanup(true);
+    const sm = createSessionManager({
+      config: cleanupConfig,
+      registry: mockRegistry,
+    });
+
+    // Should not throw even though git branch -D fails
+    await expect(sm.cleanupSession("app-1", execFileMock)).resolves.toBeUndefined();
+
+    // Kill behavior should still have completed
+    expect(mockRuntime.destroy).toHaveBeenCalledWith(makeHandle("rt-1"));
+    expect(readMetadata(sessionsDir, "app-1")).toBeNull();
+  });
+
+  it("throws for nonexistent session", async () => {
+    const cleanupConfig = makeConfigWithCleanup(true);
+    const sm = createSessionManager({
+      config: cleanupConfig,
+      registry: mockRegistry,
+    });
+
+    await expect(sm.cleanupSession("nonexistent", execFileMock)).rejects.toThrow("not found");
   });
 });

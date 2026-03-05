@@ -1013,6 +1013,17 @@ export interface SessionMetadata {
 // SERVICE INTERFACES (core, not pluggable)
 // =============================================================================
 
+/**
+ * Narrow function type for execFile callback overload.
+ * Used by cleanupSession for dependency injection in tests.
+ */
+export type ExecFileFn = (
+  file: string,
+  args: readonly string[],
+  options: { timeout?: number },
+  callback: (error: Error | null, stdout: string, stderr: string) => void,
+) => unknown;
+
 /** Session manager — CRUD for sessions */
 export interface SessionManager {
   spawn(config: SessionSpawnConfig): Promise<Session>;
@@ -1022,6 +1033,8 @@ export interface SessionManager {
   get(sessionId: SessionId): Promise<Session | null>;
   kill(sessionId: SessionId): Promise<void>;
   cleanup(projectId?: string, options?: { dryRun?: boolean }): Promise<CleanupResult>;
+  /** Kill session and delete its branch if it matches the cleanup prefix (e.g. feat/agent-*). */
+  cleanupSession(sessionId: SessionId, execFileFn?: ExecFileFn): Promise<void>;
   send(sessionId: SessionId, message: string): Promise<void>;
 }
 

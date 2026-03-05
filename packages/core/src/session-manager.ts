@@ -13,6 +13,7 @@
 
 import { statSync, existsSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { execFile as nodeExecFile } from "node:child_process";
 import {
   isIssueNotFoundError,
   isRestorable,
@@ -36,6 +37,7 @@ import {
   type PluginRegistry,
   type RuntimeHandle,
   type Issue,
+  type ExecFileFn,
   PR_STATE,
 } from "./types.js";
 import {
@@ -1147,5 +1149,58 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     return restoredSession;
   }
 
-  return { spawn, spawnOrchestrator, restore, list, get, kill, cleanup, send };
+  /**
+   * Clean up a session: kill it and optionally delete its branch if it
+   * matches the configured cleanup prefix (e.g. "feat/agent-*").
+   *
+   * Accepts an optional execFileFn for testing (dependency injection).
+   */
+  async function cleanupSession(
+    sessionId: SessionId,
+    execFileFn: ExecFileFn = nodeExecFile,
+  ): Promise<void> {
+    // 1. Read session metadata BEFORE kill (we need the branch name and project path)
+    let branch: string | undefined;
+    let projectPath: string | undefined;
+
+    for (const proj of Object.values(config.projects)) {
+      const dir = getProjectSessionsDir(proj);
+      const raw = readMetadataRaw(dir, sessionId);
+      if (raw) {
+        branch = raw["branch"];
+        projectPath = proj.path;
+        break;
+      }
+    }
+
+    // 2. Call kill() to do normal cleanup (runtime, workspace, metadata archival).
+    //    This will throw if the session doesn't exist.
+    await kill(sessionId);
+
+    // 3. Delete the branch if it matches the configured prefix
+    if (
+      config.cleanup?.enabled &&
+      branch &&
+      branch.startsWith(config.cleanup.branchPrefix) &&
+      projectPath
+    ) {
+      try {
+        await new Promise<void>((resolve, reject) => {
+          execFileFn(
+            "git",
+            ["-C", projectPath!, "branch", "-D", branch!],
+            { timeout: 30_000 },
+            (error) => {
+              if (error) reject(error);
+              else resolve();
+            },
+          );
+        });
+      } catch {
+        // Branch may already be deleted — not an error
+      }
+    }
+  }
+
+  return { spawn, spawnOrchestrator, restore, list, get, kill, cleanup, cleanupSession, send };
 }

@@ -109,6 +109,7 @@ beforeEach(() => {
     get: vi.fn().mockResolvedValue(null),
     kill: vi.fn().mockResolvedValue(undefined),
     cleanup: vi.fn(),
+    cleanupSession: vi.fn().mockResolvedValue(undefined),
     send: vi.fn().mockResolvedValue(undefined),
   };
 
@@ -139,6 +140,16 @@ beforeEach(() => {
       info: [],
     },
     reactions: {},
+    cleanup: {
+      enabled: false,
+      branchPrefix: "feat/agent-",
+      sweepInterval: 300,
+    },
+    backpressure: {
+      enabled: false,
+      pauseOnOpenPrs: false,
+      pauseOnOpenIssues: false,
+    },
     readyThresholdMs: 300_000,
   };
 
