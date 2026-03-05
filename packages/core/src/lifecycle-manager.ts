@@ -572,14 +572,42 @@ export function createLifecycleManager(
             const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
             if (!scm) continue;
 
-            // Detect PR for this branch using a minimal session-like object
-            const detectedPR = await scm.detectPR(
-              { branch } as Session,
-              project,
-            );
-            if (!detectedPR) continue;
+            // Build a minimal Session object for detectPR (only branch is used)
+            const stubSession: Session = {
+              id: "" as SessionId,
+              projectId: "",
+              status: SESSION_STATUS.CLEANUP,
+              activity: null,
+              branch,
+              issueId: null,
+              pr: null,
+              workspacePath: null,
+              runtimeHandle: null,
+              agentInfo: null,
+              createdAt: new Date(),
+              lastActivityAt: new Date(),
+              metadata: {},
+            };
 
-            // Check PR state
+            const detectedPR = await scm.detectPR(stubSession, project);
+
+            // If no PR exists, this is an orphaned branch — delete it
+            if (!detectedPR) {
+              await new Promise<void>((resolve, reject) => {
+                execFileFn(
+                  "git",
+                  ["-C", project.path, "branch", "-D", branch],
+                  { timeout: 30_000 },
+                  (error) => {
+                    if (error) reject(error);
+                    else resolve();
+                  },
+                );
+              });
+              continue;
+            }
+
+            // Check PR state — delete if merged or closed
             const prState = await scm.getPRState(detectedPR);
             if (prState === PR_STATE.MERGED || prState === PR_STATE.CLOSED) {
               await new Promise<void>((resolve, reject) => {

@@ -1189,6 +1189,44 @@ describe("periodic sweep", () => {
     expect(deleteCall).toBeUndefined();
   });
 
+  it("deletes orphaned branches with no PR", async () => {
+    config.cleanup.enabled = true;
+    config.cleanup.sweepInterval = 1;
+
+    vi.mocked(execFileMock).mockImplementation(
+      (_file, args, _opts, callback) => {
+        const argsArr = args as string[];
+        if (argsArr.includes("--list")) {
+          callback(null, "feat/agent-99\n", "");
+        } else {
+          callback(null, "", "");
+        }
+        return undefined;
+      },
+    );
+
+    // No PR exists for this branch (orphaned)
+    vi.mocked(mockSCM.detectPR).mockResolvedValue(null);
+
+    vi.mocked(mockSessionManager.list).mockResolvedValue([]);
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+      execFileFn: execFileMock,
+    });
+
+    await lm.pollAll();
+
+    // Verify branch was deleted (orphaned = no PR)
+    const deleteCall = vi.mocked(execFileMock).mock.calls.find(
+      (call) => (call[1] as string[]).includes("-D"),
+    );
+    expect(deleteCall).toBeDefined();
+    expect((deleteCall![1] as string[]).includes("feat/agent-99")).toBe(true);
+  });
+
   it("skips sweep when cleanup is disabled", async () => {
     config.cleanup.enabled = false;
     config.cleanup.sweepInterval = 1;

@@ -1206,17 +1206,18 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     await kill(sessionId);
 
     // 3. Delete the branch if it matches the configured prefix
+    const cleanupBranch = branch;
+    const cleanupPath = projectPath;
     if (
       config.cleanup?.enabled &&
-      branch &&
-      branch.startsWith(config.cleanup.branchPrefix) &&
-      projectPath
+      cleanupBranch?.startsWith(config.cleanup.branchPrefix) &&
+      cleanupPath
     ) {
       try {
         await new Promise<void>((resolve, reject) => {
           execFileFn(
             "git",
-            ["-C", projectPath!, "branch", "-D", branch!],
+            ["-C", cleanupPath, "branch", "-D", cleanupBranch],
             { timeout: 30_000 },
             (error) => {
               if (error) reject(error);
