@@ -106,8 +106,8 @@ beforeAll(() => {
   execFileSync(TMUX, ["new-session", "-d", "-s", TEST_SESSION, "-x", "80", "-y", "24"], { timeout: 5000 });
   execFileSync(TMUX, ["new-session", "-d", "-s", TEST_HASH_SESSION, "-x", "80", "-y", "24"], { timeout: 5000 });
 
-  // Start the server on a random port
-  terminal = createDirectTerminalServer(TMUX);
+  // Start the server on a random port (auth disabled for tests)
+  terminal = createDirectTerminalServer(TMUX, null);
   terminal.server.listen(0);
   const addr = terminal.server.address();
   port = typeof addr === "object" && addr ? addr.port : 0;

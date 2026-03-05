@@ -113,6 +113,7 @@ export async function buildDashboardEnv(
   configPath: string | null,
   terminalPort?: number,
   directTerminalPort?: number,
+  authToken?: string,
 ): Promise<Record<string, string>> {
   const env: Record<string, string> = { ...process.env } as Record<string, string>;
 
@@ -152,6 +153,12 @@ export async function buildDashboardEnv(
   env["DIRECT_TERMINAL_PORT"] = String(resolvedDirect);
   env["NEXT_PUBLIC_TERMINAL_PORT"] = String(resolvedTerminal);
   env["NEXT_PUBLIC_DIRECT_TERMINAL_PORT"] = String(resolvedDirect);
+
+  // Pass auth token to both server-side and client-side
+  if (authToken) {
+    env["AO_AUTH_TOKEN"] = authToken;
+    env["NEXT_PUBLIC_AO_AUTH_TOKEN"] = authToken;
+  }
 
   return env;
 }

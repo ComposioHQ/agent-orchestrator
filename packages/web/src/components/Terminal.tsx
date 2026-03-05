@@ -23,7 +23,9 @@ export function Terminal({ sessionId }: TerminalProps) {
     const protocol = window.location.protocol;
     const hostname = window.location.hostname;
     // URL-encode sessionId to prevent special characters from breaking the URL
-    fetch(`${protocol}//${hostname}:${port}/terminal?session=${encodeURIComponent(sessionId)}`)
+    const authToken = process.env.NEXT_PUBLIC_AO_AUTH_TOKEN ?? "";
+    const tokenParam = authToken ? `&token=${encodeURIComponent(authToken)}` : "";
+    fetch(`${protocol}//${hostname}:${port}/terminal?session=${encodeURIComponent(sessionId)}${tokenParam}`)
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json() as Promise<{ url: string }>;

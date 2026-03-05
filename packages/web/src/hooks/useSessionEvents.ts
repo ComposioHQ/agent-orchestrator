@@ -41,7 +41,9 @@ export function useSessionEvents(initialSessions: DashboardSession[]): Dashboard
   }, [initialSessions]);
 
   useEffect(() => {
-    const es = new EventSource("/api/events");
+    const authToken = process.env.NEXT_PUBLIC_AO_AUTH_TOKEN ?? "";
+    const tokenParam = authToken ? `?token=${encodeURIComponent(authToken)}` : "";
+    const es = new EventSource(`/api/events${tokenParam}`);
 
     es.onmessage = (event: MessageEvent) => {
       try {

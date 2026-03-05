@@ -59,10 +59,15 @@ export default function SessionPage() {
     }
   }, [session, id]);
 
+  // Build auth headers for API requests
+  const authToken = process.env.NEXT_PUBLIC_AO_AUTH_TOKEN;
+  const headers: Record<string, string> = {};
+  if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+
   // Fetch session data (memoized to avoid recreating on every render)
   const fetchSession = useCallback(async () => {
     try {
-      const res = await fetch(`/api/sessions/${encodeURIComponent(id)}`);
+      const res = await fetch(`/api/sessions/${encodeURIComponent(id)}`, { headers });
       if (res.status === 404) {
         setError("Session not found");
         setLoading(false);
@@ -83,7 +88,7 @@ export default function SessionPage() {
   const fetchZoneCounts = useCallback(async () => {
     if (!isOrchestrator) return;
     try {
-      const res = await fetch("/api/sessions");
+      const res = await fetch("/api/sessions", { headers });
       if (!res.ok) return;
       const body = (await res.json()) as { sessions: DashboardSession[] };
       const sessions = body.sessions ?? [];

@@ -88,9 +88,12 @@ async function askAgentToFix(
   try {
     const { title, description } = cleanBugbotComment(comment.body);
     const message = `Please address this review comment:\n\nFile: ${comment.path}\nComment: ${title}\nDescription: ${description}\n\nComment URL: ${comment.url}\n\nAfter fixing, mark the comment as resolved at ${comment.url}`;
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const token = process.env.NEXT_PUBLIC_AO_AUTH_TOKEN;
+    if (token) headers["Authorization"] = `Bearer ${token}`;
     const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/message`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({ message }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);

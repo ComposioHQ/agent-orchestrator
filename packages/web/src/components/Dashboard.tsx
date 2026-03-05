@@ -15,6 +15,16 @@ import { PRTableRow } from "./PRStatus";
 import { DynamicFavicon } from "./DynamicFavicon";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
 
+/** Build headers with auth token for API requests */
+function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...extra };
+  const token = process.env.NEXT_PUBLIC_AO_AUTH_TOKEN;
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
 interface DashboardProps {
   initialSessions: DashboardSession[];
   stats: DashboardStats;
@@ -52,7 +62,7 @@ export function Dashboard({ initialSessions, stats, orchestratorId, projectName 
   const handleSend = async (sessionId: string, message: string) => {
     const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/send`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ message }),
     });
     if (!res.ok) {
@@ -64,6 +74,7 @@ export function Dashboard({ initialSessions, stats, orchestratorId, projectName 
     if (!confirm(`Kill session ${sessionId}?`)) return;
     const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/kill`, {
       method: "POST",
+      headers: authHeaders(),
     });
     if (!res.ok) {
       console.error(`Failed to kill ${sessionId}:`, await res.text());
@@ -71,7 +82,10 @@ export function Dashboard({ initialSessions, stats, orchestratorId, projectName 
   };
 
   const handleMerge = async (prNumber: number) => {
-    const res = await fetch(`/api/prs/${prNumber}/merge`, { method: "POST" });
+    const res = await fetch(`/api/prs/${prNumber}/merge`, {
+      method: "POST",
+      headers: authHeaders(),
+    });
     if (!res.ok) {
       console.error(`Failed to merge PR #${prNumber}:`, await res.text());
     }
@@ -81,6 +95,7 @@ export function Dashboard({ initialSessions, stats, orchestratorId, projectName 
     if (!confirm(`Restore session ${sessionId}?`)) return;
     const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/restore`, {
       method: "POST",
+      headers: authHeaders(),
     });
     if (!res.ok) {
       console.error(`Failed to restore ${sessionId}:`, await res.text());

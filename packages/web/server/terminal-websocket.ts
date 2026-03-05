@@ -7,15 +7,40 @@
  * ttyd handles all the hard parts: xterm.js, WebSocket, ANSI rendering,
  * cursor positioning, resize, input — battle-tested and correct.
  *
- * TODO: Add authentication middleware to verify:
- *   - User is authenticated
- *   - User owns the requested session
- *   - Rate limiting for terminal access
+ * Authentication: Requires AO_AUTH_TOKEN via Authorization header or
+ * token query parameter. Auth is disabled when no token is configured.
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { createServer, request } from "node:http";
+import { createServer, type IncomingMessage, request } from "node:http";
 import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
+import { readAuthToken } from "@composio/ao-core";
+
+/** Read auth token once at startup */
+const AUTH_TOKEN = readAuthToken();
+
+/** Check if an HTTP request is authenticated */
+function isAuthenticated(req: IncomingMessage): boolean {
+  if (!AUTH_TOKEN) return true; // No token configured — auth disabled
+
+  // Check Authorization: Bearer <token> header
+  const authHeader = req.headers.authorization;
+  if (authHeader) {
+    const parts = authHeader.split(" ");
+    if (parts.length === 2 && parts[0].toLowerCase() === "bearer" && parts[1] === AUTH_TOKEN) {
+      return true;
+    }
+  }
+
+  // Check token query parameter
+  const url = new URL(req.url ?? "/", "http://localhost");
+  const queryToken = url.searchParams.get("token");
+  if (queryToken === AUTH_TOKEN) {
+    return true;
+  }
+
+  return false;
+}
 
 /** Cached full path to tmux binary */
 const TMUX = findTmux();
@@ -209,10 +234,16 @@ function getOrSpawnTtyd(sessionId: string, tmuxSessionName: string): TtydInstanc
 
 // Simple HTTP API for the dashboard to request terminal URLs
 const server = createServer(async (req, res) => {
+  // Authenticate all requests
+  if (!isAuthenticated(req)) {
+    res.writeHead(401, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Unauthorized" }));
+    return;
+  }
+
   const url = new URL(req.url ?? "/", "http://localhost");
 
   // CORS for dashboard - allow requests from the same host as the dashboard
-  // TODO: Replace with proper session-based authentication
   const origin = req.headers.origin;
   if (origin && origin !== "null") {
     // Extract hostname from origin and compare with request host

@@ -80,6 +80,9 @@ export {
   validateAndStoreOrigin,
 } from "./paths.js";
 
+// Auth — token generation and validation
+export { ensureAuthToken, readAuthToken, getAuthTokenPath } from "./auth.js";
+
 // Config generator — auto-generate config from repo URL
 export {
   isRepoUrl,

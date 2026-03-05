@@ -187,7 +187,9 @@ export function DirectTerminal({
         const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
         const hostname = window.location.hostname;
         const port = process.env.NEXT_PUBLIC_DIRECT_TERMINAL_PORT ?? "14801";
-        const wsUrl = `${protocol}//${hostname}:${port}/ws?session=${encodeURIComponent(sessionId)}`;
+        const authToken = process.env.NEXT_PUBLIC_AO_AUTH_TOKEN ?? "";
+        const tokenParam = authToken ? `&token=${encodeURIComponent(authToken)}` : "";
+        const wsUrl = `${protocol}//${hostname}:${port}/ws?session=${encodeURIComponent(sessionId)}${tokenParam}`;
 
         // ── Preserve selection while terminal receives output ────────
         // xterm.js clears the selection on every terminal.write(). We

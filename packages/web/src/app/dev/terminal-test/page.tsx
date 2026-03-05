@@ -30,7 +30,10 @@ function TerminalTestPageContent() {
 
   // Fetch available sessions on mount (only active ones)
   useEffect(() => {
-    fetch("/api/sessions?active=true")
+    const authToken = process.env.NEXT_PUBLIC_AO_AUTH_TOKEN;
+    const fetchHeaders: Record<string, string> = {};
+    if (authToken) fetchHeaders["Authorization"] = `Bearer ${authToken}`;
+    fetch("/api/sessions?active=true", { headers: fetchHeaders })
       .then((res) => res.json())
       .then((data) => {
         if (data.sessions && Array.isArray(data.sessions)) {

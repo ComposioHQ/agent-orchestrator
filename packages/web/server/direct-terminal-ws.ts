@@ -7,12 +7,13 @@
  * that tmux requires for clipboard support.
  */
 
-import { createServer, type Server } from "node:http";
+import { createServer, type Server, type IncomingMessage } from "node:http";
 import { spawn } from "node:child_process";
 import { WebSocketServer, WebSocket } from "ws";
 import { spawn as ptySpawn, type IPty } from "node-pty";
 import { homedir, userInfo } from "node:os";
 import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
+import { readAuthToken } from "@composio/ao-core";
 
 interface TerminalSession {
   sessionId: string;
@@ -31,11 +32,53 @@ export interface DirectTerminalServer {
  * Create the direct terminal WebSocket server.
  * Separated from listen() so tests can control lifecycle.
  */
-export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalServer {
+/**
+ * Check if a raw HTTP request is authenticated.
+ * Checks Authorization header and token query parameter.
+ */
+function isAuthenticated(req: IncomingMessage, authToken: string | null): boolean {
+  if (!authToken) return true; // No token configured — auth disabled
+
+  // Check Authorization: Bearer <token> header
+  const authHeader = req.headers.authorization;
+  if (authHeader) {
+    const parts = authHeader.split(" ");
+    if (parts.length === 2 && parts[0].toLowerCase() === "bearer" && parts[1] === authToken) {
+      return true;
+    }
+  }
+
+  // Check token query parameter
+  const url = new URL(req.url ?? "/", "http://localhost");
+  const queryToken = url.searchParams.get("token");
+  if (queryToken === authToken) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * @param tmuxPath - Path to tmux binary
+ * @param authTokenOverride - Auth token override. Pass `null` to disable auth.
+ *   If undefined, reads from environment/file via readAuthToken().
+ */
+export function createDirectTerminalServer(
+  tmuxPath?: string,
+  authTokenOverride?: string | null,
+): DirectTerminalServer {
   const TMUX = tmuxPath ?? findTmux();
   const activeSessions = new Map<string, TerminalSession>();
+  const authToken = authTokenOverride !== undefined ? authTokenOverride : readAuthToken();
 
   const server = createServer((req, res) => {
+    // Authenticate all HTTP requests
+    if (!isAuthenticated(req, authToken)) {
+      res.writeHead(401, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Unauthorized" }));
+      return;
+    }
+
     if (req.url === "/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(
@@ -54,6 +97,13 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
   const wss = new WebSocketServer({
     server,
     path: "/ws",
+    verifyClient: ({ req }, cb) => {
+      if (isAuthenticated(req, authToken)) {
+        cb(true);
+      } else {
+        cb(false, 401, "Unauthorized");
+      }
+    },
   });
 
   wss.on("connection", (ws, req) => {
