@@ -730,6 +730,77 @@ describe("connection lifecycle", () => {
 });
 
 // =============================================================================
+// Origin validation
+// =============================================================================
+
+describe("WebSocket Origin validation", () => {
+  it("rejects connection with disallowed Origin header", async () => {
+    const ws = new WebSocket(`ws://localhost:${port}/ws?session=${TEST_SESSION}`, {
+      headers: { Origin: "https://evil.example.com" },
+    });
+
+    const error = await new Promise<Error>((resolve) => {
+      ws.on("error", resolve);
+      setTimeout(() => resolve(new Error("timeout")), 5000);
+    });
+
+    expect(error.message).toContain("403");
+  });
+
+  it("rejects connection with null Origin (file:// URI)", async () => {
+    const ws = new WebSocket(`ws://localhost:${port}/ws?session=${TEST_SESSION}`, {
+      headers: { Origin: "null" },
+    });
+
+    const error = await new Promise<Error>((resolve) => {
+      ws.on("error", resolve);
+      setTimeout(() => resolve(new Error("timeout")), 5000);
+    });
+
+    expect(error.message).toContain("403");
+  });
+
+  it("allows connection with localhost Origin", async () => {
+    const ws = new WebSocket(`ws://localhost:${port}/ws?session=${TEST_SESSION}`, {
+      headers: { Origin: "http://localhost:3000" },
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      ws.on("open", () => resolve());
+      ws.on("error", reject);
+      setTimeout(() => reject(new Error("timeout")), 5000);
+    });
+
+    // Should have connected successfully
+    expect(ws.readyState).toBe(WebSocket.OPEN);
+    ws.close();
+  });
+
+  it("allows connection with 127.0.0.1 Origin", async () => {
+    const ws = new WebSocket(`ws://localhost:${port}/ws?session=${TEST_SESSION}`, {
+      headers: { Origin: "http://127.0.0.1:3000" },
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      ws.on("open", () => resolve());
+      ws.on("error", reject);
+      setTimeout(() => reject(new Error("timeout")), 5000);
+    });
+
+    expect(ws.readyState).toBe(WebSocket.OPEN);
+    ws.close();
+  });
+
+  it("allows connection without Origin header (non-browser client)", async () => {
+    // The default connectWs doesn't set Origin — simulates non-browser client
+    const ws = await connectWs(TEST_SESSION);
+    const data = await waitForWsData(ws);
+    expect(data.length).toBeGreaterThan(0);
+    ws.close();
+  });
+});
+
+// =============================================================================
 // Server creation
 // =============================================================================
 

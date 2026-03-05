@@ -16,6 +16,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, request } from "node:http";
 import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
+import { isAllowedOrigin } from "./origin-validation.js";
 
 /** Cached full path to tmux binary */
 const TMUX = findTmux();
@@ -211,24 +212,11 @@ function getOrSpawnTtyd(sessionId: string, tmuxSessionName: string): TtydInstanc
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
 
-  // CORS for dashboard - allow requests from the same host as the dashboard
-  // TODO: Replace with proper session-based authentication
+  // CORS — validate Origin against allowlist (localhost by default, configurable via AO_ALLOWED_ORIGINS)
   const origin = req.headers.origin;
-  if (origin && origin !== "null") {
-    // Extract hostname from origin and compare with request host
-    try {
-      const originUrl = new URL(origin);
-      const requestHost = req.headers.host;
-      // Allow if origin hostname matches request host (supports remote deployments)
-      if (requestHost && originUrl.hostname === requestHost.split(":")[0]) {
-        res.setHeader("Access-Control-Allow-Origin", origin);
-      }
-    } catch {
-      // Invalid origin URL, don't set CORS header
-    }
-  } else {
-    // Allow null origin (file:// or local HTML files)
-    res.setHeader("Access-Control-Allow-Origin", "*");
+  if (origin && isAllowedOrigin(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
   }
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");

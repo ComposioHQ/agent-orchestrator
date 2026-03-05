@@ -13,6 +13,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { spawn as ptySpawn, type IPty } from "node-pty";
 import { homedir, userInfo } from "node:os";
 import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
+import { isAllowedWebSocketOrigin } from "./origin-validation.js";
 
 interface TerminalSession {
   sessionId: string;
@@ -54,6 +55,15 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
   const wss = new WebSocketServer({
     server,
     path: "/ws",
+    verifyClient: (info, callback) => {
+      const origin = info.origin ?? info.req.headers.origin;
+      if (!isAllowedWebSocketOrigin(origin)) {
+        console.error("[DirectTerminal] Rejected WebSocket from disallowed origin:", origin);
+        callback(false, 403, "Forbidden: origin not allowed");
+        return;
+      }
+      callback(true);
+    },
   });
 
   wss.on("connection", (ws, req) => {
