@@ -11,6 +11,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { execFile as nodeExecFile } from "node:child_process";
 import {
   SESSION_STATUS,
   PR_STATE,
@@ -31,6 +32,7 @@ import {
   type Notifier,
   type Session,
   type EventPriority,
+  type ExecFileFn,
   type ProjectConfig as _ProjectConfig,
 } from "./types.js";
 import { updateMetadata } from "./metadata.js";
@@ -160,6 +162,8 @@ export interface LifecycleManagerDeps {
   config: OrchestratorConfig;
   registry: PluginRegistry;
   sessionManager: SessionManager;
+  /** Optional execFile override for testing (dependency injection). */
+  execFileFn?: ExecFileFn;
 }
 
 /** Track attempt counts for reactions per session. */
@@ -169,14 +173,17 @@ interface ReactionTracker {
 }
 
 /** Create a LifecycleManager instance. */
-export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleManager {
-  const { config, registry, sessionManager } = deps;
+export function createLifecycleManager(
+  deps: LifecycleManagerDeps,
+): LifecycleManager & { pollAll(): Promise<void> } {
+  const { config, registry, sessionManager, execFileFn = nodeExecFile } = deps;
 
   const states = new Map<SessionId, SessionStatus>();
   const reactionTrackers = new Map<string, ReactionTracker>(); // "sessionId:reactionKey"
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
+  let pollCycleCount = 0;
 
   /** Determine current status for a session by polling plugins. */
   async function determineStatus(session: Session): Promise<SessionStatus> {
@@ -533,6 +540,98 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
   }
 
+  /** Periodic sweep: scan for stale feat/agent-* branches whose PRs are merged and delete them. */
+  async function sweep(): Promise<void> {
+    if (!config.cleanup?.enabled) return;
+
+    for (const [_projectId, project] of Object.entries(config.projects)) {
+      try {
+        // List local branches matching the cleanup prefix
+        const branchOutput = await new Promise<string>((resolve, reject) => {
+          execFileFn(
+            "git",
+            [
+              "-C", project.path,
+              "branch", "--list",
+              `${config.cleanup.branchPrefix}*`,
+              "--format", "%(refname:short)",
+            ],
+            { timeout: 30_000 },
+            (error, stdout) => {
+              if (error) reject(error);
+              else resolve(stdout);
+            },
+          );
+        });
+
+        const branches = branchOutput.split("\n").map((b) => b.trim()).filter(Boolean);
+
+        for (const branch of branches) {
+          try {
+            // Resolve SCM plugin for this project
+            const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+            if (!scm) continue;
+
+            // Detect PR for this branch using a minimal session-like object
+            const detectedPR = await scm.detectPR(
+              { branch } as Session,
+              project,
+            );
+            if (!detectedPR) continue;
+
+            // Check PR state
+            const prState = await scm.getPRState(detectedPR);
+            if (prState === PR_STATE.MERGED || prState === PR_STATE.CLOSED) {
+              await new Promise<void>((resolve, reject) => {
+                execFileFn(
+                  "git",
+                  ["-C", project.path, "branch", "-D", branch],
+                  { timeout: 30_000 },
+                  (error) => {
+                    if (error) reject(error);
+                    else resolve();
+                  },
+                );
+              });
+            }
+          } catch {
+            // Individual branch cleanup failure is not critical
+          }
+        }
+
+        // Prune stale worktree refs and remote tracking branches
+        try {
+          await new Promise<void>((resolve, reject) => {
+            execFileFn(
+              "git",
+              ["-C", project.path, "worktree", "prune"],
+              { timeout: 30_000 },
+              (error) => {
+                if (error) reject(error);
+                else resolve();
+              },
+            );
+          });
+          await new Promise<void>((resolve, reject) => {
+            execFileFn(
+              "git",
+              ["-C", project.path, "fetch", "--prune"],
+              { timeout: 30_000 },
+              (error) => {
+                if (error) reject(error);
+                else resolve();
+              },
+            );
+          });
+        } catch {
+          // Prune failures are non-critical
+        }
+      } catch {
+        // Per-project sweep failure is non-critical
+      }
+    }
+  }
+
   /** Run one polling cycle across all sessions. */
   async function pollAll(): Promise<void> {
     // Re-entrancy guard: skip if previous poll is still running
@@ -585,6 +684,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           }
         }
       }
+
+      // Periodic sweep: after N poll cycles, scan for stale branches
+      pollCycleCount++;
+      if (config.cleanup?.sweepInterval && pollCycleCount >= config.cleanup.sweepInterval) {
+        pollCycleCount = 0;
+        await sweep();
+      }
     } catch {
       // Poll cycle failed — will retry next interval
     } finally {
@@ -616,5 +722,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       if (!session) throw new Error(`Session ${sessionId} not found`);
       await checkSession(session);
     },
+
+    /** Exposed for testing — run one polling cycle (includes sweep logic). */
+    pollAll,
   };
 }

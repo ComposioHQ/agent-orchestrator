@@ -17,6 +17,7 @@ import type {
   Notifier,
   ActivityState,
   PRInfo,
+  ExecFileFn,
 } from "../types.js";
 
 let tmpDir: string;
@@ -1026,5 +1027,320 @@ describe("getStates", () => {
     // Modifying returned map shouldn't affect internal state
     states.set("app-1", "killed");
     expect(lm.getStates().get("app-1")).toBe("working");
+  });
+});
+
+describe("periodic sweep", () => {
+  let execFileMock: ExecFileFn;
+  let mockSCM: SCM;
+  let registryWithSCM: PluginRegistry;
+
+  beforeEach(() => {
+    execFileMock = vi.fn<ExecFileFn>(
+      (_file, _args, _opts, callback) => {
+        // Default: succeed with empty output
+        callback(null, "", "");
+        return undefined;
+      },
+    );
+
+    mockSCM = {
+      name: "mock-scm",
+      detectPR: vi.fn().mockResolvedValue(null),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("none"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("none"),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    registryWithSCM = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+  });
+
+  it("runs sweep after sweepInterval poll cycles", async () => {
+    config.cleanup.enabled = true;
+    config.cleanup.sweepInterval = 2;
+
+    // Mock git branch --list to return a stale branch
+    vi.mocked(execFileMock).mockImplementation(
+      (_file, args, _opts, callback) => {
+        const argsArr = args as string[];
+        if (argsArr.includes("--list")) {
+          callback(null, "feat/agent-99\n", "");
+        } else {
+          callback(null, "", "");
+        }
+        return undefined;
+      },
+    );
+
+    // Mock SCM: detectPR returns a PR, getPRState says merged
+    vi.mocked(mockSCM.detectPR).mockResolvedValue(
+      makePR({ branch: "feat/agent-99", number: 99 }),
+    );
+    vi.mocked(mockSCM.getPRState).mockResolvedValue("merged");
+
+    // No active sessions
+    vi.mocked(mockSessionManager.list).mockResolvedValue([]);
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+      execFileFn: execFileMock,
+    });
+
+    // First poll cycle — sweep should not run yet (pollCycleCount=1 < 2)
+    await lm.pollAll();
+    const callsAfterFirst = vi.mocked(execFileMock).mock.calls.length;
+    expect(callsAfterFirst).toBe(0);
+
+    // Second poll cycle — sweep should run (pollCycleCount=2 >= 2)
+    await lm.pollAll();
+
+    // Verify git branch --list was called to discover branches
+    const listCall = vi.mocked(execFileMock).mock.calls.find(
+      (call) => (call[1] as string[]).includes("--list"),
+    );
+    expect(listCall).toBeDefined();
+
+    // Verify git branch -D feat/agent-99 was called to delete the merged branch
+    const deleteCall = vi.mocked(execFileMock).mock.calls.find(
+      (call) => {
+        const args = call[1] as string[];
+        return args.includes("-D") && args.includes("feat/agent-99");
+      },
+    );
+    expect(deleteCall).toBeDefined();
+  });
+
+  it("does not run sweep before sweepInterval is reached", async () => {
+    config.cleanup.enabled = true;
+    config.cleanup.sweepInterval = 3;
+
+    vi.mocked(mockSessionManager.list).mockResolvedValue([]);
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+      execFileFn: execFileMock,
+    });
+
+    // Poll twice — sweepInterval is 3, so no sweep should run
+    await lm.pollAll();
+    await lm.pollAll();
+
+    // No git commands should have been executed (sweep didn't run)
+    expect(execFileMock).not.toHaveBeenCalled();
+  });
+
+  it("does not delete branches with open PRs", async () => {
+    config.cleanup.enabled = true;
+    config.cleanup.sweepInterval = 1; // sweep every cycle
+
+    // Mock git branch --list to return a branch
+    vi.mocked(execFileMock).mockImplementation(
+      (_file, args, _opts, callback) => {
+        const argsArr = args as string[];
+        if (argsArr.includes("--list")) {
+          callback(null, "feat/agent-50\n", "");
+        } else {
+          callback(null, "", "");
+        }
+        return undefined;
+      },
+    );
+
+    // Mock SCM: detectPR returns a PR, getPRState says open
+    vi.mocked(mockSCM.detectPR).mockResolvedValue(
+      makePR({ branch: "feat/agent-50", number: 50 }),
+    );
+    vi.mocked(mockSCM.getPRState).mockResolvedValue("open");
+
+    vi.mocked(mockSessionManager.list).mockResolvedValue([]);
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+      execFileFn: execFileMock,
+    });
+
+    await lm.pollAll();
+
+    // Verify git branch -D was NOT called (PR is open, not merged)
+    const deleteCall = vi.mocked(execFileMock).mock.calls.find(
+      (call) => (call[1] as string[]).includes("-D"),
+    );
+    expect(deleteCall).toBeUndefined();
+  });
+
+  it("skips sweep when cleanup is disabled", async () => {
+    config.cleanup.enabled = false;
+    config.cleanup.sweepInterval = 1;
+
+    vi.mocked(mockSessionManager.list).mockResolvedValue([]);
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+      execFileFn: execFileMock,
+    });
+
+    await lm.pollAll();
+
+    // No git commands should have been executed (cleanup disabled)
+    expect(execFileMock).not.toHaveBeenCalled();
+  });
+
+  it("deletes branches with closed PRs", async () => {
+    config.cleanup.enabled = true;
+    config.cleanup.sweepInterval = 1;
+
+    vi.mocked(execFileMock).mockImplementation(
+      (_file, args, _opts, callback) => {
+        const argsArr = args as string[];
+        if (argsArr.includes("--list")) {
+          callback(null, "feat/agent-77\n", "");
+        } else {
+          callback(null, "", "");
+        }
+        return undefined;
+      },
+    );
+
+    vi.mocked(mockSCM.detectPR).mockResolvedValue(
+      makePR({ branch: "feat/agent-77", number: 77 }),
+    );
+    vi.mocked(mockSCM.getPRState).mockResolvedValue("closed");
+
+    vi.mocked(mockSessionManager.list).mockResolvedValue([]);
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+      execFileFn: execFileMock,
+    });
+
+    await lm.pollAll();
+
+    // Verify git branch -D was called for the closed PR branch
+    const deleteCall = vi.mocked(execFileMock).mock.calls.find(
+      (call) => {
+        const args = call[1] as string[];
+        return args.includes("-D") && args.includes("feat/agent-77");
+      },
+    );
+    expect(deleteCall).toBeDefined();
+  });
+
+  it("runs worktree prune and fetch --prune after sweep", async () => {
+    config.cleanup.enabled = true;
+    config.cleanup.sweepInterval = 1;
+
+    vi.mocked(execFileMock).mockImplementation(
+      (_file, args, _opts, callback) => {
+        const argsArr = args as string[];
+        if (argsArr.includes("--list")) {
+          callback(null, "", ""); // no branches to clean
+        } else {
+          callback(null, "", "");
+        }
+        return undefined;
+      },
+    );
+
+    vi.mocked(mockSessionManager.list).mockResolvedValue([]);
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+      execFileFn: execFileMock,
+    });
+
+    await lm.pollAll();
+
+    // Verify worktree prune was called
+    const pruneCall = vi.mocked(execFileMock).mock.calls.find(
+      (call) => {
+        const args = call[1] as string[];
+        return args.includes("worktree") && args.includes("prune");
+      },
+    );
+    expect(pruneCall).toBeDefined();
+
+    // Verify fetch --prune was called
+    const fetchCall = vi.mocked(execFileMock).mock.calls.find(
+      (call) => {
+        const args = call[1] as string[];
+        return args.includes("fetch") && args.includes("--prune");
+      },
+    );
+    expect(fetchCall).toBeDefined();
+  });
+
+  it("continues if individual branch cleanup fails", async () => {
+    config.cleanup.enabled = true;
+    config.cleanup.sweepInterval = 1;
+
+    // Return two branches, first one fails detectPR
+    vi.mocked(execFileMock).mockImplementation(
+      (_file, args, _opts, callback) => {
+        const argsArr = args as string[];
+        if (argsArr.includes("--list")) {
+          callback(null, "feat/agent-10\nfeat/agent-20\n", "");
+        } else {
+          callback(null, "", "");
+        }
+        return undefined;
+      },
+    );
+
+    // First branch: detectPR throws, second branch: detectPR returns merged PR
+    let detectCount = 0;
+    vi.mocked(mockSCM.detectPR).mockImplementation(async () => {
+      detectCount++;
+      if (detectCount === 1) throw new Error("API rate limited");
+      return makePR({ branch: "feat/agent-20", number: 20 });
+    });
+    vi.mocked(mockSCM.getPRState).mockResolvedValue("merged");
+
+    vi.mocked(mockSessionManager.list).mockResolvedValue([]);
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+      execFileFn: execFileMock,
+    });
+
+    // Should not throw — individual failures are caught
+    await expect(lm.pollAll()).resolves.toBeUndefined();
+
+    // Second branch should still be cleaned up despite first branch failing
+    const deleteCall = vi.mocked(execFileMock).mock.calls.find(
+      (call) => {
+        const args = call[1] as string[];
+        return args.includes("-D") && args.includes("feat/agent-20");
+      },
+    );
+    expect(deleteCall).toBeDefined();
   });
 });
