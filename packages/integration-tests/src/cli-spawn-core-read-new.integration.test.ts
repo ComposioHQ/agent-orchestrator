@@ -180,6 +180,16 @@ describe.skipIf(!tmuxOk)("CLI-Core integration (hash-based architecture)", () =>
         info: [],
       },
       reactions: {},
+      cleanup: {
+        enabled: true,
+        branchPrefix: "feat/agent-",
+        sweepInterval: 10,
+      },
+      backpressure: {
+        enabled: true,
+        pauseOnOpenPrs: true,
+        pauseOnOpenIssues: true,
+      },
     };
 
     const registry = createPluginRegistry();
@@ -247,6 +257,16 @@ describe.skipIf(!tmuxOk)("CLI-Core integration (hash-based architecture)", () =>
         info: [],
       },
       reactions: {},
+      cleanup: {
+        enabled: true,
+        branchPrefix: "feat/agent-",
+        sweepInterval: 10,
+      },
+      backpressure: {
+        enabled: true,
+        pauseOnOpenPrs: true,
+        pauseOnOpenIssues: true,
+      },
     };
 
     // Write metadata for project A
