@@ -518,6 +518,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           }
         }
       }
+
+      // Reactive cleanup: auto-clean branch and worktree when PR is merged
+      if (newStatus === "merged" && config.cleanup?.enabled) {
+        try {
+          await sessionManager.cleanupSession(session.id);
+        } catch {
+          // Cleanup is best-effort — failure shouldn't break the lifecycle loop
+        }
+      }
     } else {
       // No transition but track current state
       states.set(session.id, newStatus);
