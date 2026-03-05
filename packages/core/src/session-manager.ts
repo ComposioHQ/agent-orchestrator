@@ -338,6 +338,34 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       throw new Error(`Agent plugin '${project.agent ?? config.defaults.agent}' not found`);
     }
 
+    // Backpressure: check for open PRs and issues before spawning
+    if (config.backpressure?.enabled) {
+      // Check open PRs (any PR on the repo, not just agent PRs)
+      if (config.backpressure.pauseOnOpenPrs && plugins.scm?.listOpenPRs) {
+        const openPRs = await plugins.scm.listOpenPRs(project);
+        if (openPRs.length > 0) {
+          throw new Error(
+            `Backpressure: ${openPRs.length} open PR(s) on ${project.repo}. ` +
+            `Resolve before spawning new work.`,
+          );
+        }
+      }
+
+      // Check open issues
+      if (config.backpressure.pauseOnOpenIssues && plugins.tracker?.listIssues) {
+        const openIssues = await plugins.tracker.listIssues(
+          { state: "open" },
+          project,
+        );
+        if (openIssues.length > 0) {
+          throw new Error(
+            `Backpressure: ${openIssues.length} open issue(s) on ${project.repo}. ` +
+            `Resolve before spawning new work.`,
+          );
+        }
+      }
+    }
+
     // Validate issue exists BEFORE creating any resources
     let resolvedIssue: Issue | undefined;
     if (spawnConfig.issueId && plugins.tracker) {

@@ -1911,3 +1911,230 @@ describe("cleanupSession", () => {
     await expect(sm.cleanupSession("nonexistent", execFileMock)).rejects.toThrow("not found");
   });
 });
+
+describe("backpressure", () => {
+  function makeBackpressureConfig(overrides: {
+    enabled?: boolean;
+    pauseOnOpenPrs?: boolean;
+    pauseOnOpenIssues?: boolean;
+  } = {}): OrchestratorConfig {
+    return {
+      ...config,
+      backpressure: {
+        enabled: overrides.enabled ?? true,
+        pauseOnOpenPrs: overrides.pauseOnOpenPrs ?? true,
+        pauseOnOpenIssues: overrides.pauseOnOpenIssues ?? true,
+      },
+    };
+  }
+
+  it("throws when open PRs exist and backpressure is enabled", async () => {
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn(),
+      createPR: vi.fn(),
+      addComment: vi.fn(),
+      getComments: vi.fn().mockResolvedValue([]),
+      getAutomatedComments: vi.fn().mockResolvedValue([]),
+      getMergeability: vi.fn(),
+      listOpenPRs: vi.fn().mockResolvedValue([
+        {
+          number: 42,
+          url: "https://github.com/org/my-app/pull/42",
+          title: "Some open PR",
+          owner: "org",
+          repo: "my-app",
+          branch: "feat/something",
+          baseBranch: "main",
+          isDraft: false,
+        },
+      ]),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    const bpConfig = makeBackpressureConfig({ enabled: true, pauseOnOpenPrs: true });
+    const sm = createSessionManager({ config: bpConfig, registry: registryWithSCM });
+
+    await expect(sm.spawn({ projectId: "my-app" })).rejects.toThrow(/Backpressure.*1 open PR/);
+  });
+
+  it("throws when open issues exist and backpressure is enabled", async () => {
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn(),
+      createPR: vi.fn(),
+      addComment: vi.fn(),
+      getComments: vi.fn().mockResolvedValue([]),
+      getAutomatedComments: vi.fn().mockResolvedValue([]),
+      getMergeability: vi.fn(),
+      listOpenPRs: vi.fn().mockResolvedValue([]),
+    };
+
+    const mockTracker: Tracker = {
+      name: "mock-tracker",
+      getIssue: vi.fn().mockResolvedValue({}),
+      isCompleted: vi.fn().mockResolvedValue(false),
+      branchName: vi.fn().mockReturnValue("feat/agent-123"),
+      generatePrompt: vi.fn().mockResolvedValue(""),
+      listIssues: vi.fn().mockResolvedValue([
+        {
+          id: "101",
+          title: "Open issue",
+          description: "An open issue",
+          url: "https://github.com/org/my-app/issues/101",
+          state: "open",
+          labels: [],
+        },
+      ]),
+    };
+
+    const registryWithPlugins: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        if (slot === "scm") return mockSCM;
+        if (slot === "tracker") return mockTracker;
+        return null;
+      }),
+    };
+
+    const bpConfig = makeBackpressureConfig({ enabled: true, pauseOnOpenIssues: true });
+    const sm = createSessionManager({ config: bpConfig, registry: registryWithPlugins });
+
+    await expect(sm.spawn({ projectId: "my-app" })).rejects.toThrow(/Backpressure.*1 open issue/);
+  });
+
+  it("allows spawn when no open PRs or issues", async () => {
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn(),
+      createPR: vi.fn(),
+      addComment: vi.fn(),
+      getComments: vi.fn().mockResolvedValue([]),
+      getAutomatedComments: vi.fn().mockResolvedValue([]),
+      getMergeability: vi.fn(),
+      listOpenPRs: vi.fn().mockResolvedValue([]),
+    };
+
+    const mockTracker: Tracker = {
+      name: "mock-tracker",
+      getIssue: vi.fn().mockResolvedValue({}),
+      isCompleted: vi.fn().mockResolvedValue(false),
+      branchName: vi.fn().mockReturnValue("feat/agent-123"),
+      generatePrompt: vi.fn().mockResolvedValue(""),
+      listIssues: vi.fn().mockResolvedValue([]),
+    };
+
+    const registryWithPlugins: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        if (slot === "scm") return mockSCM;
+        if (slot === "tracker") return mockTracker;
+        return null;
+      }),
+    };
+
+    const bpConfig = makeBackpressureConfig({ enabled: true });
+    const sm = createSessionManager({ config: bpConfig, registry: registryWithPlugins });
+
+    // Should succeed (no backpressure rejection)
+    const session = await sm.spawn({ projectId: "my-app" });
+    expect(session.id).toBe("app-1");
+  });
+
+  it("allows spawn when backpressure is disabled", async () => {
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn(),
+      createPR: vi.fn(),
+      addComment: vi.fn(),
+      getComments: vi.fn().mockResolvedValue([]),
+      getAutomatedComments: vi.fn().mockResolvedValue([]),
+      getMergeability: vi.fn(),
+      listOpenPRs: vi.fn().mockResolvedValue([
+        {
+          number: 42,
+          url: "https://github.com/org/my-app/pull/42",
+          title: "Some open PR",
+          owner: "org",
+          repo: "my-app",
+          branch: "feat/something",
+          baseBranch: "main",
+          isDraft: false,
+        },
+      ]),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    const bpConfig = makeBackpressureConfig({ enabled: false });
+    const sm = createSessionManager({ config: bpConfig, registry: registryWithSCM });
+
+    // Should succeed despite open PRs, because backpressure is disabled
+    const session = await sm.spawn({ projectId: "my-app" });
+    expect(session.id).toBe("app-1");
+    // listOpenPRs should NOT have been called
+    expect(mockSCM.listOpenPRs).not.toHaveBeenCalled();
+  });
+
+  it("allows spawn when SCM does not implement listOpenPRs", async () => {
+    // SCM without listOpenPRs method
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn(),
+      createPR: vi.fn(),
+      addComment: vi.fn(),
+      getComments: vi.fn().mockResolvedValue([]),
+      getAutomatedComments: vi.fn().mockResolvedValue([]),
+      getMergeability: vi.fn(),
+      // listOpenPRs is intentionally undefined
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    const bpConfig = makeBackpressureConfig({ enabled: true, pauseOnOpenPrs: true });
+    const sm = createSessionManager({ config: bpConfig, registry: registryWithSCM });
+
+    // Should succeed — SCM doesn't support listOpenPRs, so backpressure skips PR check
+    const session = await sm.spawn({ projectId: "my-app" });
+    expect(session.id).toBe("app-1");
+  });
+});
