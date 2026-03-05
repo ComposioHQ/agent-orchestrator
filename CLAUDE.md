@@ -220,6 +220,8 @@ Config loaded from `agent-orchestrator.yaml` (see `agent-orchestrator.yaml.examp
 4. **Two-tier event handling** — auto-handle routine issues, notify human when judgment needed
 5. **Backwards-compatible metadata** — flat key=value files
 6. **Security first** — `execFile` not `exec`, validate all external input
+7. **Auto-cleanup** — branches matching `feat/agent-*` are automatically deleted after PR merge. Reactive (on merge detection) + periodic sweep (every ~5 min). Human branches are never touched.
+8. **Backpressure** — `spawn()` refuses to create sessions when open PRs or issues exist on the repo. Prevents piling up work that hasn't been reviewed.
 
 ## Knowledge Base
 

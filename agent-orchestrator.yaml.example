@@ -101,3 +101,18 @@ projects:
 #     threshold: 10m
 #     action: notify
 #     priority: urgent
+
+# ---------- Cleanup ----------
+# Automatically clean up branches and worktrees after PRs merge.
+# Only deletes branches matching the branchPrefix (feat/agent-* by default).
+cleanup:
+  enabled: true                    # Auto-cleanup on merge (default: true)
+  branchPrefix: "feat/agent-"     # Only delete branches with this prefix
+  sweepInterval: 10               # Poll cycles between sweep runs (~5 min)
+
+# ---------- Backpressure ----------
+# Pause spawning and research when open work exists.
+backpressure:
+  enabled: true                    # Enable backpressure (default: true)
+  pauseOnOpenPrs: true             # Pause if any open PRs on the repo
+  pauseOnOpenIssues: true          # Pause if any open issues on the repo
