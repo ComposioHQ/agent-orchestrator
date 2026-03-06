@@ -116,7 +116,7 @@ update_metadata_key() {
 # ============================================================================
 
 # Detect: gh pr create
-if [[ "$command" =~ ^gh[[:space:]]+pr[[:space:]]+create ]]; then
+if [[ "$command" =~ (^|[;&][[:space:]]*|&&[[:space:]]*)gh[[:space:]]+pr[[:space:]]+create([[:space:]]|$) ]]; then
   # Extract PR URL from output
   pr_url=$(echo "$output" | grep -Eo 'https://github[.]com/[^/]+/[^/]+/pull/[0-9]+' | head -1)
 
@@ -129,9 +129,16 @@ if [[ "$command" =~ ^gh[[:space:]]+pr[[:space:]]+create ]]; then
 fi
 
 # Detect: git checkout -b <branch> or git switch -c <branch>
-if [[ "$command" =~ ^git[[:space:]]+checkout[[:space:]]+-b[[:space:]]+([^[:space:]]+) ]] || \\
-   [[ "$command" =~ ^git[[:space:]]+switch[[:space:]]+-c[[:space:]]+([^[:space:]]+) ]]; then
-  branch="\${BASH_REMATCH[1]}"
+if [[ "$command" =~ (^|[;&][[:space:]]*|&&[[:space:]]*)git[[:space:]]+checkout[[:space:]]+-b[[:space:]]+([^[:space:]]+) ]]; then
+  branch="\${BASH_REMATCH[2]}"
+
+  if [[ -n "$branch" ]]; then
+    update_metadata_key "branch" "$branch"
+    echo '{"systemMessage": "Updated metadata: branch = '"$branch"'"}'
+    exit 0
+  fi
+elif [[ "$command" =~ (^|[;&][[:space:]]*|&&[[:space:]]*)git[[:space:]]+switch[[:space:]]+-c[[:space:]]+([^[:space:]]+) ]]; then
+  branch="\${BASH_REMATCH[2]}"
 
   if [[ -n "$branch" ]]; then
     update_metadata_key "branch" "$branch"
@@ -142,9 +149,17 @@ fi
 
 # Detect: git checkout <branch> (without -b) or git switch <branch> (without -c)
 # Only update if the branch name looks like a feature branch (contains / or -)
-if [[ "$command" =~ ^git[[:space:]]+checkout[[:space:]]+([^[:space:]-]+[/-][^[:space:]]+) ]] || \\
-   [[ "$command" =~ ^git[[:space:]]+switch[[:space:]]+([^[:space:]-]+[/-][^[:space:]]+) ]]; then
-  branch="\${BASH_REMATCH[1]}"
+if [[ "$command" =~ (^|[;&][[:space:]]*|&&[[:space:]]*)git[[:space:]]+checkout[[:space:]]+([^[:space:]-]+[/-][^[:space:]]+) ]]; then
+  branch="\${BASH_REMATCH[2]}"
+
+  # Avoid updating for checkout of commits/tags
+  if [[ -n "$branch" && "$branch" != "HEAD" ]]; then
+    update_metadata_key "branch" "$branch"
+    echo '{"systemMessage": "Updated metadata: branch = '"$branch"'"}'
+    exit 0
+  fi
+elif [[ "$command" =~ (^|[;&][[:space:]]*|&&[[:space:]]*)git[[:space:]]+switch[[:space:]]+([^[:space:]-]+[/-][^[:space:]]+) ]]; then
+  branch="\${BASH_REMATCH[2]}"
 
   # Avoid updating for checkout of commits/tags
   if [[ -n "$branch" && "$branch" != "HEAD" ]]; then
@@ -155,7 +170,7 @@ if [[ "$command" =~ ^git[[:space:]]+checkout[[:space:]]+([^[:space:]-]+[/-][^[:s
 fi
 
 # Detect: gh pr merge
-if [[ "$command" =~ ^gh[[:space:]]+pr[[:space:]]+merge ]]; then
+if [[ "$command" =~ (^|[;&][[:space:]]*|&&[[:space:]]*)gh[[:space:]]+pr[[:space:]]+merge([[:space:]]|$) ]]; then
   update_metadata_key "status" "merged"
   echo '{"systemMessage": "Updated metadata: status = merged"}'
   exit 0
@@ -288,8 +303,7 @@ async function parseJsonlFileTail(filePath: string, maxBytes = 131_072): Promise
   // Skip potentially truncated first line only when we started mid-file.
   // If offset === 0 we read from the start so the first line is complete.
   const firstNewline = content.indexOf("\n");
-  const safeContent =
-    offset > 0 && firstNewline >= 0 ? content.slice(firstNewline + 1) : content;
+  const safeContent = offset > 0 && firstNewline >= 0 ? content.slice(firstNewline + 1) : content;
   const lines: JsonlLine[] = [];
   for (const line of safeContent.split("\n")) {
     const trimmed = line.trim();
@@ -307,9 +321,7 @@ async function parseJsonlFileTail(filePath: string, maxBytes = 131_072): Promise
 }
 
 /** Extract auto-generated summary from JSONL (last "summary" type entry) */
-function extractSummary(
-  lines: JsonlLine[],
-): { summary: string; isFallback: boolean } | null {
+function extractSummary(lines: JsonlLine[]): { summary: string; isFallback: boolean } | null {
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
     if (line?.type === "summary" && line.summary) {
@@ -806,17 +818,17 @@ function createClaudeCodeAgent(): Agent {
     },
 
     async setupWorkspaceHooks(workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
-      // Use absolute path for hook command (specific to this workspace)
-      const hookScriptPath = join(workspacePath, ".claude", "metadata-updater.sh");
-      await setupHookInWorkspace(workspacePath, hookScriptPath);
+      // Use $CLAUDE_PROJECT_DIR variable to support shared settings.json via symlinks
+      const hookCommand = '"$CLAUDE_PROJECT_DIR/.claude/metadata-updater.sh"';
+      await setupHookInWorkspace(workspacePath, hookCommand);
     },
 
     async postLaunchSetup(session: Session): Promise<void> {
       if (!session.workspacePath) return;
 
-      // Use absolute path for hook command (specific to this workspace)
-      const hookScriptPath = join(session.workspacePath, ".claude", "metadata-updater.sh");
-      await setupHookInWorkspace(session.workspacePath, hookScriptPath);
+      // Use $CLAUDE_PROJECT_DIR variable to support shared settings.json via symlinks
+      const hookCommand = '"$CLAUDE_PROJECT_DIR/.claude/metadata-updater.sh"';
+      await setupHookInWorkspace(session.workspacePath, hookCommand);
     },
   };
 }
