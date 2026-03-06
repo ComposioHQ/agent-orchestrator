@@ -23,6 +23,19 @@ interface DirectTerminalProps {
   reloadCommand?: string;
 }
 
+export function buildDirectTerminalWsUrl(
+  sessionId: string,
+  locationLike: Pick<Location, "host" | "hostname" | "protocol">,
+  explicitPort?: string,
+): string {
+  const protocol = locationLike.protocol === "https:" ? "wss:" : "ws:";
+  const targetHost =
+    locationLike.protocol === "https:" || !explicitPort
+      ? locationLike.host
+      : `${locationLike.hostname}:${explicitPort}`;
+  return `${protocol}//${targetHost}/ws?session=${encodeURIComponent(sessionId)}`;
+}
+
 /**
  * Direct xterm.js terminal with native WebSocket connection.
  * Implements Extended Device Attributes (XDA) handler to enable
@@ -227,10 +240,8 @@ export function DirectTerminal({
         fit.fit();
 
         // WebSocket URL (stable across reconnects)
-        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-        const hostname = window.location.hostname;
         const port = process.env.NEXT_PUBLIC_DIRECT_TERMINAL_PORT ?? "14801";
-        const wsUrl = `${protocol}//${hostname}:${port}/ws?session=${encodeURIComponent(sessionId)}`;
+        const wsUrl = buildDirectTerminalWsUrl(sessionId, window.location, port);
 
         // ── Preserve selection while terminal receives output ────────
         // xterm.js clears the selection on every terminal.write(). We

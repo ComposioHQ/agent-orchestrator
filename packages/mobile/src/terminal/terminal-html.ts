@@ -37,7 +37,7 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
 <div id="terminal"></div>
 <script>
 (function () {
-  var WS_BASE  = window.AO_WS_URL    || 'ws://localhost:3003';
+  var WS_BASE  = (window.AO_WS_URL || 'ws://localhost:3003').replace(/\/$/, '');
   var SESSION  = window.AO_SESSION_ID || '';
 
   var statusEl = document.getElementById('status');

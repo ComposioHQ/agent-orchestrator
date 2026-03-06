@@ -5,6 +5,7 @@ import { PRStatus } from "@/components/PRStatus";
 import { SessionCard } from "@/components/SessionCard";
 import { AttentionZone } from "@/components/AttentionZone";
 import { ActivityDot } from "@/components/ActivityDot";
+import { buildDirectTerminalWsUrl } from "@/components/DirectTerminal";
 import { makeSession, makePR } from "./helpers";
 
 // ── ActivityDot ───────────────────────────────────────────────────────
@@ -231,6 +232,18 @@ describe("SessionCard", () => {
     // Click the header "restore" button (always visible)
     fireEvent.click(screen.getByText("restore"));
     expect(onRestore).toHaveBeenCalledWith("backend-1");
+  });
+
+  it("shows restart actions in both collapsed and expanded views", () => {
+    const onRestart = vi.fn();
+    const session = makeSession({ id: "backend-1", activity: "idle" });
+    const { container } = render(<SessionCard session={session} onRestart={onRestart} />);
+
+    fireEvent.click(screen.getByText("restart"));
+    expect(onRestart).toHaveBeenCalledWith("backend-1");
+
+    fireEvent.click(container.firstElementChild!);
+    expect(screen.getByText("restart session")).toBeInTheDocument();
   });
 
   it("shows merge button when PR is mergeable", () => {
@@ -492,5 +505,27 @@ describe("AttentionZone", () => {
     render(<AttentionZone level="respond" sessions={sessions} onRestore={onRestore} />);
     fireEvent.click(screen.getByText("restore"));
     expect(onRestore).toHaveBeenCalledWith("s1");
+  });
+});
+
+describe("buildDirectTerminalWsUrl", () => {
+  it("keeps same-origin host for secure pages", () => {
+    expect(
+      buildDirectTerminalWsUrl(
+        "ao-1",
+        { protocol: "https:", host: "dash.example.com", hostname: "dash.example.com" },
+        "14801",
+      ),
+    ).toBe("wss://dash.example.com/ws?session=ao-1");
+  });
+
+  it("uses the direct-terminal port for insecure local pages", () => {
+    expect(
+      buildDirectTerminalWsUrl(
+        "ao-1",
+        { protocol: "http:", host: "localhost:3000", hostname: "localhost" },
+        "14801",
+      ),
+    ).toBe("ws://localhost:14801/ws?session=ao-1");
   });
 });

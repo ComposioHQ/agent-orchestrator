@@ -3367,6 +3367,89 @@ describe("restore", () => {
   });
 });
 
+describe("restart", () => {
+  it("returns the resolved workspace path and persists postLaunchSetup metadata", async () => {
+    const agentWithMetadataUpdate: Agent = {
+      ...mockAgent,
+      postLaunchSetup: vi.fn().mockImplementation(async (session) => {
+        session.metadata = {
+          ...session.metadata,
+          opencodeSessionId: "ses_restarted",
+        };
+      }),
+    };
+
+    const registryWithMetadataUpdate: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return agentWithMetadataUpdate;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "",
+      branch: "feat/TEST-79",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-old")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithMetadataUpdate });
+    const restarted = await sm.restart("app-1");
+
+    expect(restarted.workspacePath).toBe(join(tmpDir, "my-app"));
+    const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta!["opencodeSessionId"]).toBe("ses_restarted");
+  });
+
+  it("uses orchestrator model and subagent when restarting orchestrator sessions", async () => {
+    const configWithOrchestratorModel: OrchestratorConfig = {
+      ...config,
+      projects: {
+        ...config.projects,
+        "my-app": {
+          ...config.projects["my-app"],
+          agentConfig: {
+            model: "worker-model",
+            orchestratorModel: "orchestrator-model",
+            subagent: "oracle",
+          },
+        },
+      },
+    };
+
+    writeMetadata(sessionsDir, "app-orchestrator", {
+      worktree: join(tmpDir, "my-app"),
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      role: "orchestrator",
+      agent: "mock-agent",
+      runtimeHandle: JSON.stringify(makeHandle("rt-old")),
+      opencodeSessionId: "ses_existing",
+    });
+
+    const sm = createSessionManager({
+      config: configWithOrchestratorModel,
+      registry: mockRegistry,
+    });
+    await sm.restart("app-orchestrator");
+
+    expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "orchestrator-model",
+        subagent: "oracle",
+        projectConfig: expect.objectContaining({
+          agentConfig: expect.objectContaining({ opencodeSessionId: "ses_existing" }),
+        }),
+      }),
+    );
+  });
+});
+
 describe("PluginRegistry.loadBuiltins importFn", () => {
   it("should use provided importFn instead of built-in import", async () => {
     const { createPluginRegistry: createReg } = await import("../plugin-registry.js");

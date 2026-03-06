@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { DashboardSession, SessionsResponse } from "../types";
+import { deriveTerminalWsUrl, normalizeWsUrl } from "./ws-url";
 
 const STORAGE_KEY = "@ao_backend_url";
 const TERMINAL_WS_OVERRIDE_KEY = "@ao_terminal_ws_url";
@@ -24,20 +25,6 @@ interface BackendContextValue {
 }
 
 const BackendContext = createContext<BackendContextValue | null>(null);
-
-function deriveTerminalWsUrl(backendUrl: string): string {
-  try {
-    const url = new URL(backendUrl);
-    return `ws://${url.hostname}:14801`;
-  } catch {
-    return "ws://192.168.1.1:14801";
-  }
-}
-
-/** Convert an ngrok https URL to a wss URL for WebSocket connections */
-function normalizeWsUrl(url: string): string {
-  return url.replace(/^https:\/\//, "wss://").replace(/^http:\/\//, "ws://");
-}
 
 export function BackendProvider({ children }: { children: React.ReactNode }) {
   const [backendUrl, setBackendUrlState] = useState(DEFAULT_URL);
@@ -91,38 +78,56 @@ export function BackendProvider({ children }: { children: React.ReactNode }) {
     return res.json() as Promise<SessionsResponse>;
   }, [apiFetch]);
 
-  const fetchSession = useCallback(async (id: string): Promise<DashboardSession> => {
-    const res = await apiFetch(`/api/sessions/${encodeURIComponent(id)}`);
-    return res.json() as Promise<DashboardSession>;
-  }, [apiFetch]);
+  const fetchSession = useCallback(
+    async (id: string): Promise<DashboardSession> => {
+      const res = await apiFetch(`/api/sessions/${encodeURIComponent(id)}`);
+      return res.json() as Promise<DashboardSession>;
+    },
+    [apiFetch],
+  );
 
-  const sendMessage = useCallback(async (id: string, message: string): Promise<void> => {
-    await apiFetch(`/api/sessions/${encodeURIComponent(id)}/message`, {
-      method: "POST",
-      body: JSON.stringify({ message }),
-    });
-  }, [apiFetch]);
+  const sendMessage = useCallback(
+    async (id: string, message: string): Promise<void> => {
+      await apiFetch(`/api/sessions/${encodeURIComponent(id)}/message`, {
+        method: "POST",
+        body: JSON.stringify({ message }),
+      });
+    },
+    [apiFetch],
+  );
 
-  const killSession = useCallback(async (id: string): Promise<void> => {
-    await apiFetch(`/api/sessions/${encodeURIComponent(id)}/kill`, { method: "POST" });
-  }, [apiFetch]);
+  const killSession = useCallback(
+    async (id: string): Promise<void> => {
+      await apiFetch(`/api/sessions/${encodeURIComponent(id)}/kill`, { method: "POST" });
+    },
+    [apiFetch],
+  );
 
-  const restoreSession = useCallback(async (id: string): Promise<void> => {
-    await apiFetch(`/api/sessions/${encodeURIComponent(id)}/restore`, { method: "POST" });
-  }, [apiFetch]);
+  const restoreSession = useCallback(
+    async (id: string): Promise<void> => {
+      await apiFetch(`/api/sessions/${encodeURIComponent(id)}/restore`, { method: "POST" });
+    },
+    [apiFetch],
+  );
 
-  const mergePR = useCallback(async (prNumber: number): Promise<void> => {
-    await apiFetch(`/api/prs/${prNumber}/merge`, { method: "POST" });
-  }, [apiFetch]);
+  const mergePR = useCallback(
+    async (prNumber: number): Promise<void> => {
+      await apiFetch(`/api/prs/${prNumber}/merge`, { method: "POST" });
+    },
+    [apiFetch],
+  );
 
-  const spawnSession = useCallback(async (projectId: string, issueId?: string): Promise<DashboardSession> => {
-    const res = await apiFetch("/api/spawn", {
-      method: "POST",
-      body: JSON.stringify({ projectId, ...(issueId ? { issueId } : {}) }),
-    });
-    const data = (await res.json()) as { session: DashboardSession };
-    return data.session;
-  }, [apiFetch]);
+  const spawnSession = useCallback(
+    async (projectId: string, issueId?: string): Promise<DashboardSession> => {
+      const res = await apiFetch("/api/spawn", {
+        method: "POST",
+        body: JSON.stringify({ projectId, ...(issueId ? { issueId } : {}) }),
+      });
+      const data = (await res.json()) as { session: DashboardSession };
+      return data.session;
+    },
+    [apiFetch],
+  );
 
   return (
     <BackendContext.Provider

@@ -12,6 +12,7 @@ interface AttentionZoneProps {
   onKill?: (sessionId: string) => void;
   onMerge?: (prNumber: number) => void;
   onRestore?: (sessionId: string) => void;
+  onRestart?: (sessionId: string) => void;
 }
 
 const zoneConfig: Record<
@@ -62,6 +63,7 @@ export function AttentionZone({
   onKill,
   onMerge,
   onRestore,
+  onRestart,
 }: AttentionZoneProps) {
   const config = zoneConfig[level];
   const [collapsed, setCollapsed] = useState(config.defaultCollapsed);
@@ -76,10 +78,7 @@ export function AttentionZone({
           className="mb-2.5 flex items-center gap-2 py-0.5 text-left"
           onClick={() => setCollapsed(!collapsed)}
         >
-          <div
-            className="h-1.5 w-1.5 shrink-0 rounded-full"
-            style={{ background: config.color }}
-          />
+          <div className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: config.color }} />
           <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-tertiary)]">
             {config.label}
           </span>
@@ -112,6 +111,7 @@ export function AttentionZone({
                 onKill={onKill}
                 onMerge={onMerge}
                 onRestore={onRestore}
+                onRestart={onRestart}
               />
             ))}
           </div>
@@ -128,10 +128,7 @@ export function AttentionZone({
         onClick={() => setCollapsed(!collapsed)}
       >
         {/* Semantic dot — only zone-colored element */}
-        <div
-          className="h-1.5 w-1.5 shrink-0 rounded-full"
-          style={{ background: config.color }}
-        />
+        <div className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: config.color }} />
         {/* Label — neutral, not zone-colored */}
         <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--color-text-tertiary)]">
           {config.label}
@@ -165,6 +162,7 @@ export function AttentionZone({
               onKill={onKill}
               onMerge={onMerge}
               onRestore={onRestore}
+              onRestart={onRestart}
             />
           ))}
         </div>

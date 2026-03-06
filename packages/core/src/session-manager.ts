@@ -1729,5 +1729,132 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     return restoredSession;
   }
 
-  return { spawn, spawnOrchestrator, restore, list, get, kill, cleanup, send, remap };
+  async function restart(sessionId: SessionId): Promise<Session> {
+    let raw: Record<string, string> | null = null;
+    let sessionsDir: string | null = null;
+    let project: ProjectConfig | undefined;
+    let projectId: string | undefined;
+
+    for (const [key, proj] of Object.entries(config.projects)) {
+      const dir = getProjectSessionsDir(proj);
+      const metadata = readMetadataRaw(dir, sessionId);
+      if (metadata) {
+        raw = metadata;
+        sessionsDir = dir;
+        project = proj;
+        projectId = key;
+        break;
+      }
+    }
+
+    if (!raw || !sessionsDir || !project || !projectId) {
+      throw new Error(`Session ${sessionId} not found`);
+    }
+
+    const session = metadataToSession(sessionId, raw);
+    const plugins = resolvePlugins(project, raw["agent"]);
+
+    if (!plugins.runtime) {
+      throw new Error(`Runtime plugin '${project.runtime ?? config.defaults.runtime}' not found`);
+    }
+    if (!plugins.agent) {
+      throw new Error(`Agent plugin '${project.agent ?? config.defaults.agent}' not found`);
+    }
+
+    if (session.runtimeHandle) {
+      try {
+        await plugins.runtime.destroy(session.runtimeHandle);
+      } catch {
+        // Best effort — may already be gone
+      }
+    }
+
+    const workspacePath = raw["worktree"] || project.path;
+    let launchCommand: string;
+    const configuredSubagent =
+      typeof project.agentConfig?.["subagent"] === "string"
+        ? project.agentConfig["subagent"]
+        : undefined;
+    const agentLaunchConfig = {
+      sessionId,
+      projectConfig: {
+        ...project,
+        agentConfig: {
+          ...(project.agentConfig ?? {}),
+          ...(session.metadata?.opencodeSessionId
+            ? { opencodeSessionId: session.metadata.opencodeSessionId }
+            : {}),
+        },
+      },
+      issueId: session.issueId ?? undefined,
+      permissions: project.agentConfig?.permissions,
+      model:
+        raw["role"] === "orchestrator"
+          ? (project.agentConfig?.orchestratorModel ?? project.agentConfig?.model)
+          : project.agentConfig?.model,
+      subagent: configuredSubagent,
+    };
+
+    if (plugins.agent.getRestoreCommand) {
+      const restoreCmd = await plugins.agent.getRestoreCommand(session, project);
+      launchCommand = restoreCmd ?? plugins.agent.getLaunchCommand(agentLaunchConfig);
+    } else {
+      launchCommand = plugins.agent.getLaunchCommand(agentLaunchConfig);
+    }
+
+    const environment = plugins.agent.getEnvironment(agentLaunchConfig);
+    const tmuxName = raw["tmuxName"];
+    const handle = await plugins.runtime.create({
+      sessionId: tmuxName ?? sessionId,
+      workspacePath,
+      launchCommand,
+      environment: {
+        ...environment,
+        AO_SESSION: sessionId,
+        AO_DATA_DIR: sessionsDir,
+        AO_SESSION_NAME: sessionId,
+        ...(tmuxName && { AO_TMUX_NAME: tmuxName }),
+      },
+    });
+
+    const now = new Date().toISOString();
+    updateMetadata(sessionsDir, sessionId, {
+      status: "spawning",
+      runtimeHandle: JSON.stringify(handle),
+      restoredAt: now,
+    });
+
+    const restartedSession: Session = {
+      ...session,
+      status: "spawning",
+      activity: "active",
+      workspacePath,
+      runtimeHandle: handle,
+      restoredAt: new Date(now),
+    };
+
+    if (plugins.agent.postLaunchSetup) {
+      try {
+        const metadataBeforePostLaunch = { ...(restartedSession.metadata ?? {}) };
+        await plugins.agent.postLaunchSetup(restartedSession);
+
+        const metadataAfterPostLaunch = restartedSession.metadata ?? {};
+        const metadataUpdates = Object.fromEntries(
+          Object.entries(metadataAfterPostLaunch).filter(
+            ([key, value]) => metadataBeforePostLaunch[key] !== value,
+          ),
+        );
+
+        if (Object.keys(metadataUpdates).length > 0) {
+          updateMetadata(sessionsDir, sessionId, metadataUpdates);
+        }
+      } catch {
+        // Non-fatal — session is already running
+      }
+    }
+
+    return restartedSession;
+  }
+
+  return { spawn, spawnOrchestrator, restore, restart, list, get, kill, cleanup, send, remap };
 }
