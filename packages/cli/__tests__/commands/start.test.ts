@@ -87,7 +87,6 @@ vi.mock("../../src/lib/dashboard-rebuild.js", () => ({
 
 vi.mock("../../src/lib/preflight.js", () => ({
   preflight: {
-    checkPort: vi.fn(),
     checkBuilt: vi.fn(),
   },
 }));
@@ -505,8 +504,9 @@ describe("start command — browser open waits for port", () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
 
     // Mock findWebDir to return tmpDir and create package.json for existsSync
-    const { findWebDir } = await import("../../src/lib/web-dir.js");
+    const { findWebDir, isPortAvailable } = await import("../../src/lib/web-dir.js");
     vi.mocked(findWebDir).mockReturnValue(tmpDir);
+    vi.mocked(isPortAvailable).mockResolvedValue(true);
     writeFileSync(join(tmpDir, "package.json"), "{}");
 
     mockSessionManager.get.mockResolvedValue(null);
