@@ -689,6 +689,56 @@ describe("spawn", () => {
     });
   });
 
+  it("forwards configured subagent to spawn launch when no override is provided", async () => {
+    const configWithSubagent: OrchestratorConfig = {
+      ...config,
+      projects: {
+        ...config.projects,
+        "my-app": {
+          ...config.projects["my-app"],
+          agentConfig: {
+            subagent: "oracle",
+          },
+        },
+      },
+    };
+
+    const sm = createSessionManager({
+      config: configWithSubagent,
+      registry: mockRegistry,
+    });
+    await sm.spawn({ projectId: "my-app" });
+
+    expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ subagent: "oracle" }),
+    );
+  });
+
+  it("prefers spawn subagent override over configured subagent", async () => {
+    const configWithSubagent: OrchestratorConfig = {
+      ...config,
+      projects: {
+        ...config.projects,
+        "my-app": {
+          ...config.projects["my-app"],
+          agentConfig: {
+            subagent: "oracle",
+          },
+        },
+      },
+    };
+
+    const sm = createSessionManager({
+      config: configWithSubagent,
+      registry: mockRegistry,
+    });
+    await sm.spawn({ projectId: "my-app", subagent: "librarian" });
+
+    expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ subagent: "librarian" }),
+    );
+  });
+
   it("validates issue exists when issueId provided", async () => {
     const mockTracker: Tracker = {
       name: "mock-tracker",

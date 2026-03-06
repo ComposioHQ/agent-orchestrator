@@ -711,6 +711,10 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
             strategy: opencodeIssueSessionStrategy,
           })
         : undefined;
+    const configuredSubagent =
+      typeof project.agentConfig?.["subagent"] === "string"
+        ? project.agentConfig["subagent"]
+        : undefined;
 
     const agentLaunchConfig = {
       sessionId,
@@ -725,7 +729,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       prompt: composedPrompt ?? spawnConfig.prompt,
       permissions: project.agentConfig?.permissions,
       model: project.agentConfig?.model,
-      subagent: spawnConfig.subagent,
+      subagent: spawnConfig.subagent ?? configuredSubagent,
     };
 
     let handle: RuntimeHandle;
