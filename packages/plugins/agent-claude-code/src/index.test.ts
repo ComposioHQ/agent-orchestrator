@@ -4,17 +4,21 @@ import type { Session, RuntimeHandle, AgentLaunchConfig } from "@composio/ao-cor
 // ---------------------------------------------------------------------------
 // Hoisted mocks — available inside vi.mock factories
 // ---------------------------------------------------------------------------
-const { mockExecFileAsync, mockReaddir, mockReadFile, mockStat, mockHomedir } =
+const { mockExecFileAsync, mockReaddir, mockReadFile, mockStat, mockHomedir, mockWriteFile, mockMkdir, mockChmod, mockExistsSync } =
   vi.hoisted(() => ({
     mockExecFileAsync: vi.fn(),
     mockReaddir: vi.fn(),
     mockReadFile: vi.fn(),
     mockStat: vi.fn(),
     mockHomedir: vi.fn(() => "/mock/home"),
+    mockWriteFile: vi.fn(),
+    mockMkdir: vi.fn(),
+    mockChmod: vi.fn(),
+    mockExistsSync: vi.fn(),
   }));
 
 vi.mock("node:child_process", () => {
-  const fn = Object.assign((..._args: unknown[]) => {}, {
+  const fn = Object.assign((..._args: unknown[]) => { }, {
     [Symbol.for("nodejs.util.promisify.custom")]: mockExecFileAsync,
   });
   return { execFile: fn };
@@ -24,13 +28,20 @@ vi.mock("node:fs/promises", () => ({
   readdir: mockReaddir,
   readFile: mockReadFile,
   stat: mockStat,
+  writeFile: mockWriteFile,
+  mkdir: mockMkdir,
+  chmod: mockChmod,
+}));
+
+vi.mock("node:fs", () => ({
+  existsSync: mockExistsSync,
 }));
 
 vi.mock("node:os", () => ({
   homedir: mockHomedir,
 }));
 
-import { create, manifest, default as defaultExport, resetPsCache } from "./index.js";
+import { create, manifest, default as defaultExport, resetPsCache, METADATA_UPDATER_SCRIPT } from "./index.js";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -659,3 +670,93 @@ describe("getSessionInfo", () => {
   });
 });
 
+
+// =========================================================================
+// Hook configuration (settings.json and metadata-updater.sh)
+// =========================================================================
+describe("Hook Configuration", () => {
+  const agent = defaultExport.create();
+
+  it("setupWorkspaceHooks uses $CLAUDE_PROJECT_DIR instead of absolute paths", async () => {
+    // Return empty settings.json initially
+    mockExistsSync.mockReturnValue(false);
+
+    await agent.setupWorkspaceHooks?.("/test/workspace", { dataDir: "/test/data" });
+
+    // Check that settings.json was written
+    const writeCalls = mockWriteFile.mock.calls;
+    const settingsWrite = writeCalls.find((call: any[]) =>
+      typeof call[0] === "string" && call[0].endsWith("settings.json")
+    );
+
+    expect(settingsWrite).toBeDefined();
+
+    // Parse the written JSON
+    const writtenSettings = JSON.parse(settingsWrite![1] as string);
+    const hooks = writtenSettings.hooks?.PostToolUse?.[0]?.hooks;
+
+    expect(hooks).toBeDefined();
+    expect(hooks.length).toBeGreaterThan(0);
+    expect(hooks[0].command).toBe('"$CLAUDE_PROJECT_DIR/.claude/metadata-updater.sh"');
+  });
+
+  it("postLaunchSetup uses $CLAUDE_PROJECT_DIR instead of absolute paths", async () => {
+    mockExistsSync.mockReturnValue(false);
+
+    await agent.postLaunchSetup?.(makeSession({ workspacePath: "/test/workspace" }));
+
+    const writeCalls = mockWriteFile.mock.calls;
+    const settingsWrite = writeCalls.find((call: any[]) =>
+      typeof call[0] === "string" && call[0].endsWith("settings.json")
+    );
+
+    expect(settingsWrite).toBeDefined();
+    const writtenSettings = JSON.parse(settingsWrite![1] as string);
+    expect(writtenSettings.hooks.PostToolUse[0].hooks[0].command)
+      .toBe('"$CLAUDE_PROJECT_DIR/.claude/metadata-updater.sh"');
+  });
+
+  it("setupWorkspaceHooks updates existing settings.json with absolute hook path", async () => {
+    mockExistsSync.mockReturnValue(true);
+    const existingSettings = {
+      hooks: {
+        PostToolUse: [{
+          hooks: [{
+            command: "/old/absolute/path/.claude/metadata-updater.sh"
+          }]
+        }]
+      }
+    };
+    mockReadFile.mockResolvedValue(JSON.stringify(existingSettings));
+
+    await agent.setupWorkspaceHooks?.("/test/workspace", { dataDir: "/test/data" });
+
+    const writeCalls = mockWriteFile.mock.calls;
+    const settingsWrite = writeCalls.find((call: any[]) =>
+      typeof call[0] === "string" && call[0].endsWith("settings.json")
+    );
+
+    expect(settingsWrite).toBeDefined();
+    const writtenSettings = JSON.parse(settingsWrite![1] as string);
+
+    // Check that there is STILL only one hook configured (not duplicated)
+    expect(writtenSettings.hooks.PostToolUse[0].hooks.length).toBe(1);
+    // Check that it was updated to the workspace-relative path
+    expect(writtenSettings.hooks.PostToolUse[0].hooks[0].command)
+      .toBe('"$CLAUDE_PROJECT_DIR/.claude/metadata-updater.sh"');
+  });
+
+  it("METADATA_UPDATER_SCRIPT regex allows command prefixes like cd and separators", () => {
+    // Verify that the script doesn't use strict start-of-line anchors (^gh or ^git)
+    // which fail when Claude Code emits "cd /path && gh pr create"
+    expect(METADATA_UPDATER_SCRIPT).not.toMatch(/\^gh\[\[:space:\]\]/);
+    expect(METADATA_UPDATER_SCRIPT).not.toMatch(/\^git\[\[:space:\]\]/);
+
+    // Verify it uses the new flexible group that allows start of line OR separators (; or &&)
+    const flexibleRegexPrefix = "(^|[;&][[:space:]]*|&&[[:space:]]*)";
+    expect(METADATA_UPDATER_SCRIPT).toContain(flexibleRegexPrefix + "gh[[:space:]]+pr[[:space:]]+create");
+    expect(METADATA_UPDATER_SCRIPT).toContain(flexibleRegexPrefix + "git[[:space:]]+checkout[[:space:]]+-b");
+    expect(METADATA_UPDATER_SCRIPT).toContain(flexibleRegexPrefix + "git[[:space:]]+switch[[:space:]]+-c");
+    expect(METADATA_UPDATER_SCRIPT).toContain(flexibleRegexPrefix + "gh[[:space:]]+pr[[:space:]]+merge");
+  });
+});
