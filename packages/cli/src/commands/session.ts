@@ -181,4 +181,61 @@ export function registerSession(program: Command): void {
         process.exit(1);
       }
     });
+
+  session
+    .command("link")
+    .description("Link a session to an existing PR")
+    .argument("<session>", "Session name to link")
+    .requiredOption("--pr <number>", "PR number to link")
+    .action(async (sessionName: string, opts: { pr: string }) => {
+      const config = loadConfig();
+      const sm = await getSessionManager(config);
+
+      const session = await sm.get(sessionName);
+      if (!session) {
+        console.error(chalk.red(`Session ${sessionName} not found`));
+        process.exit(1);
+      }
+
+      const project = config.projects[session.projectId];
+      if (!project) {
+        console.error(chalk.red(`Project ${session.projectId} not found in config`));
+        process.exit(1);
+      }
+
+      const prNumber = parseInt(opts.pr, 10);
+      if (isNaN(prNumber) || prNumber <= 0) {
+        console.error(chalk.red(`Invalid PR number: ${opts.pr}`));
+        process.exit(1);
+      }
+
+      try {
+        // Use `gh pr view` to get the actual PR URL (supports GitHub Enterprise)
+        // and validate the PR exists in a single call.
+        const { exec } = await import("../lib/shell.js");
+        const { stdout } = await exec("gh", [
+          "pr", "view", String(prNumber),
+          "--repo", project.repo,
+          "--json", "url,state",
+        ]);
+        const data = JSON.parse(stdout) as { url: string; state: string };
+        const prUrl = data.url;
+        const prState = data.state.toLowerCase();
+
+        // Persist the PR URL in session metadata
+        const { updateMetadata, getSessionsDir } = await import("@composio/ao-core");
+        const sessionsDir = getSessionsDir(config.configPath, project.path);
+        updateMetadata(sessionsDir, sessionName, { pr: prUrl });
+
+        console.log(
+          chalk.green(`\nLinked session ${sessionName} to PR #${prNumber} (${prState})`),
+        );
+        console.log(chalk.dim(`  URL: ${prUrl}`));
+      } catch (err) {
+        console.error(
+          chalk.red(`Failed to link PR #${prNumber}: ${err instanceof Error ? err.message : String(err)}`),
+        );
+        process.exit(1);
+      }
+    });
 }

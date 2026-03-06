@@ -325,6 +325,9 @@ describe("status command", () => {
   });
 
   it("prefers live branch over metadata branch", async () => {
+    // session-manager.list() syncs the live branch via ensureHandleAndEnrich,
+    // so status.ts just uses session.branch directly. Simulate that by having
+    // the mock session manager return a session with the live branch already set.
     writeFileSync(
       join(sessionsDir, "app-1"),
       "worktree=/tmp/wt\nbranch=old-branch\nstatus=working\n",
@@ -335,7 +338,14 @@ describe("status command", () => {
       if (args[0] === "display-message") return null;
       return null;
     });
-    mockGit.mockResolvedValue("live-branch");
+
+    // Override list() to return session with live branch already synced
+    mockSessionManager.list.mockResolvedValueOnce(
+      buildSessionsFromDir(sessionsDir, "my-app").map((s) => ({
+        ...s,
+        branch: "live-branch",
+      })),
+    );
 
     await program.parseAsync(["node", "test", "status"]);
 

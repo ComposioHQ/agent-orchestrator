@@ -19,11 +19,24 @@ import { randomUUID } from "node:crypto";
 // Mock node:child_process — must be hoisted before plugin imports
 // ---------------------------------------------------------------------------
 
-const { ghMock } = vi.hoisted(() => ({ ghMock: vi.fn() }));
+const { ghMock, execFileMock } = vi.hoisted(() => {
+  const ghMock = vi.fn();
+  // Wrapper that delegates `gh` calls to ghMock and rejects `git` calls
+  // (git branch --show-current is used for live branch sync but shouldn't
+  // consume mocked gh responses).
+  const execFileMock = vi.fn((...args: unknown[]) => {
+    const cmd = args[0];
+    if (cmd === "git") {
+      return Promise.reject(new Error("mock: git not available in tests"));
+    }
+    return ghMock(...args);
+  });
+  return { ghMock, execFileMock };
+});
 
 vi.mock("node:child_process", () => {
   const execFile = Object.assign(vi.fn(), {
-    [Symbol.for("nodejs.util.promisify.custom")]: ghMock,
+    [Symbol.for("nodejs.util.promisify.custom")]: execFileMock,
   });
   return { execFile };
 });

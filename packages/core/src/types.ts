@@ -178,6 +178,8 @@ export interface SessionSpawnConfig {
   prompt?: string;
   /** Override the agent plugin for this session (e.g. "codex", "claude-code") */
   agent?: string;
+  /** Link an existing PR number at spawn time (session adopts the PR's branch) */
+  prNumber?: number;
 }
 
 /** Config for creating an orchestrator session */

@@ -10,7 +10,7 @@ import {
   type ActivityState,
   loadConfig,
 } from "@composio/ao-core";
-import { git, getTmuxSessions, getTmuxActivity } from "../lib/shell.js";
+import { getTmuxSessions, getTmuxActivity } from "../lib/shell.js";
 import {
   banner,
   header,
@@ -46,17 +46,13 @@ async function gatherSessionInfo(
   scm: SCM,
   projectConfig: ReturnType<typeof loadConfig>,
 ): Promise<SessionInfo> {
-  let branch = session.branch;
+  // session.branch is already synced to the live worktree branch by
+  // sessionManager.list() → ensureHandleAndEnrich(), so no extra git call needed.
+  const branch = session.branch;
   const status = session.status;
   const summary = session.metadata["summary"] ?? null;
   const prUrl = session.metadata["pr"] ?? null;
   const issue = session.issueId;
-
-  // Get live branch from worktree if available
-  if (session.workspacePath) {
-    const liveBranch = await git(["branch", "--show-current"], session.workspacePath);
-    if (liveBranch) branch = liveBranch;
-  }
 
   // Get last activity time from tmux
   const tmuxTarget = session.runtimeHandle?.id ?? session.id;

@@ -29,6 +29,7 @@ async function spawnSession(
   issueId?: string,
   openTab?: boolean,
   agent?: string,
+  prNumber?: number,
 ): Promise<string> {
   const spinner = ora("Creating session").start();
 
@@ -40,6 +41,7 @@ async function spawnSession(
       projectId,
       issueId,
       agent,
+      prNumber,
     });
 
     spinner.succeed(`Session ${chalk.green(session.id)} created`);
@@ -78,7 +80,8 @@ export function registerSpawn(program: Command): void {
     .argument("[issue]", "Issue identifier (e.g. INT-1234, #42) - must exist in tracker")
     .option("--open", "Open session in terminal tab")
     .option("--agent <name>", "Override the agent plugin (e.g. codex, claude-code)")
-    .action(async (projectId: string, issueId: string | undefined, opts: { open?: boolean; agent?: string }) => {
+    .option("--pr <number>", "Link an existing PR (session adopts the PR's branch)")
+    .action(async (projectId: string, issueId: string | undefined, opts: { open?: boolean; agent?: string; pr?: string }) => {
       const config = loadConfig();
       if (!config.projects[projectId]) {
         console.error(
@@ -89,9 +92,18 @@ export function registerSpawn(program: Command): void {
         process.exit(1);
       }
 
+      let prNumber: number | undefined;
+      if (opts.pr) {
+        prNumber = parseInt(opts.pr, 10);
+        if (isNaN(prNumber) || prNumber <= 0) {
+          console.error(chalk.red(`Invalid PR number: ${opts.pr}`));
+          process.exit(1);
+        }
+      }
+
       try {
         await runSpawnPreflight(config, projectId);
-        await spawnSession(config, projectId, issueId, opts.open, opts.agent);
+        await spawnSession(config, projectId, issueId, opts.open, opts.agent, prNumber);
       } catch (err) {
         console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));
         process.exit(1);

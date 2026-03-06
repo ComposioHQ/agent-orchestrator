@@ -12,7 +12,10 @@
  */
 
 import { statSync, existsSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
+import { execFile as execFileCb } from "node:child_process";
+import { promisify } from "node:util";
 import { join } from "node:path";
+import { getLiveBranch } from "./utils.js";
 import {
   isIssueNotFoundError,
   isRestorable,
@@ -55,6 +58,8 @@ import {
   generateConfigHash,
   validateAndStoreOrigin,
 } from "./paths.js";
+
+const execFileAsync = promisify(execFileCb);
 
 /** Escape regex metacharacters in a string. */
 function escapeRegex(str: string): string {
@@ -244,6 +249,18 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         data: {},
       };
     }
+
+    // Sync live branch from workspace — agents may check out a different branch
+    // than the one recorded at spawn time (e.g. adopting a pre-existing branch).
+    if (session.workspacePath) {
+      const liveBranch = await getLiveBranch(session.workspacePath);
+      if (liveBranch && liveBranch !== session.branch) {
+        session.branch = liveBranch;
+        const sessionsDir = getProjectSessionsDir(project);
+        updateMetadata(sessionsDir, sessionName, { branch: liveBranch });
+      }
+    }
+
     await enrichSessionWithRuntimeState(session, plugins, handleFromMetadata);
   }
 
@@ -355,6 +372,33 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       }
     }
 
+    // Resolve linked PR if --pr was specified.
+    // Uses `gh pr view` to fetch the actual PR URL and head branch in a single call,
+    // avoiding hardcoded github.com URLs (supports GitHub Enterprise).
+    let linkedPrUrl: string | undefined;
+    let linkedPrBranch: string | undefined;
+    if (spawnConfig.prNumber) {
+      try {
+        const { stdout } = await execFileAsync(
+          "gh",
+          [
+            "pr", "view", String(spawnConfig.prNumber),
+            "--repo", project.repo,
+            "--json", "url,headRefName",
+          ],
+          { timeout: 30_000 },
+        );
+        const data = JSON.parse(stdout) as { url: string; headRefName: string };
+        linkedPrUrl = data.url;
+        linkedPrBranch = data.headRefName;
+      } catch (err) {
+        throw new Error(
+          `PR #${spawnConfig.prNumber} not found in ${project.repo}: ${(err as Error).message}`,
+          { cause: err },
+        );
+      }
+    }
+
     // Get the sessions directory for this project
     const sessionsDir = getProjectSessionsDir(project);
 
@@ -388,10 +432,12 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       tmuxName = generateTmuxName(config.configPath, project.sessionPrefix, num);
     }
 
-    // Determine branch name — explicit branch always takes priority
+    // Determine branch name — explicit branch always takes priority, then linked PR branch
     let branch: string;
     if (spawnConfig.branch) {
       branch = spawnConfig.branch;
+    } else if (linkedPrBranch) {
+      branch = linkedPrBranch;
     } else if (spawnConfig.issueId && plugins.tracker && resolvedIssue) {
       branch = plugins.tracker.branchName(spawnConfig.issueId, project);
     } else if (spawnConfig.issueId) {
@@ -537,6 +583,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         status: "spawning",
         tmuxName, // Store tmux name for mapping
         issue: spawnConfig.issueId,
+        pr: linkedPrUrl, // Persist linked PR URL if provided
         project: spawnConfig.projectId,
         agent: plugins.agent.name, // Persist agent name for lifecycle manager
         createdAt: new Date().toISOString(),

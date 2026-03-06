@@ -3,6 +3,32 @@
  */
 
 import { open, stat } from "node:fs/promises";
+import { execFile as execFileCb } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFileCb);
+
+/** Valid git branch name: no whitespace, no curly braces, no JSON-like content. */
+const VALID_BRANCH_RE = /^[^\s{}[\]"]+$/;
+
+/**
+ * Get the current branch from a workspace path via `git branch --show-current`.
+ * Returns null if the workspace doesn't exist, isn't a git repo, or git fails.
+ */
+export async function getLiveBranch(workspacePath: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync(
+      "git",
+      ["branch", "--show-current"],
+      { cwd: workspacePath, timeout: 10_000 },
+    );
+    const branch = stdout.trim();
+    if (branch && VALID_BRANCH_RE.test(branch)) return branch;
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * POSIX-safe shell escaping: wraps value in single quotes,

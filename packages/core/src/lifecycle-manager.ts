@@ -36,6 +36,7 @@ import {
 import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
 
+
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
   const match = str.match(/^(\d+)(s|m|h)$/);
