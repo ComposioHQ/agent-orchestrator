@@ -178,6 +178,8 @@ export interface SessionSpawnConfig {
   prompt?: string;
   /** Override the agent plugin for this session (e.g. "codex", "claude-code") */
   agent?: string;
+  /** Optional callback for progress updates (e.g. "Waiting for agent to start…") */
+  onProgress?: (message: string) => void;
 }
 
 /** Config for creating an orchestrator session */

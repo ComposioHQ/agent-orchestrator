@@ -15,7 +15,7 @@ import type { SessionManager } from "@composio/ao-core";
 // Hoisted mocks
 // ---------------------------------------------------------------------------
 
-const { mockExec, mockExecSilent, mockConfigRef, mockSessionManager, mockWaitForPortAndOpen, mockSpawn } =
+const { mockExec, mockExecSilent, mockConfigRef, mockSessionManager, mockWaitForPortAndOpen, mockSpawn, mockRegistry, mockLifecycleManager } =
   vi.hoisted(() => ({
     mockExec: vi.fn(),
     mockExecSilent: vi.fn(),
@@ -31,6 +31,8 @@ const { mockExec, mockExecSilent, mockConfigRef, mockSessionManager, mockWaitFor
     },
     mockWaitForPortAndOpen: vi.fn().mockResolvedValue(undefined),
     mockSpawn: vi.fn(),
+    mockRegistry: {},
+    mockLifecycleManager: { start: vi.fn(), stop: vi.fn() },
   }),
 );
 
@@ -63,11 +65,13 @@ vi.mock("@composio/ao-core", async (importOriginal) => {
       if (path) return actual.loadConfig(path);
       return mockConfigRef.current;
     },
+    createLifecycleManager: () => mockLifecycleManager,
   };
 });
 
 vi.mock("../../src/lib/create-session-manager.js", () => ({
   getSessionManager: async (): Promise<SessionManager> => mockSessionManager as SessionManager,
+  getRegistry: async () => mockRegistry,
 }));
 
 vi.mock("../../src/lib/web-dir.js", () => ({
