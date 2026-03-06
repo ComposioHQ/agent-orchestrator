@@ -9,21 +9,7 @@
 
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { isPortAvailable } from "./web-dir.js";
 import { exec } from "./shell.js";
-
-/**
- * Check that the dashboard port is free.
- * Throws if the port is already in use.
- */
-async function checkPort(port: number): Promise<void> {
-  const free = await isPortAvailable(port);
-  if (!free) {
-    throw new Error(
-      `Port ${port} is already in use. Free it or change 'port' in agent-orchestrator.yaml.`,
-    );
-  }
-}
 
 /**
  * Check that workspace packages have been compiled (TypeScript → JavaScript).
@@ -74,7 +60,6 @@ async function checkGhAuth(): Promise<void> {
 }
 
 export const preflight = {
-  checkPort,
   checkBuilt,
   checkTmux,
   checkGhAuth,

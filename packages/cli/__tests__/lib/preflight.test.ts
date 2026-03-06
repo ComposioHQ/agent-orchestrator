@@ -1,17 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockExec, mockIsPortAvailable, mockExistsSync } = vi.hoisted(() => ({
+const { mockExec, mockExistsSync } = vi.hoisted(() => ({
   mockExec: vi.fn(),
-  mockIsPortAvailable: vi.fn(),
   mockExistsSync: vi.fn(),
 }));
 
 vi.mock("../../src/lib/shell.js", () => ({
   exec: mockExec,
-}));
-
-vi.mock("../../src/lib/web-dir.js", () => ({
-  isPortAvailable: mockIsPortAvailable,
 }));
 
 vi.mock("node:fs", () => ({
@@ -22,28 +17,7 @@ import { preflight } from "../../src/lib/preflight.js";
 
 beforeEach(() => {
   mockExec.mockReset();
-  mockIsPortAvailable.mockReset();
   mockExistsSync.mockReset();
-});
-
-describe("preflight.checkPort", () => {
-  it("passes when port is free", async () => {
-    mockIsPortAvailable.mockResolvedValue(true);
-    await expect(preflight.checkPort(3000)).resolves.toBeUndefined();
-    expect(mockIsPortAvailable).toHaveBeenCalledWith(3000);
-  });
-
-  it("throws when port is in use", async () => {
-    mockIsPortAvailable.mockResolvedValue(false);
-    await expect(preflight.checkPort(3000)).rejects.toThrow(
-      "Port 3000 is already in use",
-    );
-  });
-
-  it("includes port number in error message", async () => {
-    mockIsPortAvailable.mockResolvedValue(false);
-    await expect(preflight.checkPort(8080)).rejects.toThrow("Port 8080");
-  });
 });
 
 describe("preflight.checkBuilt", () => {
