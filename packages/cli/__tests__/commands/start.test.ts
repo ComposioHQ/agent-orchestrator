@@ -592,6 +592,7 @@ describe("start command — orchestrator session strategy display", () => {
     mockSessionManager.spawnOrchestrator.mockResolvedValue({
       id: "app-orchestrator",
       runtimeHandle: { id: "tmux-session-1" },
+      metadata: { orchestratorSessionReused: "true" },
     });
 
     await program.parseAsync(["node", "test", "start", "--no-dashboard"]);

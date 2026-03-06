@@ -923,6 +923,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         .isAlive(existingOrchestrator.runtimeHandle)
         .catch(() => false);
       if (existingAlive && orchestratorSessionStrategy === "reuse") {
+        existingOrchestrator.metadata["orchestratorSessionReused"] = "true";
         return existingOrchestrator;
       }
       if (existingAlive && orchestratorSessionStrategy !== "reuse") {
@@ -1000,6 +1001,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       createdAt: new Date(),
       lastActivityAt: new Date(),
       metadata: {
+        orchestratorSessionReused: "false",
         ...(reusableOpenCodeSessionId ? { opencodeSessionId: reusableOpenCodeSessionId } : {}),
       },
     };

@@ -2381,6 +2381,7 @@ describe("spawnOrchestrator", () => {
     const session = await sm.spawnOrchestrator({ projectId: "my-app" });
 
     expect(session.id).toBe("app-orchestrator");
+    expect(session.metadata["orchestratorSessionReused"]).toBe("true");
     expect(mockRuntime.create).not.toHaveBeenCalled();
     expect(mockRuntime.destroy).not.toHaveBeenCalled();
     expect(existsSync(listLogPath)).toBe(false);

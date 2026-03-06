@@ -313,8 +313,6 @@ async function runStartup(
   let tmuxTarget = sessionId;
   if (opts?.orchestrator !== false) {
     const sm = await getSessionManager(config);
-    const existing = await sm.get(sessionId);
-    const existingHandleId = existing?.runtimeHandle?.id;
 
     try {
       spinner.start("Creating orchestrator session");
@@ -325,9 +323,7 @@ async function runStartup(
       }
       reused =
         orchestratorSessionStrategy === "reuse" &&
-        typeof existingHandleId === "string" &&
-        existingHandleId.length > 0 &&
-        existingHandleId === session.runtimeHandle?.id;
+        session.metadata["orchestratorSessionReused"] === "true";
       spinner.succeed(reused ? "Orchestrator session reused" : "Orchestrator session created");
     } catch (err) {
       spinner.fail("Orchestrator setup failed");
