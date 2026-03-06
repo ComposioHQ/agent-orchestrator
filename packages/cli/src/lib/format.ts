@@ -104,13 +104,20 @@ export function activityIcon(activity: ActivityState | null): string {
   }
 }
 
+/** Wrap text as an OSC 8 terminal hyperlink (clickable in supported terminals). */
+export function hyperlink(text: string, url: string): string {
+  return `\u001b]8;;${url}\u0007${text}\u001b]8;;\u0007`;
+}
+
 // eslint-disable-next-line no-control-regex
 const ANSI_RE = /\u001b\[[0-9;]*m/g;
+// eslint-disable-next-line no-control-regex
+const OSC8_RE = /\u001b\]8;;[^\u0007]*\u0007/g;
 
 /** Pad/truncate a string to exactly `width` visible characters */
 export function padCol(str: string, width: number): string {
-  // Strip ANSI codes to measure visible length
-  const visible = str.replace(ANSI_RE, "");
+  // Strip ANSI SGR codes and OSC 8 hyperlink escapes to measure visible length
+  const visible = str.replace(ANSI_RE, "").replace(OSC8_RE, "");
   if (visible.length > width) {
     // Truncate visible content, re-apply truncation
     const plain = visible.slice(0, width - 1) + "\u2026";

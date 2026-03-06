@@ -106,6 +106,7 @@ vi.mock("../../src/lib/plugins.js", () => ({
     mergePR: vi.fn(),
     closePR: vi.fn(),
   }),
+  getTracker: () => null,
 }));
 
 /** Parse a key=value metadata file into a Record<string, string>. */
