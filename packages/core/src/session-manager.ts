@@ -619,8 +619,28 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     // should NOT destroy the session. The agent is running; user can retry with `ao send`.
     if (plugins.agent.promptDelivery === "post-launch" && agentLaunchConfig.prompt) {
       try {
-        // Wait for agent to start and be ready for input
-        await new Promise((resolve) => setTimeout(resolve, 5_000));
+        // Poll terminal output for agent ready indicator instead of a fixed sleep.
+        // This is faster on fast machines (agent ready in <1s) and more reliable
+        // on slow machines (5s may not be enough). Falls back to best-effort send
+        // after 30s timeout.
+        const POLL_INTERVAL_MS = 500;
+        const POLL_TIMEOUT_MS = 30_000;
+        const deadline = Date.now() + POLL_TIMEOUT_MS;
+
+        while (Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+          try {
+            const output = await plugins.runtime.getOutput(handle, 5);
+            // Check for Claude Code's ❯ ready prompt or common shell prompts
+            // that indicate the agent is ready for input
+            if (output && /^[❯>$#]\s*$/m.test(output)) {
+              break;
+            }
+          } catch {
+            // getOutput failed — continue polling
+          }
+        }
+
         await plugins.runtime.sendMessage(handle, agentLaunchConfig.prompt);
       } catch {
         // Non-fatal: agent is running but didn't receive the initial prompt.

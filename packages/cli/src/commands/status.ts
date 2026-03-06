@@ -20,7 +20,7 @@ import {
   reviewDecisionIcon,
   padCol,
 } from "../lib/format.js";
-import { getAgentByName, getSCM } from "../lib/plugins.js";
+import { getAgent, getAgentByName, getSCM } from "../lib/plugins.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 
 interface SessionInfo {
@@ -238,10 +238,9 @@ export function registerStatus(program: Command): void {
           a.id.localeCompare(b.id),
         );
 
-        // Resolve agent and SCM for this project
-        const agentName = projectConfig.agent ?? config.defaults.agent;
-        const agent = getAgentByName(agentName);
+        // Resolve SCM for this project (shared across sessions)
         const scm = getSCM(config, projectId);
+        const defaultAgentName = projectConfig.agent ?? config.defaults.agent;
 
         if (!opts.json) {
           console.log(header(projectConfig.name || projectId));
@@ -261,8 +260,14 @@ export function registerStatus(program: Command): void {
           printTableHeader();
         }
 
-        // Gather all session info in parallel
-        const infoPromises = projectSessions.map((s) => gatherSessionInfo(s, agent, scm, config));
+        // Gather all session info in parallel — resolve agent per session from
+        // metadata so Codex sessions use the Codex plugin, not claude-code.
+        // (fixes #239 BUG-27)
+        const infoPromises = projectSessions.map((s) => {
+          const sessionAgentName = s.metadata["agent"] ?? defaultAgentName;
+          const agent = getAgentByName(sessionAgentName) ?? getAgent(config, projectId);
+          return gatherSessionInfo(s, agent, scm, config);
+        });
         const sessionInfos = await Promise.all(infoPromises);
 
         for (const info of sessionInfos) {
@@ -329,7 +334,7 @@ async function showFallbackStatus(): Promise<void> {
         lastActivityAt: new Date(),
         metadata: {},
       };
-      const introspection = await agent.getSessionInfo(sessionObj);
+      const introspection = agent ? await agent.getSessionInfo(sessionObj) : null;
       if (introspection?.summary) {
         console.log(`     ${chalk.dim("Claude:")} ${introspection.summary.slice(0, 65)}`);
       }
