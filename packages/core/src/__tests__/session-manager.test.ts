@@ -2690,6 +2690,27 @@ describe("spawnOrchestrator", () => {
     expect(meta?.["orchestratorSessionReused"]).toBeUndefined();
   });
 
+  it("respawns the orchestrator when stale metadata exists but the runtime is dead", async () => {
+    writeMetadata(sessionsDir, "app-orchestrator", {
+      worktree: join(tmpDir, "my-app"),
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      role: "orchestrator",
+      runtimeHandle: JSON.stringify(makeHandle("rt-stale")),
+      createdAt: new Date().toISOString(),
+    });
+
+    vi.mocked(mockRuntime.isAlive).mockResolvedValueOnce(false);
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.spawnOrchestrator({ projectId: "my-app" });
+
+    expect(mockRuntime.create).toHaveBeenCalledTimes(1);
+    const meta = readMetadataRaw(sessionsDir, "app-orchestrator");
+    expect(meta?.["runtimeHandle"]).toBe(JSON.stringify(makeHandle("rt-1")));
+  });
+
   it("uses orchestratorModel when configured", async () => {
     const configWithOrchestratorModel: OrchestratorConfig = {
       ...config,

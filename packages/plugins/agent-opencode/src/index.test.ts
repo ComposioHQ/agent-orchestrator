@@ -112,8 +112,8 @@ describe("getLaunchCommand", () => {
 
   it("generates base command without prompt", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig());
-    expect(cmd).toContain("opencode run --title 'AO:sess-1' --command true");
-    expect(cmd).toContain("&& exec opencode --session");
+    expect(cmd).toContain("opencode run --format json --title 'AO:sess-1' --command true");
+    expect(cmd).toContain("exec opencode --session");
     expect(cmd).toContain("opencode session list --format json");
     expect(cmd).toContain("AO:sess-1");
     expect(cmd).toContain("try{rows=JSON.parse(input)}catch{process.exit(1)}");
@@ -121,8 +121,8 @@ describe("getLaunchCommand", () => {
 
   it("uses --prompt with shell-escaped prompt", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "Fix it" }));
-    expect(cmd).toContain("opencode run --title 'AO:sess-1' 'Fix it'");
-    expect(cmd).toContain("&& exec opencode --session");
+    expect(cmd).toContain("opencode run --format json --title 'AO:sess-1' 'Fix it'");
+    expect(cmd).toContain("exec opencode --session");
   });
 
   it("includes --model with shell-escaped value", () => {
@@ -135,16 +135,16 @@ describe("getLaunchCommand", () => {
       makeLaunchConfig({ prompt: "Go", model: "claude-sonnet-4-5-20250929" }),
     );
     expect(cmd).toContain(
-      "opencode run --title 'AO:sess-1' --model 'claude-sonnet-4-5-20250929' 'Go'",
+      "opencode run --format json --title 'AO:sess-1' --model 'claude-sonnet-4-5-20250929' 'Go'",
     );
-    expect(cmd).toContain("&& exec opencode --session");
+    expect(cmd).toContain("exec opencode --session");
     expect(cmd).toContain("--model 'claude-sonnet-4-5-20250929'");
   });
 
   it("escapes single quotes in prompt (POSIX shell escaping)", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "it's broken" }));
-    expect(cmd).toContain("opencode run --title 'AO:sess-1' 'it'\\''s broken'");
-    expect(cmd).toContain("&& exec opencode --session");
+    expect(cmd).toContain("opencode run --format json --title 'AO:sess-1' 'it'\\''s broken'");
+    expect(cmd).toContain("exec opencode --session");
   });
 
   it("omits optional flags when not provided", () => {
@@ -165,8 +165,10 @@ describe("getLaunchCommand", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ subagent: "sisyphus", prompt: "fix bug" }),
     );
-    expect(cmd).toContain("opencode run --title 'AO:sess-1' --agent 'sisyphus' 'fix bug'");
-    expect(cmd).toContain("&& exec opencode --session");
+    expect(cmd).toContain(
+      "opencode run --format json --title 'AO:sess-1' --agent 'sisyphus' 'fix bug'",
+    );
+    expect(cmd).toContain("exec opencode --session");
     expect(cmd).toContain("--agent 'sisyphus'");
   });
 
@@ -179,9 +181,9 @@ describe("getLaunchCommand", () => {
       }),
     );
     expect(cmd).toContain(
-      "opencode run --title 'AO:sess-1' --agent 'sisyphus' --model 'claude-sonnet-4-5-20250929' 'fix the bug'",
+      "opencode run --format json --title 'AO:sess-1' --agent 'sisyphus' --model 'claude-sonnet-4-5-20250929' 'fix the bug'",
     );
-    expect(cmd).toContain("&& exec opencode --session");
+    expect(cmd).toContain("exec opencode --session");
     expect(cmd).toContain("--agent 'sisyphus'");
     expect(cmd).toContain("--model 'claude-sonnet-4-5-20250929'");
   });
@@ -205,8 +207,8 @@ describe("getLaunchCommand", () => {
   it("backward compatible: no agent flag when subagent not provided", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "fix it" }));
     expect(cmd).not.toContain("--agent");
-    expect(cmd).toContain("opencode run --title 'AO:sess-1' 'fix it'");
-    expect(cmd).toContain("&& exec opencode --session");
+    expect(cmd).toContain("opencode run --format json --title 'AO:sess-1' 'fix it'");
+    expect(cmd).toContain("exec opencode --session");
   });
 
   it("combines model and prompt without agent (backward compatible)", () => {
@@ -215,9 +217,9 @@ describe("getLaunchCommand", () => {
     );
     expect(cmd).not.toContain("--agent");
     expect(cmd).toContain(
-      "opencode run --title 'AO:sess-1' --model 'claude-sonnet-4-5-20250929' 'Go'",
+      "opencode run --format json --title 'AO:sess-1' --model 'claude-sonnet-4-5-20250929' 'Go'",
     );
-    expect(cmd).toContain("&& exec opencode --session");
+    expect(cmd).toContain("exec opencode --session");
     expect(cmd).toContain("--model 'claude-sonnet-4-5-20250929'");
   });
 
@@ -228,7 +230,7 @@ describe("getLaunchCommand", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ systemPrompt: "You are an orchestrator" }),
     );
-    expect(cmd).toContain("opencode run --title 'AO:sess-1'");
+    expect(cmd).toContain("opencode run --format json --title 'AO:sess-1'");
     expect(cmd).toContain("'You are an orchestrator'");
   });
 
@@ -236,7 +238,7 @@ describe("getLaunchCommand", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ systemPrompt: "You are an orchestrator", prompt: "do the task" }),
     );
-    expect(cmd).toContain("opencode run --title 'AO:sess-1'");
+    expect(cmd).toContain("opencode run --format json --title 'AO:sess-1'");
     expect(cmd).not.toContain("--prompt 'You are an orchestrator");
     expect(cmd).toContain("do the task'");
   });
@@ -249,22 +251,26 @@ describe("getLaunchCommand", () => {
   it("handles very long systemPrompt", () => {
     const longPrompt = "A".repeat(500);
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ systemPrompt: longPrompt }));
-    expect(cmd).toContain("opencode run --title 'AO:sess-1'");
+    expect(cmd).toContain("opencode run --format json --title 'AO:sess-1'");
     expect(cmd.length).toBeGreaterThan(500);
   });
 
   it("generates command with systemPromptFile via shell substitution", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ systemPromptFile: "/tmp/prompt.md" }));
-    expect(cmd).toContain("opencode run --title 'AO:sess-1' \"$(cat '/tmp/prompt.md')\"");
-    expect(cmd).toContain("&& exec opencode --session");
+    expect(cmd).toContain(
+      "opencode run --format json --title 'AO:sess-1' \"$(cat '/tmp/prompt.md')\"",
+    );
+    expect(cmd).toContain("exec opencode --session");
   });
 
   it("escapes path in systemPromptFile", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ systemPromptFile: "/tmp/it's-prompt.md" }),
     );
-    expect(cmd).toContain("opencode run --title 'AO:sess-1' \"$(cat '/tmp/it'\\''s-prompt.md')\"");
-    expect(cmd).toContain("&& exec opencode --session");
+    expect(cmd).toContain(
+      "opencode run --format json --title 'AO:sess-1' \"$(cat '/tmp/it'\\''s-prompt.md')\"",
+    );
+    expect(cmd).toContain("exec opencode --session");
   });
 
   it("systemPromptFile takes precedence over systemPrompt", () => {
@@ -287,9 +293,9 @@ describe("getLaunchCommand", () => {
       }),
     );
     expect(cmd).toContain(
-      "opencode run --title 'AO:my-orchestrator' \"$(cat '/tmp/orchestrator.md')\"",
+      "opencode run --format json --title 'AO:my-orchestrator' \"$(cat '/tmp/orchestrator.md')\"",
     );
-    expect(cmd).toContain("&& exec opencode --session");
+    expect(cmd).toContain("exec opencode --session");
   });
 
   it("combines systemPromptFile with subagent and prompt", () => {
@@ -301,8 +307,8 @@ describe("getLaunchCommand", () => {
       }),
     );
     expect(cmd).toContain("--agent 'sisyphus'");
-    expect(cmd).toContain("opencode run --title 'AO:sess-1'");
-    expect(cmd).toContain("&& exec opencode --session");
+    expect(cmd).toContain("opencode run --format json --title 'AO:sess-1'");
+    expect(cmd).toContain("exec opencode --session");
     expect(cmd).toContain("--agent 'sisyphus'");
     expect(cmd).not.toContain("--prompt");
     expect(cmd).toContain(
@@ -322,7 +328,7 @@ describe("getLaunchCommand", () => {
 
   it("handles prompt with newlines", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "line1\nline2\nline3" }));
-    expect(cmd).toContain("opencode run --title 'AO:sess-1'");
+    expect(cmd).toContain("opencode run --format json --title 'AO:sess-1'");
     expect(cmd).toContain("'line1");
   });
 
@@ -353,10 +359,16 @@ describe("getLaunchCommand", () => {
 
   it("handles empty prompt", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "" }));
-    expect(cmd).toContain("opencode run --title 'AO:sess-1' --command true");
-    expect(cmd).toContain("&& exec opencode --session");
+    expect(cmd).toContain("opencode run --format json --title 'AO:sess-1' --command true");
+    expect(cmd).toContain("exec opencode --session");
     expect(cmd).toContain("opencode session list --format json");
     expect(cmd).toContain("AO:sess-1");
+  });
+
+  it("pipes JSON output into node instead of treating the session id as a command", () => {
+    const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "Fix it" }));
+    expect(cmd).toContain("| node -e");
+    expect(cmd).not.toContain('| "$(node -e');
   });
 
   it("uses existing session id", () => {

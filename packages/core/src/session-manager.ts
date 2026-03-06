@@ -917,6 +917,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       writeFileSync(systemPromptFile, orchestratorConfig.systemPrompt, "utf-8");
     }
 
+    const existingOrchestratorMetadata = readMetadataRaw(sessionsDir, sessionId);
     const existingOrchestrator = await get(sessionId);
     if (existingOrchestrator?.runtimeHandle) {
       const existingAlive = await plugins.runtime
@@ -929,6 +930,22 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       if (existingAlive && orchestratorSessionStrategy !== "reuse") {
         await plugins.runtime.destroy(existingOrchestrator.runtimeHandle).catch(() => undefined);
       }
+    }
+
+    if (!existingOrchestratorMetadata && !reserveSessionId(sessionsDir, sessionId)) {
+      const raceSession = await get(sessionId);
+      if (raceSession?.runtimeHandle) {
+        const raceAlive = await plugins.runtime
+          .isAlive(raceSession.runtimeHandle)
+          .catch(() => false);
+        if (raceAlive && orchestratorSessionStrategy === "reuse") {
+          raceSession.metadata["orchestratorSessionReused"] = "true";
+          return raceSession;
+        }
+      }
+      throw new Error(
+        `Failed to reserve orchestrator session ID ${sessionId} (concurrent spawn detected)`,
+      );
     }
 
     const reusableOpenCodeSessionId =
