@@ -1022,6 +1022,22 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     }
 
+    if (!reserveSessionId(sessionsDir, sessionId)) {
+      const raceSession = await get(sessionId);
+      if (raceSession?.runtimeHandle) {
+        const raceAlive = await plugins.runtime
+          .isAlive(raceSession.runtimeHandle)
+          .catch(() => false);
+        if (raceAlive && orchestratorSessionStrategy === "reuse") {
+          raceSession.metadata["orchestratorSessionReused"] = "true";
+          return raceSession;
+        }
+      }
+      throw new Error(
+        `Failed to reserve orchestrator session ID ${sessionId} (concurrent spawn detected)`,
+      );
+    }
+
     const reusableOpenCodeSessionId =
       plugins.agent.name === "opencode" && orchestratorSessionStrategy === "reuse"
         ? await resolveOpenCodeSessionReuse({

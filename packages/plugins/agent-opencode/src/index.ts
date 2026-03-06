@@ -137,14 +137,17 @@ function createOpenCodeAgent(): Agent {
 
       if (!existingSessionId) {
         const runOptions = ["--title", shellEscape(`AO:${config.sessionId}`), ...sharedOptions];
-        const runCommand = promptValue
-          ? ["opencode", "run", ...runOptions, promptValue].join(" ")
-          : ["opencode", "run", ...runOptions, "--command", "true"].join(" ");
-        const continueCommand = buildContinueSessionCommand(
-          `AO:${config.sessionId}`,
-          sharedOptions,
+
+        const captureSessionId = `"$(node -e ${shellEscape("let buf='';process.stdin.on('data',c=>buf+=c).on('end',()=>{const lines=buf.toString().split('\\n');for(const line of lines){if(!line.trim())continue;try{const evt=JSON.parse(line);if(evt.type==='step_start'&&evt.session_id){process.stdout.write(evt.session_id);process.exit(0);}}}process.exit(1);})")})"`;
+
+        const fallbackSessionId = `"$(opencode session list --format json | node -e ${shellEscape("let input='';process.stdin.on('data',c=>input+=c).on('end',()=>{const title=process.argv[1];let rows;try{rows=JSON.parse(input)}catch{process.exit(1)};if(!Array.isArray(rows))process.exit(1);const matches=rows.filter(r=>r&&r.title===title&&typeof r.id==='string').sort((a,b)=>new Date(b.updated||0)-new Date(a.updated||0));if(matches.length===0)process.exit(1);process.stdout.write(matches[0].id);});")} ${shellEscape(`AO:${config.sessionId}`)})"`;
+
+        const sessionIdCapture = `"$( { ${promptValue ? ["opencode", "run", "--format", "json", ...runOptions, promptValue].join(" ") : ["opencode", "run", "--format", "json", ...runOptions, "--command", "true"].join(" ")} | ${captureSessionId}; } || echo ${fallbackSessionId} )"`;
+
+        const continueCommand = ["opencode", "--session", sessionIdCapture, ...sharedOptions].join(
+          " ",
         );
-        return `${runCommand} && ${continueCommand}`;
+        return `${continueCommand}`;
       }
 
       if (promptValue) {
