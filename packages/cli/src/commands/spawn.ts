@@ -7,6 +7,7 @@ import {
   getLeaves,
   getSiblings,
   formatPlanTree,
+  TERMINAL_STATUSES,
   type OrchestratorConfig,
   type DecomposerConfig,
   DEFAULT_DECOMPOSER_CONFIG,
@@ -270,12 +271,12 @@ export function registerBatchSpawn(program: Command): void {
       const spawnedIssues = new Set<string>();
 
       // Load existing sessions once before the loop to avoid repeated reads + enrichment.
-      // Exclude dead/killed sessions so crashed sessions don't block respawning.
-      const deadStatuses = new Set(["killed", "done", "exited"]);
+      // Exclude terminal sessions so completed/merged sessions don't block respawning
+      // (e.g. when an issue is reopened after its PR was merged).
       const existingSessions = await sm.list(projectId);
       const existingIssueMap = new Map(
         existingSessions
-          .filter((s) => s.issueId && !deadStatuses.has(s.status))
+          .filter((s) => s.issueId && !TERMINAL_STATUSES.has(s.status))
           .map((s) => [s.issueId!.toLowerCase(), s.id]),
       );
 

@@ -119,6 +119,8 @@ function statusToEventType(_from: SessionStatus | undefined, to: SessionStatus):
       return "merge.completed";
     case "needs_input":
       return "session.needs_input";
+    case "idle":
+      return "session.idle";
     case "stuck":
       return "session.stuck";
     case "errored":
@@ -143,6 +145,8 @@ function eventToReactionKey(eventType: EventType): string | null {
       return "merge-conflicts";
     case "merge.ready":
       return "approved-and-green";
+    case "session.idle":
+      return "agent-idle";
     case "session.stuck":
       return "agent-stuck";
     case "session.needs_input":
@@ -206,7 +210,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         if (activityState) {
           if (activityState.state === "waiting_input") return "needs_input";
           if (activityState.state === "exited") return "killed";
-          // active/ready/idle/blocked — proceed to PR checks below
+          if (activityState.state === "idle") return "idle";
+          // active/ready/blocked — proceed to PR checks below
         } else {
           // getActivityState returned null — fall back to terminal output parsing
           const runtime = registry.get<Runtime>(

@@ -32,7 +32,7 @@ interface DashboardProps {
   projectIds?: string[];
 }
 
-type Tab = "board" | "backlog" | "prs";
+type Tab = "board" | "backlog" | "verify" | "prs";
 
 const KANBAN_LEVELS = ["working", "pending", "review", "respond", "merge"] as const;
 
@@ -43,6 +43,8 @@ export function Dashboard({ initialSessions, stats, orchestratorId, projectName,
   const [backlogIssues, setBacklogIssues] = useState<BacklogIssue[]>([]);
   const [backlogLoading, setBacklogLoading] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [verifyIssues, setVerifyIssues] = useState<BacklogIssue[]>([]);
+  const [verifyLoading, setVerifyLoading] = useState(false);
 
   const grouped = useMemo(() => {
     const zones: Record<AttentionLevel, DashboardSession[]> = {
@@ -81,6 +83,47 @@ export function Dashboard({ initialSessions, stats, orchestratorId, projectName,
       setBacklogLoading(false);
     }
   }, []);
+
+  // Fetch verify issues
+  const fetchVerify = useCallback(async () => {
+    setVerifyLoading(true);
+    try {
+      const res = await fetch("/api/verify");
+      if (res.ok) {
+        const data = await res.json();
+        setVerifyIssues(data.issues ?? []);
+      }
+    } catch {
+      // Non-critical
+    } finally {
+      setVerifyLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === "verify") {
+      fetchVerify();
+      const interval = setInterval(fetchVerify, 30_000);
+      return () => clearInterval(interval);
+    }
+  }, [activeTab, fetchVerify]);
+
+  const handleVerifyAction = async (issueId: string, projectId: string, action: "verify" | "fail") => {
+    try {
+      const res = await fetch("/api/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ issueId, projectId, action }),
+      });
+      if (res.ok) {
+        setVerifyIssues((prev) => prev.filter((i) => !(i.id === issueId && i.projectId === projectId)));
+      } else {
+        console.error("Failed to update verify status:", await res.text());
+      }
+    } catch (err) {
+      console.error("Failed to update verify status:", err);
+    }
+  };
 
   useEffect(() => {
     if (activeTab === "backlog") {
@@ -137,6 +180,7 @@ export function Dashboard({ initialSessions, stats, orchestratorId, projectName,
 
   // Counts for tab badges
   const backlogCount = backlogIssues.length;
+  const verifyCount = verifyIssues.length;
   const prCount = openPRs.length;
   const needsAttention = grouped.respond.length + grouped.merge.length;
 
@@ -175,6 +219,9 @@ export function Dashboard({ initialSessions, stats, orchestratorId, projectName,
         </TabButton>
         <TabButton active={activeTab === "backlog"} onClick={() => setActiveTab("backlog")} badge={backlogCount > 0 ? backlogCount : undefined} badgeColor="var(--color-accent)">
           Backlog
+        </TabButton>
+        <TabButton active={activeTab === "verify"} onClick={() => setActiveTab("verify")} badge={verifyCount > 0 ? verifyCount : undefined} badgeColor="rgb(245, 158, 11)">
+          Verify
         </TabButton>
         <TabButton active={activeTab === "prs"} onClick={() => setActiveTab("prs")} badge={prCount > 0 ? prCount : undefined} badgeColor="var(--color-status-ready)">
           Pull Requests
@@ -296,6 +343,37 @@ export function Dashboard({ initialSessions, stats, orchestratorId, projectName,
         </div>
       )}
 
+      {/* Verify tab */}
+      {activeTab === "verify" && (
+        <div>
+          <div className="mb-4">
+            <p className="text-[12px] text-[var(--color-text-secondary)]">
+              Issues labeled <code className="rounded bg-[var(--color-bg-subtle)] px-1.5 py-0.5 text-[11px]" style={{ color: "rgb(245, 158, 11)" }}>merged-unverified</code> need human verification on staging.
+            </p>
+          </div>
+
+          {verifyLoading && verifyIssues.length === 0 ? (
+            <div className="py-12 text-center text-[12px] text-[var(--color-text-tertiary)]">Loading issues to verify...</div>
+          ) : verifyIssues.length === 0 ? (
+            <EmptyState
+              title="Nothing to verify"
+              description="All merged issues have been verified"
+            />
+          ) : (
+            <div className="space-y-2">
+              {verifyIssues.map((issue) => (
+                <VerifyCard
+                  key={`${issue.projectId}-${issue.id}`}
+                  issue={issue}
+                  onVerify={() => handleVerifyAction(issue.id, issue.projectId, "verify")}
+                  onFail={() => handleVerifyAction(issue.id, issue.projectId, "fail")}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* PRs tab */}
       {activeTab === "prs" && (
         <>
@@ -402,6 +480,62 @@ function BacklogCard({ issue }: { issue: BacklogIssue }) {
         queued
       </span>
     </a>
+  );
+}
+
+function VerifyCard({ issue, onVerify, onFail }: { issue: BacklogIssue; onVerify: () => void; onFail: () => void }) {
+  const [acting, setActing] = useState<"verify" | "fail" | null>(null);
+
+  const handleAction = async (action: "verify" | "fail", handler: () => void) => {
+    setActing(action);
+    try {
+      await handler();
+    } finally {
+      setActing(null);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-3 rounded-md border border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)] px-4 py-3">
+      <svg className="h-4 w-4 shrink-0" style={{ color: "rgb(245, 158, 11)" }} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <path d="M12 8v4M12 16h.01" />
+      </svg>
+      <div className="flex-1 min-w-0">
+        <a
+          href={issue.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-[13px] font-medium text-[var(--color-text-primary)] truncate hover:underline"
+        >
+          #{issue.id} {issue.title}
+        </a>
+        <div className="mt-0.5 flex items-center gap-2">
+          <span className="text-[11px] text-[var(--color-text-tertiary)]">{issue.projectId}</span>
+          {issue.labels.filter(l => l !== "merged-unverified").map(label => (
+            <span key={label} className="rounded-full bg-[var(--color-bg-subtle)] px-2 py-0.5 text-[10px] text-[var(--color-text-secondary)]">
+              {label}
+            </span>
+          ))}
+        </div>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        <button
+          onClick={() => handleAction("verify", onVerify)}
+          disabled={acting !== null}
+          className="rounded-md bg-[rgba(46,160,67,0.15)] px-3 py-1.5 text-[11px] font-semibold text-[rgb(46,160,67)] hover:bg-[rgba(46,160,67,0.25)] disabled:opacity-50"
+        >
+          {acting === "verify" ? "..." : "Verified"}
+        </button>
+        <button
+          onClick={() => handleAction("fail", onFail)}
+          disabled={acting !== null}
+          className="rounded-md bg-[rgba(248,81,73,0.15)] px-3 py-1.5 text-[11px] font-semibold text-[rgb(248,81,73)] hover:bg-[rgba(248,81,73,0.25)] disabled:opacity-50"
+        >
+          {acting === "fail" ? "..." : "Failed"}
+        </button>
+      </div>
+    </div>
   );
 }
 

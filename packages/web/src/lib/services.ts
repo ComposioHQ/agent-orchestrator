@@ -119,48 +119,112 @@ export function startBacklogPoller(): void {
   globalForBacklog._aoBacklogTimer = setInterval(() => void pollBacklog(), BACKLOG_POLL_INTERVAL);
 }
 
-// Track which issues we've already closed to avoid repeated API calls
-const closedIssues = new Set<string>();
+// Track which issues we've already processed to avoid repeated API calls
+const processedIssues = new Set<string>();
 
-/** Close GitHub issues for sessions whose PRs have been merged. */
-async function closeIssuesForMergedSessions(
+/** Label GitHub issues for verification when their PRs have been merged. */
+async function labelIssuesForVerification(
   sessions: Session[],
   config: OrchestratorConfig,
   registry: PluginRegistry,
 ): Promise<void> {
   const mergedSessions = sessions.filter(
-    (s) => s.status === "merged" && s.issueId && !closedIssues.has(`${s.projectId}:${s.issueId}`),
+    (s) => s.status === "merged" && s.issueId && !processedIssues.has(`${s.projectId}:${s.issueId}`),
   );
 
   for (const session of mergedSessions) {
     const key = `${session.projectId}:${session.issueId}`;
     const project = config.projects[session.projectId];
-    if (!project?.tracker) {
-      closedIssues.add(key);
-      continue;
-    }
+    if (!project?.tracker) { processedIssues.add(key); continue; }
 
     const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
-    if (!tracker?.updateIssue) {
-      closedIssues.add(key);
-      continue;
-    }
+    if (!tracker?.updateIssue) { processedIssues.add(key); continue; }
 
     try {
       await tracker.updateIssue(
         session.issueId!,
         {
-          state: "closed",
-          labels: ["agent:done"],
+          labels: ["merged-unverified"],
           removeLabels: ["agent:backlog", "agent:in-progress"],
-          comment: `Closed automatically — PR merged.`,
+          comment: `PR merged. Issue awaiting human verification on staging.`,
         },
         project,
       );
     } catch (err) {
       console.error(`[backlog] Failed to close issue ${session.issueId}:`, err);
     }
-    closedIssues.add(key);
+    processedIssues.add(key);
+  }
+}
+
+    const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
+    if (!tracker?.updateIssue) {
+      closedIssues.add(key);
+      continue;
+    }
+=======
+    if (!project?.tracker) { processedIssues.add(key); continue; }
+
+    const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
+    if (!tracker?.updateIssue) { processedIssues.add(key); continue; }
+>>>>>>> 21c165d (feat: add verification gate — issues stay open until human confirms fix)
+
+    try {
+      await tracker.updateIssue(
+        session.issueId!,
+        {
+          labels: ["merged-unverified"],
+          removeLabels: ["agent:backlog", "agent:in-progress"],
+          comment: `PR merged. Issue awaiting human verification on staging.`,
+        },
+        project,
+      );
+    } catch (err) {
+      console.error(`[backlog] Failed to close issue ${session.issueId}:`, err);
+    }
+    processedIssues.add(key);
+  }
+}
+
+/**
+ * Detect reopened issues (open + agent:done label) and swap the label
+ * back to agent:backlog so pollBacklog picks them up on the next cycle.
+ */
+async function relabelReopenedIssues(
+  config: OrchestratorConfig,
+  registry: PluginRegistry,
+): Promise<void> {
+  for (const [, project] of Object.entries(config.projects)) {
+    if (!project.tracker) continue;
+    const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
+    if (!tracker?.listIssues || !tracker.updateIssue) continue;
+
+    let reopened: Issue[];
+    try {
+      reopened = await tracker.listIssues(
+        { state: "open", labels: ["agent:done"], limit: 20 },
+        project,
+      );
+    } catch {
+      continue;
+    }
+
+    for (const issue of reopened) {
+      try {
+        await tracker.updateIssue(
+          issue.id,
+          {
+            labels: [BACKLOG_LABEL],
+            removeLabels: ["agent:done"],
+            comment: "Issue reopened — returning to agent backlog.",
+          },
+          project,
+        );
+        console.log(`[backlog] Relabeled reopened issue ${issue.id} → ${BACKLOG_LABEL}`);
+      } catch (err) {
+        console.error(`[backlog] Failed to relabel reopened issue ${issue.id}:`, err);
+      }
+    }
   }
 }
 
@@ -170,13 +234,14 @@ async function pollBacklog(): Promise<void> {
 
     // Get all sessions
     const allSessions = await sessionManager.list();
-    const terminalStatuses = new Set(["killed", "merged", "done", "terminated", "cleanup"]);
+    // Label issues for verification when PRs are merged
+    await labelIssuesForVerification(allSessions, config, registry);
 
-    // Close issues for merged sessions (label cleanup + issue close)
-    await closeIssuesForMergedSessions(allSessions, config, registry);
+    // Detect reopened issues: open state + agent:done label → relabel as agent:backlog
+    await relabelReopenedIssues(config, registry);
 
     const workerSessions = allSessions.filter(
-      (s) => !s.id.endsWith("-orchestrator") && !terminalStatuses.has(s.status),
+      (s) => !s.id.endsWith("-orchestrator") && !TERMINAL_STATUSES.has(s.status),
     );
     const activeIssueIds = new Set(
       workerSessions.filter((s) => s.issueId).map((s) => s.issueId!.toLowerCase()),
@@ -302,6 +367,34 @@ export async function getBacklogIssues(): Promise<Array<Issue & { projectId: str
       try {
         const issues = await tracker.listIssues(
           { state: "open", labels: [BACKLOG_LABEL], limit: 20 },
+          project,
+        );
+        for (const issue of issues) {
+          results.push({ ...issue, projectId });
+        }
+      } catch {
+        // Skip unavailable trackers
+      }
+    }
+  } catch {
+    // Services unavailable
+  }
+  return results;
+}
+
+/** Get issues labeled merged-unverified across all projects (for dashboard verify tab). */
+export async function getVerifyIssues(): Promise<Array<Issue & { projectId: string }>> {
+  const results: Array<Issue & { projectId: string }> = [];
+  try {
+    const { config, registry } = await getServices();
+    for (const [projectId, project] of Object.entries(config.projects)) {
+      if (!project.tracker) continue;
+      const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
+      if (!tracker?.listIssues) continue;
+
+      try {
+        const issues = await tracker.listIssues(
+          { state: "open", labels: ["merged-unverified"], limit: 20 },
           project,
         );
         for (const issue of issues) {

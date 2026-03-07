@@ -38,6 +38,7 @@ export type SessionStatus =
   | "stuck"
   | "errored"
   | "killed"
+  | "idle"
   | "done"
   | "terminated";
 
@@ -85,6 +86,7 @@ export const SESSION_STATUS = {
   NEEDS_INPUT: "needs_input" as const,
   STUCK: "stuck" as const,
   ERRORED: "errored" as const,
+  IDLE: "idle" as const,
   KILLED: "killed" as const,
   DONE: "done" as const,
   TERMINATED: "terminated" as const,
@@ -734,6 +736,7 @@ export type EventType =
   | "session.working"
   | "session.exited"
   | "session.killed"
+  | "session.idle"
   | "session.stuck"
   | "session.needs_input"
   | "session.errored"
