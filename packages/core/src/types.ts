@@ -352,6 +352,11 @@ export interface AgentLaunchConfig {
    * - Codex/Aider: similar shell substitution
    */
   systemPromptFile?: string;
+  /**
+   * Parsed dispatch labels from the issue (e.g. dispatch:, mode:, model:).
+   * Populated by parseDispatchLabels() in session-manager when an issue has labels.
+   */
+  metadata?: Record<string, string>;
 }
 
 export interface WorkspaceHooksConfig {

@@ -203,6 +203,22 @@ describe("getLaunchCommand", () => {
     expect(cmd).not.toMatch(/\s-p\s/);
     expect(cmd).not.toContain("Do the task");
   });
+
+  it("appends team composition prompt for fire team dispatch", () => {
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({ metadata: { dispatch: "dispatch:cli-team-5" } }),
+    );
+    expect(cmd).toContain("--append-system-prompt");
+    expect(cmd).toContain("team of 5 agents");
+    expect(cmd).toContain("own specific files");
+  });
+
+  it("does not append team prompt for non-team dispatch", () => {
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({ metadata: { dispatch: "dispatch:cli-single" } }),
+    );
+    expect(cmd).not.toContain("team of");
+  });
 });
 
 // =========================================================================
@@ -230,6 +246,25 @@ describe("getEnvironment", () => {
   it("does not set AO_ISSUE_ID when not provided", () => {
     const env = agent.getEnvironment(makeLaunchConfig());
     expect(env["AO_ISSUE_ID"]).toBeUndefined();
+  });
+
+  it("sets CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS for fire team dispatch", () => {
+    const env = agent.getEnvironment(
+      makeLaunchConfig({ metadata: { dispatch: "dispatch:cli-team-3" } }),
+    );
+    expect(env["CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"]).toBe("1");
+  });
+
+  it("does not set AGENT_TEAMS for non-team dispatch", () => {
+    const env = agent.getEnvironment(
+      makeLaunchConfig({ metadata: { dispatch: "dispatch:cli-single" } }),
+    );
+    expect(env["CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"]).toBeUndefined();
+  });
+
+  it("does not set AGENT_TEAMS when no dispatch metadata", () => {
+    const env = agent.getEnvironment(makeLaunchConfig());
+    expect(env["CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"]).toBeUndefined();
   });
 });
 
