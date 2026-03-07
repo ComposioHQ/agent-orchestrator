@@ -1,3 +1,4 @@
+import { getSessionsDir } from "@composio/ao-core";
 import { NextResponse, type NextRequest } from "next/server";
 import { getServices, getSCM } from "@/lib/services";
 import {
@@ -6,6 +7,20 @@ import {
   enrichSessionPR,
   enrichSessionsMetadata,
 } from "@/lib/serialize";
+
+function resolveSessionsDir(
+  configPath: string,
+  projectPath: string,
+  metadata: Record<string, string>,
+): string | null {
+  const metadataDir = metadata["AO_DATA_DIR"] ?? metadata["aoDataDir"] ?? metadata["sessionsDir"];
+  if (metadataDir) return metadataDir;
+  try {
+    return getSessionsDir(configPath, projectPath);
+  } catch {
+    return null;
+  }
+}
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -22,16 +37,26 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     // Enrich metadata (issue labels, agent summaries, issue titles)
     await enrichSessionsMetadata([coreSession], [dashboardSession], config, registry);
 
-    // Enrich PR — serve cache immediately, refresh in background if stale
+    // Enrich PR — always fetch fresh data for the detail endpoint (no cache)
     if (coreSession.pr) {
       const project = resolveProject(coreSession, config.projects);
       const scm = getSCM(registry, project);
-      if (scm) {
-        const cached = await enrichSessionPR(dashboardSession, scm, coreSession.pr, { cacheOnly: true });
-        if (!cached) {
-          // Nothing cached yet — block once to populate, then future calls use cache
-          await enrichSessionPR(dashboardSession, scm, coreSession.pr);
-        }
+      if (scm && project) {
+        const sessionsDir = resolveSessionsDir(
+          config.configPath,
+          project.path,
+          coreSession.metadata,
+        );
+        await enrichSessionPR(dashboardSession, scm, coreSession.pr, {
+          bypassCache: true,
+          metadata: sessionsDir
+            ? {
+                sessionsDir,
+                sessionId: coreSession.id,
+                currentStatus: coreSession.status,
+              }
+            : undefined,
+        });
       }
     }
 

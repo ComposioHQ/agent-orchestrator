@@ -1,4 +1,4 @@
-import { ACTIVITY_STATE } from "@composio/ao-core";
+import { ACTIVITY_STATE, getSessionsDir } from "@composio/ao-core";
 import { NextResponse } from "next/server";
 import { getServices, getSCM } from "@/lib/services";
 import {
@@ -8,6 +8,20 @@ import {
   enrichSessionsMetadata,
   computeStats,
 } from "@/lib/serialize";
+
+function resolveSessionsDir(
+  configPath: string,
+  projectPath: string,
+  metadata: Record<string, string>,
+): string | null {
+  const metadataDir = metadata["AO_DATA_DIR"] ?? metadata["aoDataDir"] ?? metadata["sessionsDir"];
+  if (metadataDir) return metadataDir;
+  try {
+    return getSessionsDir(configPath, projectPath);
+  } catch {
+    return null;
+  }
+}
 
 /** GET /api/sessions — List all sessions with full state
  * Query params:
@@ -50,7 +64,17 @@ export async function GET(request: Request) {
       const project = resolveProject(core, config.projects);
       const scm = getSCM(registry, project);
       if (!scm) return Promise.resolve();
-      return enrichSessionPR(dashboardSessions[i], scm, core.pr);
+      if (!project) return Promise.resolve();
+      const sessionsDir = resolveSessionsDir(config.configPath, project.path, core.metadata);
+      return enrichSessionPR(dashboardSessions[i], scm, core.pr, {
+        metadata: sessionsDir
+          ? {
+              sessionsDir,
+              sessionId: core.id,
+              currentStatus: core.status,
+            }
+          : undefined,
+      });
     });
     const enrichTimeout = new Promise<void>((resolve) => setTimeout(resolve, 4_000));
     await Promise.race([Promise.allSettled(enrichPromises), enrichTimeout]);

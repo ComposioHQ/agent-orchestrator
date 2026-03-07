@@ -5,18 +5,28 @@
  * (string dates, flattened DashboardPR) suitable for JSON serialization.
  */
 
-import type {
-  Session,
-  Agent,
-  SCM,
-  PRInfo,
-  Tracker,
-  ProjectConfig,
-  OrchestratorConfig,
-  PluginRegistry,
+import {
+  SESSION_STATUS,
+  updateMetadata,
+  type Session,
+  type Agent,
+  type SCM,
+  type PRInfo,
+  type SessionStatus,
+  type Tracker,
+  type ProjectConfig,
+  type OrchestratorConfig,
+  type PluginRegistry,
 } from "@composio/ao-core";
 import type { DashboardSession, DashboardPR, DashboardStats } from "./types.js";
-import { TTLCache, prCache, prCacheKey, type PREnrichmentData } from "./cache";
+import {
+  TTLCache,
+  prCache,
+  prCacheKey,
+  PR_CACHE_TTL_SUCCESS_MS,
+  PR_CACHE_TTL_RATE_LIMIT_MS,
+  type PREnrichmentData,
+} from "./cache";
 
 /** Cache for issue titles (5 min TTL — issue titles rarely change) */
 const issueTitleCache = new TTLCache<string>(300_000);
@@ -106,14 +116,22 @@ export async function enrichSessionPR(
   dashboard: DashboardSession,
   scm: SCM,
   pr: PRInfo,
-  opts?: { cacheOnly?: boolean },
+  opts?: {
+    cacheOnly?: boolean;
+    bypassCache?: boolean;
+    metadata?: {
+      sessionsDir: string;
+      sessionId: string;
+      currentStatus: SessionStatus;
+    };
+  },
 ): Promise<boolean> {
   if (!dashboard.pr) return false;
 
   const cacheKey = prCacheKey(pr.owner, pr.repo, pr.number);
 
   // Check cache first
-  const cached = prCache.get(cacheKey);
+  const cached = opts?.bypassCache ? null : prCache.get(cacheKey);
   if (cached && dashboard.pr) {
     dashboard.pr.state = cached.state;
     dashboard.pr.title = cached.title;
@@ -125,6 +143,7 @@ export async function enrichSessionPR(
     dashboard.pr.mergeability = cached.mergeability;
     dashboard.pr.unresolvedThreads = cached.unresolvedThreads;
     dashboard.pr.unresolvedComments = cached.unresolvedComments;
+    maybeWriteSessionStatusTransition(dashboard, opts?.metadata, isPRRateLimited(dashboard.pr));
     return true;
   }
 
@@ -232,7 +251,10 @@ export async function enrichSessionPR(
       unresolvedThreads: dashboard.pr.unresolvedThreads,
       unresolvedComments: dashboard.pr.unresolvedComments,
     };
-    prCache.set(cacheKey, rateLimitedData, 60 * 60_000); // 60 min — GitHub rate limit resets hourly
+    if (!opts?.bypassCache) {
+      prCache.set(cacheKey, rateLimitedData, PR_CACHE_TTL_RATE_LIMIT_MS);
+    }
+    maybeWriteSessionStatusTransition(dashboard, opts?.metadata, true);
     return true;
   }
 
@@ -248,8 +270,66 @@ export async function enrichSessionPR(
     unresolvedThreads: dashboard.pr.unresolvedThreads,
     unresolvedComments: dashboard.pr.unresolvedComments,
   };
-  prCache.set(cacheKey, cacheData);
+  if (!opts?.bypassCache) {
+    prCache.set(cacheKey, cacheData, PR_CACHE_TTL_SUCCESS_MS);
+  }
+  maybeWriteSessionStatusTransition(dashboard, opts?.metadata, false);
   return true;
+}
+
+function isPRRateLimited(pr: DashboardPR): boolean {
+  return pr.mergeability.blockers.includes("API rate limited or unavailable");
+}
+
+function deriveSessionStatusTransition(
+  currentStatus: SessionStatus,
+  pr: DashboardPR,
+  rateLimited: boolean,
+): SessionStatus | null {
+  if (pr.state === "merged") return SESSION_STATUS.MERGED;
+  if (pr.state === "closed") return SESSION_STATUS.DONE;
+
+  // During rate limiting, CI/review data can be stale defaults.
+  if (rateLimited) return null;
+
+  if (currentStatus === SESSION_STATUS.CI_FAILED && pr.ciStatus === "passing") {
+    return SESSION_STATUS.PR_OPEN;
+  }
+  if (pr.reviewDecision === "approved") {
+    return SESSION_STATUS.APPROVED;
+  }
+  if (pr.reviewDecision === "changes_requested") {
+    return SESSION_STATUS.CHANGES_REQUESTED;
+  }
+
+  return null;
+}
+
+function maybeWriteSessionStatusTransition(
+  dashboard: DashboardSession,
+  metadata:
+    | {
+        sessionsDir: string;
+        sessionId: string;
+        currentStatus: SessionStatus;
+      }
+    | undefined,
+  rateLimited: boolean,
+): void {
+  if (!dashboard.pr || !metadata) return;
+
+  const nextStatus = deriveSessionStatusTransition(metadata.currentStatus, dashboard.pr, rateLimited);
+  if (!nextStatus || nextStatus === metadata.currentStatus) return;
+
+  try {
+    updateMetadata(metadata.sessionsDir, metadata.sessionId, { status: nextStatus });
+    dashboard.status = nextStatus;
+  } catch (error) {
+    console.warn(
+      `[enrichSessionPR] failed to update metadata for session ${metadata.sessionId}:`,
+      error,
+    );
+  }
 }
 
 /** Enrich a DashboardSession's issue label using the tracker plugin. */
