@@ -136,6 +136,10 @@ export interface SSESnapshotEvent {
     activity: ActivityState | null;
     attentionLevel: AttentionLevel;
     lastActivityAt: string;
+    /** PR status fields from cache (null when no PR or not cached) */
+    prState?: "open" | "merged" | "closed" | null;
+    ciStatus?: CIStatus | null;
+    reviewDecision?: ReviewDecision | null;
   }>;
 }
 

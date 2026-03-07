@@ -1,8 +1,32 @@
 import { getServices } from "@/lib/services";
 import { sessionToDashboard } from "@/lib/serialize";
-import { getAttentionLevel } from "@/lib/types";
+import { getAttentionLevel, type DashboardSession } from "@/lib/types";
+import { prCache, prCacheKey } from "@/lib/cache";
 
 export const dynamic = "force-dynamic";
+
+/** Build a snapshot entry for a session, including cached PR status (no API calls). */
+function toSnapshotEntry(s: DashboardSession) {
+  const entry: Record<string, unknown> = {
+    id: s.id,
+    status: s.status,
+    activity: s.activity,
+    attentionLevel: getAttentionLevel(s),
+    lastActivityAt: s.lastActivityAt,
+  };
+
+  // Include cached PR status if available (cheap cache read, no API call)
+  if (s.pr) {
+    const cached = prCache.get(prCacheKey(s.pr.owner, s.pr.repo, s.pr.number));
+    if (cached) {
+      entry.prState = cached.state;
+      entry.ciStatus = cached.ciStatus;
+      entry.reviewDecision = cached.reviewDecision;
+    }
+  }
+
+  return entry;
+}
 
 /**
  * GET /api/events — SSE stream for real-time lifecycle events
@@ -26,13 +50,7 @@ export async function GET(): Promise<Response> {
 
           const initialEvent = {
             type: "snapshot",
-            sessions: dashboardSessions.map((s) => ({
-              id: s.id,
-              status: s.status,
-              activity: s.activity,
-              attentionLevel: getAttentionLevel(s),
-              lastActivityAt: s.lastActivityAt,
-            })),
+            sessions: dashboardSessions.map(toSnapshotEntry),
           };
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(initialEvent)}\n\n`));
         } catch {
@@ -69,13 +87,7 @@ export async function GET(): Promise<Response> {
           try {
             const event = {
               type: "snapshot",
-              sessions: dashboardSessions.map((s) => ({
-                id: s.id,
-                status: s.status,
-                activity: s.activity,
-                attentionLevel: getAttentionLevel(s),
-                lastActivityAt: s.lastActivityAt,
-              })),
+              sessions: dashboardSessions.map(toSnapshotEntry),
             };
             controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
           } catch {

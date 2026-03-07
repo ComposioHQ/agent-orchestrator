@@ -17,6 +17,7 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const activeOnly = searchParams.get("active") === "true";
+    const forceRefresh = searchParams.get("refresh") === "true";
 
     const { config, registry, sessionManager } = await getServices();
     const coreSessions = await sessionManager.list();
@@ -50,7 +51,7 @@ export async function GET(request: Request) {
       const project = resolveProject(core, config.projects);
       const scm = getSCM(registry, project);
       if (!scm) return Promise.resolve();
-      return enrichSessionPR(dashboardSessions[i], scm, core.pr);
+      return enrichSessionPR(dashboardSessions[i], scm, core.pr, { forceRefresh });
     });
     const enrichTimeout = new Promise<void>((resolve) => setTimeout(resolve, 4_000));
     await Promise.race([Promise.allSettled(enrichPromises), enrichTimeout]);

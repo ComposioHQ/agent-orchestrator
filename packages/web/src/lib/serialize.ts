@@ -106,26 +106,28 @@ export async function enrichSessionPR(
   dashboard: DashboardSession,
   scm: SCM,
   pr: PRInfo,
-  opts?: { cacheOnly?: boolean },
+  opts?: { cacheOnly?: boolean; forceRefresh?: boolean },
 ): Promise<boolean> {
   if (!dashboard.pr) return false;
 
   const cacheKey = prCacheKey(pr.owner, pr.repo, pr.number);
 
-  // Check cache first
-  const cached = prCache.get(cacheKey);
-  if (cached && dashboard.pr) {
-    dashboard.pr.state = cached.state;
-    dashboard.pr.title = cached.title;
-    dashboard.pr.additions = cached.additions;
-    dashboard.pr.deletions = cached.deletions;
-    dashboard.pr.ciStatus = cached.ciStatus;
-    dashboard.pr.ciChecks = cached.ciChecks;
-    dashboard.pr.reviewDecision = cached.reviewDecision;
-    dashboard.pr.mergeability = cached.mergeability;
-    dashboard.pr.unresolvedThreads = cached.unresolvedThreads;
-    dashboard.pr.unresolvedComments = cached.unresolvedComments;
-    return true;
+  // Check cache first (unless force-refresh requested)
+  if (!opts?.forceRefresh) {
+    const cached = prCache.get(cacheKey);
+    if (cached && dashboard.pr) {
+      dashboard.pr.state = cached.state;
+      dashboard.pr.title = cached.title;
+      dashboard.pr.additions = cached.additions;
+      dashboard.pr.deletions = cached.deletions;
+      dashboard.pr.ciStatus = cached.ciStatus;
+      dashboard.pr.ciChecks = cached.ciChecks;
+      dashboard.pr.reviewDecision = cached.reviewDecision;
+      dashboard.pr.mergeability = cached.mergeability;
+      dashboard.pr.unresolvedThreads = cached.unresolvedThreads;
+      dashboard.pr.unresolvedComments = cached.unresolvedComments;
+      return true;
+    }
   }
 
   // Cache miss — if cacheOnly, signal caller to refresh in background
@@ -216,7 +218,7 @@ export async function enrichSessionPR(
     dashboard.pr.mergeability.blockers.push("API rate limited or unavailable");
   }
 
-  // If rate limited, cache the partial data with a long TTL (5 min) so we stop
+  // If rate limited, cache partial data with a moderate TTL so we stop
   // hammering the API on every page load. The rate-limit blocker flag tells the
   // UI to show stale-data warnings instead of making decisions on bad data.
   if (mostFailed) {
@@ -232,7 +234,7 @@ export async function enrichSessionPR(
       unresolvedThreads: dashboard.pr.unresolvedThreads,
       unresolvedComments: dashboard.pr.unresolvedComments,
     };
-    prCache.set(cacheKey, rateLimitedData, 60 * 60_000); // 60 min — GitHub rate limit resets hourly
+    prCache.set(cacheKey, rateLimitedData, 10 * 60_000); // 10 min — retry sooner than hourly reset
     return true;
   }
 
@@ -248,7 +250,22 @@ export async function enrichSessionPR(
     unresolvedThreads: dashboard.pr.unresolvedThreads,
     unresolvedComments: dashboard.pr.unresolvedComments,
   };
-  prCache.set(cacheKey, cacheData);
+
+  // Adaptive TTL based on PR state:
+  // - Terminal states (merged/closed): 5 min (won't change)
+  // - Active CI (pending/running checks): 15s (changes rapidly)
+  // - Stable open PRs: default 60s
+  const hasActiveCI = dashboard.pr.ciStatus === "pending" ||
+    dashboard.pr.ciChecks.some((c) => c.status === "pending" || c.status === "running");
+  let ttl: number | undefined;
+  if (dashboard.pr.state === "merged" || dashboard.pr.state === "closed") {
+    ttl = 5 * 60_000; // 5 min for terminal states
+  } else if (hasActiveCI) {
+    ttl = 15_000; // 15s for active CI — changes rapidly
+  }
+  // else: undefined → default 60s TTL
+
+  prCache.set(cacheKey, cacheData, ttl);
   return true;
 }
 

@@ -10,7 +10,7 @@ interface CacheEntry<T> {
   expiresAt: number;
 }
 
-const DEFAULT_TTL_MS = 5 * 60_000; // 5 minutes
+const DEFAULT_TTL_MS = 60_000; // 60 seconds
 
 /**
  * Simple TTL cache backed by a Map.
@@ -71,6 +71,11 @@ export class TTLCache<T> {
     }
   }
 
+  /** Remove a specific key from the cache */
+  invalidate(key: string): boolean {
+    return this.cache.delete(key);
+  }
+
   /** Get cache size (includes stale entries) */
   size(): number {
     return this.cache.size;
@@ -105,7 +110,7 @@ export interface PREnrichmentData {
   }>;
 }
 
-/** Global PR enrichment cache (60s TTL) */
+/** Global PR enrichment cache (default 60s TTL) */
 export const prCache = new TTLCache<PREnrichmentData>();
 
 /** Generate cache key for a PR: `owner/repo#123` */

@@ -415,6 +415,135 @@ describe("enrichSessionPR", () => {
     expect(scm.getPRSummary).not.toHaveBeenCalled();
   });
 
+  it("should bypass cache when forceRefresh is true", async () => {
+    const pr = createPRInfo();
+    const coreSession = createCoreSession({ pr });
+    const dashboard1 = sessionToDashboard(coreSession);
+    const dashboard2 = sessionToDashboard(coreSession);
+    const scm = createMockSCM();
+
+    // First call: populate cache
+    await enrichSessionPR(dashboard1, scm, pr);
+    expect(scm.getPRSummary).toHaveBeenCalledTimes(1);
+
+    // Second call with forceRefresh: should bypass cache and fetch again
+    await enrichSessionPR(dashboard2, scm, pr, { forceRefresh: true });
+    expect(scm.getPRSummary).toHaveBeenCalledTimes(2);
+    expect(dashboard2.pr?.additions).toBe(100);
+  });
+
+  it("should use shorter TTL for terminal PR states (merged/closed)", async () => {
+    vi.useFakeTimers();
+
+    const pr = createPRInfo();
+    const coreSession = createCoreSession({ pr });
+    const dashboard = sessionToDashboard(coreSession);
+
+    // SCM returns merged state
+    const scm: SCM = {
+      ...createMockSCM(),
+      getPRSummary: vi.fn().mockResolvedValue({
+        state: "merged",
+        title: "Test PR",
+        additions: 100,
+        deletions: 50,
+      }),
+    };
+
+    await enrichSessionPR(dashboard, scm, pr);
+    expect(dashboard.pr?.state).toBe("merged");
+
+    // Cache should still be valid at 4 minutes (terminal state TTL is 5 min)
+    vi.advanceTimersByTime(4 * 60_000);
+    const cacheKey = prCacheKey(pr.owner, pr.repo, pr.number);
+    expect(prCache.get(cacheKey)).not.toBeNull();
+
+    // Cache should expire after 5 minutes
+    vi.advanceTimersByTime(1 * 60_000 + 1);
+    expect(prCache.get(cacheKey)).toBeNull();
+
+    vi.useRealTimers();
+  });
+
+  it("should cache rate-limited data for 10 minutes (not 60)", async () => {
+    vi.useFakeTimers();
+
+    const pr = createPRInfo();
+    const coreSession = createCoreSession({ pr });
+    const dashboard = sessionToDashboard(coreSession);
+    const scm = createFailingSCM();
+
+    await enrichSessionPR(dashboard, scm, pr);
+
+    const cacheKey = prCacheKey(pr.owner, pr.repo, pr.number);
+
+    // Cache should still be valid at 9 minutes
+    vi.advanceTimersByTime(9 * 60_000);
+    expect(prCache.get(cacheKey)).not.toBeNull();
+
+    // Cache should expire after 10 minutes
+    vi.advanceTimersByTime(1 * 60_000 + 1);
+    expect(prCache.get(cacheKey)).toBeNull();
+
+    vi.useRealTimers();
+  });
+
+  it("should use shorter TTL (15s) when CI checks are pending", async () => {
+    vi.useFakeTimers();
+
+    const pr = createPRInfo();
+    const coreSession = createCoreSession({ pr });
+    const dashboard = sessionToDashboard(coreSession);
+
+    // SCM returns pending CI status
+    const scm: SCM = {
+      ...createMockSCM(),
+      getCISummary: vi.fn().mockResolvedValue("pending"),
+      getCIChecks: vi.fn().mockResolvedValue([
+        { name: "build", status: "running", url: "https://example.com" },
+      ]),
+    };
+
+    await enrichSessionPR(dashboard, scm, pr);
+    expect(dashboard.pr?.ciStatus).toBe("pending");
+
+    const cacheKey = prCacheKey(pr.owner, pr.repo, pr.number);
+
+    // Cache should still be valid at 14 seconds
+    vi.advanceTimersByTime(14_000);
+    expect(prCache.get(cacheKey)).not.toBeNull();
+
+    // Cache should expire after 15 seconds
+    vi.advanceTimersByTime(1_001);
+    expect(prCache.get(cacheKey)).toBeNull();
+
+    vi.useRealTimers();
+  });
+
+  it("should use default TTL (60s) when CI is stable (passing)", async () => {
+    vi.useFakeTimers();
+
+    const pr = createPRInfo();
+    const coreSession = createCoreSession({ pr });
+    const dashboard = sessionToDashboard(coreSession);
+    const scm = createMockSCM(); // Returns passing CI
+
+    await enrichSessionPR(dashboard, scm, pr);
+    expect(dashboard.pr?.ciStatus).toBe("passing");
+
+    const cacheKey = prCacheKey(pr.owner, pr.repo, pr.number);
+
+    // Cache should still be valid at 59 seconds
+    vi.advanceTimersByTime(59_000);
+    expect(prCache.get(cacheKey)).not.toBeNull();
+
+    // Cache should expire after 60 seconds
+    vi.advanceTimersByTime(1_001);
+    expect(prCache.get(cacheKey)).toBeNull();
+
+    vi.useRealTimers();
+  });
+
   it("should handle missing optional SCM methods", async () => {
     const pr = createPRInfo();
     const coreSession = createCoreSession({ pr });

@@ -7,9 +7,11 @@ import {
   enrichSessionsMetadata,
 } from "@/lib/serialize";
 
-export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
+    const { searchParams } = new URL(request.url);
+    const forceRefresh = searchParams.get("refresh") === "true";
     const { config, registry, sessionManager } = await getServices();
 
     const coreSession = await sessionManager.get(id);
@@ -27,10 +29,15 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       const project = resolveProject(coreSession, config.projects);
       const scm = getSCM(registry, project);
       if (scm) {
-        const cached = await enrichSessionPR(dashboardSession, scm, coreSession.pr, { cacheOnly: true });
-        if (!cached) {
-          // Nothing cached yet — block once to populate, then future calls use cache
-          await enrichSessionPR(dashboardSession, scm, coreSession.pr);
+        if (forceRefresh) {
+          // Force-refresh bypasses cache entirely
+          await enrichSessionPR(dashboardSession, scm, coreSession.pr, { forceRefresh: true });
+        } else {
+          const cached = await enrichSessionPR(dashboardSession, scm, coreSession.pr, { cacheOnly: true });
+          if (!cached) {
+            // Nothing cached yet — block once to populate, then future calls use cache
+            await enrichSessionPR(dashboardSession, scm, coreSession.pr);
+          }
         }
       }
     }

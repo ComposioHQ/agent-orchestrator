@@ -96,11 +96,44 @@ describe("TTLCache", () => {
     shortCache.clear();
   });
 
+  it("should invalidate a specific key", () => {
+    cache.set("key1", "value1");
+    cache.set("key2", "value2");
+    expect(cache.get("key1")).toBe("value1");
+
+    const removed = cache.invalidate("key1");
+    expect(removed).toBe(true);
+    expect(cache.get("key1")).toBeNull();
+    expect(cache.get("key2")).toBe("value2"); // Other keys unaffected
+  });
+
+  it("should return false when invalidating non-existent key", () => {
+    const removed = cache.invalidate("nonexistent");
+    expect(removed).toBe(false);
+  });
+
   it("should not prevent process exit with unref", () => {
     // This test just verifies the cache can be created without throwing
     const testCache = new TTLCache<string>(1000);
     expect(testCache).toBeDefined();
     testCache.clear();
+  });
+
+  it("should use default TTL of 60 seconds", () => {
+    vi.useFakeTimers();
+    const defaultCache = new TTLCache<string>();
+    defaultCache.set("key1", "value1");
+
+    // Still valid at 59 seconds
+    vi.advanceTimersByTime(59_000);
+    expect(defaultCache.get("key1")).toBe("value1");
+
+    // Expired at 61 seconds
+    vi.advanceTimersByTime(2_000);
+    expect(defaultCache.get("key1")).toBeNull();
+
+    defaultCache.clear();
+    vi.useRealTimers();
   });
 });
 

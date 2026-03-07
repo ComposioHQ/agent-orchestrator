@@ -17,15 +17,38 @@ function reducer(state: DashboardSession[], action: Action): DashboardSession[] 
       const next = state.map((s) => {
         const patch = patchMap.get(s.id);
         if (!patch) return s;
-        if (
-          s.status === patch.status &&
-          s.activity === patch.activity &&
-          s.lastActivityAt === patch.lastActivityAt
-        ) {
-          return s;
-        }
+
+        // Check if basic session fields changed
+        const basicChanged =
+          s.status !== patch.status ||
+          s.activity !== patch.activity ||
+          s.lastActivityAt !== patch.lastActivityAt;
+
+        // Check if PR status fields changed (from cached PR data in SSE)
+        const prChanged =
+          s.pr !== null &&
+          patch.prState !== undefined &&
+          patch.prState !== null &&
+          (s.pr.state !== patch.prState ||
+            s.pr.ciStatus !== patch.ciStatus ||
+            s.pr.reviewDecision !== patch.reviewDecision);
+
+        if (!basicChanged && !prChanged) return s;
+
         changed = true;
-        return { ...s, status: patch.status, activity: patch.activity, lastActivityAt: patch.lastActivityAt };
+        const updated = { ...s, status: patch.status, activity: patch.activity, lastActivityAt: patch.lastActivityAt };
+
+        // Apply PR status patches if present
+        if (updated.pr && patch.prState !== undefined && patch.prState !== null) {
+          updated.pr = {
+            ...updated.pr,
+            state: patch.prState,
+            ...(patch.ciStatus !== undefined && patch.ciStatus !== null && { ciStatus: patch.ciStatus }),
+            ...(patch.reviewDecision !== undefined && patch.reviewDecision !== null && { reviewDecision: patch.reviewDecision }),
+          };
+        }
+
+        return updated;
       });
       return changed ? next : state;
     }
