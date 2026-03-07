@@ -573,7 +573,7 @@ describe("CodexAppServerClient", () => {
   // Approval Requests
   // =========================================================================
   describe("approval handling", () => {
-    it("auto-accepts approvals when no handler is provided", async () => {
+    it("declines approvals by default when no handler is provided", async () => {
       const proc = createFakeProcess();
       const client = new CodexAppServerClient({ requestTimeout: 500 });
 
@@ -591,13 +591,35 @@ describe("CodexAppServerClient", () => {
       }));
       await new Promise((r) => setTimeout(r, 10));
 
-      // Should have auto-responded with accept
-      const approvalResponse = proc.stdinLines.find((l) => l.includes('"accept"'));
-      expect(approvalResponse).toBeDefined();
+      // Should have responded with default decision: decline
+      const declineResponse = proc.stdinLines.find((l) => l.includes('"decline"'));
+      expect(declineResponse).toBeDefined();
 
       const closePromise = client.close();
       proc.simulateExit(0);
       await closePromise;
+    });
+
+    it("supports explicit default approval decision override", async () => {
+      const proc = createFakeProcess();
+      const client = new CodexAppServerClient({
+        requestTimeout: 500,
+        defaultApprovalDecision: "accept",
+      });
+
+      await connectClient(client, proc);
+
+      proc.sendLine(JSON.stringify({
+        id: 11,
+        method: "item/fileChange/requestApproval",
+        params: { path: "safe.ts" },
+      }));
+      await new Promise((r) => setTimeout(r, 10));
+
+      const acceptResponse = proc.stdinLines.find((l) => l.includes('"accept"'));
+      expect(acceptResponse).toBeDefined();
+
+      await closeClient(client, proc);
     });
 
     it("falls back to 'decline' when approval handler throws", async () => {

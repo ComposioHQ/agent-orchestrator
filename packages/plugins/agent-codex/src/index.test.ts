@@ -34,7 +34,10 @@ vi.mock("node:child_process", () => {
   const fn = Object.assign((..._args: unknown[]) => {}, {
     [Symbol.for("nodejs.util.promisify.custom")]: mockExecFileAsync,
   });
-  return { execFile: fn };
+  // execFileSync used by resolveCodexBinarySync — default to throwing so
+  // sync resolution falls through to the existsSync candidates check.
+  const execFileSyncFn = vi.fn(() => { throw new Error("not found"); });
+  return { execFile: fn, execFileSync: execFileSyncFn };
 });
 
 vi.mock("node:fs/promises", () => ({
@@ -742,6 +745,178 @@ describe("getSessionInfo", () => {
     expect(result).not.toBeNull();
     expect(result!.agentSessionId).toBe("new-session");
     expect(result!.summary).toBe("Codex session (o3)");
+  });
+
+  it("pins session files per AO session when two sessions share one workspace", async () => {
+    const earlyContent = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
+    );
+    const lateContent = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "o3-mini" },
+    );
+
+    mockReaddir.mockResolvedValue(["early-session.jsonl", "late-session.jsonl"]);
+    mockOpen.mockImplementation(async (path: string) => {
+      if (path.includes("early-session")) return makeFakeFileHandle(earlyContent);
+      if (path.includes("late-session")) return makeFakeFileHandle(lateContent);
+      throw new Error("ENOENT");
+    });
+    mockCreateReadStream.mockImplementation((path: string) => {
+      if (path.includes("early-session")) return makeContentStream(earlyContent);
+      if (path.includes("late-session")) return makeContentStream(lateContent);
+      return makeContentStream("");
+    });
+    mockStat.mockImplementation((path: string) => {
+      if (path.includes("early-session")) return Promise.resolve({ mtimeMs: 1_000 });
+      if (path.includes("late-session")) return Promise.resolve({ mtimeMs: 300_000 });
+      return Promise.reject(new Error("ENOENT"));
+    });
+
+    const earlyAoSession = makeSession({
+      id: "ao-early",
+      workspacePath: "/workspace/test",
+      createdAt: new Date(50_000),
+    });
+    const lateAoSession = makeSession({
+      id: "ao-late",
+      workspacePath: "/workspace/test",
+      createdAt: new Date(300_500),
+    });
+
+    const earlyResult = await agent.getSessionInfo(earlyAoSession);
+    const lateResult = await agent.getSessionInfo(lateAoSession);
+
+    expect(earlyResult).not.toBeNull();
+    expect(lateResult).not.toBeNull();
+    expect(earlyResult!.agentSessionId).toBe("early-session");
+    expect(lateResult!.agentSessionId).toBe("late-session");
+
+    // Ensure each session keeps its own pinned file on subsequent reads.
+    const earlyAgain = await agent.getSessionInfo(earlyAoSession);
+    const lateAgain = await agent.getSessionInfo(lateAoSession);
+    expect(earlyAgain!.agentSessionId).toBe("early-session");
+    expect(lateAgain!.agentSessionId).toBe("late-session");
+  });
+
+  it("selects different files for two shared-workspace sessions when queried in parallel", async () => {
+    const earlyContent = jsonl({ type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" });
+    const lateContent = jsonl({ type: "session_meta", cwd: "/workspace/test", model: "o3-mini" });
+
+    mockReaddir.mockResolvedValue(["early-session.jsonl", "late-session.jsonl"]);
+    mockOpen.mockImplementation(async (path: string) => {
+      if (path.includes("early-session")) return makeFakeFileHandle(earlyContent);
+      if (path.includes("late-session")) return makeFakeFileHandle(lateContent);
+      throw new Error("ENOENT");
+    });
+    mockCreateReadStream.mockImplementation((path: string) => {
+      if (path.includes("early-session")) return makeContentStream(earlyContent);
+      if (path.includes("late-session")) return makeContentStream(lateContent);
+      return makeContentStream("");
+    });
+    mockStat.mockImplementation((path: string) => {
+      if (path.includes("early-session")) return Promise.resolve({ mtimeMs: 1_000 });
+      if (path.includes("late-session")) return Promise.resolve({ mtimeMs: 300_000 });
+      return Promise.reject(new Error("ENOENT"));
+    });
+
+    const earlyAoSession = makeSession({
+      id: "ao-early-par",
+      workspacePath: "/workspace/test",
+      createdAt: new Date(30_000),
+    });
+    const lateAoSession = makeSession({
+      id: "ao-late-par",
+      workspacePath: "/workspace/test",
+      createdAt: new Date(300_500),
+    });
+
+    const [earlyResult, lateResult] = await Promise.all([
+      agent.getSessionInfo(earlyAoSession),
+      agent.getSessionInfo(lateAoSession),
+    ]);
+
+    expect(earlyResult).not.toBeNull();
+    expect(lateResult).not.toBeNull();
+    expect(earlyResult!.agentSessionId).toBe("early-session");
+    expect(lateResult!.agentSessionId).toBe("late-session");
+  });
+
+  it("keeps using the pinned file for a session even after newer matching files appear", async () => {
+    const oldContent = jsonl({ type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" });
+    const newContent = jsonl({ type: "session_meta", cwd: "/workspace/test", model: "o3-mini" });
+
+    mockReaddir.mockResolvedValue(["old-session.jsonl", "new-session.jsonl"]);
+    mockOpen.mockImplementation(async (path: string) => {
+      if (path.includes("old-session")) return makeFakeFileHandle(oldContent);
+      if (path.includes("new-session")) return makeFakeFileHandle(newContent);
+      throw new Error("ENOENT");
+    });
+    mockCreateReadStream.mockImplementation((path: string) => {
+      if (path.includes("old-session")) return makeContentStream(oldContent);
+      if (path.includes("new-session")) return makeContentStream(newContent);
+      return makeContentStream("");
+    });
+    mockStat.mockImplementation((path: string) => {
+      if (path.includes("old-session")) return Promise.resolve({ mtimeMs: 1_000 });
+      if (path.includes("new-session")) return Promise.resolve({ mtimeMs: 500_000 });
+      return Promise.reject(new Error("ENOENT"));
+    });
+
+    const session = makeSession({
+      id: "ao-sticky",
+      workspacePath: "/workspace/test",
+      createdAt: new Date(10_000),
+    });
+
+    const first = await agent.getSessionInfo(session);
+    expect(first).not.toBeNull();
+    expect(first!.agentSessionId).toBe("old-session");
+
+    // If pinning regresses to "latest", this would flip to new-session.
+    const second = await agent.getSessionInfo(session);
+    expect(second).not.toBeNull();
+    expect(second!.agentSessionId).toBe("old-session");
+  });
+
+  it("re-pins a session when its previously pinned file disappears", async () => {
+    const earlyContent = jsonl({ type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" });
+    const lateContent = jsonl({ type: "session_meta", cwd: "/workspace/test", model: "o3-mini" });
+    let oldFileDeleted = false;
+
+    mockReaddir.mockResolvedValue(["early-session.jsonl", "late-session.jsonl"]);
+    mockOpen.mockImplementation(async (path: string) => {
+      if (path.includes("early-session")) return makeFakeFileHandle(earlyContent);
+      if (path.includes("late-session")) return makeFakeFileHandle(lateContent);
+      throw new Error("ENOENT");
+    });
+    mockCreateReadStream.mockImplementation((path: string) => {
+      if (path.includes("early-session")) return makeContentStream(earlyContent);
+      if (path.includes("late-session")) return makeContentStream(lateContent);
+      return makeContentStream("");
+    });
+    mockStat.mockImplementation((path: string) => {
+      if (path.includes("early-session")) {
+        if (oldFileDeleted) return Promise.reject(new Error("ENOENT"));
+        return Promise.resolve({ mtimeMs: 1_000 });
+      }
+      if (path.includes("late-session")) return Promise.resolve({ mtimeMs: 300_000 });
+      return Promise.reject(new Error("ENOENT"));
+    });
+
+    const session = makeSession({
+      id: "ao-repin",
+      workspacePath: "/workspace/test",
+      createdAt: new Date(20_000),
+    });
+
+    const first = await agent.getSessionInfo(session);
+    expect(first).not.toBeNull();
+    expect(first!.agentSessionId).toBe("early-session");
+
+    oldFileDeleted = true;
+    const second = await agent.getSessionInfo(session);
+    expect(second).not.toBeNull();
+    expect(second!.agentSessionId).toBe("late-session");
   });
 
   it("handles corrupt/malformed JSONL lines gracefully", async () => {
