@@ -104,13 +104,25 @@ export function activityIcon(activity: ActivityState | null): string {
   }
 }
 
+/**
+ * Wrap text in an OSC 8 hyperlink escape sequence.
+ * Terminals that support OSC 8 render the text as a clickable link;
+ * unsupported terminals show the text unchanged.
+ */
+export function hyperlink(text: string, url: string): string {
+  return `\u001b]8;;${url}\u001b\\${text}\u001b]8;;\u001b\\`;
+}
+
 // eslint-disable-next-line no-control-regex
 const ANSI_RE = /\u001b\[[0-9;]*m/g;
 
+// eslint-disable-next-line no-control-regex
+const OSC8_RE = /\u001b\]8;;[^\u001b]*\u001b\\/g;
+
 /** Pad/truncate a string to exactly `width` visible characters */
 export function padCol(str: string, width: number): string {
-  // Strip ANSI codes to measure visible length
-  const visible = str.replace(ANSI_RE, "");
+  // Strip ANSI codes and OSC 8 hyperlinks to measure visible length
+  const visible = str.replace(OSC8_RE, "").replace(ANSI_RE, "");
   if (visible.length > width) {
     // Truncate visible content, re-apply truncation
     const plain = visible.slice(0, width - 1) + "\u2026";

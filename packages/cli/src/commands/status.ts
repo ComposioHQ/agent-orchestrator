@@ -3,6 +3,7 @@ import type { Command } from "commander";
 import {
   type Agent,
   type SCM,
+  type Tracker,
   type Session,
   type PRInfo,
   type CIStatus,
@@ -19,8 +20,9 @@ import {
   ciStatusIcon,
   reviewDecisionIcon,
   padCol,
+  hyperlink,
 } from "../lib/format.js";
-import { getAgentByName, getSCM } from "../lib/plugins.js";
+import { getAgentByName, getSCM, getTracker } from "../lib/plugins.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 
 interface SessionInfo {
@@ -32,6 +34,7 @@ interface SessionInfo {
   pr: string | null;
   prNumber: number | null;
   issue: string | null;
+  issueUrl: string | null;
   lastActivity: string;
   project: string | null;
   ciStatus: CIStatus | null;
@@ -44,6 +47,7 @@ async function gatherSessionInfo(
   session: Session,
   agent: Agent,
   scm: SCM,
+  tracker: Tracker | null,
   projectConfig: ReturnType<typeof loadConfig>,
 ): Promise<SessionInfo> {
   let branch = session.branch;
@@ -113,6 +117,19 @@ async function gatherSessionInfo(
     }
   }
 
+  // Resolve issue URL from tracker
+  let issueUrl: string | null = null;
+  if (issue && tracker) {
+    const project = projectConfig.projects[session.projectId];
+    if (project) {
+      try {
+        issueUrl = tracker.issueUrl(issue, project);
+      } catch {
+        // Tracker URL resolution failed — not critical
+      }
+    }
+  }
+
   return {
     name: session.id,
     branch,
@@ -122,6 +139,7 @@ async function gatherSessionInfo(
     pr: prUrl,
     prNumber,
     issue,
+    issueUrl,
     lastActivity,
     project: session.projectId,
     ciStatus,
@@ -134,6 +152,7 @@ async function gatherSessionInfo(
 // Column widths for the table
 const COL = {
   session: 14,
+  issue: 11,
   branch: 24,
   pr: 6,
   ci: 6,
@@ -146,6 +165,7 @@ const COL = {
 function printTableHeader(): void {
   const hdr =
     padCol("Session", COL.session) +
+    padCol("Issue", COL.issue) +
     padCol("Branch", COL.branch) +
     padCol("PR", COL.pr) +
     padCol("CI", COL.ci) +
@@ -155,15 +175,34 @@ function printTableHeader(): void {
     "Age";
   console.log(chalk.dim(`  ${hdr}`));
   const totalWidth =
-    COL.session + COL.branch + COL.pr + COL.ci + COL.review + COL.threads + COL.activity + 3;
+    COL.session +
+    COL.issue +
+    COL.branch +
+    COL.pr +
+    COL.ci +
+    COL.review +
+    COL.threads +
+    COL.activity +
+    3;
   console.log(chalk.dim(`  ${"─".repeat(totalWidth)}`));
 }
 
 function printSessionRow(info: SessionInfo): void {
   const prStr = info.prNumber ? `#${info.prNumber}` : "-";
 
+  // Render issue as a clickable hyperlink if URL is available
+  let issueStr: string;
+  if (info.issue) {
+    issueStr = info.issueUrl
+      ? chalk.magenta(hyperlink(info.issue, info.issueUrl))
+      : chalk.magenta(info.issue);
+  } else {
+    issueStr = chalk.dim("-");
+  }
+
   const row =
     padCol(chalk.green(info.name), COL.session) +
+    padCol(issueStr, COL.issue) +
     padCol(info.branch ? chalk.cyan(info.branch) : chalk.dim("-"), COL.branch) +
     padCol(info.prNumber ? chalk.blue(prStr) : chalk.dim(prStr), COL.pr) +
     padCol(ciStatusIcon(info.ciStatus), COL.ci) +
@@ -238,10 +277,11 @@ export function registerStatus(program: Command): void {
           a.id.localeCompare(b.id),
         );
 
-        // Resolve agent and SCM for this project
+        // Resolve agent, SCM, and tracker for this project
         const agentName = projectConfig.agent ?? config.defaults.agent;
         const agent = getAgentByName(agentName);
         const scm = getSCM(config, projectId);
+        const tracker = getTracker(config, projectId);
 
         if (!opts.json) {
           console.log(header(projectConfig.name || projectId));
@@ -262,7 +302,9 @@ export function registerStatus(program: Command): void {
         }
 
         // Gather all session info in parallel
-        const infoPromises = projectSessions.map((s) => gatherSessionInfo(s, agent, scm, config));
+        const infoPromises = projectSessions.map((s) =>
+          gatherSessionInfo(s, agent, scm, tracker, config),
+        );
         const sessionInfos = await Promise.all(infoPromises);
 
         for (const info of sessionInfos) {
