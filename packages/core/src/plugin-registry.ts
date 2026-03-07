@@ -44,6 +44,7 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
   { slot: "notifier", name: "desktop", pkg: "@composio/ao-plugin-notifier-desktop" },
   { slot: "notifier", name: "slack", pkg: "@composio/ao-plugin-notifier-slack" },
   { slot: "notifier", name: "webhook", pkg: "@composio/ao-plugin-notifier-webhook" },
+  { slot: "notifier", name: "openclaw", pkg: "@composio/ao-plugin-notifier-openclaw" },
   // Terminals
   { slot: "terminal", name: "iterm2", pkg: "@composio/ao-plugin-terminal-iterm2" },
   { slot: "terminal", name: "web", pkg: "@composio/ao-plugin-terminal-web" },
