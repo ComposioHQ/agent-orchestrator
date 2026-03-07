@@ -26,6 +26,35 @@ const execFileAsync = promisify(execFile);
 
 /** Shared bin directory for ao shell wrappers (prepended to PATH) */
 const AO_BIN_DIR = join(homedir(), ".ao", "bin");
+const DEFAULT_PATH_FALLBACK = "/usr/bin:/bin";
+const PRIORITY_PATH_DIRS = ["/usr/local/bin"] as const;
+const PRIORITY_PATH_SET = new Set<string>(PRIORITY_PATH_DIRS);
+
+function buildAgentPath(basePath: string | undefined): string {
+  const segments = (basePath ?? DEFAULT_PATH_FALLBACK).split(":").filter(Boolean);
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+
+  const pushUnique = (segment: string) => {
+    if (seen.has(segment)) return;
+    seen.add(segment);
+    ordered.push(segment);
+  };
+
+  // Keep AO wrappers first, then prioritize user/system shim locations.
+  pushUnique(AO_BIN_DIR);
+  for (const dir of PRIORITY_PATH_DIRS) {
+    pushUnique(dir);
+  }
+
+  for (const segment of segments) {
+    if (segment === AO_BIN_DIR) continue;
+    if (PRIORITY_PATH_SET.has(segment)) continue;
+    pushUnique(segment);
+  }
+
+  return ordered.join(":");
+}
 
 // =============================================================================
 // Plugin Manifest
@@ -599,10 +628,9 @@ function createCodexAgent(): Agent {
         env["AO_ISSUE_ID"] = config.issueId;
       }
 
-      // Prepend ~/.ao/bin to PATH so our gh/git wrappers intercept commands.
-      // The wrappers strip this directory from PATH before calling the real
-      // binary, so there's no infinite recursion.
-      env["PATH"] = `${AO_BIN_DIR}:${process.env["PATH"] ?? "/usr/bin:/bin"}`;
+      // Ensure wrappers intercept first, while preferring /usr/local/bin over
+      // package-manager bins (e.g. Linuxbrew) for the real gh/git resolution.
+      env["PATH"] = buildAgentPath(process.env["PATH"]);
 
       return env;
     },

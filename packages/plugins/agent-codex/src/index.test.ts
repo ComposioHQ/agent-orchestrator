@@ -374,12 +374,36 @@ describe("getEnvironment", () => {
     expect(env["PATH"]?.startsWith("/mock/home/.ao/bin:")).toBe(true);
   });
 
+  it("prioritizes /usr/local/bin before linuxbrew paths", () => {
+    const originalPath = process.env["PATH"];
+    process.env["PATH"] = "/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin";
+    try {
+      const env = agent.getEnvironment(makeLaunchConfig());
+      expect(env["PATH"]).toBe(
+        "/mock/home/.ao/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:/usr/bin:/bin",
+      );
+    } finally {
+      process.env["PATH"] = originalPath;
+    }
+  });
+
+  it("does not duplicate /usr/local/bin when it is already in PATH", () => {
+    const originalPath = process.env["PATH"];
+    process.env["PATH"] = "/usr/local/bin:/usr/bin:/usr/local/bin:/bin";
+    try {
+      const env = agent.getEnvironment(makeLaunchConfig());
+      expect(env["PATH"]).toBe("/mock/home/.ao/bin:/usr/local/bin:/usr/bin:/bin");
+    } finally {
+      process.env["PATH"] = originalPath;
+    }
+  });
+
   it("falls back to /usr/bin:/bin when process.env.PATH is undefined", () => {
     const originalPath = process.env["PATH"];
     delete process.env["PATH"];
     try {
       const env = agent.getEnvironment(makeLaunchConfig());
-      expect(env["PATH"]).toContain("/usr/bin:/bin");
+      expect(env["PATH"]).toBe("/mock/home/.ao/bin:/usr/local/bin:/usr/bin:/bin");
     } finally {
       process.env["PATH"] = originalPath;
     }
