@@ -86,6 +86,7 @@ const DefaultPluginsSchema = z.object({
   agent: z.string().default("claude-code"),
   workspace: z.string().default("worktree"),
   notifiers: z.array(z.string()).default(["composio", "desktop"]),
+  agentConfig: AgentSpecificConfigSchema.optional(),
 });
 
 const OrchestratorConfigSchema = z.object({
@@ -126,8 +127,14 @@ function expandPaths(config: OrchestratorConfig): OrchestratorConfig {
   return config;
 }
 
-/** Apply defaults to project configs */
-function applyProjectDefaults(config: OrchestratorConfig): OrchestratorConfig {
+/** Apply defaults to project configs.
+ *  rawConfig is the pre-Zod-validation object so we can tell which fields
+ *  the user actually set vs which Zod filled in with defaults.
+ */
+function applyProjectDefaults(config: OrchestratorConfig, rawConfig?: Record<string, unknown>): OrchestratorConfig {
+  const rawProjects = (rawConfig && typeof rawConfig === "object" && rawConfig !== null)
+    ? (rawConfig as Record<string, unknown>)["projects"] as Record<string, Record<string, unknown>> | undefined
+    : undefined;
   for (const [id, project] of Object.entries(config.projects)) {
     // Derive name from project ID if not set
     if (!project.name) {
@@ -148,6 +155,28 @@ function applyProjectDefaults(config: OrchestratorConfig): OrchestratorConfig {
     // Infer tracker from repo if not set (default to github issues)
     if (!project.tracker) {
       project.tracker = { plugin: "github" };
+    }
+
+    // Merge defaults.agentConfig into project.agentConfig so that
+    // top-level defaults (e.g. permissions: skip) apply to all projects
+    // unless explicitly overridden per-project. (fixes #74)
+    //
+    // We check the raw (pre-Zod) config to determine which agentConfig
+    // fields the user explicitly set, since Zod fills in defaults like
+    // { permissions: "skip" } that would otherwise shadow the user's
+    // top-level defaults.
+    if (config.defaults.agentConfig) {
+      const rawProjectAgentConfig = rawProjects?.[id]?.["agentConfig"] as Record<string, unknown> | undefined;
+      const explicitProjectOverrides: Record<string, unknown> = {};
+      if (rawProjectAgentConfig && typeof rawProjectAgentConfig === "object") {
+        for (const [key, value] of Object.entries(rawProjectAgentConfig)) {
+          explicitProjectOverrides[key] = value;
+        }
+      }
+      project.agentConfig = {
+        ...config.defaults.agentConfig,
+        ...explicitProjectOverrides,
+      };
     }
   }
 
@@ -404,7 +433,7 @@ export function validateConfig(raw: unknown): OrchestratorConfig {
 
   let config = validated as OrchestratorConfig;
   config = expandPaths(config);
-  config = applyProjectDefaults(config);
+  config = applyProjectDefaults(config, raw as Record<string, unknown>);
   config = applyDefaultReactions(config);
 
   // Validate project uniqueness and prefix collisions

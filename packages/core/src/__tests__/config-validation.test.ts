@@ -398,4 +398,71 @@ describe("Config Defaults", () => {
     const validated = validateConfig(config);
     expect(validated.projects.proj1.tracker).toEqual({ plugin: "github" });
   });
+
+  it("merges defaults.agentConfig into project agentConfig (fixes #74)", () => {
+    const config = {
+      defaults: {
+        agentConfig: {
+          permissions: "skip",
+          model: "opus",
+        },
+      },
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          // No agentConfig — should inherit from defaults
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.projects.proj1.agentConfig!.permissions).toBe("skip");
+    expect(validated.projects.proj1.agentConfig!.model).toBe("opus");
+  });
+
+  it("project agentConfig overrides defaults.agentConfig per field", () => {
+    const config = {
+      defaults: {
+        agentConfig: {
+          permissions: "skip",
+          model: "opus",
+        },
+      },
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          agentConfig: {
+            model: "sonnet",
+            // permissions not set — should inherit "skip" from defaults
+          },
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.projects.proj1.agentConfig!.permissions).toBe("skip");
+    expect(validated.projects.proj1.agentConfig!.model).toBe("sonnet");
+  });
+
+  it("works without defaults.agentConfig", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          agentConfig: {
+            permissions: "skip",
+          },
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.projects.proj1.agentConfig!.permissions).toBe("skip");
+  });
 });
