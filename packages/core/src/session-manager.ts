@@ -809,6 +809,24 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       throw err;
     }
 
+    // Capture initial output for agents that support sessionID extraction (e.g., OpenCode)
+    let capturedOpenCodeSessionId: string | undefined;
+    if (
+      plugins.runtime.captureInitialOutput &&
+      plugins.agent.parseSessionIdFromOutput &&
+      plugins.agent.name === "opencode"
+    ) {
+      try {
+        const output = await plugins.runtime.captureInitialOutput(handle, 5000);
+        const parsedId = await plugins.agent.parseSessionIdFromOutput(output);
+        if (parsedId) {
+          capturedOpenCodeSessionId = parsedId;
+        }
+      } catch {
+        // Non-fatal: continue without captured sessionID
+      }
+    }
+
     // Write metadata and run post-launch setup — clean up on failure
     const session: Session = {
       id: sessionId,
@@ -825,6 +843,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       lastActivityAt: new Date(),
       metadata: {
         ...(reusedOpenCodeSessionId ? { opencodeSessionId: reusedOpenCodeSessionId } : {}),
+        ...(capturedOpenCodeSessionId ? { opencodeSessionId: capturedOpenCodeSessionId } : {}),
       },
     };
 
@@ -839,7 +858,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         agent: plugins.agent.name, // Persist agent name for lifecycle manager
         createdAt: new Date().toISOString(),
         runtimeHandle: JSON.stringify(handle),
-        opencodeSessionId: reusedOpenCodeSessionId,
+        opencodeSessionId: capturedOpenCodeSessionId ?? reusedOpenCodeSessionId,
       });
 
       if (plugins.agent.postLaunchSetup) {
@@ -956,20 +975,6 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       writeFileSync(systemPromptFile, orchestratorConfig.systemPrompt, "utf-8");
     }
 
-    const existingOrchestrator = await get(sessionId);
-    if (existingOrchestrator?.runtimeHandle) {
-      const existingAlive = await plugins.runtime
-        .isAlive(existingOrchestrator.runtimeHandle)
-        .catch(() => false);
-      if (existingAlive && orchestratorSessionStrategy === "reuse") {
-        existingOrchestrator.metadata["orchestratorSessionReused"] = "true";
-        return existingOrchestrator;
-      }
-      if (existingAlive && orchestratorSessionStrategy !== "reuse") {
-        await plugins.runtime.destroy(existingOrchestrator.runtimeHandle).catch(() => undefined);
-      }
-    }
-
     const reusableOpenCodeSessionId =
       plugins.agent.name === "opencode" && orchestratorSessionStrategy === "reuse"
         ? await resolveOpenCodeSessionReuse({
@@ -1012,18 +1017,28 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     const launchCommand = plugins.agent.getLaunchCommand(agentLaunchConfig);
     const environment = plugins.agent.getEnvironment(agentLaunchConfig);
 
-    const handle = await plugins.runtime.create({
-      sessionId: tmuxName ?? sessionId,
-      workspacePath: project.path,
-      launchCommand,
-      environment: {
-        ...environment,
-        AO_SESSION: sessionId,
-        AO_DATA_DIR: sessionsDir,
-        AO_SESSION_NAME: sessionId,
-        ...(tmuxName && { AO_TMUX_NAME: tmuxName }),
-      },
-    });
+    let handle: RuntimeHandle;
+    try {
+      handle = await plugins.runtime.create({
+        sessionId: tmuxName ?? sessionId,
+        workspacePath: project.path,
+        launchCommand,
+        environment: {
+          ...environment,
+          AO_SESSION: sessionId,
+          AO_DATA_DIR: sessionsDir,
+          AO_SESSION_NAME: sessionId,
+          ...(tmuxName && { AO_TMUX_NAME: tmuxName }),
+        },
+      });
+    } catch (err) {
+      try {
+        deleteMetadata(sessionsDir, sessionId, false);
+      } catch {
+        /* best effort */
+      }
+      throw err;
+    }
 
     // Write metadata and run post-launch setup
     const session: Session = {

@@ -181,6 +181,21 @@ export function create(): Runtime {
         command: `tmux attach -t ${handle.id}`,
       };
     },
+
+    async captureInitialOutput(handle: RuntimeHandle, timeoutMs = 5000): Promise<string> {
+      const deadline = Date.now() + timeoutMs;
+      let output = "";
+
+      while (Date.now() < deadline) {
+        output = await this.getOutput(handle, 100);
+        if (output.trim()) {
+          return output;
+        }
+        await sleep(100);
+      }
+
+      throw new Error(`Timeout waiting for initial output from session ${handle.id}`);
+    },
   };
 }
 

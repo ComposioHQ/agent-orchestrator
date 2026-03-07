@@ -227,6 +227,29 @@ function createOpenCodeAgent(): Agent {
       // OpenCode doesn't have JSONL session files for introspection yet
       return null;
     },
+
+    async parseSessionIdFromOutput(output: string): Promise<string | null> {
+      for (const line of output.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (
+            parsed &&
+            typeof parsed === "object" &&
+            parsed["type"] === "step_start" &&
+            typeof parsed["sessionID"] === "string"
+          ) {
+            const sessionId = asValidOpenCodeSessionId(parsed["sessionID"]);
+            return sessionId ?? null;
+          }
+        } catch {
+          // Not JSON, skip
+        }
+      }
+      return null;
+    },
   };
 }
 

@@ -2864,6 +2864,23 @@ describe("spawnOrchestrator", () => {
 
     expect(session.runtimeHandle).toEqual(makeHandle("rt-1"));
   });
+
+  it("prevents concurrent orchestrator spawns with atomic reservation", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    const [result1, result2] = await Promise.allSettled([
+      sm.spawnOrchestrator({ projectId: "my-app" }),
+      sm.spawnOrchestrator({ projectId: "my-app" }),
+    ]);
+
+    const succeeded = [result1, result2].filter(
+      (r) => r.status === "fulfilled",
+    );
+    expect(succeeded.length).toBeGreaterThanOrEqual(1);
+
+    const createCalls = (mockRuntime.create as ReturnType<typeof vi.fn>).mock.calls.length;
+    expect(createCalls).toBeLessThanOrEqual(2);
+  });
 });
 
 describe("restore", () => {

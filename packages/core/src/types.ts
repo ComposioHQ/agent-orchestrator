@@ -219,6 +219,14 @@ export interface Runtime {
 
   /** Get info needed to attach a human to this session (for Terminal plugin) */
   getAttachInfo?(handle: RuntimeHandle): Promise<AttachInfo>;
+
+  /**
+   * Capture initial output from a newly created session.
+   * Used to extract agent-specific data (e.g., OpenCode sessionID from JSON output).
+   * @param timeoutMs - max time to wait for output (default: 5000)
+   * @returns captured output string, or throws on timeout
+   */
+  captureInitialOutput?(handle: RuntimeHandle, timeoutMs?: number): Promise<string>;
 }
 
 export interface RuntimeCreateConfig {
@@ -300,6 +308,14 @@ export interface Agent {
 
   /** Extract information from agent's internal data (summary, cost, session ID) */
   getSessionInfo(session: Session): Promise<AgentSessionInfo | null>;
+
+  /**
+   * Parse agent-specific session ID from captured runtime output.
+   * Used for deterministic session attach (e.g., OpenCode JSON step_start event).
+   * @param output - captured output from runtime.captureInitialOutput()
+   * @returns parsed session ID, or null if not found
+   */
+  parseSessionIdFromOutput?(output: string): Promise<string | null>;
 
   /**
    * Optional: get a launch command that resumes a previous session.

@@ -524,3 +524,75 @@ describe("getSessionInfo", () => {
     expect(await agent.getSessionInfo(makeSession({ workspacePath: "/some/path" }))).toBeNull();
   });
 });
+
+// =========================================================================
+// parseSessionIdFromOutput
+// =========================================================================
+describe("parseSessionIdFromOutput", () => {
+  const agent = create();
+
+  it("extracts sessionID from step_start JSON event", async () => {
+    const output = '{"type":"step_start","sessionID":"ses_abc123","data":{}}';
+    const result = await agent.parseSessionIdFromOutput!(output);
+    expect(result).toBe("ses_abc123");
+  });
+
+  it("extracts sessionID from multiline output with step_start", async () => {
+    const output = `
+Some log output
+{"type":"other_event","data":{}}
+{"type":"step_start","sessionID":"ses_def456","timestamp":"2024-01-01"}
+More output
+`;
+    const result = await agent.parseSessionIdFromOutput!(output);
+    expect(result).toBe("ses_def456");
+  });
+
+  it("returns null when no step_start event found", async () => {
+    const output = '{"type":"other_event","data":{}}';
+    const result = await agent.parseSessionIdFromOutput!(output);
+    expect(result).toBeNull();
+  });
+
+  it("returns null when sessionID is missing", async () => {
+    const output = '{"type":"step_start","data":{}}';
+    const result = await agent.parseSessionIdFromOutput!(output);
+    expect(result).toBeNull();
+  });
+
+  it("returns null when sessionID is not a string", async () => {
+    const output = '{"type":"step_start","sessionID":123}';
+    const result = await agent.parseSessionIdFromOutput!(output);
+    expect(result).toBeNull();
+  });
+
+  it("returns null for empty output", async () => {
+    const result = await agent.parseSessionIdFromOutput!("");
+    expect(result).toBeNull();
+  });
+
+  it("returns null for non-JSON output", async () => {
+    const result = await agent.parseSessionIdFromOutput!("not json at all");
+    expect(result).toBeNull();
+  });
+
+  it("handles mixed valid and invalid JSON lines", async () => {
+    const output = `
+not json
+{"type":"other_event"}
+{"type":"step_start","sessionID":"ses_xyz789"}
+also not json
+`;
+    const result = await agent.parseSessionIdFromOutput!(output);
+    expect(result).toBe("ses_xyz789");
+  });
+
+  it("returns first sessionID when multiple step_start events exist", async () => {
+    const output = `
+{"type":"step_start","sessionID":"ses_first"}
+{"type":"step_start","sessionID":"ses_second"}
+`;
+    const result = await agent.parseSessionIdFromOutput!(output);
+    expect(result).toBe("ses_first");
+  });
+});
