@@ -6,9 +6,8 @@
  *   2. Config-derived context — project name, repo, default branch, tracker info, reaction rules
  *   3. User rules — inline agentRules and/or agentRulesFile content
  *
- * buildPrompt() returns null when there's nothing meaningful to compose
- * (no issue, no rules, no explicit prompt), preserving backward compatibility
- * for bare launches.
+ * buildPrompt() always returns the AO base guidance and project context so
+ * bare launches still know about AO-specific commands such as PR claiming.
  */
 
 import { readFileSync } from "node:fs";
@@ -24,6 +23,7 @@ export const BASE_AGENT_PROMPT = `You are an AI coding agent managed by the Agen
 ## Session Lifecycle
 - You are running inside a managed session. Focus on the assigned task.
 - When you finish your work, create a PR and push it. The orchestrator will handle CI monitoring and review routing.
+- If you're told to take over or continue work on an existing PR, run \`ao session claim-pr <pr-number-or-url>\` from inside this session before making changes.
 - If CI fails, the orchestrator will send you the failures — fix them and push again.
 - If reviewers request changes, the orchestrator will forward their comments — address each one, push fixes, and reply to the comments.
 
@@ -141,24 +141,14 @@ function readUserRules(project: ProjectConfig): string | null {
 /**
  * Compose a layered prompt for an agent session.
  *
- * Returns null if there's nothing meaningful to compose (no issue, no rules,
- * no explicit user prompt). This preserves backward-compatible behavior where
- * bare launches (no issue) send no prompt.
+ * Always returns the AO base guidance plus project context, then layers on
+ * issue context, user rules, and explicit instructions when available.
  */
-export function buildPrompt(config: PromptBuildConfig): string | null {
-  const hasIssue = Boolean(config.issueId);
+export function buildPrompt(config: PromptBuildConfig): string {
   const userRules = readUserRules(config.project);
-  const hasRules = Boolean(userRules);
-  const hasUserPrompt = Boolean(config.userPrompt);
-
-  // Nothing to compose — return null for backward compatibility
-  if (!hasIssue && !hasRules && !hasUserPrompt) {
-    return null;
-  }
-
   const sections: string[] = [];
 
-  // Layer 1: Base prompt (always included when we have something to compose)
+  // Layer 1: Base prompt is always included for every managed session.
   sections.push(BASE_AGENT_PROMPT);
 
   // Layer 2: Config-derived context

@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { createSessionManager } from "../session-manager.js";
 import { writeMetadata, readMetadata, readMetadataRaw, deleteMetadata } from "../metadata.js";
-import { getSessionsDir, getProjectBaseDir } from "../paths.js";
+import { getSessionsDir, getProjectBaseDir, getWorktreesDir } from "../paths.js";
 import {
   SessionNotRestorableError,
   WorkspaceMissingError,
@@ -193,7 +193,8 @@ describe("spawn", () => {
 
     const session = await sm.spawn({
       projectId: "my-app",
-      issueId: "this is a very long issue description that should be truncated to sixty characters maximum",
+      issueId:
+        "this is a very long issue description that should be truncated to sixty characters maximum",
     });
 
     expect(session.branch!.replace("feat/", "").length).toBeLessThanOrEqual(60);
@@ -341,9 +342,9 @@ describe("spawn", () => {
     it("throws when agent override plugin is not found", async () => {
       const sm = createSessionManager({ config, registry: registryWithMultipleAgents });
 
-      await expect(
-        sm.spawn({ projectId: "my-app", agent: "nonexistent" }),
-      ).rejects.toThrow("Agent plugin 'nonexistent' not found");
+      await expect(sm.spawn({ projectId: "my-app", agent: "nonexistent" })).rejects.toThrow(
+        "Agent plugin 'nonexistent' not found",
+      );
     });
 
     it("uses default agent when no override specified", async () => {
@@ -581,7 +582,7 @@ describe("spawn", () => {
     expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
   });
 
-  it("does not send prompt post-launch when no prompt is provided", async () => {
+  it("sends AO guidance post-launch even when no explicit prompt is provided", async () => {
     vi.useFakeTimers();
     const postLaunchAgent = {
       ...mockAgent,
@@ -598,11 +599,14 @@ describe("spawn", () => {
     };
 
     const sm = createSessionManager({ config, registry: registryWithPostLaunch });
-    const spawnPromise = sm.spawn({ projectId: "my-app" }); // No prompt
+    const spawnPromise = sm.spawn({ projectId: "my-app" });
     await vi.advanceTimersByTimeAsync(5_000);
     await spawnPromise;
 
-    expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
+    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: expect.any(String) }),
+      expect.stringContaining("ao session claim-pr"),
+    );
     vi.useRealTimers();
   });
 
@@ -953,10 +957,48 @@ describe("get", () => {
     const sm = createSessionManager({ config, registry: mockRegistry });
     expect(await sm.get("nonexistent")).toBeNull();
   });
+
+
+  it("preserves arbitrary metadata flags on loaded sessions", async () => {
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "feat/test",
+      status: "working",
+      project: "my-app",
+      prAutoDetect: "off",
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const session = await sm.get("app-1");
+
+    expect(session).not.toBeNull();
+    expect(session!.metadata["prAutoDetect"]).toBe("off");
+  });
 });
 
 describe("kill", () => {
   it("destroys runtime, workspace, and archives metadata", async () => {
+    const managedWorktree = join(
+      getWorktreesDir(config.configPath, config.projects["my-app"]!.path),
+      "app-1",
+    );
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: managedWorktree,
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.kill("app-1");
+
+    expect(mockRuntime.destroy).toHaveBeenCalledWith(makeHandle("rt-1"));
+    expect(mockWorkspace.destroy).toHaveBeenCalledWith(managedWorktree);
+    expect(readMetadata(sessionsDir, "app-1")).toBeNull(); // archived + deleted
+  });
+
+  it("does not destroy workspace paths outside managed roots", async () => {
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp/ws",
       branch: "main",
@@ -968,9 +1010,38 @@ describe("kill", () => {
     const sm = createSessionManager({ config, registry: mockRegistry });
     await sm.kill("app-1");
 
-    expect(mockRuntime.destroy).toHaveBeenCalledWith(makeHandle("rt-1"));
-    expect(mockWorkspace.destroy).toHaveBeenCalledWith("/tmp/ws");
-    expect(readMetadata(sessionsDir, "app-1")).toBeNull(); // archived + deleted
+    expect(mockWorkspace.destroy).not.toHaveBeenCalled();
+  });
+
+  it("destroys workspace under legacy ~/.worktrees root", async () => {
+    const legacyWorktree = join(homedir(), ".worktrees", "my-app", "app-1");
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: legacyWorktree,
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.kill("app-1");
+
+    expect(mockWorkspace.destroy).toHaveBeenCalledWith(legacyWorktree);
+  });
+
+  it("never destroys workspace equal to project path", async () => {
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: config.projects["my-app"]!.path,
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.kill("app-1");
+
+    expect(mockWorkspace.destroy).not.toHaveBeenCalled();
   });
 
   it("throws for nonexistent session", async () => {
@@ -1160,7 +1231,7 @@ describe("cleanup", () => {
 });
 
 describe("send", () => {
-  it("sends message via runtime.sendMessage", async () => {
+  it("sends message via runtime.sendMessage and confirms delivery", async () => {
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp",
       branch: "main",
@@ -1168,11 +1239,66 @@ describe("send", () => {
       project: "my-app",
       runtimeHandle: JSON.stringify(makeHandle("rt-1")),
     });
+    vi.mocked(mockRuntime.getOutput)
+      .mockResolvedValueOnce("before")
+      .mockResolvedValueOnce("after");
 
     const sm = createSessionManager({ config, registry: mockRegistry });
     await sm.send("app-1", "Fix the CI failures");
 
     expect(mockRuntime.sendMessage).toHaveBeenCalledWith(makeHandle("rt-1"), "Fix the CI failures");
+  });
+
+  it("restores a dead session before sending the message", async () => {
+    const wsPath = join(tmpDir, "ws-app-1");
+    mkdirSync(wsPath, { recursive: true });
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/TEST-1",
+      status: "working",
+      project: "my-app",
+      issue: "TEST-1",
+      runtimeHandle: JSON.stringify(makeHandle("rt-old")),
+    });
+
+    vi.mocked(mockRuntime.isAlive).mockImplementation(async (handle) => handle.id !== "rt-old");
+    vi.mocked(mockAgent.isProcessRunning).mockImplementation(
+      async (handle) => handle.id !== "rt-old",
+    );
+    vi.mocked(mockRuntime.create).mockResolvedValue(makeHandle("rt-restored"));
+    vi.mocked(mockRuntime.getOutput)
+      .mockResolvedValueOnce("restored prompt")
+      .mockResolvedValueOnce("before send")
+      .mockResolvedValueOnce("after send");
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.send("app-1", "Please fix the review comments");
+
+    expect(mockRuntime.create).toHaveBeenCalled();
+    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
+      makeHandle("rt-restored"),
+      "Please fix the review comments",
+    );
+  });
+
+  it("resolves when delivery cannot be confirmed (message already sent)", async () => {
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+    vi.mocked(mockRuntime.getOutput).mockResolvedValue("steady output");
+    vi.mocked(mockAgent.detectActivity).mockReturnValue("idle");
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    // Should resolve without throwing — the message was already sent via
+    // sendMessage, so unconfirmed delivery is treated as a soft success
+    // to avoid duplicate dispatches on the next poll cycle.
+    await expect(sm.send("app-1", "Fix the CI failures")).resolves.toBeUndefined();
+    expect(mockRuntime.sendMessage).toHaveBeenCalled();
   });
 
   it("throws for nonexistent session", async () => {
@@ -1187,10 +1313,13 @@ describe("send", () => {
       status: "working",
       project: "my-app",
     });
+    vi.mocked(mockRuntime.getOutput)
+      .mockResolvedValueOnce("before")
+      .mockResolvedValueOnce("after");
 
     const sm = createSessionManager({ config, registry: mockRegistry });
     await sm.send("app-1", "hello");
-    // Should use session ID "app-1" as the handle id with default runtime
+
     expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
       { id: "app-1", runtimeName: "mock", data: {} },
       "hello",
@@ -1670,6 +1799,161 @@ describe("restore", () => {
     expect(meta!["pr"]).toBe("https://github.com/org/my-app/pull/99");
     expect(meta!["summary"]).toBe("Implementing feature X");
     expect(meta!["branch"]).toBe("feat/TEST-42");
+  });
+});
+
+describe("claimPR", () => {
+  function makeSCM(overrides: Partial<SCM> = {}): SCM {
+    return {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      resolvePR: vi.fn().mockResolvedValue({
+        number: 42,
+        url: "https://github.com/org/my-app/pull/42",
+        title: "Existing PR",
+        owner: "org",
+        repo: "my-app",
+        branch: "feat/existing-pr",
+        baseBranch: "main",
+        isDraft: false,
+      }),
+      assignPRToCurrentUser: vi.fn().mockResolvedValue(undefined),
+      checkoutPR: vi.fn().mockResolvedValue(true),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      getPRSummary: vi.fn(),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn(),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn(),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  function registryWithSCM(mockSCM: SCM): PluginRegistry {
+    return {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, _name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+  }
+
+  it("claims an open PR and updates session metadata", async () => {
+    const mockSCM = makeSCM();
+
+    writeMetadata(sessionsDir, "app-2", {
+      worktree: "/tmp/ws-app-2",
+      branch: "feat/old-branch",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-2")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithSCM(mockSCM) });
+    const result = await sm.claimPR("app-2", "42");
+
+    expect(result.pr.number).toBe(42);
+    expect(result.branchChanged).toBe(true);
+
+    expect(mockSCM.resolvePR).toHaveBeenCalledWith("42", config.projects["my-app"]);
+    expect(mockSCM.checkoutPR).toHaveBeenCalledWith(result.pr, "/tmp/ws-app-2");
+
+    const raw = readMetadataRaw(sessionsDir, "app-2");
+    expect(raw).toMatchObject({
+      branch: "feat/existing-pr",
+      status: "pr_open",
+      pr: "https://github.com/org/my-app/pull/42",
+    });
+    expect(raw!["prAutoDetect"]).toBeUndefined();
+  });
+
+  it("supports takeover by disabling PR auto-detect on the previous session", async () => {
+    const mockSCM = makeSCM();
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/ws-app-1",
+      branch: "feat/existing-pr",
+      status: "review_pending",
+      project: "my-app",
+      pr: "https://github.com/org/my-app/pull/42",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    writeMetadata(sessionsDir, "app-2", {
+      worktree: "/tmp/ws-app-2",
+      branch: "feat/other-work",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-2")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithSCM(mockSCM) });
+    const result = await sm.claimPR("app-2", "42", { takeover: true });
+
+    expect(result.takenOverFrom).toEqual(["app-1"]);
+
+    const previous = readMetadataRaw(sessionsDir, "app-1");
+    expect(previous!["pr"]).toBeUndefined();
+    expect(previous!["prAutoDetect"]).toBe("off");
+    expect(previous!["status"]).toBe("working");
+  });
+
+  it("rejects takeover when another session already tracks the PR", async () => {
+    const mockSCM = makeSCM();
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/ws-app-1",
+      branch: "feat/existing-pr",
+      status: "pr_open",
+      project: "my-app",
+      pr: "https://github.com/org/my-app/pull/42",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    writeMetadata(sessionsDir, "app-2", {
+      worktree: "/tmp/ws-app-2",
+      branch: "feat/other-work",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-2")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithSCM(mockSCM) });
+
+    await expect(sm.claimPR("app-2", "42")).rejects.toThrow("already tracked by app-1");
+  });
+
+  it("keeps AO metadata updated even if GitHub assignment fails", async () => {
+    const mockSCM = makeSCM({
+      assignPRToCurrentUser: vi.fn().mockRejectedValue(new Error("permission denied")),
+    });
+
+    writeMetadata(sessionsDir, "app-2", {
+      worktree: "/tmp/ws-app-2",
+      branch: "feat/old-branch",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-2")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithSCM(mockSCM) });
+    const result = await sm.claimPR("app-2", "42", { assignOnGithub: true });
+
+    expect(result.githubAssigned).toBe(false);
+    expect(result.githubAssignmentError).toContain("permission denied");
+
+    const raw = readMetadataRaw(sessionsDir, "app-2");
+    expect(raw!["pr"]).toBe("https://github.com/org/my-app/pull/42");
+    expect(raw!["status"]).toBe("pr_open");
   });
 });
 

@@ -33,6 +33,7 @@ const { mockTmux, mockGit, mockGh, mockExec, mockConfigRef, mockSessionManager, 
       spawn: vi.fn(),
       spawnOrchestrator: vi.fn(),
       send: vi.fn(),
+      claimPR: vi.fn(),
     },
     sessionsDirRef: { current: "" },
   }));
@@ -171,6 +172,7 @@ beforeEach(() => {
   mockSessionManager.get.mockReset();
   mockSessionManager.spawn.mockReset();
   mockSessionManager.send.mockReset();
+  mockSessionManager.claimPR.mockReset();
 
   // Default: list reads from sessionsDir
   mockSessionManager.list.mockImplementation(async () => {
@@ -186,6 +188,23 @@ beforeEach(() => {
     skipped: [],
     errors: [],
   } satisfies CleanupResult);
+  mockSessionManager.claimPR.mockResolvedValue({
+    sessionId: "app-1",
+    projectId: "my-app",
+    pr: {
+      number: 42,
+      url: "https://github.com/org/repo/pull/42",
+      title: "Existing PR",
+      owner: "org",
+      repo: "repo",
+      branch: "feat/existing-pr",
+      baseBranch: "main",
+      isDraft: false,
+    },
+    branchChanged: true,
+    githubAssigned: false,
+    takenOverFrom: [],
+  });
 });
 
 afterEach(() => {
@@ -309,6 +328,52 @@ describe("session kill", () => {
     await program.parseAsync(["node", "test", "session", "kill", "app-1"]);
 
     expect(mockSessionManager.kill).toHaveBeenCalledWith("app-1");
+  });
+});
+
+describe("session claim-pr", () => {
+  afterEach(() => {
+    delete process.env["AO_SESSION_NAME"];
+    delete process.env["AO_SESSION"];
+  });
+
+  it("claims a PR for an explicit session", async () => {
+    await program.parseAsync([
+      "node",
+      "test",
+      "session",
+      "claim-pr",
+      "42",
+      "app-2",
+      "--assign-on-github",
+      "--takeover",
+    ]);
+
+    expect(mockSessionManager.claimPR).toHaveBeenCalledWith("app-2", "42", {
+      assignOnGithub: true,
+      takeover: true,
+    });
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("Session app-2 claimed PR #42");
+    expect(output).toContain("feat/existing-pr");
+  });
+
+  it("uses AO_SESSION_NAME when session argument is omitted", async () => {
+    process.env["AO_SESSION_NAME"] = "app-7";
+
+    await program.parseAsync(["node", "test", "session", "claim-pr", "42"]);
+
+    expect(mockSessionManager.claimPR).toHaveBeenCalledWith("app-7", "42", {
+      assignOnGithub: undefined,
+      takeover: undefined,
+    });
+  });
+
+  it("fails when no session can be resolved", async () => {
+    await expect(program.parseAsync(["node", "test", "session", "claim-pr", "42"])).rejects.toThrow(
+      "process.exit(1)",
+    );
   });
 });
 

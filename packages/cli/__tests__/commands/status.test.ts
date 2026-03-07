@@ -1,5 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync, existsSync, readdirSync, readFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  writeFileSync,
+  rmSync,
+  mkdirSync,
+  existsSync,
+  readdirSync,
+  readFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -39,6 +47,7 @@ const {
     spawn: vi.fn(),
     spawnOrchestrator: vi.fn(),
     send: vi.fn(),
+    claimPR: vi.fn(),
   },
   sessionsDirRef: { current: "" },
 }));
