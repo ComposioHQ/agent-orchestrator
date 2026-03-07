@@ -1,10 +1,14 @@
 import eslint from "@eslint/js";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { FlatCompat } from "@eslint/eslintrc";
 import tseslint from "typescript-eslint";
 import eslintConfigPrettier from "eslint-config-prettier";
 
+const compatBaseDirectory = dirname(fileURLToPath(import.meta.url));
+
 const compat = new FlatCompat({
-  baseDirectory: import.meta.dirname,
+  baseDirectory: compatBaseDirectory,
   recommendedConfig: eslint.configs.recommended,
 });
 
@@ -35,7 +39,10 @@ export default tseslint.config(
     rules: {
       "@next/next/no-html-link-for-pages": "off",
     },
-  }),
+  }).map((config) => ({
+    ...config,
+    files: ["packages/web/**/*.ts", "packages/web/**/*.tsx"],
+  })),
   eslintConfigPrettier,
   {
     languageOptions: {
