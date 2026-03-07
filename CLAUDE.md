@@ -38,8 +38,8 @@ packages/
     runtime-{tmux,process}/
     agent-{claude-code,codex,aider,opencode}/
     workspace-{worktree,clone}/
-    tracker-{github,linear}/
-    scm-github/
+    tracker-{github,gitlab,linear}/
+    scm-{github,gitlab}/
     notifier-{desktop,slack,composio,webhook}/
     terminal-{iterm2,web}/
 ```

@@ -36,6 +36,14 @@ projects:
     #   plugin: linear
     #   teamId: "your-team-id"
 
+    # For GitLab projects:
+    # scm:
+    #   plugin: gitlab
+    #   host: gitlab.com       # optional, for self-hosted instances
+    # tracker:
+    #   plugin: gitlab
+    #   host: gitlab.com
+
     # Files to symlink into workspaces
     # symlinks: [.env, .claude]
 
