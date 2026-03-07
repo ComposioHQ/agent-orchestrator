@@ -78,7 +78,11 @@ export function DirectTerminal({
     let cleanup: (() => void) | null = null;
     let inputDisposable: { dispose(): void } | null = null;
 
-    const PERMANENT_CLOSE_CODES = new Set([4001, 4004]); // auth failure, session not found
+    // Do not retry these close codes:
+    // 1008: policy/session errors from server
+    // 4001/4004: auth/session-not-found (custom app codes)
+    // 4009: this client was replaced by a newer connection for the same session
+    const PERMANENT_CLOSE_CODES = new Set([1008, 4001, 4004, 4009]);
     const MAX_RECONNECT_DELAY = 15_000;
 
     Promise.all([
@@ -309,8 +313,10 @@ export function DirectTerminal({
             }
           };
 
-          websocket.onerror = (event) => {
-            console.error("[DirectTerminal] WebSocket error:", event);
+          websocket.onerror = () => {
+            // Browser WebSocket error events are intentionally opaque.
+            // Actionable details are surfaced via the subsequent onclose event.
+            console.warn("[DirectTerminal] WebSocket transport error");
           };
 
           websocket.onclose = (event) => {

@@ -689,6 +689,27 @@ describe("connection lifecycle", () => {
     ws.close();
   });
 
+  it("replaces prior connection for the same session ID", async () => {
+    const ws1 = await connectWs(TEST_SESSION);
+    await waitForWsData(ws1);
+    const ws1Closed = waitForWsClose(ws1);
+
+    const ws2 = await connectWs(TEST_SESSION);
+    await waitForWsData(ws2);
+
+    const closeResult = await ws1Closed;
+    expect(closeResult.code).toBe(4009);
+    expect(terminal.activeSessions.size).toBe(1);
+    expect(terminal.activeSessions.has(TEST_SESSION)).toBe(true);
+
+    const marker = `REPLACE_OK_${Date.now()}`;
+    ws2.send(`echo ${marker}\n`);
+    const output = await waitForMarker(ws2, marker);
+    expect(output).toContain(marker);
+
+    ws2.close();
+  });
+
   it("handles rapid connect and disconnect", async () => {
     // Connect and immediately close multiple times
     for (let i = 0; i < 3; i++) {
