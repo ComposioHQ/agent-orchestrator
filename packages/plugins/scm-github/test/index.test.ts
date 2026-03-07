@@ -364,6 +364,11 @@ describe("scm-github plugin", () => {
       expect(await scm.getCIChecks(pr)).toEqual([]);
     });
 
+    it('returns empty array when gh reports "no checks reported" (issue #117)', async () => {
+      mockGhError("no checks reported on the 'feat/my-feature' branch");
+      expect(await scm.getCIChecks(pr)).toEqual([]);
+    });
+
     it("handles missing optional fields gracefully", async () => {
       mockGh([{ name: "test", state: "SUCCESS" }]);
       const checks = await scm.getCIChecks(pr);
@@ -408,6 +413,11 @@ describe("scm-github plugin", () => {
     it('returns "failing" on error (fail-closed)', async () => {
       mockGhError();
       expect(await scm.getCISummary(pr)).toBe("failing");
+    });
+
+    it('returns "none" when gh reports "no checks reported" (issue #117)', async () => {
+      mockGhError("no checks reported on the 'feat/my-feature' branch");
+      expect(await scm.getCISummary(pr)).toBe("none");
     });
 
     it('returns "none" when all checks are skipped', async () => {
