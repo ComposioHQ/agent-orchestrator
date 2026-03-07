@@ -30,13 +30,19 @@ import {
 } from "@composio/ao-core";
 import { exec, execSilent } from "../lib/shell.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
-import { findWebDir, buildDashboardEnv, waitForPortAndOpen, isPortAvailable, findFreePort } from "../lib/web-dir.js";
+import {
+  findWebDir,
+  buildDashboardEnv,
+  waitForPortAndOpen,
+  isPortAvailable,
+  findFreePort,
+  MAX_PORT_SCAN,
+} from "../lib/web-dir.js";
+import { ensureLifecycleWorker, stopLifecycleWorker } from "../lib/lifecycle-service.js";
 import { cleanNextCache } from "../lib/dashboard-rebuild.js";
 import { preflight } from "../lib/preflight.js";
 
 const DEFAULT_PORT = 3000;
-/** How many extra ports to try when the configured port is busy. */
-const PORT_INCREMENT_LIMIT = 10;
 
 // =============================================================================
 // HELPERS
@@ -151,7 +157,9 @@ async function cloneRepo(parsed: ParsedRepoUrl, targetDir: string, cwd: string):
  * Also returns the parsed URL so the caller can match by repo when the config
  * contains multiple projects.
  */
-async function handleUrlStart(url: string): Promise<{ config: OrchestratorConfig; parsed: ParsedRepoUrl }> {
+async function handleUrlStart(
+  url: string,
+): Promise<{ config: OrchestratorConfig; parsed: ParsedRepoUrl }> {
   const spinner = ora();
 
   // 1. Parse URL
@@ -251,6 +259,8 @@ async function runStartup(
   opts?: { dashboard?: boolean; orchestrator?: boolean; rebuild?: boolean },
 ): Promise<void> {
   const sessionId = `${project.sessionPrefix}-orchestrator`;
+  const shouldStartLifecycle = opts?.dashboard !== false || opts?.orchestrator !== false;
+  let lifecycleStatus: Awaited<ReturnType<typeof ensureLifecycleWorker>> | null = null;
   let port = config.port ?? DEFAULT_PORT;
   let skipDashboard = false;
 
@@ -264,7 +274,7 @@ async function runStartup(
   if (opts?.dashboard !== false) {
     // Auto-increment port when configured port is busy
     if (!(await isPortAvailable(port))) {
-      const newPort = await findFreePort(port + 1, PORT_INCREMENT_LIMIT);
+      const newPort = await findFreePort(port + 1, MAX_PORT_SCAN);
       if (newPort !== null) {
         console.log(
           chalk.yellow(`⚠ Port ${port} in use, dashboard starting on port ${newPort} instead`),
@@ -273,7 +283,7 @@ async function runStartup(
       } else {
         console.log(
           chalk.yellow(
-            `⚠ Dashboard unavailable (port ${port}–${port + PORT_INCREMENT_LIMIT} all in use). Sessions will still work.`,
+            `⚠ Dashboard unavailable (port ${port}–${port + MAX_PORT_SCAN} all in use). Sessions will still work.`,
           ),
         );
         skipDashboard = true;
@@ -304,6 +314,27 @@ async function runStartup(
     }
   }
 
+  if (shouldStartLifecycle) {
+    try {
+      spinner.start("Starting lifecycle worker");
+      lifecycleStatus = await ensureLifecycleWorker(config, projectId);
+      spinner.succeed(
+        lifecycleStatus.started
+          ? `Lifecycle worker started${lifecycleStatus.pid ? ` (PID ${lifecycleStatus.pid})` : ""}`
+          : `Lifecycle worker already running${lifecycleStatus.pid ? ` (PID ${lifecycleStatus.pid})` : ""}`,
+      );
+    } catch (err) {
+      spinner.fail("Lifecycle worker failed to start");
+      if (dashboardProcess) {
+        dashboardProcess.kill();
+      }
+      throw new Error(
+        `Failed to start lifecycle worker: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err },
+      );
+    }
+  }
+
   // Create orchestrator session (unless --no-orchestrator or already exists)
   let tmuxTarget = sessionId;
   if (opts?.orchestrator !== false) {
@@ -316,9 +347,7 @@ async function runStartup(
         tmuxTarget = existing.runtimeHandle.id;
       }
       console.log(
-        chalk.yellow(
-          `Orchestrator session "${sessionId}" is already running (skipping creation)`,
-        ),
+        chalk.yellow(`Orchestrator session "${sessionId}" is already running (skipping creation)`),
       );
     } else {
       try {
@@ -347,6 +376,14 @@ async function runStartup(
 
   if (opts?.dashboard !== false && !skipDashboard) {
     console.log(chalk.cyan("Dashboard:"), `http://localhost:${port}`);
+  }
+
+  if (shouldStartLifecycle && lifecycleStatus) {
+    const lifecycleLabel = lifecycleStatus.started ? "started" : "already running";
+    const lifecycleTarget = lifecycleStatus.pid
+      ? `${lifecycleLabel} (PID ${lifecycleStatus.pid})`
+      : lifecycleLabel;
+    console.log(chalk.cyan("Lifecycle:"), lifecycleTarget);
   }
 
   if (opts?.orchestrator !== false && !exists) {
@@ -485,6 +522,13 @@ export function registerStop(program: Command): void {
           spinner.succeed("Orchestrator session stopped");
         } else {
           console.log(chalk.yellow(`Orchestrator session "${sessionId}" is not running`));
+        }
+
+        const lifecycleStopped = await stopLifecycleWorker(config, _projectId);
+        if (lifecycleStopped) {
+          console.log(chalk.green("Lifecycle worker stopped"));
+        } else {
+          console.log(chalk.yellow("Lifecycle worker not running"));
         }
 
         // Stop dashboard

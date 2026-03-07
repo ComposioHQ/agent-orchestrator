@@ -5,20 +5,34 @@ import { loadConfig, type OrchestratorConfig } from "@composio/ao-core";
 import { exec } from "../lib/shell.js";
 import { banner } from "../lib/format.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
+import { ensureLifecycleWorker } from "../lib/lifecycle-service.js";
 import { preflight } from "../lib/preflight.js";
+
+interface SpawnClaimOptions {
+  claimPr?: string;
+  assignOnGithub?: boolean;
+  takeover?: boolean;
+}
 
 /**
  * Run pre-flight checks for a project once, before any sessions are spawned.
  * Validates runtime and tracker prerequisites so failures surface immediately
  * rather than repeating per-session in a batch.
  */
-async function runSpawnPreflight(config: OrchestratorConfig, projectId: string): Promise<void> {
+async function runSpawnPreflight(
+  config: OrchestratorConfig,
+  projectId: string,
+  options?: SpawnClaimOptions,
+): Promise<void> {
   const project = config.projects[projectId];
   const runtime = project?.runtime ?? config.defaults.runtime;
   if (runtime === "tmux") {
     await preflight.checkTmux();
   }
-  if (project?.tracker?.plugin === "github") {
+  const needsGitHubAuth =
+    project?.tracker?.plugin === "github" ||
+    (options?.claimPr && project?.scm?.plugin === "github");
+  if (needsGitHubAuth) {
     await preflight.checkGhAuth();
   }
 }
@@ -29,6 +43,7 @@ async function spawnSession(
   issueId?: string,
   openTab?: boolean,
   agent?: string,
+  claimOptions?: SpawnClaimOptions,
 ): Promise<string> {
   const spinner = ora("Creating session").start();
 
@@ -42,10 +57,35 @@ async function spawnSession(
       agent,
     });
 
-    spinner.succeed(`Session ${chalk.green(session.id)} created`);
+    let branchStr = session.branch ?? "";
+    let claimedPrUrl: string | null = null;
+
+    if (claimOptions?.claimPr) {
+      spinner.text = `Claiming PR ${claimOptions.claimPr}`;
+      try {
+        const claimResult = await sm.claimPR(session.id, claimOptions.claimPr, {
+          assignOnGithub: claimOptions.assignOnGithub,
+          takeover: claimOptions.takeover,
+        });
+        branchStr = claimResult.pr.branch;
+        claimedPrUrl = claimResult.pr.url;
+      } catch (err) {
+        throw new Error(
+          `Session ${session.id} was created, but failed to claim PR ${claimOptions.claimPr}: ${err instanceof Error ? err.message : String(err)}`,
+          { cause: err },
+        );
+      }
+    }
+
+    spinner.succeed(
+      claimedPrUrl
+        ? `Session ${chalk.green(session.id)} created and claimed PR`
+        : `Session ${chalk.green(session.id)} created`,
+    );
 
     console.log(`  Worktree: ${chalk.dim(session.workspacePath ?? "-")}`);
-    if (session.branch) console.log(`  Branch:   ${chalk.dim(session.branch)}`);
+    if (branchStr) console.log(`  Branch:   ${chalk.dim(branchStr)}`);
+    if (claimedPrUrl) console.log(`  PR:       ${chalk.dim(claimedPrUrl)}`);
 
     // Show the tmux name for attaching (stored in metadata or runtimeHandle)
     const tmuxTarget = session.runtimeHandle?.id ?? session.id;
@@ -65,7 +105,7 @@ async function spawnSession(
     console.log(`SESSION=${session.id}`);
     return session.id;
   } catch (err) {
-    spinner.fail("Failed to create session");
+    spinner.fail("Failed to create or initialize session");
     throw err;
   }
 }
@@ -78,25 +118,52 @@ export function registerSpawn(program: Command): void {
     .argument("[issue]", "Issue identifier (e.g. INT-1234, #42) - must exist in tracker")
     .option("--open", "Open session in terminal tab")
     .option("--agent <name>", "Override the agent plugin (e.g. codex, claude-code)")
-    .action(async (projectId: string, issueId: string | undefined, opts: { open?: boolean; agent?: string }) => {
-      const config = loadConfig();
-      if (!config.projects[projectId]) {
-        console.error(
-          chalk.red(
-            `Unknown project: ${projectId}\nAvailable: ${Object.keys(config.projects).join(", ")}`,
-          ),
-        );
-        process.exit(1);
-      }
+    .option("--claim-pr <pr>", "Immediately claim an existing PR for the spawned session")
+    .option("--assign-on-github", "Assign the claimed PR to the authenticated GitHub user")
+    .option("--takeover", "Transfer PR ownership from another AO session if needed")
+    .action(
+      async (
+        projectId: string,
+        issueId: string | undefined,
+        opts: {
+          open?: boolean;
+          agent?: string;
+          claimPr?: string;
+          assignOnGithub?: boolean;
+          takeover?: boolean;
+        },
+      ) => {
+        const config = loadConfig();
+        if (!config.projects[projectId]) {
+          console.error(
+            chalk.red(
+              `Unknown project: ${projectId}\nAvailable: ${Object.keys(config.projects).join(", ")}`,
+            ),
+          );
+          process.exit(1);
+        }
 
-      try {
-        await runSpawnPreflight(config, projectId);
-        await spawnSession(config, projectId, issueId, opts.open, opts.agent);
-      } catch (err) {
-        console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));
-        process.exit(1);
-      }
-    });
+        if (!opts.claimPr && (opts.assignOnGithub || opts.takeover)) {
+          console.error(
+            chalk.red("--assign-on-github and --takeover require --claim-pr on `ao spawn`."),
+          );
+          process.exit(1);
+        }
+
+        try {
+          await runSpawnPreflight(config, projectId, { claimPr: opts.claimPr });
+          await ensureLifecycleWorker(config, projectId);
+          await spawnSession(config, projectId, issueId, opts.open, opts.agent, {
+            claimPr: opts.claimPr,
+            assignOnGithub: opts.assignOnGithub,
+            takeover: opts.takeover,
+          });
+        } catch (err) {
+          console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));
+          process.exit(1);
+        }
+      },
+    );
 }
 
 export function registerBatchSpawn(program: Command): void {
@@ -126,6 +193,7 @@ export function registerBatchSpawn(program: Command): void {
       // Pre-flight once before the loop so a missing prerequisite fails fast
       try {
         await runSpawnPreflight(config, projectId);
+        await ensureLifecycleWorker(config, projectId);
       } catch (err) {
         console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));
         process.exit(1);
@@ -158,47 +226,50 @@ export function registerBatchSpawn(program: Command): void {
         // Check existing sessions (pre-loaded before loop)
         const existingSessionId = existingIssueMap.get(issue.toLowerCase());
         if (existingSessionId) {
-          console.log(chalk.yellow(`  Skip ${issue} — already has session: ${existingSessionId}`));
+          console.log(chalk.yellow(`  Skip ${issue} — already has session ${existingSessionId}`));
           skipped.push({ issue, existing: existingSessionId });
           continue;
         }
 
         try {
-          const sessionName = await spawnSession(config, projectId, issue, opts.open);
-          created.push({ session: sessionName, issue });
+          const session = await sm.spawn({ projectId, issueId: issue });
+          created.push({ session: session.id, issue });
           spawnedIssues.add(issue.toLowerCase());
-        } catch (err) {
-          const message = String(err);
-          console.error(chalk.red(`  ✗ ${issue} — ${err}`));
-          failed.push({ issue, error: message });
-        }
+          console.log(chalk.green(`  Created ${session.id} for ${issue}`));
 
-        // Small delay between spawns
-        await new Promise((r) => setTimeout(r, 500));
+          if (opts.open) {
+            try {
+              const tmuxTarget = session.runtimeHandle?.id ?? session.id;
+              await exec("open-iterm-tab", [tmuxTarget]);
+            } catch {
+              // best effort
+            }
+          }
+        } catch (err) {
+          failed.push({
+            issue,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          console.log(
+            chalk.red(
+              `  Failed ${issue} — ${err instanceof Error ? err.message : String(err)}`,
+            ),
+          );
+        }
       }
 
-      console.log(chalk.bold("\nSummary:"));
-      console.log(`  Created: ${chalk.green(String(created.length))} sessions`);
-      console.log(`  Skipped: ${chalk.yellow(String(skipped.length))} (duplicate)`);
-      console.log(`  Failed:  ${chalk.red(String(failed.length))}`);
-
+      console.log();
       if (created.length > 0) {
-        console.log(chalk.bold("\nCreated sessions:"));
-        for (const { session, issue } of created) {
-          console.log(`  ${chalk.green(session)} -> ${issue}`);
-        }
+        console.log(chalk.green(`Created ${created.length} sessions:`));
+        for (const item of created) console.log(`  ${item.session} ← ${item.issue}`);
       }
       if (skipped.length > 0) {
-        console.log(chalk.bold("\nSkipped (duplicate):"));
-        for (const { issue, existing } of skipped) {
-          console.log(`  ${issue} -> existing: ${existing}`);
-        }
+        console.log(chalk.yellow(`Skipped ${skipped.length} issues:`));
+        for (const item of skipped) console.log(`  ${item.issue} (existing: ${item.existing})`);
       }
       if (failed.length > 0) {
-        console.log(chalk.yellow(`\n${failed.length} failed:`));
-        failed.forEach((f) => {
-          console.log(chalk.dim(`  - ${f.issue}: ${f.error}`));
-        });
+        console.log(chalk.red(`Failed ${failed.length} issues:`));
+        for (const item of failed) console.log(`  ${item.issue}: ${item.error}`);
       }
       console.log();
     });
