@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { SessionDetail } from "@/components/SessionDetail";
 import { type DashboardSession, getAttentionLevel, type AttentionLevel } from "@/lib/types";
@@ -128,9 +129,9 @@ export default function SessionPage() {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[var(--color-bg-base)]">
         <div className="text-[13px] text-[var(--color-status-error)]">{error ?? "Session not found"}</div>
-        <a href="/" className="text-[12px] text-[var(--color-accent)] hover:underline">
+        <Link href="/" className="text-[12px] text-[var(--color-accent)] hover:underline">
           ← Back to dashboard
-        </a>
+        </Link>
       </div>
     );
   }

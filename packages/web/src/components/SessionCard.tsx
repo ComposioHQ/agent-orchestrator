@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useEffect, useRef } from "react";
 import {
   type DashboardSession,
@@ -100,13 +101,13 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
           </button>
         )}
         {!isTerminal && (
-          <a
+          <Link
             href={`/sessions/${encodeURIComponent(session.id)}`}
             onClick={(e) => e.stopPropagation()}
             className="rounded border border-[var(--color-border-default)] bg-[var(--color-bg-subtle)] px-2.5 py-0.5 text-[11px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] hover:no-underline"
           >
             terminal
-          </a>
+          </Link>
         )}
       </div>
 
