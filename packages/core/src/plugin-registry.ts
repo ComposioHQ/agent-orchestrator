@@ -59,6 +59,10 @@ function extractPluginConfig(
   return undefined;
 }
 
+function importBuiltinModule(pkg: string): Promise<unknown> {
+  return import(/* webpackIgnore: true */ pkg);
+}
+
 export function createPluginRegistry(): PluginRegistry {
   const plugins: PluginMap = new Map();
 
@@ -89,7 +93,7 @@ export function createPluginRegistry(): PluginRegistry {
       orchestratorConfig?: OrchestratorConfig,
       importFn?: (pkg: string) => Promise<unknown>,
     ): Promise<void> {
-      const doImport = importFn ?? ((pkg: string) => import(pkg));
+      const doImport = importFn ?? importBuiltinModule;
       for (const builtin of BUILTIN_PLUGINS) {
         try {
           const mod = (await doImport(builtin.pkg)) as PluginModule;

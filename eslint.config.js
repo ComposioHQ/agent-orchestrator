@@ -1,9 +1,14 @@
 import eslint from "@eslint/js";
+import { FlatCompat } from "@eslint/eslintrc";
 import tseslint from "typescript-eslint";
 import eslintConfigPrettier from "eslint-config-prettier";
 
+const compat = new FlatCompat({
+  baseDirectory: import.meta.dirname,
+  recommendedConfig: eslint.configs.recommended,
+});
+
 export default tseslint.config(
-  // Global ignores
   {
     ignores: [
       "**/dist/**",
@@ -18,29 +23,29 @@ export default tseslint.config(
       "packages/mobile/**",
     ],
   },
-
-  // Base JS rules
   eslint.configs.recommended,
-
-  // TypeScript strict rules
   ...tseslint.configs.strict,
-
-  // Prettier compat (disables formatting rules)
+  ...compat.config({
+    extends: ["next/core-web-vitals"],
+    settings: {
+      next: {
+        rootDir: "packages/web",
+      },
+    },
+    rules: {
+      "@next/next/no-html-link-for-pages": "off",
+    },
+  }),
   eslintConfigPrettier,
-
-  // Project-wide rules
   {
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: "module",
     },
     rules: {
-      // Security: prevent shell injection patterns
       "no-eval": "error",
       "no-implied-eval": "error",
       "no-new-func": "error",
-
-      // Code quality
       "no-console": "warn",
       "no-debugger": "error",
       "no-duplicate-imports": "error",
@@ -48,8 +53,6 @@ export default tseslint.config(
       "prefer-const": "error",
       "no-var": "error",
       eqeqeq: ["error", "always"],
-
-      // TypeScript
       "@typescript-eslint/no-unused-vars": [
         "error",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
@@ -60,8 +63,6 @@ export default tseslint.config(
       "@typescript-eslint/no-require-imports": "error",
     },
   },
-
-  // Relaxed rules for test files
   {
     files: ["**/*.test.ts", "**/__tests__/**"],
     rules: {
@@ -70,24 +71,26 @@ export default tseslint.config(
       "@typescript-eslint/no-non-null-assertion": "off",
     },
   },
-
-  // CLI package uses console.log/error for user output
   {
     files: ["packages/cli/**/*.ts"],
     rules: {
       "no-console": "off",
     },
   },
-
-  // Relaxed rules for Next.js pages/components
   {
     files: ["packages/web/**/*.tsx", "packages/web/**/*.ts"],
     rules: {
-      "no-console": "off", // Next.js uses console for server logs
+      "no-console": "off",
     },
   },
 
-  // Scripts directory - Node.js environment
+  {
+    files: ["packages/web/src/app/dev/**/*.tsx", "packages/web/src/app/test-direct/**/*.tsx"],
+    rules: {
+      "react/no-unescaped-entities": "off",
+    },
+  },
+
   {
     files: ["scripts/**/*.js", "scripts/**/*.mjs"],
     languageOptions: {
@@ -99,7 +102,7 @@ export default tseslint.config(
       },
     },
     rules: {
-      "no-console": "off", // Scripts use console for output
+      "no-console": "off",
     },
   },
 );
