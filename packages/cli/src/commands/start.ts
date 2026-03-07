@@ -409,23 +409,30 @@ async function runStartup(
  * Best effort — if it fails, just warn the user.
  */
 async function stopDashboard(port: number): Promise<void> {
+  // Find PIDs listening on the port. lsof exits with code 1 when no
+  // process is found, so we catch that and report cleanly. (fixes #92)
+  let pids: string[];
   try {
-    // Find PIDs listening on the port (can be multiple: parent + children)
     const { stdout } = await exec("lsof", ["-ti", `:${port}`]);
-    const pids = stdout
+    pids = stdout
       .trim()
       .split("\n")
       .filter((p) => p.length > 0);
-
-    if (pids.length > 0) {
-      // Kill all processes (pass PIDs as separate arguments)
-      await exec("kill", pids);
-      console.log(chalk.green("Dashboard stopped"));
-    } else {
-      console.log(chalk.yellow(`Dashboard not running on port ${port}`));
-    }
   } catch {
-    console.log(chalk.yellow("Could not stop dashboard (may not be running)"));
+    // lsof exit code 1 → no process on port (normal case)
+    pids = [];
+  }
+
+  if (pids.length === 0) {
+    console.log(chalk.yellow(`Dashboard not running on port ${port}`));
+    return;
+  }
+
+  try {
+    await exec("kill", pids);
+    console.log(chalk.green("Dashboard stopped"));
+  } catch {
+    console.log(chalk.yellow("Could not stop dashboard processes"));
   }
 }
 
