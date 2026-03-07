@@ -1,0 +1,18 @@
+{
+  "name": "canary-app",
+  "version": "1.0.0",
+  "description": "Canary test project for ao-teams validation",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "node --test src/__tests__/*.test.ts",
+    "lint": "echo 'lint ok'",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.7.0"
+  }
+}

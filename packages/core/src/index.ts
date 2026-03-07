@@ -80,6 +80,13 @@ export {
   validateAndStoreOrigin,
 } from "./paths.js";
 
+// Team types — ao-teams team orchestration
+export * from "./team-types.js";
+
+// Team config — YAML parsing for teams, learnings, test tasks
+export { parseTeamsConfig, loadTeamsConfig, resolveTeam } from "./team-config.js";
+export type { TeamsConfig } from "./team-config.js";
+
 // Config generator — auto-generate config from repo URL
 export {
   isRepoUrl,

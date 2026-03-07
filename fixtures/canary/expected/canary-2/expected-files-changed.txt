@@ -1,0 +1,3 @@
+src/middleware/auth.ts
+src/types.ts
+src/index.ts

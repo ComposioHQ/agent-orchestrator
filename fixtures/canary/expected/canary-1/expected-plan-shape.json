@@ -1,0 +1,6 @@
+{
+  "description": "canary-1: Add request logging middleware",
+  "expectedWorkUnitCount": 1,
+  "expectedFileScopeCoverage": ["src/middleware/logger.ts"],
+  "expectedSharedFiles": ["src/index.ts"]
+}

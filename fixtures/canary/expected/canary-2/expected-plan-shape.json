@@ -1,0 +1,6 @@
+{
+  "description": "canary-2: Add JWT auth with role-based route guards",
+  "expectedWorkUnitCount": [2, 3],
+  "expectedFileScopeCoverage": ["src/middleware/auth.ts", "src/types.ts"],
+  "expectedSharedFiles": ["src/index.ts"]
+}
