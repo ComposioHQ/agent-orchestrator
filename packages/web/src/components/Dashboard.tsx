@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import {
   type DashboardSession,
@@ -106,7 +107,7 @@ export function Dashboard({ initialSessions, stats, orchestratorId, projectName 
           <StatusLine stats={stats} />
         </div>
         {orchestratorId && (
-          <a
+          <Link
             href={`/sessions/${encodeURIComponent(orchestratorId)}`}
             className="orchestrator-btn flex items-center gap-2 rounded-[7px] px-4 py-2 text-[12px] font-semibold hover:no-underline"
           >
@@ -115,7 +116,7 @@ export function Dashboard({ initialSessions, stats, orchestratorId, projectName 
             <svg className="h-3 w-3 opacity-70" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
               <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" />
             </svg>
-          </a>
+          </Link>
         )}
       </div>
 
