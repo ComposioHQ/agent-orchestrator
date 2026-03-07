@@ -6,12 +6,13 @@ import {
   type ActivityDetection,
   type ActivityState,
   type PluginModule,
+  type ProjectConfig,
   type RuntimeHandle,
   type Session,
   type WorkspaceHooksConfig,
 } from "@composio/ao-core";
 import { execFile } from "node:child_process";
-import { writeFile, mkdir, readFile, rename } from "node:fs/promises";
+import { writeFile, mkdir, readFile, readdir, rename } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -27,9 +28,9 @@ const AO_BIN_DIR = join(homedir(), ".ao", "bin");
 // =============================================================================
 
 export const manifest = {
-  name: "opencode",
+  name: "gemini",
   slot: "agent" as const,
-  description: "Agent plugin: OpenCode",
+  description: "Agent plugin: Gemini CLI",
   version: "0.1.0",
 };
 
@@ -223,7 +224,7 @@ async function atomicWriteFile(filePath: string, content: string, mode: number):
   await rename(tmpPath, filePath);
 }
 
-async function setupOpenCodeWorkspace(workspacePath: string): Promise<void> {
+async function setupGeminiWorkspace(workspacePath: string): Promise<void> {
   // 1. Write shared wrappers to ~/.ao/bin/
   await mkdir(AO_BIN_DIR, { recursive: true });
 
@@ -251,19 +252,43 @@ async function setupOpenCodeWorkspace(workspacePath: string): Promise<void> {
   }
 
   // 2. Append ao section to AGENTS.md (create if missing, skip if already present)
+  // NOTE: GEMINI.md (system prompt) is written at launch time via getLaunchCommand's
+  // compound shell prefix (cp/printf), not here, because the system prompt content
+  // is only available from AgentLaunchConfig, not at workspace setup time.
   const agentsMdPath = join(workspacePath, "AGENTS.md");
-  let existing = "";
+  let existingAgentsMd = "";
   try {
-    existing = await readFile(agentsMdPath, "utf-8");
+    existingAgentsMd = await readFile(agentsMdPath, "utf-8");
   } catch {
     // File doesn't exist yet
   }
 
-  if (!existing.includes("Agent Orchestrator (ao) Session")) {
-    const content = existing
-      ? existing.trimEnd() + "\n" + AO_AGENTS_MD_SECTION
+  if (!existingAgentsMd.includes("Agent Orchestrator (ao) Session")) {
+    const content = existingAgentsMd
+      ? existingAgentsMd.trimEnd() + "\n" + AO_AGENTS_MD_SECTION
       : AO_AGENTS_MD_SECTION.trimStart();
     await writeFile(agentsMdPath, content, "utf-8");
+  }
+}
+
+// =============================================================================
+// Gemini Session Detection
+// =============================================================================
+
+/** Gemini session directory: ~/.gemini/tmp/ */
+const GEMINI_TMP_DIR = join(homedir(), ".gemini", "tmp");
+
+/**
+ * Check if any Gemini session data exists under ~/.gemini/tmp/.
+ * Used by getRestoreCommand to guard against `gemini -r latest` when no
+ * prior session exists.
+ */
+async function hasGeminiSessions(): Promise<boolean> {
+  try {
+    const dirs = await readdir(GEMINI_TMP_DIR);
+    return dirs.length > 0;
+  } catch {
+    return false;
   }
 }
 
@@ -271,26 +296,41 @@ async function setupOpenCodeWorkspace(workspacePath: string): Promise<void> {
 // Agent Implementation
 // =============================================================================
 
-function createOpenCodeAgent(): Agent {
+function createGeminiAgent(): Agent {
   return {
-    name: "opencode",
-    processName: "opencode",
+    name: "gemini",
+    processName: "gemini",
 
     getLaunchCommand(config: AgentLaunchConfig): string {
-      const parts: string[] = ["opencode"];
+      // Gemini CLI auto-reads GEMINI.md from workspace root as its system prompt.
+      // Since there's no --system-prompt CLI flag, we write the file before launching
+      // via a compound shell command. The tmux session is cd'd into the workspace,
+      // so relative paths work. systemPromptFile is preferred (avoids shell truncation
+      // for long prompts); inline systemPrompt is a fallback.
+      let prefix = "";
+      if (config.systemPromptFile) {
+        prefix = `cp ${shellEscape(config.systemPromptFile)} GEMINI.md && `;
+      } else if (config.systemPrompt) {
+        prefix = `printf '%s' ${shellEscape(config.systemPrompt)} > GEMINI.md && `;
+      }
 
-      // NOTE: OpenCode has no CLI flag to skip permissions / auto-approve.
-      // The `permissions` config is silently ignored for this agent.
+      const parts: string[] = ["gemini"];
 
-      if (config.prompt) {
-        parts.push("run", shellEscape(config.prompt));
+      // --yolo auto-approves all actions (equivalent to "skip" permissions)
+      if (config.permissions === "skip") {
+        parts.push("--yolo");
       }
 
       if (config.model) {
-        parts.push("--model", shellEscape(config.model));
+        parts.push("-m", shellEscape(config.model));
       }
 
-      return parts.join(" ");
+      if (config.prompt) {
+        // -p <prompt> for headless mode
+        parts.push("-p", shellEscape(config.prompt));
+      }
+
+      return prefix + parts.join(" ");
     },
 
     getEnvironment(config: AgentLaunchConfig): Record<string, string> {
@@ -302,8 +342,6 @@ function createOpenCodeAgent(): Agent {
       }
 
       // Prepend ~/.ao/bin to PATH so our gh/git wrappers intercept commands.
-      // The wrappers strip this directory from PATH before calling the real
-      // binary, so there's no infinite recursion.
       env["PATH"] = `${AO_BIN_DIR}:${process.env["PATH"] ?? "/usr/bin:/bin"}`;
 
       return env;
@@ -311,7 +349,18 @@ function createOpenCodeAgent(): Agent {
 
     detectActivity(terminalOutput: string): ActivityState {
       if (!terminalOutput.trim()) return "idle";
-      // OpenCode doesn't have rich terminal output patterns yet
+
+      const lines = terminalOutput.trim().split("\n");
+      const lastLine = lines[lines.length - 1]?.trim() ?? "";
+
+      // If Gemini is showing its input prompt, it's idle
+      if (/^[>$#]\s*$/.test(lastLine)) return "idle";
+
+      // Check last few lines for approval prompts
+      const tail = lines.slice(-5).join("\n");
+      if (/approve|confirm/i.test(tail)) return "waiting_input";
+      if (/\(y\)es.*\(n\)o/i.test(tail)) return "waiting_input";
+
       return "active";
     },
 
@@ -322,13 +371,15 @@ function createOpenCodeAgent(): Agent {
       const running = await this.isProcessRunning(session.runtimeHandle);
       if (!running) return { state: "exited", timestamp: exitedAt };
 
-      // NOTE: OpenCode stores all session data in a single global SQLite database
-      // at ~/.local/share/opencode/opencode.db without per-workspace scoping. When
-      // multiple OpenCode sessions run in parallel, database modifications from any
-      // session will cause all sessions to appear active. Until OpenCode provides
-      // per-workspace session tracking, we return null (unknown) rather than guessing.
+      // NOTE: Gemini stores sessions under ~/.gemini/tmp/{project-id}/chats/ but
+      // there is no documented mapping from workspace path to project-id. Scanning
+      // all projects and picking the globally newest file (as before) would attribute
+      // one session's activity to another when multiple Gemini sessions run in
+      // parallel. Until Gemini provides per-workspace session scoping, we return
+      // null (unknown) rather than returning potentially incorrect data.
       //
-      // TODO: Implement proper per-session activity detection when OpenCode supports it.
+      // TODO: Implement proper per-session activity detection when Gemini exposes
+      //       a workspace-to-project-id mapping.
       return null;
     },
 
@@ -351,7 +402,7 @@ function createOpenCodeAgent(): Agent {
             timeout: 30_000,
           });
           const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
-          const processRe = /(?:^|\/)opencode(?:\s|$)/;
+          const processRe = /(?:^|\/)gemini(?:\s|$)/;
           for (const line of psOut.split("\n")) {
             const cols = line.trimStart().split(/\s+/);
             if (cols.length < 3 || !ttySet.has(cols[1] ?? "")) continue;
@@ -384,17 +435,42 @@ function createOpenCodeAgent(): Agent {
     },
 
     async getSessionInfo(_session: Session): Promise<AgentSessionInfo | null> {
-      // OpenCode doesn't have JSONL session files for introspection yet
+      // Cannot reliably scope session files to a specific workspace — see
+      // getActivityState comment. Return null to avoid cross-session data leaks.
       return null;
     },
 
+    async getRestoreCommand(_session: Session, project: ProjectConfig): Promise<string | null> {
+      // Check if any Gemini session exists before returning a restore command.
+      // Without this guard, `gemini -r latest` would fail when no prior session
+      // exists, and the caller couldn't fall back to getLaunchCommand.
+      const hasSession = await hasGeminiSessions();
+      if (!hasSession) return null;
+
+      // Gemini CLI supports -r latest to resume the most recent session
+      const parts: string[] = ["gemini"];
+
+      if ((project.agentConfig?.permissions as string | undefined) === "skip") {
+        parts.push("--yolo");
+      }
+
+      const model = project.agentConfig?.model as string | undefined;
+      if (model) {
+        parts.push("-m", shellEscape(model));
+      }
+
+      parts.push("-r", "latest");
+
+      return parts.join(" ");
+    },
+
     async setupWorkspaceHooks(workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
-      await setupOpenCodeWorkspace(workspacePath);
+      await setupGeminiWorkspace(workspacePath);
     },
 
     async postLaunchSetup(session: Session): Promise<void> {
       if (!session.workspacePath) return;
-      await setupOpenCodeWorkspace(session.workspacePath);
+      await setupGeminiWorkspace(session.workspacePath);
     },
   };
 }
@@ -404,7 +480,7 @@ function createOpenCodeAgent(): Agent {
 // =============================================================================
 
 export function create(): Agent {
-  return createOpenCodeAgent();
+  return createGeminiAgent();
 }
 
 export default { manifest, create } satisfies PluginModule<Agent>;
