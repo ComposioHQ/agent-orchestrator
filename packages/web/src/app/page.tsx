@@ -23,9 +23,11 @@ export async function generateMetadata(): Promise<Metadata> {
 export default async function Home() {
   let sessions: DashboardSession[] = [];
   let orchestratorId: string | null = null;
+  let projectIds: string[] = [];
   const projectName = getProjectName();
   try {
     const { config, registry, sessionManager } = await getServices();
+    projectIds = Object.keys(config.projects);
     const allSessions = await sessionManager.list();
 
     // Find the orchestrator session (any session ending with -orchestrator)
@@ -101,6 +103,6 @@ export default async function Home() {
   }
 
   return (
-    <Dashboard initialSessions={sessions} stats={computeStats(sessions)} orchestratorId={orchestratorId} projectName={projectName} />
+    <Dashboard initialSessions={sessions} stats={computeStats(sessions)} orchestratorId={orchestratorId} projectName={projectName} projectIds={projectIds} />
   );
 }

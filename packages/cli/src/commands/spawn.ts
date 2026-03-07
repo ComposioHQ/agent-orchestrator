@@ -1,7 +1,17 @@
 import chalk from "chalk";
 import ora from "ora";
 import type { Command } from "commander";
-import { loadConfig, type OrchestratorConfig } from "@composio/ao-core";
+import {
+  loadConfig,
+  decompose,
+  getLeaves,
+  getSiblings,
+  formatPlanTree,
+  TERMINAL_STATUSES,
+  type OrchestratorConfig,
+  type DecomposerConfig,
+  DEFAULT_DECOMPOSER_CONFIG,
+} from "@composio/ao-core";
 import { exec } from "../lib/shell.js";
 import { banner } from "../lib/format.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
@@ -121,6 +131,8 @@ export function registerSpawn(program: Command): void {
     .option("--claim-pr <pr>", "Immediately claim an existing PR for the spawned session")
     .option("--assign-on-github", "Assign the claimed PR to the authenticated GitHub user")
     .option("--takeover", "Transfer PR ownership from another AO session if needed")
+    .option("--decompose", "Decompose issue into subtasks before spawning")
+    .option("--max-depth <n>", "Max decomposition depth (default: 3)")
     .action(
       async (
         projectId: string,
@@ -131,6 +143,8 @@ export function registerSpawn(program: Command): void {
           claimPr?: string;
           assignOnGithub?: boolean;
           takeover?: boolean;
+          decompose?: boolean;
+          maxDepth?: string;
         },
       ) => {
         const config = loadConfig();
@@ -150,14 +164,65 @@ export function registerSpawn(program: Command): void {
           process.exit(1);
         }
 
+        const claimOptions: SpawnClaimOptions = {
+          claimPr: opts.claimPr,
+          assignOnGithub: opts.assignOnGithub,
+          takeover: opts.takeover,
+        };
+
         try {
-          await runSpawnPreflight(config, projectId, { claimPr: opts.claimPr });
+          await runSpawnPreflight(config, projectId, claimOptions);
           await ensureLifecycleWorker(config, projectId);
-          await spawnSession(config, projectId, issueId, opts.open, opts.agent, {
-            claimPr: opts.claimPr,
-            assignOnGithub: opts.assignOnGithub,
-            takeover: opts.takeover,
-          });
+
+          if (opts.decompose && issueId) {
+            // Decompose the issue before spawning
+            const project = config.projects[projectId];
+            const decompConfig: DecomposerConfig = {
+              ...DEFAULT_DECOMPOSER_CONFIG,
+              ...(project.decomposer ?? {}),
+              maxDepth: opts.maxDepth ? parseInt(opts.maxDepth, 10) : (project.decomposer?.maxDepth ?? 3),
+            };
+
+            const spinner = ora("Decomposing task...").start();
+            const issueTitle = issueId;
+
+            const plan = await decompose(issueTitle, decompConfig);
+            const leaves = getLeaves(plan.tree);
+            spinner.succeed(`Decomposed into ${chalk.bold(String(leaves.length))} subtasks`);
+
+            console.log();
+            console.log(chalk.dim(formatPlanTree(plan.tree)));
+            console.log();
+
+            if (leaves.length <= 1) {
+              console.log(chalk.yellow("Task is atomic — spawning directly."));
+              await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions);
+            } else {
+              // Create child issues and spawn sessions with lineage context
+              const sm = await getSessionManager(config);
+              console.log(chalk.bold(`Spawning ${leaves.length} sessions with lineage context...`));
+              console.log();
+
+              for (const leaf of leaves) {
+                const siblings = getSiblings(plan.tree, leaf.id);
+                try {
+                  const session = await sm.spawn({
+                    projectId,
+                    issueId, // All work on the same parent issue for now
+                    lineage: leaf.lineage,
+                    siblings,
+                    agent: opts.agent,
+                  });
+                  console.log(`  ${chalk.green("✓")} ${session.id} — ${leaf.description}`);
+                } catch (err) {
+                  console.error(`  ${chalk.red("✗")} ${leaf.description} — ${err instanceof Error ? err.message : err}`);
+                }
+                await new Promise((r) => setTimeout(r, 500));
+              }
+            }
+          } else {
+            await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions);
+          }
         } catch (err) {
           console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));
           process.exit(1);
@@ -206,12 +271,12 @@ export function registerBatchSpawn(program: Command): void {
       const spawnedIssues = new Set<string>();
 
       // Load existing sessions once before the loop to avoid repeated reads + enrichment.
-      // Exclude dead/killed sessions so crashed sessions don't block respawning.
-      const deadStatuses = new Set(["killed", "done", "exited"]);
+      // Exclude terminal sessions so completed/merged sessions don't block respawning
+      // (e.g. when an issue is reopened after its PR was merged).
       const existingSessions = await sm.list(projectId);
       const existingIssueMap = new Map(
         existingSessions
-          .filter((s) => s.issueId && !deadStatuses.has(s.status))
+          .filter((s) => s.issueId && !TERMINAL_STATUSES.has(s.status))
           .map((s) => [s.issueId!.toLowerCase(), s.id]),
       );
 

@@ -61,7 +61,7 @@ function createGitHubTracker(): Tracker {
         "--repo",
         project.repo,
         "--json",
-        "number,title,body,url,state,stateReason,labels,assignees",
+        "number,title,body,url,state,labels,assignees",
       ]);
 
       const data: {
@@ -70,7 +70,6 @@ function createGitHubTracker(): Tracker {
         body: string;
         url: string;
         state: string;
-        stateReason: string | null;
         labels: Array<{ name: string }>;
         assignees: Array<{ login: string }>;
       } = JSON.parse(raw);
@@ -80,7 +79,7 @@ function createGitHubTracker(): Tracker {
         title: data.title,
         description: data.body ?? "",
         url: data.url,
-        state: mapState(data.state, data.stateReason),
+        state: mapState(data.state),
         labels: data.labels.map((l) => l.name),
         assignee: data.assignees[0]?.login,
       };
@@ -154,7 +153,7 @@ function createGitHubTracker(): Tracker {
         "--repo",
         project.repo,
         "--json",
-        "number,title,body,url,state,stateReason,labels,assignees",
+        "number,title,body,url,state,labels,assignees",
         "--limit",
         String(filters.limit ?? 30),
       ];
@@ -182,7 +181,6 @@ function createGitHubTracker(): Tracker {
         body: string;
         url: string;
         state: string;
-        stateReason: string | null;
         labels: Array<{ name: string }>;
         assignees: Array<{ login: string }>;
       }> = JSON.parse(raw);
@@ -192,7 +190,7 @@ function createGitHubTracker(): Tracker {
         title: data.title,
         description: data.body ?? "",
         url: data.url,
-        state: mapState(data.state, data.stateReason),
+        state: mapState(data.state),
         labels: data.labels.map((l) => l.name),
         assignee: data.assignees[0]?.login,
       }));
@@ -209,6 +207,19 @@ function createGitHubTracker(): Tracker {
         await gh(["issue", "close", identifier, "--repo", project.repo]);
       } else if (update.state === "open") {
         await gh(["issue", "reopen", identifier, "--repo", project.repo]);
+      }
+
+      // Handle label removal
+      if (update.removeLabels && update.removeLabels.length > 0) {
+        await gh([
+          "issue",
+          "edit",
+          identifier,
+          "--repo",
+          project.repo,
+          "--remove-label",
+          update.removeLabels.join(","),
+        ]);
       }
 
       // Handle label changes

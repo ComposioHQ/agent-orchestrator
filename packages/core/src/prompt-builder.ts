@@ -58,6 +58,12 @@ export interface PromptBuildConfig {
 
   /** Explicit user prompt (appended last) */
   userPrompt?: string;
+
+  /** Decomposition context — ancestor task chain (from decomposer) */
+  lineage?: string[];
+
+  /** Decomposition context — sibling task descriptions (from decomposer) */
+  siblings?: string[];
 }
 
 // =============================================================================
@@ -157,6 +163,25 @@ export function buildPrompt(config: PromptBuildConfig): string {
   // Layer 3: User rules
   if (userRules) {
     sections.push(`## Project Rules\n${userRules}`);
+  }
+
+  // Layer 4: Decomposition context (lineage + siblings)
+  if (config.lineage && config.lineage.length > 0) {
+    const hierarchy = config.lineage.map((desc, i) => `${"  ".repeat(i)}${i}. ${desc}`);
+    // Add current task marker using issueId or last lineage entry
+    const currentLabel = config.issueId ?? "this task";
+    hierarchy.push(`${"  ".repeat(config.lineage.length)}${config.lineage.length}. ${currentLabel}  <-- (this task)`);
+
+    sections.push(
+      `## Task Hierarchy\nThis task is part of a larger decomposed plan. Your place in the hierarchy:\n\n\`\`\`\n${hierarchy.join("\n")}\n\`\`\`\n\nStay focused on YOUR specific task. Do not implement functionality that belongs to other tasks in the hierarchy.`,
+    );
+  }
+
+  if (config.siblings && config.siblings.length > 0) {
+    const siblingLines = config.siblings.map((s) => `  - ${s}`);
+    sections.push(
+      `## Parallel Work\nSibling tasks being worked on in parallel:\n${siblingLines.join("\n")}\n\nDo not duplicate work that sibling tasks handle. If you need interfaces/types from siblings, define reasonable stubs.`,
+    );
   }
 
   // Explicit user prompt (appended last, highest priority)

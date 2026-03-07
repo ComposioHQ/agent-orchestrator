@@ -1,4 +1,4 @@
-import { getServices } from "@/lib/services";
+import { getServices, startBacklogPoller } from "@/lib/services";
 import { sessionToDashboard } from "@/lib/serialize";
 import { getAttentionLevel } from "@/lib/types";
 
@@ -8,21 +8,27 @@ export const dynamic = "force-dynamic";
  * GET /api/events — SSE stream for real-time lifecycle events
  *
  * Sends session state updates to connected clients.
- * Polls SessionManager.list() on an interval (no SSE push from core yet).
+ * Also starts the lifecycle manager and backlog poller on first connection.
  */
 export async function GET(): Promise<Response> {
   const encoder = new TextEncoder();
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   let updates: ReturnType<typeof setInterval> | undefined;
 
+  // Start backlog poller (idempotent — lifecycle manager is started in services.ts)
+  startBacklogPoller();
+
   const stream = new ReadableStream({
     start(controller) {
       // Send initial snapshot
       void (async () => {
         try {
-          const { sessionManager } = await getServices();
+          const { sessionManager, lifecycleManager } = await getServices();
           const sessions = await sessionManager.list();
           const dashboardSessions = sessions.map(sessionToDashboard);
+
+          // Include lifecycle state map for debugging/display
+          const lifecycleStates = Object.fromEntries(lifecycleManager.getStates());
 
           const initialEvent = {
             type: "snapshot",
@@ -33,10 +39,10 @@ export async function GET(): Promise<Response> {
               attentionLevel: getAttentionLevel(s),
               lastActivityAt: s.lastActivityAt,
             })),
+            lifecycle: lifecycleStates,
           };
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(initialEvent)}\n\n`));
         } catch {
-          // If services aren't available, send empty snapshot
           controller.enqueue(
             encoder.encode(`data: ${JSON.stringify({ type: "snapshot", sessions: [] })}\n\n`),
           );
@@ -62,7 +68,6 @@ export async function GET(): Promise<Response> {
             const sessions = await sessionManager.list();
             dashboardSessions = sessions.map(sessionToDashboard);
           } catch {
-            // Transient service error — skip this poll, retry on next interval
             return;
           }
 
@@ -79,7 +84,6 @@ export async function GET(): Promise<Response> {
             };
             controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
           } catch {
-            // enqueue failure means the stream is closed — clean up both intervals
             clearInterval(updates);
             clearInterval(heartbeat);
           }

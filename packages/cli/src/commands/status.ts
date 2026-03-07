@@ -8,6 +8,8 @@ import {
   type CIStatus,
   type ReviewDecision,
   type ActivityState,
+  type Tracker,
+  type ProjectConfig,
   loadConfig,
 } from "@composio/ao-core";
 import { git, getTmuxSessions, getTmuxActivity } from "../lib/shell.js";
@@ -286,6 +288,41 @@ export function registerStatus(program: Command): void {
             `  ${totalSessions} active session${totalSessions !== 1 ? "s" : ""} across ${projectIds.length} project${projectIds.length !== 1 ? "s" : ""}`,
           ),
         );
+
+        // Check for issues awaiting verification across all projects
+        try {
+          const { createPluginRegistry } = await import("@composio/ao-core");
+          const registry = createPluginRegistry();
+          await registry.loadFromConfig(config, (pkg: string) => import(pkg));
+
+          let unverifiedTotal = 0;
+          for (const projectId of projectIds) {
+            const project: ProjectConfig | undefined = config.projects[projectId];
+            if (!project?.tracker) continue;
+            const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
+            if (!tracker?.listIssues) continue;
+            try {
+              const issues = await tracker.listIssues(
+                { state: "open", labels: ["merged-unverified"], limit: 20 },
+                project,
+              );
+              unverifiedTotal += issues.length;
+            } catch {
+              // Tracker query failed — not critical
+            }
+          }
+
+          if (unverifiedTotal > 0) {
+            console.log(
+              chalk.yellow(
+                `  ⚠ ${unverifiedTotal} issue${unverifiedTotal !== 1 ? "s" : ""} awaiting verification (use \`ao verify --list\` to see them)`,
+              ),
+            );
+          }
+        } catch {
+          // Plugin registry or tracker unavailable — skip silently
+        }
+
         console.log();
       }
     });
