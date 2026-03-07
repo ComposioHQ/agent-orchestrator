@@ -6,7 +6,9 @@ import { formatAge } from "../lib/format.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 
 export function registerSession(program: Command): void {
-  const session = program.command("session").description("Session management (ls, kill, cleanup)");
+  const session = program
+    .command("session")
+    .description("Session management (ls, kill, cleanup, restore, claim-pr)");
 
   session
     .command("ls")
@@ -150,6 +152,65 @@ export function registerSession(program: Command): void {
         }
       }
     });
+
+  session
+    .command("claim-pr")
+    .description("Attach an existing PR to a session")
+    .argument("<pr>", "Pull request number or URL")
+    .argument("[session]", "Session name (defaults to AO_SESSION_NAME/AO_SESSION)")
+    .option("--assign-on-github", "Assign the PR to the authenticated GitHub user")
+    .option("--takeover", "Transfer PR ownership from another AO session if needed")
+    .action(
+      async (
+        prRef: string,
+        sessionName: string | undefined,
+        opts: { assignOnGithub?: boolean; takeover?: boolean },
+      ) => {
+        const config = loadConfig();
+        const resolvedSession =
+          sessionName ?? process.env["AO_SESSION_NAME"] ?? process.env["AO_SESSION"];
+
+        if (!resolvedSession) {
+          console.error(
+            chalk.red(
+              "No session provided. Pass a session name or run this inside a managed AO session.",
+            ),
+          );
+          process.exit(1);
+        }
+
+        const sm = await getSessionManager(config);
+
+        try {
+          const result = await sm.claimPR(resolvedSession, prRef, {
+            assignOnGithub: opts.assignOnGithub,
+            takeover: opts.takeover,
+          });
+
+          console.log(chalk.green(`\nSession ${resolvedSession} claimed PR #${result.pr.number}.`));
+          console.log(chalk.dim(`  PR:       ${result.pr.url}`));
+          console.log(chalk.dim(`  Branch:   ${result.pr.branch}`));
+          console.log(
+            chalk.dim(
+              `  Checkout: ${result.branchChanged ? "switched to PR branch" : "already on PR branch"}`,
+            ),
+          );
+          if (result.takenOverFrom.length > 0) {
+            console.log(chalk.dim(`  Took over from: ${result.takenOverFrom.join(", ")}`));
+          }
+          if (opts.assignOnGithub) {
+            if (result.githubAssigned) {
+              console.log(chalk.dim("  GitHub assignee: updated"));
+            } else if (result.githubAssignmentError) {
+              console.log(chalk.yellow(`  GitHub assignee: ${result.githubAssignmentError}`));
+            }
+          }
+        } catch (err) {
+          console.error(chalk.red(`Failed to claim PR for session ${resolvedSession}: ${err}`));
+          process.exit(1);
+        }
+      },
+    );
 
   session
     .command("restore")

@@ -10,9 +10,11 @@
 import {
   createPluginRegistry,
   createSessionManager,
+  createLifecycleManager,
   type OrchestratorConfig,
   type SessionManager,
   type PluginRegistry,
+  type LifecycleManager,
 } from "@composio/ao-core";
 
 let registryPromise: Promise<PluginRegistry> | null = null;
@@ -45,3 +47,15 @@ export async function getSessionManager(config: OrchestratorConfig): Promise<Ses
   return createSessionManager({ config, registry });
 }
 
+/**
+ * Create a LifecycleManager backed by core's implementation.
+ * Shares the same plugin registry initialization path as SessionManager.
+ */
+export async function getLifecycleManager(
+  config: OrchestratorConfig,
+  projectId?: string,
+): Promise<LifecycleManager> {
+  const registry = await getRegistry(config);
+  const sessionManager = createSessionManager({ config, registry });
+  return createLifecycleManager({ config, registry, sessionManager, projectId });
+}

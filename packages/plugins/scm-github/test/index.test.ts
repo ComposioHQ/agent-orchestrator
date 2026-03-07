@@ -148,6 +148,12 @@ describe("scm-github plugin", () => {
       await expect(scm.detectPR(makeSession(), badProject)).rejects.toThrow("Invalid repo format");
     });
 
+
+    it("rejects repo strings with extra path segments", async () => {
+      const badProject = { ...project, repo: "acme/repo/extra" };
+      await expect(scm.detectPR(makeSession(), badProject)).rejects.toThrow("Invalid repo format");
+    });
+
     it("detects draft PRs", async () => {
       mockGh([
         {
@@ -185,6 +191,80 @@ describe("scm-github plugin", () => {
     it("handles lowercase state strings", async () => {
       mockGh({ state: "merged" });
       expect(await scm.getPRState(pr)).toBe("merged");
+    });
+  });
+
+  // ---- resolvePR ---------------------------------------------------------
+
+  describe("resolvePR", () => {
+    it("resolves a PR number into canonical PR info", async () => {
+      mockGh({
+        number: 42,
+        url: "https://github.com/acme/repo/pull/42",
+        title: "feat: add feature",
+        headRefName: "feat/my-feature",
+        baseRefName: "main",
+        isDraft: false,
+      });
+
+      await expect(scm.resolvePR?.("42", project)).resolves.toEqual(pr);
+    });
+  });
+
+  // ---- assignPRToCurrentUser --------------------------------------------
+
+  describe("assignPRToCurrentUser", () => {
+    it("assigns the PR to the authenticated user", async () => {
+      ghMock.mockResolvedValueOnce({ stdout: "" });
+
+      await scm.assignPRToCurrentUser?.(pr);
+
+      expect(ghMock).toHaveBeenCalledWith(
+        "gh",
+        ["pr", "edit", "42", "--repo", "acme/repo", "--add-assignee", "@me"],
+        expect.any(Object),
+      );
+    });
+  });
+
+  // ---- checkoutPR --------------------------------------------------------
+
+  describe("checkoutPR", () => {
+    it("returns false when already on the PR branch", async () => {
+      ghMock.mockResolvedValueOnce({ stdout: "feat/my-feature\n" });
+
+      await expect(scm.checkoutPR?.(pr, "/tmp/repo")).resolves.toBe(false);
+
+      expect(ghMock).toHaveBeenCalledTimes(1);
+      expect(ghMock).toHaveBeenCalledWith(
+        "git",
+        ["branch", "--show-current"],
+        expect.objectContaining({ cwd: "/tmp/repo" }),
+      );
+    });
+
+    it("throws when switching branches would discard local changes", async () => {
+      ghMock.mockResolvedValueOnce({ stdout: "main\n" });
+      ghMock.mockResolvedValueOnce({ stdout: " M src/index.ts\n" });
+
+      await expect(scm.checkoutPR?.(pr, "/tmp/repo")).rejects.toThrow(
+        'Workspace has uncommitted changes; cannot switch to PR branch "feat/my-feature" safely',
+      );
+    });
+
+    it("checks out the PR when the workspace is clean", async () => {
+      ghMock.mockResolvedValueOnce({ stdout: "main\n" });
+      ghMock.mockResolvedValueOnce({ stdout: "" });
+      ghMock.mockResolvedValueOnce({ stdout: "" });
+
+      await expect(scm.checkoutPR?.(pr, "/tmp/repo")).resolves.toBe(true);
+
+      expect(ghMock).toHaveBeenNthCalledWith(
+        3,
+        "gh",
+        ["pr", "checkout", "42", "--repo", "acme/repo"],
+        expect.objectContaining({ cwd: "/tmp/repo" }),
+      );
     });
   });
 
@@ -536,9 +616,9 @@ describe("scm-github plugin", () => {
       expect(comments[0].author).toBe("alice");
     });
 
-    it("returns empty on error", async () => {
+    it("throws on error so callers can distinguish failure from empty", async () => {
       mockGhError("API rate limit");
-      expect(await scm.getPendingComments(pr)).toEqual([]);
+      await expect(scm.getPendingComments(pr)).rejects.toThrow("Failed to fetch pending comments");
     });
 
     it("handles null path and line", async () => {
@@ -654,9 +734,11 @@ describe("scm-github plugin", () => {
       expect(comments).toEqual([]);
     });
 
-    it("returns empty on error", async () => {
+    it("throws on error so callers can distinguish failure from empty", async () => {
       mockGhError("network failure");
-      expect(await scm.getAutomatedComments(pr)).toEqual([]);
+      await expect(scm.getAutomatedComments(pr)).rejects.toThrow(
+        "Failed to fetch automated comments",
+      );
     });
 
     it("uses original_line as fallback", async () => {
