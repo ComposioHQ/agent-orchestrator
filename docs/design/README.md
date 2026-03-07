@@ -11,6 +11,7 @@
 | [`design-brief.md`](./design-brief.md) | **Main design brief** — competitive analysis, full color palette, typography, all component specs, anti-patterns, implementation stack recommendation, and current codebase audit |
 | [`session-detail-design-brief.md`](./session-detail-design-brief.md) | Design spec for `/sessions/[id]` — the single-agent investigation view |
 | [`orchestrator-terminal-design-brief.md`](./orchestrator-terminal-design-brief.md) | Design spec for the orchestrator terminal — full-viewport command center with status strip |
+| [`session-replacement-handoff.md`](./session-replacement-handoff.md) | Design plan for successor sessions, PR takeover, and context handoff after replacing a worker |
 | [`token-reference.css`](./token-reference.css) | **Ready-to-use CSS** — drop-in replacement for `globals.css` `@theme` block |
 | [`competitive-analysis-raw.md`](./competitive-analysis-raw.md) | Raw research notes from all 14 competitor sites (Linear, Vercel, Railway, Fly.io, Inngest, Temporal, Grafana, WandB, LangSmith, Retool, Render, PlanetScale, Supabase, GitHub Copilot) |
 | [`design-brief-v1.md`](./design-brief-v1.md) | Original v1 brief (text-only research, pre-Playwright CSS extraction) — kept for reference |
