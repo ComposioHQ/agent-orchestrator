@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   type DashboardSession,
   type DashboardStats,
@@ -86,6 +86,19 @@ export function Dashboard({ initialSessions, stats, orchestratorId, projectName 
       console.error(`Failed to restore ${sessionId}:`, await res.text());
     }
   };
+
+  // Live document title: show attention count when sessions need action
+  const needsAttention = useMemo(
+    () => (grouped.respond?.length ?? 0) + (grouped.review?.length ?? 0) + (grouped.merge?.length ?? 0),
+    [grouped],
+  );
+  useEffect(() => {
+    const base = projectName ? `${projectName} | ao` : "ao";
+    document.title = needsAttention > 0 ? `(${needsAttention}) ${base}` : base;
+    return () => {
+      document.title = "ao";
+    };
+  }, [needsAttention, projectName]);
 
   const hasKanbanSessions = KANBAN_LEVELS.some((l) => grouped[l].length > 0);
 
