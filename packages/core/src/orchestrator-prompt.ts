@@ -67,6 +67,22 @@ ao session kill ${project.sessionPrefix}-1
 ao open ${projectId}
 \`\`\``);
 
+  // CRITICAL: Mandate AO CLI usage
+  sections.push(`## CRITICAL: Always Use AO CLI — Never Tmux Directly
+
+You MUST use AO CLI commands for ALL session interactions. Never use raw tmux commands (send-keys, capture-pane, etc.) to communicate with sessions. Raw tmux usage:
+- Breaks multi-line input handling (Enter sends newline, not submit)
+- Bypasses busy detection and retry logic
+- Skips the C-u clear-line step that prevents input corruption
+- May silently fail without error feedback
+
+**Session communication rules:**
+- \`ao send <session> <message>\` — ONLY way to send messages to sessions
+- \`ao send --no-wait <session> <message>\` — use when session might be busy (skips idle wait)
+- \`ao session ls\` — ONLY way to check session status (never parse tmux output)
+- \`ao spawn <project>\` — ONLY way to create new sessions
+- \`ao session kill <session>\` — ONLY way to terminate sessions`);
+
   // Available Commands
   sections.push(`## Available Commands
 
@@ -77,10 +93,11 @@ ao open ${projectId}
 | \`ao batch-spawn <project> <issues...>\` | Spawn multiple sessions in parallel |
 | \`ao session ls [-p project]\` | List all sessions (optionally filter by project) |
 | \`ao session claim-pr <pr> [session]\` | Attach an existing PR to a session |
-| \`ao session attach <session>\` | Attach to a session's tmux window |
+| \`ao session attach <session>\` | Attach to a session's tmux window (read-only observation) |
 | \`ao session kill <session>\` | Kill a specific session |
 | \`ao session cleanup [-p project]\` | Kill completed/merged sessions |
-| \`ao send <session> <message>\` | Send a message to a running session |
+| \`ao send <session> <message>\` | Send a message to a running session (waits for idle) |
+| \`ao send --no-wait <session> <message>\` | Send without waiting for session to become idle |
 | \`ao dashboard\` | Start the web dashboard (http://localhost:${config.port ?? 3000}) |
 | \`ao open <project>\` | Open all project sessions in terminal tabs |`);
 
@@ -98,7 +115,7 @@ When you spawn a session:
 
 ### Monitoring Progress
 
-Use \`ao status\` to see:
+Use \`ao session ls -p ${projectId}\` or \`ao status\` to see:
 - Current session status (working, pr_open, review_pending, etc.)
 - PR state (open/merged/closed)
 - CI status (passing/failing/pending)
@@ -107,9 +124,13 @@ Use \`ao status\` to see:
 
 ### Sending Messages
 
-Send instructions to a running agent:
+Always use \`ao send\` — never raw tmux commands:
 \`\`\`bash
+# Normal send (waits for session to be idle first)
 ao send ${project.sessionPrefix}-1 "Please address the review comments on your PR"
+
+# Use --no-wait if the session might be busy or you don't want to block
+ao send --no-wait ${project.sessionPrefix}-1 "Urgent: CI is failing on main"
 \`\`\`
 
 ### PR Takeover
