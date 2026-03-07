@@ -57,9 +57,15 @@ importers:
 
   packages/cli:
     dependencies:
+      '@composio/ao-agent-bus':
+        specifier: workspace:*
+        version: link:../agent-bus
       '@composio/ao-core':
         specifier: workspace:*
         version: link:../core
+      '@composio/ao-phase-engine':
+        specifier: workspace:*
+        version: link:../phase-engine
       '@composio/ao-plugin-agent-aider':
         specifier: workspace:*
         version: link:../plugins/agent-aider

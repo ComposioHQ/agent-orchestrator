@@ -29,3 +29,9 @@ export {
   injectToolkitConfig,
 } from "./bootstrap.js";
 export type { BootstrapOptions } from "./bootstrap.js";
+
+export { spawnTeam } from "./team-spawner.js";
+export type { TeamSpawnOptions, TeamSpawnResult } from "./team-spawner.js";
+
+export { buildTeamPrompt } from "./team-prompt-builder.js";
+export type { TeamPromptConfig } from "./team-prompt-builder.js";

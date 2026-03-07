@@ -83,6 +83,69 @@ projects:
 #   warning: [slack]           # auto-fix failed
 #   info: [slack]              # summary, all done
 
+# ============================================================================
+# ao-teams — Coordinated team execution
+# ============================================================================
+
+# Team presets (built-in: solo, pair, quad — or define custom teams)
+# teams:
+#   my-custom-team:
+#     description: "Custom team for complex tasks"
+#     phases: [plan, validate, implement, integrate, review, revise, test, finalize, refine]
+#     max_review_cycles: 2
+#     agents:
+#       planner:
+#         role: planner
+#         model: sonnet
+#         prompt_file: .ao/prompts/planner.md
+#         max_turns: 10
+#       driver:
+#         role: driver
+#         model: sonnet
+#         prompt_file: .ao/prompts/driver.md
+#         skills: [.ao/skills/typescript.md]
+#       reviewer:
+#         role: reviewer
+#         model: opus
+#         prompt_file: .ao/prompts/reviewer.md
+#       tester:
+#         role: tester
+#         model: haiku
+#         on_demand: true
+
+# Global skill files injected into ALL team agents
+# skills:
+#   - .ao/skills/project-conventions.md
+#   - .ao/skills/git-workflow.md
+
+# Project learnings (.ao/learnings/) — accumulated knowledge across tasks
+# learnings:
+#   enabled: true
+#   max_entries_per_file: 50
+#   stale_after_tasks: 10
+#   auto_prune_after_tasks: 20
+#   auto_commit: true
+
+# Test tasks executed during the test phase
+# test_tasks:
+#   smoke:
+#     command: "pnpm test"
+#     timeout: 300
+#     required: true
+#     on_fail: agent         # spawn tester agent on failure
+#     max_retries: 2
+#   lint:
+#     command: "pnpm lint"
+#     timeout: 60
+#     required: false
+#     on_fail: notify
+#   typecheck:
+#     command: "pnpm typecheck"
+#     timeout: 120
+#     required: true
+#     on_fail: agent
+#     max_retries: 1
+
 # Reactions — auto-responses to events (these are the defaults)
 # reactions:
 #   ci-failed:
