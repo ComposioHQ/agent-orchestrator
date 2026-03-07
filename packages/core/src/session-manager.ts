@@ -27,6 +27,8 @@ import {
   type OrchestratorSpawnConfig,
   type SessionStatus,
   type CleanupResult,
+  type ClaimPROptions,
+  type ClaimPRResult,
   type OrchestratorConfig,
   type ProjectConfig,
   type Runtime,
@@ -106,6 +108,25 @@ const VALID_STATUSES: ReadonlySet<string> = new Set([
   "terminated",
 ]);
 
+const PR_TRACKING_STATUSES: ReadonlySet<string> = new Set([
+  "pr_open",
+  "ci_failed",
+  "review_pending",
+  "changes_requested",
+  "approved",
+  "mergeable",
+]);
+
+const SEND_RESTORE_READY_TIMEOUT_MS = 5_000;
+const SEND_RESTORE_READY_POLL_MS = 500;
+const SEND_CONFIRMATION_ATTEMPTS = 3;
+const SEND_CONFIRMATION_POLL_MS = 500;
+const SEND_CONFIRMATION_OUTPUT_LINES = 20;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /** Validate and normalize a status string. */
 function validateStatus(raw: string | undefined): SessionStatus {
   // Bash scripts write "starting" — treat as "working"
@@ -167,6 +188,13 @@ export interface SessionManagerDeps {
 /** Create a SessionManager instance. */
 export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   const { config, registry } = deps;
+
+  interface LocatedSession {
+    raw: Record<string, string>;
+    sessionsDir: string;
+    project: ProjectConfig;
+    projectId: string;
+  }
 
   /**
    * Get the sessions directory for a project.
@@ -266,6 +294,17 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
 
     return { runtime, agent, workspace, tracker, scm };
+  }
+
+  function findSessionRecord(sessionId: SessionId): LocatedSession | null {
+    for (const [projectId, project] of Object.entries(config.projects)) {
+      const sessionsDir = getProjectSessionsDir(project);
+      const raw = readMetadataRaw(sessionsDir, sessionId);
+      if (!raw) continue;
+      return { raw, sessionsDir, project, projectId };
+    }
+
+    return null;
   }
 
   /**
@@ -513,7 +552,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       sessionId,
       projectConfig: project,
       issueId: spawnConfig.issueId,
-      prompt: composedPrompt ?? spawnConfig.prompt,
+      prompt: composedPrompt,
       permissions: project.agentConfig?.permissions,
       model: project.agentConfig?.model,
     };
@@ -965,44 +1004,294 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
   }
 
   async function send(sessionId: SessionId, message: string): Promise<void> {
-    // Find the session in any project's sessions directory
-    let raw: Record<string, string> | null = null;
-    for (const project of Object.values(config.projects)) {
-      const sessionsDir = getProjectSessionsDir(project);
-      const metadata = readMetadataRaw(sessionsDir, sessionId);
-      if (metadata) {
-        raw = metadata;
-        break;
-      }
+    const located = findSessionRecord(sessionId);
+    if (!located) {
+      throw new Error(`Session ${sessionId} not found`);
     }
 
-    if (!raw) throw new Error(`Session ${sessionId} not found`);
+    const { raw, project } = located;
+    const parsedHandle = raw["runtimeHandle"]
+      ? safeJsonParse<RuntimeHandle>(raw["runtimeHandle"])
+      : null;
+    const runtimeName = parsedHandle?.runtimeName ?? project.runtime ?? config.defaults.runtime;
+    const agentName = raw["agent"] ?? project.agent ?? config.defaults.agent;
 
-    // Build handle: use stored runtimeHandle, or fall back to session ID as tmux session name
-    let handle: RuntimeHandle;
-    if (raw["runtimeHandle"]) {
-      const parsed = safeJsonParse<RuntimeHandle>(raw["runtimeHandle"]);
-      if (!parsed) {
-        throw new Error(`Corrupted runtime handle for session ${sessionId}`);
-      }
-      handle = parsed;
-    } else {
-      // Sessions created by bash scripts don't have runtimeHandle — use session ID as tmux handle
-      handle = { id: sessionId, runtimeName: config.defaults.runtime, data: {} };
-    }
-
-    // Prefer handle.runtimeName to find the correct plugin
-    const project = config.projects[raw["project"] ?? ""];
-    const runtimePlugin = registry.get<Runtime>(
-      "runtime",
-      handle.runtimeName ??
-        (project ? (project.runtime ?? config.defaults.runtime) : config.defaults.runtime),
-    );
+    const runtimePlugin = registry.get<Runtime>("runtime", runtimeName);
     if (!runtimePlugin) {
       throw new Error(`No runtime plugin for session ${sessionId}`);
     }
 
-    await runtimePlugin.sendMessage(handle, message);
+    const agentPlugin = registry.get<Agent>("agent", agentName);
+    if (!agentPlugin) {
+      throw new Error(`No agent plugin for session ${sessionId}`);
+    }
+
+    const captureOutput = async (handle: RuntimeHandle): Promise<string> => {
+      try {
+        return (await runtimePlugin.getOutput(handle, SEND_CONFIRMATION_OUTPUT_LINES)) ?? "";
+      } catch {
+        return "";
+      }
+    };
+
+    const detectActivityFromOutput = (output: string) => {
+      if (!output) return null;
+      try {
+        return agentPlugin.detectActivity(output);
+      } catch {
+        return null;
+      }
+    };
+
+    const hasQueuedMessage = (output: string): boolean => {
+      return output.includes("Press up to edit queued messages");
+    };
+
+    const waitForRestoredSession = async (restoredSession: Session): Promise<void> => {
+      const handle = restoredSession.runtimeHandle;
+      if (!handle) {
+        return;
+      }
+
+      const deadline = Date.now() + SEND_RESTORE_READY_TIMEOUT_MS;
+      while (true) {
+        const [runtimeAlive, processRunning, output] = await Promise.all([
+          runtimePlugin.isAlive(handle).catch(() => true),
+          agentPlugin.isProcessRunning(handle).catch(() => true),
+          captureOutput(handle),
+        ]);
+
+        if (runtimeAlive && (processRunning || output.trim().length > 0)) {
+          return;
+        }
+
+        if (Date.now() >= deadline) {
+          return;
+        }
+
+        await sleep(SEND_RESTORE_READY_POLL_MS);
+      }
+    };
+
+    const restoreForDelivery = async (reason: string, session: Session): Promise<Session> => {
+      if (NON_RESTORABLE_STATUSES.has(session.status)) {
+        throw new Error(`Cannot send to session ${sessionId}: ${reason}`);
+      }
+
+      try {
+        const restored = await restore(sessionId);
+        await waitForRestoredSession(restored);
+        return restored;
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        throw new Error(`Cannot send to session ${sessionId}: ${reason} (${detail})`, { cause: err });
+      }
+    };
+
+    const prepareSession = async (forceRestore = false): Promise<Session> => {
+      const current = await get(sessionId);
+      if (!current) {
+        throw new Error(`Session ${sessionId} not found`);
+      }
+
+      const handle =
+        current.runtimeHandle ??
+        ({
+          id: sessionId,
+          runtimeName,
+          data: {},
+        } satisfies RuntimeHandle);
+      const normalized = current.runtimeHandle ? current : { ...current, runtimeHandle: handle };
+
+      if (forceRestore || isRestorable(normalized)) {
+        return restoreForDelivery(
+          forceRestore ? "session needed to be restarted before delivery" : "session is not running",
+          normalized,
+        );
+      }
+
+      const [runtimeAlive, processRunning] = await Promise.all([
+        runtimePlugin.isAlive(handle).catch(() => true),
+        agentPlugin.isProcessRunning(handle).catch(() => true),
+      ]);
+
+      if (!runtimeAlive || !processRunning) {
+        return restoreForDelivery(
+          !runtimeAlive ? "runtime is not alive" : "agent process is not running",
+          normalized,
+        );
+      }
+
+      return normalized;
+    };
+
+    const sendWithConfirmation = async (session: Session): Promise<void> => {
+      const handle = session.runtimeHandle;
+      if (!handle) {
+        throw new Error(`Session ${sessionId} has no runtime handle`);
+      }
+
+      const baselineOutput = await captureOutput(handle);
+      const baselineActivity = detectActivityFromOutput(baselineOutput) ?? session.activity;
+
+      await runtimePlugin.sendMessage(handle, message);
+
+      for (let attempt = 1; attempt <= SEND_CONFIRMATION_ATTEMPTS; attempt++) {
+        // Sleep before each check (including the first) so the runtime has time
+        // to reflect the message in its output.
+        await sleep(SEND_CONFIRMATION_POLL_MS);
+
+        const output = await captureOutput(handle);
+        const activity = detectActivityFromOutput(output) ?? session.activity;
+        const delivered =
+          hasQueuedMessage(output) ||
+          (output.length > 0 && output !== baselineOutput) ||
+          (baselineActivity !== "active" && activity === "active") ||
+          (baselineActivity !== "waiting_input" && activity === "waiting_input");
+
+        if (delivered) {
+          return;
+        }
+      }
+
+      // Message was already sent via runtimePlugin.sendMessage above — if we
+      // cannot *confirm* delivery (e.g. agent is slow to show output), treat it
+      // as a soft success rather than throwing.  Throwing here caused the caller
+      // to report failure, which prevented the dispatch-hash from updating and
+      // led to duplicate messages on the next poll cycle.
+      return;
+    };
+
+    let prepared = await prepareSession();
+
+    try {
+      await sendWithConfirmation(prepared);
+    } catch (err) {
+      const shouldRetryWithRestore =
+        prepared.restoredAt === undefined &&
+        !NON_RESTORABLE_STATUSES.has(prepared.status);
+
+      if (!shouldRetryWithRestore) {
+        if (err instanceof Error) {
+          throw err;
+        }
+        throw new Error(String(err), { cause: err });
+      }
+
+      prepared = await prepareSession(true);
+      try {
+        await sendWithConfirmation(prepared);
+      } catch (retryErr) {
+        if (retryErr instanceof Error) {
+          throw retryErr;
+        }
+        throw new Error(String(retryErr), { cause: retryErr });
+      }
+    }
+  }
+
+  async function claimPR(
+    sessionId: SessionId,
+    prRef: string,
+    options?: ClaimPROptions,
+  ): Promise<ClaimPRResult> {
+    const reference = prRef.trim();
+    if (!reference) throw new Error("PR reference is required");
+
+    const located = findSessionRecord(sessionId);
+    if (!located) throw new Error(`Session ${sessionId} not found`);
+
+    const { raw, sessionsDir, project, projectId } = located;
+    if (raw["role"] === "orchestrator") {
+      throw new Error(`Session ${sessionId} is an orchestrator session and cannot claim PRs`);
+    }
+
+    const plugins = resolvePlugins(project, raw["agent"]);
+    const scm = plugins.scm;
+    if (!scm?.resolvePR || !scm.checkoutPR) {
+      throw new Error(
+        `SCM plugin ${project.scm?.plugin ? `"${project.scm.plugin}" ` : ""}does not support claiming existing PRs`,
+      );
+    }
+
+    const pr = await scm.resolvePR(reference, project);
+    const prState = await scm.getPRState(pr);
+    if (prState !== PR_STATE.OPEN) {
+      throw new Error(`Cannot claim PR #${pr.number} because it is ${prState}`);
+    }
+
+    const conflictingSessions = new Set<SessionId>();
+    for (const { sessionName } of listAllSessions(projectId)) {
+      if (sessionName === sessionId) continue;
+
+      const otherRaw = readMetadataRaw(sessionsDir, sessionName);
+      if (!otherRaw || otherRaw["role"] === "orchestrator") continue;
+
+      const samePr = otherRaw["pr"] === pr.url;
+      const sameBranch =
+        otherRaw["branch"] === pr.branch && (otherRaw["prAutoDetect"] ?? "on") !== "off";
+
+      if (samePr || sameBranch) {
+        conflictingSessions.add(sessionName);
+      }
+    }
+
+    const takenOverFrom = [...conflictingSessions];
+    if (takenOverFrom.length > 0 && !options?.takeover) {
+      throw new Error(
+        `PR #${pr.number} is already tracked by ${takenOverFrom.join(", ")}. Re-run with takeover enabled to transfer ownership.`,
+      );
+    }
+
+    const workspacePath = raw["worktree"];
+    if (!workspacePath) {
+      throw new Error(`Session ${sessionId} has no workspace to check out PR #${pr.number}`);
+    }
+
+    const branchChanged = await scm.checkoutPR(pr, workspacePath);
+
+    updateMetadata(sessionsDir, sessionId, {
+      pr: pr.url,
+      status: "pr_open",
+      branch: pr.branch,
+      prAutoDetect: "",
+    });
+
+    for (const previousSessionId of takenOverFrom) {
+      const previousRaw = readMetadataRaw(sessionsDir, previousSessionId);
+      if (!previousRaw) continue;
+
+      updateMetadata(sessionsDir, previousSessionId, {
+        pr: "",
+        prAutoDetect: "off",
+        ...(PR_TRACKING_STATUSES.has(previousRaw["status"] ?? "") ? { status: "working" } : {}),
+      });
+    }
+
+    let githubAssigned = false;
+    let githubAssignmentError: string | undefined;
+    if (options?.assignOnGithub) {
+      if (!scm.assignPRToCurrentUser) {
+        githubAssignmentError = `SCM plugin "${scm.name}" does not support assigning PRs`;
+      } else {
+        try {
+          await scm.assignPRToCurrentUser(pr);
+          githubAssigned = true;
+        } catch (err) {
+          githubAssignmentError = err instanceof Error ? err.message : String(err);
+        }
+      }
+    }
+
+    return {
+      sessionId,
+      projectId,
+      pr,
+      branchChanged,
+      githubAssigned,
+      githubAssignmentError,
+      takenOverFrom,
+    };
   }
 
   async function restore(sessionId: SessionId): Promise<Session> {
@@ -1055,6 +1344,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         tmuxName: raw["tmuxName"],
         issue: raw["issue"],
         pr: raw["pr"],
+        prAutoDetect:
+          raw["prAutoDetect"] === "off" ? "off" : raw["prAutoDetect"] === "on" ? "on" : undefined,
         summary: raw["summary"],
         project: raw["project"],
         createdAt: raw["createdAt"],
@@ -1195,5 +1486,5 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     return restoredSession;
   }
 
-  return { spawn, spawnOrchestrator, restore, list, get, kill, cleanup, send };
+  return { spawn, spawnOrchestrator, restore, list, get, kill, cleanup, send, claimPR };
 }
