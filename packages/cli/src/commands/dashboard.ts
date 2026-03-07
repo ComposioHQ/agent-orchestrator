@@ -4,8 +4,11 @@ import { existsSync } from "node:fs";
 import chalk from "chalk";
 import type { Command } from "commander";
 import { loadConfig } from "@composio/ao-core";
-import { findWebDir, buildDashboardEnv, waitForPortAndOpen } from "../lib/web-dir.js";
+import { findWebDir, buildDashboardEnv, waitForPortAndOpen, isPortAvailable, findFreePort } from "../lib/web-dir.js";
 import { cleanNextCache, findRunningDashboardPid, findProcessWebDir, waitForPortFree } from "../lib/dashboard-rebuild.js";
+
+/** How many extra ports to try when the configured port is busy. */
+const PORT_INCREMENT_LIMIT = 10;
 
 export function registerDashboard(program: Command): void {
   program
@@ -16,7 +19,7 @@ export function registerDashboard(program: Command): void {
     .option("--rebuild", "Clean stale build artifacts and rebuild before starting")
     .action(async (opts: { port?: string; open?: boolean; rebuild?: boolean }) => {
       const config = loadConfig();
-      const port = opts.port ? parseInt(opts.port, 10) : (config.port ?? 3000);
+      let port = opts.port ? parseInt(opts.port, 10) : (config.port ?? 3000);
 
       if (isNaN(port) || port < 1 || port > 65535) {
         console.error(chalk.red("Invalid port number. Must be 1-65535."));
@@ -56,6 +59,28 @@ export function registerDashboard(program: Command): void {
 
         await cleanNextCache(targetWebDir);
         // Fall through to start the dashboard on this port.
+      }
+
+      // Auto-increment port when configured port is busy (skip during --rebuild
+      // since we just killed the process on that port above)
+      if (!opts.rebuild && !(await isPortAvailable(port))) {
+        const originalPort = port;
+        const newPort = await findFreePort(port + 1, PORT_INCREMENT_LIMIT);
+        if (newPort !== null) {
+          console.log(
+            chalk.yellow(`⚠ Port ${originalPort} in use, starting on port ${newPort} instead`),
+          );
+          port = newPort;
+        } else {
+          console.error(
+            chalk.red(
+              `Port ${originalPort}–${originalPort + PORT_INCREMENT_LIMIT} all in use.\n` +
+                `Fix: Change 'port' in agent-orchestrator.yaml, or free a port:\n` +
+                `  lsof -ti:${originalPort} | xargs kill`,
+            ),
+          );
+          process.exit(1);
+        }
       }
 
       const webDir = localWebDir;

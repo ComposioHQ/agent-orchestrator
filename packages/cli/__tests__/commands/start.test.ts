@@ -22,6 +22,8 @@ const {
   mockSessionManager,
   mockWaitForPortAndOpen,
   mockSpawn,
+  mockIsPortAvailable,
+  mockFindFreePort,
   mockEnsureLifecycleWorker,
   mockStopLifecycleWorker,
 } = vi.hoisted(() => ({
@@ -40,6 +42,8 @@ const {
   },
   mockWaitForPortAndOpen: vi.fn().mockResolvedValue(undefined),
   mockSpawn: vi.fn(),
+  mockIsPortAvailable: vi.fn().mockResolvedValue(true),
+  mockFindFreePort: vi.fn().mockResolvedValue(3000),
   mockEnsureLifecycleWorker: vi.fn(),
   mockStopLifecycleWorker: vi.fn(),
 }));
@@ -89,8 +93,8 @@ vi.mock("../../src/lib/web-dir.js", () => ({
   findWebDir: vi.fn().mockReturnValue("/fake/web"),
   buildDashboardEnv: vi.fn().mockResolvedValue({}),
   waitForPortAndOpen: (...args: unknown[]) => mockWaitForPortAndOpen(...args),
-  isPortAvailable: vi.fn().mockResolvedValue(true),
-  findFreePort: vi.fn().mockResolvedValue(3000),
+  isPortAvailable: (...args: unknown[]) => mockIsPortAvailable(...args),
+  findFreePort: (...args: unknown[]) => mockFindFreePort(...args),
 }));
 
 vi.mock("../../src/lib/dashboard-rebuild.js", () => ({
@@ -102,7 +106,6 @@ vi.mock("../../src/lib/dashboard-rebuild.js", () => ({
 
 vi.mock("../../src/lib/preflight.js", () => ({
   preflight: {
-    checkPort: vi.fn(),
     checkBuilt: vi.fn(),
   },
 }));
@@ -155,6 +158,10 @@ beforeEach(() => {
   mockExecSilent.mockResolvedValue(null);
   mockWaitForPortAndOpen.mockReset();
   mockWaitForPortAndOpen.mockResolvedValue(undefined);
+  mockIsPortAvailable.mockReset();
+  mockIsPortAvailable.mockResolvedValue(true);
+  mockFindFreePort.mockReset();
+  mockFindFreePort.mockResolvedValue(3000);
   mockEnsureLifecycleWorker.mockReset();
   mockEnsureLifecycleWorker.mockResolvedValue({
     running: true,
