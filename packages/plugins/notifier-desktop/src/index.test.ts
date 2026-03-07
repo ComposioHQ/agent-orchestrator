@@ -13,7 +13,7 @@ vi.mock("node:os", () => ({
 
 import { execFile } from "node:child_process";
 import { platform } from "node:os";
-import { manifest, create, escapeAppleScript } from "./index.js";
+import pluginDefault, { manifest, create, escapeAppleScript } from "./index.js";
 
 const mockExecFile = execFile as unknown as Mock;
 const mockPlatform = platform as unknown as Mock;
@@ -41,6 +41,13 @@ describe("notifier-desktop", () => {
         cb(null);
       },
     );
+  });
+
+  describe("default export", () => {
+    it("is a valid PluginModule", () => {
+      expect(pluginDefault.manifest).toBe(manifest);
+      expect(typeof pluginDefault.create).toBe("function");
+    });
   });
 
   describe("manifest", () => {

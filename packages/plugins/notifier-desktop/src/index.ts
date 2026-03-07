@@ -81,6 +81,7 @@ function sendNotification(
         else resolve();
       });
     } else {
+      // eslint-disable-next-line no-console
       console.warn(`[notifier-desktop] Desktop notifications not supported on ${os}`);
       resolve();
     }

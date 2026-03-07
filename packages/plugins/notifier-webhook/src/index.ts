@@ -116,6 +116,7 @@ export function create(config?: Record<string, unknown>): Notifier {
   const retryDelayMs = Number.isFinite(rawDelay) && rawDelay >= 0 ? rawDelay : 1000;
 
   if (!url) {
+    // eslint-disable-next-line no-console
     console.warn("[notifier-webhook] No url configured — notifications will be no-ops");
   } else {
     validateUrl(url, "notifier-webhook");

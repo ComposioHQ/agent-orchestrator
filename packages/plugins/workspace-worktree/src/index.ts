@@ -179,7 +179,7 @@ export function create(config?: Record<string, unknown>): Workspace {
           }
         }
 
-        if (path && (path === projectWorktreeDir || path.startsWith(projectWorktreeDir + "/"))) {
+        if (path && path.startsWith(projectWorktreeDir + "/")) {
           const sessionId = basename(path);
           infos.push({
             path,
@@ -207,7 +207,19 @@ export function create(config?: Record<string, unknown>): Workspace {
     },
 
     async restore(cfg: WorkspaceCreateConfig, workspacePath: string): Promise<WorkspaceInfo> {
+      assertSafePathSegment(cfg.projectId, "projectId");
+      assertSafePathSegment(cfg.sessionId, "sessionId");
+
       const repoPath = expandPath(cfg.project.path);
+      const workspaceParentDir = resolve(workspacePath, "..");
+
+      mkdirSync(workspaceParentDir, { recursive: true });
+
+      if (existsSync(workspacePath)) {
+        throw new Error(
+          `Workspace path "${workspacePath}" already exists for session "${cfg.sessionId}" — destroy it before restoring`,
+        );
+      }
 
       // Prune stale worktree entries
       try {
@@ -234,7 +246,21 @@ export function create(config?: Record<string, unknown>): Workspace {
         } catch {
           // Last resort: create from default branch
           const baseRef = `origin/${cfg.project.defaultBranch}`;
-          await git(repoPath, "worktree", "add", "-b", cfg.branch, workspacePath, baseRef);
+          try {
+            await git(repoPath, "worktree", "add", "-b", cfg.branch, workspacePath, baseRef);
+          } catch (restoreErr: unknown) {
+            try {
+              await git(repoPath, "worktree", "remove", "--force", workspacePath);
+            } catch {
+              if (existsSync(workspacePath)) {
+                rmSync(workspacePath, { recursive: true, force: true });
+              }
+            }
+            const msg = restoreErr instanceof Error ? restoreErr.message : String(restoreErr);
+            throw new Error(`Failed to restore worktree for branch "${cfg.branch}": ${msg}`, {
+              cause: restoreErr,
+            });
+          }
         }
       }
 
