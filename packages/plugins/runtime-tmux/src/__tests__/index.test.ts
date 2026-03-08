@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as childProcess from "node:child_process";
 import * as fs from "node:fs";
 import type { RuntimeHandle } from "@composio/ao-core";
+import { setTimeout as sleep } from "node:timers/promises";
 
 // Mock node:child_process with custom promisify support
 vi.mock("node:child_process", () => {
@@ -23,10 +24,16 @@ vi.mock("node:fs", () => ({
   unlinkSync: vi.fn(),
 }));
 
+// Mock node:timers/promises to avoid real waits in retry logic
+vi.mock("node:timers/promises", () => ({
+  setTimeout: vi.fn().mockResolvedValue(undefined),
+}));
+
 // Get reference to the promisify-custom mock — this is what the plugin actually calls
 const mockExecFileCustom = (childProcess.execFile as any)[
   Symbol.for("nodejs.util.promisify.custom")
 ] as ReturnType<typeof vi.fn>;
+const mockSleep = vi.mocked(sleep);
 const expectedTmuxOptions = { timeout: 5_000 };
 
 /** Queue a successful tmux command with the given stdout. */
@@ -56,6 +63,7 @@ import tmuxPlugin, { manifest, create } from "../index.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockSleep.mockResolvedValue(undefined);
 });
 
 describe("manifest", () => {
@@ -306,16 +314,20 @@ describe("runtime.sendMessage()", () => {
     const handle = makeHandle("msg-long");
     const longText = "x".repeat(250);
 
-    // 1: C-u, 2: load-buffer, 3: paste-buffer, 4: unlinkSync (sync), 5: delete-buffer, 6: Enter
+    // C-u, load-buffer, paste-buffer, delete-buffer, capture settle x3, Enter, capture confirm
     mockTmuxSuccess(); // C-u
     mockTmuxSuccess(); // load-buffer
     mockTmuxSuccess(); // paste-buffer
     mockTmuxSuccess(); // delete-buffer (finally block)
+    mockTmuxSuccess("> [Pasted Content 250 chars]"); // capture initial
+    mockTmuxSuccess("> [Pasted Content 250 chars]"); // capture stable #1
+    mockTmuxSuccess("> [Pasted Content 250 chars]"); // capture stable #2
     mockTmuxSuccess(); // Enter
+    mockTmuxSuccess("Working on it..."); // capture after Enter
 
     await runtime.sendMessage(handle, longText);
 
-    expect(mockExecFileCustom).toHaveBeenCalledTimes(5);
+    expect(mockExecFileCustom).toHaveBeenCalledTimes(9);
 
     // Call 0: clear
     expect(mockExecFileCustom).toHaveBeenNthCalledWith(
@@ -367,7 +379,11 @@ describe("runtime.sendMessage()", () => {
     mockTmuxSuccess(); // load-buffer
     mockTmuxSuccess(); // paste-buffer
     mockTmuxSuccess(); // delete-buffer (finally)
+    mockTmuxSuccess("> [Pasted Content 18 chars]"); // capture initial
+    mockTmuxSuccess("> [Pasted Content 18 chars]"); // capture stable #1
+    mockTmuxSuccess("> [Pasted Content 18 chars]"); // capture stable #2
     mockTmuxSuccess(); // Enter
+    mockTmuxSuccess("Working on multiline input..."); // capture after Enter
 
     await runtime.sendMessage(handle, "line1\nline2\nline3");
 
@@ -417,6 +433,33 @@ describe("runtime.sendMessage()", () => {
       ["delete-buffer", "-b", "ao-test-uuid-1234"],
       expectedTmuxOptions,
     );
+  });
+
+  it("retries Enter when pasted draft is still visible after first Enter", async () => {
+    const runtime = create();
+    const handle = makeHandle("msg-retry");
+    const longText = "z".repeat(4096);
+
+    mockTmuxSuccess(); // C-u
+    mockTmuxSuccess(); // load-buffer
+    mockTmuxSuccess(); // paste-buffer
+    mockTmuxSuccess(); // delete-buffer (finally)
+    mockTmuxSuccess("> [Pasted Content 4096 chars]"); // capture initial
+    mockTmuxSuccess("> [Pasted Content 4096 chars]"); // capture stable #1
+    mockTmuxSuccess("> [Pasted Content 4096 chars]"); // capture stable #2
+    mockTmuxSuccess(); // Enter attempt #1
+    mockTmuxSuccess("> [Pasted Content 4096 chars]"); // still draft -> retry
+    mockTmuxSuccess(); // Enter attempt #2
+    mockTmuxSuccess("Thinking..."); // draft gone -> confirmed
+
+    await runtime.sendMessage(handle, longText);
+
+    const enterCalls = mockExecFileCustom.mock.calls.filter(
+      (call) =>
+        call[0] === "tmux" &&
+        JSON.stringify(call[1]) === JSON.stringify(["send-keys", "-t", "msg-retry", "Enter"]),
+    );
+    expect(enterCalls).toHaveLength(2);
   });
 });
 
