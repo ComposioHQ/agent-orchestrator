@@ -289,6 +289,7 @@ async function pollBacklog(): Promise<void> {
               console.log(
                 `[backlog] Posted decomposition plan for ${issue.id} (${leaves.length} subtasks, awaiting approval)`,
               );
+              continue;
             } else {
               // Auto-execute: spawn each leaf with lineage context
               console.log(
