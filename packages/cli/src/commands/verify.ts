@@ -7,7 +7,6 @@ import {
   type PluginRegistry,
   loadConfig,
 } from "@composio/ao-core";
-import { getSessionManager } from "../lib/create-session-manager.js";
 
 /**
  * Resolve the target project from config.
@@ -121,7 +120,9 @@ export function registerVerify(program: Command): void {
             }
           }
           console.log(
-            chalk.dim(`\n  ${issues.length} issue${issues.length !== 1 ? "s" : ""} awaiting verification`),
+            chalk.dim(
+              `\n  ${issues.length} issue${issues.length !== 1 ? "s" : ""} awaiting verification`,
+            ),
           );
           return;
         }
@@ -139,8 +140,7 @@ export function registerVerify(program: Command): void {
 
         if (opts.fail) {
           // Verification failed
-          const comment =
-            opts.comment ?? "Verification failed — problem persists on staging.";
+          const comment = opts.comment ?? "Verification failed — problem persists on staging.";
 
           await tracker.updateIssue(
             issue,
@@ -157,8 +157,7 @@ export function registerVerify(program: Command): void {
           console.log(chalk.dim(`  Comment: ${comment}`));
         } else {
           // Verification passed
-          const comment =
-            opts.comment ?? "Verified — fix confirmed on staging.";
+          const comment = opts.comment ?? "Verified — fix confirmed on staging.";
 
           await tracker.updateIssue(
             issue,

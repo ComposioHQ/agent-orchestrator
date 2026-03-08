@@ -103,7 +103,7 @@ const ProjectConfigSchema = z.object({
   orchestratorSessionStrategy: z
     .enum(["reuse", "delete", "ignore", "delete-new", "ignore-new", "kill-previous"])
     .optional(),
-  opencodeIssueSessionStrategy: z.enum(["reuse", "delete", "ignore"]).optional();
+  opencodeIssueSessionStrategy: z.enum(["reuse", "delete", "ignore"]).optional(),
   decomposer: DecomposerConfigSchema.optional(),
 });
 

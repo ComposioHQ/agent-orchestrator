@@ -920,7 +920,6 @@ export interface ProjectConfig {
   /** Rules for the orchestrator agent (stored, reserved for future use) */
   orchestratorRules?: string;
 
-<<<<<<< HEAD
   orchestratorSessionStrategy?:
     | "reuse"
     | "delete"
@@ -930,7 +929,7 @@ export interface ProjectConfig {
     | "kill-previous";
 
   opencodeIssueSessionStrategy?: "reuse" | "delete" | "ignore";
-=======
+
   /** Task decomposition configuration */
   decomposer?: {
     /** Enable auto-decomposition for backlog issues (default: false) */
@@ -942,7 +941,6 @@ export interface ProjectConfig {
     /** Require human approval before executing decomposed plans (default: true) */
     requireApproval: boolean;
   };
->>>>>>> 1561dde (feat: add task decomposition layer (classify → decompose → recurse))
 }
 
 export interface TrackerConfig {

@@ -129,45 +129,23 @@ async function labelIssuesForVerification(
   registry: PluginRegistry,
 ): Promise<void> {
   const mergedSessions = sessions.filter(
-    (s) => s.status === "merged" && s.issueId && !processedIssues.has(`${s.projectId}:${s.issueId}`),
+    (s) =>
+      s.status === "merged" && s.issueId && !processedIssues.has(`${s.projectId}:${s.issueId}`),
   );
 
   for (const session of mergedSessions) {
     const key = `${session.projectId}:${session.issueId}`;
     const project = config.projects[session.projectId];
-    if (!project?.tracker) { processedIssues.add(key); continue; }
-
-    const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
-    if (!tracker?.updateIssue) { processedIssues.add(key); continue; }
-
-    try {
-      await tracker.updateIssue(
-        session.issueId!,
-        {
-          labels: ["merged-unverified"],
-          removeLabels: ["agent:backlog", "agent:in-progress"],
-          comment: `PR merged. Issue awaiting human verification on staging.`,
-        },
-        project,
-      );
-    } catch (err) {
-      console.error(`[backlog] Failed to close issue ${session.issueId}:`, err);
+    if (!project?.tracker) {
+      processedIssues.add(key);
+      continue;
     }
-    processedIssues.add(key);
-  }
-}
 
     const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
     if (!tracker?.updateIssue) {
-      closedIssues.add(key);
+      processedIssues.add(key);
       continue;
     }
-=======
-    if (!project?.tracker) { processedIssues.add(key); continue; }
-
-    const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
-    if (!tracker?.updateIssue) { processedIssues.add(key); continue; }
->>>>>>> 21c165d (feat: add verification gate — issues stay open until human confirms fix)
 
     try {
       await tracker.updateIssue(
