@@ -27,6 +27,7 @@
     "postinstall": "node scripts/rebuild-node-pty.js"
   },
   "devDependencies": {
+    "@next/eslint-plugin-next": "^15.1.0",
     "@changesets/cli": "^2.29.8",
     "@eslint/js": "^10.0.1",
     "@types/node": "^25.2.3",
@@ -34,6 +35,6 @@
     "eslint-config-prettier": "^10.1.8",
     "husky": "^9.1.7",
     "prettier": "^3.8.1",
-    "typescript-eslint": "^8.55.0"
+    "typescript-eslint": "^8.56.1"
   }
 }

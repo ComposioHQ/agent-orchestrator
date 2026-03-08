@@ -34,18 +34,14 @@ const VALID_APPS = new Set<string>(["slack", "discord", "gmail"]);
 const GMAIL_SUBJECT = "Agent Orchestrator Notification";
 
 interface ComposioToolkit {
-  executeAction(params: {
-    action: string;
-    params: Record<string, unknown>;
-    entityId?: string;
-  }): Promise<{ successful: boolean; data?: unknown; error?: string }>;
+  execute(action: string, params: Record<string, unknown>): Promise<{ successful: boolean; data?: unknown; error?: string }>;
 }
 
 /**
- * Lazy-load composio-core SDK.
+ * Lazy-load @composio/core SDK.
  * Returns null if the package is not installed.
  *
- * We use dynamic import + unknown casting because composio-core is an
+ * We use dynamic import + unknown casting because @composio/core is an
  * optional peer dependency — it may or may not be installed, and its
  * TypeScript types may not match our internal interface exactly.
  */
@@ -53,15 +49,18 @@ async function loadComposioSDK(apiKey: string): Promise<ComposioToolkit | null> 
   try {
     // String literal import so vitest can intercept it for mocking.
     // The `as unknown as …` cast is safe because we validate the shape below.
-    const mod = (await import("composio-core")) as unknown as Record<string, unknown>;
+    const mod = (await import(/* @vite-ignore */ /* webpackIgnore: true */ "@composio/core")) as unknown as Record<string, unknown>;
     const ComposioClass = (mod.Composio ??
       (mod.default as Record<string, unknown> | undefined)?.Composio ??
       mod.default) as (new (opts: { apiKey: string }) => unknown) | undefined;
     if (typeof ComposioClass !== "function") {
-      throw new Error("Could not find Composio class in composio-core module");
+      throw new Error("Could not find Composio class in @composio/core module");
     }
-    const client = new ComposioClass({ apiKey });
-    return client as ComposioToolkit;
+    const client = new ComposioClass({ apiKey }) as { tools?: unknown };
+    if (!client.tools || typeof (client.tools as ComposioToolkit).execute !== "function") {
+      throw new Error("Could not find tools.execute in @composio/core client");
+    }
+    return client.tools as ComposioToolkit;
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     const code = err instanceof Error ? (err as NodeJS.ErrnoException).code : undefined;
@@ -141,11 +140,11 @@ export function create(config?: Record<string, unknown>): Notifier {
   const channelId = typeof config?.channelId === "string" ? config.channelId : undefined;
   const emailTo = typeof config?.emailTo === "string" ? config.emailTo : undefined;
 
-  // Internal: allows tests to inject a mock client without mocking composio-core
+  // Internal: allows tests to inject a mock client without mocking @composio/core
   const clientOverride =
     config?._clientOverride !== undefined &&
     config._clientOverride !== null &&
-    typeof (config._clientOverride as ComposioToolkit).executeAction === "function"
+    typeof (config._clientOverride as ComposioToolkit).execute === "function"
       ? (config._clientOverride as ComposioToolkit)
       : undefined;
 
@@ -185,7 +184,7 @@ export function create(config?: Record<string, unknown>): Notifier {
         sdkMissing = true;
         // eslint-disable-next-line no-console
         console.warn(
-          "[notifier-composio] composio-core package is not installed — notifications will be no-ops. Run: npm install composio-core",
+          "[notifier-composio] @composio/core package is not installed — notifications will be no-ops. Run: pnpm add @composio/core",
         );
         return null;
       }
@@ -202,7 +201,7 @@ export function create(config?: Record<string, unknown>): Notifier {
     const timeoutMs = 30_000;
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
 
-    const actionPromise = composio.executeAction({ action, params });
+    const actionPromise = composio.execute(action, { entityId: "default", arguments: params });
     // Prevent unhandled rejection if the timeout fires and actionPromise later rejects
     actionPromise.catch(() => {});
 

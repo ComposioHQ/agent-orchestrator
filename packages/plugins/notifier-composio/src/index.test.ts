@@ -16,15 +16,20 @@ function makeEvent(overrides: Partial<OrchestratorEvent> = {}): OrchestratorEven
   };
 }
 
-const mockExecuteAction = vi.fn().mockResolvedValue({ successful: true });
+const mockExecute = vi.fn().mockResolvedValue({ successful: true });
 
-vi.mock("composio-core", () => {
-  // Must use a regular function (not arrow) to be callable with `new`
+vi.mock("@composio/core", () => {
   function MockComposio() {
-    return { executeAction: mockExecuteAction };
+    return { tools: { execute: mockExecute } };
   }
   return { Composio: MockComposio };
 });
+
+function getLastExecuteCall(): { action: string; params: Record<string, any> } {
+  const call = mockExecute.mock.calls.at(-1);
+  if (!call) throw new Error("Expected Composio execute to be called");
+  return { action: call[0] as string, params: call[1] as Record<string, any> };
+}
 
 describe("notifier-composio", () => {
   const originalEnv = process.env.COMPOSIO_API_KEY;
@@ -95,11 +100,7 @@ describe("notifier-composio", () => {
       const notifier = create({ composioApiKey: "k" });
       await notifier.notify(makeEvent());
 
-      expect(mockExecuteAction).toHaveBeenCalledWith(
-        expect.objectContaining({
-          action: "SLACK_SEND_MESSAGE",
-        }),
-      );
+      expect(getLastExecuteCall().action).toBe("SLACK_SEND_MESSAGE");
     });
   });
 
@@ -108,22 +109,14 @@ describe("notifier-composio", () => {
       const notifier = create({ composioApiKey: "k", defaultApp: "slack" });
       await notifier.notify(makeEvent());
 
-      expect(mockExecuteAction).toHaveBeenCalledWith(
-        expect.objectContaining({
-          action: "SLACK_SEND_MESSAGE",
-        }),
-      );
+      expect(getLastExecuteCall().action).toBe("SLACK_SEND_MESSAGE");
     });
 
     it("calls DISCORD_SEND_MESSAGE for discord app", async () => {
       const notifier = create({ composioApiKey: "k", defaultApp: "discord" });
       await notifier.notify(makeEvent());
 
-      expect(mockExecuteAction).toHaveBeenCalledWith(
-        expect.objectContaining({
-          action: "DISCORD_SEND_MESSAGE",
-        }),
-      );
+      expect(getLastExecuteCall().action).toBe("DISCORD_SEND_MESSAGE");
     });
 
     it("calls GMAIL_SEND_EMAIL for gmail app", async () => {
@@ -134,51 +127,47 @@ describe("notifier-composio", () => {
       });
       await notifier.notify(makeEvent());
 
-      expect(mockExecuteAction).toHaveBeenCalledWith(
-        expect.objectContaining({
-          action: "GMAIL_SEND_EMAIL",
-        }),
-      );
+      expect(getLastExecuteCall().action).toBe("GMAIL_SEND_EMAIL");
     });
 
     it("routes to channelId when set", async () => {
       const notifier = create({ composioApiKey: "k", channelId: "C123" });
       await notifier.notify(makeEvent());
 
-      const callArgs = mockExecuteAction.mock.calls[0][0];
-      expect(callArgs.params.channel).toBe("C123");
+      const callArgs = getLastExecuteCall();
+      expect(callArgs.params.arguments.channel).toBe("C123");
     });
 
     it("routes to channelName when channelId not set", async () => {
       const notifier = create({ composioApiKey: "k", channelName: "#general" });
       await notifier.notify(makeEvent());
 
-      const callArgs = mockExecuteAction.mock.calls[0][0];
-      expect(callArgs.params.channel).toBe("#general");
+      const callArgs = getLastExecuteCall();
+      expect(callArgs.params.arguments.channel).toBe("#general");
     });
 
     it("includes priority emoji in text", async () => {
       const notifier = create({ composioApiKey: "k" });
       await notifier.notify(makeEvent({ priority: "urgent" }));
 
-      const callArgs = mockExecuteAction.mock.calls[0][0];
-      expect(callArgs.params.text).toContain("\u{1F6A8}");
+      const callArgs = getLastExecuteCall();
+      expect(callArgs.params.arguments.text).toContain("\u{1F6A8}");
     });
 
     it("includes prUrl when present as string", async () => {
       const notifier = create({ composioApiKey: "k" });
       await notifier.notify(makeEvent({ data: { prUrl: "https://github.com/pull/1" } }));
 
-      const callArgs = mockExecuteAction.mock.calls[0][0];
-      expect(callArgs.params.text).toContain("https://github.com/pull/1");
+      const callArgs = getLastExecuteCall();
+      expect(callArgs.params.arguments.text).toContain("https://github.com/pull/1");
     });
 
     it("ignores prUrl when not a string", async () => {
       const notifier = create({ composioApiKey: "k" });
       await notifier.notify(makeEvent({ data: { prUrl: 42 } }));
 
-      const callArgs = mockExecuteAction.mock.calls[0][0];
-      expect(callArgs.params.text).not.toContain("PR:");
+      const callArgs = getLastExecuteCall();
+      expect(callArgs.params.arguments.text).not.toContain("PR:");
     });
   });
 
@@ -191,9 +180,9 @@ describe("notifier-composio", () => {
       ];
       await notifier.notifyWithActions!(makeEvent(), actions);
 
-      const callArgs = mockExecuteAction.mock.calls[0][0];
-      expect(callArgs.params.text).toContain("Merge");
-      expect(callArgs.params.text).toContain("Kill");
+      const callArgs = getLastExecuteCall();
+      expect(callArgs.params.arguments.text).toContain("Merge");
+      expect(callArgs.params.arguments.text).toContain("Kill");
     });
 
     it("includes URL actions as links", async () => {
@@ -201,8 +190,8 @@ describe("notifier-composio", () => {
       const actions: NotifyAction[] = [{ label: "View PR", url: "https://github.com/pull/42" }];
       await notifier.notifyWithActions!(makeEvent(), actions);
 
-      const callArgs = mockExecuteAction.mock.calls[0][0];
-      expect(callArgs.params.text).toContain("https://github.com/pull/42");
+      const callArgs = getLastExecuteCall();
+      expect(callArgs.params.arguments.text).toContain("https://github.com/pull/42");
     });
 
     it("renders callback-only actions without URL", async () => {
@@ -210,8 +199,8 @@ describe("notifier-composio", () => {
       const actions: NotifyAction[] = [{ label: "Restart", callbackEndpoint: "/api/restart" }];
       await notifier.notifyWithActions!(makeEvent(), actions);
 
-      const callArgs = mockExecuteAction.mock.calls[0][0];
-      expect(callArgs.params.text).toContain("- Restart");
+      const callArgs = getLastExecuteCall();
+      expect(callArgs.params.arguments.text).toContain("- Restart");
     });
 
     it("uses correct tool slug for configured app", async () => {
@@ -219,11 +208,7 @@ describe("notifier-composio", () => {
       const actions: NotifyAction[] = [{ label: "Test", url: "https://example.com" }];
       await notifier.notifyWithActions!(makeEvent(), actions);
 
-      expect(mockExecuteAction).toHaveBeenCalledWith(
-        expect.objectContaining({
-          action: "DISCORD_SEND_MESSAGE",
-        }),
-      );
+      expect(getLastExecuteCall().action).toBe("DISCORD_SEND_MESSAGE");
     });
   });
 
@@ -232,16 +217,16 @@ describe("notifier-composio", () => {
       const notifier = create({ composioApiKey: "k" });
       await notifier.post!("Hello from AO");
 
-      const callArgs = mockExecuteAction.mock.calls[0][0];
-      expect(callArgs.params.text).toBe("Hello from AO");
+      const callArgs = getLastExecuteCall();
+      expect(callArgs.params.arguments.text).toBe("Hello from AO");
     });
 
     it("overrides channel from context", async () => {
       const notifier = create({ composioApiKey: "k", channelName: "#default" });
       await notifier.post!("test", { channel: "#override" });
 
-      const callArgs = mockExecuteAction.mock.calls[0][0];
-      expect(callArgs.params.channel).toBe("#override");
+      const callArgs = getLastExecuteCall();
+      expect(callArgs.params.arguments.channel).toBe("#override");
     });
 
     it("returns null", async () => {
@@ -253,7 +238,7 @@ describe("notifier-composio", () => {
 
   describe("error handling", () => {
     it("throws when SDK returns unsuccessful result", async () => {
-      mockExecuteAction.mockResolvedValueOnce({
+      mockExecute.mockResolvedValueOnce({
         successful: false,
         error: "channel not found",
       });
@@ -263,7 +248,7 @@ describe("notifier-composio", () => {
     });
 
     it("wraps SDK error with descriptive message", async () => {
-      mockExecuteAction.mockResolvedValueOnce({
+      mockExecute.mockResolvedValueOnce({
         successful: false,
         error: undefined,
       });
@@ -278,7 +263,7 @@ describe("notifier-composio", () => {
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
       const notifier = create();
       await notifier.notify(makeEvent());
-      expect(mockExecuteAction).not.toHaveBeenCalled();
+      expect(mockExecute).not.toHaveBeenCalled();
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("No composioApiKey"));
       warnSpy.mockRestore();
     });

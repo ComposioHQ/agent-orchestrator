@@ -13,6 +13,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": resolve(__dirname, "./src"),
+      "@composio/core": resolve(__dirname, "./src/__tests__/stubs/composio-core.ts"),
     },
   },
 });
