@@ -33,8 +33,55 @@ const VALID_APPS = new Set<string>(["slack", "discord", "gmail"]);
 
 const GMAIL_SUBJECT = "Agent Orchestrator Notification";
 
+interface ComposioActionResult {
+  successful: boolean;
+  data?: unknown;
+  error?: string;
+}
+
 interface ComposioToolkit {
-  execute(action: string, params: Record<string, unknown>): Promise<{ successful: boolean; data?: unknown; error?: string }>;
+  runAction(action: string, params: Record<string, unknown>): Promise<ComposioActionResult>;
+}
+
+interface ModernComposioTools {
+  execute(
+    action: string,
+    params: { entityId: string; arguments: Record<string, unknown> },
+  ): Promise<ComposioActionResult>;
+}
+
+interface LegacyComposioClient {
+  executeAction(params: {
+    action: string;
+    params: Record<string, unknown>;
+    entityId?: string;
+  }): Promise<ComposioActionResult>;
+}
+
+function normalizeComposioToolkit(candidate: unknown): ComposioToolkit | undefined {
+  if (!candidate || typeof candidate !== "object") {
+    return undefined;
+  }
+
+  if (typeof (candidate as ModernComposioTools).execute === "function") {
+    const modernTools = candidate as ModernComposioTools;
+    return {
+      runAction(action: string, params: Record<string, unknown>) {
+        return modernTools.execute(action, { entityId: "default", arguments: params });
+      },
+    };
+  }
+
+  if (typeof (candidate as LegacyComposioClient).executeAction === "function") {
+    const legacyClient = candidate as LegacyComposioClient;
+    return {
+      runAction(action: string, params: Record<string, unknown>) {
+        return legacyClient.executeAction({ action, params });
+      },
+    };
+  }
+
+  return undefined;
 }
 
 /**
@@ -57,10 +104,11 @@ async function loadComposioSDK(apiKey: string): Promise<ComposioToolkit | null> 
       throw new Error("Could not find Composio class in @composio/core module");
     }
     const client = new ComposioClass({ apiKey }) as { tools?: unknown };
-    if (!client.tools || typeof (client.tools as ComposioToolkit).execute !== "function") {
-      throw new Error("Could not find tools.execute in @composio/core client");
+    const toolkit = normalizeComposioToolkit(client.tools);
+    if (!toolkit) {
+      throw new Error("Could not find a supported tools client in @composio/core");
     }
-    return client.tools as ComposioToolkit;
+    return toolkit;
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     const code = err instanceof Error ? (err as NodeJS.ErrnoException).code : undefined;
@@ -141,12 +189,7 @@ export function create(config?: Record<string, unknown>): Notifier {
   const emailTo = typeof config?.emailTo === "string" ? config.emailTo : undefined;
 
   // Internal: allows tests to inject a mock client without mocking @composio/core
-  const clientOverride =
-    config?._clientOverride !== undefined &&
-    config._clientOverride !== null &&
-    typeof (config._clientOverride as ComposioToolkit).execute === "function"
-      ? (config._clientOverride as ComposioToolkit)
-      : undefined;
+  const clientOverride = normalizeComposioToolkit(config?._clientOverride);
 
   if (typeof config?.defaultApp === "string" && !VALID_APPS.has(config.defaultApp)) {
     throw new Error(
@@ -201,7 +244,7 @@ export function create(config?: Record<string, unknown>): Notifier {
     const timeoutMs = 30_000;
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
 
-    const actionPromise = composio.execute(action, { entityId: "default", arguments: params });
+    const actionPromise = composio.runAction(action, params);
     // Prevent unhandled rejection if the timeout fires and actionPromise later rejects
     actionPromise.catch(() => {});
 

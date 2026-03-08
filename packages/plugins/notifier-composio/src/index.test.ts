@@ -105,6 +105,25 @@ describe("notifier-composio", () => {
   });
 
   describe("notify", () => {
+    it("accepts legacy _clientOverride objects with executeAction", async () => {
+      const legacyExecuteAction = vi.fn().mockResolvedValue({ successful: true });
+      const notifier = create({
+        composioApiKey: "k",
+        _clientOverride: { executeAction: legacyExecuteAction },
+      });
+
+      await notifier.notify(makeEvent());
+
+      expect(legacyExecuteAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "SLACK_SEND_MESSAGE",
+          params: expect.objectContaining({
+            text: expect.stringContaining("Session app-1 spawned successfully"),
+          }),
+        }),
+      );
+    });
+
     it("calls SLACK_SEND_MESSAGE for slack app", async () => {
       const notifier = create({ composioApiKey: "k", defaultApp: "slack" });
       await notifier.notify(makeEvent());
