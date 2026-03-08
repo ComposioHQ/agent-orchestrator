@@ -417,11 +417,15 @@ describe("WebSocket terminal connection", () => {
     // Resize with missing rows
     ws.send(JSON.stringify({ type: "resize", cols: 120 }));
 
-    // Should still work
-    const marker = `INCOMPLETE_RESIZE_${Date.now()}`;
+    // Should still work even if terminal wrapping inserts control codes
+    const marker = `IR_${Date.now()}`;
     ws.send(`echo ${marker}\n`);
     const output = await waitForMarker(ws, marker);
-    expect(output).toContain(marker);
+    const normalizedOutput = output
+      .replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "")
+      .replace(/\u001B\][^\u0007]*(?:\u0007|\u001B\\)/g, "")
+      .replace(/\s+/g, "");
+    expect(normalizedOutput).toContain(marker);
 
     ws.close();
   });
