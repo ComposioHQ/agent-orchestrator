@@ -187,7 +187,6 @@ export function registerSend(program: Command): void {
           console.log(chalk.green("Message sent and processing"));
           return;
         }
-
         await sendViaTmux(tmuxTarget, message);
 
         // Verify delivery with retries
