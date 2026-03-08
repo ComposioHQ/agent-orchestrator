@@ -1294,7 +1294,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
   async function cleanup(
     projectId?: string,
-    options?: { dryRun?: boolean },
+    options?: { dryRun?: boolean; purgeOpenCode?: boolean },
   ): Promise<CleanupResult> {
     const result: CleanupResult = { killed: [], skipped: [], errors: [] };
     const sessions = await list(projectId);
@@ -1328,6 +1328,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       if (killedKeys.has(key)) return;
       skippedKeys.add(key);
     };
+
+    const shouldPurgeOpenCode = options?.purgeOpenCode !== false;
 
     for (const session of sessions) {
       try {
@@ -1382,7 +1384,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
         if (shouldKill) {
           if (!options?.dryRun) {
-            await kill(session.id, { purgeOpenCode: true });
+            await kill(session.id, { purgeOpenCode: shouldPurgeOpenCode });
           }
           pushKilled(session.projectId, session.id);
         } else {
@@ -1417,7 +1419,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           pushSkipped(projectKey, archivedId);
           continue;
         }
-        if (cleanupAgent === "opencode" && mappedOpenCodeSessionId) {
+        if (cleanupAgent === "opencode" && mappedOpenCodeSessionId && shouldPurgeOpenCode) {
           if (!options?.dryRun) {
             try {
               await deleteOpenCodeSession(mappedOpenCodeSessionId);

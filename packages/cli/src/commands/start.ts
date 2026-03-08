@@ -496,7 +496,7 @@ export function registerStop(program: Command): void {
     .command("stop [project]")
     .description("Stop orchestrator agent and dashboard for a project")
     .option("--purge-session", "Also purge the mapped OpenCode session when stopping")
-    .action(async (projectArg?: string, opts?: { purgeSession?: boolean }) => {
+    .action(async (projectArg?: string, opts: { purgeSession?: boolean } = {}) => {
       try {
         const config = loadConfig();
         const { projectId: _projectId, project } = resolveProject(config, projectArg);
