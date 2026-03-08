@@ -281,17 +281,20 @@ async function pollBacklog(): Promise<void> {
           if (shouldDecompose) {
             // Decompose the issue before spawning
             const taskDescription = `${issue.title}\n\n${issue.description}`;
-            const config: DecomposerConfig = { ...DEFAULT_DECOMPOSER_CONFIG, ...decompConfig };
+            const decomposerConfig: DecomposerConfig = {
+              ...DEFAULT_DECOMPOSER_CONFIG,
+              ...decompConfig,
+            };
 
             console.log(`[backlog] Decomposing issue ${issue.id}: "${issue.title}"`);
-            const plan = await decompose(taskDescription, config);
+            const plan = await decompose(taskDescription, decomposerConfig);
             const leaves = getLeaves(plan.tree);
 
             if (leaves.length <= 1) {
               // Atomic — spawn directly
               await sessionManager.spawn({ projectId, issueId: issue.id });
               availableSlots--;
-            } else if (config.requireApproval) {
+            } else if (decomposerConfig.requireApproval) {
               // Post plan as comment and wait for human approval
               const treeText = formatPlanTree(plan.tree);
               if (tracker.updateIssue) {
