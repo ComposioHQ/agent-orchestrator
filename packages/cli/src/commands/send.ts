@@ -3,7 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import chalk from "chalk";
 import type { Command } from "commander";
-import { type Agent, type Session, loadConfig } from "@composio/ao-core";
+import {
+  type Agent,
+  type OpenCodeSessionManager,
+  type Session,
+  loadConfig,
+} from "@composio/ao-core";
 import { exec, tmux } from "../lib/shell.js";
 import { getAgentByName } from "../lib/plugins.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
@@ -12,9 +17,13 @@ import { getSessionManager } from "../lib/create-session-manager.js";
  * Resolve session context: tmux target name and Agent plugin.
  * Loads config and looks up the session once, avoiding duplicate work.
  */
-async function resolveSessionContext(
-  sessionName: string,
-): Promise<{ tmuxTarget: string; agent: Agent; session: Session | null }> {
+async function resolveSessionContext(sessionName: string): Promise<{
+  tmuxTarget: string;
+  runtimeName?: string;
+  agent: Agent;
+  session: Session | null;
+  sessionManager: OpenCodeSessionManager | null;
+}> {
   try {
     const config = loadConfig();
     const sm = await getSessionManager(config);
@@ -22,13 +31,27 @@ async function resolveSessionContext(
     if (session) {
       const tmuxTarget = session.runtimeHandle?.id ?? sessionName;
       const project = config.projects[session.projectId];
-      const agentName = project?.agent ?? config.defaults.agent;
-      return { tmuxTarget, agent: getAgentByName(agentName), session };
+      const agentName = session.metadata["agent"] ?? project?.agent ?? config.defaults.agent;
+      const runtimeName =
+        session.runtimeHandle?.runtimeName ?? project?.runtime ?? config.defaults.runtime;
+      return {
+        tmuxTarget,
+        runtimeName,
+        agent: getAgentByName(agentName),
+        session,
+        sessionManager: sm,
+      };
     }
   } catch {
     // No config or session not found — fall back to defaults
   }
-  return { tmuxTarget: sessionName, agent: getAgentByName("claude-code"), session: null };
+  return {
+    tmuxTarget: sessionName,
+    runtimeName: "tmux",
+    agent: getAgentByName("claude-code"),
+    session: null,
+    sessionManager: null,
+  };
 }
 
 function isActive(agent: Agent, terminalOutput: string): boolean {
@@ -41,6 +64,50 @@ function hasQueuedMessage(terminalOutput: string): boolean {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function readMessageInput(opts: { file?: string }, messageParts: string[]): Promise<string> {
+  const inlineMessage = messageParts.join(" ");
+  if (!opts.file && !inlineMessage) {
+    console.error(chalk.red("No message provided"));
+    process.exit(1);
+  }
+
+  if (!opts.file) {
+    return inlineMessage;
+  }
+
+  try {
+    return readFileSync(opts.file, "utf-8");
+  } catch (err) {
+    console.error(chalk.red(`Cannot read file: ${opts.file} (${err})`));
+    process.exit(1);
+  }
+}
+
+async function sendViaTmux(tmuxTarget: string, message: string): Promise<void> {
+  await exec("tmux", ["send-keys", "-t", tmuxTarget, "C-u"]);
+  await sleep(200);
+
+  if (message.includes("\n") || message.length > 200) {
+    const tmpFile = join(tmpdir(), `ao-send-${Date.now()}.txt`);
+    writeFileSync(tmpFile, message);
+    try {
+      await exec("tmux", ["load-buffer", tmpFile]);
+      await exec("tmux", ["paste-buffer", "-t", tmuxTarget]);
+    } finally {
+      try {
+        unlinkSync(tmpFile);
+      } catch {
+        // ignore cleanup failure
+      }
+    }
+  } else {
+    await exec("tmux", ["send-keys", "-t", tmuxTarget, "-l", message]);
+  }
+
+  await sleep(300);
+  await exec("tmux", ["send-keys", "-t", tmuxTarget, "Enter"]);
 }
 
 export function registerSend(program: Command): void {
@@ -59,32 +126,38 @@ export function registerSend(program: Command): void {
         opts: { file?: string; wait?: boolean; timeout?: string },
       ) => {
         // Resolve session context once: tmux target, agent plugin, session data
-        const { tmuxTarget, agent } = await resolveSessionContext(session);
+        const {
+          tmuxTarget,
+          runtimeName,
+          agent,
+          session: existingSession,
+          sessionManager,
+        } = await resolveSessionContext(session);
 
-        const exists = await tmux("has-session", "-t", tmuxTarget);
-        if (exists === null) {
-          console.error(chalk.red(`Session '${session}' does not exist`));
-          process.exit(1);
-        }
-
-        // Validate message input before any side effects
-        const msg = opts.file ? null : messageParts.join(" ");
-        if (!opts.file && !msg) {
-          console.error(chalk.red("No message provided"));
-          process.exit(1);
-        }
+        const message = await readMessageInput(opts, messageParts);
 
         const parsedTimeout = parseInt(opts.timeout || "600", 10);
         const timeoutMs = (isNaN(parsedTimeout) || parsedTimeout <= 0 ? 600 : parsedTimeout) * 1000;
 
+        const canUseTmux = runtimeName === "tmux";
+
+        if (!existingSession) {
+          const exists = await tmux("has-session", "-t", tmuxTarget);
+          if (exists === null) {
+            console.error(chalk.red(`Session '${session}' does not exist`));
+            process.exit(1);
+          }
+        }
+
         // Helper to capture output from the resolved tmux target
         async function captureOutput(lines: number): Promise<string> {
+          if (!canUseTmux) return "";
           const output = await tmux("capture-pane", "-t", tmuxTarget, "-p", "-S", String(-lines));
           return output || "";
         }
 
-        // Wait for idle
-        if (opts.wait !== false) {
+        const delegatesToSessionManager = Boolean(existingSession && sessionManager);
+        if (opts.wait !== false && canUseTmux && !delegatesToSessionManager) {
           const start = Date.now();
           let warned = false;
           while (isActive(agent, await captureOutput(5))) {
@@ -100,52 +173,27 @@ export function registerSend(program: Command): void {
           }
         }
 
-        // Clear partial input
-        await exec("tmux", ["send-keys", "-t", tmuxTarget, "C-u"]);
-        await sleep(200);
-
-        // Send the message
-        if (opts.file) {
-          let content: string;
-          try {
-            content = readFileSync(opts.file, "utf-8");
-          } catch (err) {
-            console.error(chalk.red(`Cannot read file: ${opts.file} (${err})`));
-            process.exit(1);
-          }
-          const tmpFile = join(tmpdir(), `ao-send-${Date.now()}.txt`);
-          writeFileSync(tmpFile, content);
-          try {
-            await exec("tmux", ["load-buffer", tmpFile]);
-            await exec("tmux", ["paste-buffer", "-t", tmuxTarget]);
-          } finally {
-            try {
-              unlinkSync(tmpFile);
-            } catch {
-              // ignore cleanup failure
-            }
-          }
-        } else if (msg) {
-          if (msg.includes("\n") || msg.length > 200) {
-            const tmpFile = join(tmpdir(), `ao-send-${Date.now()}.txt`);
-            writeFileSync(tmpFile, msg);
-            try {
-              await exec("tmux", ["load-buffer", tmpFile]);
-              await exec("tmux", ["paste-buffer", "-t", tmuxTarget]);
-            } finally {
-              try {
-                unlinkSync(tmpFile);
-              } catch {
-                // ignore cleanup failure
-              }
-            }
-          } else {
-            await exec("tmux", ["send-keys", "-t", tmuxTarget, "-l", msg]);
-          }
+        if (existingSession && !sessionManager) {
+          console.error(chalk.red("AO-managed session found, but session manager is unavailable"));
+          process.exit(1);
         }
 
-        await sleep(300);
-        await exec("tmux", ["send-keys", "-t", tmuxTarget, "Enter"]);
+        if (!canUseTmux && !delegatesToSessionManager) {
+          console.error(
+            chalk.red(
+              `Session '${session}' is not tmux-backed and cannot be sent without lifecycle routing`,
+            ),
+          );
+          process.exit(1);
+        }
+
+        if (existingSession && sessionManager) {
+          await sessionManager.send(session, message);
+          console.log(chalk.green("Message sent and processing"));
+          return;
+        }
+
+        await sendViaTmux(tmuxTarget, message);
 
         // Verify delivery with retries
         for (let attempt = 1; attempt <= 3; attempt++) {

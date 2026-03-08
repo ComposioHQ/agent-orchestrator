@@ -1,7 +1,8 @@
+import { spawn } from "node:child_process";
 import chalk from "chalk";
 import type { Command } from "commander";
 import { loadConfig, SessionNotRestorableError, WorkspaceMissingError } from "@composio/ao-core";
-import { git, getTmuxActivity } from "../lib/shell.js";
+import { git, getTmuxActivity, tmux } from "../lib/shell.js";
 import { formatAge } from "../lib/format.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 
@@ -75,15 +76,48 @@ export function registerSession(program: Command): void {
     });
 
   session
+    .command("attach")
+    .description("Attach to a session's tmux window")
+    .argument("<session>", "Session name to attach")
+    .action(async (sessionName: string) => {
+      const config = loadConfig();
+      const sm = await getSessionManager(config);
+      const sessionInfo = await sm.get(sessionName);
+      const tmuxTarget = sessionInfo?.runtimeHandle?.id ?? sessionName;
+
+      const exists = await tmux("has-session", "-t", tmuxTarget);
+      if (exists === null) {
+        console.error(chalk.red(`Session '${sessionName}' does not exist`));
+        process.exit(1);
+      }
+
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn("tmux", ["attach", "-t", tmuxTarget], { stdio: "inherit" });
+        child.once("error", (err) => reject(err));
+        child.once("exit", (code) => {
+          if (code === 0 || code === null) {
+            resolve();
+            return;
+          }
+          reject(new Error(`tmux attach exited with code ${code}`));
+        });
+      }).catch((err) => {
+        console.error(chalk.red(`Failed to attach to session ${sessionName}: ${err}`));
+        process.exit(1);
+      });
+    });
+
+  session
     .command("kill")
     .description("Kill a session and remove its worktree")
     .argument("<session>", "Session name to kill")
-    .action(async (sessionName: string) => {
+    .option("--purge-session", "Delete mapped OpenCode session during kill")
+    .action(async (sessionName: string, opts: { purgeSession?: boolean }) => {
       const config = loadConfig();
       const sm = await getSessionManager(config);
 
       try {
-        await sm.kill(sessionName);
+        await sm.kill(sessionName, { purgeOpenCode: opts.purgeSession === true });
         console.log(chalk.green(`\nSession ${sessionName} killed.`));
       } catch (err) {
         console.error(chalk.red(`Failed to kill session ${sessionName}: ${err}`));
@@ -239,6 +273,25 @@ export function registerSession(program: Command): void {
         } else {
           console.error(chalk.red(`Failed to restore session ${sessionName}: ${err}`));
         }
+        process.exit(1);
+      }
+    });
+
+  session
+    .command("remap")
+    .description("Re-discover and persist OpenCode session mapping for an AO session")
+    .argument("<session>", "Session name to remap")
+    .option("-f, --force", "Force fresh remap by re-discovering the OpenCode session")
+    .action(async (sessionName: string, opts: { force?: boolean }) => {
+      const config = loadConfig();
+      const sm = await getSessionManager(config);
+
+      try {
+        const mapped = await sm.remap(sessionName, opts.force === true);
+        console.log(chalk.green(`\nSession ${sessionName} remapped.`));
+        console.log(chalk.dim(`  OpenCode session: ${mapped}`));
+      } catch (err) {
+        console.error(chalk.red(`Failed to remap session ${sessionName}: ${err}`));
         process.exit(1);
       }
     });

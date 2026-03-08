@@ -16,7 +16,7 @@ import {
   createSessionManager,
   type OrchestratorConfig,
   type PluginRegistry,
-  type SessionManager,
+  type OpenCodeSessionManager,
   type SCM,
   type ProjectConfig,
 } from "@composio/ao-core";
@@ -24,6 +24,7 @@ import {
 // Static plugin imports — webpack needs these to be string literals
 import pluginRuntimeTmux from "@composio/ao-plugin-runtime-tmux";
 import pluginAgentClaudeCode from "@composio/ao-plugin-agent-claude-code";
+import pluginAgentOpencode from "@composio/ao-plugin-agent-opencode";
 import pluginWorkspaceWorktree from "@composio/ao-plugin-workspace-worktree";
 import pluginScmGithub from "@composio/ao-plugin-scm-github";
 import pluginTrackerGithub from "@composio/ao-plugin-tracker-github";
@@ -32,7 +33,7 @@ import pluginTrackerLinear from "@composio/ao-plugin-tracker-linear";
 export interface Services {
   config: OrchestratorConfig;
   registry: PluginRegistry;
-  sessionManager: SessionManager;
+  sessionManager: OpenCodeSessionManager;
 }
 
 // Cache in globalThis for Next.js HMR stability
@@ -64,6 +65,7 @@ async function initServices(): Promise<Services> {
   // Register plugins explicitly (webpack can't handle dynamic import() in core)
   registry.register(pluginRuntimeTmux);
   registry.register(pluginAgentClaudeCode);
+  registry.register(pluginAgentOpencode);
   registry.register(pluginWorkspaceWorktree);
   registry.register(pluginScmGithub);
   registry.register(pluginTrackerGithub);
@@ -81,4 +83,3 @@ export function getSCM(registry: PluginRegistry, project: ProjectConfig | undefi
   if (!project?.scm) return null;
   return registry.get<SCM>("scm", project.scm.plugin);
 }
-

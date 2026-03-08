@@ -9,6 +9,25 @@ import {
   computeStats,
 } from "@/lib/serialize";
 
+const METADATA_ENRICH_TIMEOUT_MS = 3_000;
+const PR_ENRICH_TIMEOUT_MS = 4_000;
+const PER_PR_ENRICH_TIMEOUT_MS = 1_500;
+
+async function settlesWithin(promise: Promise<unknown>, timeoutMs: number): Promise<boolean> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<boolean>((resolve) => {
+    timeoutId = setTimeout(() => resolve(false), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise.then(() => true).catch(() => true), timeoutPromise]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
 /** GET /api/sessions — List all sessions with full state
  * Query params:
  * - active=true: Only return non-exited sessions
@@ -40,20 +59,30 @@ export async function GET(request: Request) {
       dashboardSessions = activeIndices.map((i) => dashboardSessions[i]);
     }
 
-    // Enrich metadata (issue labels, agent summaries, issue titles) — cap at 3s
-    const metaTimeout = new Promise<void>((resolve) => setTimeout(resolve, 3_000));
-    await Promise.race([enrichSessionsMetadata(workerSessions, dashboardSessions, config, registry), metaTimeout]);
+    const metadataSettled = await settlesWithin(
+      enrichSessionsMetadata(workerSessions, dashboardSessions, config, registry),
+      METADATA_ENRICH_TIMEOUT_MS,
+    );
 
-    // Enrich sessions that have PRs with live SCM data (CI, reviews, mergeability)
-    const enrichPromises = workerSessions.map((core, i) => {
-      if (!core.pr) return Promise.resolve();
-      const project = resolveProject(core, config.projects);
-      const scm = getSCM(registry, project);
-      if (!scm) return Promise.resolve();
-      return enrichSessionPR(dashboardSessions[i], scm, core.pr);
-    });
-    const enrichTimeout = new Promise<void>((resolve) => setTimeout(resolve, 4_000));
-    await Promise.race([Promise.allSettled(enrichPromises), enrichTimeout]);
+    if (metadataSettled) {
+      const prDeadlineAt = Date.now() + PR_ENRICH_TIMEOUT_MS;
+      for (let i = 0; i < workerSessions.length; i++) {
+        const core = workerSessions[i];
+        if (!core?.pr) continue;
+
+        const remainingMs = prDeadlineAt - Date.now();
+        if (remainingMs <= 0) break;
+
+        const project = resolveProject(core, config.projects);
+        const scm = getSCM(registry, project);
+        if (!scm) continue;
+
+        await settlesWithin(
+          enrichSessionPR(dashboardSessions[i], scm, core.pr),
+          Math.min(remainingMs, PER_PR_ENRICH_TIMEOUT_MS),
+        );
+      }
+    }
 
     return NextResponse.json({
       sessions: dashboardSessions,

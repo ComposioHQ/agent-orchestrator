@@ -146,19 +146,75 @@ describe("loadBuiltins", () => {
 
     const fakeClaudeCode = makePlugin("agent", "claude-code");
     const fakeCodex = makePlugin("agent", "codex");
+    const fakeOpenCode = makePlugin("agent", "opencode");
 
     await registry.loadBuiltins(undefined, async (pkg: string) => {
       if (pkg === "@composio/ao-plugin-agent-claude-code") return fakeClaudeCode;
       if (pkg === "@composio/ao-plugin-agent-codex") return fakeCodex;
+      if (pkg === "@composio/ao-plugin-agent-opencode") return fakeOpenCode;
       throw new Error(`Not found: ${pkg}`);
     });
 
     const agents = registry.list("agent");
     expect(agents).toContainEqual(expect.objectContaining({ name: "claude-code", slot: "agent" }));
     expect(agents).toContainEqual(expect.objectContaining({ name: "codex", slot: "agent" }));
+    expect(agents).toContainEqual(expect.objectContaining({ name: "opencode", slot: "agent" }));
 
     expect(registry.get("agent", "codex")).not.toBeNull();
     expect(registry.get("agent", "claude-code")).not.toBeNull();
+    expect(registry.get("agent", "opencode")).not.toBeNull();
+  });
+
+  it("passes configured notifier plugin config to create()", async () => {
+    const registry = createPluginRegistry();
+    const fakeWebhookNotifier = makePlugin("notifier", "webhook");
+    const config = makeOrchestratorConfig({
+      notifiers: {
+        webhook: {
+          plugin: "webhook",
+          url: "http://127.0.0.1:8787/hook",
+          retries: 2,
+          retryDelayMs: 500,
+        },
+      },
+    });
+
+    await registry.loadBuiltins(config, async (pkg: string) => {
+      if (pkg === "@composio/ao-plugin-notifier-webhook") return fakeWebhookNotifier;
+      throw new Error(`Not found: ${pkg}`);
+    });
+
+    expect(fakeWebhookNotifier.create).toHaveBeenCalledWith({
+      plugin: "webhook",
+      url: "http://127.0.0.1:8787/hook",
+      retries: 2,
+      retryDelayMs: 500,
+    });
+  });
+
+  it("matches notifier config by plugin name instead of instance key", async () => {
+    const registry = createPluginRegistry();
+    const fakeWebhookNotifier = makePlugin("notifier", "webhook");
+    const config = makeOrchestratorConfig({
+      notifiers: {
+        "my-webhook": {
+          plugin: "webhook",
+          url: "http://127.0.0.1:8787/custom-hook",
+          retries: 4,
+        },
+      },
+    });
+
+    await registry.loadBuiltins(config, async (pkg: string) => {
+      if (pkg === "@composio/ao-plugin-notifier-webhook") return fakeWebhookNotifier;
+      throw new Error(`Not found: ${pkg}`);
+    });
+
+    expect(fakeWebhookNotifier.create).toHaveBeenCalledWith({
+      plugin: "webhook",
+      url: "http://127.0.0.1:8787/custom-hook",
+      retries: 4,
+    });
   });
 });
 

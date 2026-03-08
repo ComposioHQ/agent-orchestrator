@@ -178,6 +178,8 @@ export interface SessionSpawnConfig {
   prompt?: string;
   /** Override the agent plugin for this session (e.g. "codex", "claude-code") */
   agent?: string;
+  /** Override the OpenCode subagent for this session (e.g. "sisyphus", "oracle") */
+  subagent?: string;
 }
 
 /** Config for creating an orchestrator session */
@@ -329,7 +331,7 @@ export interface AgentLaunchConfig {
   projectConfig: ProjectConfig;
   issueId?: string;
   prompt?: string;
-  permissions?: AgentPermissionMode;
+  permissions?: AgentPermissionInput;
   model?: string;
   /**
    * System prompt to pass to the agent for orchestrator context.
@@ -352,6 +354,12 @@ export interface AgentLaunchConfig {
    * - Codex/Aider: similar shell substitution
    */
   systemPromptFile?: string;
+  /**
+   * Specialized OpenCode subagent to use (e.g., sisyphus, oracle, librarian).
+   * Requires oh-my-opencode to be installed.
+   * Use --subagent flag to select the subagent.
+   */
+  subagent?: string;
 }
 
 export interface WorkspaceHooksConfig {
@@ -903,6 +911,16 @@ export interface ProjectConfig {
 
   /** Rules for the orchestrator agent (stored, reserved for future use) */
   orchestratorRules?: string;
+
+  orchestratorSessionStrategy?:
+    | "reuse"
+    | "delete"
+    | "ignore"
+    | "delete-new"
+    | "ignore-new"
+    | "kill-previous";
+
+  opencodeIssueSessionStrategy?: "reuse" | "delete" | "ignore";
 }
 
 export interface TrackerConfig {
@@ -924,7 +942,12 @@ export interface NotifierConfig {
 export interface AgentSpecificConfig {
   permissions?: AgentPermissionMode;
   model?: string;
+  orchestratorModel?: string;
   [key: string]: unknown;
+}
+
+export interface OpenCodeAgentConfig extends AgentSpecificConfig {
+  opencodeSessionId?: string;
 }
 
 /**
@@ -952,7 +975,12 @@ export function normalizeAgentPermissionMode(
   mode: string | undefined,
 ): AgentPermissionMode | undefined {
   if (!mode) return undefined;
-  if (mode !== "permissionless" && mode !== "default" && mode !== "auto-edit" && mode !== "suggest") {
+  if (
+    mode !== "permissionless" &&
+    mode !== "default" &&
+    mode !== "auto-edit" &&
+    mode !== "suggest"
+  ) {
     if (mode === "skip") return "permissionless";
     return undefined;
   }
@@ -1024,6 +1052,7 @@ export interface SessionMetadata {
   dashboardPort?: number;
   terminalWsPort?: number;
   directTerminalWsPort?: number;
+  opencodeSessionId?: string;
 }
 
 // =============================================================================
@@ -1037,10 +1066,19 @@ export interface SessionManager {
   restore(sessionId: SessionId): Promise<Session>;
   list(projectId?: string): Promise<Session[]>;
   get(sessionId: SessionId): Promise<Session | null>;
-  kill(sessionId: SessionId): Promise<void>;
-  cleanup(projectId?: string, options?: { dryRun?: boolean }): Promise<CleanupResult>;
+  kill(sessionId: SessionId, options?: { purgeOpenCode?: boolean }): Promise<void>;
+  cleanup(
+    projectId?: string,
+    options?: { dryRun?: boolean; purgeOpenCode?: boolean },
+  ): Promise<CleanupResult>;
   send(sessionId: SessionId, message: string): Promise<void>;
   claimPR(sessionId: SessionId, prRef: string, options?: ClaimPROptions): Promise<ClaimPRResult>;
+}
+
+/** OpenCode-specific session manager with remap capability */
+export interface OpenCodeSessionManager extends SessionManager {
+  /** Remap session to OpenCode session ID, returns the mapped OpenCode session ID */
+  remap(sessionId: SessionId, force?: boolean): Promise<string>;
 }
 
 export interface ClaimPROptions {
@@ -1056,6 +1094,11 @@ export interface ClaimPRResult {
   githubAssigned: boolean;
   githubAssignmentError?: string;
   takenOverFrom: SessionId[];
+}
+
+/** Type guard to check if a SessionManager supports OpenCode-specific remap operation */
+export function isOpenCodeSessionManager(sm: SessionManager): sm is OpenCodeSessionManager {
+  return typeof (sm as OpenCodeSessionManager).remap === "function";
 }
 
 export interface CleanupResult {
@@ -1152,5 +1195,13 @@ export class WorkspaceMissingError extends Error {
   ) {
     super(`Workspace missing at ${path}${detail ? `: ${detail}` : ""}`);
     this.name = "WorkspaceMissingError";
+  }
+}
+
+/** Thrown when a session lookup fails (session does not exist). */
+export class SessionNotFoundError extends Error {
+  constructor(public readonly sessionId: string) {
+    super(`Session not found: ${sessionId}`);
+    this.name = "SessionNotFoundError";
   }
 }

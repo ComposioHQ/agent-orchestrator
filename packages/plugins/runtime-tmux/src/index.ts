@@ -15,6 +15,7 @@ import type {
 } from "@composio/ao-core";
 
 const execFileAsync = promisify(execFile);
+const TMUX_COMMAND_TIMEOUT_MS = 5_000;
 
 export const manifest = {
   name: "tmux",
@@ -34,7 +35,9 @@ function assertValidSessionId(id: string): void {
 
 /** Run a tmux command and return stdout */
 async function tmux(...args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync("tmux", args);
+  const { stdout } = await execFileAsync("tmux", args, {
+    timeout: TMUX_COMMAND_TIMEOUT_MS,
+  });
   return stdout.trimEnd();
 }
 

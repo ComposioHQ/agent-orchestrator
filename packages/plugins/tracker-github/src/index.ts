@@ -36,6 +36,70 @@ async function gh(args: string[]): Promise<string> {
   }
 }
 
+function getErrorText(err: unknown): string {
+  if (!(err instanceof Error)) return "";
+
+  const details: string[] = [err.message];
+  const withIo = err as Error & { stderr?: string; stdout?: string; cause?: unknown };
+  if (typeof withIo.stderr === "string") details.push(withIo.stderr);
+  if (typeof withIo.stdout === "string") details.push(withIo.stdout);
+  if (withIo.cause instanceof Error) details.push(getErrorText(withIo.cause));
+
+  return details.join("\n").toLowerCase();
+}
+
+function isUnknownJsonFieldError(err: unknown, fieldName: string): boolean {
+  const text = getErrorText(err);
+  if (!text) return false;
+
+  const unknownFieldSignals =
+    text.includes("unknown json field") ||
+    text.includes("unknown field") ||
+    text.includes("invalid field");
+
+  return unknownFieldSignals && text.includes(fieldName.toLowerCase());
+}
+
+async function ghIssueViewJson(identifier: string, project: ProjectConfig): Promise<string> {
+  const fieldsWithStateReason = "number,title,body,url,state,stateReason,labels,assignees";
+  try {
+    return await gh([
+      "issue",
+      "view",
+      identifier,
+      "--repo",
+      project.repo,
+      "--json",
+      fieldsWithStateReason,
+    ]);
+  } catch (err) {
+    if (!isUnknownJsonFieldError(err, "stateReason")) throw err;
+    return gh([
+      "issue",
+      "view",
+      identifier,
+      "--repo",
+      project.repo,
+      "--json",
+      "number,title,body,url,state,labels,assignees",
+    ]);
+  }
+}
+
+async function ghIssueListJson(args: string[]): Promise<string> {
+  const withStateReason = [
+    ...args,
+    "--json",
+    "number,title,body,url,state,stateReason,labels,assignees",
+  ];
+  try {
+    return await gh(withStateReason);
+  } catch (err) {
+    if (!isUnknownJsonFieldError(err, "stateReason")) throw err;
+    return gh([...args, "--json", "number,title,body,url,state,labels,assignees"]);
+  }
+}
+
 function mapState(ghState: string, stateReason?: string | null): Issue["state"] {
   const s = ghState.toUpperCase();
   if (s === "CLOSED") {
@@ -54,15 +118,7 @@ function createGitHubTracker(): Tracker {
     name: "github",
 
     async getIssue(identifier: string, project: ProjectConfig): Promise<Issue> {
-      const raw = await gh([
-        "issue",
-        "view",
-        identifier,
-        "--repo",
-        project.repo,
-        "--json",
-        "number,title,body,url,state,stateReason,labels,assignees",
-      ]);
+      const raw = await ghIssueViewJson(identifier, project);
 
       const data: {
         number: number;
@@ -70,7 +126,7 @@ function createGitHubTracker(): Tracker {
         body: string;
         url: string;
         state: string;
-        stateReason: string | null;
+        stateReason?: string | null;
         labels: Array<{ name: string }>;
         assignees: Array<{ login: string }>;
       } = JSON.parse(raw);
@@ -153,8 +209,6 @@ function createGitHubTracker(): Tracker {
         "list",
         "--repo",
         project.repo,
-        "--json",
-        "number,title,body,url,state,stateReason,labels,assignees",
         "--limit",
         String(filters.limit ?? 30),
       ];
@@ -175,14 +229,14 @@ function createGitHubTracker(): Tracker {
         args.push("--assignee", filters.assignee);
       }
 
-      const raw = await gh(args);
+      const raw = await ghIssueListJson(args);
       const issues: Array<{
         number: number;
         title: string;
         body: string;
         url: string;
         state: string;
-        stateReason: string | null;
+        stateReason?: string | null;
         labels: Array<{ name: string }>;
         assignees: Array<{ login: string }>;
       }> = JSON.parse(raw);

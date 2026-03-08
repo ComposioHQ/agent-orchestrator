@@ -120,6 +120,7 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
     directTerminalWsPort: raw["directTerminalWsPort"]
       ? Number(raw["directTerminalWsPort"])
       : undefined,
+    opencodeSessionId: raw["opencodeSessionId"],
   };
 }
 
@@ -168,6 +169,7 @@ export function writeMetadata(
     data["terminalWsPort"] = String(metadata.terminalWsPort);
   if (metadata.directTerminalWsPort !== undefined)
     data["directTerminalWsPort"] = String(metadata.directTerminalWsPort);
+  if (metadata.opencodeSessionId) data["opencodeSessionId"] = metadata.opencodeSessionId;
 
   atomicWriteFileSync(path, serializeMetadata(data));
 }
@@ -256,6 +258,49 @@ export function readArchivedMetadataRaw(
   } catch {
     return null;
   }
+}
+
+export function updateArchivedMetadata(
+  dataDir: string,
+  sessionId: SessionId,
+  updates: Partial<Record<string, string>>,
+): boolean {
+  validateSessionId(sessionId);
+  const archiveDir = join(dataDir, "archive");
+  if (!existsSync(archiveDir)) return false;
+
+  const prefix = `${sessionId}_`;
+  let latest: string | null = null;
+
+  for (const file of readdirSync(archiveDir)) {
+    if (!file.startsWith(prefix)) continue;
+    const charAfterPrefix = file[prefix.length];
+    if (!charAfterPrefix || charAfterPrefix < "0" || charAfterPrefix > "9") continue;
+    if (!latest || file > latest) latest = file;
+  }
+
+  if (!latest) return false;
+
+  const archivePath = join(archiveDir, latest);
+  let existing: Record<string, string>;
+  try {
+    existing = parseMetadataFile(readFileSync(archivePath, "utf-8"));
+  } catch {
+    return false;
+  }
+
+  for (const [key, value] of Object.entries(updates)) {
+    if (value === undefined) continue;
+    if (value === "") {
+      const { [key]: _, ...rest } = existing;
+      existing = rest;
+    } else {
+      existing[key] = value;
+    }
+  }
+
+  atomicWriteFileSync(archivePath, serializeMetadata(existing));
+  return true;
 }
 
 /**

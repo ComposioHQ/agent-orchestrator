@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getServices } from "@/lib/services";
 import { stripControlChars, validateIdentifier, validateString } from "@/lib/validation";
-import type { Runtime } from "@composio/ao-core";
+import { SessionNotFoundError } from "@composio/ao-core";
 
 const MAX_MESSAGE_LENGTH = 10_000;
 
@@ -46,34 +46,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       );
     }
 
-    const { sessionManager, registry } = await getServices();
-    const session = await sessionManager.get(id);
-
-    if (!session) {
-      return NextResponse.json({ error: "Session not found" }, { status: 404 });
-    }
-
-    if (!session.runtimeHandle) {
-      return NextResponse.json({ error: "Session has no runtime handle" }, { status: 400 });
-    }
-
-    // Get the runtime plugin that was used to create this session
-    // Use the runtime from the session handle, not from current project config
-    const runtimeName = session.runtimeHandle.runtimeName;
-    const runtime = registry.get<Runtime>("runtime", runtimeName);
-    if (!runtime) {
-      return NextResponse.json(
-        { error: `Runtime plugin '${runtimeName}' not found` },
-        { status: 500 },
-      );
-    }
-
+    const { sessionManager } = await getServices();
     try {
-      // Use the Runtime plugin's sendMessage method which handles sanitization
-      // and uses the correct runtime handle
-      await runtime.sendMessage(session.runtimeHandle, message);
+      await sessionManager.send(id, message);
       return NextResponse.json({ success: true });
     } catch (err) {
+      if (err instanceof SessionNotFoundError) {
+        return NextResponse.json({ error: err.message }, { status: 404 });
+      }
       const errorMsg = err instanceof Error ? err.message : String(err);
       console.error("Failed to send message:", errorMsg);
       return NextResponse.json({ error: `Failed to send message: ${errorMsg}` }, { status: 500 });

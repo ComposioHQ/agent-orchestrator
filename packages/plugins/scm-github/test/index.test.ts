@@ -337,10 +337,12 @@ describe("scm-github plugin", () => {
         { name: "queued", state: "QUEUED", link: "", startedAt: "", completedAt: "" },
         { name: "cancelled", state: "CANCELLED", link: "", startedAt: "", completedAt: "" },
         { name: "action_req", state: "ACTION_REQUIRED", link: "", startedAt: "", completedAt: "" },
+        { name: "stale", state: "STALE", link: "", startedAt: "", completedAt: "" },
+        { name: "unknown", state: "SOME_NEW_STATE", link: "", startedAt: "", completedAt: "" },
       ]);
 
       const checks = await scm.getCIChecks(pr);
-      expect(checks).toHaveLength(10);
+      expect(checks).toHaveLength(12);
       expect(checks[0].status).toBe("passed");
       expect(checks[0].url).toBe("https://ci/1");
       expect(checks[1].status).toBe("failed");
@@ -352,6 +354,8 @@ describe("scm-github plugin", () => {
       expect(checks[7].status).toBe("pending");
       expect(checks[8].status).toBe("failed"); // CANCELLED
       expect(checks[9].status).toBe("failed"); // ACTION_REQUIRED
+      expect(checks[10].status).toBe("skipped");
+      expect(checks[11].status).toBe("skipped");
     });
 
     it("throws on error (fail-closed)", async () => {
@@ -370,6 +374,36 @@ describe("scm-github plugin", () => {
       expect(checks[0].url).toBeUndefined();
       expect(checks[0].startedAt).toBeUndefined();
       expect(checks[0].completedAt).toBeUndefined();
+    });
+
+    it("falls back to statusCheckRollup when gh pr checks --json is unsupported", async () => {
+      mockGhError('gh pr checks failed: Unknown JSON field "state"');
+      mockGh({
+        statusCheckRollup: [
+          {
+            __typename: "CheckRun",
+            name: "Test",
+            status: "COMPLETED",
+            conclusion: "SUCCESS",
+            detailsUrl: "https://ci/test",
+            startedAt: "2025-01-01T00:00:00Z",
+            completedAt: "2025-01-01T00:05:00Z",
+          },
+          {
+            __typename: "StatusContext",
+            context: "Lint",
+            state: "PENDING",
+            targetUrl: "https://ci/lint",
+            createdAt: "2025-01-01T00:01:00Z",
+          },
+        ],
+      });
+
+      const checks = await scm.getCIChecks(pr);
+      expect(checks).toHaveLength(2);
+      expect(checks[0]).toMatchObject({ name: "Test", status: "passed", url: "https://ci/test" });
+      expect(checks[1]).toMatchObject({ name: "Lint", status: "pending", url: "https://ci/lint" });
+      expect(ghMock).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -416,6 +450,32 @@ describe("scm-github plugin", () => {
         { name: "b", state: "NEUTRAL" },
       ]);
       expect(await scm.getCISummary(pr)).toBe("none");
+    });
+
+    it('returns "none" for stale/unknown check states instead of false failing', async () => {
+      mockGh([
+        { name: "a", state: "STALE" },
+        { name: "b", state: "SOME_NEW_STATE" },
+      ]);
+      expect(await scm.getCISummary(pr)).toBe("none");
+    });
+
+    it('uses fallback checks source before reporting "failing"', async () => {
+      mockGhError('gh pr checks failed: Unknown JSON field "state"');
+      mockGh({
+        statusCheckRollup: [
+          {
+            __typename: "CheckRun",
+            name: "Build",
+            status: "COMPLETED",
+            conclusion: "SUCCESS",
+            detailsUrl: "https://ci/build",
+          },
+        ],
+      });
+
+      expect(await scm.getCISummary(pr)).toBe("passing");
+      expect(ghMock).toHaveBeenCalledTimes(2);
     });
   });
 

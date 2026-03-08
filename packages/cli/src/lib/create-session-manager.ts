@@ -12,7 +12,7 @@ import {
   createSessionManager,
   createLifecycleManager,
   type OrchestratorConfig,
-  type SessionManager,
+  type OpenCodeSessionManager,
   type PluginRegistry,
   type LifecycleManager,
 } from "@composio/ao-core";
@@ -42,7 +42,9 @@ async function getRegistry(config: OrchestratorConfig): Promise<PluginRegistry> 
  * Create a SessionManager backed by core's implementation.
  * Initializes the plugin registry from config and wires everything up.
  */
-export async function getSessionManager(config: OrchestratorConfig): Promise<SessionManager> {
+export async function getSessionManager(
+  config: OrchestratorConfig,
+): Promise<OpenCodeSessionManager> {
   const registry = await getRegistry(config);
   return createSessionManager({ config, registry });
 }

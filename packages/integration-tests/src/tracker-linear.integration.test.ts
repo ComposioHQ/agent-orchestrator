@@ -48,50 +48,72 @@ function linearGraphQL<T>(query: string, variables: Record<string, unknown>): Pr
   }
   const body = JSON.stringify({ query, variables });
 
-  return new Promise<T>((resolve, reject) => {
-    const url = new URL("https://api.linear.app/graphql");
-    const req = request(
-      {
-        hostname: url.hostname,
-        path: url.pathname,
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: LINEAR_API_KEY,
-          "Content-Length": Buffer.byteLength(body),
-        },
-      },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on("data", (chunk: Buffer) => chunks.push(chunk));
-        res.on("end", () => {
-          try {
-            const text = Buffer.concat(chunks).toString("utf-8");
-            const json = JSON.parse(text) as {
-              data?: T;
-              errors?: Array<{ message: string }>;
-            };
-            if (json.errors?.length) {
-              reject(new Error(`Linear API error: ${json.errors[0].message}`));
-              return;
-            }
-            resolve(json.data as T);
-          } catch (err) {
-            reject(err);
-          }
+  async function executeWithRetry(attempt = 1): Promise<T> {
+    try {
+      return await new Promise<T>((resolve, reject) => {
+        const url = new URL("https://api.linear.app/graphql");
+        const req = request(
+          {
+            hostname: url.hostname,
+            path: url.pathname,
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: LINEAR_API_KEY,
+              "Content-Length": Buffer.byteLength(body),
+            },
+          },
+          (res) => {
+            const chunks: Buffer[] = [];
+            res.on("data", (chunk: Buffer) => chunks.push(chunk));
+            res.on("end", () => {
+              const text = Buffer.concat(chunks).toString("utf-8");
+              const statusCode = res.statusCode ?? 0;
+
+              if (statusCode >= 500) {
+                reject(new Error(`Linear API ${statusCode}: ${text.slice(0, 200)}`));
+                return;
+              }
+
+              let json: { data?: T; errors?: Array<{ message: string }> };
+              try {
+                json = JSON.parse(text) as { data?: T; errors?: Array<{ message: string }> };
+              } catch {
+                reject(
+                  new Error(`Linear API returned non-JSON (${statusCode}): ${text.slice(0, 200)}`),
+                );
+                return;
+              }
+
+              if (json.errors?.length) {
+                reject(new Error(`Linear API error: ${json.errors[0].message}`));
+                return;
+              }
+
+              resolve(json.data as T);
+            });
+          },
+        );
+
+        req.setTimeout(30_000, () => {
+          req.destroy();
+          reject(new Error("Linear API request timed out"));
         });
-      },
-    );
 
-    req.setTimeout(30_000, () => {
-      req.destroy();
-      reject(new Error("Linear API request timed out"));
-    });
+        req.on("error", (err) => reject(err));
+        req.write(body);
+        req.end();
+      });
+    } catch (err) {
+      if (attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+        return executeWithRetry(attempt + 1);
+      }
+      throw err;
+    }
+  }
 
-    req.on("error", (err) => reject(err));
-    req.write(body);
-    req.end();
-  });
+  return executeWithRetry();
 }
 
 // ---------------------------------------------------------------------------
@@ -135,11 +157,15 @@ describe.skipIf(!canRun)("tracker-linear (integration)", () => {
 
     // Resolve the UUID for cleanup — only possible with direct API key
     if (LINEAR_API_KEY) {
-      const data = await linearGraphQL<{ issue: { id: string } }>(
-        `query($id: String!) { issue(id: $id) { id } }`,
-        { id: issueIdentifier },
-      );
-      issueUuid = data.issue.id;
+      try {
+        const data = await linearGraphQL<{ issue: { id: string } }>(
+          `query($id: String!) { issue(id: $id) { id } }`,
+          { id: issueIdentifier },
+        );
+        issueUuid = data.issue.id;
+      } catch {
+        issueUuid = undefined;
+      }
     }
   }, 30_000);
 
@@ -238,18 +264,25 @@ describe.skipIf(!canRun)("tracker-linear (integration)", () => {
     // Verify the comment was added — use direct API if available,
     // otherwise trust the plugin didn't throw
     if (LINEAR_API_KEY) {
-      const data = await linearGraphQL<{
-        issue: { comments: { nodes: Array<{ body: string }> } };
-      }>(
-        `query($id: String!) {
-          issue(id: $id) {
-            comments { nodes { body } }
-          }
-        }`,
-        { id: issueIdentifier },
+      const commentBodies = await pollUntil(
+        async () => {
+          const data = await linearGraphQL<{
+            issue: { comments: { nodes: Array<{ body: string }> } };
+          }>(
+            `query($id: String!) {
+              issue(id: $id) {
+                comments(first: 50) { nodes { body } }
+              }
+            }`,
+            { id: issueIdentifier },
+          );
+
+          const bodies = data.issue.comments.nodes.map((c) => c.body);
+          return bodies.includes("Integration test comment") ? bodies : undefined;
+        },
+        { timeoutMs: 5_000, intervalMs: 500 },
       );
 
-      const commentBodies = data.issue.comments.nodes.map((c) => c.body);
       expect(commentBodies).toContain("Integration test comment");
     }
   });
@@ -265,8 +298,12 @@ describe.skipIf(!canRun)("tracker-linear (integration)", () => {
     );
     expect(completed).toBe(true);
 
-    const issue = await tracker.getIssue(issueIdentifier, project);
-    expect(issue.state).toBe("closed");
+    const closedState = await pollUntilEqual(
+      async () => (await tracker.getIssue(issueIdentifier, project)).state,
+      "closed",
+      { timeoutMs: 5_000, intervalMs: 500 },
+    );
+    expect(closedState).toBe("closed");
   });
 
   it("updateIssue reopens the issue", async () => {
@@ -280,7 +317,11 @@ describe.skipIf(!canRun)("tracker-linear (integration)", () => {
     );
     expect(completed).toBe(false);
 
-    const issue = await tracker.getIssue(issueIdentifier, project);
-    expect(issue.state).toBe("open");
+    const reopenedState = await pollUntilEqual(
+      async () => (await tracker.getIssue(issueIdentifier, project)).state,
+      "open",
+      { timeoutMs: 5_000, intervalMs: 500 },
+    );
+    expect(reopenedState).toBe("open");
   });
 });

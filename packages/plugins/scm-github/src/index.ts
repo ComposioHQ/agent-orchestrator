@@ -87,6 +87,111 @@ function parseDate(val: string | undefined | null): Date {
   return isNaN(d.getTime()) ? new Date(0) : d;
 }
 
+function isUnsupportedPrChecksJsonError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return /pr checks/i.test(err.message) && /unknown json field/i.test(err.message);
+}
+
+function mapRawCheckStateToStatus(rawState: string | undefined): CICheck["status"] {
+  const state = (rawState ?? "").toUpperCase();
+  if (state === "IN_PROGRESS") return "running";
+  if (
+    state === "PENDING" ||
+    state === "QUEUED" ||
+    state === "REQUESTED" ||
+    state === "WAITING" ||
+    state === "EXPECTED"
+  ) {
+    return "pending";
+  }
+  if (state === "SUCCESS") return "passed";
+  if (
+    state === "FAILURE" ||
+    state === "TIMED_OUT" ||
+    state === "CANCELLED" ||
+    state === "ACTION_REQUIRED" ||
+    state === "ERROR"
+  ) {
+    return "failed";
+  }
+  if (
+    state === "SKIPPED" ||
+    state === "NEUTRAL" ||
+    state === "STALE" ||
+    state === "NOT_REQUIRED" ||
+    state === "NONE" ||
+    state === ""
+  ) {
+    return "skipped";
+  }
+
+  return "skipped";
+}
+
+async function getCIChecksFromStatusRollup(pr: PRInfo): Promise<CICheck[]> {
+  const raw = await gh([
+    "pr",
+    "view",
+    String(pr.number),
+    "--repo",
+    repoFlag(pr),
+    "--json",
+    "statusCheckRollup",
+  ]);
+
+  const data: { statusCheckRollup?: unknown[] } = JSON.parse(raw);
+  const rollup = Array.isArray(data.statusCheckRollup) ? data.statusCheckRollup : [];
+
+  return rollup
+    .map((entry): CICheck | null => {
+      if (!entry || typeof entry !== "object") return null;
+      const row = entry as Record<string, unknown>;
+      const name =
+        (typeof row["name"] === "string" && row["name"]) ||
+        (typeof row["context"] === "string" && row["context"]);
+      if (!name) return null;
+
+      const rawState =
+        typeof row["conclusion"] === "string"
+          ? row["conclusion"]
+          : typeof row["state"] === "string"
+            ? row["state"]
+            : typeof row["status"] === "string"
+              ? row["status"]
+              : undefined;
+
+      const url =
+        (typeof row["link"] === "string" && row["link"]) ||
+        (typeof row["detailsUrl"] === "string" && row["detailsUrl"]) ||
+        (typeof row["targetUrl"] === "string" && row["targetUrl"]) ||
+        undefined;
+
+      const startedAtRaw =
+        typeof row["startedAt"] === "string"
+          ? row["startedAt"]
+          : typeof row["createdAt"] === "string"
+            ? row["createdAt"]
+            : undefined;
+      const completedAtRaw =
+        typeof row["completedAt"] === "string" ? row["completedAt"] : undefined;
+
+      const check: CICheck = {
+        name,
+        status: mapRawCheckStateToStatus(rawState),
+        conclusion: typeof rawState === "string" ? rawState.toUpperCase() : undefined,
+        startedAt: startedAtRaw ? new Date(startedAtRaw) : undefined,
+        completedAt: completedAtRaw ? new Date(completedAtRaw) : undefined,
+      };
+
+      if (url) {
+        check.url = url;
+      }
+
+      return check;
+    })
+    .filter((check): check is CICheck => check !== null);
+}
+
 function parseProjectRepo(projectRepo: string): [string, string] {
   const parts = projectRepo.split("/");
   if (parts.length !== 2 || !parts[0] || !parts[1]) {
@@ -279,29 +384,8 @@ function createGitHubSCM(): SCM {
         }> = JSON.parse(raw);
 
         return checks.map((c) => {
-          let status: CICheck["status"];
           const state = c.state?.toUpperCase();
-
-          // gh pr checks returns state directly: SUCCESS, FAILURE, PENDING, QUEUED, etc.
-          if (state === "PENDING" || state === "QUEUED") {
-            status = "pending";
-          } else if (state === "IN_PROGRESS") {
-            status = "running";
-          } else if (state === "SUCCESS") {
-            status = "passed";
-          } else if (
-            state === "FAILURE" ||
-            state === "TIMED_OUT" ||
-            state === "CANCELLED" ||
-            state === "ACTION_REQUIRED"
-          ) {
-            status = "failed";
-          } else if (state === "SKIPPED" || state === "NEUTRAL") {
-            status = "skipped";
-          } else {
-            // Unknown state on a check — fail closed for safety
-            status = "failed";
-          }
+          const status = mapRawCheckStateToStatus(state);
 
           return {
             name: c.name,
@@ -313,6 +397,9 @@ function createGitHubSCM(): SCM {
           };
         });
       } catch (err) {
+        if (isUnsupportedPrChecksJsonError(err)) {
+          return getCIChecksFromStatusRollup(pr);
+        }
         // Propagate so callers (getCISummary) can decide how to handle.
         // Do NOT silently return [] — that causes a fail-open where CI
         // appears healthy when we simply failed to fetch check status.

@@ -31,6 +31,7 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
   { slot: "agent", name: "claude-code", pkg: "@composio/ao-plugin-agent-claude-code" },
   { slot: "agent", name: "codex", pkg: "@composio/ao-plugin-agent-codex" },
   { slot: "agent", name: "aider", pkg: "@composio/ao-plugin-agent-aider" },
+  { slot: "agent", name: "opencode", pkg: "@composio/ao-plugin-agent-opencode" },
   // Workspaces
   { slot: "workspace", name: "worktree", pkg: "@composio/ao-plugin-workspace-worktree" },
   { slot: "workspace", name: "clone", pkg: "@composio/ao-plugin-workspace-clone" },
@@ -51,11 +52,22 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
 
 /** Extract plugin-specific config from orchestrator config */
 function extractPluginConfig(
-  _slot: PluginSlot,
-  _name: string,
-  _config: OrchestratorConfig,
+  slot: PluginSlot,
+  name: string,
+  config: OrchestratorConfig,
 ): Record<string, unknown> | undefined {
-  // Reserved for future plugin-specific config mapping
+  if (slot === "notifier") {
+    for (const notifierConfig of Object.values(config.notifiers)) {
+      if (
+        notifierConfig &&
+        typeof notifierConfig === "object" &&
+        notifierConfig["plugin"] === name
+      ) {
+        return notifierConfig;
+      }
+    }
+  }
+
   return undefined;
 }
 

@@ -64,6 +64,13 @@ projects:
     # orchestratorRules: |
     #   Prefer to batch-spawn related issues together.
 
+    # OpenCode issue session strategy (only for agent: opencode)
+    # opencodeIssueSessionStrategy: reuse   # reuse | delete | ignore
+
+    # OpenCode orchestrator session strategy (only for agent: opencode)
+    # Controls how the orchestrator's OpenCode session is managed
+    # orchestratorSessionStrategy: reuse    # reuse | delete | ignore
+
     # Per-project reaction overrides
     # reactions:
     #   approved-and-green:
