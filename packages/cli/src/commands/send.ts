@@ -156,7 +156,8 @@ export function registerSend(program: Command): void {
           return output || "";
         }
 
-        if (opts.wait !== false && canUseTmux) {
+        const delegatesToSessionManager = Boolean(existingSession && sessionManager);
+        if (opts.wait !== false && canUseTmux && !delegatesToSessionManager) {
           const start = Date.now();
           let warned = false;
           while (isActive(agent, await captureOutput(5))) {

@@ -514,6 +514,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return null;
   }
 
+  function requireSessionRecord(sessionId: SessionId): LocatedSession {
+    const located = findSessionRecord(sessionId);
+    if (!located) {
+      throw new SessionNotFoundError(sessionId);
+    }
+    return located;
+  }
+
   /**
    * Ensure session has a runtime handle (fabricate one if missing) and enrich
    * with live runtime state + activity detection. Used by both list() and get().
@@ -1221,27 +1229,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
   }
 
   async function kill(sessionId: SessionId, options?: { purgeOpenCode?: boolean }): Promise<void> {
-    // Find the session in any project's sessions directory
-    let raw: Record<string, string> | null = null;
-    let sessionsDir: string | null = null;
-    let project: ProjectConfig | undefined;
-    let projectId: string | undefined;
-
-    for (const [projId, proj] of Object.entries(config.projects)) {
-      const dir = getProjectSessionsDir(proj);
-      const metadata = readMetadataRaw(dir, sessionId);
-      if (metadata) {
-        raw = metadata;
-        sessionsDir = dir;
-        project = proj;
-        projectId = projId;
-        break;
-      }
-    }
-
-    if (!raw || !sessionsDir) {
-      throw new SessionNotFoundError(sessionId);
-    }
+    const { raw, sessionsDir, project, projectId } = requireSessionRecord(sessionId);
 
     const cleanupAgent = raw["agent"] ?? project?.agent ?? config.defaults.agent;
 
@@ -1468,12 +1456,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
   }
 
   async function send(sessionId: SessionId, message: string): Promise<void> {
-    const located = findSessionRecord(sessionId);
-    if (!located) {
-      throw new SessionNotFoundError(sessionId);
-    }
-
-    const { raw, sessionsDir, project } = located;
+    const { raw, sessionsDir, project } = requireSessionRecord(sessionId);
     const selectedAgent = raw["agent"] ?? project.agent ?? config.defaults.agent;
     if (selectedAgent === "opencode" && !asValidOpenCodeSessionId(raw["opencodeSessionId"])) {
       const discovered = await discoverOpenCodeSessionIdByTitle(
@@ -1676,10 +1659,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     const reference = prRef.trim();
     if (!reference) throw new Error("PR reference is required");
 
-    const located = findSessionRecord(sessionId);
-    if (!located) throw new SessionNotFoundError(sessionId);
-
-    const { raw, sessionsDir, project, projectId } = located;
+    const { raw, sessionsDir, project, projectId } = requireSessionRecord(sessionId);
     if (raw["role"] === "orchestrator") {
       throw new Error(`Session ${sessionId} is an orchestrator session and cannot claim PRs`);
     }
@@ -1773,24 +1753,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
   }
 
   async function remap(sessionId: SessionId, force = false): Promise<string> {
-    let raw: Record<string, string> | null = null;
-    let sessionsDir: string | null = null;
-    let project: ProjectConfig | null = null;
-
-    for (const candidateProject of Object.values(config.projects)) {
-      const dir = getProjectSessionsDir(candidateProject);
-      const metadata = readMetadataRaw(dir, sessionId);
-      if (metadata) {
-        raw = metadata;
-        sessionsDir = dir;
-        project = candidateProject;
-        break;
-      }
-    }
-
-    if (!raw || !sessionsDir || !project) {
-      throw new SessionNotFoundError(sessionId);
-    }
+    const { raw, sessionsDir, project } = requireSessionRecord(sessionId);
 
     const selectedAgent = raw["agent"] ?? project.agent ?? config.defaults.agent;
     if (selectedAgent !== "opencode") {
@@ -1821,16 +1784,12 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     let projectId: string | undefined;
     let fromArchive = false;
 
-    for (const [key, proj] of Object.entries(config.projects)) {
-      const dir = getProjectSessionsDir(proj);
-      const metadata = readMetadataRaw(dir, sessionId);
-      if (metadata) {
-        raw = metadata;
-        sessionsDir = dir;
-        project = proj;
-        projectId = key;
-        break;
-      }
+    const activeRecord = findSessionRecord(sessionId);
+    if (activeRecord) {
+      raw = activeRecord.raw;
+      sessionsDir = activeRecord.sessionsDir;
+      project = activeRecord.project;
+      projectId = activeRecord.projectId;
     }
 
     // Fall back to archived metadata (killed/cleaned sessions)
