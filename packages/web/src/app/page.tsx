@@ -10,7 +10,7 @@ import {
   computeStats,
 } from "@/lib/serialize";
 import { prCache, prCacheKey } from "@/lib/cache";
-import { getProjectName } from "@/lib/project-name";
+import { getPrimaryProjectId, getProjectName } from "@/lib/project-name";
 import type { OrchestratorConfig } from "@composio/ao-core";
 
 export const dynamic = "force-dynamic";
@@ -34,12 +34,12 @@ export async function generateMetadata(): Promise<Metadata> {
 export default async function Home() {
   let sessions: DashboardSession[] = [];
   let orchestratorId: string | null = null;
-  const projectName = getProjectName();
+  const projectId = getPrimaryProjectId();
   try {
     const { config, registry, sessionManager } = await getServices();
     const allSessions = await sessionManager.list();
 
-    const projectFilter = projectName;
+    const projectFilter = projectId;
 
     if (projectFilter && projectFilter !== "all") {
       const orchSession = allSessions.find(
@@ -124,7 +124,7 @@ export default async function Home() {
       initialSessions={sessions}
       stats={computeStats(sessions)}
       orchestratorId={orchestratorId}
-      projectName={projectName}
+      projectName={projectId}
     />
   );
 }

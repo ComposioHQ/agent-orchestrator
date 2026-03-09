@@ -22,3 +22,14 @@ export const getProjectName = cache((): string => {
   }
   return "ao";
 });
+
+export const getPrimaryProjectId = cache((): string => {
+  try {
+    const config = loadConfig();
+    const firstKey = Object.keys(config.projects)[0];
+    if (firstKey) return firstKey;
+  } catch {
+    // Config not available
+  }
+  return "ao";
+});
