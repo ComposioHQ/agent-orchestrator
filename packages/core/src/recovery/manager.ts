@@ -163,5 +163,3 @@ export async function recoverSessionById(
   const assessment = await validateSession(scanned, config, registry);
   return executeAction(assessment, config, registry, context);
 }
-
-export { scanAllSessions, validateSession, executeAction };
