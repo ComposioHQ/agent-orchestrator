@@ -64,3 +64,4 @@ CLAUDE.md
 AGENTS.md
 .claude/
 .opencode/
+.claude/scheduled_tasks.lock
