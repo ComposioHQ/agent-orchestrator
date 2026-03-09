@@ -41,6 +41,20 @@ node -e "const pty = require('./node_modules/.pnpm/node-pty@1.1.0/node_modules/n
 pnpm install  # Automatically rebuilds node-pty via postinstall hook
 ```
 
+### Node 24+ deprecation warning during rebuild
+
+If `pnpm install` prints a `DEP0169` warning about `url.parse()` while rebuilding `node-pty`,
+that warning currently comes from `node-gyp`'s dependency stack during the native rebuild step,
+not from this repository's source code. The rebuild is still required on Linux because
+`node-pty@1.1.0` does not ship Linux prebuilds.
+
+```bash
+(node:12345) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized...
+```
+
+This warning is harmless for the install flow and can be ignored until the upstream toolchain
+stops using the deprecated parser.
+
 If you need to manually rebuild:
 
 ```bash

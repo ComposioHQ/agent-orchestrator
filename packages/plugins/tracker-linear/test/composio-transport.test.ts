@@ -6,9 +6,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 const { mockExecute, MockComposio } = vi.hoisted(() => {
   const mockExecute = vi.fn();
-  const MockComposio = vi.fn().mockImplementation(() => ({
-    tools: { execute: mockExecute },
-  }));
+  const MockComposio = vi.fn(function MockComposio() {
+    return { tools: { execute: mockExecute } };
+  });
   return { mockExecute, MockComposio };
 });
 

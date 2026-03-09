@@ -1,4 +1,5 @@
 import eslint from "@eslint/js";
+import nextPlugin from "@next/eslint-plugin-next";
 import tseslint from "typescript-eslint";
 import eslintConfigPrettier from "eslint-config-prettier";
 
@@ -17,6 +18,13 @@ export default tseslint.config(
       "test-clipboard*.sh",
       "packages/mobile/**",
     ],
+  },
+
+  // Register Next plugin so Next build can detect it from flat config
+  {
+    plugins: {
+      "@next/next": nextPlugin,
+    },
   },
 
   // Base JS rules

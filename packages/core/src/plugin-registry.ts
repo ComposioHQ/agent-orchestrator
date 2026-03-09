@@ -107,7 +107,7 @@ export function createPluginRegistry(): PluginRegistry {
       orchestratorConfig?: OrchestratorConfig,
       importFn?: (pkg: string) => Promise<unknown>,
     ): Promise<void> {
-      const doImport = importFn ?? ((pkg: string) => import(pkg));
+      const doImport = importFn ?? ((pkg: string) => import(/* webpackIgnore: true */ pkg));
       for (const builtin of BUILTIN_PLUGINS) {
         try {
           const mod = (await doImport(builtin.pkg)) as PluginModule;

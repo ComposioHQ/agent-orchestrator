@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { type DashboardSession, type DashboardPR, isPRMergeReady } from "@/lib/types";
 import { CI_STATUS } from "@composio/ao-core/types";
@@ -221,7 +222,7 @@ export function SessionDetail({
       {/* Nav bar — glass effect */}
       <nav className="nav-glass sticky top-0 z-10 border-b border-[var(--color-border-subtle)]">
         <div className="mx-auto flex max-w-[900px] items-center gap-2 px-8 py-2.5">
-          <a
+          <Link
             href="/"
             className="flex items-center gap-1 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-text-primary)] hover:no-underline"
           >
@@ -235,7 +236,7 @@ export function SessionDetail({
               <path d="M15 18l-6-6 6-6" />
             </svg>
             Orchestrator
-          </a>
+          </Link>
           <span className="text-[var(--color-border-strong)]">/</span>
           <span className="font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]">
             {session.id}
@@ -453,9 +454,10 @@ function PRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
   const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   useEffect(() => {
+    const timers = timersRef.current;
     return () => {
-      timersRef.current.forEach((timer) => clearTimeout(timer));
-      timersRef.current.clear();
+      timers.forEach((timer) => clearTimeout(timer));
+      timers.clear();
     };
   }, []);
 
