@@ -300,7 +300,17 @@ function createGitHubSCM(): SCM {
       if (currentBranch === pr.branch) return false;
 
       const dirty = await git(["status", "--porcelain"], workspacePath);
-      if (dirty) {
+      const dirtyLines = dirty
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+      const hasBlockingDirty = dirtyLines.some((line) => {
+        const normalized = line.replace(/^([MADRCU?!]{1,2})\s+/, "");
+        return (
+          normalized !== ".claude/settings.json" && normalized !== ".claude/metadata-updater.sh"
+        );
+      });
+      if (hasBlockingDirty) {
         throw new Error(
           `Workspace has uncommitted changes; cannot switch to PR branch "${pr.branch}" safely`,
         );

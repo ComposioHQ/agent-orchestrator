@@ -252,6 +252,23 @@ describe("scm-github plugin", () => {
       );
     });
 
+    it("ignores AO-managed claude metadata file dirtiness", async () => {
+      ghMock.mockResolvedValueOnce({ stdout: "main\n" });
+      ghMock.mockResolvedValueOnce({
+        stdout: " M .claude/settings.json\n?? .claude/metadata-updater.sh\n",
+      });
+      ghMock.mockResolvedValueOnce({ stdout: "" });
+
+      await expect(scm.checkoutPR?.(pr, "/tmp/repo")).resolves.toBe(true);
+
+      expect(ghMock).toHaveBeenNthCalledWith(
+        3,
+        "gh",
+        ["pr", "checkout", "42", "--repo", "acme/repo"],
+        expect.objectContaining({ cwd: "/tmp/repo" }),
+      );
+    });
+
     it("checks out the PR when the workspace is clean", async () => {
       ghMock.mockResolvedValueOnce({ stdout: "main\n" });
       ghMock.mockResolvedValueOnce({ stdout: "" });
