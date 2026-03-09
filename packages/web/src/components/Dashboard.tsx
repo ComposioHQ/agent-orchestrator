@@ -14,6 +14,7 @@ import { AttentionZone } from "./AttentionZone";
 import { PRTableRow } from "./PRStatus";
 import { DynamicFavicon } from "./DynamicFavicon";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
+import { CreateSwarmModal } from "./CreateSwarmModal";
 
 interface DashboardProps {
   initialSessions: DashboardSession[];
@@ -27,6 +28,7 @@ const KANBAN_LEVELS = ["working", "pending", "review", "respond", "merge"] as co
 export function Dashboard({ initialSessions, stats, orchestratorId, projectName }: DashboardProps) {
   const sessions = useSessionEvents(initialSessions);
   const [rateLimitDismissed, setRateLimitDismissed] = useState(false);
+  const [showSwarmModal, setShowSwarmModal] = useState(false);
   const grouped = useMemo(() => {
     const zones: Record<AttentionLevel, DashboardSession[]> = {
       merge: [],
@@ -105,19 +107,31 @@ export function Dashboard({ initialSessions, stats, orchestratorId, projectName 
           </h1>
           <StatusLine stats={stats} />
         </div>
-        {orchestratorId && (
-          <a
-            href={`/sessions/${encodeURIComponent(orchestratorId)}`}
-            className="orchestrator-btn flex items-center gap-2 rounded-[7px] px-4 py-2 text-[12px] font-semibold hover:no-underline"
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowSwarmModal(true)}
+            className="flex items-center gap-1.5 rounded-[7px] border border-[var(--color-border-default)] bg-[var(--color-bg-subtle)] px-3.5 py-2 text-[12px] font-semibold text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
           >
-            <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] opacity-80" />
-            orchestrator
-            <svg className="h-3 w-3 opacity-70" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-              <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" />
+            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <path d="M12 5v14M5 12h14" />
             </svg>
-          </a>
-        )}
+            Create Swarm
+          </button>
+          {orchestratorId && (
+            <a
+              href={`/sessions/${encodeURIComponent(orchestratorId)}`}
+              className="orchestrator-btn flex items-center gap-2 rounded-[7px] px-4 py-2 text-[12px] font-semibold hover:no-underline"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] opacity-80" />
+              orchestrator
+              <svg className="h-3 w-3 opacity-70" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" />
+              </svg>
+            </a>
+          )}
+        </div>
       </div>
+      {showSwarmModal && <CreateSwarmModal onClose={() => setShowSwarmModal(false)} />}
 
       {/* Rate limit notice */}
       {anyRateLimited && !rateLimitDismissed && (
