@@ -37,7 +37,7 @@ import {
 const execFileAsync = promisify(execFile);
 
 /** Known bot logins that produce automated review comments */
-const BOT_AUTHORS = new Set([
+const DEFAULT_BOT_AUTHORS = new Set([
   "cursor[bot]",
   "github-actions[bot]",
   "codecov[bot]",
@@ -48,7 +48,18 @@ const BOT_AUTHORS = new Set([
   "deepsource-autofix[bot]",
   "snyk-bot",
   "lgtm-com[bot]",
+  "coderabbitai[bot]",
+  "copilot-pull-request-reviewer",
+  "copilot-pull-request-reviewer[bot]",
+  "Copilot",
+  "chatgpt-codex-connector[bot]",
 ]);
+
+function buildBotAuthors(config?: Record<string, unknown>): Set<string> {
+  const extra = config?.extraBotAuthors;
+  if (!Array.isArray(extra) || extra.length === 0) return DEFAULT_BOT_AUTHORS;
+  return new Set([...DEFAULT_BOT_AUTHORS, ...(extra as string[]).filter((x) => typeof x === "string")]);
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -445,7 +456,8 @@ function parseDate(val: string | undefined | null): Date {
 // SCM implementation
 // ---------------------------------------------------------------------------
 
-function createGitHubSCM(): SCM {
+function createGitHubSCM(config?: Record<string, unknown>): SCM {
+  const BOT_AUTHORS = buildBotAuthors(config);
   return {
     name: "github",
 
@@ -1033,8 +1045,8 @@ export const manifest = {
   version: "0.1.0",
 };
 
-export function create(): SCM {
-  return createGitHubSCM();
+export function create(config?: Record<string, unknown>): SCM {
+  return createGitHubSCM(config);
 }
 
 export default { manifest, create } satisfies PluginModule<SCM>;
