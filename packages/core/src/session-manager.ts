@@ -2047,6 +2047,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
   async function send(sessionId: SessionId, message: string): Promise<void> {
     const { raw, sessionsDir, project } = requireSessionRecord(sessionId);
+    const persistedStatus = validateStatus(raw["status"]);
     const selectedAgent = raw["agent"] ?? project.agent ?? config.defaults.agent;
     if (selectedAgent === "opencode" && !asValidOpenCodeSessionId(raw["opencodeSessionId"])) {
       const discovered = await discoverOpenCodeSessionIdByTitle(
@@ -2153,11 +2154,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         } satisfies RuntimeHandle);
       const normalized = current.runtimeHandle ? current : { ...current, runtimeHandle: handle };
 
-      if (forceRestore || isRestorable(normalized)) {
+      if (forceRestore) {
         return restoreForDelivery(
-          forceRestore
-            ? "session needed to be restarted before delivery"
-            : "session is not running",
+          "session needed to be restarted before delivery",
           normalized,
         );
       }
@@ -2166,6 +2165,19 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         runtimePlugin.isAlive(handle).catch(() => true),
         agentPlugin.isProcessRunning(handle).catch(() => true),
       ]);
+
+      // Prefer the live runtime/process check over stale metadata status.
+      // Sessions can sit idle at their prompt with statuses like "done" or
+      // "stuck" while still accepting new input. If the runtime is alive and
+      // the agent process is still present, we should deliver directly instead
+      // of forcing a restore based only on the recorded status.
+      if (runtimeAlive && processRunning) {
+        return normalized;
+      }
+
+      if (isRestorable(normalized)) {
+        return restoreForDelivery("session is not running", normalized);
+      }
 
       if (!runtimeAlive || !processRunning) {
         return restoreForDelivery(
@@ -2238,6 +2250,12 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         }
         throw new Error(String(retryErr), { cause: retryErr });
       }
+    }
+
+    // A freshly delivered prompt means the session is actively working again,
+    // even if the last persisted status was idle/stuck/review-related.
+    if (!NON_RESTORABLE_STATUSES.has(persistedStatus)) {
+      updateMetadata(sessionsDir, sessionId, { status: "working" });
     }
   }
 

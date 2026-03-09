@@ -2098,6 +2098,47 @@ describe("send", () => {
     expect(mockRuntime.sendMessage).toHaveBeenCalledWith(makeHandle("rt-1"), "Fix the CI failures");
   });
 
+  it("marks a live non-working session as working after sending", async () => {
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "stuck",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+    vi.mocked(mockRuntime.getOutput).mockResolvedValueOnce("before").mockResolvedValueOnce("after");
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.send("app-1", "Wake up and handle the CI failures");
+
+    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
+      makeHandle("rt-1"),
+      "Wake up and handle the CI failures",
+    );
+    expect(readMetadataRaw(sessionsDir, "app-1")?.["status"]).toBe("working");
+  });
+
+  it("prefers a live session over stale terminal metadata when sending", async () => {
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "done",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+    vi.mocked(mockRuntime.getOutput).mockResolvedValueOnce("before").mockResolvedValueOnce("after");
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.send("app-1", "Resume and fix the failing checks");
+
+    expect(mockRuntime.create).not.toHaveBeenCalled();
+    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
+      makeHandle("rt-1"),
+      "Resume and fix the failing checks",
+    );
+    expect(readMetadataRaw(sessionsDir, "app-1")?.["status"]).toBe("working");
+  });
+
   it("restores a dead session before sending the message", async () => {
     const wsPath = join(tmpDir, "ws-app-1");
     mkdirSync(wsPath, { recursive: true });
@@ -2129,6 +2170,7 @@ describe("send", () => {
       makeHandle("rt-restored"),
       "Please fix the review comments",
     );
+    expect(readMetadataRaw(sessionsDir, "app-1")?.["status"]).toBe("working");
   });
 
   it("resolves when delivery cannot be confirmed (message already sent)", async () => {
