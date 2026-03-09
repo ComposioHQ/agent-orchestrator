@@ -835,6 +835,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         launchCommand,
         environment: {
           ...environment,
+          ...(project.agentConfig?.env ?? {}), // Merge custom environment variables from config
           AO_SESSION: sessionId,
           AO_DATA_DIR: sessionsDir, // Pass sessions directory (not root dataDir)
           AO_SESSION_NAME: sessionId, // User-facing session name
@@ -1070,6 +1071,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       launchCommand,
       environment: {
         ...environment,
+        ...(project.agentConfig?.env ?? {}), // Merge custom environment variables from config
         AO_SESSION: sessionId,
         AO_DATA_DIR: sessionsDir,
         AO_SESSION_NAME: sessionId,
@@ -1982,6 +1984,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       launchCommand,
       environment: {
         ...environment,
+        ...(project.agentConfig?.env ?? {}), // Merge custom environment variables from config
         AO_SESSION: sessionId,
         AO_DATA_DIR: sessionsDir,
         AO_SESSION_NAME: sessionId,
