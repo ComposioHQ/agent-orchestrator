@@ -1055,6 +1055,281 @@ describe("reactions", () => {
     expect(mockSessionManager.send).toHaveBeenCalledWith("app-1", "CI is failing. Fix it.");
   });
 
+  it("auto-fetches CI failure logs when ci-failed has no explicit message", async () => {
+    config.reactions = {
+      "ci-failed": {
+        auto: true,
+        action: "send-to-agent",
+        retries: 2,
+      },
+    };
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("failing"),
+      getCIFailureLogs: vi.fn().mockResolvedValue("FAIL src/example.test.ts\nExpected true to be false"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("none"),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    const session = makeSession({ status: "pr_open", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(mockSCM.getCIFailureLogs).toHaveBeenCalledWith(session.pr);
+    expect(mockSessionManager.send).toHaveBeenCalledWith(
+      "app-1",
+      "CI failed on your PR. Here are the failure logs:\n\nFAIL src/example.test.ts\nExpected true to be false\n\nPlease fix the failing test(s) and push.",
+    );
+  });
+
+  it("falls back to a generic CI failure message when logs are unavailable", async () => {
+    config.reactions = {
+      "ci-failed": {
+        auto: true,
+        action: "send-to-agent",
+        retries: 2,
+      },
+    };
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("failing"),
+      getCIFailureLogs: vi.fn().mockResolvedValue(null),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("none"),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    const session = makeSession({ status: "pr_open", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(mockSessionManager.send).toHaveBeenCalledWith(
+      "app-1",
+      "CI has failed on your PR. Please check the CI logs, fix the issue, and push.",
+    );
+  });
+
+  it("re-fires persistent ci_failed reactions after the configured interval", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-09T12:00:00.000Z"));
+
+    config.reactions = {
+      "ci-failed": {
+        auto: true,
+        action: "send-to-agent",
+        retries: 3,
+        refireIntervalMs: 120_000,
+      },
+    };
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("failing"),
+      getCIFailureLogs: vi
+        .fn()
+        .mockResolvedValueOnce("first failure")
+        .mockResolvedValueOnce("updated failure"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("none"),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    const session = makeSession({ status: "pr_open", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+
+    vi.setSystemTime(new Date("2026-03-09T12:01:59.000Z"));
+    await lm.check("app-1");
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+
+    vi.setSystemTime(new Date("2026-03-09T12:02:01.000Z"));
+    await lm.check("app-1");
+
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(2);
+    expect(mockSessionManager.send).toHaveBeenNthCalledWith(
+      2,
+      "app-1",
+      "CI failed on your PR. Here are the failure logs:\n\nupdated failure\n\nPlease fix the failing test(s) and push.",
+    );
+  });
+
+  it("escalates persistent ci_failed reactions after retries are exhausted", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-09T13:00:00.000Z"));
+
+    const mockNotifier: Notifier = {
+      name: "mock-notifier",
+      notify: vi.fn().mockResolvedValue(undefined),
+    };
+
+    config.reactions = {
+      "ci-failed": {
+        auto: true,
+        action: "send-to-agent",
+        retries: 1,
+        refireIntervalMs: 120_000,
+      },
+    };
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("failing"),
+      getCIFailureLogs: vi.fn().mockResolvedValue("initial failure"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("none"),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    const registryWithNotifier: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "notifier" && name === "desktop") return mockNotifier;
+        return null;
+      }),
+    };
+
+    const session = makeSession({ status: "pr_open", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithNotifier,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+    expect(mockNotifier.notify).not.toHaveBeenCalled();
+
+    vi.setSystemTime(new Date("2026-03-09T13:02:01.000Z"));
+    await lm.check("app-1");
+
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+    expect(mockNotifier.notify).toHaveBeenCalledTimes(1);
+    expect(mockNotifier.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "reaction.escalated" }),
+    );
+
+    vi.setSystemTime(new Date("2026-03-09T13:04:02.000Z"));
+    await lm.check("app-1");
+
+    expect(mockNotifier.notify).toHaveBeenCalledTimes(1);
+  });
+
   it("does not trigger reaction when auto=false", async () => {
     config.reactions = {
       "ci-failed": {

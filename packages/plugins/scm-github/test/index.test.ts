@@ -63,6 +63,10 @@ function mockGh(result: unknown) {
   ghMock.mockResolvedValueOnce({ stdout: JSON.stringify(result) });
 }
 
+function mockGhStdout(stdout: string) {
+  ghMock.mockResolvedValueOnce({ stdout });
+}
+
 function mockGhError(msg = "Command failed") {
   ghMock.mockRejectedValueOnce(new Error(msg));
 }
@@ -404,6 +408,63 @@ describe("scm-github plugin", () => {
       expect(checks[0]).toMatchObject({ name: "Test", status: "passed", url: "https://ci/test" });
       expect(checks[1]).toMatchObject({ name: "Lint", status: "pending", url: "https://ci/lint" });
       expect(ghMock).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("getCIFailureLogs", () => {
+    it("returns the last 80 lines from the first failed GitHub Actions run", async () => {
+      mockGh([
+        {
+          name: "build",
+          state: "FAILURE",
+          link: "https://github.com/acme/repo/actions/runs/123456789/job/1",
+          startedAt: "2025-01-01T00:00:00Z",
+          completedAt: "2025-01-01T00:05:00Z",
+        },
+      ]);
+      mockGhStdout(
+        Array.from({ length: 100 }, (_, index) => `line ${index + 1}`).join("\n"),
+      );
+
+      await expect(scm.getCIFailureLogs?.(pr)).resolves.toBe(
+        Array.from({ length: 80 }, (_, index) => `line ${index + 21}`).join("\n"),
+      );
+      expect(ghMock).toHaveBeenNthCalledWith(
+        2,
+        "gh",
+        ["run", "view", "123456789", "--repo", "acme/repo", "--log-failed"],
+        expect.any(Object),
+      );
+    });
+
+    it("returns null when there is no failed check with a GitHub Actions run URL", async () => {
+      mockGh([
+        {
+          name: "build",
+          state: "FAILURE",
+          link: "https://ci.example.com/build/42",
+          startedAt: "2025-01-01T00:00:00Z",
+          completedAt: "2025-01-01T00:05:00Z",
+        },
+      ]);
+
+      await expect(scm.getCIFailureLogs?.(pr)).resolves.toBeNull();
+      expect(ghMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("returns null when fetching the failed run logs fails", async () => {
+      mockGh([
+        {
+          name: "build",
+          state: "FAILURE",
+          link: "https://github.com/acme/repo/runs/123456789?check_suite_focus=true",
+          startedAt: "2025-01-01T00:00:00Z",
+          completedAt: "2025-01-01T00:05:00Z",
+        },
+      ]);
+      mockGhError("run logs unavailable");
+
+      await expect(scm.getCIFailureLogs?.(pr)).resolves.toBeNull();
     });
   });
 

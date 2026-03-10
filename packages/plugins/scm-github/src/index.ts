@@ -87,6 +87,32 @@ function parseDate(val: string | undefined | null): Date {
   return isNaN(d.getTime()) ? new Date(0) : d;
 }
 
+function extractRunIdFromUrl(url: string | undefined): string | null {
+  if (!url) return null;
+
+  const pattern = /\/runs\/(\d+)(?:\/|$)/;
+  const fallbackMatch = url.match(pattern)?.[1] ?? null;
+
+  try {
+    const parsed = new URL(url);
+    const match = parsed.pathname.match(pattern);
+    if (match?.[1]) {
+      return match[1];
+    }
+  } catch {
+    return fallbackMatch;
+  }
+
+  return fallbackMatch;
+}
+
+function truncateLogOutput(logs: string, maxLines: number): string | null {
+  const trimmed = logs.trim();
+  if (!trimmed) return null;
+
+  return trimmed.split(/\r?\n/).slice(-maxLines).join("\n");
+}
+
 function isUnsupportedPrChecksJsonError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   return /pr checks/i.test(err.message) && /unknown json field/i.test(err.message);
@@ -404,6 +430,38 @@ function createGitHubSCM(): SCM {
         // Do NOT silently return [] — that causes a fail-open where CI
         // appears healthy when we simply failed to fetch check status.
         throw new Error("Failed to fetch CI checks", { cause: err });
+      }
+    },
+
+    async getCIFailureLogs(pr: PRInfo): Promise<string | null> {
+      try {
+        const failedRunIds = (await this.getCIChecks(pr))
+          .filter((check) => check.status === "failed")
+          .map((check) => extractRunIdFromUrl(check.url))
+          .filter((runId): runId is string => runId !== null);
+
+        for (const runId of failedRunIds) {
+          try {
+            const logs = await gh([
+              "run",
+              "view",
+              runId,
+              "--repo",
+              repoFlag(pr),
+              "--log-failed",
+            ]);
+            const truncatedLogs = truncateLogOutput(logs, 80);
+            if (truncatedLogs) {
+              return truncatedLogs;
+            }
+          } catch {
+            continue;
+          }
+        }
+
+        return null;
+      } catch {
+        return null;
       }
     },
 

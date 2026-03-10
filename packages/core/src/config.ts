@@ -28,6 +28,7 @@ const ReactionConfigSchema = z.object({
   message: z.string().optional(),
   priority: z.enum(["urgent", "action", "warning", "info"]).optional(),
   retries: z.number().optional(),
+  refireIntervalMs: z.number().nonnegative().optional(),
   escalateAfter: z.union([z.number(), z.string()]).optional(),
   threshold: z.string().optional(),
   includeSummary: z.boolean().optional(),
@@ -229,9 +230,8 @@ function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
     "ci-failed": {
       auto: true,
       action: "send-to-agent",
-      message:
-        "CI is failing on your PR. Run `gh pr checks` to see the failures, fix them, and push.",
       retries: 2,
+      refireIntervalMs: 120_000,
       escalateAfter: 2,
     },
     "changes-requested": {
@@ -239,6 +239,7 @@ function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
       action: "send-to-agent",
       message:
         "There are review comments on your PR. Check with `gh pr view --comments` and `gh api` for inline comments. Address each one, push fixes, and reply.",
+      refireIntervalMs: 300_000,
       escalateAfter: "30m",
     },
     "bugbot-comments": {
@@ -263,6 +264,7 @@ function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
       auto: true,
       action: "notify",
       priority: "urgent",
+      refireIntervalMs: 300_000,
       threshold: "10m",
     },
     "agent-needs-input": {

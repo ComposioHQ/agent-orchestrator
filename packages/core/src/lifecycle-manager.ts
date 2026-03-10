@@ -170,6 +170,8 @@ export interface LifecycleManagerDeps {
 interface ReactionTracker {
   attempts: number;
   firstTriggered: Date;
+  lastReactionFiredAtMs: number;
+  escalatedAtMs?: number;
 }
 
 interface LifecyclePollStats {
@@ -264,6 +266,8 @@ function createPollStats(): LifecyclePollStats {
 }
 
 const OPEN_PR_STATUS_POLL_INTERVAL_MS = 60_000;
+const DEFAULT_CI_REACTION_REFIRE_INTERVAL_MS = 120_000;
+const DEFAULT_REACTION_REFIRE_INTERVAL_MS = 300_000;
 
 interface OpenPREvaluation {
   status: SessionStatus;
@@ -292,6 +296,34 @@ function shouldOverridePreservedPRStatus(status: SessionStatus): boolean {
   );
 }
 
+function getPersistentReactionKey(status: SessionStatus): string | null {
+  switch (status) {
+    case SESSION_STATUS.CI_FAILED:
+      return "ci-failed";
+    case SESSION_STATUS.CHANGES_REQUESTED:
+      return "changes-requested";
+    case SESSION_STATUS.STUCK:
+      return "agent-stuck";
+    default:
+      return null;
+  }
+}
+
+function getReactionRefireIntervalMs(
+  reactionKey: string,
+  reactionConfig: ReactionConfig,
+): number {
+  if (typeof reactionConfig.refireIntervalMs === "number") {
+    return reactionConfig.refireIntervalMs;
+  }
+
+  if (reactionKey === "ci-failed") {
+    return DEFAULT_CI_REACTION_REFIRE_INTERVAL_MS;
+  }
+
+  return DEFAULT_REACTION_REFIRE_INTERVAL_MS;
+}
+
 /** Create a LifecycleManager instance. */
 export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleManager {
   const { config, registry, sessionManager, projectId: scopedProjectId } = deps;
@@ -301,6 +333,116 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
+
+  function getOrCreateReactionTracker(sessionId: SessionId, reactionKey: string): ReactionTracker {
+    const trackerKey = `${sessionId}:${reactionKey}`;
+    let tracker = reactionTrackers.get(trackerKey);
+
+    if (!tracker) {
+      tracker = {
+        attempts: 0,
+        firstTriggered: new Date(),
+        lastReactionFiredAtMs: 0,
+      };
+      reactionTrackers.set(trackerKey, tracker);
+    }
+
+    return tracker;
+  }
+
+  async function buildSendToAgentMessage(
+    sessionId: SessionId,
+    projectId: string,
+    reactionKey: string,
+    reactionConfig: ReactionConfig,
+    pollStats?: LifecyclePollStats,
+    session?: Session,
+  ): Promise<string | null> {
+    if (reactionConfig.message) {
+      return reactionConfig.message;
+    }
+
+    if (reactionKey !== "ci-failed") {
+      return null;
+    }
+
+    const fallbackMessage =
+      "CI has failed on your PR. Please check the CI logs, fix the issue, and push.";
+    const currentSession = session ?? (await sessionManager.get(sessionId));
+
+    if (!currentSession?.pr) {
+      return fallbackMessage;
+    }
+
+    const project = config.projects[currentSession.projectId] ?? config.projects[projectId];
+    if (!project?.scm) {
+      return fallbackMessage;
+    }
+
+    const scm = registry.get<SCM>("scm", project.scm.plugin);
+    if (!scm?.getCIFailureLogs) {
+      return fallbackMessage;
+    }
+
+    try {
+      const logs = await scm.getCIFailureLogs(currentSession.pr);
+      if (!logs) {
+        return fallbackMessage;
+      }
+
+      return `CI failed on your PR. Here are the failure logs:\n\n${logs}\n\nPlease fix the failing test(s) and push.`;
+    } catch (error) {
+      incrementPollError(pollStats);
+      logLifecycle("error", "reaction.ci_logs.failed", {
+        pollId: pollStats?.pollId,
+        projectId: currentSession.projectId,
+        sessionId,
+        reactionKey,
+        pr: currentSession.pr,
+        error,
+      });
+      return fallbackMessage;
+    }
+  }
+
+  async function maybeRefirePersistentReaction(
+    session: Session,
+    status: SessionStatus,
+    pollStats?: LifecyclePollStats,
+  ): Promise<void> {
+    const reactionKey = getPersistentReactionKey(status);
+    if (!reactionKey) {
+      return;
+    }
+
+    const reactionConfig = getReactionConfigForSession(session, reactionKey);
+    if (!reactionConfig?.action) {
+      return;
+    }
+
+    if (reactionConfig.auto === false && reactionConfig.action !== "notify") {
+      return;
+    }
+
+    const tracker = reactionTrackers.get(`${session.id}:${reactionKey}`);
+    if (!tracker || tracker.escalatedAtMs !== undefined) {
+      return;
+    }
+
+    const refireIntervalMs = getReactionRefireIntervalMs(reactionKey, reactionConfig);
+    if (Date.now() - tracker.lastReactionFiredAtMs < refireIntervalMs) {
+      return;
+    }
+
+    await executeReaction(
+      session.id,
+      session.projectId,
+      reactionKey,
+      reactionConfig,
+      pollStats,
+      session,
+    );
+  }
 
   /** Check if idle time exceeds the agent-stuck threshold. */
   function isIdleBeyondThreshold(session: Session, idleTimestamp: Date): boolean {
@@ -608,16 +750,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     pollStats?: LifecyclePollStats,
     session?: Session,
   ): Promise<ReactionResult> {
-    const trackerKey = `${sessionId}:${reactionKey}`;
-    let tracker = reactionTrackers.get(trackerKey);
-
-    if (!tracker) {
-      tracker = { attempts: 0, firstTriggered: new Date() };
-      reactionTrackers.set(trackerKey, tracker);
-    }
+    const tracker = getOrCreateReactionTracker(sessionId, reactionKey);
+    const nowMs = Date.now();
 
     // Increment attempts before checking escalation
     tracker.attempts++;
+    tracker.lastReactionFiredAtMs = nowMs;
 
     // Check if we should escalate
     const maxRetries = reactionConfig.retries ?? Infinity;
@@ -640,6 +778,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
 
     if (shouldEscalate) {
+      tracker.escalatedAtMs = nowMs;
+
       // Escalate to human
       const event = createEvent("reaction.escalated", {
         sessionId,
@@ -668,9 +808,18 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     switch (action) {
       case "send-to-agent": {
-        if (reactionConfig.message) {
+        const message = await buildSendToAgentMessage(
+          sessionId,
+          projectId,
+          reactionKey,
+          reactionConfig,
+          pollStats,
+          session,
+        );
+
+        if (message) {
           try {
-            await sessionManager.send(sessionId, reactionConfig.message);
+            await sessionManager.send(sessionId, message);
             logLifecycle("info", "reaction.sent_to_agent", {
               pollId: pollStats?.pollId,
               projectId,
@@ -683,7 +832,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
               reactionType: reactionKey,
               success: true,
               action: "send-to-agent",
-              message: reactionConfig.message,
+              message,
               escalated: false,
             };
           } catch (error) {
@@ -1245,6 +1394,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
 
     await maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction, pollStats);
+
+    if (newStatus === oldStatus) {
+      await maybeRefirePersistentReaction(session, newStatus, pollStats);
+    }
   }
 
   /** Run one polling cycle across all sessions. */

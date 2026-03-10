@@ -550,6 +550,9 @@ export interface SCM {
   /** Get overall CI summary */
   getCISummary(pr: PRInfo): Promise<CIStatus>;
 
+  /** Get CI failure log output for a PR (truncated). Optional. */
+  getCIFailureLogs?(pr: PRInfo): Promise<string | null>;
+
   // --- Review Tracking ---
 
   /** Get all reviews on a PR */
@@ -793,6 +796,9 @@ export interface ReactionConfig {
 
   /** How many times to retry send-to-agent before escalating */
   retries?: number;
+
+  /** How long to wait before re-firing for a persistent actionable state */
+  refireIntervalMs?: number;
 
   /** Escalate to human notification after this many failures or this duration */
   escalateAfter?: number | string;
