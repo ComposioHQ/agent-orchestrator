@@ -12,7 +12,7 @@ import {
 } from "@composio/ao-core";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { stat, access } from "node:fs/promises";
+import { stat, access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { constants } from "node:fs";
 
@@ -59,6 +59,81 @@ async function getChatHistoryMtime(workspacePath: string): Promise<Date | null> 
   } catch {
     return null;
   }
+}
+
+/**
+ * Extract a summary from Aider's chat history file (.aider.chat.history.md).
+ * The file uses markdown with `#### <role>` headers separating messages.
+ * Returns the first line of the last assistant message as the summary.
+ */
+async function extractSummaryFromChatHistory(
+  workspacePath: string,
+): Promise<{ summary: string; isFallback: boolean } | null> {
+  const chatFile = join(workspacePath, ".aider.chat.history.md");
+  let content: string;
+  try {
+    content = await readFile(chatFile, "utf-8");
+  } catch {
+    return null;
+  }
+
+  if (!content.trim()) return null;
+
+  // Split into sections by role headers (#### user, #### assistant)
+  // Walk backwards to find the last assistant message
+  const lines = content.split("\n");
+  let lastAssistantStart = -1;
+  let lastAssistantEnd = lines.length;
+
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (/^#{1,4}\s+(assistant|ASSISTANT)/i.test(line)) {
+      lastAssistantStart = i + 1;
+      break;
+    }
+    // If we hit another header before finding assistant, update the end boundary
+    if (/^#{1,4}\s+(user|USER|system|SYSTEM)/i.test(line)) {
+      lastAssistantEnd = i;
+    }
+  }
+
+  if (lastAssistantStart === -1) {
+    // No assistant message found — try to use the first user message as fallback
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (/^#{1,4}\s+(user|USER)/i.test(line)) {
+        // Gather content until the next section header
+        for (let j = i + 1; j < lines.length; j++) {
+          const nextLine = lines[j].trim();
+          if (/^#{1,4}\s+/i.test(nextLine)) break;
+          if (nextLine) {
+            return { summary: nextLine.slice(0, 120), isFallback: true };
+          }
+        }
+        break;
+      }
+    }
+    return null;
+  }
+
+  // Extract the assistant message content, skipping code blocks entirely
+  const rawLines = lines.slice(lastAssistantStart, lastAssistantEnd);
+  const assistantLines: string[] = [];
+  let inCodeBlock = false;
+  for (const l of rawLines) {
+    const trimmed = l.trim();
+    if (trimmed.startsWith("```")) {
+      inCodeBlock = !inCodeBlock;
+      continue;
+    }
+    if (!inCodeBlock && trimmed) {
+      assistantLines.push(trimmed);
+    }
+  }
+
+  if (assistantLines.length === 0) return null;
+
+  return { summary: assistantLines[0].slice(0, 120), isFallback: false };
 }
 
 // =============================================================================
@@ -118,7 +193,26 @@ function createAiderAgent(): Agent {
 
     detectActivity(terminalOutput: string): ActivityState {
       if (!terminalOutput.trim()) return "idle";
-      // Aider doesn't have rich terminal output patterns yet
+
+      const lines = terminalOutput.trim().split("\n");
+      const lastLine = lines[lines.length - 1]?.trim() ?? "";
+      const tail = lines.slice(-5).join("\n");
+
+      // Aider's input prompt — waiting for user input
+      if (/^aider\s*>\s*$/i.test(lastLine)) return "ready";
+      if (/^>\s*$/.test(lastLine)) return "ready";
+
+      // Permission/confirmation prompts
+      if (/\(Y\)es.*\(N\)o/i.test(tail)) return "waiting_input";
+      if (/Allow edits to/i.test(tail)) return "waiting_input";
+      if (/Add .+ to the chat\?/i.test(tail)) return "waiting_input";
+      if (/Create new file/i.test(tail)) return "waiting_input";
+
+      // Error patterns
+      if (/^Error:/i.test(lastLine)) return "blocked";
+      if (/API Error/i.test(tail)) return "blocked";
+      if (/rate limit/i.test(tail)) return "blocked";
+
       return "active";
     },
 
@@ -207,9 +301,15 @@ function createAiderAgent(): Agent {
       }
     },
 
-    async getSessionInfo(_session: Session): Promise<AgentSessionInfo | null> {
-      // Aider doesn't have JSONL session files for introspection yet
-      return null;
+    async getSessionInfo(session: Session): Promise<AgentSessionInfo | null> {
+      if (!session.workspacePath) return null;
+
+      const result = await extractSummaryFromChatHistory(session.workspacePath);
+      return {
+        summary: result?.summary ?? null,
+        summaryIsFallback: result?.isFallback ?? false,
+        agentSessionId: null, // Aider doesn't have persistent session IDs
+      };
     },
   };
 }
