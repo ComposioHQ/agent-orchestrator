@@ -11,6 +11,8 @@ import {
   type ProjectConfig,
   type RuntimeHandle,
   type Session,
+  type UsageDial,
+  type UsageSnapshot,
   type WorkspaceHooksConfig,
 } from "@composio/ao-core";
 import { execFile } from "node:child_process";
@@ -330,6 +332,7 @@ const CODEX_SESSIONS_DIR = join(homedir(), ".codex", "sessions");
 
 /** Typed representation of a line in a Codex JSONL session file */
 interface CodexJsonlLine {
+  timestamp?: string;
   type?: string;
   cwd?: string;
   model?: string;
@@ -339,13 +342,50 @@ interface CodexJsonlLine {
   content?: string;
   role?: string;
   // event_msg with token_count subtype
-  msg?: {
-    type?: string;
-    input_tokens?: number;
-    output_tokens?: number;
-    cached_tokens?: number;
-    reasoning_tokens?: number;
-  };
+  msg?: CodexEventMessage;
+  payload?: CodexEventMessage;
+}
+
+interface CodexTokenUsageTotals {
+  input_tokens?: number;
+  cached_input_tokens?: number;
+  output_tokens?: number;
+  reasoning_output_tokens?: number;
+  total_tokens?: number;
+}
+
+interface CodexTokenUsageInfo {
+  total_token_usage?: CodexTokenUsageTotals | null;
+  last_token_usage?: CodexTokenUsageTotals | null;
+}
+
+interface CodexCreditsSnapshot {
+  has_credits?: boolean;
+  unlimited?: boolean;
+  balance?: number | string | null;
+}
+
+interface CodexRateLimitWindow {
+  used_percent?: number;
+  window_minutes?: number;
+  resets_at?: number | string | null;
+}
+
+interface CodexRateLimitSnapshot {
+  limit_id?: string;
+  limit_name?: string | null;
+  primary?: CodexRateLimitWindow | null;
+  secondary?: CodexRateLimitWindow | null;
+  credits?: CodexCreditsSnapshot | null;
+  plan_type?: string | null;
+}
+
+interface CodexEventMessage {
+  type?: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  info?: CodexTokenUsageInfo | null;
+  rate_limits?: CodexRateLimitSnapshot | CodexRateLimitSnapshot[] | null;
 }
 
 /**
@@ -471,6 +511,256 @@ interface CodexSessionData {
   threadId: string | null;
   inputTokens: number;
   outputTokens: number;
+  usesCumulativeTotals: boolean;
+  rateLimits: Map<string, CodexRateLimitSnapshot>;
+  credits: CodexCreditsSnapshot | null;
+  plan: string | null;
+  capturedAt: string | null;
+}
+
+function extractTokenUsage(
+  message: CodexEventMessage | null | undefined,
+): { inputTokens: number; outputTokens: number; cumulative: boolean } | null {
+  if (!message || message.type !== "token_count") return null;
+
+  const totalUsage = message.info?.total_token_usage;
+  if (
+    totalUsage &&
+    (typeof totalUsage.input_tokens === "number" || typeof totalUsage.output_tokens === "number")
+  ) {
+    return {
+      inputTokens: totalUsage.input_tokens ?? 0,
+      outputTokens: totalUsage.output_tokens ?? 0,
+      cumulative: true,
+    };
+  }
+
+  const lastUsage = message.info?.last_token_usage;
+  if (
+    lastUsage &&
+    (typeof lastUsage.input_tokens === "number" || typeof lastUsage.output_tokens === "number")
+  ) {
+    return {
+      inputTokens: lastUsage.input_tokens ?? 0,
+      outputTokens: lastUsage.output_tokens ?? 0,
+      cumulative: false,
+    };
+  }
+
+  if (
+    typeof message.input_tokens === "number" ||
+    typeof message.output_tokens === "number"
+  ) {
+    return {
+      inputTokens: message.input_tokens ?? 0,
+      outputTokens: message.output_tokens ?? 0,
+      cumulative: false,
+    };
+  }
+
+  return null;
+}
+
+function asRateLimitSnapshots(
+  rateLimits: CodexEventMessage["rate_limits"],
+): CodexRateLimitSnapshot[] {
+  if (!rateLimits) return [];
+  return Array.isArray(rateLimits) ? rateLimits : [rateLimits];
+}
+
+function normalizeResetTimestamp(resetsAt: number | string | null | undefined): string | null {
+  if (typeof resetsAt === "number" && Number.isFinite(resetsAt)) {
+    const millis = resetsAt > 1_000_000_000_000 ? resetsAt : resetsAt * 1000;
+    return new Date(millis).toISOString();
+  }
+
+  if (typeof resetsAt === "string" && resetsAt.trim().length > 0) {
+    const parsed = new Date(resetsAt);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString();
+    }
+  }
+
+  return null;
+}
+
+function normalizeBalance(value: number | string | null | undefined): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
+function clampPercent(value: number): number {
+  return Math.min(100, Math.max(0, value));
+}
+
+function formatPercent(value: number): string {
+  const rounded = Math.round(value * 10) / 10;
+  return Number.isInteger(rounded) ? `${rounded}%` : `${rounded.toFixed(1)}%`;
+}
+
+function formatCredits(balance: number): string {
+  const displayBalance = balance >= 1 ? Math.floor(balance) : balance;
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: displayBalance < 1 ? 1 : 0,
+    minimumFractionDigits: 0,
+  }).format(displayBalance);
+}
+
+function formatPlanType(planType: string | null): string | null {
+  if (!planType) return null;
+  if (planType.toLowerCase() === "pro") {
+    return "ChatGPT Pro";
+  }
+  return planType;
+}
+
+function createPercentRemainingDial(
+  id: string,
+  label: string,
+  window: CodexRateLimitWindow | null | undefined,
+): UsageDial | null {
+  if (!window || typeof window.used_percent !== "number") return null;
+
+  const remaining = clampPercent(100 - window.used_percent);
+  return {
+    id,
+    label,
+    kind: "percent_remaining",
+    status: "available",
+    value: remaining,
+    maxValue: 100,
+    displayValue: formatPercent(remaining),
+    resetsAt: normalizeResetTimestamp(window.resets_at),
+  };
+}
+
+function buildCodexUsageSnapshot(data: CodexSessionData): UsageSnapshot | null {
+  if (data.rateLimits.size === 0 && !data.credits) {
+    return null;
+  }
+
+  const dials = new Map<string, UsageDial>();
+
+  for (const snapshot of data.rateLimits.values()) {
+    const limitKey = `${snapshot.limit_id ?? ""} ${snapshot.limit_name ?? ""}`.toLowerCase();
+    if (!data.plan && snapshot.plan_type) {
+      data.plan = snapshot.plan_type;
+    }
+    if (!data.credits && snapshot.credits) {
+      data.credits = snapshot.credits;
+    }
+
+    if (/review/.test(limitKey)) {
+      const reviewDial = createPercentRemainingDial(
+        "codex-code-review",
+        "Code review",
+        snapshot.primary,
+      );
+      if (reviewDial) {
+        dials.set(reviewDial.id, reviewDial);
+      }
+      continue;
+    }
+
+    const isSpark =
+      limitKey.includes("bengalfox") || limitKey.includes("spark");
+
+    if (isSpark) {
+      const spark5Hour = createPercentRemainingDial(
+        "codex-spark-5h",
+        "GPT-5.3-Codex-Spark 5 hour usage limit",
+        snapshot.primary,
+      );
+      if (spark5Hour) {
+        dials.set(spark5Hour.id, spark5Hour);
+      }
+
+      const sparkWeekly = createPercentRemainingDial(
+        "codex-spark-weekly",
+        "GPT-5.3-Codex-Spark Weekly usage limit",
+        snapshot.secondary,
+      );
+      if (sparkWeekly) {
+        dials.set(sparkWeekly.id, sparkWeekly);
+      }
+      continue;
+    }
+
+    const fiveHour = createPercentRemainingDial(
+      "codex-5h",
+      "5 hour usage limit",
+      snapshot.primary,
+    );
+    if (fiveHour) {
+      dials.set(fiveHour.id, fiveHour);
+    }
+
+    const weekly = createPercentRemainingDial(
+      "codex-weekly",
+      "Weekly usage limit",
+      snapshot.secondary,
+    );
+    if (weekly) {
+      dials.set(weekly.id, weekly);
+    }
+  }
+
+  if (data.credits?.unlimited) {
+    dials.set("codex-credits", {
+      id: "codex-credits",
+      label: "Credits remaining",
+      kind: "absolute",
+      status: "unlimited",
+      value: null,
+      maxValue: null,
+      displayValue: "Unlimited",
+      resetsAt: null,
+    });
+  } else {
+    const balance = normalizeBalance(data.credits?.balance);
+    if (balance !== null) {
+      dials.set("codex-credits", {
+        id: "codex-credits",
+        label: "Credits remaining",
+        kind: "absolute",
+        status: "available",
+        value: balance,
+        maxValue: null,
+        displayValue: formatCredits(balance),
+        resetsAt: null,
+      });
+    }
+  }
+
+  if (dials.size === 0) {
+    return null;
+  }
+
+  const order = [
+    "codex-5h",
+    "codex-weekly",
+    "codex-spark-5h",
+    "codex-spark-weekly",
+    "codex-code-review",
+    "codex-credits",
+  ];
+
+  return {
+    provider: "codex",
+    plan: formatPlanType(data.plan),
+    capturedAt: data.capturedAt ?? new Date().toISOString(),
+    dials: order
+      .map((id) => dials.get(id))
+      .filter((dial): dial is UsageDial => dial !== undefined),
+  };
 }
 
 /**
@@ -480,7 +770,17 @@ interface CodexSessionData {
  */
 async function streamCodexSessionData(filePath: string): Promise<CodexSessionData | null> {
   try {
-    const data: CodexSessionData = { model: null, threadId: null, inputTokens: 0, outputTokens: 0 };
+    const data: CodexSessionData = {
+      model: null,
+      threadId: null,
+      inputTokens: 0,
+      outputTokens: 0,
+      usesCumulativeTotals: false,
+      rateLimits: new Map(),
+      credits: null,
+      plan: null,
+      capturedAt: null,
+    };
     const rl = createInterface({
       input: createReadStream(filePath, { encoding: "utf-8" }),
       crlfDelay: Infinity,
@@ -497,12 +797,42 @@ async function streamCodexSessionData(filePath: string): Promise<CodexSessionDat
         if (entry.type === "session_meta" && typeof entry.model === "string") {
           data.model = entry.model;
         }
+        if (typeof entry.timestamp === "string" && entry.timestamp) {
+          data.capturedAt = entry.timestamp;
+        }
         if (typeof entry.threadId === "string" && entry.threadId) {
           data.threadId = entry.threadId;
         }
-        if (entry.type === "event_msg" && entry.msg?.type === "token_count") {
-          data.inputTokens += entry.msg.input_tokens ?? 0;
-          data.outputTokens += entry.msg.output_tokens ?? 0;
+
+        if (entry.type !== "event_msg") continue;
+
+        const messages = [entry.msg, entry.payload];
+        for (const message of messages) {
+          const tokenUsage = extractTokenUsage(message);
+          if (tokenUsage) {
+            if (tokenUsage.cumulative) {
+              data.usesCumulativeTotals = true;
+              data.inputTokens = Math.max(data.inputTokens, tokenUsage.inputTokens);
+              data.outputTokens = Math.max(data.outputTokens, tokenUsage.outputTokens);
+            } else if (!data.usesCumulativeTotals) {
+              data.inputTokens += tokenUsage.inputTokens;
+              data.outputTokens += tokenUsage.outputTokens;
+            }
+          }
+
+          for (const snapshot of asRateLimitSnapshots(message?.rate_limits)) {
+            const key =
+              snapshot.limit_id ??
+              snapshot.limit_name ??
+              `limit-${data.rateLimits.size + 1}`;
+            data.rateLimits.set(key, snapshot);
+            if (snapshot.credits) {
+              data.credits = snapshot.credits;
+            }
+            if (snapshot.plan_type) {
+              data.plan = snapshot.plan_type;
+            }
+          }
         }
       } catch {
         // Skip malformed lines
@@ -796,6 +1126,18 @@ function createCodexAgent(): Agent {
         agentSessionId,
         cost,
       };
+    },
+
+    async getUsageSnapshot(session: Session): Promise<UsageSnapshot | null> {
+      if (!session.workspacePath) return null;
+
+      const sessionFile = await findCodexSessionFileCached(session.workspacePath);
+      if (!sessionFile) return null;
+
+      const data = await streamCodexSessionData(sessionFile);
+      if (!data) return null;
+
+      return buildCodexUsageSnapshot(data);
     },
 
     async getRestoreCommand(session: Session, project: ProjectConfig): Promise<string | null> {

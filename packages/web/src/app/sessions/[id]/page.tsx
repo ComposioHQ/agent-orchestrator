@@ -3,7 +3,12 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { SessionDetail } from "@/components/SessionDetail";
-import { type DashboardSession, getAttentionLevel, type AttentionLevel } from "@/lib/types";
+import {
+  type DashboardSession,
+  type SessionUsageResponse,
+  getAttentionLevel,
+  type AttentionLevel,
+} from "@/lib/types";
 import { activityIcon } from "@/lib/activity-icons";
 
 function truncate(s: string, max: number): string {
@@ -46,6 +51,7 @@ export default function SessionPage() {
   const isOrchestrator = id.endsWith("-orchestrator");
 
   const [session, setSession] = useState<DashboardSession | null>(null);
+  const [usage, setUsage] = useState<SessionUsageResponse | null>(null);
   const [zoneCounts, setZoneCounts] = useState<ZoneCounts | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -99,13 +105,27 @@ export default function SessionPage() {
     }
   }, [isOrchestrator]);
 
+  const fetchUsage = useCallback(async () => {
+    if (isOrchestrator) return;
+
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(id)}/usage`);
+      if (!res.ok) return;
+      const data = (await res.json()) as SessionUsageResponse;
+      setUsage(data);
+    } catch {
+      // Non-critical — the page still works without usage details
+    }
+  }, [id, isOrchestrator]);
+
   // Initial fetch — session first, zone counts after (avoids blocking on slow /api/sessions)
   useEffect(() => {
     fetchSession();
+    void fetchUsage();
     // Delay zone counts so the heavy /api/sessions call doesn't contend with session load
     const t = setTimeout(fetchZoneCounts, 2000);
     return () => clearTimeout(t);
-  }, [fetchSession, fetchZoneCounts]);
+  }, [fetchSession, fetchUsage, fetchZoneCounts]);
 
   // Poll every 5s
   useEffect(() => {
@@ -115,6 +135,13 @@ export default function SessionPage() {
     }, 5000);
     return () => clearInterval(interval);
   }, [fetchSession, fetchZoneCounts]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      void fetchUsage();
+    }, 60_000);
+    return () => clearInterval(interval);
+  }, [fetchUsage]);
 
   if (loading) {
     return (
@@ -138,6 +165,7 @@ export default function SessionPage() {
   return (
     <SessionDetail
       session={session}
+      usage={usage}
       isOrchestrator={isOrchestrator}
       orchestratorZones={zoneCounts ?? undefined}
     />

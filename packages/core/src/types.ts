@@ -301,6 +301,9 @@ export interface Agent {
   /** Extract information from agent's internal data (summary, cost, session ID) */
   getSessionInfo(session: Session): Promise<AgentSessionInfo | null>;
 
+  /** Optional: extract normalized subscription/rate-limit usage for dashboard dials */
+  getUsageSnapshot?(session: Session): Promise<UsageSnapshot | null>;
+
   /**
    * Optional: get a launch command that resumes a previous session.
    * Returns null if no previous session is found (caller falls back to getLaunchCommand).
@@ -384,6 +387,41 @@ export interface CostEstimate {
   inputTokens: number;
   outputTokens: number;
   estimatedCostUsd: number;
+}
+
+export type UsageProvider = "codex" | "claude-code";
+
+export type UsageDialKind = "percent_used" | "percent_remaining" | "absolute";
+
+export type UsageDialStatus = "available" | "unavailable" | "unlimited";
+
+export interface UsageDial {
+  /** Stable dial identifier for merging/sorting UI state */
+  id: string;
+  /** User-facing dial label */
+  label: string;
+  /** How the numeric value should be interpreted */
+  kind: UsageDialKind;
+  /** Dial status when live data is or isn't available */
+  status: UsageDialStatus;
+  /** Raw numeric value (0-100 for percentage dials, absolute for counters) */
+  value: number | null;
+  /** Optional max value used to render gauge progress */
+  maxValue?: number | null;
+  /** Pre-formatted display value for UI rendering */
+  displayValue: string;
+  /** Optional reset timestamp as an ISO string */
+  resetsAt?: string | null;
+}
+
+export interface UsageSnapshot {
+  provider: UsageProvider;
+  /** Human-readable plan or subscription label, when known */
+  plan?: string | null;
+  /** When this snapshot was captured, as an ISO timestamp */
+  capturedAt: string;
+  /** Provider-specific dials */
+  dials: UsageDial[];
 }
 
 // =============================================================================

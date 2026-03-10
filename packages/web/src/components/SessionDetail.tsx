@@ -2,12 +2,18 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
-import { type DashboardSession, type DashboardPR, isPRMergeReady } from "@/lib/types";
+import {
+  type DashboardSession,
+  type DashboardPR,
+  type SessionUsageResponse,
+  isPRMergeReady,
+} from "@/lib/types";
 import { CI_STATUS } from "@composio/ao-core/types";
 import { cn } from "@/lib/cn";
 import { CICheckList } from "./CIBadge";
 import { DirectTerminal } from "./DirectTerminal";
 import { ActivityDot } from "./ActivityDot";
+import { SessionUsageCard } from "./UsageDials";
 
 interface OrchestratorZones {
   merge: number;
@@ -20,6 +26,7 @@ interface OrchestratorZones {
 
 interface SessionDetailProps {
   session: DashboardSession;
+  usage?: SessionUsageResponse | null;
   isOrchestrator?: boolean;
   orchestratorZones?: OrchestratorZones;
 }
@@ -191,6 +198,7 @@ function OrchestratorStatusStrip({
 
 export function SessionDetail({
   session,
+  usage = null,
   isOrchestrator = false,
   orchestratorZones,
 }: SessionDetailProps) {
@@ -375,6 +383,10 @@ export function SessionDetail({
             </div>
           </div>
         </div>
+
+        {!isOrchestrator && (
+          <SessionUsageCard cost={usage?.cost ?? null} snapshot={usage?.snapshot ?? null} />
+        )}
 
         {/* ── PR Card ─────────────────────────────────────────────── */}
         {pr && <PRCard pr={pr} sessionId={session.id} />}

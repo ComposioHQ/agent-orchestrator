@@ -14,6 +14,7 @@ import { AttentionZone } from "./AttentionZone";
 import { PRTableRow } from "./PRStatus";
 import { DynamicFavicon } from "./DynamicFavicon";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
+import { UsageOverview } from "./UsageOverview";
 
 interface DashboardProps {
   initialSessions: DashboardSession[];
@@ -118,6 +119,8 @@ export function Dashboard({ initialSessions, stats, orchestratorId, projectName 
           </a>
         )}
       </div>
+
+      <UsageOverview />
 
       {/* Rate limit notice */}
       {anyRateLimited && !rateLimitDismissed && (

@@ -15,6 +15,10 @@ export type {
   ReviewDecision,
   MergeReadiness,
   PRState,
+  CostEstimate,
+  UsageDial,
+  UsageProvider,
+  UsageSnapshot,
 } from "@composio/ao-core/types";
 
 import {
@@ -30,6 +34,9 @@ import {
   type SessionStatus,
   type ActivityState,
   type ReviewDecision,
+  type CostEstimate,
+  type UsageProvider,
+  type UsageSnapshot,
 } from "@composio/ao-core/types";
 
 // Re-export for use in client components
@@ -125,6 +132,18 @@ export interface DashboardStats {
   workingSessions: number;
   openPRs: number;
   needsReview: number;
+}
+
+export interface DashboardUsageResponse {
+  updatedAt: string;
+  snapshots: UsageSnapshot[];
+}
+
+export interface SessionUsageResponse {
+  sessionId: string;
+  provider: UsageProvider | null;
+  cost: CostEstimate | null;
+  snapshot: UsageSnapshot | null;
 }
 
 /** SSE snapshot event from /api/events */

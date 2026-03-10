@@ -937,6 +937,116 @@ describe("getSessionInfo", () => {
 });
 
 // =========================================================================
+// getUsageSnapshot — subscription dials
+// =========================================================================
+describe("getUsageSnapshot", () => {
+  const agent = create();
+
+  function jsonl(...lines: Record<string, unknown>[]): string {
+    return lines.map((line) => JSON.stringify(line)).join("\n") + "\n";
+  }
+
+  it("returns normalized Codex usage dials from token_count payload events", async () => {
+    const sessionContent = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "gpt-5-codex" },
+      {
+        timestamp: "2026-03-10T12:00:00.000Z",
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: null,
+          rate_limits: {
+            limit_id: "codex",
+            primary: { used_percent: 8, window_minutes: 300, resets_at: 1771803416 },
+            secondary: { used_percent: 12, window_minutes: 10080, resets_at: 1771876568 },
+            credits: { has_credits: true, unlimited: false, balance: "685.6850000000" },
+            plan_type: "pro",
+          },
+        },
+      },
+      {
+        timestamp: "2026-03-10T12:00:01.000Z",
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: null,
+          rate_limits: {
+            limit_id: "codex_bengalfox",
+            limit_name: "GPT-5.3-Codex-Spark",
+            primary: { used_percent: 0, window_minutes: 300, resets_at: 1771806051 },
+            secondary: { used_percent: 2, window_minutes: 10080, resets_at: 1772392851 },
+          },
+        },
+      },
+      {
+        timestamp: "2026-03-10T12:00:02.000Z",
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: null,
+          rate_limits: {
+            limit_id: "codex_review",
+            limit_name: "Code review",
+            primary: { used_percent: 30, window_minutes: 10080, resets_at: 1772392851 },
+          },
+        },
+      },
+    );
+
+    mockReaddir.mockResolvedValue(["rollout-123.jsonl"]);
+    setupMockOpen(sessionContent);
+    setupMockStream(sessionContent);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const snapshot = await agent.getUsageSnapshot!(makeSession({ workspacePath: "/workspace/test" }));
+
+    expect(snapshot).not.toBeNull();
+    expect(snapshot?.provider).toBe("codex");
+    expect(snapshot?.dials.map((dial) => dial.id)).toEqual([
+      "codex-5h",
+      "codex-weekly",
+      "codex-spark-5h",
+      "codex-spark-weekly",
+      "codex-code-review",
+      "codex-credits",
+    ]);
+    expect(snapshot?.dials.map((dial) => dial.displayValue)).toEqual([
+      "92%",
+      "88%",
+      "100%",
+      "98%",
+      "70%",
+      "685",
+    ]);
+  });
+
+  it("returns null when no rate-limit payloads are present", async () => {
+    const sessionContent = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "gpt-5-codex" },
+      {
+        timestamp: "2026-03-10T12:00:00.000Z",
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            total_token_usage: { input_tokens: 1000, output_tokens: 250, total_tokens: 1250 },
+          },
+          rate_limits: null,
+        },
+      },
+    );
+
+    mockReaddir.mockResolvedValue(["rollout-456.jsonl"]);
+    setupMockOpen(sessionContent);
+    setupMockStream(sessionContent);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const snapshot = await agent.getUsageSnapshot!(makeSession({ workspacePath: "/workspace/test" }));
+    expect(snapshot).toBeNull();
+  });
+});
+
+// =========================================================================
 // getRestoreCommand — conversation resume
 // =========================================================================
 describe("getRestoreCommand", () => {

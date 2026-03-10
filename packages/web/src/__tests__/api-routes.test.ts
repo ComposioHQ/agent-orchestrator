@@ -3,7 +3,6 @@ import { NextRequest } from "next/server";
 import {
   SessionNotFoundError,
   SessionNotRestorableError,
-  SessionNotFoundError,
   type Session,
   type SessionManager,
   type OrchestratorConfig,
@@ -12,6 +11,37 @@ import {
 } from "@composio/ao-core";
 import * as serialize from "@/lib/serialize";
 import { getSCM } from "@/lib/services";
+
+const { mockGetDashboardUsage, mockGetSessionUsage } = vi.hoisted(() => ({
+  mockGetDashboardUsage: vi.fn(async () => ({
+    updatedAt: "2026-03-10T12:00:00.000Z",
+    snapshots: [
+      {
+        provider: "codex" as const,
+        plan: "ChatGPT Pro",
+        capturedAt: "2026-03-10T12:00:00.000Z",
+        dials: [],
+      },
+      {
+        provider: "claude-code" as const,
+        plan: null,
+        capturedAt: "2026-03-10T12:00:00.000Z",
+        dials: [],
+      },
+    ],
+  })),
+  mockGetSessionUsage: vi.fn(async (session: Session) => ({
+    sessionId: session.id,
+    provider: "claude-code" as const,
+    cost: { inputTokens: 1200, outputTokens: 340, estimatedCostUsd: 0.021 },
+    snapshot: {
+      provider: "claude-code" as const,
+      plan: null,
+      capturedAt: "2026-03-10T12:00:00.000Z",
+      dials: [],
+    },
+  })),
+}));
 
 // ── Mock Data ─────────────────────────────────────────────────────────
 // Provides test sessions covering the key states the dashboard needs.
@@ -159,15 +189,22 @@ vi.mock("@/lib/services", () => ({
   getSCM: vi.fn(() => mockSCM),
 }));
 
+vi.mock("@/lib/usage", () => ({
+  getDashboardUsage: mockGetDashboardUsage,
+  getSessionUsage: mockGetSessionUsage,
+}));
+
 // ── Import routes after mocking ───────────────────────────────────────
 
 import { GET as sessionsGET } from "@/app/api/sessions/route";
+import { GET as usageGET } from "@/app/api/usage/route";
 import { POST as spawnPOST } from "@/app/api/spawn/route";
 import { POST as sendPOST } from "@/app/api/sessions/[id]/send/route";
 import { POST as messagePOST } from "@/app/api/sessions/[id]/message/route";
 import { POST as killPOST } from "@/app/api/sessions/[id]/kill/route";
 import { POST as restorePOST } from "@/app/api/sessions/[id]/restore/route";
 import { POST as remapPOST } from "@/app/api/sessions/[id]/remap/route";
+import { GET as sessionUsageGET } from "@/app/api/sessions/[id]/usage/route";
 import { POST as mergePOST } from "@/app/api/prs/[id]/merge/route";
 import { GET as eventsGET } from "@/app/api/events/route";
 
@@ -186,6 +223,34 @@ beforeEach(() => {
   (mockSessionManager.get as ReturnType<typeof vi.fn>).mockImplementation(
     async (id: string) => testSessions.find((s) => s.id === id) ?? null,
   );
+  mockGetDashboardUsage.mockResolvedValue({
+    updatedAt: "2026-03-10T12:00:00.000Z",
+    snapshots: [
+      {
+        provider: "codex",
+        plan: "ChatGPT Pro",
+        capturedAt: "2026-03-10T12:00:00.000Z",
+        dials: [],
+      },
+      {
+        provider: "claude-code",
+        plan: null,
+        capturedAt: "2026-03-10T12:00:00.000Z",
+        dials: [],
+      },
+    ],
+  });
+  mockGetSessionUsage.mockImplementation(async (session: Session) => ({
+    sessionId: session.id,
+    provider: "claude-code",
+    cost: { inputTokens: 1200, outputTokens: 340, estimatedCostUsd: 0.021 },
+    snapshot: {
+      provider: "claude-code",
+      plan: null,
+      capturedAt: "2026-03-10T12:00:00.000Z",
+      dials: [],
+    },
+  }));
 });
 
 describe("API Routes", () => {
@@ -239,6 +304,42 @@ describe("API Routes", () => {
 
       metadataSpy.mockRestore();
       vi.useRealTimers();
+    });
+  });
+
+  describe("GET /api/usage", () => {
+    it("returns provider snapshots from the usage service", async () => {
+      const res = await usageGET();
+      expect(res.status).toBe(200);
+
+      const data = await res.json();
+      expect(data.updatedAt).toBe("2026-03-10T12:00:00.000Z");
+      expect(data.snapshots).toHaveLength(2);
+      expect(data.snapshots[0].provider).toBe("codex");
+      expect(mockGetDashboardUsage).toHaveBeenCalled();
+    });
+  });
+
+  describe("GET /api/sessions/:id/usage", () => {
+    it("returns usage for a known session", async () => {
+      const res = await sessionUsageGET(makeRequest("/api/sessions/backend-3/usage"), {
+        params: Promise.resolve({ id: "backend-3" }),
+      });
+
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.sessionId).toBe("backend-3");
+      expect(data.provider).toBe("claude-code");
+      expect(data.cost.inputTokens).toBe(1200);
+      expect(mockGetSessionUsage).toHaveBeenCalled();
+    });
+
+    it("returns 404 for unknown sessions", async () => {
+      const res = await sessionUsageGET(makeRequest("/api/sessions/missing/usage"), {
+        params: Promise.resolve({ id: "missing" }),
+      });
+
+      expect(res.status).toBe(404);
     });
   });
 

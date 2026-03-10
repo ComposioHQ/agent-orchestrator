@@ -528,6 +528,9 @@ importers:
       '@composio/ao-plugin-agent-claude-code':
         specifier: workspace:*
         version: link:../plugins/agent-claude-code
+      '@composio/ao-plugin-agent-codex':
+        specifier: workspace:*
+        version: link:../plugins/agent-codex
       '@composio/ao-plugin-agent-opencode':
         specifier: workspace:*
         version: link:../plugins/agent-opencode
@@ -3605,6 +3608,7 @@ packages:
   tar@7.5.7:
     resolution: {integrity: sha512-fov56fJiRuThVFXD6o6/Q354S7pnWMJIVlDBYijsTNx6jKSE4pvrDTs6lUnmGvNyfJwFQQwWy3owKz1ucIhveQ==}
     engines: {node: '>=18'}
+    deprecated: Old versions of tar are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
 
   term-size@2.2.1:
     resolution: {integrity: sha512-wK0Ri4fOGjv/XPy8SBHZChl8CM7uMc5VML7SqiQ0zG7+J5Vr+RMQDoHa2CNT6KHUnTGIXH34UDMkPzAUyapBZg==}

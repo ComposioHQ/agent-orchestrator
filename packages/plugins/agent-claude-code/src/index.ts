@@ -12,6 +12,8 @@ import {
   type ProjectConfig,
   type RuntimeHandle,
   type Session,
+  type UsageDial,
+  type UsageSnapshot,
   type WorkspaceHooksConfig,
 } from "@composio/ao-core";
 import { execFile } from "node:child_process";
@@ -240,6 +242,7 @@ async function findLatestSessionFile(projectDir: string): Promise<string | null>
 }
 
 interface JsonlLine {
+  timestamp?: string;
   type?: string;
   summary?: string;
   message?: { content?: string; role?: string };
@@ -254,6 +257,19 @@ interface JsonlLine {
   inputTokens?: number;
   outputTokens?: number;
   estimatedCostUsd?: number;
+  rate_limit_info?: ClaudeRateLimitInfo;
+}
+
+interface ClaudeRateLimitInfo {
+  status?: string;
+  resetsAt?: string | null;
+  rateLimitType?: string;
+  utilization?: number;
+  overageStatus?: string;
+  overageResetsAt?: string | null;
+  overageDisabledReason?: string | null;
+  isUsingOverage?: boolean;
+  surpassedThreshold?: boolean;
 }
 
 /**
@@ -389,6 +405,97 @@ function extractCost(lines: JsonlLine[]): CostEstimate | undefined {
   }
 
   return { inputTokens, outputTokens, estimatedCostUsd: totalCost };
+}
+
+function normalizeClaudePercent(value: number | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  const percent = value <= 1 ? value * 100 : value;
+  return Math.min(100, Math.max(0, percent));
+}
+
+function formatClaudePercent(value: number): string {
+  const rounded = Math.round(value * 10) / 10;
+  return Number.isInteger(rounded) ? `${rounded}%` : `${rounded.toFixed(1)}%`;
+}
+
+function createClaudeUsageDial(
+  id: string,
+  label: string,
+  info: ClaudeRateLimitInfo,
+): UsageDial | null {
+  const percent = normalizeClaudePercent(info.utilization);
+  if (percent === null) return null;
+
+  return {
+    id,
+    label,
+    kind: "percent_used",
+    status: "available",
+    value: percent,
+    maxValue: 100,
+    displayValue: formatClaudePercent(percent),
+    resetsAt: info.resetsAt ?? null,
+  };
+}
+
+function extractUsageSnapshot(lines: JsonlLine[]): UsageSnapshot | null {
+  let currentSessionInfo: ClaudeRateLimitInfo | null = null;
+  let weeklyInfo: ClaudeRateLimitInfo | null = null;
+  let capturedAt: string | null = null;
+
+  for (const line of lines) {
+    if (line.type !== "rate_limit_event" || !line.rate_limit_info) continue;
+
+    capturedAt = typeof line.timestamp === "string" ? line.timestamp : capturedAt;
+    const info = line.rate_limit_info;
+    switch (info.rateLimitType) {
+      case "five_hour":
+        currentSessionInfo = info;
+        break;
+      case "seven_day":
+        weeklyInfo = info;
+        break;
+      case "seven_day_opus":
+      case "seven_day_sonnet":
+        if (!weeklyInfo) {
+          weeklyInfo = info;
+        }
+        break;
+      default:
+        break;
+    }
+  }
+
+  const dials = [
+    currentSessionInfo
+      ? createClaudeUsageDial(
+          "claude-current-session",
+          "Current session usage",
+          currentSessionInfo,
+        )
+      : null,
+    weeklyInfo
+      ? createClaudeUsageDial(
+          "claude-weekly-all-models",
+          "Weekly limits - All models",
+          weeklyInfo,
+        )
+      : null,
+  ].filter((dial): dial is UsageDial => dial !== null);
+
+  if (dials.length === 0) {
+    return null;
+  }
+
+  return {
+    provider: "claude-code",
+    plan: null,
+    capturedAt: capturedAt ?? new Date().toISOString(),
+    dials,
+  };
 }
 
 // =============================================================================
@@ -784,6 +891,21 @@ function createClaudeCodeAgent(): Agent {
         agentSessionId,
         cost: extractCost(lines),
       };
+    },
+
+    async getUsageSnapshot(session: Session): Promise<UsageSnapshot | null> {
+      if (!session.workspacePath) return null;
+
+      const projectPath = toClaudeProjectPath(session.workspacePath);
+      const projectDir = join(homedir(), ".claude", "projects", projectPath);
+
+      const sessionFile = await findLatestSessionFile(projectDir);
+      if (!sessionFile) return null;
+
+      const lines = await parseJsonlFileTail(sessionFile);
+      if (lines.length === 0) return null;
+
+      return extractUsageSnapshot(lines);
     },
 
     async getRestoreCommand(session: Session, project: ProjectConfig): Promise<string | null> {
