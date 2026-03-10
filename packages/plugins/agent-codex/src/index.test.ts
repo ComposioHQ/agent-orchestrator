@@ -126,14 +126,18 @@ function mockTmuxWithProcess(processName: string, found = true) {
 
 /**
  * Create a mock file handle for `open()` that returns `content` from `read()`.
- * Used by sessionFileMatchesCwd which reads only the first 4 KB.
+ * Used by sessionFileMatchesCwd which reads the JSONL header in chunks.
  */
 function makeFakeFileHandle(content: string) {
   const buf = Buffer.from(content, "utf-8");
   return {
-    read: vi.fn().mockImplementation((buffer: Buffer, offset: number, length: number, _position: number) => {
-      const bytesToCopy = Math.min(length, buf.length);
-      buf.copy(buffer, offset, 0, bytesToCopy);
+    read: vi.fn().mockImplementation((buffer: Buffer, offset: number, length: number, position: number | null) => {
+      const start = typeof position === "number" ? position : 0;
+      if (start >= buf.length) {
+        return Promise.resolve({ bytesRead: 0, buffer });
+      }
+      const bytesToCopy = Math.min(length, buf.length - start);
+      buf.copy(buffer, offset, start, start + bytesToCopy);
       return Promise.resolve({ bytesRead: bytesToCopy, buffer });
     }),
     close: vi.fn().mockResolvedValue(undefined),
@@ -657,7 +661,7 @@ describe("getActivityState", () => {
     expect(result?.timestamp).toBeInstanceOf(Date);
   });
 
-  it("matches session_meta cwd nested in payload", async () => {
+  it("returns active when session_meta cwd is nested under payload", async () => {
     mockTmuxWithProcess("codex");
     const content = '{"type":"session_meta","payload":{"cwd":"/workspace/test"}}\n';
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
@@ -670,6 +674,21 @@ describe("getActivityState", () => {
     expect(result?.timestamp).toBeInstanceOf(Date);
   });
 
+  it("returns active when the session_meta header spans more than one read chunk", async () => {
+    mockTmuxWithProcess("codex");
+    const content = `${JSON.stringify({
+      type: "session_meta",
+      payload: { cwd: "/workspace/test", base_instructions: { text: "x".repeat(5000) } },
+    })}\n`;
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
+
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    const result = await agent.getActivityState(session);
+    expect(result?.state).toBe("active");
+    expect(result?.timestamp).toBeInstanceOf(Date);
+  });
   it("returns idle when session file is stale", async () => {
     mockTmuxWithProcess("codex");
     const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
@@ -762,7 +781,7 @@ describe("getSessionInfo", () => {
     expect(result!.cost!.estimatedCostUsd).toBeGreaterThan(0);
   });
 
-  it("matches session_meta cwd nested in payload for session discovery", async () => {
+  it("matches session files when session_meta cwd is nested under payload", async () => {
     const sessionContent = jsonl(
       { type: "session_meta", payload: { cwd: "/workspace/test" }, model: "gpt-4o" },
       { type: "event_msg", msg: { type: "token_count", input_tokens: 100, output_tokens: 50 } },

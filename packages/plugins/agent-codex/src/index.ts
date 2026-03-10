@@ -336,9 +336,6 @@ interface CodexJsonlLine {
   type?: string;
   cwd?: string;
   model?: string;
-  payload?: {
-    cwd?: string;
-  };
   // Thread ID from thread_started notifications
   threadId?: string;
   // User message content (from user input events)
@@ -346,7 +343,12 @@ interface CodexJsonlLine {
   role?: string;
   // event_msg with token_count subtype
   msg?: CodexEventMessage;
-  payload?: CodexEventMessage;
+  payload?: CodexJsonlPayload | null;
+}
+
+interface CodexJsonlPayload extends CodexEventMessage {
+  cwd?: string;
+  model?: string;
 }
 
 interface CodexTokenUsageTotals {
@@ -389,10 +391,6 @@ interface CodexEventMessage {
   output_tokens?: number;
   info?: CodexTokenUsageInfo | null;
   rate_limits?: CodexRateLimitSnapshot | CodexRateLimitSnapshot[] | null;
-}
-
-function getSessionMetaCwd(entry: CodexJsonlLine): string | undefined {
-  return entry.cwd ?? entry.payload?.cwd;
 }
 
 /**
@@ -440,22 +438,45 @@ async function collectJsonlFiles(dir: string, depth = 0): Promise<string[]> {
 
 /**
  * Check if the first few lines of a JSONL file contain a session_meta
- * entry matching the given workspace path. Reads only the first 4 KB
+ * entry matching the given workspace path. Reads only the JSONL header
  * to avoid loading large rollout files into memory.
  */
+const SESSION_FILE_MATCH_CHUNK_BYTES = 4096;
+const SESSION_FILE_MATCH_MAX_BYTES = 64 * 1024;
+const SESSION_FILE_MATCH_MAX_LINES = 10;
+
 async function sessionFileMatchesCwd(
   filePath: string,
   workspacePath: string,
 ): Promise<boolean> {
   try {
-    // Read only the first 4 KB — session_meta is always in the first few lines.
-    // Avoids loading large rollout files (100 MB+) into memory.
     const handle = await open(filePath, "r");
     let content: string;
     try {
-      const buffer = Buffer.allocUnsafe(4096);
-      const { bytesRead } = await handle.read(buffer, 0, 4096, 0);
-      content = buffer.subarray(0, bytesRead).toString("utf-8");
+      // session_meta is emitted near the top of the file, but can be larger
+      // than a single chunk when Codex embeds long instruction payloads.
+      const chunks: Buffer[] = [];
+      let totalBytes = 0;
+      let newlineCount = 0;
+
+      while (totalBytes < SESSION_FILE_MATCH_MAX_BYTES && newlineCount < SESSION_FILE_MATCH_MAX_LINES) {
+        const chunkSize = Math.min(SESSION_FILE_MATCH_CHUNK_BYTES, SESSION_FILE_MATCH_MAX_BYTES - totalBytes);
+        const buffer = Buffer.allocUnsafe(chunkSize);
+        const { bytesRead } = await handle.read(buffer, 0, chunkSize, totalBytes);
+        if (bytesRead === 0) break;
+
+        const chunk = buffer.subarray(0, bytesRead);
+        chunks.push(chunk);
+        totalBytes += bytesRead;
+
+        for (const byte of chunk) {
+          if (byte === 0x0a) newlineCount += 1;
+        }
+
+        if (bytesRead < chunkSize) break;
+      }
+
+      content = Buffer.concat(chunks, totalBytes).toString("utf-8");
     } finally {
       await handle.close();
     }
@@ -465,10 +486,12 @@ async function sessionFileMatchesCwd(
       if (!trimmed) continue;
       try {
         const parsed: unknown = JSON.parse(trimmed);
-        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) continue;
-
-        const entry = parsed as CodexJsonlLine;
-        if (entry.type === "session_meta" && getSessionMetaCwd(entry) === workspacePath) {
+        if (
+          typeof parsed === "object" &&
+          parsed !== null &&
+          !Array.isArray(parsed) &&
+          sessionMetaMatchesWorkspace(parsed as CodexJsonlLine, workspacePath)
+        ) {
           return true;
         }
       } catch {
@@ -479,6 +502,11 @@ async function sessionFileMatchesCwd(
     // Unreadable file
   }
   return false;
+}
+
+function sessionMetaMatchesWorkspace(entry: CodexJsonlLine, workspacePath: string): boolean {
+  if (entry.type !== "session_meta") return false;
+  return entry.cwd === workspacePath || entry.payload?.cwd === workspacePath;
 }
 
 /**
