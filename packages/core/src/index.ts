@@ -99,6 +99,25 @@ export { asValidOpenCodeSessionId } from "./opencode-session-id.js";
 export { normalizeOrchestratorSessionStrategy } from "./orchestrator-session-strategy.js";
 export type { NormalizedOrchestratorSessionStrategy } from "./orchestrator-session-strategy.js";
 
+// Feedback tools — contracts, validation, and report storage
+export {
+  FEEDBACK_TOOL_NAMES,
+  FEEDBACK_TOOL_CONTRACTS,
+  BugReportSchema,
+  ImprovementSuggestionSchema,
+  validateFeedbackToolInput,
+  generateFeedbackDedupeKey,
+  FeedbackReportStore,
+} from "./feedback-tools.js";
+export type {
+  FeedbackToolName,
+  FeedbackToolContract,
+  BugReportInput,
+  ImprovementSuggestionInput,
+  FeedbackToolInput,
+  PersistedFeedbackReport,
+} from "./feedback-tools.js";
+
 // Path utilities — hash-based directory structure
 export {
   generateConfigHash,
@@ -108,6 +127,7 @@ export {
   getProjectBaseDir,
   getSessionsDir,
   getWorktreesDir,
+  getFeedbackReportsDir,
   getArchiveDir,
   getOriginFilePath,
   generateSessionName,

@@ -103,6 +103,14 @@ export function getWorktreesDir(configPath: string, projectPath: string): string
 }
 
 /**
+ * Get the feedback reports directory for a project.
+ * Format: ~/.agent-orchestrator/{hash}-{projectId}/feedback-reports
+ */
+export function getFeedbackReportsDir(configPath: string, projectPath: string): string {
+  return join(getProjectBaseDir(configPath, projectPath), "feedback-reports");
+}
+
+/**
  * Get the archive directory for a project.
  * Format: ~/.agent-orchestrator/{hash}-{projectId}/archive
  */
