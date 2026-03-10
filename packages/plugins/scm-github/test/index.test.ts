@@ -14,7 +14,12 @@ vi.mock("node:child_process", () => {
   return { execFile };
 });
 
-import { create, manifest } from "../src/index.js";
+import {
+  create,
+  manifest,
+  computeForkSyncState,
+  buildConvergenceSuggestions,
+} from "../src/index.js";
 import type { PRInfo, Session, ProjectConfig } from "@composio/ao-core";
 
 // ---------------------------------------------------------------------------
@@ -1003,6 +1008,180 @@ describe("scm-github plugin", () => {
       const result = await scm.getMergeability(pr);
       expect(result.blockers).toHaveLength(4);
       expect(result.mergeable).toBe(false);
+    });
+  });
+
+  // ---- fork convergence --------------------------------------------------
+
+  describe("fork convergence helpers", () => {
+    it("computes up_to_date state", () => {
+      expect(
+        computeForkSyncState(0, 0, { localRef: "feat/xyz", upstreamRef: "upstream/main" }),
+      ).toMatchObject({
+        relation: "up_to_date",
+        ahead: 0,
+        behind: 0,
+        diverged: false,
+      });
+    });
+
+    it("computes ahead state", () => {
+      expect(
+        computeForkSyncState(3, 0, { localRef: "feat/xyz", upstreamRef: "upstream/main" }),
+      ).toMatchObject({
+        relation: "ahead",
+        ahead: 3,
+        behind: 0,
+        diverged: false,
+      });
+    });
+
+    it("computes behind state", () => {
+      expect(
+        computeForkSyncState(0, 2, { localRef: "feat/xyz", upstreamRef: "upstream/main" }),
+      ).toMatchObject({
+        relation: "behind",
+        ahead: 0,
+        behind: 2,
+        diverged: false,
+      });
+    });
+
+    it("computes diverged state", () => {
+      expect(
+        computeForkSyncState(4, 5, { localRef: "feat/xyz", upstreamRef: "upstream/main" }),
+      ).toMatchObject({
+        relation: "diverged",
+        ahead: 4,
+        behind: 5,
+        diverged: true,
+      });
+    });
+
+    it("generates deterministic convergence suggestions", () => {
+      const state = computeForkSyncState(2, 3, {
+        localRef: "feat/xyz",
+        upstreamRef: "upstream/main",
+      });
+      expect(buildConvergenceSuggestions(state)).toEqual([
+        {
+          type: "sync_upstream",
+          message: "Local branch is behind upstream by 3 commit(s); run fork.sync_upstream.",
+        },
+        {
+          type: "upstreamable_patch",
+          message:
+            "Local branch is ahead by 2 commit(s); consider upstreaming these changes via PR.",
+        },
+        {
+          type: "drift_alert",
+          message:
+            "Fork has diverged from upstream (ahead and behind simultaneously); manual convergence is required.",
+        },
+      ]);
+    });
+  });
+
+  describe("forkSyncUpstream", () => {
+    it("returns no-op for up-to-date branch", async () => {
+      ghMock.mockResolvedValueOnce({ stdout: "feat/my-feature\n" }); // branch
+      ghMock.mockResolvedValueOnce({ stdout: "" }); // fetch
+      ghMock.mockResolvedValueOnce({ stdout: "ok\n" }); // rev-parse
+      ghMock.mockResolvedValueOnce({ stdout: "0\t0\n" }); // rev-list
+
+      const result = await scm.forkSyncUpstream?.({ workspacePath: "/tmp/repo" });
+
+      expect(result).toMatchObject({
+        primitive: "fork.sync_upstream",
+        action: "none",
+        synced: false,
+      });
+      expect(result?.stateBefore.relation).toBe("up_to_date");
+      expect(result?.stateAfter.relation).toBe("up_to_date");
+      expect(result?.stateBefore.localRef).toBe("feat/my-feature");
+      expect(ghMock).toHaveBeenNthCalledWith(
+        1,
+        "git",
+        ["branch", "--show-current"],
+        expect.objectContaining({ cwd: "/tmp/repo" }),
+      );
+    });
+
+    it("fast-forwards when strictly behind", async () => {
+      ghMock.mockResolvedValueOnce({ stdout: "feat/my-feature\n" }); // branch
+      ghMock.mockResolvedValueOnce({ stdout: "" }); // fetch
+      ghMock.mockResolvedValueOnce({ stdout: "ok\n" }); // rev-parse
+      ghMock.mockResolvedValueOnce({ stdout: "2\t0\n" }); // rev-list before
+      ghMock.mockResolvedValueOnce({ stdout: "" }); // merge --ff-only
+      ghMock.mockResolvedValueOnce({ stdout: "0\t0\n" }); // rev-list after
+
+      const result = await scm.forkSyncUpstream?.({ workspacePath: "/tmp/repo" });
+
+      expect(result).toMatchObject({
+        primitive: "fork.sync_upstream",
+        action: "fast_forward",
+        synced: true,
+      });
+      expect(result?.stateBefore.relation).toBe("behind");
+      expect(result?.stateAfter.relation).toBe("up_to_date");
+      expect(result?.stateBefore.localRef).toBe("feat/my-feature");
+    });
+
+    it("does not attempt merge for diverged branches and returns drift alert", async () => {
+      ghMock.mockResolvedValueOnce({ stdout: "feat/my-feature\n" }); // branch
+      ghMock.mockResolvedValueOnce({ stdout: "" }); // fetch
+      ghMock.mockResolvedValueOnce({ stdout: "ok\n" }); // rev-parse
+      ghMock.mockResolvedValueOnce({ stdout: "4\t3\n" }); // rev-list before
+
+      const result = await scm.forkSyncUpstream?.({ workspacePath: "/tmp/repo" });
+
+      expect(result?.action).toBe("blocked");
+      expect(result?.synced).toBe(false);
+      expect(result?.stateBefore.relation).toBe("diverged");
+      expect(result?.stateBefore.localRef).toBe("feat/my-feature");
+      expect(result?.suggestions.some((s) => s.type === "drift_alert")).toBe(true);
+      expect(ghMock).not.toHaveBeenCalledWith(
+        "git",
+        ["merge", "--ff-only", "upstream/main"],
+        expect.anything(),
+      );
+    });
+
+    it("returns blocked when ff-only merge fails (conflict path)", async () => {
+      ghMock.mockResolvedValueOnce({ stdout: "feat/my-feature\n" }); // branch
+      ghMock.mockResolvedValueOnce({ stdout: "" }); // fetch
+      ghMock.mockResolvedValueOnce({ stdout: "ok\n" }); // rev-parse
+      ghMock.mockResolvedValueOnce({ stdout: "1\t0\n" }); // rev-list before
+      ghMock.mockRejectedValueOnce(new Error("ff-only failed")); // merge --ff-only
+
+      const result = await scm.forkSyncUpstream?.({ workspacePath: "/tmp/repo" });
+
+      expect(result?.action).toBe("blocked");
+      expect(result?.synced).toBe(false);
+      expect(result?.stateAfter.relation).toBe("behind");
+      expect(result?.stateAfter.localRef).toBe("feat/my-feature");
+      expect(result?.suggestions.some((s) => s.type === "sync_upstream")).toBe(true);
+    });
+
+    it("throws when provided localBranch is not the checked out HEAD branch", async () => {
+      ghMock.mockResolvedValueOnce({ stdout: "feat/current\n" }); // branch
+
+      await expect(
+        scm.forkSyncUpstream?.({
+          workspacePath: "/tmp/repo",
+          localBranch: "feat/other",
+        }),
+      ).rejects.toThrow(
+        'fork.sync_upstream localBranch "feat/other" is not checked out (current: "feat/current")',
+      );
+
+      expect(ghMock).toHaveBeenCalledTimes(1);
+      expect(ghMock).toHaveBeenNthCalledWith(
+        1,
+        "git",
+        ["branch", "--show-current"],
+        expect.objectContaining({ cwd: "/tmp/repo" }),
+      );
     });
   });
 });

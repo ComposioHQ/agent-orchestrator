@@ -575,6 +575,55 @@ export interface SCM {
 
   /** Check if PR is ready to merge */
   getMergeability(pr: PRInfo): Promise<MergeReadiness>;
+
+  // --- Fork Convergence (v1) ---
+
+  /** Compute ahead/behind/diverged sync state against an upstream ref. */
+  getForkSyncState?(input: ForkSyncInput): Promise<ForkSyncState>;
+
+  /** Generate deterministic convergence suggestions from a sync state. */
+  getForkConvergenceSuggestions?(state: ForkSyncState): ForkConvergenceSuggestion[];
+
+  /** v1 primitive: fork.sync_upstream (fast-forward-only sync). */
+  forkSyncUpstream?(input: ForkSyncInput): Promise<ForkSyncResult>;
+}
+
+export interface ForkSyncInput {
+  /** Local repository path where git commands should run. */
+  workspacePath: string;
+  /** Upstream remote name (defaults to "upstream" in implementations). */
+  upstreamRemote?: string;
+  /** Upstream branch name (defaults to "main" in implementations). */
+  upstreamBranch?: string;
+  /** Local branch to sync (defaults to currently checked out branch in implementations). */
+  localBranch?: string;
+}
+
+export type ForkSyncRelation = "up_to_date" | "ahead" | "behind" | "diverged";
+
+export interface ForkSyncState {
+  upstreamRef: string;
+  localRef: string;
+  ahead: number;
+  behind: number;
+  diverged: boolean;
+  relation: ForkSyncRelation;
+}
+
+export interface ForkConvergenceSuggestion {
+  type: "upstreamable_patch" | "drift_alert" | "sync_upstream";
+  message: string;
+}
+
+export type ForkSyncAction = "none" | "fast_forward" | "blocked";
+
+export interface ForkSyncResult {
+  primitive: "fork.sync_upstream";
+  action: ForkSyncAction;
+  synced: boolean;
+  stateBefore: ForkSyncState;
+  stateAfter: ForkSyncState;
+  suggestions: ForkConvergenceSuggestion[];
 }
 
 // --- PR Types ---

@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PR #402 Pre-Merge Explainer</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --card: #ffffff;
+      --ink: #142033;
+      --muted: #4a5c78;
+      --accent: #0b6bcb;
+      --ok: #0a7a3d;
+      --warn: #a25a00;
+      --border: #d9e1ee;
+      --code: #edf3ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", Arial, sans-serif;
+      color: var(--ink);
+      background: linear-gradient(180deg, #eef4ff 0%, #f7f9fd 35%, #f5f7fb 100%);
+      line-height: 1.5;
+    }
+    main {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 28px 18px 60px;
+    }
+    h1, h2 { margin: 0 0 10px; }
+    h1 { font-size: 1.9rem; }
+    h2 { font-size: 1.25rem; margin-top: 8px; }
+    .meta, .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      box-shadow: 0 6px 18px rgba(12, 37, 72, 0.05);
+    }
+    .meta { margin-bottom: 14px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 12px;
+      margin: 12px 0;
+    }
+    .card h3 {
+      margin: 0 0 8px;
+      font-size: 1.04rem;
+      color: #17325f;
+    }
+    ul { margin: 8px 0 0 18px; padding: 0; }
+    li { margin: 3px 0; }
+    code {
+      background: var(--code);
+      border: 1px solid #d8e5ff;
+      border-radius: 6px;
+      padding: 1px 6px;
+      font-family: "IBM Plex Mono", Consolas, monospace;
+      font-size: 0.92em;
+    }
+    pre {
+      background: #111c2e;
+      color: #f0f5ff;
+      border-radius: 10px;
+      padding: 12px;
+      overflow: auto;
+      margin: 8px 0 0;
+      font-size: 0.9rem;
+    }
+    .ok { color: var(--ok); font-weight: 700; }
+    .warn { color: var(--warn); font-weight: 700; }
+    .merge {
+      margin-top: 14px;
+      border-left: 4px solid var(--ok);
+      background: #ebf9f0;
+      padding: 12px;
+      border-radius: 8px;
+      font-weight: 700;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>PR #402 Pre-Merge Explainer</h1>
+    <div class="meta">
+      <div><strong>PR:</strong> <a href="https://github.com/ComposioHQ/agent-orchestrator/pull/402">#402</a></div>
+      <div><strong>Issue:</strong> <a href="https://github.com/ComposioHQ/agent-orchestrator/issues/401">#401</a></div>
+      <div><strong>Branch:</strong> <code>feat/401</code></div>
+      <div><strong>Snapshot:</strong> 2026-03-10 17:30:05 UTC</div>
+    </div>
+
+    <div class="grid">
+      <section class="card">
+        <h3>What This PR Does</h3>
+        <ul>
+          <li>Adds v1 fork convergence primitives to the SCM contract.</li>
+          <li>Implements <code>fork.sync_upstream</code> in GitHub SCM with fast-forward-only semantics.</li>
+          <li>Computes and exposes deterministic ahead/behind/diverged sync state.</li>
+          <li>Adds convergence suggestions (sync hint, upstreamable patch hint, drift alert).</li>
+          <li>Documents operator workflow for sync and divergence handling.</li>
+        </ul>
+      </section>
+
+      <section class="card">
+        <h3>Architecture / Design Choices</h3>
+        <ul>
+          <li>Pure helper for state computation: <code>computeForkSyncState</code>.</li>
+          <li>Pure helper for suggestions: <code>buildConvergenceSuggestions</code>.</li>
+          <li>Single parser path for git count output to avoid duplicate parsing logic.</li>
+          <li>No implicit conflict merge in v1; diverged or ff-failure returns <code>blocked</code>.</li>
+          <li>Sync action remains explicit and explainable via returned state + suggestions.</li>
+        </ul>
+      </section>
+    </div>
+
+    <div class="grid">
+      <section class="card">
+        <h3>Iterations & Feedback Addressed</h3>
+        <ul>
+          <li><strong>Iteration 1</strong> (<code>6494800</code>): initial implementation + tests + workflow doc.</li>
+          <li><strong>Iteration 2</strong> (<code>c570526</code>): Bugbot feedback fix for fork-sync test mock call order.</li>
+          <li>Bugbot thread resolved after fix and retest.</li>
+        </ul>
+      </section>
+
+      <section class="card">
+        <h3>Testing Performed</h3>
+        <pre>pnpm --filter @composio/ao-core build
+# Result: success
+
+pnpm --filter @composio/ao-plugin-scm-github test
+# Result: 72 passed, 0 failed</pre>
+        <ul>
+          <li>Coverage includes up-to-date/ahead/behind/diverged state cases.</li>
+          <li>Covers sync no-op, fast-forward, diverged blocked, and ff-only failure path.</li>
+        </ul>
+      </section>
+    </div>
+
+    <div class="grid">
+      <section class="card">
+        <h3>CI and Bugbot Snapshot</h3>
+        <ul>
+          <li class="ok">All CI checks passing.</li>
+          <li class="ok">Cursor Bugbot check passing.</li>
+          <li class="ok">No unresolved Bugbot review threads.</li>
+        </ul>
+      </section>
+
+      <section class="card">
+        <h3>Review Pass Method</h3>
+        <ul>
+          <li>Requested: slash-review command if available.</li>
+          <li>Session capability: no slash-review interface available in this terminal session.</li>
+          <li>Fallback used: structured manual deep review checklist over API contract, behavior paths, tests, docs, and regressions.</li>
+          <li>Outcome: no remaining blockers found.</li>
+        </ul>
+      </section>
+    </div>
+
+    <section class="card">
+      <h3>Remaining Risks</h3>
+      <ul>
+        <li>Operational risk is low-to-moderate: behavior depends on local git remote naming and branch topology.</li>
+        <li>v1 intentionally does not auto-resolve divergence; operators must perform manual convergence when blocked.</li>
+        <li>Future improvement opportunity: richer structured error reasons for blocked paths.</li>
+      </ul>
+      <div class="merge">Merge recommendation: <span class="ok">MERGE</span></div>
+    </section>
+  </main>
+</body>
+</html>

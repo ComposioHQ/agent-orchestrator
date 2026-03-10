@@ -22,6 +22,10 @@ import {
   type ReviewComment,
   type AutomatedComment,
   type MergeReadiness,
+  type ForkSyncInput,
+  type ForkSyncState,
+  type ForkSyncResult,
+  type ForkConvergenceSuggestion,
 } from "@composio/ao-core";
 
 const execFileAsync = promisify(execFile);
@@ -85,6 +89,79 @@ function parseDate(val: string | undefined | null): Date {
   if (!val) return new Date(0);
   const d = new Date(val);
   return isNaN(d.getTime()) ? new Date(0) : d;
+}
+
+function normalizePositiveCount(value: number): number {
+  if (!Number.isFinite(value) || value < 0) return 0;
+  return Math.floor(value);
+}
+
+export function computeForkSyncState(
+  aheadCount: number,
+  behindCount: number,
+  refs: { localRef: string; upstreamRef: string },
+): ForkSyncState {
+  const ahead = normalizePositiveCount(aheadCount);
+  const behind = normalizePositiveCount(behindCount);
+  const diverged = ahead > 0 && behind > 0;
+  const relation: ForkSyncState["relation"] = diverged
+    ? "diverged"
+    : ahead > 0
+      ? "ahead"
+      : behind > 0
+        ? "behind"
+        : "up_to_date";
+
+  return {
+    localRef: refs.localRef,
+    upstreamRef: refs.upstreamRef,
+    ahead,
+    behind,
+    diverged,
+    relation,
+  };
+}
+
+export function buildConvergenceSuggestions(
+  state: ForkSyncState,
+): ForkConvergenceSuggestion[] {
+  const suggestions: ForkConvergenceSuggestion[] = [];
+
+  if (state.behind > 0) {
+    suggestions.push({
+      type: "sync_upstream",
+      message: `Local branch is behind upstream by ${state.behind} commit(s); run fork.sync_upstream.`,
+    });
+  }
+
+  if (state.ahead > 0) {
+    suggestions.push({
+      type: "upstreamable_patch",
+      message: `Local branch is ahead by ${state.ahead} commit(s); consider upstreaming these changes via PR.`,
+    });
+  }
+
+  if (state.diverged) {
+    suggestions.push({
+      type: "drift_alert",
+      message:
+        "Fork has diverged from upstream (ahead and behind simultaneously); manual convergence is required.",
+    });
+  }
+
+  return suggestions;
+}
+
+function parseLeftRightCounts(raw: string): { behind: number; ahead: number } {
+  // `git rev-list --left-right --count upstream...local` returns "<left>\t<right>".
+  const match = raw.trim().match(/^(\d+)\s+(\d+)$/);
+  if (!match) {
+    throw new Error(`Unexpected git rev-list count output: "${raw.trim()}"`);
+  }
+  return {
+    behind: Number.parseInt(match[1], 10),
+    ahead: Number.parseInt(match[2], 10),
+  };
 }
 
 function isUnsupportedPrChecksJsonError(err: unknown): boolean {
@@ -230,6 +307,27 @@ function prInfoFromView(
 // ---------------------------------------------------------------------------
 
 function createGitHubSCM(): SCM {
+  async function resolveForkSyncState(
+    input: ForkSyncInput,
+  ): Promise<ForkSyncState> {
+    const upstreamRemote = input.upstreamRemote ?? "upstream";
+    const upstreamBranch = input.upstreamBranch ?? "main";
+    const localBranch =
+      input.localBranch ?? (await git(["branch", "--show-current"], input.workspacePath));
+    const upstreamRef = `${upstreamRemote}/${upstreamBranch}`;
+
+    const countsRaw = await git(
+      ["rev-list", "--left-right", "--count", `${upstreamRef}...${localBranch}`],
+      input.workspacePath,
+    );
+    const counts = parseLeftRightCounts(countsRaw);
+
+    return computeForkSyncState(counts.ahead, counts.behind, {
+      localRef: localBranch,
+      upstreamRef,
+    });
+  }
+
   return {
     name: "github",
 
@@ -727,6 +825,80 @@ function createGitHubSCM(): SCM {
         approved,
         noConflicts,
         blockers,
+      };
+    },
+
+    async getForkSyncState(input: ForkSyncInput): Promise<ForkSyncState> {
+      const upstreamRemote = input.upstreamRemote ?? "upstream";
+      const upstreamBranch = input.upstreamBranch ?? "main";
+      const upstreamRef = `${upstreamRemote}/${upstreamBranch}`;
+
+      await git(["fetch", upstreamRemote, upstreamBranch], input.workspacePath);
+      await git(["rev-parse", "--verify", upstreamRef], input.workspacePath);
+
+      return resolveForkSyncState(input);
+    },
+
+    getForkConvergenceSuggestions(state: ForkSyncState): ForkConvergenceSuggestion[] {
+      return buildConvergenceSuggestions(state);
+    },
+
+    async forkSyncUpstream(input: ForkSyncInput): Promise<ForkSyncResult> {
+      const upstreamRemote = input.upstreamRemote ?? "upstream";
+      const upstreamBranch = input.upstreamBranch ?? "main";
+      const currentBranch = await git(["branch", "--show-current"], input.workspacePath);
+      const localBranch = input.localBranch ?? currentBranch;
+      if (input.localBranch && input.localBranch !== currentBranch) {
+        throw new Error(
+          `fork.sync_upstream localBranch "${input.localBranch}" is not checked out (current: "${currentBranch}")`,
+        );
+      }
+      const upstreamRef = `${upstreamRemote}/${upstreamBranch}`;
+      const localRef = localBranch;
+
+      await git(["fetch", upstreamRemote, upstreamBranch], input.workspacePath);
+      await git(["rev-parse", "--verify", upstreamRef], input.workspacePath);
+
+      const stateBefore = await resolveForkSyncState({
+        ...input,
+        upstreamRemote,
+        upstreamBranch,
+        localBranch,
+      });
+
+      let action: ForkSyncResult["action"] = "none";
+
+      if (stateBefore.behind > 0 && stateBefore.ahead === 0) {
+        try {
+          await git(["merge", "--ff-only", upstreamRef], input.workspacePath);
+          action = "fast_forward";
+        } catch {
+          action = "blocked";
+        }
+      } else if (stateBefore.diverged) {
+        action = "blocked";
+      }
+
+      const stateAfter =
+        action === "fast_forward"
+          ? await resolveForkSyncState({
+              ...input,
+              upstreamRemote,
+              upstreamBranch,
+              localBranch,
+            })
+          : computeForkSyncState(stateBefore.ahead, stateBefore.behind, {
+              localRef,
+              upstreamRef,
+            });
+
+      return {
+        primitive: "fork.sync_upstream",
+        action,
+        synced: action === "fast_forward" && stateAfter.behind === 0,
+        stateBefore,
+        stateAfter,
+        suggestions: buildConvergenceSuggestions(stateAfter),
       };
     },
   };
