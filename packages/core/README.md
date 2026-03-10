@@ -62,7 +62,7 @@ Polls sessions, detects state changes, triggers reactions:
 **State machine:**
 
 ```
-spawning → working → pr_open → ci_failed/review_pending/approved → mergeable → merged
+spawning → working → pr_open → waiting_ci → ci_failed/review_pending/approved → mergeable → merged
 ```
 
 **Reactions:**

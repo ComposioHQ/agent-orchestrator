@@ -322,6 +322,11 @@ describe("getAttentionLevel", () => {
       expect(getAttentionLevel(session)).toBe("pending");
     });
 
+    it("should return 'pending' for waiting_ci even after the agent exits", () => {
+      const session = createSession({ status: "waiting_ci", activity: "exited" });
+      expect(getAttentionLevel(session)).toBe("pending");
+    });
+
     it("should return 'pending' when PR has unresolved threads", () => {
       const session = createSession({
         status: "pr_open",

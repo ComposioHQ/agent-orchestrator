@@ -1108,7 +1108,7 @@ describe("list", () => {
     vi.useRealTimers();
   });
 
-  it("marks dead runtimes as killed", async () => {
+  it("marks dead runtimes as exited without clobbering their status", async () => {
     const deadRuntime: Runtime = {
       ...mockRuntime,
       isAlive: vi.fn().mockResolvedValue(false),
@@ -1133,8 +1133,39 @@ describe("list", () => {
     const sm = createSessionManager({ config, registry: registryWithDead });
     const sessions = await sm.list();
 
-    expect(sessions[0].status).toBe("killed");
+    expect(sessions[0].status).toBe("working");
     expect(sessions[0].activity).toBe("exited");
+  });
+
+  it("preserves waiting_ci sessions after the agent exits", async () => {
+    const deadRuntime: Runtime = {
+      ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(false),
+    };
+    const registryWithDead: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return deadRuntime;
+        if (slot === "agent") return mockAgent;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "a",
+      status: "waiting_ci",
+      project: "my-app",
+      pr: "https://github.com/org/repo/pull/42",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithDead });
+    const sessions = await sm.list();
+
+    expect(sessions[0].status).toBe("waiting_ci");
+    expect(sessions[0].activity).toBe("exited");
+    expect(deadRuntime.isAlive).not.toHaveBeenCalled();
   });
 
   it("detects activity using agent-native mechanism", async () => {

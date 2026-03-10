@@ -502,6 +502,7 @@ const VALID_STATUSES: ReadonlySet<string> = new Set([
   "spawning",
   "working",
   "pr_open",
+  "waiting_ci",
   "ci_failed",
   "review_pending",
   "changes_requested",
@@ -519,6 +520,7 @@ const VALID_STATUSES: ReadonlySet<string> = new Set([
 
 const PR_TRACKING_STATUSES: ReadonlySet<string> = new Set([
   "pr_open",
+  "waiting_ci",
   "ci_failed",
   "review_pending",
   "changes_requested",
@@ -881,7 +883,15 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
    * Enrich session with live runtime state (alive/exited) and activity detection.
    * Mutates the session object in place.
    */
-  const TERMINAL_SESSION_STATUSES = new Set(["killed", "done", "merged", "terminated", "cleanup"]);
+  const TERMINAL_SESSION_STATUSES = new Set([
+    "killed",
+    "done",
+    "merged",
+    "terminated",
+    "cleanup",
+    // waiting_ci intentionally keeps PR polling alive after the agent exits.
+    "waiting_ci",
+  ]);
 
   async function enrichSessionWithRuntimeState(
     session: Session,
@@ -902,7 +912,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       try {
         const alive = await plugins.runtime.isAlive(session.runtimeHandle);
         if (!alive) {
-          session.status = "killed";
+          // Preserve the persisted lifecycle status so the lifecycle manager can
+          // decide whether an exited session should be restored, marked killed,
+          // or kept alive for PR/CI tracking.
           session.activity = "exited";
           return;
         }

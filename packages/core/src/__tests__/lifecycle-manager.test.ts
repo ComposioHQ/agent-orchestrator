@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { createHash, randomUUID } from "node:crypto";
 import { createLifecycleManager } from "../lifecycle-manager.js";
 import { createSessionManager } from "../session-manager.js";
-import { deleteMetadata, writeMetadata, readMetadataRaw } from "../metadata.js";
+import { deleteMetadata, writeMetadata, readMetadataRaw, updateMetadata } from "../metadata.js";
 import { getSessionsDir, getProjectBaseDir, getWorktreesDir } from "../paths.js";
 import type {
   OrchestratorConfig,
@@ -430,6 +430,124 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("killed");
   });
 
+  it("keeps PR sessions in waiting_ci when the runtime exits before CI finishes", async () => {
+    vi.mocked(mockRuntime.isAlive).mockResolvedValue(false);
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("pending"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("none"),
+      getPendingComments: vi.fn().mockResolvedValue([]),
+      getAutomatedComments: vi.fn().mockResolvedValue([]),
+      getMergeability: vi.fn().mockResolvedValue({
+        mergeable: false,
+        ciPassing: false,
+        approved: false,
+        noConflicts: true,
+        blockers: ["ci"],
+      }),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    const session = makeSession({ status: "pr_open", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+      pr: makePR().url,
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("waiting_ci");
+    expect(readMetadataRaw(sessionsDir, "app-1")?.["status"]).toBe("waiting_ci");
+    expect(readMetadataRaw(sessionsDir, "app-1")?.["waitingCiSince"]).toBeTruthy();
+    expect(readMetadataRaw(sessionsDir, "app-1")?.["lastPrCiStatus"]).toBe("pending");
+  });
+
+  it("auto-detects the PR and enters waiting_ci when the agent exits before metadata is updated", async () => {
+    vi.mocked(mockRuntime.isAlive).mockResolvedValue(false);
+
+    const pr = makePR();
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn().mockResolvedValue(pr),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("pending"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("none"),
+      getPendingComments: vi.fn().mockResolvedValue([]),
+      getAutomatedComments: vi.fn().mockResolvedValue([]),
+      getMergeability: vi.fn().mockResolvedValue({
+        mergeable: false,
+        ciPassing: false,
+        approved: false,
+        noConflicts: true,
+        blockers: ["ci"],
+      }),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    const session = makeSession({ status: "working", pr: null, branch: pr.branch });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: pr.branch,
+      status: "working",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(mockSCM.detectPR).toHaveBeenCalledWith(session, config.projects["my-app"]);
+    expect(lm.getStates().get("app-1")).toBe("waiting_ci");
+    expect(readMetadataRaw(sessionsDir, "app-1")?.["pr"]).toBe(pr.url);
+    expect(readMetadataRaw(sessionsDir, "app-1")?.["status"]).toBe("waiting_ci");
+  });
+
   it("detects killed state when getActivityState returns exited", async () => {
     vi.mocked(mockAgent.getActivityState).mockResolvedValue({ state: "exited" });
 
@@ -744,6 +862,166 @@ describe("check (single session)", () => {
 
     expect(mockSCM.getCISummary).toHaveBeenCalledTimes(3);
     expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("wakes a waiting_ci session when CI later fails after the agent exits", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-09T10:00:00.000Z"));
+
+    config.reactions = {
+      "ci-failed": {
+        auto: true,
+        action: "send-to-agent",
+        message: "Fix CI",
+      },
+    };
+
+    vi.mocked(mockRuntime.isAlive).mockResolvedValue(false);
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValueOnce("pending").mockResolvedValueOnce("failing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("none"),
+      getPendingComments: vi.fn().mockResolvedValue([]),
+      getAutomatedComments: vi.fn().mockResolvedValue([]),
+      getMergeability: vi.fn().mockResolvedValue({
+        mergeable: false,
+        ciPassing: false,
+        approved: false,
+        noConflicts: true,
+        blockers: ["ci"],
+      }),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    const session = makeSession({ status: "pr_open", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+      pr: makePR().url,
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("waiting_ci");
+    expect(mockSessionManager.send).not.toHaveBeenCalled();
+    expect(readMetadataRaw(sessionsDir, "app-1")?.["waitingCiSince"]).toBeTruthy();
+
+    vi.setSystemTime(new Date("2026-03-09T10:01:01.000Z"));
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("ci_failed");
+    expect(mockSessionManager.send).toHaveBeenCalledWith("app-1", "Fix CI");
+    expect(readMetadataRaw(sessionsDir, "app-1")?.["status"]).toBe("ci_failed");
+    expect(readMetadataRaw(sessionsDir, "app-1")?.["waitingCiSince"]).toBeUndefined();
+  });
+
+  it("times out waiting_ci sessions after 30 minutes and warns humans", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-09T10:31:00.000Z"));
+
+    config.notificationRouting.warning = ["desktop"];
+
+    const mockNotifier: Notifier = {
+      name: "mock-notifier",
+      notify: vi.fn().mockResolvedValue(undefined),
+    };
+
+    vi.mocked(mockRuntime.isAlive).mockResolvedValue(false);
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("pending"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("none"),
+      getPendingComments: vi.fn().mockResolvedValue([]),
+      getAutomatedComments: vi.fn().mockResolvedValue([]),
+      getMergeability: vi.fn().mockResolvedValue({
+        mergeable: false,
+        ciPassing: false,
+        approved: false,
+        noConflicts: true,
+        blockers: ["ci"],
+      }),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "notifier" && name === "desktop") return mockNotifier;
+        return null;
+      }),
+    };
+
+    const session = makeSession({
+      status: "waiting_ci",
+      pr: makePR(),
+      metadata: { waitingCiSince: "2026-03-09T10:00:00.000Z" },
+    });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "waiting_ci",
+      project: "my-app",
+      pr: makePR().url,
+    });
+    updateMetadata(sessionsDir, "app-1", {
+      waitingCiSince: "2026-03-09T10:00:00.000Z",
+      lastPrStatusPollAt: "2026-03-09T10:00:00.000Z",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("done");
+    expect(readMetadataRaw(sessionsDir, "app-1")?.["status"]).toBe("done");
+    expect(readMetadataRaw(sessionsDir, "app-1")?.["waitingCiTimedOutAt"]).toBeTruthy();
+    expect(mockNotifier.notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "session.completed",
+        priority: "warning",
+      }),
+    );
   });
 
   it("promotes a stuck PR to mergeable when CI passes and no review is required", async () => {

@@ -114,6 +114,8 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
     createdAt: raw["createdAt"],
     runtimeHandle: raw["runtimeHandle"],
     restoredAt: raw["restoredAt"],
+    waitingCiSince: raw["waitingCiSince"],
+    waitingCiTimedOutAt: raw["waitingCiTimedOutAt"],
     role: raw["role"],
     dashboardPort: raw["dashboardPort"] ? Number(raw["dashboardPort"]) : undefined,
     terminalWsPort: raw["terminalWsPort"] ? Number(raw["terminalWsPort"]) : undefined,
@@ -163,6 +165,9 @@ export function writeMetadata(
   if (metadata.createdAt) data["createdAt"] = metadata.createdAt;
   if (metadata.runtimeHandle) data["runtimeHandle"] = metadata.runtimeHandle;
   if (metadata.restoredAt) data["restoredAt"] = metadata.restoredAt;
+  if (metadata.waitingCiSince) data["waitingCiSince"] = metadata.waitingCiSince;
+  if (metadata.waitingCiTimedOutAt)
+    data["waitingCiTimedOutAt"] = metadata.waitingCiTimedOutAt;
   if (metadata.role) data["role"] = metadata.role;
   if (metadata.dashboardPort !== undefined) data["dashboardPort"] = String(metadata.dashboardPort);
   if (metadata.terminalWsPort !== undefined)

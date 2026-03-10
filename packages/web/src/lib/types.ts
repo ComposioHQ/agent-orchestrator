@@ -236,7 +236,10 @@ export function getAttentionLevel(session: DashboardSession): AttentionLevel {
     return "respond";
   }
   // Exited agent with non-terminal status = crashed, needs human attention
-  if (session.activity === ACTIVITY_STATE.EXITED) {
+  if (
+    session.activity === ACTIVITY_STATE.EXITED &&
+    session.status !== SESSION_STATUS.WAITING_CI
+  ) {
     return "respond";
   }
 
@@ -252,7 +255,10 @@ export function getAttentionLevel(session: DashboardSession): AttentionLevel {
   }
 
   // ── Pending: waiting on external (reviewer, CI) ───────────────────
-  if (session.status === "review_pending") {
+  if (
+    session.status === SESSION_STATUS.REVIEW_PENDING ||
+    session.status === SESSION_STATUS.WAITING_CI
+  ) {
     return "pending";
   }
   if (session.pr && !isPRRateLimited(session.pr)) {

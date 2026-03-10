@@ -7,6 +7,7 @@ export type SessionStatus =
   | "spawning"
   | "working"
   | "pr_open"
+  | "waiting_ci"
   | "ci_failed"
   | "review_pending"
   | "changes_requested"
@@ -177,7 +178,7 @@ export function getAttentionLevel(session: DashboardSession): AttentionLevel {
   ) {
     return "respond";
   }
-  if (session.activity === "exited") {
+  if (session.activity === "exited" && session.status !== "waiting_ci") {
     return "respond";
   }
 
@@ -193,7 +194,7 @@ export function getAttentionLevel(session: DashboardSession): AttentionLevel {
   }
 
   // Pending: waiting on external
-  if (session.status === "review_pending") {
+  if (session.status === "review_pending" || session.status === "waiting_ci") {
     return "pending";
   }
   if (session.pr && !isPRRateLimited(session.pr)) {

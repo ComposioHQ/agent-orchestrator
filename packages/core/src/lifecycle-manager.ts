@@ -361,6 +361,7 @@ function createPollStats(): LifecyclePollStats {
 }
 
 const OPEN_PR_STATUS_POLL_INTERVAL_MS = 60_000;
+const WAITING_CI_TIMEOUT_MS = 30 * 60_000;
 const DEFAULT_CI_REACTION_REFIRE_INTERVAL_MS = 120_000;
 const DEFAULT_REACTION_REFIRE_INTERVAL_MS = 300_000;
 
@@ -379,6 +380,46 @@ function isOpenPRStatusPollDue(session: Session): boolean {
   const lastPollAtMs = parseTimestampMs(session.metadata["lastPrStatusPollAt"]);
   if (lastPollAtMs === null) return true;
   return Date.now() - lastPollAtMs >= OPEN_PR_STATUS_POLL_INTERVAL_MS;
+}
+
+function isWaitingForCiVerdict(ciStatus: CIStatus): boolean {
+  return ciStatus === CI_STATUS.NONE || ciStatus === CI_STATUS.PENDING;
+}
+
+function shouldKeepPollingExitedPRSession(
+  session: Session,
+  currentStatus: SessionStatus,
+  allowPrAutoDetect: boolean,
+): boolean {
+  if (!session.pr) {
+    return (
+      allowPrAutoDetect &&
+      (currentStatus === SESSION_STATUS.WORKING || currentStatus === SESSION_STATUS.DONE)
+    );
+  }
+
+  switch (currentStatus) {
+    case SESSION_STATUS.WORKING:
+    case SESSION_STATUS.PR_OPEN:
+    case SESSION_STATUS.WAITING_CI:
+    case SESSION_STATUS.CI_FAILED:
+    case SESSION_STATUS.REVIEW_PENDING:
+    case SESSION_STATUS.CHANGES_REQUESTED:
+    case SESSION_STATUS.APPROVED:
+    case SESSION_STATUS.MERGEABLE:
+      return true;
+    default:
+      return false;
+  }
+}
+
+function isWaitingCiTimedOut(session: Session): boolean {
+  const waitingCiSinceMs = parseTimestampMs(session.metadata["waitingCiSince"]);
+  if (waitingCiSinceMs === null) {
+    return false;
+  }
+
+  return Date.now() - waitingCiSinceMs >= WAITING_CI_TIMEOUT_MS;
 }
 
 function shouldOverridePreservedPRStatus(status: SessionStatus): boolean {
@@ -451,6 +492,41 @@ function isSessionCleanupComplete(
       step.step !== "opencode",
   );
 }
+
+function buildStatusMetadataUpdates(
+  session: Session,
+  fromStatus: SessionStatus | undefined,
+  toStatus: SessionStatus,
+): Partial<Record<string, string>> {
+  const updates: Partial<Record<string, string>> = { status: toStatus };
+
+  if (toStatus === SESSION_STATUS.WAITING_CI) {
+    updates["waitingCiSince"] = session.metadata["waitingCiSince"] ?? new Date().toISOString();
+    updates["waitingCiTimedOutAt"] = "";
+    return updates;
+  }
+
+  if (fromStatus === SESSION_STATUS.WAITING_CI) {
+    updates["waitingCiSince"] = "";
+    updates["waitingCiTimedOutAt"] =
+      toStatus === SESSION_STATUS.DONE ? new Date().toISOString() : "";
+    return updates;
+  }
+
+  if (toStatus !== SESSION_STATUS.DONE && session.metadata["waitingCiTimedOutAt"]) {
+    updates["waitingCiTimedOutAt"] = "";
+  }
+
+  return updates;
+}
+
+const INACTIVE_SESSION_STATUSES: ReadonlySet<SessionStatus> = new Set([
+  SESSION_STATUS.KILLED,
+  SESSION_STATUS.DONE,
+  SESSION_STATUS.MERGED,
+  SESSION_STATUS.TERMINATED,
+  SESSION_STATUS.CLEANUP,
+]);
 
 /** Create a LifecycleManager instance. */
 export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleManager {
@@ -668,6 +744,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     currentStatus: SessionStatus,
     pollStats?: LifecyclePollStats,
   ): Promise<SessionStatus> {
+    if (
+      currentStatus === SESSION_STATUS.DONE &&
+      typeof session.metadata["waitingCiTimedOutAt"] === "string"
+    ) {
+      return SESSION_STATUS.DONE;
+    }
+
     const project = config.projects[session.projectId];
     if (!project) return currentStatus;
 
@@ -675,10 +758,14 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const agent = registry.get<Agent>("agent", agentName);
     const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
     const scmPlugin = project.scm?.plugin ?? "unknown";
+    const allowPrAutoDetect =
+      scm !== null && Boolean(session.branch) && session.metadata["prAutoDetect"] !== "off";
 
     // Track activity state across steps so stuck detection can run after PR checks
     let detectedIdleTimestamp: Date | null = null;
     let preserveCurrentStatus = false;
+    let agentExitedWithOpenPR = false;
+    let retryExitedSessionAfterPrLookupError = false;
 
     // 1. Check if runtime is alive
     if (session.runtimeHandle) {
@@ -695,7 +782,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           });
           return true;
         });
-        if (!alive) return "killed";
+        if (!alive) {
+          if (shouldKeepPollingExitedPRSession(session, currentStatus, allowPrAutoDetect)) {
+            agentExitedWithOpenPR = true;
+          } else {
+            return "killed";
+          }
+        }
       }
     }
 
@@ -706,7 +799,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const activityState = await agent.getActivityState(session, config.readyThresholdMs);
         if (activityState) {
           if (activityState.state === "waiting_input") return "needs_input";
-          if (activityState.state === "exited") return "killed";
+          if (activityState.state === "exited") {
+            if (shouldKeepPollingExitedPRSession(session, currentStatus, allowPrAutoDetect)) {
+              agentExitedWithOpenPR = true;
+            } else {
+              return "killed";
+            }
+          }
 
           // Stuck detection: if agent is idle/blocked beyond the configured threshold,
           // transition to "stuck" so the agent-stuck reaction can fire.
@@ -739,7 +838,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             if (activity === "waiting_input") return "needs_input";
 
             const processAlive = await agent.isProcessRunning(session.runtimeHandle);
-            if (!processAlive) return "killed";
+            if (!processAlive) {
+              if (shouldKeepPollingExitedPRSession(session, currentStatus, allowPrAutoDetect)) {
+                agentExitedWithOpenPR = true;
+              } else {
+                return "killed";
+              }
+            }
           }
         }
       } catch (error) {
@@ -790,6 +895,9 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           branch: session.branch,
           error,
         });
+        if (agentExitedWithOpenPR) {
+          retryExitedSessionAfterPrLookupError = true;
+        }
         // SCM detection failed — will retry next poll
       }
     }
@@ -814,6 +922,20 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           lastPrStatusPollAt: new Date().toISOString(),
           lastPrCiStatus: openPREvaluation.ciStatus,
         });
+
+        if (
+          agentExitedWithOpenPR &&
+          isWaitingForCiVerdict(openPREvaluation.ciStatus)
+        ) {
+          if (
+            currentStatus === SESSION_STATUS.WAITING_CI &&
+            isWaitingCiTimedOut(session)
+          ) {
+            return SESSION_STATUS.DONE;
+          }
+
+          return SESSION_STATUS.WAITING_CI;
+        }
 
         if (shouldOverridePreservedPRStatus(openPREvaluation.status)) {
           return openPREvaluation.status;
@@ -855,6 +977,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           return currentStatus;
         }
       }
+    }
+
+    if (agentExitedWithOpenPR && !session.pr) {
+      return retryExitedSessionAfterPrLookupError ? currentStatus : SESSION_STATUS.KILLED;
     }
 
     if (preserveCurrentStatus) {
@@ -1423,6 +1549,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         lastAutomatedReviewDispatchAt: "",
         lastPrStatusPollAt: "",
         lastPrCiStatus: "",
+        waitingCiSince: "",
+        waitingCiTimedOutAt: "",
       });
       return;
     }
@@ -1692,7 +1820,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
       // State transition detected
       states.set(session.id, newStatus);
-      updateSessionMetadata(session, { status: newStatus });
+      updateSessionMetadata(session, buildStatusMetadataUpdates(session, oldStatus, newStatus));
 
       // Reset allCompleteEmitted when any session becomes active again
       if (newStatus !== "merged" && newStatus !== "killed") {
@@ -1739,6 +1867,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
                 reactionResult.resultingStatus &&
                 reactionResult.resultingStatus !== newStatus
               ) {
+                const reactionFromStatus = newStatus;
                 const finalStatus = reactionResult.resultingStatus;
                 const finalEventType = statusToEventType(newStatus, finalStatus);
                 const finalReactionKey = finalEventType ? eventToReactionKey(finalEventType) : null;
@@ -1760,7 +1889,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
                 newStatus = finalStatus;
                 states.set(session.id, finalStatus);
-                updateSessionMetadata(session, { status: finalStatus });
+                updateSessionMetadata(
+                  session,
+                  buildStatusMetadataUpdates(session, reactionFromStatus, finalStatus),
+                );
               }
 
               // Only suppress the transition notification if the reaction actually
@@ -1786,6 +1918,16 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           });
           await notifyHuman(event, priority, pollStats);
         }
+      }
+
+      if (oldStatus === SESSION_STATUS.WAITING_CI && newStatus === SESSION_STATUS.DONE) {
+        const event = createEvent("session.completed", {
+          sessionId: session.id,
+          projectId: session.projectId,
+          message: `${session.id}: CI did not report within 30 minutes; marking session done`,
+          data: { oldStatus, newStatus, reason: "waiting_ci_timeout" },
+        });
+        await notifyHuman(event, "warning", pollStats);
       }
     } else {
       // No transition but track current state
@@ -1829,12 +1971,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       // (e.g., list() detected a dead runtime and marked it "killed" — we need to
       // process that transition even though the new status is terminal)
       const sessionsToCheck = sessions.filter((s) => {
-        if (s.status !== "merged" && s.status !== "killed") return true;
+        if (!INACTIVE_SESSION_STATUSES.has(s.status)) return true;
         const tracked = states.get(s.id);
         return tracked !== undefined && tracked !== s.status;
       });
 
-      const activeSessions = sessions.filter((s) => s.status !== "merged" && s.status !== "killed");
+      const activeSessions = sessions.filter((s) => !INACTIVE_SESSION_STATUSES.has(s.status));
       pollStats.totalSessions = sessions.length;
       pollStats.checkedSessions = sessionsToCheck.length;
       pollStats.activeSessions = activeSessions.length;

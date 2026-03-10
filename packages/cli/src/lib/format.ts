@@ -34,6 +34,7 @@ export function statusColor(status: string): string {
     case "idle":
       return chalk.yellow(status);
     case "pr_open":
+    case "waiting_ci":
     case "review_pending":
       return chalk.blue(status);
     case "approved":

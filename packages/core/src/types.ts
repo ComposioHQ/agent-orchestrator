@@ -27,6 +27,7 @@ export type SessionStatus =
   | "spawning"
   | "working"
   | "pr_open"
+  | "waiting_ci"
   | "ci_failed"
   | "review_pending"
   | "changes_requested"
@@ -75,6 +76,7 @@ export const SESSION_STATUS = {
   SPAWNING: "spawning" as const,
   WORKING: "working" as const,
   PR_OPEN: "pr_open" as const,
+  WAITING_CI: "waiting_ci" as const,
   CI_FAILED: "ci_failed" as const,
   REVIEW_PENDING: "review_pending" as const,
   CHANGES_REQUESTED: "changes_requested" as const,
@@ -1103,6 +1105,8 @@ export interface SessionMetadata {
   createdAt?: string;
   runtimeHandle?: string;
   restoredAt?: string;
+  waitingCiSince?: string;
+  waitingCiTimedOutAt?: string;
   role?: string; // "orchestrator" for orchestrator sessions
   dashboardPort?: number;
   terminalWsPort?: number;
