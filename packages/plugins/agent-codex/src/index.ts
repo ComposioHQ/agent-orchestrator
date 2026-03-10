@@ -557,6 +557,73 @@ export async function resolveCodexBinary(): Promise<string> {
 }
 
 // =============================================================================
+// Terminal Output Patterns for detectActivity
+// =============================================================================
+
+/** Classify Codex CLI's activity state from terminal output (pure, sync).
+ *
+ *  Priority order (first match wins):
+ *  1. Empty output → idle
+ *  2. Last line is a shell/input prompt → idle
+ *  3. Tail contains approval/confirmation prompts → waiting_input
+ *  4. Tail contains error/blocked indicators → blocked
+ *  5. Any recognized active indicator → active
+ *  6. Non-empty output with no pattern match → active (default)
+ */
+function classifyCodexTerminalOutput(terminalOutput: string): ActivityState {
+  // 1. Empty output — can't determine state
+  if (!terminalOutput.trim()) return "idle";
+
+  const lines = terminalOutput.trim().split("\n");
+  const lastLine = lines[lines.length - 1]?.trim() ?? "";
+
+  // 2. Shell/input prompt on the last line → idle (agent is waiting for user input prompt)
+  //    Codex shows `>` or standard shell prompts when ready for a new task.
+  if (/^[❯>$#]\s*$/.test(lastLine)) return "idle";
+
+  // 3. Check the bottom of the buffer for approval/confirmation prompts.
+  //    Historical "Thinking"/"Reading" text higher in the buffer must NOT
+  //    override a current prompt at the bottom.
+  const tail = lines.slice(-5).join("\n");
+
+  // Codex approval prompts
+  if (/approval required/i.test(tail)) return "waiting_input";
+  if (/apply patch\?/i.test(tail)) return "waiting_input";
+  if (/approve\?/i.test(tail)) return "waiting_input";
+  if (/\(y\)es.*\(n\)o/i.test(tail)) return "waiting_input";
+  if (/\(y\/n\)/i.test(tail)) return "waiting_input";
+  if (/do you want to proceed\?/i.test(tail)) return "waiting_input";
+  if (/press enter to confirm/i.test(tail)) return "waiting_input";
+  if (/accept changes\?/i.test(tail)) return "waiting_input";
+  if (/allow this action\?/i.test(tail)) return "waiting_input";
+  if (/confirm\?.*\[y\/n\]/i.test(tail)) return "waiting_input";
+
+  // 4. Check for blocked/error indicators in the tail
+  if (/rate limit/i.test(tail)) return "blocked";
+  if (/error:\s*authentication/i.test(tail)) return "blocked";
+  if (/api key.*invalid/i.test(tail)) return "blocked";
+  if (/token limit exceeded/i.test(tail)) return "blocked";
+  if (/connection refused/i.test(tail)) return "blocked";
+  if (/quota exceeded/i.test(tail)) return "blocked";
+  if (/ECONNREFUSED/i.test(tail)) return "blocked";
+  if (/ERR_NETWORK/i.test(tail)) return "blocked";
+  if (/429 Too Many Requests/i.test(tail)) return "blocked";
+  if (/unauthorized/i.test(tail)) return "blocked";
+
+  // 5. Check for completion/done indicators on the last line → idle
+  //    These indicate Codex finished its task and returned to a ready state.
+  if (/^done\.?$/i.test(lastLine)) return "idle";
+  if (/task completed/i.test(lastLine)) return "idle";
+  if (/all changes applied/i.test(lastLine)) return "idle";
+  if (/exiting/i.test(lastLine)) return "idle";
+
+  // 6. Default to active — Codex is processing.
+  //    Active indicators (Thinking, Reading, Writing, sandbox execution, etc.)
+  //    all map to "active" so no need to check them individually.
+  return "active";
+}
+
+// =============================================================================
 // Agent Implementation
 // =============================================================================
 
@@ -664,22 +731,7 @@ function createCodexAgent(): Agent {
     },
 
     detectActivity(terminalOutput: string): ActivityState {
-      if (!terminalOutput.trim()) return "idle";
-
-      const lines = terminalOutput.trim().split("\n");
-      const lastLine = lines[lines.length - 1]?.trim() ?? "";
-
-      // If Codex is showing its input prompt, it's idle
-      if (/^[>$#]\s*$/.test(lastLine)) return "idle";
-
-      // Check last few lines for approval prompts
-      const tail = lines.slice(-5).join("\n");
-      if (/approval required/i.test(tail)) return "waiting_input";
-      if (/\(y\)es.*\(n\)o/i.test(tail)) return "waiting_input";
-
-      // Default to active — specific patterns (esc to interrupt, spinner
-      // symbols) all map to "active" so no need to check them individually.
-      return "active";
+      return classifyCodexTerminalOutput(terminalOutput);
     },
 
     async getActivityState(session: Session, readyThresholdMs?: number): Promise<ActivityDetection | null> {
