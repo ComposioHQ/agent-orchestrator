@@ -1,0 +1,19 @@
+# Minimal setup for a single GitLab repo with GitLab Issues
+# Perfect for getting started with GitLab
+
+dataDir: ~/.agent-orchestrator
+worktreeDir: ~/.worktrees
+
+projects:
+  my-app:
+    repo: group/subgroup/my-app
+    path: ~/my-app
+    defaultBranch: main
+
+    scm:
+      plugin: gitlab
+      host: gitlab.com
+
+    tracker:
+      plugin: gitlab
+      host: gitlab.com

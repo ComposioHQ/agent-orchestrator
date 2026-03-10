@@ -151,14 +151,23 @@ function applyProjectDefaults(config: OrchestratorConfig): OrchestratorConfig {
       project.sessionPrefix = generateSessionPrefix(projectId);
     }
 
-    // Infer SCM from repo if not set
+    const isGitLabHost = (host: string | undefined): boolean =>
+      !!host && (host.includes("gitlab") || host.includes("gitlab.com"));
+
+    const detectGitLab = (): boolean => {
+      if (isGitLabHost(project.scm?.["host"] as string)) return true;
+      if (isGitLabHost(project.tracker?.["host"] as string)) return true;
+      return false;
+    };
+
+    const useGitLab = detectGitLab();
+
     if (!project.scm && project.repo.includes("/")) {
-      project.scm = { plugin: "github" };
+      project.scm = { plugin: useGitLab ? "gitlab" : "github" };
     }
 
-    // Infer tracker from repo if not set (default to github issues)
     if (!project.tracker) {
-      project.tracker = { plugin: "github" };
+      project.tracker = { plugin: useGitLab ? "gitlab" : "github" };
     }
   }
 
