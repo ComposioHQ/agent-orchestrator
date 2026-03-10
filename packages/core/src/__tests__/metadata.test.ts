@@ -11,6 +11,8 @@ import {
   updateMetadata,
   deleteMetadata,
   listMetadata,
+  listArchivedSessionIds,
+  reserveSessionId,
 } from "../metadata.js";
 
 let dataDir: string;
@@ -460,5 +462,212 @@ describe("listMetadata", () => {
     const list = listMetadata(emptyDir);
     expect(list).toEqual([]);
     // no cleanup needed since dir was never created
+  });
+});
+
+describe("listArchivedSessionIds", () => {
+  it("lists unique session IDs from archive directory", () => {
+    const archiveDir = join(dataDir, "archive");
+    mkdirSync(archiveDir, { recursive: true });
+
+    writeFileSync(join(archiveDir, "app-1_2025-01-01T00-00-00-000Z"), "status=killed\n");
+    writeFileSync(join(archiveDir, "app-1_2025-06-01T00-00-00-000Z"), "status=killed\n");
+    writeFileSync(join(archiveDir, "app-2_2025-03-01T00-00-00-000Z"), "status=done\n");
+
+    const ids = listArchivedSessionIds(dataDir).sort();
+    expect(ids).toEqual(["app-1", "app-2"]);
+  });
+
+  it("returns empty array when archive directory does not exist", () => {
+    expect(listArchivedSessionIds(dataDir)).toEqual([]);
+  });
+
+  it("returns empty array when archive directory is empty", () => {
+    mkdirSync(join(dataDir, "archive"), { recursive: true });
+    expect(listArchivedSessionIds(dataDir)).toEqual([]);
+  });
+
+  it("skips files without underscore separator", () => {
+    const archiveDir = join(dataDir, "archive");
+    mkdirSync(archiveDir, { recursive: true });
+
+    writeFileSync(join(archiveDir, "malformed-no-timestamp"), "status=killed\n");
+    writeFileSync(join(archiveDir, "app-1_2025-01-01T00-00-00-000Z"), "status=killed\n");
+
+    expect(listArchivedSessionIds(dataDir)).toEqual(["app-1"]);
+  });
+
+  it("integrates with deleteMetadata archive flow", () => {
+    writeMetadata(dataDir, "sess-1", { worktree: "/tmp", branch: "a", status: "working" });
+    writeMetadata(dataDir, "sess-2", { worktree: "/tmp", branch: "b", status: "working" });
+
+    deleteMetadata(dataDir, "sess-1", true);
+    deleteMetadata(dataDir, "sess-2", true);
+
+    const archived = listArchivedSessionIds(dataDir).sort();
+    expect(archived).toEqual(["sess-1", "sess-2"]);
+
+    // Active list should be empty
+    expect(listMetadata(dataDir)).toEqual([]);
+  });
+});
+
+describe("metadata round-tripping with special characters", () => {
+  it("preserves values containing equals signs", () => {
+    writeMetadata(dataDir, "special-1", {
+      worktree: "/tmp/w",
+      branch: "main",
+      status: "working",
+      runtimeHandle: '{"id":"tmux-1","data":{"key":"a=b"}}',
+    });
+
+    const meta = readMetadata(dataDir, "special-1");
+    expect(meta!.runtimeHandle).toBe('{"id":"tmux-1","data":{"key":"a=b"}}');
+  });
+
+  it("preserves URLs with query strings", () => {
+    const prUrl = "https://github.com/org/repo/pull/42?expand=1";
+    writeMetadata(dataDir, "special-2", {
+      worktree: "/tmp/w",
+      branch: "main",
+      status: "pr_open",
+      pr: prUrl,
+    });
+
+    const meta = readMetadata(dataDir, "special-2");
+    expect(meta!.pr).toBe(prUrl);
+  });
+
+  it("preserves summaries with special characters", () => {
+    const summary = 'Implementing OAuth2 with JWT tokens & PKCE flow (RFC 7636)';
+    writeMetadata(dataDir, "special-3", {
+      worktree: "/tmp/w",
+      branch: "feat/auth",
+      status: "working",
+      summary,
+    });
+
+    const meta = readMetadata(dataDir, "special-3");
+    expect(meta!.summary).toBe(summary);
+  });
+
+  it("round-trips all optional fields through write/read cycle", () => {
+    const fullMetadata = {
+      worktree: "/Users/dev/projects/my-app/worktrees/sess-1",
+      branch: "feat/INT-1234-complex-feature",
+      status: "pr_open",
+      tmuxName: "a3b4c5d6-sess-1",
+      issue: "https://linear.app/team/issue/INT-1234",
+      pr: "https://github.com/org/repo/pull/99",
+      summary: "Refactoring the session manager for better concurrency",
+      project: "my-app",
+      agent: "claude-code",
+      createdAt: "2025-06-15T12:00:00.000Z",
+      runtimeHandle: '{"id":"a3b4c5d6-sess-1","runtimeName":"tmux","data":{}}',
+      restoredAt: "2025-06-16T08:30:00.000Z",
+      role: "worker",
+      dashboardPort: 3000,
+      terminalWsPort: 14800,
+      directTerminalWsPort: 14801,
+    };
+
+    writeMetadata(dataDir, "roundtrip-1", fullMetadata);
+    const meta = readMetadata(dataDir, "roundtrip-1");
+
+    expect(meta).not.toBeNull();
+    expect(meta!.worktree).toBe(fullMetadata.worktree);
+    expect(meta!.branch).toBe(fullMetadata.branch);
+    expect(meta!.status).toBe(fullMetadata.status);
+    expect(meta!.tmuxName).toBe(fullMetadata.tmuxName);
+    expect(meta!.issue).toBe(fullMetadata.issue);
+    expect(meta!.pr).toBe(fullMetadata.pr);
+    expect(meta!.summary).toBe(fullMetadata.summary);
+    expect(meta!.project).toBe(fullMetadata.project);
+    expect(meta!.agent).toBe(fullMetadata.agent);
+    expect(meta!.createdAt).toBe(fullMetadata.createdAt);
+    expect(meta!.runtimeHandle).toBe(fullMetadata.runtimeHandle);
+    expect(meta!.restoredAt).toBe(fullMetadata.restoredAt);
+    expect(meta!.role).toBe(fullMetadata.role);
+    expect(meta!.dashboardPort).toBe(fullMetadata.dashboardPort);
+    expect(meta!.terminalWsPort).toBe(fullMetadata.terminalWsPort);
+    expect(meta!.directTerminalWsPort).toBe(fullMetadata.directTerminalWsPort);
+  });
+
+  it("round-trips through archive: write → delete(archive) → readArchived", () => {
+    writeMetadata(dataDir, "roundtrip-2", {
+      worktree: "/tmp/w",
+      branch: "feat/issue-42",
+      status: "merged",
+      pr: "https://github.com/org/repo/pull/42",
+      summary: "Fixed authentication bug",
+    });
+
+    deleteMetadata(dataDir, "roundtrip-2", true);
+
+    const archived = readArchivedMetadataRaw(dataDir, "roundtrip-2");
+    expect(archived).not.toBeNull();
+    expect(archived!["branch"]).toBe("feat/issue-42");
+    expect(archived!["status"]).toBe("merged");
+    expect(archived!["pr"]).toBe("https://github.com/org/repo/pull/42");
+    expect(archived!["summary"]).toBe("Fixed authentication bug");
+  });
+});
+
+describe("session ID validation", () => {
+  it("rejects session IDs with path traversal", () => {
+    expect(() => readMetadata(dataDir, "../etc/passwd")).toThrow("Invalid session ID");
+  });
+
+  it("rejects session IDs with slashes", () => {
+    expect(() => readMetadata(dataDir, "foo/bar")).toThrow("Invalid session ID");
+  });
+
+  it("rejects empty session IDs", () => {
+    expect(() => readMetadata(dataDir, "")).toThrow("Invalid session ID");
+  });
+
+  it("rejects session IDs with spaces", () => {
+    expect(() => readMetadata(dataDir, "foo bar")).toThrow("Invalid session ID");
+  });
+
+  it("accepts valid session IDs with hyphens and underscores", () => {
+    writeMetadata(dataDir, "valid-session_1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+    });
+    const meta = readMetadata(dataDir, "valid-session_1");
+    expect(meta).not.toBeNull();
+  });
+});
+
+describe("reserveSessionId", () => {
+  it("reserves a new session ID", () => {
+    const reserved = reserveSessionId(dataDir, "reserve-1");
+    expect(reserved).toBe(true);
+    expect(existsSync(join(dataDir, "reserve-1"))).toBe(true);
+  });
+
+  it("returns false if session ID is already taken", () => {
+    reserveSessionId(dataDir, "reserve-2");
+    const second = reserveSessionId(dataDir, "reserve-2");
+    expect(second).toBe(false);
+  });
+
+  it("creates parent directories if needed", () => {
+    const nestedDir = join(dataDir, "nested", "sessions");
+    const reserved = reserveSessionId(nestedDir, "reserve-3");
+    expect(reserved).toBe(true);
+    expect(existsSync(join(nestedDir, "reserve-3"))).toBe(true);
+  });
+
+  it("reserved file can be written to with updateMetadata", () => {
+    reserveSessionId(dataDir, "reserve-4");
+    updateMetadata(dataDir, "reserve-4", { status: "spawning", branch: "main" });
+
+    const raw = readMetadataRaw(dataDir, "reserve-4");
+    expect(raw).not.toBeNull();
+    expect(raw!["status"]).toBe("spawning");
+    expect(raw!["branch"]).toBe("main");
   });
 });
