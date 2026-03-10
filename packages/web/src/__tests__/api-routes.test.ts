@@ -10,7 +10,7 @@ import {
   type SCM,
 } from "@composio/ao-core";
 import * as serialize from "@/lib/serialize";
-import { createScopedLifecycleManager, getSCM } from "@/lib/services";
+import { getSCM } from "@/lib/services";
 
 // ── Mock Data ─────────────────────────────────────────────────────────
 // Provides test sessions covering the key states the dashboard needs.
@@ -633,7 +633,6 @@ describe("API Routes", () => {
 
       const res = await webhookPOST(req);
       expect(res.status).toBe(202);
-      expect(createScopedLifecycleManager).toHaveBeenCalled();
       expect(mockLifecycleManager.check).toHaveBeenCalledWith("backend-7");
       const data = await res.json();
       expect(data.sessionIds).toEqual(["backend-7"]);

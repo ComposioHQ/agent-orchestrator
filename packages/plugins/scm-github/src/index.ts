@@ -62,36 +62,6 @@ async function gh(args: string[]): Promise<string> {
   }
 }
 
-async function ghInDir(args: string[], cwd: string): Promise<string> {
-  try {
-    const { stdout } = await execFileAsync("gh", args, {
-      cwd,
-      maxBuffer: 10 * 1024 * 1024,
-      timeout: 30_000,
-    });
-    return stdout.trim();
-  } catch (err) {
-    throw new Error(`gh ${args.slice(0, 3).join(" ")} failed: ${(err as Error).message}`, {
-      cause: err,
-    });
-  }
-}
-
-async function git(args: string[], cwd: string): Promise<string> {
-  try {
-    const { stdout } = await execFileAsync("git", args, {
-      cwd,
-      maxBuffer: 10 * 1024 * 1024,
-      timeout: 30_000,
-    });
-    return stdout.trim();
-  } catch (err) {
-    throw new Error(`git ${args.slice(0, 3).join(" ")} failed: ${(err as Error).message}`, {
-      cause: err,
-    });
-  }
-}
-
 function getHeader(
   headers: Record<string, string | string[] | undefined>,
   name: string,
@@ -718,8 +688,8 @@ function createGitHubSCM(): SCM {
               url: c.url,
             };
           });
-      } catch {
-        return [];
+      } catch (err) {
+        throw new Error("Failed to fetch pending comments", { cause: err });
       }
     },
 
@@ -776,8 +746,8 @@ function createGitHubSCM(): SCM {
               url: c.html_url,
             };
           });
-      } catch {
-        return [];
+      } catch (err) {
+        throw new Error("Failed to fetch automated comments", { cause: err });
       }
     },
 

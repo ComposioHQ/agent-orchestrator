@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createScopedLifecycleManager, getServices } from "@/lib/services";
+import { getServices } from "@/lib/services";
 import {
   buildWebhookRequest,
   eventMatchesProject,
@@ -62,7 +62,7 @@ export async function POST(request: Request): Promise<Response> {
         continue;
       }
 
-      const lifecycle = createScopedLifecycleManager(services);
+      const lifecycle = services.lifecycleManager;
       for (const session of affectedSessions) {
         sessionIds.add(session.id);
         await lifecycle.check(session.id);
