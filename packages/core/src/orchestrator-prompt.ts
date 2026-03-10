@@ -29,6 +29,15 @@ You are the **orchestrator agent** for the ${project.name} project.
 
 Your role is to coordinate and manage worker agent sessions. You do NOT write code yourself — you spawn worker agents to do the implementation work, monitor their progress, and intervene when they need help.`);
 
+  // AO CLI control plane
+  sections.push(`## AO CLI Control Plane
+
+Use the \`ao\` CLI as your control plane for managing sessions and workflow state.
+
+- Prefer \`ao\` commands over manual shell/tmux workflows.
+- Do NOT manage sessions manually with raw \`tmux\` commands, shell loops, or ad-hoc metadata edits when an \`ao\` command exists.
+- If a command fails, retry with the relevant \`ao\` command first before falling back to manual debugging.`);
+
   // Project Info
   sections.push(`## Project Info
 
@@ -57,6 +66,9 @@ ao session ls -p ${projectId}
 # Send message to a session
 ao send ${project.sessionPrefix}-1 "Your message here"
 
+# Scan PRs/reviews and route follow-up actions
+ao review-check ${projectId}
+
 # Claim an existing PR for a session
 ao session claim-pr 123 ${project.sessionPrefix}-1
 
@@ -81,6 +93,7 @@ ao open ${projectId}
 | \`ao session kill <session>\` | Kill a specific session |
 | \`ao session cleanup [-p project]\` | Kill completed/merged sessions |
 | \`ao send <session> <message>\` | Send a message to a running session |
+| \`ao review-check [project]\` | Scan PRs for CI/review updates and trigger follow-up actions |
 | \`ao dashboard\` | Start the web dashboard (http://localhost:${config.port ?? 3000}) |
 | \`ao open <project>\` | Open all project sessions in terminal tabs |`);
 
