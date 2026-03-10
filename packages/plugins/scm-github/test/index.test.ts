@@ -262,6 +262,31 @@ describe("scm-github plugin", () => {
         }),
       );
     });
+
+    it("parses push events with branch and sha", async () => {
+      const event = await scm.parseWebhook?.(
+        makeWebhookRequest({
+          headers: { "x-github-event": "push" },
+          body: JSON.stringify({
+            ref: "refs/heads/feat/my-feature",
+            after: "abcde12345",
+            repository: { owner: { login: "acme" }, name: "repo" },
+            head_commit: { timestamp: "2026-03-10T12:01:00Z" },
+          }),
+        }),
+        project,
+      );
+
+      expect(event).toEqual(
+        expect.objectContaining({
+          provider: "github",
+          kind: "push",
+          branch: "feat/my-feature",
+          sha: "abcde12345",
+        }),
+      );
+      expect(event?.timestamp?.toISOString()).toBe("2026-03-10T12:01:00.000Z");
+    });
   });
 
   // ---- detectPR ----------------------------------------------------------

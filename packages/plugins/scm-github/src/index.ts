@@ -433,6 +433,25 @@ function parseGitHubWebhookEvent(
     };
   }
 
+  if (rawEventType === "push") {
+    const headCommit =
+      payload["head_commit"] && typeof payload["head_commit"] === "object"
+        ? (payload["head_commit"] as Record<string, unknown>)
+        : undefined;
+    return {
+      provider: "github",
+      kind: "push",
+      action,
+      rawEventType,
+      deliveryId,
+      repository,
+      branch: parseBranchRef(payload["ref"]),
+      sha: typeof payload["after"] === "string" ? (payload["after"] as string) : undefined,
+      timestamp: parseTimestamp(payload["updated_at"] ?? headCommit?.["timestamp"]),
+      data: payload,
+    };
+  }
+
   return {
     provider: "github",
     kind: "unknown",
