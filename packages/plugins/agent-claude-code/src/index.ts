@@ -124,8 +124,18 @@ update_metadata_key() {
 # Command Detection and Parsing
 # ============================================================================
 
+# Normalize command chains so hooks still detect metadata-changing commands when
+# users run them after an initial directory hop (e.g. cd repo && gh pr create).
+normalized_command=$(printf '%s' "$command" | tr '\\n' ' ')
+cd_prefix_pattern='^[[:space:]]*cd[[:space:]]+[^;&|]+[[:space:]]*(&&|;|\\|\\|)[[:space:]]*(.+)$'
+while [[ "$normalized_command" =~ $cd_prefix_pattern ]]; do
+  normalized_command="\${BASH_REMATCH[2]}"
+done
+# Trim leading spaces after stripping prefixes
+normalized_command="\${normalized_command#"\${normalized_command%%[![:space:]]*}"}"
+
 # Detect: gh pr create
-if [[ "$command" =~ ^gh[[:space:]]+pr[[:space:]]+create ]]; then
+if [[ "$normalized_command" =~ ^gh[[:space:]]+pr[[:space:]]+create ]]; then
   # Extract PR URL from output
   pr_url=$(echo "$output" | grep -Eo 'https://github[.]com/[^/]+/[^/]+/pull/[0-9]+' | head -1)
 
@@ -138,8 +148,8 @@ if [[ "$command" =~ ^gh[[:space:]]+pr[[:space:]]+create ]]; then
 fi
 
 # Detect: git checkout -b <branch> or git switch -c <branch>
-if [[ "$command" =~ ^git[[:space:]]+checkout[[:space:]]+-b[[:space:]]+([^[:space:]]+) ]] || \\
-   [[ "$command" =~ ^git[[:space:]]+switch[[:space:]]+-c[[:space:]]+([^[:space:]]+) ]]; then
+if [[ "$normalized_command" =~ ^git[[:space:]]+checkout[[:space:]]+-b[[:space:]]+([^[:space:]]+) ]] || \\
+   [[ "$normalized_command" =~ ^git[[:space:]]+switch[[:space:]]+-c[[:space:]]+([^[:space:]]+) ]]; then
   branch="\${BASH_REMATCH[1]}"
 
   if [[ -n "$branch" ]]; then
@@ -151,8 +161,8 @@ fi
 
 # Detect: git checkout <branch> (without -b) or git switch <branch> (without -c)
 # Only update if the branch name looks like a feature branch (contains / or -)
-if [[ "$command" =~ ^git[[:space:]]+checkout[[:space:]]+([^[:space:]-]+[/-][^[:space:]]+) ]] || \\
-   [[ "$command" =~ ^git[[:space:]]+switch[[:space:]]+([^[:space:]-]+[/-][^[:space:]]+) ]]; then
+if [[ "$normalized_command" =~ ^git[[:space:]]+checkout[[:space:]]+([^[:space:]-]+[/-][^[:space:]]+) ]] || \\
+   [[ "$normalized_command" =~ ^git[[:space:]]+switch[[:space:]]+([^[:space:]-]+[/-][^[:space:]]+) ]]; then
   branch="\${BASH_REMATCH[1]}"
 
   # Avoid updating for checkout of commits/tags
@@ -164,7 +174,7 @@ if [[ "$command" =~ ^git[[:space:]]+checkout[[:space:]]+([^[:space:]-]+[/-][^[:s
 fi
 
 # Detect: gh pr merge
-if [[ "$command" =~ ^gh[[:space:]]+pr[[:space:]]+merge ]]; then
+if [[ "$normalized_command" =~ ^gh[[:space:]]+pr[[:space:]]+merge ]]; then
   update_metadata_key "status" "merged"
   echo '{"systemMessage": "Updated metadata: status = merged"}'
   exit 0
