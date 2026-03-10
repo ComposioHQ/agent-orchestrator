@@ -71,6 +71,21 @@ ao spawn my-project 123    # GitHub issue, Linear ticket, or ad-hoc
 
 Dashboard opens at `http://localhost:3000`. Run `ao status` for the CLI view.
 
+**Option C — Containerized deployment:**
+
+```bash
+git clone https://github.com/ComposioHQ/agent-orchestrator.git
+cd agent-orchestrator
+mkdir -p projects
+cp agent-orchestrator.yaml.example agent-orchestrator.yaml
+# edit agent-orchestrator.yaml:
+# - set the project path to ./projects/your-repo
+# - set defaults.runtime to process (or your preferred runtime)
+docker compose up --build
+```
+
+Dashboard opens at `http://localhost:3000`. See [Container Deployment](#container-deployment) for image and agent options.
+
 ## How It Works
 
 ```
@@ -138,6 +153,17 @@ CI fails → agent gets the logs and fixes it. Reviewer requests changes → age
 
 See [`agent-orchestrator.yaml.example`](agent-orchestrator.yaml.example) for the full reference.
 
+## Container Deployment
+
+Use the root [compose.yaml](compose.yaml) and [Containerfile](Containerfile).
+
+- `compose.yaml` mounts `./projects` into the container at `./projects`, so project paths in config can stay relative, for example `./projects/your-repo`.
+- Set `AO_PROJECT` if your config contains more than one project and you want the container to start a specific one by default.
+- Set `AO_INSTALL_AGENTS` before `docker compose build` or `podman compose build` to control which CLIs are baked into the image. Default: `claude-code,codex,aider,goose`.
+- For GitHub issue/PR workflows, point `GH_CONFIG_DIR` at a host directory with `gh auth login` state.
+- For Kubernetes access, place a kubeconfig at `./.kube/config` or override `KUBECONFIG_DIR`.
+- If you do not want to build locally, switch the service image to `ghcr.io/composiohq/agent-orchestrator:latest`.
+
 ## CLI
 
 ```bash
@@ -162,8 +188,14 @@ Running one AI agent in a terminal is easy. Running 30 across different issues, 
 
 - Node.js 20+
 - Git 2.25+
-- tmux (for default runtime)
+- tmux (for the default runtime)
 - `gh` CLI (for GitHub integration)
+
+Or, if running Containerized:
+
+- Docker or Podman
+- Compose support (`docker compose` or `podman compose`)
+- A checked-out project available under `./projects`
 
 ## Development
 

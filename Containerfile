@@ -53,7 +53,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 RUN corepack prepare "pnpm@${PNPM_VERSION}" --activate
 
-WORKDIR /workspace/projects
+WORKDIR /app
 
 COPY --from=builder /app /app
 COPY scripts/container-entrypoint.sh /usr/local/bin/ao-entrypoint
@@ -64,6 +64,6 @@ RUN /usr/local/bin/install-coding-agents "$AO_INSTALL_AGENTS"
 
 EXPOSE 3000 14800 14801
 
-VOLUME ["/root/.agent-orchestrator", "/workspace/projects"]
+VOLUME ["/root/.agent-orchestrator", "/app/projects"]
 
 ENTRYPOINT ["/usr/local/bin/ao-entrypoint"]

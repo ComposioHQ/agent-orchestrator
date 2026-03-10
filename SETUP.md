@@ -2,6 +2,8 @@
 
 Comprehensive guide to installing, configuring, and troubleshooting Agent Orchestrator.
 
+Container deployment is also available via the root-level [`compose.yaml`](compose.yaml) and [`Containerfile`](Containerfile). This guide focuses on the existing bare-metal installation and local development flow.
+
 ## Prerequisites
 
 ### Required
@@ -57,7 +59,7 @@ Comprehensive guide to installing, configuring, and troubleshooting Agent Orches
 
 ## Installation
 
-### Build from Source (Current Method)
+### Build from Source
 
 The package is not yet published to npm. Install by building from source:
 
