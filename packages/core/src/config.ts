@@ -285,8 +285,17 @@ function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
     },
   };
 
-  // Merge defaults with user-specified reactions (user wins)
-  config.reactions = { ...defaults, ...config.reactions };
+  // Merge defaults with user-specified reactions (user wins per field)
+  const mergedReactions: typeof config.reactions = { ...defaults };
+
+  for (const [reactionKey, reactionConfig] of Object.entries(config.reactions)) {
+    mergedReactions[reactionKey] = {
+      ...(defaults[reactionKey] ?? {}),
+      ...reactionConfig,
+    };
+  }
+
+  config.reactions = mergedReactions;
 
   return config;
 }

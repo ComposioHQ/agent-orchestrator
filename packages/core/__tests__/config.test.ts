@@ -109,6 +109,37 @@ projects:
       expect(config.port).toBe(5000);
     });
 
+    it("preserves default reaction fields when overriding only part of a reaction", () => {
+      const configPath = join(testDir, "reaction-config.yaml");
+      writeFileSync(
+        configPath,
+        `
+projects:
+  test-project:
+    repo: test/repo
+    path: ${testDir}
+    defaultBranch: main
+reactions:
+  ci-failed:
+    auto: true
+    action: send-to-agent
+    retries: 5
+`,
+      );
+
+      const config = loadConfig(configPath);
+
+      expect(config.reactions["ci-failed"]).toEqual(
+        expect.objectContaining({
+          auto: true,
+          action: "send-to-agent",
+          retries: 5,
+          refireIntervalMs: 120_000,
+          escalateAfter: 2,
+        }),
+      );
+    });
+
     it("should throw error if config not found", () => {
       expect(() => loadConfig()).toThrow("No agent-orchestrator.yaml found");
     });
