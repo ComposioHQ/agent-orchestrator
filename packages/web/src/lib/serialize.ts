@@ -21,6 +21,15 @@ import { TTLCache, prCache, prCacheKey, type PREnrichmentData } from "./cache";
 /** Cache for issue titles (5 min TTL — issue titles rarely change) */
 const issueTitleCache = new TTLCache<string>(300_000);
 
+function isAbsoluteHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 /** Resolve which project a session belongs to. */
 export function resolveProject(
   core: Session,
@@ -51,7 +60,7 @@ export function sessionToDashboard(session: Session): DashboardSession {
     activity: session.activity,
     branch: session.branch,
     issueId: session.issueId, // Deprecated: kept for backwards compatibility
-    issueUrl: session.issueId, // issueId is actually the full URL
+    issueUrl: session.issueId && isAbsoluteHttpUrl(session.issueId) ? session.issueId : null,
     issueLabel: null, // Will be enriched by enrichSessionIssue()
     issueTitle: null, // Will be enriched by enrichSessionIssueTitle()
     summary,
@@ -343,6 +352,23 @@ export async function enrichSessionsMetadata(
 ): Promise<void> {
   // Resolve projects once per session (avoids repeated Object.entries lookups)
   const projects = coreSessions.map((core) => resolveProject(core, config.projects));
+
+  // Derive external issue URLs from tracker identifiers before label/title enrichment.
+  projects.forEach((project, i) => {
+    const dashboard = dashboardSessions[i];
+    const core = coreSessions[i];
+    if (dashboard?.issueUrl || !core?.issueId || !project?.tracker) return;
+
+    const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
+    if (!tracker) return;
+
+    try {
+      const issueUrl = tracker.issueUrl(core.issueId, project);
+      dashboard.issueUrl = isAbsoluteHttpUrl(issueUrl) ? issueUrl : null;
+    } catch {
+      dashboard.issueUrl = null;
+    }
+  });
 
   // Enrich issue labels (synchronous — must run before async title enrichment)
   projects.forEach((project, i) => {
