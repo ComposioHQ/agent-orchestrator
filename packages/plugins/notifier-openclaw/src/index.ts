@@ -23,6 +23,8 @@ interface OpenClawWebhookPayload {
   sessionKey?: string;
   wakeMode?: WakeMode;
   deliver?: boolean;
+  channel?: string;
+  to?: string;
 }
 
 async function postWithRetry(
@@ -120,6 +122,8 @@ export function create(config?: Record<string, unknown>): Notifier {
     typeof config?.sessionKeyPrefix === "string" ? config.sessionKeyPrefix : "hook:ao:";
   const wakeMode: WakeMode = config?.wakeMode === "next-heartbeat" ? "next-heartbeat" : "now";
   const deliver = typeof config?.deliver === "boolean" ? config.deliver : true;
+  const channel = typeof config?.channel === "string" ? config.channel : undefined;
+  const to = typeof config?.to === "string" ? config.to : undefined;
 
   const { retries, retryDelayMs } = normalizeRetryConfig(config);
 
@@ -142,18 +146,30 @@ export function create(config?: Record<string, unknown>): Notifier {
     await postWithRetry(url, payload, headers, retries, retryDelayMs, { sessionId });
   }
 
+  function buildPayload(
+    payload: Omit<OpenClawWebhookPayload, "name" | "wakeMode" | "deliver" | "channel" | "to">,
+  ): OpenClawWebhookPayload {
+    return {
+      ...payload,
+      name: senderName,
+      wakeMode,
+      deliver,
+      ...(channel ? { channel } : {}),
+      ...(to ? { to } : {}),
+    };
+  }
+
   return {
     name: "openclaw",
 
     async notify(event: OrchestratorEvent): Promise<void> {
       const sessionKey = `${sessionKeyPrefix}${sanitizeSessionId(event.sessionId)}`;
-      await sendPayload({
+      await sendPayload(
+        buildPayload({
         message: formatEscalationMessage(event),
-        name: senderName,
         sessionKey,
-        wakeMode,
-        deliver,
-      });
+        }),
+      );
     },
 
     async notifyWithActions(event: OrchestratorEvent, actions: NotifyAction[]): Promise<void> {
@@ -161,26 +177,24 @@ export function create(config?: Record<string, unknown>): Notifier {
       const actionsLine = formatActionsLine(actions);
       const message = [formatEscalationMessage(event), actionsLine].filter(Boolean).join("\n");
 
-      await sendPayload({
+      await sendPayload(
+        buildPayload({
         message,
-        name: senderName,
         sessionKey,
-        wakeMode,
-        deliver,
-      });
+        }),
+      );
     },
 
     async post(message: string, context?: NotifyContext): Promise<string | null> {
       const sessionId = context?.sessionId ? sanitizeSessionId(context.sessionId) : "default";
       const sessionKey = `${sessionKeyPrefix}${sessionId}`;
 
-      await sendPayload({
+      await sendPayload(
+        buildPayload({
         message,
-        name: senderName,
         sessionKey,
-        wakeMode,
-        deliver,
-      });
+        }),
+      );
 
       return null;
     },

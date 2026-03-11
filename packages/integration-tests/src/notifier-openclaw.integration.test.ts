@@ -92,6 +92,24 @@ describe("notifier-openclaw integration", () => {
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body.deliver).toBe(true);
     expect(body.wakeMode).toBe("now");
+    expect(body.channel).toBeUndefined();
+    expect(body.to).toBeUndefined();
+  });
+
+  it("passes explicit destination override fields through to OpenClaw", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const notifier = openClawPlugin.create({
+      token: "tok",
+      channel: "discord",
+      to: "1481253232679325817",
+    });
+    await notifier.notify(makeEvent({ sessionId: "ao-22" }));
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.channel).toBe("discord");
+    expect(body.to).toBe("1481253232679325817");
   });
 
   it("retries 503 then succeeds", async () => {

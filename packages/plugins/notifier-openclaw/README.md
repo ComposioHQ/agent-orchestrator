@@ -23,13 +23,21 @@ notifiers:
     plugin: openclaw
     url: http://127.0.0.1:18789/hooks/agent
     token: ${OPENCLAW_HOOKS_TOKEN}
+    sessionKeyPrefix: "hook:ao:"
+    wakeMode: now
+    deliver: true
+    # Optional fixed-destination routing for mixed Discord/Telegram/etc setups
+    channel: discord
+    to: "1481253232679325817"
 ```
 
 ## Behavior
 
 - Sends `POST /hooks/agent` payloads with per-session key `hook:ao:<sessionId>`.
 - Defaults `wakeMode: now` and `deliver: true`.
+- Includes `channel` and `to` in the payload when configured for deterministic routing.
 - Retries on `429` and `5xx` responses with exponential backoff.
+- If `deliver: true` is set without `channel` or `to`, final delivery depends on OpenClaw-side destination resolution.
 
 ## Token rotation
 

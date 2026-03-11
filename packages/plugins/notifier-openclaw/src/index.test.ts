@@ -125,6 +125,8 @@ describe("notifier-openclaw", () => {
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body.wakeMode).toBe("now");
     expect(body.deliver).toBe(true);
+    expect(body.channel).toBeUndefined();
+    expect(body.to).toBeUndefined();
   });
 
   it("supports wakeMode=next-heartbeat when configured", async () => {
@@ -136,6 +138,22 @@ describe("notifier-openclaw", () => {
 
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body.wakeMode).toBe("next-heartbeat");
+  });
+
+  it("includes explicit destination override when configured", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const notifier = create({
+      token: "tok",
+      channel: "discord",
+      to: "1481253232679325817",
+    });
+    await notifier.notify(makeEvent());
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.channel).toBe("discord");
+    expect(body.to).toBe("1481253232679325817");
   });
 
   it("retries on 5xx response", async () => {

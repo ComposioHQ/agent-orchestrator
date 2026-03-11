@@ -85,6 +85,14 @@ projects:
 #     plugin: slack
 #     webhook: ${SLACK_WEBHOOK_URL}
 #     channel: "#agent-updates"
+#   openclaw:
+#     plugin: openclaw
+#     url: http://127.0.0.1:18789/hooks/agent
+#     token: ${OPENCLAW_HOOKS_TOKEN}
+#     deliver: true
+#     # Optional fixed-destination routing; omit to use OpenClaw-side resolution
+#     channel: discord
+#     to: "1481253232679325817"
 
 # Notification routing by priority
 # notificationRouting:
