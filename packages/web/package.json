@@ -19,7 +19,6 @@
     "screenshot:install": "npx playwright install chromium"
   },
   "dependencies": {
-    "@composio/core": "^0.6.4",
     "@composio/ao-core": "workspace:*",
     "@composio/ao-plugin-agent-claude-code": "workspace:*",
     "@composio/ao-plugin-agent-opencode": "workspace:*",
