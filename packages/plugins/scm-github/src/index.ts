@@ -280,7 +280,9 @@ function parseGitHubRepository(payload: Record<string, unknown>) {
 
 function parseBranchRef(ref: unknown): string | undefined {
   if (typeof ref !== "string" || ref.length === 0) return undefined;
-  return ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : ref;
+  if (ref.startsWith("refs/heads/")) return ref.slice("refs/heads/".length);
+  if (ref.startsWith("refs/")) return undefined;
+  return ref;
 }
 
 function parseTimestamp(value: unknown): Date | undefined {

@@ -328,6 +328,30 @@ describe("scm-github plugin", () => {
       );
       expect(event?.timestamp?.toISOString()).toBe("2026-03-10T12:01:00.000Z");
     });
+
+    it("does not set branch for tag push refs", async () => {
+      const event = await scm.parseWebhook?.(
+        makeWebhookRequest({
+          headers: { "x-github-event": "push" },
+          body: JSON.stringify({
+            ref: "refs/tags/v1.0.0",
+            after: "abcde12345",
+            repository: { owner: { login: "acme" }, name: "repo" },
+            head_commit: { timestamp: "2026-03-10T12:01:00Z" },
+          }),
+        }),
+        project,
+      );
+
+      expect(event).toEqual(
+        expect.objectContaining({
+          provider: "github",
+          kind: "push",
+          branch: undefined,
+          sha: "abcde12345",
+        }),
+      );
+    });
   });
 
   // ---- detectPR ----------------------------------------------------------
