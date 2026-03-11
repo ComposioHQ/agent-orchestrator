@@ -7,6 +7,9 @@
 .husky
 .env
 .env.*
+agent-orchestrator.yaml
+test-ao-config.yaml
+test-ao-config2.yaml
 node_modules
 packages/*/node_modules
 packages/*/dist

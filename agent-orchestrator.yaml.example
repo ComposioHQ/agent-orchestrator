@@ -24,8 +24,8 @@ defaults:
 
 # Projects — at minimum, specify repo and path
 # If running via compose/container:
-#   set `path` below to the container path, e.g. /projects/my-app instead of ~/my-app
-#   whatever host directory AO_PROJECTS_DIR points to (it defaults to ./projects) is mounted at /projects
+#   place this config at ./projects/agent-orchestrator.yaml on the host
+#   set every `path` below to the container path, e.g. /projects/my-app instead of ~/my-app
 projects:
   my-app:
     name: My App

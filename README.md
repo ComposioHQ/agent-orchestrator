@@ -77,8 +77,8 @@ Dashboard opens at `http://localhost:3000`. Run `ao status` for the CLI view.
 git clone https://github.com/ComposioHQ/agent-orchestrator.git
 cd agent-orchestrator
 mkdir -p projects
-cp agent-orchestrator.yaml.example agent-orchestrator.yaml
-# edit agent-orchestrator.yaml:
+cp agent-orchestrator.yaml.example projects/agent-orchestrator.yaml
+# edit projects/agent-orchestrator.yaml:
 # - set the project path to /projects/your-repo
 # - set defaults.runtime to process (or your preferred runtime)
 docker compose up --build
@@ -157,9 +157,13 @@ See [`agent-orchestrator.yaml.example`](agent-orchestrator.yaml.example) for the
 
 Use the root [compose.yaml](compose.yaml) and [Containerfile](Containerfile).
 
+The image exposes `ao` as its default command, so you can use it either as a long-running service or as a one-shot onboarding container.
+
 - Path mapping matters:
   - `AO_PROJECTS_DIR` defaults to `./projects` on the host
   - regardless of the host directory name, compose mounts it at `/projects` inside the container
+  - the container defaults `AO_CONFIG_PATH` to `/projects/agent-orchestrator.yaml`
+  - `compose up` runs `ao start` and uses that shared config path automatically
   - `agent-orchestrator.yaml` must use the container path, not the host path
 - Example:
 
@@ -176,11 +180,69 @@ Examples:
 - host `./projects/my-app` -> container `/projects/my-app`
 - host `./somewhere/else/my-app` with `AO_PROJECTS_DIR=./somewhere/else` -> container `/projects/my-app`
 
-- Set `AO_PROJECT` if your config contains more than one project and you want the container to start a specific one by default.
+- Put the shared compose config at `./projects/agent-orchestrator.yaml` on the host.
 - Set `AO_INSTALL_AGENTS` before `docker compose build` or `podman compose build` to control which CLIs are baked into the image. Default: `claude-code,codex,aider,goose`.
 - For GitHub issue/PR workflows, point `GH_CONFIG_DIR` at a host directory with `gh auth login` state.
 - For Kubernetes access, place a kubeconfig at `./.kube/config` or override `KUBECONFIG_DIR`.
 - If you do not want to build locally, switch the service image to `ghcr.io/composiohq/agent-orchestrator:latest`.
+- If your config has multiple projects, override the compose command, for example: `docker compose run --rm agent-orchestrator start my-project`
+
+For first-time onboarding without a prewritten config, run the image directly and pass the normal `ao` arguments:
+
+```bash
+docker run --rm -it \
+  -p 3000:3000 \
+  -p 14800:14800 \
+  -p 14801:14801 \
+  -v "$(pwd)/projects:/projects" \
+  -v ao-data:/root/.agent-orchestrator \
+  ghcr.io/composiohq/agent-orchestrator:latest \
+  start https://github.com/your-org/your-repo
+```
+
+The same pattern works with Podman:
+
+```bash
+podman run --rm -it \
+  -p 3000:3000 \
+  -p 14800:14800 \
+  -p 14801:14801 \
+  -v "$(pwd)/projects:/projects" \
+  -v ao-data:/root/.agent-orchestrator \
+  ghcr.io/composiohq/agent-orchestrator:latest \
+  start https://github.com/your-org/your-repo
+```
+
+That onboarding flow should clone into `./projects/<repo>` on the host and generate `./projects/<repo>/agent-orchestrator.yaml`.
+
+The same works for `ao init`:
+
+```bash
+podman compose run --rm agent-orchestrator init
+```
+
+Because the service now works from `/projects`, that creates `./projects/agent-orchestrator.yaml` on the host by default.
+
+For repo-URL onboarding with compose, use:
+
+```bash
+podman compose run --rm agent-orchestrator start https://github.com/your-org/your-repo
+```
+
+In that flow, the image default `AO_CONFIG_PATH=/projects/agent-orchestrator.yaml` makes the generated config land where later `podman compose up` will find it.
+GitHub shorthand also works there, for example:
+
+```bash
+podman compose run --rm agent-orchestrator start your-org/your-repo
+```
+
+If you still see paths under `/app/<repo>` in the container logs, you are running an older image and should rebuild locally before retrying.
+
+Optional mounts for richer integrations:
+
+- `-v "$(pwd)/.gh:/root/.config/gh:ro"` if you want to reuse `gh auth login` state for private GitHub repos or PR workflows
+- `-v "$(pwd)/.kube:/root/.kube:ro"` if you need Kubernetes access from inside the orchestrator
+- when using `compose.yaml`, run additional CLI commands with `docker compose exec agent-orchestrator ao ...` or `podman compose exec agent-orchestrator ao ...`
 
 ## CLI
 

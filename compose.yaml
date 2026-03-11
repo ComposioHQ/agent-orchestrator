@@ -8,32 +8,22 @@ services:
         AO_INSTALL_AGENTS: ${AO_INSTALL_AGENTS:-claude-code,codex,aider,goose}
     init: true
     ports:
-      - "${AO_PORT:-3000}:3000"
-      - "${AO_TERMINAL_PORT:-14800}:14800"
-      - "${AO_DIRECT_TERMINAL_PORT:-14801}:14801"
+      - '${AO_PORT:-3000}:3000'
+      - '${AO_TERMINAL_PORT:-14800}:14800'
+      - '${AO_DIRECT_TERMINAL_PORT:-14801}:14801'
     environment:
-      AO_CONFIG_PATH: /app/agent-orchestrator.yaml
-      AO_PROJECT: ${AO_PROJECT:-}
-      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      AO_INSTALL_AGENTS: ${AO_INSTALL_AGENTS:-claude-code,codex,aider,goose}
-      KUBECONFIG: /root/.kube/config
-      TERMINAL_PORT: 14800
-      DIRECT_TERMINAL_PORT: 14801
+      - GITHUB_TOKEN
+      - ANTHROPIC_API_KEY
     volumes:
       - type: bind
-        source: ${AO_CONFIG_FILE:-./agent-orchestrator.yaml}
-        target: /app/agent-orchestrator.yaml
-        read_only: true
-      - type: bind
-        source: ${AO_PROJECTS_DIR:-./projects}
+        source: '${AO_PROJECTS_DIR:-./projects}'
         target: /projects
       - type: bind
-        source: ${KUBECONFIG_DIR:-./.kube}
+        source: '${KUBECONFIG_DIR:-./.kube}'
         target: /root/.kube
         read_only: true
       - type: bind
-        source: ${GH_CONFIG_DIR:-./.gh}
+        source: '${GH_CONFIG_DIR:-./.gh}'
         target: /root/.config/gh
         read_only: true
       - type: volume
@@ -42,4 +32,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  ao-data:
+  ao-data: null

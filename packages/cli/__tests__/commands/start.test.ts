@@ -138,6 +138,7 @@ let program: Command;
 let cwdSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
+  delete process.env["AO_CONFIG_PATH"];
   tmpDir = mkdtempSync(join(tmpdir(), "ao-start-test-"));
 
   program = new Command();
@@ -178,6 +179,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  delete process.env["AO_CONFIG_PATH"];
   if (cwdSpy) cwdSpy.mockRestore();
   rmSync(tmpDir, { recursive: true, force: true });
   vi.restoreAllMocks();
@@ -487,6 +489,42 @@ describe("start command — URL argument", () => {
       .join("\n");
     expect(output).toContain("Using existing config");
     expect(output).toContain("Configured App");
+  });
+
+  it("writes generated config to AO_CONFIG_PATH when set", async () => {
+    const repoDir = join(tmpDir, "agent-sandbox");
+    const outputConfig = join(tmpDir, "projects", "agent-orchestrator.yaml");
+    mockCwd(tmpDir);
+    process.env["AO_CONFIG_PATH"] = outputConfig;
+
+    mockExecSilent.mockResolvedValue("Logged in");
+    mockExec.mockImplementation(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "clone") {
+        createFakeRepo(repoDir, "https://github.com/zvictor/agent-sandbox.git", {
+          "package.json": "{}",
+        });
+        return { stdout: "", stderr: "" };
+      }
+      return { stdout: "", stderr: "" };
+    });
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "start",
+      "https://github.com/zvictor/agent-sandbox",
+      "--no-dashboard",
+      "--no-orchestrator",
+    ]);
+
+    expect(existsSync(outputConfig)).toBe(true);
+    expect(existsSync(join(repoDir, "agent-orchestrator.yaml"))).toBe(false);
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain(`Config generated: ${outputConfig}`);
   });
 
   it("resolves correct project when existing config has multiple projects", async () => {

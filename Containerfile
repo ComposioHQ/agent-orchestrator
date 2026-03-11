@@ -26,14 +26,10 @@ RUN pnpm build
 FROM docker.io/node:lts-trixie-slim AS runtime
 
 ARG PNPM_VERSION=9.15.4
-ARG AO_INSTALL_AGENTS=claude-code,codex,aider,goose
 
 ENV PNPM_HOME=/pnpm
 ENV PNPM_VERSION=${PNPM_VERSION}
-ENV AO_INSTALL_AGENTS=${AO_INSTALL_AGENTS}
 ENV PATH="/root/.local/bin:${PNPM_HOME}:${PATH}"
-ENV AO_CONFIG_PATH=/app/agent-orchestrator.yaml
-ENV HOME=/root
 
 RUN corepack enable
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -53,17 +49,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 RUN corepack prepare "pnpm@${PNPM_VERSION}" --activate
 
-WORKDIR /app
-
+WORKDIR /projects
 COPY --from=builder /app /app
-COPY scripts/container-entrypoint.sh /usr/local/bin/ao-entrypoint
 COPY scripts/install-coding-agents.sh /usr/local/bin/install-coding-agents
 
-RUN chmod +x /usr/local/bin/ao-entrypoint /usr/local/bin/install-coding-agents
+RUN chmod +x /app/packages/agent-orchestrator/bin/ao.js /usr/local/bin/install-coding-agents \
+  && ln -sf /app/packages/agent-orchestrator/bin/ao.js /usr/local/bin/ao
+
+ARG AO_INSTALL_AGENTS=claude-code,codex,aider,goose
 RUN /usr/local/bin/install-coding-agents "$AO_INSTALL_AGENTS"
 
 EXPOSE 3000 14800 14801
 
 VOLUME ["/root/.agent-orchestrator", "/projects"]
+
+ENV AO_CONFIG_PATH=/projects/agent-orchestrator.yaml
 
 ENTRYPOINT [ "/usr/local/bin/ao" ]
