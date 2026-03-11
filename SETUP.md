@@ -102,7 +102,7 @@ This single command will:
 1. **Clone** the repo (or reuse an existing clone)
 2. **Auto-detect** language, package manager, SCM platform, and default branch
 3. **Generate** `agent-orchestrator.yaml` with smart defaults
-4. **Start** the dashboard and orchestrator agent
+4. **Start** supervised dashboard + terminal websocket services and the orchestrator agent
 
 Supports GitHub, GitLab, and Bitbucket URLs (HTTPS and SSH):
 
@@ -113,6 +113,29 @@ ao start git@github.com:owner/repo.git
 ```
 
 If the repo already has an `agent-orchestrator.yaml`, it will be used as-is.
+
+### Supervised Runtime (Recommended)
+
+Use `ao services` for resilient dashboard and terminal connectivity:
+
+```bash
+# One-time install (systemd user services on Linux, portable supervisor fallback elsewhere)
+ao services install
+
+# Verify dashboard + websocket readiness (3000/14800/14801)
+ao services status --strict
+```
+
+This is the recommended migration path from ad-hoc `pnpm dev` shell processes.  
+`ao dashboard` remains available for local development but is intentionally unsupervised.
+
+### Runtime Acceptance Checks (Issue #417)
+
+After `ao services install`, validate:
+
+1. Killing any one of the three processes auto-recovers without manual restart.
+2. Dashboard endpoints remain reachable (`/ao/` and `/sessions/<id>` via your proxy/local routing).
+3. Terminal no longer stalls on `Connecting... XDA` due to missing ws backends (`14800`/`14801` healthy).
 
 ### Quick Setup with `ao init`
 
@@ -801,7 +824,7 @@ Yes! Each orchestrator instance should have:
 - Different dashboard port (`port`) — e.g., 3000 for project A, 3001 for project B
 - Different config file
 
-Terminal WebSocket ports are auto-detected by default, so you typically only need to set `port:` differently. If you need explicit control, you can also set `terminalPort:` and `directTerminalPort:` per config.
+For supervised runtime (`ao services`), default websocket ports are stable (`14800` + `14801`) so XDA routing stays predictable. For multiple orchestrator instances, set `terminalPort` and `directTerminalPort` explicitly in each config.
 
 Useful for:
 

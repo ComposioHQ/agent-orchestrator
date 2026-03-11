@@ -1,5 +1,33 @@
 # Troubleshooting
 
+## Terminal stuck at "Connecting... XDA"
+
+**Symptom**: Session page loads, but terminal never connects and stays at `Connecting... XDA`.
+
+**Root Cause**: One or both websocket backends are down:
+
+- terminal websocket service (`14800`)
+- direct terminal websocket service (`14801`)
+
+**Fix**:
+
+```bash
+# Check readiness for dashboard + websocket backends
+ao services status --strict
+
+# Restart supervised services
+ao services stop
+ao services start
+```
+
+**Expected healthy state**:
+
+- Dashboard reachable on `3000`
+- `http://127.0.0.1:14800/health` returns `200`
+- `http://127.0.0.1:14801/health` returns `200`
+
+**Prevention**: Use `ao services install` so services are supervised and auto-restarted.
+
 ## DirectTerminal: posix_spawnp failed error
 
 **Symptom**: Terminal in browser shows "Connected" but blank. WebSocket logs show:

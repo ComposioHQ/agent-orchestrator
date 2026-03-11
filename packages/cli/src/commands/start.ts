@@ -9,7 +9,6 @@
  * (or equivalent flag) at launch time — no file writing required.
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import chalk from "chalk";
@@ -34,7 +33,6 @@ import { getSessionManager } from "../lib/create-session-manager.js";
 import { ensureLifecycleWorker, stopLifecycleWorker } from "../lib/lifecycle-service.js";
 import {
   findWebDir,
-  buildDashboardEnv,
   waitForPortAndOpen,
   isPortAvailable,
   findFreePort,
@@ -42,6 +40,7 @@ import {
 } from "../lib/web-dir.js";
 import { cleanNextCache } from "../lib/dashboard-rebuild.js";
 import { preflight } from "../lib/preflight.js";
+import { startManagedServices, stopManagedServices } from "../lib/services.js";
 
 const DEFAULT_PORT = 3000;
 
@@ -221,35 +220,6 @@ async function handleUrlStart(
 }
 
 /**
- * Start dashboard server in the background.
- * Returns the child process handle for cleanup.
- */
-async function startDashboard(
-  port: number,
-  webDir: string,
-  configPath: string | null,
-  terminalPort?: number,
-  directTerminalPort?: number,
-): Promise<ChildProcess> {
-  const env = await buildDashboardEnv(port, configPath, terminalPort, directTerminalPort);
-
-  const child = spawn("pnpm", ["run", "dev"], {
-    cwd: webDir,
-    stdio: "inherit",
-    detached: false,
-    env,
-  });
-
-  child.on("error", (err) => {
-    console.error(chalk.red("Dashboard failed to start:"), err.message);
-    // Emit synthetic exit so callers listening on "exit" can clean up
-    child.emit("exit", 1, null);
-  });
-
-  return child;
-}
-
-/**
  * Shared startup logic: launch dashboard + orchestrator session, print summary.
  * Used by both normal and URL-based start flows.
  */
@@ -270,26 +240,22 @@ async function runStartup(
   console.log(chalk.bold(`\nStarting orchestrator for ${chalk.cyan(project.name)}\n`));
 
   const spinner = ora();
-  let dashboardProcess: ChildProcess | null = null;
   let reused = false;
 
-  // Start dashboard (unless --no-dashboard)
+  // Start supervised dashboard + websocket services (unless --no-dashboard)
   if (opts?.dashboard !== false) {
-    if (opts?.autoPort) {
-      // Port was auto-selected during config generation — if it's now busy
-      // (race condition), find another free port instead of erroring.
-      if (!(await isPortAvailable(port))) {
-        const newPort = await findFreePort(DEFAULT_PORT);
-        if (newPort === null) {
-          throw new Error(
-            `No free port found in range ${DEFAULT_PORT}–${DEFAULT_PORT + MAX_PORT_SCAN - 1}.`,
-          );
-        }
-        port = newPort;
+    if (opts?.autoPort && !(await isPortAvailable(port))) {
+      // URL onboarding can race with another process claiming the initially
+      // selected port. Pick a new one so startup can still proceed.
+      const newPort = await findFreePort(DEFAULT_PORT);
+      if (newPort === null) {
+        throw new Error(
+          `No free port found in range ${DEFAULT_PORT}–${DEFAULT_PORT + MAX_PORT_SCAN - 1}.`,
+        );
       }
-    } else {
-      await preflight.checkPort(port);
+      port = newPort;
     }
+
     const webDir = findWebDir();
     if (!existsSync(resolve(webDir, "package.json"))) {
       throw new Error("Could not find @composio/ao-web package. Run: pnpm install");
@@ -300,16 +266,29 @@ async function runStartup(
       await cleanNextCache(webDir);
     }
 
-    spinner.start("Starting dashboard");
-    dashboardProcess = await startDashboard(
-      port,
-      webDir,
-      config.configPath,
-      config.terminalPort,
-      config.directTerminalPort,
-    );
-    spinner.succeed(`Dashboard starting on http://localhost:${port}`);
-    console.log(chalk.dim("  (Dashboard will be ready in a few seconds)\n"));
+    const serviceConfig =
+      port === (config.port ?? DEFAULT_PORT)
+        ? config
+        : ({
+            ...config,
+            port,
+          } satisfies OrchestratorConfig);
+
+    spinner.start("Starting supervised dashboard services");
+    const serviceStart = await startManagedServices(serviceConfig, {
+      manager: "auto",
+      waitTimeoutMs: 30_000,
+    });
+    if (serviceStart.ready) {
+      spinner.succeed(
+        `Dashboard services ready on http://localhost:${port} (${serviceStart.manager})`,
+      );
+    } else {
+      spinner.warn(
+        `Services started via ${serviceStart.manager}, but readiness checks are still failing`,
+      );
+    }
+    console.log();
   }
 
   if (shouldStartLifecycle) {
@@ -323,9 +302,6 @@ async function runStartup(
       );
     } catch (err) {
       spinner.fail("Lifecycle worker failed to start");
-      if (dashboardProcess) {
-        dashboardProcess.kill();
-      }
       throw new Error(
         `Failed to start lifecycle worker: ${err instanceof Error ? err.message : String(err)}`,
         { cause: err },
@@ -351,9 +327,6 @@ async function runStartup(
       spinner.succeed(reused ? "Orchestrator session reused" : "Orchestrator session created");
     } catch (err) {
       spinner.fail("Orchestrator setup failed");
-      if (dashboardProcess) {
-        dashboardProcess.kill();
-      }
       throw new Error(
         `Failed to setup orchestrator: ${err instanceof Error ? err.message : String(err)}`,
         { cause: err },
@@ -386,23 +359,11 @@ async function runStartup(
 
   // Auto-open browser to orchestrator session page once the server is accepting connections.
   // Polls the port instead of using a fixed delay — deterministic and works regardless of
-  // how long Next.js takes to compile. AbortController cancels polling on early exit.
-  let openAbort: AbortController | undefined;
+  // how long Next.js takes to compile.
   if (opts?.dashboard !== false) {
-    openAbort = new AbortController();
+    const openAbort = new AbortController();
     const orchestratorUrl = `http://localhost:${port}/sessions/${sessionId}`;
     void waitForPortAndOpen(port, orchestratorUrl, openAbort.signal);
-  }
-
-  // Keep dashboard process alive if it was started
-  if (dashboardProcess) {
-    dashboardProcess.on("exit", (code) => {
-      if (openAbort) openAbort.abort();
-      if (code !== 0 && code !== null) {
-        console.error(chalk.red(`Dashboard exited with code ${code}`));
-      }
-      process.exit(code ?? 0);
-    });
   }
 }
 
@@ -527,7 +488,13 @@ export function registerStop(program: Command): void {
             console.log(chalk.yellow("Lifecycle worker not running"));
           }
 
-          // Stop dashboard
+          // Stop supervised dashboard/websocket services, then best-effort
+          // legacy port kill for any stale ad-hoc process.
+          try {
+            await stopManagedServices(config, { manager: "auto" });
+          } catch {
+            // Fall through to legacy stop below.
+          }
           await stopDashboard(port);
 
           console.log(chalk.bold.green("\n✓ Orchestrator stopped\n"));

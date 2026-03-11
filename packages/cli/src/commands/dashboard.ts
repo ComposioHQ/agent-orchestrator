@@ -10,7 +10,7 @@ import { cleanNextCache, findRunningDashboardPid, findProcessWebDir, waitForPort
 export function registerDashboard(program: Command): void {
   program
     .command("dashboard")
-    .description("Start the web dashboard")
+    .description("Start the web dashboard in dev mode (unsupervised)")
     .option("-p, --port <port>", "Port to listen on")
     .option("--no-open", "Don't open browser automatically")
     .option("--rebuild", "Clean stale build artifacts and rebuild before starting")
@@ -60,6 +60,7 @@ export function registerDashboard(program: Command): void {
 
       const webDir = localWebDir;
 
+      console.log(chalk.yellow("Running in dev mode (unsupervised). For resilient runtime use `ao services start`.\n"));
       console.log(chalk.bold(`Starting dashboard on http://localhost:${port}\n`));
 
       const env = await buildDashboardEnv(

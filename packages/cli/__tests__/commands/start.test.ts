@@ -24,6 +24,8 @@ const {
   mockSpawn,
   mockEnsureLifecycleWorker,
   mockStopLifecycleWorker,
+  mockStartManagedServices,
+  mockStopManagedServices,
 } = vi.hoisted(() => ({
   mockExec: vi.fn(),
   mockExecSilent: vi.fn(),
@@ -42,6 +44,8 @@ const {
   mockSpawn: vi.fn(),
   mockEnsureLifecycleWorker: vi.fn(),
   mockStopLifecycleWorker: vi.fn(),
+  mockStartManagedServices: vi.fn(),
+  mockStopManagedServices: vi.fn(),
 }));
 
 vi.mock("../../src/lib/shell.js", () => ({
@@ -109,6 +113,11 @@ vi.mock("../../src/lib/dashboard-rebuild.js", () => ({
   waitForPortFree: vi.fn(),
 }));
 
+vi.mock("../../src/lib/services.js", () => ({
+  startManagedServices: (...args: unknown[]) => mockStartManagedServices(...args),
+  stopManagedServices: (...args: unknown[]) => mockStopManagedServices(...args),
+}));
+
 vi.mock("../../src/lib/preflight.js", () => ({
   preflight: {
     checkPort: vi.fn(),
@@ -174,6 +183,41 @@ beforeEach(() => {
   });
   mockStopLifecycleWorker.mockReset();
   mockStopLifecycleWorker.mockResolvedValue(true);
+  mockStartManagedServices.mockReset();
+  mockStartManagedServices.mockResolvedValue({
+    manager: "systemd",
+    started: true,
+    ready: true,
+    status: {
+      manager: "systemd",
+      managerRunning: true,
+      managerDetail: "mock",
+      processStates: {
+        dashboard: "active",
+        "terminal-ws": "active",
+        "direct-terminal-ws": "active",
+      },
+      services: [],
+      allReady: true,
+    },
+  });
+  mockStopManagedServices.mockReset();
+  mockStopManagedServices.mockResolvedValue({
+    manager: "systemd",
+    stopped: true,
+    status: {
+      manager: "systemd",
+      managerRunning: false,
+      managerDetail: "mock",
+      processStates: {
+        dashboard: "inactive",
+        "terminal-ws": "inactive",
+        "direct-terminal-ws": "inactive",
+      },
+      services: [],
+      allReady: false,
+    },
+  });
   mockSpawn.mockClear();
 });
 
