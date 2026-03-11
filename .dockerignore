@@ -23,6 +23,5 @@ examples
 *.md
 scripts/*
 !scripts/rebuild-node-pty.js
-!scripts/container-entrypoint.sh
 !scripts/install-coding-agents.sh
 .DS_Store

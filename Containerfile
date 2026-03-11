@@ -66,4 +66,4 @@ EXPOSE 3000 14800 14801
 
 VOLUME ["/root/.agent-orchestrator", "/projects"]
 
-ENTRYPOINT ["/usr/local/bin/ao-entrypoint"]
+ENTRYPOINT [ "/usr/local/bin/ao" ]
