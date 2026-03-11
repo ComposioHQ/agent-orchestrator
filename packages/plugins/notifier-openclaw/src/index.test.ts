@@ -20,6 +20,7 @@ describe("notifier-openclaw", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     delete process.env.OPENCLAW_HOOKS_TOKEN;
+    delete process.env.OPENCLAW_HOOKS_URL;
   });
 
   afterEach(() => {
@@ -41,6 +42,20 @@ describe("notifier-openclaw", () => {
 
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(fetchMock.mock.calls[0][0]).toBe("http://127.0.0.1:18789/hooks/agent");
+  });
+
+  it("uses url from ${OPENCLAW_HOOKS_URL} config syntax", async () => {
+    process.env.OPENCLAW_HOOKS_URL = "http://127.0.0.1:18789/hooks/agent";
+
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const notifier = create({ token: "tok", url: "${OPENCLAW_HOOKS_URL}" });
+    await notifier.notify(makeEvent());
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0][0]).toBe("http://127.0.0.1:18789/hooks/agent");
+    delete process.env.OPENCLAW_HOOKS_URL;
   });
 
   it("uses token from OPENCLAW_HOOKS_TOKEN env", async () => {

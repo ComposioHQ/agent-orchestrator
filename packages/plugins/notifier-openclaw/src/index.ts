@@ -27,19 +27,23 @@ interface OpenClawWebhookPayload {
   to?: string;
 }
 
-function resolveToken(rawToken: unknown): string | undefined {
-  if (typeof rawToken !== "string") return process.env.OPENCLAW_HOOKS_TOKEN;
+function resolveEnvStyleString(rawValue: unknown): string | undefined {
+  if (typeof rawValue !== "string") return undefined;
 
-  const token = rawToken.trim();
-  if (!token) return process.env.OPENCLAW_HOOKS_TOKEN;
+  const value = rawValue.trim();
+  if (!value) return undefined;
 
-  const envMatch = /^\$\{([^{}]+)\}$/.exec(token);
+  const envMatch = /^\$\{([^{}]+)\}$/.exec(value);
   if (envMatch) {
     const envName = envMatch[1];
     return process.env[envName] ?? undefined;
   }
 
-  return token;
+  return value;
+}
+
+function resolveToken(rawToken: unknown): string | undefined {
+  return resolveEnvStyleString(rawToken) ?? process.env.OPENCLAW_HOOKS_TOKEN;
 }
 
 async function postWithRetry(
@@ -127,7 +131,7 @@ function formatActionsLine(actions: NotifyAction[]): string {
 
 export function create(config?: Record<string, unknown>): Notifier {
   const url =
-    (typeof config?.url === "string" ? config.url : undefined) ??
+    resolveEnvStyleString(config?.url) ??
     "http://127.0.0.1:18789/hooks/agent";
   const token = resolveToken(config?.token);
   const senderName = typeof config?.name === "string" ? config.name : "AO";
