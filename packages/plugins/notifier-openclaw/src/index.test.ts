@@ -56,6 +56,19 @@ describe("notifier-openclaw", () => {
     expect(headers["Authorization"]).toBe("Bearer env-token");
   });
 
+  it("resolves token from ${VAR} syntax in config", async () => {
+    process.env.OPENCLAW_HOOKS_TOKEN = "env-token";
+
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const notifier = create({ token: "${OPENCLAW_HOOKS_TOKEN}" });
+    await notifier.notify(makeEvent());
+
+    const headers = fetchMock.mock.calls[0][1].headers;
+    expect(headers["Authorization"]).toBe("Bearer env-token");
+  });
+
   it("warns and sends without Authorization when token missing", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const fetchMock = vi.fn().mockResolvedValue({ ok: true });
