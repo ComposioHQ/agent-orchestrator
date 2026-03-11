@@ -304,6 +304,35 @@ describe("scm-github plugin", () => {
       );
     });
 
+    it("parses check_run events using check_suite.head_branch", async () => {
+      const event = await scm.parseWebhook?.(
+        makeWebhookRequest({
+          headers: { "x-github-event": "check_run" },
+          body: JSON.stringify({
+            action: "completed",
+            repository: { owner: { login: "acme" }, name: "repo" },
+            check_run: {
+              head_sha: "def456",
+              updated_at: "2026-03-10T12:00:00Z",
+              pull_requests: [{ number: 42 }],
+              check_suite: { head_branch: "feat/my-feature" },
+            },
+          }),
+        }),
+        project,
+      );
+
+      expect(event).toEqual(
+        expect.objectContaining({
+          provider: "github",
+          kind: "ci",
+          branch: "feat/my-feature",
+          sha: "def456",
+          prNumber: 42,
+        }),
+      );
+    });
+
     it("parses push events with branch and sha", async () => {
       const event = await scm.parseWebhook?.(
         makeWebhookRequest({

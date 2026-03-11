@@ -18,6 +18,10 @@
     "./utils": {
       "types": "./dist/utils.d.ts",
       "import": "./dist/utils.js"
+    },
+    "./scm-webhook-utils": {
+      "types": "./dist/scm-webhook-utils.d.ts",
+      "import": "./dist/scm-webhook-utils.js"
     }
   },
   "files": [

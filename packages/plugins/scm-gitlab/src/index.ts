@@ -25,6 +25,12 @@ import {
   type AutomatedComment,
   type MergeReadiness,
 } from "@composio/ao-core";
+import {
+  getWebhookHeader,
+  parseWebhookBranchRef,
+  parseWebhookJsonObject,
+  parseWebhookTimestamp,
+} from "@composio/ao-core/scm-webhook-utils";
 
 import { glab, parseJSON, stripHost } from "./glab-utils.js";
 
@@ -115,40 +121,6 @@ function inferSeverity(body: string): AutomatedComment["severity"] {
   return "info";
 }
 
-function getHeader(
-  headers: Record<string, string | string[] | undefined>,
-  name: string,
-): string | undefined {
-  const target = name.toLowerCase();
-  for (const [key, value] of Object.entries(headers)) {
-    if (key.toLowerCase() !== target) continue;
-    if (Array.isArray(value)) return value[0];
-    return value;
-  }
-  return undefined;
-}
-
-function parseJsonObject(body: string): Record<string, unknown> {
-  const parsed: unknown = JSON.parse(body);
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("Webhook payload must be a JSON object");
-  }
-  return parsed as Record<string, unknown>;
-}
-
-function parseTimestamp(value: unknown): Date | undefined {
-  if (typeof value !== "string") return undefined;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? undefined : date;
-}
-
-function parseBranchRef(ref: unknown): string | undefined {
-  if (typeof ref !== "string" || ref.length === 0) return undefined;
-  if (ref.startsWith("refs/heads/")) return ref.slice("refs/heads/".length);
-  if (ref.startsWith("refs/")) return undefined;
-  return ref;
-}
-
 function getGitLabWebhookConfig(project: ProjectConfig) {
   const webhook = project.scm?.webhook;
   return {
@@ -194,11 +166,11 @@ function parseGitLabWebhookEvent(
   payload: Record<string, unknown>,
   config: ReturnType<typeof getGitLabWebhookConfig>,
 ): SCMWebhookEvent | null {
-  const rawEventType = getHeader(request.headers, config.eventHeader);
+  const rawEventType = getWebhookHeader(request.headers, config.eventHeader);
   if (!rawEventType) return null;
 
   const normalizedEventType = rawEventType.toLowerCase();
-  const deliveryId = getHeader(request.headers, config.deliveryHeader);
+  const deliveryId = getWebhookHeader(request.headers, config.deliveryHeader);
   const repository = parseGitLabRepository(payload);
   const objectAttributes =
     payload["object_attributes"] && typeof payload["object_attributes"] === "object"
@@ -230,12 +202,12 @@ function parseGitLabWebhookEvent(
           : typeof mergeRequest["id"] === "number"
             ? (mergeRequest["id"] as number)
             : undefined,
-      branch: parseBranchRef(mergeRequest["source_branch"]),
+      branch: parseWebhookBranchRef(mergeRequest["source_branch"]),
       sha:
         typeof mergeRequest["last_commit"] === "object" && mergeRequest["last_commit"]
           ? ((mergeRequest["last_commit"] as Record<string, unknown>)["id"] as string | undefined)
           : undefined,
-      timestamp: parseTimestamp(mergeRequest["updated_at"]),
+      timestamp: parseWebhookTimestamp(mergeRequest["updated_at"]),
       data: payload,
     };
   }
@@ -256,12 +228,12 @@ function parseGitLabWebhookEvent(
       repository,
       prNumber:
         typeof mergeRequest["iid"] === "number" ? (mergeRequest["iid"] as number) : undefined,
-      branch: parseBranchRef(mergeRequest["source_branch"]),
+      branch: parseWebhookBranchRef(mergeRequest["source_branch"]),
       sha:
         typeof mergeRequest["last_commit"] === "object" && mergeRequest["last_commit"]
           ? ((mergeRequest["last_commit"] as Record<string, unknown>)["id"] as string | undefined)
           : undefined,
-      timestamp: parseTimestamp(
+      timestamp: parseWebhookTimestamp(
         objectAttributes?.["updated_at"] ?? objectAttributes?.["created_at"],
       ),
       data: payload,
@@ -286,7 +258,7 @@ function parseGitLabWebhookEvent(
           ? (((payload["merge_request"] as Record<string, unknown>)["iid"] as number | undefined) ??
             ((payload["merge_request"] as Record<string, unknown>)["id"] as number | undefined))
           : undefined,
-      branch: parseBranchRef(payload["ref"] ?? objectAttributes?.["ref"]),
+      branch: parseWebhookBranchRef(payload["ref"] ?? objectAttributes?.["ref"]),
       sha:
         typeof payload["checkout_sha"] === "string"
           ? (payload["checkout_sha"] as string)
@@ -295,7 +267,7 @@ function parseGitLabWebhookEvent(
             : typeof objectAttributes?.["sha"] === "string"
               ? (objectAttributes["sha"] as string)
               : undefined,
-      timestamp: parseTimestamp(
+      timestamp: parseWebhookTimestamp(
         objectAttributes?.["finished_at"] ??
           objectAttributes?.["updated_at"] ??
           payload["commit_timestamp"] ??
@@ -318,14 +290,14 @@ function parseGitLabWebhookEvent(
       rawEventType,
       deliveryId,
       repository,
-      branch: parseBranchRef(payload["ref"]),
+      branch: parseWebhookBranchRef(payload["ref"]),
       sha:
         typeof payload["after"] === "string"
           ? (payload["after"] as string)
           : typeof payload["checkout_sha"] === "string"
             ? (payload["checkout_sha"] as string)
             : undefined,
-      timestamp: parseTimestamp(payload["event_created_at"] ?? payload["commit_timestamp"]),
+      timestamp: parseWebhookTimestamp(payload["event_created_at"] ?? payload["commit_timestamp"]),
       data: payload,
     };
   }
@@ -337,7 +309,9 @@ function parseGitLabWebhookEvent(
     rawEventType,
     deliveryId,
     repository,
-    timestamp: parseTimestamp(objectAttributes?.["updated_at"] ?? payload["event_created_at"]),
+    timestamp: parseWebhookTimestamp(
+      objectAttributes?.["updated_at"] ?? payload["event_created_at"],
+    ),
     data: payload,
   };
 }
@@ -402,12 +376,12 @@ function createGitLabSCM(config?: Record<string, unknown>): SCM {
         return { ok: false, reason: "Webhook payload exceeds configured maxBodyBytes" };
       }
 
-      const eventType = getHeader(request.headers, webhookConfig.eventHeader);
+      const eventType = getWebhookHeader(request.headers, webhookConfig.eventHeader);
       if (!eventType) {
         return { ok: false, reason: `Missing ${webhookConfig.eventHeader} header` };
       }
 
-      const deliveryId = getHeader(request.headers, webhookConfig.deliveryHeader);
+      const deliveryId = getWebhookHeader(request.headers, webhookConfig.deliveryHeader);
       const secretName = webhookConfig.secretEnvVar;
       if (!secretName) {
         return { ok: true, deliveryId, eventType };
@@ -418,7 +392,7 @@ function createGitLabSCM(config?: Record<string, unknown>): SCM {
         return { ok: false, reason: `Webhook secret env var ${secretName} is not configured` };
       }
 
-      const providedToken = getHeader(request.headers, webhookConfig.signatureHeader);
+      const providedToken = getWebhookHeader(request.headers, webhookConfig.signatureHeader);
       if (!providedToken) {
         return { ok: false, reason: `Missing ${webhookConfig.signatureHeader} header` };
       }
@@ -440,7 +414,7 @@ function createGitLabSCM(config?: Record<string, unknown>): SCM {
       project: ProjectConfig,
     ): Promise<SCMWebhookEvent | null> {
       const webhookConfig = getGitLabWebhookConfig(project);
-      const payload = parseJsonObject(request.body);
+      const payload = parseWebhookJsonObject(request.body);
       return parseGitLabWebhookEvent(request, payload, webhookConfig);
     },
 

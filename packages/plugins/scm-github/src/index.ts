@@ -27,6 +27,12 @@ import {
   type AutomatedComment,
   type MergeReadiness,
 } from "@composio/ao-core";
+import {
+  getWebhookHeader,
+  parseWebhookBranchRef,
+  parseWebhookJsonObject,
+  parseWebhookTimestamp,
+} from "@composio/ao-core/scm-webhook-utils";
 
 const execFileAsync = promisify(execFile);
 
@@ -215,19 +221,6 @@ async function getCIChecksFromStatusRollup(pr: PRInfo): Promise<CICheck[]> {
     .filter((check): check is CICheck => check !== null);
 }
 
-function getHeader(
-  headers: Record<string, string | string[] | undefined>,
-  name: string,
-): string | undefined {
-  const target = name.toLowerCase();
-  for (const [key, value] of Object.entries(headers)) {
-    if (key.toLowerCase() !== target) continue;
-    if (Array.isArray(value)) return value[0];
-    return value;
-  }
-  return undefined;
-}
-
 function getGitHubWebhookConfig(project: ProjectConfig) {
   const webhook = project.scm?.webhook;
   return {
@@ -255,14 +248,6 @@ function verifyGitHubSignature(
   return timingSafeEqual(expectedBuffer, providedBuffer);
 }
 
-function parseJsonObject(body: string): Record<string, unknown> {
-  const parsed: unknown = JSON.parse(body);
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("Webhook payload must be a JSON object");
-  }
-  return parsed as Record<string, unknown>;
-}
-
 function parseGitHubRepository(payload: Record<string, unknown>) {
   const repository = payload["repository"];
   if (!repository || typeof repository !== "object") return undefined;
@@ -278,28 +263,15 @@ function parseGitHubRepository(payload: Record<string, unknown>) {
   return { owner, name };
 }
 
-function parseBranchRef(ref: unknown): string | undefined {
-  if (typeof ref !== "string" || ref.length === 0) return undefined;
-  if (ref.startsWith("refs/heads/")) return ref.slice("refs/heads/".length);
-  if (ref.startsWith("refs/")) return undefined;
-  return ref;
-}
-
-function parseTimestamp(value: unknown): Date | undefined {
-  if (typeof value !== "string") return undefined;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? undefined : date;
-}
-
 function parseGitHubWebhookEvent(
   request: SCMWebhookRequest,
   payload: Record<string, unknown>,
   config: ReturnType<typeof getGitHubWebhookConfig>,
 ): SCMWebhookEvent | null {
-  const rawEventType = getHeader(request.headers, config.eventHeader);
+  const rawEventType = getWebhookHeader(request.headers, config.eventHeader);
   if (!rawEventType) return null;
 
-  const deliveryId = getHeader(request.headers, config.deliveryHeader);
+  const deliveryId = getWebhookHeader(request.headers, config.deliveryHeader);
   const repository = parseGitHubRepository(payload);
   const action = typeof payload["action"] === "string" ? payload["action"] : rawEventType;
 
@@ -323,7 +295,7 @@ function parseGitHubWebhookEvent(
             : undefined,
       branch: typeof head?.["ref"] === "string" ? head["ref"] : undefined,
       sha: typeof head?.["sha"] === "string" ? head["sha"] : undefined,
-      timestamp: parseTimestamp(pr["updated_at"]),
+      timestamp: parseWebhookTimestamp(pr["updated_at"]),
       data: payload,
     };
   }
@@ -350,10 +322,10 @@ function parseGitHubWebhookEvent(
       sha: typeof head?.["sha"] === "string" ? head["sha"] : undefined,
       timestamp:
         rawEventType === "pull_request_review"
-          ? parseTimestamp(
+          ? parseWebhookTimestamp(
               (payload["review"] as Record<string, unknown> | undefined)?.["submitted_at"],
             )
-          : parseTimestamp(
+          : parseWebhookTimestamp(
               (payload["comment"] as Record<string, unknown> | undefined)?.["updated_at"] ??
                 (payload["comment"] as Record<string, unknown> | undefined)?.["created_at"],
             ),
@@ -374,7 +346,7 @@ function parseGitHubWebhookEvent(
       deliveryId,
       repository,
       prNumber: typeof issueRecord["number"] === "number" ? issueRecord["number"] : undefined,
-      timestamp: parseTimestamp(
+      timestamp: parseWebhookTimestamp(
         (payload["comment"] as Record<string, unknown> | undefined)?.["updated_at"] ??
           (payload["comment"] as Record<string, unknown> | undefined)?.["created_at"],
       ),
@@ -397,9 +369,15 @@ function parseGitHubWebhookEvent(
       repository,
       prNumber: typeof firstPR?.["number"] === "number" ? firstPR["number"] : undefined,
       branch:
-        typeof check?.["head_branch"] === "string" ? (check["head_branch"] as string) : undefined,
+        typeof check?.["head_branch"] === "string"
+          ? (check["head_branch"] as string)
+          : typeof (check?.["check_suite"] as Record<string, unknown> | undefined)?.[
+                "head_branch"
+              ] === "string"
+            ? ((check?.["check_suite"] as Record<string, unknown>)["head_branch"] as string)
+            : undefined,
       sha: typeof check?.["head_sha"] === "string" ? (check["head_sha"] as string) : undefined,
-      timestamp: parseTimestamp(check?.["updated_at"]),
+      timestamp: parseWebhookTimestamp(check?.["updated_at"]),
       data: payload,
     };
   }
@@ -415,9 +393,9 @@ function parseGitHubWebhookEvent(
       rawEventType,
       deliveryId,
       repository,
-      branch: parseBranchRef(branches[0]?.["name"] ?? payload["ref"]),
+      branch: parseWebhookBranchRef(branches[0]?.["name"] ?? payload["ref"]),
       sha: typeof payload["sha"] === "string" ? (payload["sha"] as string) : undefined,
-      timestamp: parseTimestamp(payload["updated_at"]),
+      timestamp: parseWebhookTimestamp(payload["updated_at"]),
       data: payload,
     };
   }
@@ -434,9 +412,9 @@ function parseGitHubWebhookEvent(
       rawEventType,
       deliveryId,
       repository,
-      branch: parseBranchRef(payload["ref"]),
+      branch: parseWebhookBranchRef(payload["ref"]),
       sha: typeof payload["after"] === "string" ? (payload["after"] as string) : undefined,
-      timestamp: parseTimestamp(headCommit?.["timestamp"] ?? payload["updated_at"]),
+      timestamp: parseWebhookTimestamp(headCommit?.["timestamp"] ?? payload["updated_at"]),
       data: payload,
     };
   }
@@ -448,7 +426,7 @@ function parseGitHubWebhookEvent(
     rawEventType,
     deliveryId,
     repository,
-    timestamp: parseTimestamp(payload["updated_at"]),
+    timestamp: parseWebhookTimestamp(payload["updated_at"]),
     data: payload,
   };
 }
@@ -489,12 +467,12 @@ function createGitHubSCM(): SCM {
         return { ok: false, reason: "Webhook payload exceeds configured maxBodyBytes" };
       }
 
-      const eventType = getHeader(request.headers, config.eventHeader);
+      const eventType = getWebhookHeader(request.headers, config.eventHeader);
       if (!eventType) {
         return { ok: false, reason: `Missing ${config.eventHeader} header` };
       }
 
-      const deliveryId = getHeader(request.headers, config.deliveryHeader);
+      const deliveryId = getWebhookHeader(request.headers, config.deliveryHeader);
       const secretName = config.secretEnvVar;
       if (!secretName) {
         return { ok: true, deliveryId, eventType };
@@ -505,7 +483,7 @@ function createGitHubSCM(): SCM {
         return { ok: false, reason: `Webhook secret env var ${secretName} is not configured` };
       }
 
-      const signature = getHeader(request.headers, config.signatureHeader);
+      const signature = getWebhookHeader(request.headers, config.signatureHeader);
       if (!signature) {
         return { ok: false, reason: `Missing ${config.signatureHeader} header` };
       }
@@ -527,7 +505,7 @@ function createGitHubSCM(): SCM {
       project: ProjectConfig,
     ): Promise<SCMWebhookEvent | null> {
       const config = getGitHubWebhookConfig(project);
-      const payload = parseJsonObject(request.body);
+      const payload = parseWebhookJsonObject(request.body);
       return parseGitHubWebhookEvent(request, payload, config);
     },
 
