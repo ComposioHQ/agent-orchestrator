@@ -64,6 +64,9 @@ async function spawnSession(
       projectId,
       issueId,
       agent,
+      onProgress: (message: string) => {
+        spinner.text = message;
+      },
     });
 
     let branchStr = session.branch ?? "";

@@ -165,10 +165,12 @@ describe("spawn command", () => {
     );
 
     // Must delegate to session manager
-    expect(mockSessionManager.spawn).toHaveBeenCalledWith({
-      projectId: "my-app",
-      issueId: "INT-100",
-    });
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "my-app",
+        issueId: "INT-100",
+      }),
+    );
 
     const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
     expect(output).toContain("app-7");
@@ -195,10 +197,12 @@ describe("spawn command", () => {
 
     await program.parseAsync(["node", "test", "spawn", "my-app", "42"]);
 
-    expect(mockSessionManager.spawn).toHaveBeenCalledWith({
-      projectId: "my-app",
-      issueId: "42",
-    });
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "my-app",
+        issueId: "42",
+      }),
+    );
   });
 
   it("spawns without issueId when none provided", async () => {
@@ -222,10 +226,12 @@ describe("spawn command", () => {
 
     await program.parseAsync(["node", "test", "spawn", "my-app"]);
 
-    expect(mockSessionManager.spawn).toHaveBeenCalledWith({
-      projectId: "my-app",
-      issueId: undefined,
-    });
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "my-app",
+        issueId: undefined,
+      }),
+    );
   });
 
   it("shows tmux attach command using runtimeHandle.id (hash-based name)", async () => {
@@ -277,11 +283,13 @@ describe("spawn command", () => {
 
     await program.parseAsync(["node", "test", "spawn", "my-app", "--agent", "codex"]);
 
-    expect(mockSessionManager.spawn).toHaveBeenCalledWith({
-      projectId: "my-app",
-      issueId: undefined,
-      agent: "codex",
-    });
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "my-app",
+        issueId: undefined,
+        agent: "codex",
+      }),
+    );
   });
 
   it("passes --agent flag with issue ID", async () => {
@@ -305,11 +313,13 @@ describe("spawn command", () => {
 
     await program.parseAsync(["node", "test", "spawn", "my-app", "INT-42", "--agent", "codex"]);
 
-    expect(mockSessionManager.spawn).toHaveBeenCalledWith({
-      projectId: "my-app",
-      issueId: "INT-42",
-      agent: "codex",
-    });
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "my-app",
+        issueId: "INT-42",
+        agent: "codex",
+      }),
+    );
   });
 
   it("rejects unknown project ID", async () => {
@@ -368,6 +378,7 @@ describe("spawn command", () => {
       projectId: "my-app",
       issueId: undefined,
       agent: undefined,
+      onProgress: expect.any(Function),
     });
     expect(mockSessionManager.claimPR).toHaveBeenCalledWith("app-1", "123", {
       assignOnGithub: undefined,

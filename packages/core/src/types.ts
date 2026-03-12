@@ -187,6 +187,8 @@ export interface SessionSpawnConfig {
   prompt?: string;
   /** Override the agent plugin for this session (e.g. "codex", "claude-code") */
   agent?: string;
+  /** Optional callback for progress updates (e.g. "Waiting for agent to start…") */
+  onProgress?: (message: string) => void;
   /** Override the OpenCode subagent for this session (e.g. "sisyphus", "oracle") */
   subagent?: string;
   /** Decomposition context — ancestor task chain (passed to prompt builder) */

@@ -361,6 +361,11 @@ async function runStartup(
     }
   }
 
+  process.on("SIGINT", () => {
+    if (dashboardProcess) dashboardProcess.kill();
+    process.exit(0);
+  });
+
   // Print summary
   console.log(chalk.bold.green("\n✓ Startup complete\n"));
 
