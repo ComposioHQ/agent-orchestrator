@@ -2,6 +2,10 @@ node_modules/
 dist/
 .pnpm-store/
 .next/
+.tmp/
+.tmp-*/
+result
+result-*
 *.tsbuildinfo
 coverage/
 *.patch

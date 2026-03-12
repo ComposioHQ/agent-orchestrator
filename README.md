@@ -72,6 +72,20 @@ ao spawn my-project 123    # GitHub issue, Linear ticket, or ad-hoc
 
 Dashboard opens at `http://localhost:3000`. Run `ao status` for the CLI view.
 
+**Option C — Run with Nix (single command):**
+
+```bash
+nix run github:ComposioHQ/agent-orchestrator -- start https://github.com/your-org/your-repo
+```
+
+Or from a local checkout:
+
+```bash
+nix run . -- --help
+```
+
+This exposes the `ao` CLI without a manual Node/pnpm install. The flake builds the CLI and packaged dashboard ahead of time, so there is no first-run workspace bootstrap. You still need whichever agent CLI you plan to use (`claude`, `codex`, `aider`, etc.).
+
 ## How It Works
 
 ```
