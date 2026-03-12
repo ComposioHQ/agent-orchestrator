@@ -130,9 +130,13 @@ describe("scripts/ao-doctor.sh", () => {
     const configPath = join(tempRoot, "agent-orchestrator.yaml");
     const dataDir = join(tempRoot, "data");
     const worktreeDir = join(tempRoot, "worktrees");
+    const commentedDataDir = `${dataDir} # session metadata`;
+    const commentedWorktreeDir = `${worktreeDir} # ephemeral worktrees`;
     writeFileSync(
       configPath,
-      [`dataDir: ${dataDir}`, `worktreeDir: ${worktreeDir}`, "projects: {}"].join("\n"),
+      [`dataDir: ${commentedDataDir}`, `worktreeDir: ${commentedWorktreeDir}`, "projects: {}"].join(
+        "\n",
+      ),
     );
 
     const tmpRoot = join(tempRoot, "tmp-root");
@@ -157,6 +161,8 @@ describe("scripts/ao-doctor.sh", () => {
     const staleStillExists = existsSync(staleFile);
     const dataDirExists = existsSync(dataDir);
     const worktreeDirExists = existsSync(worktreeDir);
+    const commentedDataDirExists = existsSync(commentedDataDir);
+    const commentedWorktreeDirExists = existsSync(commentedWorktreeDir);
     rmSync(tempRoot, { recursive: true, force: true });
 
     expect(result.status).toBe(0);
@@ -167,5 +173,7 @@ describe("scripts/ao-doctor.sh", () => {
     expect(staleStillExists).toBe(false);
     expect(dataDirExists).toBe(true);
     expect(worktreeDirExists).toBe(true);
+    expect(commentedDataDirExists).toBe(false);
+    expect(commentedWorktreeDirExists).toBe(false);
   });
 });

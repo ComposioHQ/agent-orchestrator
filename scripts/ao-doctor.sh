@@ -101,8 +101,11 @@ find_config() {
 read_config_value() {
   local key="$1"
   local file="$2"
+  local raw
   local value
-  value="$(grep -E "^[[:space:]]*${key}:" "$file" | head -n 1 | cut -d: -f2- | tr -d '"' | xargs 2>/dev/null || true)"
+  raw="$(grep -E "^[[:space:]]*${key}:" "$file" | head -n 1 | cut -d: -f2- || true)"
+  raw="${raw%%[[:space:]]#*}"
+  value="$(printf '%s' "$raw" | tr -d '"' | xargs 2>/dev/null || true)"
   printf '%s' "$value"
 }
 
