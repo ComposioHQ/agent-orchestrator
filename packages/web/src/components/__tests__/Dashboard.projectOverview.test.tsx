@@ -43,6 +43,20 @@ describe("Dashboard project overview cards", () => {
     expect(screen.getAllByText("No running orchestrator")).toHaveLength(1);
   });
 
+  it("remains stable when orchestrators prop is omitted", () => {
+    render(
+      <Dashboard
+        initialSessions={[makeSession({ projectId: "my-app" })]}
+        projects={[
+          { id: "my-app", name: "My App" },
+          { id: "docs-app", name: "Docs App" },
+        ]}
+      />,
+    );
+
+    expect(screen.getAllByRole("button", { name: "Spawn Orchestrator" })).toHaveLength(2);
+  });
+
   it("updates the card after spawning an orchestrator", async () => {
     let resolveSpawn: ((value: Response) => void) | null = null;
     vi.mocked(fetch).mockImplementationOnce(

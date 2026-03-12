@@ -29,6 +29,7 @@ interface DashboardProps {
 }
 
 const KANBAN_LEVELS = ["working", "pending", "review", "respond", "merge"] as const;
+const EMPTY_ORCHESTRATORS: DashboardOrchestratorLink[] = [];
 
 function mergeOrchestrators(
   current: DashboardOrchestratorLink[],
@@ -49,8 +50,9 @@ export function Dashboard({
   projectName,
   projects = [],
   initialGlobalPause = null,
-  orchestrators = [],
+  orchestrators,
 }: DashboardProps) {
+  const orchestratorLinks = orchestrators ?? EMPTY_ORCHESTRATORS;
   const { sessions, globalPause } = useSessionEvents(
     initialSessions,
     initialGlobalPause,
@@ -59,15 +61,15 @@ export function Dashboard({
   const [rateLimitDismissed, setRateLimitDismissed] = useState(false);
   const [globalPauseDismissed, setGlobalPauseDismissed] = useState(false);
   const [activeOrchestrators, setActiveOrchestrators] =
-    useState<DashboardOrchestratorLink[]>(orchestrators);
+    useState<DashboardOrchestratorLink[]>(orchestratorLinks);
   const [spawningProjectIds, setSpawningProjectIds] = useState<string[]>([]);
   const [spawnErrors, setSpawnErrors] = useState<Record<string, string>>({});
   const showSidebar = projects.length > 1;
   const allProjectsView = showSidebar && projectId === undefined;
 
   useEffect(() => {
-    setActiveOrchestrators((current) => mergeOrchestrators(current, orchestrators));
-  }, [orchestrators]);
+    setActiveOrchestrators((current) => mergeOrchestrators(current, orchestratorLinks));
+  }, [orchestratorLinks]);
 
   const grouped = useMemo(() => {
     const zones: Record<AttentionLevel, DashboardSession[]> = {
