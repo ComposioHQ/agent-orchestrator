@@ -9,7 +9,7 @@
 
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { isPortAvailable } from "./web-dir.js";
+import { isPortAvailable, resolveDashboardRuntime } from "./web-dir.js";
 import { exec } from "./shell.js";
 
 /**
@@ -32,6 +32,11 @@ async function checkPort(port: number): Promise<void> {
  * starting the dashboard. Works with both `next dev` and `next build`.
  */
 async function checkBuilt(webDir: string): Promise<void> {
+  const runtime = resolveDashboardRuntime(webDir);
+  if (runtime.mode === "built") {
+    return;
+  }
+
   const nodeModules = resolve(webDir, "node_modules", "@composio", "ao-core");
   if (!existsSync(nodeModules)) {
     throw new Error("Dependencies not installed. Run: pnpm install && pnpm build");

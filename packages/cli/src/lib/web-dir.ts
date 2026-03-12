@@ -40,6 +40,12 @@ export function isPortAvailable(port: number): Promise<boolean> {
 /** How many consecutive ports to scan before giving up. */
 export const MAX_PORT_SCAN = 100;
 
+export interface DashboardRuntime {
+  mode: "dev" | "built";
+  webDir: string;
+  standaloneServerPath: string | null;
+}
+
 /**
  * Find the first available port starting from `start`, scanning upward.
  * Returns `null` if no free port is found within `maxScan` attempts.
@@ -156,12 +162,49 @@ export async function buildDashboardEnv(
   return env;
 }
 
+function findStandaloneServerPath(webDir: string): string | null {
+  const candidates = [
+    resolve(webDir, ".next", "standalone", "packages", "web", "server.js"),
+    resolve(webDir, ".next", "standalone", "server.js"),
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+export function resolveDashboardRuntime(webDir = findWebDir()): DashboardRuntime {
+  const standaloneServerPath = findStandaloneServerPath(webDir);
+  const terminalServerPath = resolve(webDir, "dist", "server", "terminal-websocket.js");
+  const directTerminalServerPath = resolve(webDir, "dist", "server", "direct-terminal-ws.js");
+
+  const built =
+    standaloneServerPath !== null &&
+    existsSync(terminalServerPath) &&
+    existsSync(directTerminalServerPath);
+
+  return {
+    mode: built ? "built" : "dev",
+    webDir,
+    standaloneServerPath,
+  };
+}
+
 /**
  * Locate the @composio/ao-web package directory.
  * Uses createRequire for ESM-compatible require.resolve, with fallback
  * to sibling package paths that work from both src/ and dist/.
  */
 export function findWebDir(): string {
+  const envWebDir = process.env["AO_WEB_DIR"];
+  if (envWebDir && existsSync(resolve(envWebDir, "package.json"))) {
+    return envWebDir;
+  }
+
   // Try to resolve from node_modules first (installed as workspace dep)
   try {
     const pkgJson = require.resolve("@composio/ao-web/package.json");

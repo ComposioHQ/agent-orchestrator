@@ -10,7 +10,7 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import chalk from "chalk";
 import ora from "ora";
@@ -35,6 +35,7 @@ import { ensureLifecycleWorker, stopLifecycleWorker } from "../lib/lifecycle-ser
 import {
   findWebDir,
   buildDashboardEnv,
+  resolveDashboardRuntime,
   waitForPortAndOpen,
   isPortAvailable,
   findFreePort,
@@ -225,6 +226,7 @@ async function handleUrlStart(
  * Returns the child process handle for cleanup.
  */
 async function startDashboard(
+  runtimeMode: "dev" | "built",
   port: number,
   webDir: string,
   configPath: string | null,
@@ -233,12 +235,20 @@ async function startDashboard(
 ): Promise<ChildProcess> {
   const env = await buildDashboardEnv(port, configPath, terminalPort, directTerminalPort);
 
-  const child = spawn("pnpm", ["run", "dev"], {
-    cwd: webDir,
-    stdio: "inherit",
-    detached: false,
-    env,
-  });
+  const child =
+    runtimeMode === "built"
+      ? spawn("node", [resolve(webDir, "scripts", "start-standalone.js")], {
+          cwd: webDir,
+          stdio: "inherit",
+          detached: false,
+          env,
+        })
+      : spawn("pnpm", ["run", "dev"], {
+          cwd: webDir,
+          stdio: "inherit",
+          detached: false,
+          env,
+        });
 
   child.on("error", (err) => {
     console.error(chalk.red("Dashboard failed to start:"), err.message);
@@ -247,6 +257,30 @@ async function startDashboard(
   });
 
   return child;
+}
+
+async function rebuildDashboard(webDir: string): Promise<void> {
+  try {
+    accessSync(webDir, constants.W_OK);
+  } catch {
+    throw new Error("Dashboard rebuild is unavailable for packaged installs.");
+  }
+
+  await new Promise<void>((resolvePromise, reject) => {
+    const child = spawn("pnpm", ["build"], {
+      cwd: webDir,
+      stdio: "inherit",
+    });
+
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) {
+        resolvePromise();
+        return;
+      }
+      reject(new Error(`pnpm build exited with code ${code ?? "null"}`));
+    });
+  });
 }
 
 /**
@@ -297,18 +331,26 @@ async function runStartup(
     await preflight.checkBuilt(webDir);
 
     if (opts?.rebuild) {
+      spinner.start("Rebuilding dashboard bundle");
       await cleanNextCache(webDir);
+      await rebuildDashboard(webDir);
+      spinner.succeed("Dashboard bundle rebuilt");
     }
+
+    const runtime = resolveDashboardRuntime(webDir);
 
     spinner.start("Starting dashboard");
     dashboardProcess = await startDashboard(
+      runtime.mode,
       port,
       webDir,
       config.configPath,
       config.terminalPort,
       config.directTerminalPort,
     );
-    spinner.succeed(`Dashboard starting on http://localhost:${port}`);
+    spinner.succeed(
+      `Dashboard (${runtime.mode === "built" ? "built" : "dev"}) starting on http://localhost:${port}`,
+    );
     console.log(chalk.dim("  (Dashboard will be ready in a few seconds)\n"));
   }
 
