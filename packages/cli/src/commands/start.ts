@@ -18,7 +18,6 @@ import type { Command } from "commander";
 import {
   loadConfig,
   generateOrchestratorPrompt,
-  createLifecycleManager,
   isRepoUrl,
   parseRepoUrl,
   resolveCloneTarget,
@@ -31,7 +30,7 @@ import {
   type ParsedRepoUrl,
 } from "@composio/ao-core";
 import { exec, execSilent } from "../lib/shell.js";
-import { getSessionManager, getRegistry } from "../lib/create-session-manager.js";
+import { getSessionManager } from "../lib/create-session-manager.js";
 import { ensureLifecycleWorker, stopLifecycleWorker } from "../lib/lifecycle-service.js";
 import {
   findWebDir,
@@ -362,27 +361,7 @@ async function runStartup(
     }
   }
 
-  // Start lifecycle manager (CI reactions, PR merge detection, notifications)
-  let lifecycle: ReturnType<typeof createLifecycleManager> | null = null;
-  try {
-    const registry = await getRegistry(config);
-    const sessionManager = await getSessionManager(config);
-    lifecycle = createLifecycleManager({
-      config,
-      registry,
-      sessionManager,
-    });
-    lifecycle.start(30_000);
-  } catch (err) {
-    if (dashboardProcess) dashboardProcess.kill();
-    throw new Error(
-      `Failed to start lifecycle manager: ${err instanceof Error ? err.message : String(err)}`,
-      { cause: err },
-    );
-  }
-
   process.on("SIGINT", () => {
-    lifecycle?.stop();
     if (dashboardProcess) dashboardProcess.kill();
     process.exit(0);
   });
@@ -408,7 +387,6 @@ async function runStartup(
     console.log(chalk.cyan("Orchestrator:"), `reused existing session (${sessionId})`);
   }
 
-  console.log(chalk.cyan("Lifecycle:"), "running (30s poll interval)");
   console.log(chalk.dim(`Config: ${config.configPath}\n`));
 
   // Auto-open browser to orchestrator session page once the server is accepting connections.
@@ -425,7 +403,6 @@ async function runStartup(
   if (dashboardProcess) {
     dashboardProcess.on("exit", (code) => {
       if (openAbort) openAbort.abort();
-      lifecycle?.stop();
       if (code !== 0 && code !== null) {
         console.error(chalk.red(`Dashboard exited with code ${code}`));
       }

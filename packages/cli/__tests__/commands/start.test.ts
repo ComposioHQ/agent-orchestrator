@@ -22,8 +22,6 @@ const {
   mockSessionManager,
   mockWaitForPortAndOpen,
   mockSpawn,
-  mockRegistry,
-  mockLifecycleManager,
   mockEnsureLifecycleWorker,
   mockStopLifecycleWorker,
 } = vi.hoisted(() => ({
@@ -42,8 +40,6 @@ const {
   },
   mockWaitForPortAndOpen: vi.fn().mockResolvedValue(undefined),
   mockSpawn: vi.fn(),
-  mockRegistry: {},
-  mockLifecycleManager: { start: vi.fn(), stop: vi.fn() },
   mockEnsureLifecycleWorker: vi.fn(),
   mockStopLifecycleWorker: vi.fn(),
 }));
@@ -86,13 +82,11 @@ vi.mock("@composio/ao-core", async (importOriginal) => {
       if (path) return actual.loadConfig(path);
       return mockConfigRef.current;
     },
-    createLifecycleManager: () => mockLifecycleManager,
   };
 });
 
 vi.mock("../../src/lib/create-session-manager.js", () => ({
   getSessionManager: async (): Promise<SessionManager> => mockSessionManager as SessionManager,
-  getRegistry: async () => mockRegistry,
 }));
 
 vi.mock("../../src/lib/lifecycle-service.js", () => ({
