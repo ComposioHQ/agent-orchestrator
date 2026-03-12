@@ -11,7 +11,7 @@ import {
   getCorrelationId,
   jsonWithCorrelation,
   recordApiObservation,
-  resolveProjectIdForSession,
+  resolveProjectIdForSessionId,
 } from "@/lib/observability";
 
 /** POST /api/sessions/:id/restore — Restore a terminated session */
@@ -26,7 +26,7 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
 
   try {
     const { config, sessionManager } = await getServices();
-    const projectId = await resolveProjectIdForSession(sessionManager, id);
+    const projectId = resolveProjectIdForSessionId(config, id);
     const restored = await sessionManager.restore(id);
 
     recordApiObservation({
@@ -60,13 +60,8 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
     if (err instanceof WorkspaceMissingError) {
       return jsonWithCorrelation({ error: err.message }, { status: 422 }, correlationId);
     }
-    const { config, sessionManager } = await getServices().catch(() => ({
-      config: undefined,
-      sessionManager: undefined,
-    }));
-    const projectId = sessionManager
-      ? await resolveProjectIdForSession(sessionManager, id)
-      : undefined;
+    const { config } = await getServices().catch(() => ({ config: undefined }));
+    const projectId = config ? resolveProjectIdForSessionId(config, id) : undefined;
     if (config) {
       recordApiObservation({
         config,

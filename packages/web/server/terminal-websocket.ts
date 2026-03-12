@@ -15,14 +15,9 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, request } from "node:http";
-import {
-  createCorrelationId,
-  createProjectObserver,
-  loadConfig,
-  type OrchestratorConfig,
-  type ProjectObserver,
-} from "@composio/ao-core";
+import { createCorrelationId } from "@composio/ao-core";
 import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
+import { createObserverContext, inferProjectId } from "./terminal-observability.js";
 
 /** Cached full path to tmux binary */
 const TMUX = findTmux();
@@ -55,40 +50,7 @@ const availablePorts = new Set<number>(); // Pool of recycled ports
 let nextPort = 7800; // Start ttyd instances from port 7800
 const MAX_PORT = 7900; // Prevent unbounded port allocation
 
-function createObserverContext(): {
-  config: OrchestratorConfig | undefined;
-  observer: ProjectObserver | undefined;
-} {
-  try {
-    const config = loadConfig();
-    return {
-      config,
-      observer: createProjectObserver(config, "terminal-websocket"),
-    };
-  } catch {
-    return { config: undefined, observer: undefined };
-  }
-}
-
-function inferProjectId(
-  config: OrchestratorConfig | undefined,
-  sessionId: string,
-): string | undefined {
-  if (!config) {
-    return undefined;
-  }
-
-  for (const [projectId, project] of Object.entries(config.projects)) {
-    const prefix = project.sessionPrefix;
-    if (sessionId === prefix || sessionId.startsWith(`${prefix}-`)) {
-      return projectId;
-    }
-  }
-
-  return undefined;
-}
-
-const { config: observabilityConfig, observer } = createObserverContext();
+const { config: observabilityConfig, observer } = createObserverContext("terminal-websocket");
 
 function recordWebsocketMetric(input: {
   metric: "websocket_connect" | "websocket_disconnect" | "websocket_error";

@@ -12,14 +12,9 @@ import { spawn } from "node:child_process";
 import { WebSocketServer, WebSocket } from "ws";
 import { spawn as ptySpawn, type IPty } from "node-pty";
 import { homedir, userInfo } from "node:os";
-import {
-  createCorrelationId,
-  createProjectObserver,
-  loadConfig,
-  type OrchestratorConfig,
-  type ProjectObserver,
-} from "@composio/ao-core";
+import { createCorrelationId } from "@composio/ao-core";
 import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
+import { createObserverContext, inferProjectId } from "./terminal-observability.js";
 
 interface TerminalSession {
   sessionId: string;
@@ -46,39 +41,6 @@ export interface DirectTerminalServer {
   shutdown: () => void;
 }
 
-function createObserverContext(): {
-  config: OrchestratorConfig | undefined;
-  observer: ProjectObserver | undefined;
-} {
-  try {
-    const config = loadConfig();
-    return {
-      config,
-      observer: createProjectObserver(config, "terminal-direct-websocket"),
-    };
-  } catch {
-    return { config: undefined, observer: undefined };
-  }
-}
-
-function inferProjectId(
-  config: OrchestratorConfig | undefined,
-  sessionId: string,
-): string | undefined {
-  if (!config) {
-    return undefined;
-  }
-
-  for (const [projectId, project] of Object.entries(config.projects)) {
-    const prefix = project.sessionPrefix;
-    if (sessionId === prefix || sessionId.startsWith(`${prefix}-`)) {
-      return projectId;
-    }
-  }
-
-  return undefined;
-}
-
 /**
  * Create the direct terminal WebSocket server.
  * Separated from listen() so tests can control lifecycle.
@@ -86,7 +48,7 @@ function inferProjectId(
 export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalServer {
   const TMUX = tmuxPath ?? findTmux();
   const activeSessions = new Map<string, TerminalSession>();
-  const { config, observer } = createObserverContext();
+  const { config, observer } = createObserverContext("terminal-direct-websocket");
   const metrics: WebsocketHealthMetrics = {
     activeConnections: 0,
     totalConnections: 0,

@@ -6,7 +6,7 @@ import {
   getCorrelationId,
   jsonWithCorrelation,
   recordApiObservation,
-  resolveProjectIdForSession,
+  resolveProjectIdForSessionId,
 } from "@/lib/observability";
 
 const MAX_MESSAGE_LENGTH = 10_000;
@@ -41,7 +41,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   try {
     const { config, sessionManager } = await getServices();
-    const projectId = await resolveProjectIdForSession(sessionManager, id);
+    const projectId = resolveProjectIdForSessionId(config, id);
     await sessionManager.send(id, message);
     recordApiObservation({
       config,
@@ -64,13 +64,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (err instanceof SessionNotFoundError) {
       return jsonWithCorrelation({ error: err.message }, { status: 404 }, correlationId);
     }
-    const { config, sessionManager } = await getServices().catch(() => ({
-      config: undefined,
-      sessionManager: undefined,
-    }));
-    const projectId = sessionManager
-      ? await resolveProjectIdForSession(sessionManager, id)
-      : undefined;
+    const { config } = await getServices().catch(() => ({ config: undefined }));
+    const projectId = config ? resolveProjectIdForSessionId(config, id) : undefined;
     if (config) {
       recordApiObservation({
         config,

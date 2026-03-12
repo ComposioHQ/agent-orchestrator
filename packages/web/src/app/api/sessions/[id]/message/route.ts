@@ -6,7 +6,7 @@ import {
   getCorrelationId,
   jsonWithCorrelation,
   recordApiObservation,
-  resolveProjectIdForSession,
+  resolveProjectIdForSessionId,
 } from "@/lib/observability";
 
 const MAX_MESSAGE_LENGTH = 10_000;
@@ -64,7 +64,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
 
     const { config, sessionManager } = await getServices();
-    const projectId = await resolveProjectIdForSession(sessionManager, id);
+    const projectId = resolveProjectIdForSessionId(config, id);
     try {
       await sessionManager.send(id, message);
       recordApiObservation({

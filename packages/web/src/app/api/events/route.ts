@@ -66,10 +66,7 @@ export async function GET(request: Request): Promise<Response> {
         } catch {
           void 0;
         }
-      })();
 
-      // Send initial snapshot
-      void (async () => {
         try {
           const { config, sessionManager } = await getServices();
           const requestedProjectId =

@@ -6,7 +6,7 @@ import {
   getCorrelationId,
   jsonWithCorrelation,
   recordApiObservation,
-  resolveProjectIdForSession,
+  resolveProjectIdForSessionId,
 } from "@/lib/observability";
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -20,7 +20,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   try {
     const { config, sessionManager } = await getServices();
-    const projectId = await resolveProjectIdForSession(sessionManager, id);
+    const projectId = resolveProjectIdForSessionId(config, id);
     const opencodeSessionId = await sessionManager.remap(id, true);
     recordApiObservation({
       config,
@@ -39,13 +39,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       correlationId,
     );
   } catch (err) {
-    const { config, sessionManager } = await getServices().catch(() => ({
-      config: undefined,
-      sessionManager: undefined,
-    }));
-    const projectId = sessionManager
-      ? await resolveProjectIdForSession(sessionManager, id)
-      : undefined;
+    const { config } = await getServices().catch(() => ({ config: undefined }));
+    const projectId = config ? resolveProjectIdForSessionId(config, id) : undefined;
     if (err instanceof SessionNotFoundError) {
       if (config) {
         recordApiObservation({

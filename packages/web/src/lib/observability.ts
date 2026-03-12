@@ -3,7 +3,6 @@ import {
   createProjectObserver,
   readObservabilitySummary,
   type OrchestratorConfig,
-  type SessionManager,
   type ObservabilitySummary,
 } from "@composio/ao-core";
 import { NextResponse } from "next/server";
@@ -72,12 +71,17 @@ export function recordApiObservation(input: ApiObservationInput): void {
   }
 }
 
-export async function resolveProjectIdForSession(
-  sessionManager: SessionManager,
+export function resolveProjectIdForSessionId(
+  config: OrchestratorConfig,
   sessionId: string,
-): Promise<string | undefined> {
-  const session = await sessionManager.get(sessionId);
-  return session?.projectId;
+): string | undefined {
+  for (const [projectId, project] of Object.entries(config.projects)) {
+    const prefix = project.sessionPrefix;
+    if (sessionId === prefix || sessionId.startsWith(`${prefix}-`)) {
+      return projectId;
+    }
+  }
+  return undefined;
 }
 
 export function getObservabilitySummary(config: OrchestratorConfig): ObservabilitySummary {
