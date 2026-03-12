@@ -16,6 +16,13 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; background: #0d1117; overflow: hidden; }
   #terminal { width: 100%; height: 100%; }
+  /* Ensure xterm handles touch scrolling on mobile WebViews */
+  .xterm-viewport {
+    -webkit-overflow-scrolling: touch;
+  }
+  .xterm-screen {
+    touch-action: none;
+  }
   #status {
     position: fixed;
     top: 6px;
@@ -73,6 +80,45 @@ export const TERMINAL_HTML = `<!DOCTYPE html>
   term.loadAddon(fitAddon);
   term.open(document.getElementById('terminal'));
   fitAddon.fit();
+
+  // ── Mobile touch scroll ──────────────────────────────────────────
+  // xterm.js has built-in touch handlers, but they often don't fire
+  // in React Native WebViews because the native gesture recogniser
+  // intercepts the events first.  We attach our own handlers on the
+  // xterm screen element and call term.scrollLines() directly.
+  (function () {
+    var el = document.querySelector('.xterm-screen');
+    if (!el) return;
+    var lastY = null;
+    var accum = 0;
+    var LINE_H = 18; // approx pixels per terminal row
+
+    el.addEventListener('touchstart', function (e) {
+      if (e.touches.length === 1) {
+        lastY = e.touches[0].clientY;
+        accum = 0;
+      }
+    }, { passive: true });
+
+    el.addEventListener('touchmove', function (e) {
+      if (lastY === null || e.touches.length !== 1) return;
+      e.preventDefault(); // stop WebView from stealing the scroll
+      var curY = e.touches[0].clientY;
+      var dy = lastY - curY; // positive = scroll down
+      lastY = curY;
+      accum += dy;
+      var lines = Math.trunc(accum / LINE_H);
+      if (lines !== 0) {
+        term.scrollLines(lines);
+        accum -= lines * LINE_H;
+      }
+    }, { passive: false });
+
+    el.addEventListener('touchend', function () {
+      lastY = null;
+      accum = 0;
+    }, { passive: true });
+  })();
 
   function postToRN(obj) {
     try {
