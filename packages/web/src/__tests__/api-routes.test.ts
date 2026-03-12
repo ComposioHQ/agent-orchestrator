@@ -8,6 +8,7 @@ import {
   type OrchestratorConfig,
   type PluginRegistry,
   type SCM,
+  type Tracker,
 } from "@composio/ao-core";
 import * as serialize from "@/lib/serialize";
 import { getSCM } from "@/lib/services";
@@ -162,9 +163,30 @@ const mockSCM: SCM = {
   })),
 };
 
+const mockTracker: Tracker = {
+  name: "linear",
+  getIssue: vi.fn(async (id: string) => ({
+    id,
+    title: `Issue ${id}`,
+    description: "",
+    url: `https://linear.app/topshark/issue/${id}`,
+    state: "open",
+    labels: [],
+  })),
+  isCompleted: vi.fn(async () => false),
+  issueUrl: vi.fn((identifier: string) => `https://linear.app/topshark/issue/${identifier}`),
+  issueLabel: vi.fn((url: string) => url.split("/").pop() ?? url),
+  branchName: vi.fn((identifier: string) => `feat/${identifier}`),
+  generatePrompt: vi.fn(async (identifier: string) => `Prompt for ${identifier}`),
+};
+
 const mockRegistry: PluginRegistry = {
   register: vi.fn(),
-  get: vi.fn(() => mockSCM) as PluginRegistry["get"],
+  get: vi.fn((slot: string) => {
+    if (slot === "tracker") return mockTracker;
+    if (slot === "scm") return mockSCM;
+    return null;
+  }) as PluginRegistry["get"],
   list: vi.fn(() => []),
   loadBuiltins: vi.fn(async () => {}),
   loadFromConfig: vi.fn(async () => {}),
@@ -187,6 +209,7 @@ const mockConfig: OrchestratorConfig = {
       path: "/tmp/my-app",
       defaultBranch: "main",
       sessionPrefix: "my-app",
+      tracker: { plugin: "linear" },
       scm: { plugin: "github", webhook: {} },
     },
     "docs-app": {
@@ -264,6 +287,14 @@ beforeEach(() => {
     branch: "feat/health-check",
     data: {},
   });
+  (mockTracker.getIssue as ReturnType<typeof vi.fn>).mockImplementation(async (id: string) => ({
+    id,
+    title: `Issue ${id}`,
+    description: "",
+    url: `https://linear.app/topshark/issue/${id}`,
+    state: "open",
+    labels: [],
+  }));
 });
 
 describe("API Routes", () => {
@@ -299,6 +330,18 @@ describe("API Routes", () => {
       expect(session).toHaveProperty("status");
       expect(session).toHaveProperty("activity");
       expect(session).toHaveProperty("createdAt");
+    });
+
+    it("returns full external issueUrl values for tracker-backed sessions", async () => {
+      const res = await sessionsGET(makeRequest("http://localhost:3000/api/sessions"));
+      expect(res.status).toBe(200);
+
+      const data = await res.json();
+      const session = data.sessions.find((s: { id: string }) => s.id === "frontend-1");
+
+      expect(session.issueId).toBe("INT-1270");
+      expect(session.issueUrl).toBe("https://linear.app/topshark/issue/INT-1270");
+      expect(session.issueLabel).toBe("INT-1270");
     });
 
     it("skips PR enrichment when metadata enrichment hits timeout", async () => {

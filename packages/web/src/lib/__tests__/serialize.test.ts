@@ -126,6 +126,26 @@ describe("sessionToDashboard", () => {
     expect(dashboard.lastActivityAt).toBe("2025-01-01T01:00:00.000Z");
   });
 
+  it("should preserve issueUrl when issueId is already an absolute URL", () => {
+    const coreSession = createCoreSession({
+      issueId: "https://linear.app/acme/issue/INT-100",
+    });
+
+    const dashboard = sessionToDashboard(coreSession);
+
+    expect(dashboard.issueId).toBe("https://linear.app/acme/issue/INT-100");
+    expect(dashboard.issueUrl).toBe("https://linear.app/acme/issue/INT-100");
+  });
+
+  it("should not treat bare tracker identifiers as issue URLs", () => {
+    const coreSession = createCoreSession({ issueId: "INT-100" });
+
+    const dashboard = sessionToDashboard(coreSession);
+
+    expect(dashboard.issueId).toBe("INT-100");
+    expect(dashboard.issueUrl).toBeNull();
+  });
+
   it("should use agentInfo summary with summaryIsFallback false", () => {
     const coreSession = createCoreSession({
       agentInfo: {
@@ -805,6 +825,57 @@ describe("enrichSessionsMetadata", () => {
     // Summary enriched (async)
     expect(dashboard.summary).toBe("Implementing auth fix");
     // Issue title enriched (async, depends on issueLabel from sync step)
+    expect(dashboard.issueTitle).toBe("Fix auth bug");
+  });
+
+  it("should derive issueUrl from tracker for identifier-backed sessions", async () => {
+    const tracker = mockTracker("Fix auth bug");
+    tracker.issueUrl = vi.fn().mockReturnValue("https://linear.app/acme/issue/INT-100");
+    tracker.issueLabel = vi.fn().mockReturnValue("INT-100");
+    tracker.getIssue = vi.fn().mockResolvedValue({
+      id: "INT-100",
+      title: "Fix auth bug",
+      description: "",
+      url: "https://linear.app/acme/issue/INT-100",
+      state: "open",
+      labels: [],
+    });
+    const agent = mockAgent("Implementing auth fix");
+    const registry = mockRegistry(tracker, agent);
+
+    const core = createCoreSession({ issueId: "INT-100" });
+    const dashboard = sessionToDashboard(core);
+
+    await enrichSessionsMetadata([core], [dashboard], testConfig, registry);
+
+    expect(tracker.issueUrl).toHaveBeenCalledWith("INT-100", testProject);
+    expect(dashboard.issueUrl).toBe("https://linear.app/acme/issue/INT-100");
+    expect(dashboard.issueLabel).toBe("INT-100");
+    expect(dashboard.issueTitle).toBe("Fix auth bug");
+  });
+
+  it("should derive GitHub issueUrl from tracker for identifier-backed sessions", async () => {
+    const tracker = mockTracker("Fix auth bug");
+    tracker.issueUrl = vi.fn().mockReturnValue("https://github.com/test/repo/issues/420");
+    tracker.issueLabel = vi.fn().mockReturnValue("#420");
+    tracker.getIssue = vi.fn().mockResolvedValue({
+      id: "420",
+      title: "Fix auth bug",
+      description: "",
+      url: "https://github.com/test/repo/issues/420",
+      state: "open",
+      labels: [],
+    });
+    const agent = mockAgent("Implementing auth fix");
+    const registry = mockRegistry(tracker, agent);
+
+    const core = createCoreSession({ issueId: "420" });
+    const dashboard = sessionToDashboard(core);
+
+    await enrichSessionsMetadata([core], [dashboard], testConfig, registry);
+
+    expect(dashboard.issueUrl).toBe("https://github.com/test/repo/issues/420");
+    expect(dashboard.issueLabel).toBe("#420");
     expect(dashboard.issueTitle).toBe("Fix auth bug");
   });
 
