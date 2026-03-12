@@ -52,6 +52,8 @@
                 lib.cleanSourceFilter path type
                 && !(relPath == "result"
                   || lib.hasPrefix "result-" relPath
+                  || lib.hasPrefix ".deploy" relPath
+                  || lib.hasPrefix ".stage-" relPath
                   || relPath == ".tmp"
                   || lib.hasPrefix ".tmp/" relPath
                   || lib.hasPrefix ".tmp-" relPath
@@ -206,20 +208,74 @@
               export NEXT_TELEMETRY_DISABLED=1
               export npm_config_nodedir="${pkgs.nodejs_20}"
               node scripts/rebuild-node-pty.js
-              pnpm --filter @composio/ao-cli... build
-              pnpm --filter @composio/ao-web... build
+              pnpm -r --filter @composio/ao-cli... --filter @composio/ao-web... build
               runHook postBuild
             '';
 
             installPhase = ''
               runHook preInstall
 
-              mkdir -p $out/bin $out/libexec
-              cp -R . $out/libexec/agent-orchestrator
-              mkdir -p $out/libexec/agent-orchestrator/packages/web/.next/standalone/packages/web/.next
+              export PATH="${lib.makeBinPath runtimeTools}:$PATH"
+              export npm_config_nodedir="${pkgs.nodejs_20}"
+              rm -rf .deploy
+              mkdir -p .deploy/runtime/packages/plugins
+
+              cp package.json .deploy/runtime/package.json
+              cp pnpm-lock.yaml .deploy/runtime/pnpm-lock.yaml
+              cp pnpm-workspace.yaml .deploy/runtime/pnpm-workspace.yaml
+
+              mkdir -p .deploy/runtime/packages/cli
+              cp packages/cli/package.json .deploy/runtime/packages/cli/package.json
+              cp -R packages/cli/dist .deploy/runtime/packages/cli/dist
+              cp -R packages/cli/templates .deploy/runtime/packages/cli/templates
+
+              mkdir -p .deploy/runtime/packages/core
+              cp packages/core/package.json .deploy/runtime/packages/core/package.json
+              cp -R packages/core/dist .deploy/runtime/packages/core/dist
+
+              for pluginDir in packages/plugins/*; do
+                if [ -d "$pluginDir" ] && [ -f "$pluginDir/package.json" ] && [ -d "$pluginDir/dist" ]; then
+                  mkdir -p ".deploy/runtime/$pluginDir"
+                  cp "$pluginDir/package.json" ".deploy/runtime/$pluginDir/package.json"
+                  cp -R "$pluginDir/dist" ".deploy/runtime/$pluginDir/dist"
+                fi
+              done
+
+              (
+                cd .deploy/runtime
+                pnpm \
+                  --store-dir "$pnpmDeps" \
+                  --offline \
+                  --ignore-scripts \
+                  install \
+                  --prod \
+                  --frozen-lockfile
+              )
+
+              mkdir -p .deploy/runtime/packages/web/node_modules .deploy/runtime/packages/web/.next
+              cp packages/web/package.json .deploy/runtime/packages/web/package.json
+              cp -R packages/web/scripts .deploy/runtime/packages/web/scripts
+              cp -R packages/web/dist .deploy/runtime/packages/web/dist
+              if [ -d packages/web/public ]; then
+                cp -R packages/web/public .deploy/runtime/packages/web/public
+              fi
+              cp -R packages/web/.next/standalone .deploy/runtime/packages/web/.next/standalone
+              cp -R packages/web/.next/static .deploy/runtime/packages/web/.next/static
+              cp -LR packages/web/node_modules/node-pty .deploy/runtime/packages/web/node_modules/node-pty
+              cp -LR packages/web/node_modules/ws .deploy/runtime/packages/web/node_modules/ws
+              if [ -d node_modules/.pnpm/node-pty@1.1.0/node_modules/node-pty/build ]; then
+                cp -R \
+                  node_modules/.pnpm/node-pty@1.1.0/node_modules/node-pty/build \
+                  .deploy/runtime/packages/web/node_modules/node-pty/
+              fi
+
+              mkdir -p .deploy/runtime/packages/web/.next/standalone/packages/web/.next
               cp -R \
-                $out/libexec/agent-orchestrator/packages/web/.next/static \
-                $out/libexec/agent-orchestrator/packages/web/.next/standalone/packages/web/.next/static
+                .deploy/runtime/packages/web/.next/static \
+                .deploy/runtime/packages/web/.next/standalone/packages/web/.next/static
+
+              mkdir -p $out/bin $out/libexec/agent-orchestrator
+              cp -R .deploy/runtime/. $out/libexec/agent-orchestrator
 
               makeWrapper ${pkgs.nodejs_20}/bin/node $out/bin/ao \
                 --add-flags $out/libexec/agent-orchestrator/packages/cli/dist/index.js \

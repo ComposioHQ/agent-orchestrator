@@ -4,6 +4,8 @@ dist/
 .next/
 .tmp/
 .tmp-*/
+.deploy*/
+.stage-*/
 result
 result-*
 *.tsbuildinfo
