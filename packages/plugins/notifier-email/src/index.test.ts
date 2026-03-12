@@ -270,6 +270,35 @@ describe("notifier-email", () => {
         "Resend API failed (422): Unprocessable Entity",
       );
     });
+
+    it("escapes HTML in event fields to prevent injection", async () => {
+      process.env.RESEND_API_KEY = "re_test_key";
+      const fetchMock = mockFetchOk();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const notifier = create({ to: ["user@example.com"] });
+      await notifier.notify(
+        makeEvent({ message: '<script>alert("xss")</script>', sessionId: "<b>bold</b>" }),
+      );
+
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+      expect(body.html).not.toContain("<script>");
+      expect(body.html).toContain("&lt;script&gt;");
+      expect(body.html).toContain("&lt;b&gt;bold&lt;/b&gt;");
+    });
+
+    it("blocks javascript: URLs in PR links", async () => {
+      process.env.RESEND_API_KEY = "re_test_key";
+      const fetchMock = mockFetchOk();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const notifier = create({ to: ["user@example.com"] });
+      await notifier.notify(makeEvent({ data: { prUrl: "javascript:alert(1)" } }));
+
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+      expect(body.html).not.toContain("javascript:");
+      expect(body.html).toContain('href="#"');
+    });
   });
 
   describe("notifyWithActions", () => {

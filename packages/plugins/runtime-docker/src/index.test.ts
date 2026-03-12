@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as childProcess from "node:child_process";
-import * as fs from "node:fs";
 import type { RuntimeHandle } from "@composio/ao-core";
 
 // Mock node:child_process with custom promisify support
@@ -9,17 +8,6 @@ vi.mock("node:child_process", () => {
   (mockExecFile as any)[Symbol.for("nodejs.util.promisify.custom")] = vi.fn();
   return { execFile: mockExecFile };
 });
-
-// Mock node:crypto for deterministic UUIDs
-vi.mock("node:crypto", () => ({
-  randomUUID: () => "test-uuid-1234",
-}));
-
-// Mock node:fs for writeFileSync / unlinkSync
-vi.mock("node:fs", () => ({
-  writeFileSync: vi.fn(),
-  unlinkSync: vi.fn(),
-}));
 
 // Get reference to the promisify-custom mock
 const mockExecFileCustom = (childProcess.execFile as any)[
@@ -212,61 +200,42 @@ describe("runtime.destroy()", () => {
 });
 
 describe("runtime.sendMessage()", () => {
-  it("copies message file to container and executes it", async () => {
+  it("appends message to /tmp/ao-input via printf and shellEscape", async () => {
     const runtime = create();
     const handle = makeHandle("msg-test");
 
-    // docker cp
-    mockDockerSuccess();
-    // docker exec (cat + rm)
     mockDockerSuccess();
 
     await runtime.sendMessage(handle, "hello world");
 
-    expect(mockExecFileCustom).toHaveBeenCalledTimes(2);
-
-    // docker cp call
-    expect(mockExecFileCustom).toHaveBeenNthCalledWith(1, "docker", [
-      "cp",
-      expect.stringContaining("ao-docker-msg-test-uuid-1234.txt"),
-      "msg-test:/tmp/ao-message.txt",
-    ], { timeout: 30_000 });
-
-    // docker exec call
-    expect(mockExecFileCustom).toHaveBeenNthCalledWith(2, "docker", [
-      "exec",
-      "msg-test",
-      "sh",
-      "-c",
-      "cat /tmp/ao-message.txt && rm -f /tmp/ao-message.txt",
-    ], { timeout: 30_000 });
-
-    // Verify writeFileSync was called with the message + newline
-    expect(fs.writeFileSync).toHaveBeenCalledWith(
-      expect.stringContaining("ao-docker-msg-test-uuid-1234.txt"),
-      "hello world\n",
-      { encoding: "utf-8", mode: 0o600 },
+    expect(mockExecFileCustom).toHaveBeenCalledTimes(1);
+    expect(mockExecFileCustom).toHaveBeenCalledWith(
+      "docker",
+      [
+        "exec",
+        "msg-test",
+        "sh",
+        "-c",
+        expect.stringContaining("printf '%s\\n'"),
+      ],
+      { timeout: 30_000 },
     );
 
-    // Verify unlinkSync was called for cleanup
-    expect(fs.unlinkSync).toHaveBeenCalledWith(
-      expect.stringContaining("ao-docker-msg-test-uuid-1234.txt"),
-    );
+    const cmd = mockExecFileCustom.mock.calls[0][1][4] as string;
+    expect(cmd).toContain(">> /tmp/ao-input");
   });
 
-  it("cleans up temp file even on docker cp failure", async () => {
+  it("prevents shell injection in message", async () => {
     const runtime = create();
-    const handle = makeHandle("msg-fail");
+    const handle = makeHandle("msg-inject");
 
-    // docker cp fails
-    mockDockerError("cp failed");
+    mockDockerSuccess();
 
-    await expect(runtime.sendMessage(handle, "hello")).rejects.toThrow("cp failed");
+    await runtime.sendMessage(handle, "$(rm -rf /)");
 
-    // unlinkSync should still be called for temp file cleanup
-    expect(fs.unlinkSync).toHaveBeenCalledWith(
-      expect.stringContaining("ao-docker-msg-test-uuid-1234.txt"),
-    );
+    const cmd = mockExecFileCustom.mock.calls[0][1][4] as string;
+    // shellEscape wraps in single quotes, so injection payload is neutralized
+    expect(cmd).toContain("'$(rm -rf /)'");
   });
 });
 

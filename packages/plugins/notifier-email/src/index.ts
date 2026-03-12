@@ -14,6 +14,25 @@ export const manifest = {
   version: "0.1.0",
 };
 
+/** Escape a string for safe HTML interpolation. */
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/** Sanitize a URL for use in href attributes (block javascript: protocol). */
+function sanitizeUrl(url: string): string {
+  const lower = url.trim().toLowerCase();
+  if (lower.startsWith("javascript:") || lower.startsWith("data:")) {
+    return "#";
+  }
+  return escapeHtml(url);
+}
+
 const PRIORITY_EMOJI: Record<EventPriority, string> = {
   urgent: "\u{1F6A8}",
   action: "\u{1F449}",
@@ -31,18 +50,18 @@ function buildHtml(event: OrchestratorEvent, actions?: NotifyAction[]): string {
 
   let html = `
 <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px;">
-  <h2>${PRIORITY_EMOJI[event.priority]} ${event.type} &mdash; ${event.sessionId}</h2>
-  <p>${event.message}</p>
+  <h2>${PRIORITY_EMOJI[event.priority]} ${escapeHtml(event.type)} &mdash; ${escapeHtml(event.sessionId)}</h2>
+  <p>${escapeHtml(event.message)}</p>
   <table style="border-collapse: collapse; margin: 16px 0;">
-    <tr><td style="padding: 4px 12px 4px 0; font-weight: bold;">Project</td><td>${event.projectId}</td></tr>
-    <tr><td style="padding: 4px 12px 4px 0; font-weight: bold;">Session</td><td>${event.sessionId}</td></tr>
-    <tr><td style="padding: 4px 12px 4px 0; font-weight: bold;">Priority</td><td>${event.priority}</td></tr>
+    <tr><td style="padding: 4px 12px 4px 0; font-weight: bold;">Project</td><td>${escapeHtml(event.projectId)}</td></tr>
+    <tr><td style="padding: 4px 12px 4px 0; font-weight: bold;">Session</td><td>${escapeHtml(event.sessionId)}</td></tr>
+    <tr><td style="padding: 4px 12px 4px 0; font-weight: bold;">Priority</td><td>${escapeHtml(event.priority)}</td></tr>
     <tr><td style="padding: 4px 12px 4px 0; font-weight: bold;">Time</td><td>${event.timestamp.toISOString()}</td></tr>
-    ${ciStatus ? `<tr><td style="padding: 4px 12px 4px 0; font-weight: bold;">CI</td><td>${ciStatus}</td></tr>` : ""}
+    ${ciStatus ? `<tr><td style="padding: 4px 12px 4px 0; font-weight: bold;">CI</td><td>${escapeHtml(ciStatus)}</td></tr>` : ""}
   </table>`;
 
   if (prUrl) {
-    html += `<p><a href="${prUrl}" style="color: #0366d6;">View Pull Request</a></p>`;
+    html += `<p><a href="${sanitizeUrl(prUrl)}" style="color: #0366d6;">View Pull Request</a></p>`;
   }
 
   if (actions && actions.length > 0) {
@@ -50,7 +69,7 @@ function buildHtml(event: OrchestratorEvent, actions?: NotifyAction[]): string {
       .filter((a) => a.url)
       .map(
         (a) =>
-          `<a href="${a.url}" style="display:inline-block;padding:8px 16px;margin:4px;background:#0366d6;color:#fff;text-decoration:none;border-radius:4px;">${a.label}</a>`,
+          `<a href="${sanitizeUrl(a.url as string)}" style="display:inline-block;padding:8px 16px;margin:4px;background:#0366d6;color:#fff;text-decoration:none;border-radius:4px;">${escapeHtml(a.label)}</a>`,
       )
       .join(" ");
     if (links) {
@@ -69,18 +88,26 @@ async function sendEmail(
   subject: string,
   html: string,
 ): Promise<void> {
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({ from, to, subject, html }),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
 
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Resend API failed (${response.status}): ${body}`);
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({ from, to, subject, html }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Resend API failed (${response.status}): ${body}`);
+    }
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -119,7 +146,7 @@ export function create(config?: Record<string, unknown>): Notifier {
         from,
         to,
         "Agent Orchestrator Notification",
-        `<div style="font-family: sans-serif;">${message}</div>`,
+        `<div style="font-family: sans-serif;">${escapeHtml(message)}</div>`,
       );
       return null;
     },

@@ -1,16 +1,13 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { writeFileSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { randomUUID } from "node:crypto";
-import type {
-  PluginModule,
-  Runtime,
-  RuntimeCreateConfig,
-  RuntimeHandle,
-  RuntimeMetrics,
-  AttachInfo,
+import {
+  shellEscape,
+  type PluginModule,
+  type Runtime,
+  type RuntimeCreateConfig,
+  type RuntimeHandle,
+  type RuntimeMetrics,
+  type AttachInfo,
 } from "@composio/ao-core";
 
 const execFileAsync = promisify(execFile);
@@ -102,42 +99,19 @@ export function create(config?: Record<string, unknown>): Runtime {
     },
 
     async sendMessage(handle: RuntimeHandle, message: string): Promise<void> {
-      // Write message to a temp file, docker cp it in, then pipe it to stdin
-      // of the running process via a helper script
-      const tmpPath = join(tmpdir(), `ao-docker-msg-${randomUUID()}.txt`);
-      writeFileSync(tmpPath, message + "\n", {
-        encoding: "utf-8",
-        mode: 0o600,
-      });
-
-      try {
-        // Copy the message file into the container
-        await execFileAsync(
-          "docker",
-          ["cp", tmpPath, `${handle.id}:/tmp/ao-message.txt`],
-          { timeout: 30_000 },
-        );
-
-        // Pipe the message file content. This is limited compared to tmux's
-        // send-keys but works for basic text input.
-        await execFileAsync(
-          "docker",
-          [
-            "exec",
-            handle.id,
-            "sh",
-            "-c",
-            "cat /tmp/ao-message.txt && rm -f /tmp/ao-message.txt",
-          ],
-          { timeout: 30_000 },
-        );
-      } finally {
-        try {
-          unlinkSync(tmpPath);
-        } catch {
-          /* ignore cleanup errors */
-        }
-      }
+      // Append the message to /tmp/ao-input inside the container so the
+      // running agent can read it (consistent with podman/lxc/nspawn/k8s).
+      await execFileAsync(
+        "docker",
+        [
+          "exec",
+          handle.id,
+          "sh",
+          "-c",
+          `printf '%s\\n' ${shellEscape(message)} >> /tmp/ao-input`,
+        ],
+        { timeout: 30_000 },
+      );
     },
 
     async getOutput(handle: RuntimeHandle, lines = 50): Promise<string> {

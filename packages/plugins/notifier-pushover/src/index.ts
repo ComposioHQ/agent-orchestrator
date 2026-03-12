@@ -59,15 +59,23 @@ async function sendPushover(
     if (urlTitle) body.url_title = urlTitle;
   }
 
-  const response = await fetch("https://api.pushover.net/1/messages.json", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
 
-  if (!response.ok) {
-    const respBody = await response.text();
-    throw new Error(`Pushover API failed (${response.status}): ${respBody}`);
+  try {
+    const response = await fetch("https://api.pushover.net/1/messages.json", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const respBody = await response.text();
+      throw new Error(`Pushover API failed (${response.status}): ${respBody}`);
+    }
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

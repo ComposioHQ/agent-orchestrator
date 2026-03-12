@@ -67,15 +67,23 @@ async function sendEvent(
     links: allLinks.length > 0 ? allLinks : undefined,
   };
 
-  const response = await fetch("https://events.pagerduty.com/v2/enqueue", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
 
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`PagerDuty API failed (${response.status}): ${body}`);
+  try {
+    const response = await fetch("https://events.pagerduty.com/v2/enqueue", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`PagerDuty API failed (${response.status}): ${body}`);
+    }
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -108,23 +116,30 @@ export function create(_config?: Record<string, unknown>): Notifier {
     async post(message: string, context?: NotifyContext): Promise<string | null> {
       if (!routingKey) return null;
       // For plain messages, create a minimal trigger event
-      const response = await fetch("https://events.pagerduty.com/v2/enqueue", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          routing_key: routingKey,
-          event_action: "trigger",
-          payload: {
-            summary: message,
-            source: `ao/${context?.projectId ?? "unknown"}`,
-            severity: "info",
-          },
-        }),
-      });
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 30_000);
+      try {
+        const response = await fetch("https://events.pagerduty.com/v2/enqueue", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            routing_key: routingKey,
+            event_action: "trigger",
+            payload: {
+              summary: message,
+              source: `ao/${context?.projectId ?? "unknown"}`,
+              severity: "info",
+            },
+          }),
+          signal: controller.signal,
+        });
 
-      if (!response.ok) {
-        const body = await response.text();
-        throw new Error(`PagerDuty API failed (${response.status}): ${body}`);
+        if (!response.ok) {
+          const body = await response.text();
+          throw new Error(`PagerDuty API failed (${response.status}): ${body}`);
+        }
+      } finally {
+        clearTimeout(t);
       }
       return null;
     },

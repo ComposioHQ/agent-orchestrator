@@ -61,15 +61,23 @@ async function postToNtfy(
     }
   }
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers,
-    body: message,
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
 
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`ntfy POST failed (${response.status}): ${body}`);
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: message,
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`ntfy POST failed (${response.status}): ${body}`);
+    }
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

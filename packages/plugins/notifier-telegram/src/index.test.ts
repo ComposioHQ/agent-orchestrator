@@ -181,6 +181,21 @@ describe("notifier-telegram", () => {
       expect(body.text).toContain("https://github.com/org/repo/pull/42");
     });
 
+    it("escapes special characters in PR URLs for MarkdownV2", async () => {
+      process.env.TELEGRAM_BOT_TOKEN = "test-token";
+      const fetchMock = mockFetchOk();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const notifier = create({ chatId: "12345" });
+      await notifier.notify(
+        makeEvent({ data: { prUrl: "https://example.com/path(1)" } }),
+      );
+
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+      // Parentheses in the URL should be escaped for MarkdownV2
+      expect(body.text).toContain("https://example.com/path\\(1\\)");
+    });
+
     it("does not include reply_markup for simple notify", async () => {
       process.env.TELEGRAM_BOT_TOKEN = "test-token";
       const fetchMock = mockFetchOk();

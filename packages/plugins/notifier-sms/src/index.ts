@@ -63,18 +63,26 @@ async function sendSms(
   params.set("From", from);
   params.set("Body", body);
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Authorization: `Basic ${credentials}`,
-    },
-    body: params.toString(),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
 
-  if (!response.ok) {
-    const respBody = await response.text();
-    throw new Error(`Twilio API failed (${response.status}): ${respBody}`);
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Authorization: `Basic ${credentials}`,
+      },
+      body: params.toString(),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const respBody = await response.text();
+      throw new Error(`Twilio API failed (${response.status}): ${respBody}`);
+    }
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

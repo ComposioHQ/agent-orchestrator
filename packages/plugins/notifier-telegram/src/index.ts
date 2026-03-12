@@ -26,6 +26,11 @@ function escapeMarkdownV2(text: string): string {
   return text.replace(/([_*[\]()~`>#+\-=|{}.!\\])/g, "\\$1");
 }
 
+/** Escape special chars inside a MarkdownV2 URL (inside parentheses of a link). */
+function escapeMarkdownV2Url(url: string): string {
+  return url.replace(/([()\\])/g, "\\$1");
+}
+
 function buildMessage(event: OrchestratorEvent): string {
   const emoji = PRIORITY_EMOJI[event.priority];
   const lines: string[] = [
@@ -39,7 +44,7 @@ function buildMessage(event: OrchestratorEvent): string {
 
   const prUrl = typeof event.data.prUrl === "string" ? event.data.prUrl : undefined;
   if (prUrl) {
-    lines.push(`[View Pull Request](${prUrl})`);
+    lines.push(`[View Pull Request](${escapeMarkdownV2Url(prUrl)})`);
   }
 
   return lines.join("\n");
