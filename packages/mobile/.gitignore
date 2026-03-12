@@ -30,5 +30,5 @@ yarn-error.*
 # local env files
 .env*.local
 
-# npm (project uses pnpm)
-package-lock.json
+# npm-debug log (keep lock file committed for EAS Build)
+
