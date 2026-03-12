@@ -85,6 +85,14 @@ projects:
 #     plugin: slack
 #     webhook: ${SLACK_WEBHOOK_URL}
 #     channel: "#agent-updates"
+#   openclaw:
+#     plugin: openclaw
+#     url: ${OPENCLAW_HOOKS_URL}
+#     token: ${OPENCLAW_HOOKS_TOKEN}
+#     deliver: true
+#     # Set both fields to avoid falling back to OpenClaw's last resolved target
+#     channel: discord
+#     to: "1481253232679325817"
 
 # Notification routing by priority
 # notificationRouting:

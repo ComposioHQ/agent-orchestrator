@@ -20,6 +20,7 @@ describe("notifier-openclaw", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     delete process.env.OPENCLAW_HOOKS_TOKEN;
+    delete process.env.OPENCLAW_HOOKS_URL;
   });
 
   afterEach(() => {
@@ -43,6 +44,20 @@ describe("notifier-openclaw", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("http://127.0.0.1:18789/hooks/agent");
   });
 
+  it("uses url from ${OPENCLAW_HOOKS_URL} config syntax", async () => {
+    process.env.OPENCLAW_HOOKS_URL = "http://127.0.0.1:18789/hooks/agent";
+
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const notifier = create({ token: "tok", url: "${OPENCLAW_HOOKS_URL}" });
+    await notifier.notify(makeEvent());
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0][0]).toBe("http://127.0.0.1:18789/hooks/agent");
+    delete process.env.OPENCLAW_HOOKS_URL;
+  });
+
   it("uses token from OPENCLAW_HOOKS_TOKEN env", async () => {
     process.env.OPENCLAW_HOOKS_TOKEN = "env-token";
 
@@ -50,6 +65,19 @@ describe("notifier-openclaw", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const notifier = create();
+    await notifier.notify(makeEvent());
+
+    const headers = fetchMock.mock.calls[0][1].headers;
+    expect(headers["Authorization"]).toBe("Bearer env-token");
+  });
+
+  it("resolves token from ${VAR} syntax in config", async () => {
+    process.env.OPENCLAW_HOOKS_TOKEN = "env-token";
+
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const notifier = create({ token: "${OPENCLAW_HOOKS_TOKEN}" });
     await notifier.notify(makeEvent());
 
     const headers = fetchMock.mock.calls[0][1].headers;
@@ -125,6 +153,8 @@ describe("notifier-openclaw", () => {
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body.wakeMode).toBe("now");
     expect(body.deliver).toBe(true);
+    expect(body.channel).toBeUndefined();
+    expect(body.to).toBeUndefined();
   });
 
   it("supports wakeMode=next-heartbeat when configured", async () => {
@@ -136,6 +166,22 @@ describe("notifier-openclaw", () => {
 
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body.wakeMode).toBe("next-heartbeat");
+  });
+
+  it("includes explicit destination override when configured", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const notifier = create({
+      token: "tok",
+      channel: "discord",
+      to: "1481253232679325817",
+    });
+    await notifier.notify(makeEvent());
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.channel).toBe("discord");
+    expect(body.to).toBe("1481253232679325817");
   });
 
   it("retries on 5xx response", async () => {

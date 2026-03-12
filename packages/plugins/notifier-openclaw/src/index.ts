@@ -23,6 +23,27 @@ interface OpenClawWebhookPayload {
   sessionKey?: string;
   wakeMode?: WakeMode;
   deliver?: boolean;
+  channel?: string;
+  to?: string;
+}
+
+function resolveEnvStyleString(rawValue: unknown): string | undefined {
+  if (typeof rawValue !== "string") return undefined;
+
+  const value = rawValue.trim();
+  if (!value) return undefined;
+
+  const envMatch = /^\$\{([^{}]+)\}$/.exec(value);
+  if (envMatch) {
+    const envName = envMatch[1];
+    return process.env[envName] ?? undefined;
+  }
+
+  return value;
+}
+
+function resolveToken(rawToken: unknown): string | undefined {
+  return resolveEnvStyleString(rawToken) ?? process.env.OPENCLAW_HOOKS_TOKEN;
 }
 
 async function postWithRetry(
@@ -110,16 +131,16 @@ function formatActionsLine(actions: NotifyAction[]): string {
 
 export function create(config?: Record<string, unknown>): Notifier {
   const url =
-    (typeof config?.url === "string" ? config.url : undefined) ??
+    resolveEnvStyleString(config?.url) ??
     "http://127.0.0.1:18789/hooks/agent";
-  const token =
-    (typeof config?.token === "string" ? config.token : undefined) ??
-    process.env.OPENCLAW_HOOKS_TOKEN;
+  const token = resolveToken(config?.token);
   const senderName = typeof config?.name === "string" ? config.name : "AO";
   const sessionKeyPrefix =
     typeof config?.sessionKeyPrefix === "string" ? config.sessionKeyPrefix : "hook:ao:";
   const wakeMode: WakeMode = config?.wakeMode === "next-heartbeat" ? "next-heartbeat" : "now";
   const deliver = typeof config?.deliver === "boolean" ? config.deliver : true;
+  const channel = typeof config?.channel === "string" ? config.channel : undefined;
+  const to = typeof config?.to === "string" ? config.to : undefined;
 
   const { retries, retryDelayMs } = normalizeRetryConfig(config);
 
@@ -142,18 +163,30 @@ export function create(config?: Record<string, unknown>): Notifier {
     await postWithRetry(url, payload, headers, retries, retryDelayMs, { sessionId });
   }
 
+  function buildPayload(
+    payload: Omit<OpenClawWebhookPayload, "name" | "wakeMode" | "deliver" | "channel" | "to">,
+  ): OpenClawWebhookPayload {
+    return {
+      ...payload,
+      name: senderName,
+      wakeMode,
+      deliver,
+      ...(channel ? { channel } : {}),
+      ...(to ? { to } : {}),
+    };
+  }
+
   return {
     name: "openclaw",
 
     async notify(event: OrchestratorEvent): Promise<void> {
       const sessionKey = `${sessionKeyPrefix}${sanitizeSessionId(event.sessionId)}`;
-      await sendPayload({
+      await sendPayload(
+        buildPayload({
         message: formatEscalationMessage(event),
-        name: senderName,
         sessionKey,
-        wakeMode,
-        deliver,
-      });
+        }),
+      );
     },
 
     async notifyWithActions(event: OrchestratorEvent, actions: NotifyAction[]): Promise<void> {
@@ -161,26 +194,24 @@ export function create(config?: Record<string, unknown>): Notifier {
       const actionsLine = formatActionsLine(actions);
       const message = [formatEscalationMessage(event), actionsLine].filter(Boolean).join("\n");
 
-      await sendPayload({
+      await sendPayload(
+        buildPayload({
         message,
-        name: senderName,
         sessionKey,
-        wakeMode,
-        deliver,
-      });
+        }),
+      );
     },
 
     async post(message: string, context?: NotifyContext): Promise<string | null> {
       const sessionId = context?.sessionId ? sanitizeSessionId(context.sessionId) : "default";
       const sessionKey = `${sessionKeyPrefix}${sessionId}`;
 
-      await sendPayload({
+      await sendPayload(
+        buildPayload({
         message,
-        name: senderName,
         sessionKey,
-        wakeMode,
-        deliver,
-      });
+        }),
+      );
 
       return null;
     },
