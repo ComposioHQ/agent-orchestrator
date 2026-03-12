@@ -734,6 +734,31 @@ describe("API Routes", () => {
       expect(data.guardBlockers?.length).toBeGreaterThan(0);
     });
 
+    it("fails closed when SCM lacks full review thread snapshots", async () => {
+      const original = mockSCM.getReviewThreadSnapshots;
+      mockSCM.getReviewThreadSnapshots = undefined as unknown as ReturnType<typeof vi.fn>;
+      (mockSCM.getMergeability as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        mergeable: true,
+        ciPassing: true,
+        approved: true,
+        noConflicts: true,
+        blockers: [],
+      });
+      (mockSCM.getCIChecks as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+        { name: "review-integrity", status: "passed" },
+        { name: "ao/merge-guard", status: "passed" },
+      ]);
+
+      const req = makeRequest("/api/prs/432/merge", { method: "POST" });
+      const res = await mergePOST(req, { params: Promise.resolve({ id: "432" }) });
+      expect(res.status).toBe(422);
+      const data = await res.json();
+      expect(
+        data.guardBlockers.some((b: { code: string }) => b.code === "THREAD_SNAPSHOTS_UNAVAILABLE"),
+      ).toBe(true);
+      mockSCM.getReviewThreadSnapshots = original;
+    });
+
     it("returns 400 for non-numeric PR id", async () => {
       const req = makeRequest("/api/prs/abc/merge", { method: "POST" });
       const res = await mergePOST(req, { params: Promise.resolve({ id: "abc" }) });

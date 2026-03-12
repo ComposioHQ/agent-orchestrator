@@ -68,17 +68,7 @@ export async function getThreadSnapshots(
     return scm.getReviewThreadSnapshots(pr);
   }
 
-  const unresolved = await scm.getPendingComments(pr);
-  return unresolved.map((comment) => ({
-    prNumber: pr.number,
-    threadId: comment.id,
-    source: "human",
-    path: comment.path,
-    bodyHash: hashThreadBody(comment.body),
-    severity: "unknown",
-    status: "open",
-    capturedAt: comment.createdAt,
-  }));
+  throw new Error("SCM does not support full review thread snapshots");
 }
 
 export function normalizeCheckState(status: CICheck["status"]): "passed" | "pending" | "failed" {
@@ -184,6 +174,31 @@ export async function evaluateMergeGuardForPR(input: {
   integrity: ReturnType<typeof evaluateReviewIntegrity>;
   guard: MergeGuardEvaluation;
 }> {
+  if (!input.scm.getReviewThreadSnapshots) {
+    const checks = await input.scm.getCIChecks(input.pr);
+    const checkConclusions = buildCheckConclusions(checks);
+    const integrity = {
+      status: "fail" as const,
+      unresolvedThreadCount: 0,
+      unverifiedResolvedThreadCount: 0,
+      blockers: [
+        {
+          code: "THREAD_SNAPSHOTS_UNAVAILABLE" as const,
+          message: "SCM does not support full review thread snapshots",
+        },
+      ],
+    };
+
+    checkConclusions.set("review-integrity", "failed");
+    const guard = evaluateMergeGuard({
+      integrity,
+      requiredChecks: [...(input.requiredChecks ?? REVIEW_INTEGRITY_DEFAULTS.requiredChecks)],
+      checkConclusions: new Map([...checkConclusions, ["ao/merge-guard", "failed"]]),
+    });
+
+    return { integrity, guard };
+  }
+
   const threadSnapshots = await getThreadSnapshots(input.scm, input.pr);
   const checks = await input.scm.getCIChecks(input.pr);
   const checkConclusions = buildCheckConclusions(checks);

@@ -93,6 +93,28 @@ describe("review integrity evaluator", () => {
     expect(result.status).toBe("fail");
     expect(result.blockers.some((b) => b.code === "VERIFICATION_DRIFT")).toBe(true);
   });
+
+  it("classifies mixed validation blockers individually", () => {
+    const records = new Map([
+      [
+        "THR_1",
+        verifiedRecord({
+          evidence: {
+            changedFiles: ["src/a.ts"],
+            testCommands: ["pnpm test"],
+            testResults: [],
+          },
+          verifiedHeadSha: "oldsha",
+        }),
+      ],
+    ]);
+    const result = evaluateReviewIntegrity([thread({ status: "resolved" })], records, {
+      currentHeadSha: "newsha",
+    });
+    expect(result.status).toBe("fail");
+    expect(result.blockers.some((b) => b.code === "VERIFICATION_DRIFT")).toBe(true);
+    expect(result.blockers.some((b) => b.code === "INVALID_RESOLUTION")).toBe(true);
+  });
 });
 
 describe("merge guard evaluator", () => {

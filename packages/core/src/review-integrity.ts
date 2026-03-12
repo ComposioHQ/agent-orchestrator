@@ -48,6 +48,7 @@ export interface ResolutionRecord {
 export interface IntegrityBlocker {
   code:
     | "THREAD_UNRESOLVED"
+    | "THREAD_SNAPSHOTS_UNAVAILABLE"
     | "MISSING_RESOLUTION"
     | "UNVERIFIED_RESOLUTION"
     | "INVALID_RESOLUTION"
@@ -64,6 +65,12 @@ export interface ReviewIntegrityEvaluation {
   unresolvedThreadCount: number;
   unverifiedResolvedThreadCount: number;
   blockers: IntegrityBlocker[];
+}
+
+function blockerCodeForValidationMessage(message: string): IntegrityBlocker["code"] {
+  return message.includes("invalidated by new commit")
+    ? "VERIFICATION_DRIFT"
+    : "INVALID_RESOLUTION";
 }
 
 export interface MergeGuardEvaluation {
@@ -386,11 +393,12 @@ export function evaluateReviewIntegrity(
     const validationBlockers = validateResolutionRecord(record, thread, opts);
     if (validationBlockers.length > 0) {
       unverifiedResolvedThreadCount += 1;
-      const code = validationBlockers.some((b) => b.includes("invalidated by new commit"))
-        ? "VERIFICATION_DRIFT"
-        : "INVALID_RESOLUTION";
       for (const b of validationBlockers) {
-        blockers.push({ code, threadId: thread.threadId, message: b });
+        blockers.push({
+          code: blockerCodeForValidationMessage(b),
+          threadId: thread.threadId,
+          message: b,
+        });
       }
     }
   }
