@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 
 export const dynamic = "force-dynamic";
 import { Dashboard } from "@/components/Dashboard";
-import type { DashboardSession } from "@/lib/types";
+import type { DashboardSession, DispatchPlanItem, HarnessSnapshot } from "@/lib/types";
 import { getServices, getSCM } from "@/lib/services";
 import {
   sessionToDashboard,
@@ -15,6 +15,7 @@ import { prCache, prCacheKey } from "@/lib/cache";
 import { getPrimaryProjectId, getProjectName, getAllProjects } from "@/lib/project-name";
 import { filterProjectSessions, filterWorkerSessions } from "@/lib/project-utils";
 import { resolveGlobalPause, type GlobalPauseState } from "@/lib/global-pause";
+import { loadHarnessSnapshot } from "@/lib/harness-plan";
 
 function getSelectedProjectName(projectFilter: string | undefined): string {
   if (projectFilter === "all") return "All Projects";
@@ -48,8 +49,21 @@ export default async function Home(props: { searchParams: Promise<{ project?: st
     orchestrators: [],
   };
 
+  let dispatchPlan: DispatchPlanItem[] = [];
+  let harness: HarnessSnapshot = {
+    dispatchPlan: [],
+    workState: [],
+    reconciliationState: [],
+    scoreSummaryByTicket: [],
+    needsRescore: [],
+  };
+  let defaultProjectId: string | null = null;
+
   try {
     const { config, registry, sessionManager } = await getServices();
+    defaultProjectId = Object.keys(config.projects ?? {})[0] ?? null;
+    harness = await loadHarnessSnapshot(config);
+    dispatchPlan = harness.dispatchPlan;
     const allSessions = await sessionManager.list();
 
     pageData.globalPause = resolveGlobalPause(allSessions);
@@ -134,6 +148,9 @@ export default async function Home(props: { searchParams: Promise<{ project?: st
       projects={projects}
       initialGlobalPause={pageData.globalPause}
       orchestrators={pageData.orchestrators}
+      dispatchPlan={dispatchPlan}
+      harness={harness}
+      defaultProjectId={defaultProjectId}
     />
   );
 }

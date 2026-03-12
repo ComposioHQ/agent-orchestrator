@@ -241,12 +241,20 @@ describe("runtime.destroy()", () => {
     const handle = makeHandle("destroy-test");
 
     mockTmuxSuccess();
+    mockTmuxError("session not found");
 
     await runtime.destroy(handle);
 
-    expect(mockExecFileCustom).toHaveBeenCalledWith(
+    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
+      1,
       "tmux",
       ["kill-session", "-t", "destroy-test"],
+      expectedTmuxOptions,
+    );
+    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
+      2,
+      "tmux",
+      ["has-session", "-t", "destroy-test"],
       expectedTmuxOptions,
     );
   });
@@ -255,6 +263,7 @@ describe("runtime.destroy()", () => {
     const runtime = create();
     const handle = makeHandle("already-dead");
 
+    mockTmuxError("session not found: already-dead");
     mockTmuxError("session not found: already-dead");
 
     // Should not throw

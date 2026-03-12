@@ -55,6 +55,7 @@ export function sessionToDashboard(session: Session): DashboardSession {
     projectId: session.projectId,
     status: session.status,
     activity: session.activity,
+    runtimeName: session.runtimeHandle?.runtimeName ?? null,
     branch: session.branch,
     issueId: session.issueId, // Deprecated: kept for backwards compatibility
     issueUrl: session.issueId, // issueId is actually the full URL

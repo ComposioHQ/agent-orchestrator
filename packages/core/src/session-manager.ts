@@ -72,7 +72,16 @@ import {
   parsePauseUntil,
 } from "./global-pause.js";
 import { sessionFromMetadata } from "./utils/session-from-metadata.js";
-import { safeJsonParse } from "./utils/validation.js";
+import { safeJsonParse, validateStatus } from "./utils/validation.js";
+import {
+  assertRestoreAllowed,
+  assertSendAllowed,
+  assertSpawnAllowed,
+  persistActiveSession,
+  persistTerminalWorkState,
+  resolveTerminationPolicy,
+  resolveWorkspaceLifecyclePolicy,
+} from "./repo-policy.js";
 
 const execFileAsync = promisify(execFile);
 const OPENCODE_DISCOVERY_TIMEOUT_MS = 2_000;
@@ -220,10 +229,41 @@ const SEND_RESTORE_READY_POLL_MS = 500;
 const SEND_CONFIRMATION_ATTEMPTS = 3;
 const SEND_CONFIRMATION_POLL_MS = 500;
 const SEND_CONFIRMATION_OUTPUT_LINES = 20;
+const KILL_RUNTIME_WAIT_MS = 5_000;
+const KILL_RUNTIME_POLL_MS = 100;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+async function waitForRuntimeShutdown(
+  runtime: Runtime,
+  handle: RuntimeHandle,
+  timeoutMs = KILL_RUNTIME_WAIT_MS,
+): Promise<boolean> {
+  if (!new Set(["process", "tmux"]).has(handle.runtimeName)) {
+    return true;
+  }
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      if (!(await runtime.isAlive(handle))) {
+        return true;
+      }
+    } catch {
+      return true;
+    }
+    await sleep(KILL_RUNTIME_POLL_MS);
+  }
+
+  try {
+    return !(await runtime.isAlive(handle));
+  } catch {
+    return true;
+  }
+}
+
+
 
 /** Reconstruct a Session object from raw metadata key=value pairs. */
 function metadataToSession(
@@ -891,6 +931,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     }
 
+    const policyGuard = assertSpawnAllowed(project, spawnConfig.issueId);
+
     // Get the sessions directory for this project
     const sessionsDir = getProjectSessionsDir(project);
 
@@ -1105,6 +1147,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
       if (Object.keys(session.metadata || {}).length > 0) {
         updateMetadata(sessionsDir, sessionId, session.metadata);
+      }
+      const activeWorkId = policyGuard?.workId ?? spawnConfig.issueId;
+      if (activeWorkId) {
+        persistActiveSession(project, activeWorkId, sessionId);
       }
     } catch (err) {
       // Clean up runtime and workspace on post-launch failure
@@ -1509,10 +1555,20 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return null;
   }
 
-  async function kill(sessionId: SessionId, options?: { purgeOpenCode?: boolean }): Promise<void> {
+  async function kill(
+    sessionId: SessionId,
+    options?: { purgeOpenCode?: boolean; preserveWorkspace?: boolean; workStatus?: string },
+  ): Promise<void> {
     const { raw, sessionsDir, project, projectId } = requireSessionRecord(sessionId);
 
     const cleanupAgent = raw["agent"] ?? project?.agent ?? config.defaults.agent;
+    const terminationPolicy = resolveTerminationPolicy(project, sessionId, raw["issue"]);
+    const workspaceLifecycle = resolveWorkspaceLifecyclePolicy(project, sessionId, raw["issue"]);
+    const preserveWorkspace =
+      options?.preserveWorkspace ??
+      workspaceLifecycle?.preserveWorkspace ??
+      terminationPolicy?.preserveWorkspace ??
+      false;
 
     // Destroy runtime — prefer handle.runtimeName to find the correct plugin
     if (raw["runtimeHandle"]) {
@@ -1524,17 +1580,17 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
             (project ? (project.runtime ?? config.defaults.runtime) : config.defaults.runtime),
         );
         if (runtimePlugin) {
-          try {
-            await runtimePlugin.destroy(handle);
-          } catch {
-            // Runtime might already be gone
+          await runtimePlugin.destroy(handle);
+          const stopped = await waitForRuntimeShutdown(runtimePlugin, handle);
+          if (!stopped) {
+            throw new Error(`Runtime ${handle.runtimeName} for session ${sessionId} did not stop`);
           }
         }
       }
     }
 
     const worktree = raw["worktree"];
-    if (worktree && shouldDestroyWorkspacePath(project, projectId, worktree)) {
+    if (!preserveWorkspace && worktree && shouldDestroyWorkspacePath(project, projectId, worktree)) {
       const workspacePlugin = project
         ? resolvePlugins(project).workspace
         : registry.get<Workspace>("workspace", config.defaults.workspace);
@@ -1571,6 +1627,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     if (didPurgeOpenCodeSession) {
       markArchivedOpenCodeCleanup(sessionsDir, sessionId);
     }
+    persistTerminalWorkState(project, sessionId, raw["issue"], options?.workStatus ?? "killed");
   }
 
   async function cleanup(
@@ -1663,9 +1720,25 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           }
         }
 
+        const terminationPolicy = resolveTerminationPolicy(project, session.id, session.issueId ?? undefined);
+        const allowPolicyKill = terminationPolicy?.allowCleanup ?? false;
+
+        if (shouldKill && terminationPolicy && !allowPolicyKill) {
+          pushSkipped(session.projectId, session.id);
+          continue;
+        }
+
+        if (!shouldKill && allowPolicyKill) {
+          shouldKill = true;
+        }
+
         if (shouldKill) {
           if (!options?.dryRun) {
-            await kill(session.id, { purgeOpenCode: shouldPurgeOpenCode });
+            await kill(session.id, {
+              purgeOpenCode: shouldPurgeOpenCode,
+              preserveWorkspace: terminationPolicy?.preserveWorkspace,
+              workStatus: terminationPolicy?.workStatus,
+            });
           }
           pushKilled(session.projectId, session.id);
         } else {
@@ -1696,7 +1769,16 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
         const cleanupAgent = archived["agent"] ?? project.agent ?? config.defaults.agent;
         const mappedOpenCodeSessionId = asValidOpenCodeSessionId(archived["opencodeSessionId"]);
+        const archivedTerminationPolicy = resolveTerminationPolicy(
+          project,
+          archivedId,
+          archived["issue"],
+        );
         if (cleanupAgent === "opencode" && archived["opencodeCleanedAt"]) {
+          pushSkipped(projectKey, archivedId);
+          continue;
+        }
+        if (archivedTerminationPolicy && !archivedTerminationPolicy.allowCleanup) {
           pushSkipped(projectKey, archivedId);
           continue;
         }
@@ -1748,6 +1830,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       );
     }
 
+    assertSendAllowed(project, sessionId, raw["issue"]);
     const selectedAgent = raw["agent"] ?? project.agent ?? config.defaults.agent;
     if (selectedAgent === "opencode" && !asValidOpenCodeSessionId(raw["opencodeSessionId"])) {
       const discovered = await discoverOpenCodeSessionIdByTitle(
@@ -2002,6 +2085,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       prAutoDetect: "",
     });
 
+    if (raw["issue"]) {
+      persistActiveSession(project, raw["issue"], sessionId, "review");
+    }
+
     for (const previousSessionId of takenOverFrom) {
       const previousRaw = readMetadataRaw(sessionsDir, previousSessionId);
       if (!previousRaw) continue;
@@ -2098,6 +2185,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     if (!raw || !sessionsDir || !project || !projectId) {
       throw new SessionNotFoundError(sessionId);
     }
+
+    const policyGuard = assertRestoreAllowed(project, sessionId, raw["issue"]);
 
     const selectedAgent = raw["agent"] ?? project.agent ?? config.defaults.agent;
     if (selectedAgent === "opencode" && !asValidOpenCodeSessionId(raw["opencodeSessionId"])) {
@@ -2288,8 +2377,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           updateMetadata(sessionsDir, sessionId, metadataUpdates);
         }
       } catch {
-        // Non-fatal — session is already running
+        // Non-fatal – session is already running
       }
+    }
+
+    const activeWorkId = policyGuard?.workId ?? raw["issue"];
+    if (activeWorkId) {
+      persistActiveSession(project, activeWorkId, sessionId);
     }
 
     return restoredSession;

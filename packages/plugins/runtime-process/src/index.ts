@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import type {
   PluginModule,
   Runtime,
@@ -7,6 +7,11 @@ import type {
   RuntimeMetrics,
   AttachInfo,
 } from "@composio/ao-core";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
+const PROCESS_DESTROY_WAIT_MS = 5_000;
+const PROCESS_DESTROY_POLL_MS = 100;
 
 export const manifest = {
   name: "process",
@@ -31,6 +36,55 @@ interface ProcessEntry {
 }
 
 const MAX_OUTPUT_LINES = 1000;
+
+function getPidFromHandle(handle: RuntimeHandle): number | null {
+  const rawPid = handle.data["pid"];
+  const pid = typeof rawPid === "number" ? rawPid : Number(rawPid);
+  return Number.isFinite(pid) && pid > 0 ? pid : null;
+}
+
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err: unknown) {
+    if (err instanceof Error && "code" in err && err.code === "EPERM") {
+      return true;
+    }
+    return false;
+  }
+}
+
+async function killPidTree(pid: number): Promise<void> {
+  if (process.platform === "win32") {
+    try {
+      await execFileAsync("taskkill", ["/PID", String(pid), "/T", "/F"], { timeout: 10_000 });
+    } catch {
+      // Best effort: process may already be gone
+    }
+    return;
+  }
+
+  try {
+    process.kill(-pid, "SIGTERM");
+  } catch {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      // Already gone
+    }
+  }
+}
+
+async function waitForPidExit(pid: number, timeoutMs = PROCESS_DESTROY_WAIT_MS): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isPidAlive(pid)) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, PROCESS_DESTROY_POLL_MS));
+  }
+}
 
 export function create(): Runtime {
   // Per-instance process map — each create() call gets its own isolated state
@@ -147,7 +201,14 @@ export function create(): Runtime {
 
     async destroy(handle: RuntimeHandle): Promise<void> {
       const entry = processes.get(handle.id);
-      if (!entry) return;
+      if (!entry) {
+        const pid = getPidFromHandle(handle);
+        if (pid !== null && isPidAlive(pid)) {
+          await killPidTree(pid);
+          await waitForPidExit(pid);
+        }
+        return;
+      }
 
       const child = entry.process;
       if (!child) {
@@ -160,12 +221,7 @@ export function create(): Runtime {
         // spawned by the shell are also terminated, not just the shell itself.
         const pid = child.pid;
         if (pid) {
-          try {
-            process.kill(-pid, "SIGTERM");
-          } catch {
-            // Process group may not exist — fall back to direct kill
-            child.kill("SIGTERM");
-          }
+          await killPidTree(pid);
         } else {
           child.kill("SIGTERM");
         }
@@ -175,10 +231,14 @@ export function create(): Runtime {
           const timeout = setTimeout(() => {
             if (child.exitCode === null && child.signalCode === null) {
               if (pid) {
-                try {
-                  process.kill(-pid, "SIGKILL");
-                } catch {
-                  child.kill("SIGKILL");
+                if (process.platform === "win32") {
+                  void killPidTree(pid);
+                } else {
+                  try {
+                    process.kill(-pid, "SIGKILL");
+                  } catch {
+                    child.kill("SIGKILL");
+                  }
                 }
               } else {
                 child.kill("SIGKILL");
@@ -246,8 +306,11 @@ export function create(): Runtime {
 
     async isAlive(handle: RuntimeHandle): Promise<boolean> {
       const entry = processes.get(handle.id);
-      if (!entry || !entry.process) return false;
-      return entry.process.exitCode === null && entry.process.signalCode === null;
+      if (entry?.process) {
+        return entry.process.exitCode === null && entry.process.signalCode === null;
+      }
+      const pid = getPidFromHandle(handle);
+      return pid !== null ? isPidAlive(pid) : false;
     },
 
     async getMetrics(handle: RuntimeHandle): Promise<RuntimeMetrics> {
@@ -260,11 +323,10 @@ export function create(): Runtime {
 
     async getAttachInfo(handle: RuntimeHandle): Promise<AttachInfo> {
       const entry = processes.get(handle.id);
+      const fallbackPid = getPidFromHandle(handle);
       if (
-        !entry ||
-        !entry.process ||
-        entry.process.exitCode !== null ||
-        entry.process.signalCode !== null
+        (!entry || !entry.process || entry.process.exitCode !== null || entry.process.signalCode !== null) &&
+        (fallbackPid === null || !isPidAlive(fallbackPid))
       ) {
         return {
           type: "process",
@@ -274,7 +336,7 @@ export function create(): Runtime {
       }
       return {
         type: "process",
-        target: String(entry.process.pid),
+        target: String(entry?.process?.pid ?? fallbackPid),
       };
     },
   };

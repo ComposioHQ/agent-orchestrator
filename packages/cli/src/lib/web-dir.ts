@@ -114,7 +114,12 @@ export async function buildDashboardEnv(
   terminalPort?: number,
   directTerminalPort?: number,
 ): Promise<Record<string, string>> {
-  const env: Record<string, string> = { ...process.env } as Record<string, string>;
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    // Windows can expose pseudo-vars like "=C:" that make child_process.spawn fail with EINVAL.
+    if (!value || key.startsWith("=")) continue;
+    env[key] = value;
+  }
 
   // Pass config path so dashboard uses the same config as the CLI
   if (configPath) {

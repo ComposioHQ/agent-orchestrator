@@ -63,6 +63,7 @@ export interface DashboardSession {
   projectId: string;
   status: SessionStatus;
   activity: ActivityState | null;
+  runtimeName: string | null;
   branch: string | null;
   issueId: string | null; // Deprecated: use issueUrl instead
   issueUrl: string | null; // Full issue URL
@@ -75,6 +76,7 @@ export interface DashboardSession {
   lastActivityAt: string;
   pr: DashboardPR | null;
   metadata: Record<string, string>;
+  harness?: SessionHarnessContext | null;
 }
 
 /**
@@ -134,6 +136,95 @@ export interface DashboardOrchestratorLink {
   id: string;
   projectId: string;
   projectName: string;
+}
+
+export interface DispatchPlanItem {
+  work_id: string;
+  work_status: string;
+  next_action: string;
+  priority: number;
+  reason: string;
+  objective_id?: string | null;
+  spec_id?: string | null;
+  initiative_id?: string | null;
+  latest_decision_id?: string | null;
+  latest_scorecard_id?: string | null;
+  active_run_id?: string | null;
+}
+
+export interface WorkStateItem {
+  work_id: string;
+  work_status: string;
+  retry_count?: number;
+  retry_budget?: number | null;
+  active_session_id?: string | null;
+  updated_at?: string;
+}
+
+export interface ReconciliationItem {
+  work_id: string;
+  next_action: string;
+  reason?: string;
+  active_session_id?: string | null;
+  updated_at?: string;
+}
+
+export interface ScoreSummaryItem {
+  subject_id: string;
+  artifact_id: string;
+  score_total: number;
+  score_band: string;
+  recommended_action: string;
+  blocking_findings_count: number;
+}
+
+export interface SessionHarnessContext {
+  workId: string;
+  workState: WorkStateItem | null;
+  reconciliation: ReconciliationItem | null;
+  dispatchPlan: DispatchPlanItem | null;
+}
+
+export interface HarnessSnapshot {
+  dispatchPlan: DispatchPlanItem[];
+  workState: WorkStateItem[];
+  reconciliationState: ReconciliationItem[];
+  scoreSummaryByTicket: ScoreSummaryItem[];
+  needsRescore: ScoreSummaryItem[];
+}
+
+/** Work-first orchestrator console view model */
+export interface WorkCard {
+  workId: string;
+  title: string;
+  status: string;
+  recommendedAction: string;
+  reason: string;
+  scoreBand?: string;
+  blockingFindings?: number;
+  activeSessionId?: string | null;
+}
+
+/** Detailed work state for Inbox -> Work Detail flow */
+export interface WorkDetail {
+  workId: string;
+  status: string;
+  reconciliationAction?: string | null;
+  latestDecision?: string | null;
+  latestScorecard?: string | null;
+  allowedActions: string[];
+  blocker?: string | null;
+  stopCondition?: string | null;
+  activeSessionId?: string | null;
+}
+
+/** Fixed response envelope for Orchestrator Chat */
+export interface OrchestratorAnswer {
+  state: string;
+  blocker?: string | null;
+  allowedActions: string[];
+  recommendedAction: string;
+  evidence: string[];
 }
 
 /** SSE snapshot event from /api/events */

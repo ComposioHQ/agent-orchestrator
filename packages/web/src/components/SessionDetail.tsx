@@ -8,6 +8,9 @@ import { cn } from "@/lib/cn";
 import { CICheckList } from "./CIBadge";
 import { DirectTerminal } from "./DirectTerminal";
 import { ActivityDot } from "./ActivityDot";
+import { QuickCommandDeck } from "./QuickCommandDeck";
+import { RecentActivityFeed } from "./RecentActivityFeed";
+import { SessionHarnessPanel } from "./SessionHarnessPanel";
 
 interface OrchestratorZones {
   merge: number;
@@ -138,21 +141,21 @@ function OrchestratorStatusStrip({
 
   return (
     <div
-      className="border-b border-[var(--color-border-subtle)] px-8 py-4"
+      className="border-b border-[#e5e5e5] px-8 py-4"
       style={{
-        background: "linear-gradient(to bottom, rgba(88,166,255,0.04) 0%, transparent 100%)",
+        background: "linear-gradient(to bottom, rgba(255,92,0,0.05) 0%, rgba(255,255,255,0.8) 100%)",
       }}
     >
-      <div className="mx-auto flex max-w-[900px] items-center gap-3 flex-wrap">
+      <div className="mx-auto flex max-w-[1100px] items-center gap-3 flex-wrap">
         {/* Total count */}
         <div className="flex items-baseline gap-1.5 mr-2">
-          <span className="text-[22px] font-bold leading-none tabular-nums text-[var(--color-text-primary)]">
+          <span className="text-[22px] font-bold leading-none tabular-nums text-[#111]">
             {total}
           </span>
-          <span className="text-[11px] text-[var(--color-text-tertiary)]">agents</span>
+          <span className="text-[11px] text-[#777]">agents</span>
         </div>
 
-        <div className="h-5 w-px bg-[var(--color-border-subtle)] mr-1" />
+        <div className="h-5 w-px bg-[#e5e5e5] mr-1" />
 
         {/* Per-zone pills */}
         {stats.length > 0 ? (
@@ -174,11 +177,11 @@ function OrchestratorStatusStrip({
             </div>
           ))
         ) : (
-          <span className="text-[12px] text-[var(--color-text-tertiary)]">no active agents</span>
+          <span className="text-[12px] text-[#888]">no active agents</span>
         )}
 
         {uptime && (
-          <span className="ml-auto font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]">
+          <span className="ml-auto font-[var(--font-mono)] text-[11px] text-[#888]">
             up {uptime}
           </span>
         )}
@@ -202,11 +205,12 @@ export function SessionDetail({
     color: "var(--color-text-muted)",
   };
 
-  const accentColor = "var(--color-accent)";
+  const accentColor = "#ff5c00";
   const terminalVariant = isOrchestrator ? "orchestrator" : "agent";
 
   const terminalHeight = isOrchestrator ? "calc(100vh - 240px)" : "max(440px, calc(100vh - 440px))";
   const isOpenCodeSession = session.metadata["agent"] === "opencode";
+  const supportsDirectTerminal = session.runtimeName === "tmux";
   const opencodeSessionId =
     typeof session.metadata["opencodeSessionId"] === "string" &&
     session.metadata["opencodeSessionId"].length > 0
@@ -217,13 +221,13 @@ export function SessionDetail({
     : undefined;
 
   return (
-    <div className="min-h-screen bg-[var(--color-bg-base)]">
+    <div className="min-h-screen bg-[#f3f3f1] text-[#111]">
       {/* Nav bar — glass effect */}
-      <nav className="nav-glass sticky top-0 z-10 border-b border-[var(--color-border-subtle)]">
-        <div className="mx-auto flex max-w-[900px] items-center gap-2 px-8 py-2.5">
+      <nav className="nav-glass sticky top-0 z-10 border-b border-[#e5e5e5]">
+        <div className="mx-auto flex max-w-[1100px] items-center gap-2 px-8 py-2.5">
           <a
             href="/"
-            className="flex items-center gap-1 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-text-primary)] hover:no-underline"
+            className="flex items-center gap-1 text-[11px] font-medium text-[#666] transition-colors hover:text-[#111] hover:no-underline"
           >
             <svg
               className="h-3 w-3 opacity-60"
@@ -236,8 +240,8 @@ export function SessionDetail({
             </svg>
             Orchestrator
           </a>
-          <span className="text-[var(--color-border-strong)]">/</span>
-          <span className="font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]">
+          <span className="text-[#b5b5b5]">/</span>
+          <span className="font-[var(--font-mono)] text-[11px] text-[#7a7a7a]">
             {session.id}
           </span>
           {isOrchestrator && (
@@ -260,7 +264,7 @@ export function SessionDetail({
         <OrchestratorStatusStrip zones={orchestratorZones} createdAt={session.createdAt} />
       )}
 
-      <div className="mx-auto max-w-[900px] px-8 py-6">
+      <div className="mx-auto max-w-[1100px] px-8 py-6">
         {/* ── Header card ─────────────────────────────────────────── */}
         <div
           className="detail-card mb-6 rounded-[8px] border border-[var(--color-border-default)] p-5"
@@ -274,6 +278,9 @@ export function SessionDetail({
                 <h1 className="font-[var(--font-mono)] text-[17px] font-semibold tracking-[-0.01em] text-[var(--color-text-primary)]">
                   {session.id}
                 </h1>
+                <span className="rounded border border-[#ff5c00] bg-[#fff5ef] px-2 py-0.5 text-[10px] font-bold tracking-[0.08em] text-[#ff5c00]">
+                  DESIGN-V3-0311
+                </span>
                 {/* Activity badge */}
                 <div
                   className="flex items-center gap-1.5 rounded-full px-2.5 py-0.5"
@@ -379,6 +386,16 @@ export function SessionDetail({
         {/* ── PR Card ─────────────────────────────────────────────── */}
         {pr && <PRCard pr={pr} sessionId={session.id} />}
 
+        <SessionHarnessPanel harness={session.harness} />
+
+        {!isOrchestrator && <QuickCommandDeck session={session} />}
+
+        <RecentActivityFeed
+          status={session.status}
+          activity={session.activity}
+          lastActivityAt={session.lastActivityAt}
+        />
+
         {/* ── Terminal ─────────────────────────────────────────────── */}
         <div className={pr ? "mt-6" : ""}>
           <div className="mb-3 flex items-center gap-2">
@@ -390,14 +407,21 @@ export function SessionDetail({
               Terminal
             </span>
           </div>
-          <DirectTerminal
-            sessionId={session.id}
-            startFullscreen={startFullscreen}
-            variant={terminalVariant}
-            height={terminalHeight}
-            isOpenCodeSession={isOpenCodeSession}
-            reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
-          />
+          {supportsDirectTerminal ? (
+            <DirectTerminal
+              sessionId={session.id}
+              startFullscreen={startFullscreen}
+              variant={terminalVariant}
+              height={terminalHeight}
+              isOpenCodeSession={isOpenCodeSession}
+              reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
+            />
+          ) : (
+            <div className="rounded-[6px] border border-[#e0e0e0] bg-white p-4 text-[12px] text-[#666]">
+              Direct terminal is only supported for `tmux` runtime sessions.
+              {session.runtimeName ? ` Current runtime: ${session.runtimeName}.` : ""}
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -18,6 +18,13 @@ import type {
 
 const execFileAsync = promisify(execFile);
 
+function sanitizeGhEnv(baseEnv: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env = { ...baseEnv };
+  delete env["GH_TOKEN"];
+  delete env["GITHUB_TOKEN"];
+  return env;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -25,6 +32,7 @@ const execFileAsync = promisify(execFile);
 async function gh(args: string[]): Promise<string> {
   try {
     const { stdout } = await execFileAsync("gh", args, {
+      env: sanitizeGhEnv(),
       maxBuffer: 10 * 1024 * 1024,
       timeout: 30_000,
     });

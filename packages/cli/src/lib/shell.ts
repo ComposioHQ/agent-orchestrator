@@ -3,6 +3,13 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFileCb);
 
+function sanitizeGhEnv(baseEnv: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env = { ...baseEnv };
+  delete env["GH_TOKEN"];
+  delete env["GITHUB_TOKEN"];
+  return env;
+}
+
 export interface ExecResult {
   stdout: string;
   stderr: string;
@@ -11,11 +18,11 @@ export interface ExecResult {
 export async function exec(
   cmd: string,
   args: string[],
-  options?: { cwd?: string; env?: Record<string, string> },
+  options?: { cwd?: string; env?: NodeJS.ProcessEnv },
 ): Promise<ExecResult> {
   const { stdout, stderr } = await execFileAsync(cmd, args, {
     cwd: options?.cwd,
-    env: options?.env ? { ...process.env, ...options.env } : undefined,
+    env: options?.env ?? process.env,
     maxBuffer: 10 * 1024 * 1024,
   });
   return { stdout: stdout.trimEnd(), stderr: stderr.trimEnd() };
@@ -44,7 +51,12 @@ export async function git(args: string[], cwd?: string): Promise<string | null> 
 }
 
 export async function gh(args: string[]): Promise<string | null> {
-  return execSilent("gh", args);
+  try {
+    const { stdout } = await exec("gh", args, { env: sanitizeGhEnv() });
+    return stdout;
+  } catch {
+    return null;
+  }
 }
 
 export async function getTmuxSessions(): Promise<string[]> {

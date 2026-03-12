@@ -232,8 +232,10 @@ async function startDashboard(
   directTerminalPort?: number,
 ): Promise<ChildProcess> {
   const env = await buildDashboardEnv(port, configPath, terminalPort, directTerminalPort);
+  const dashboardCmd = process.platform === "win32" ? "cmd.exe" : "pnpm";
+  const dashboardArgs = process.platform === "win32" ? ["/c", "pnpm", "run", "dev"] : ["run", "dev"];
 
-  const child = spawn("pnpm", ["run", "dev"], {
+  const child = spawn(dashboardCmd, dashboardArgs, {
     cwd: webDir,
     stdio: "inherit",
     detached: false,
@@ -442,6 +444,7 @@ export function registerStart(program: Command): void {
     .description(
       "Start orchestrator agent and dashboard for a project (or pass a repo URL to onboard)",
     )
+    .option("-c, --config <path>", "Path to config file")
     .option("--no-dashboard", "Skip starting the dashboard server")
     .option("--no-orchestrator", "Skip starting the orchestrator agent")
     .option("--rebuild", "Clean and rebuild dashboard before starting")
@@ -449,6 +452,7 @@ export function registerStart(program: Command): void {
       async (
         projectArg?: string,
         opts?: {
+          config?: string;
           dashboard?: boolean;
           orchestrator?: boolean;
           rebuild?: boolean;
@@ -469,7 +473,7 @@ export function registerStart(program: Command): void {
             ({ projectId, project } = resolveProjectByRepo(config, result.parsed));
           } else {
             // Normal flow — load existing config
-            config = loadConfig();
+            config = loadConfig(opts?.config);
             ({ projectId, project } = resolveProject(config, projectArg));
           }
 
@@ -495,12 +499,13 @@ export function registerStop(program: Command): void {
   program
     .command("stop [project]")
     .description("Stop orchestrator agent and dashboard for a project")
+    .option("-c, --config <path>", "Path to config file")
     .option("--keep-session", "Keep mapped OpenCode session after stopping")
     .option("--purge-session", "Delete mapped OpenCode session when stopping")
     .action(
-      async (projectArg?: string, opts: { keepSession?: boolean; purgeSession?: boolean } = {}) => {
+      async (projectArg?: string, opts: { config?: string; keepSession?: boolean; purgeSession?: boolean } = {}) => {
         try {
-          const config = loadConfig();
+          const config = loadConfig(opts.config);
           const { projectId: _projectId, project } = resolveProject(config, projectArg);
           const sessionId = `${project.sessionPrefix}-orchestrator`;
           const port = config.port ?? 3000;

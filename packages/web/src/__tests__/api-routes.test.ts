@@ -11,6 +11,7 @@ import {
 } from "@composio/ao-core";
 import * as serialize from "@/lib/serialize";
 import { getSCM } from "@/lib/services";
+import * as harnessPlan from "@/lib/harness-plan";
 
 // ── Mock Data ─────────────────────────────────────────────────────────
 // Provides test sessions covering the key states the dashboard needs.
@@ -220,6 +221,17 @@ vi.mock("@/lib/project-name", () => ({
   getAllProjects: () => [{ id: "my-app", name: "My App" }],
 }));
 
+vi.mock("@/lib/harness-plan", () => ({
+  loadHarnessSnapshot: vi.fn(async () => ({
+    dispatchPlan: [],
+    workState: [],
+    reconciliationState: [],
+    scoreSummaryByTicket: [],
+    needsRescore: [],
+  })),
+  resolveSessionHarnessContext: vi.fn(() => null),
+}));
+
 // ── Import routes after mocking ───────────────────────────────────────
 
 import { GET as sessionsGET } from "@/app/api/sessions/route";
@@ -264,6 +276,14 @@ beforeEach(() => {
     branch: "feat/health-check",
     data: {},
   });
+  (harnessPlan.loadHarnessSnapshot as ReturnType<typeof vi.fn>).mockResolvedValue({
+    dispatchPlan: [],
+    workState: [],
+    reconciliationState: [],
+    scoreSummaryByTicket: [],
+    needsRescore: [],
+  });
+  (harnessPlan.resolveSessionHarnessContext as ReturnType<typeof vi.fn>).mockReturnValue(null);
 });
 
 describe("API Routes", () => {
@@ -745,6 +765,91 @@ describe("API Routes", () => {
       expect(res.status).toBe(409);
       const data = await res.json();
       expect(data.error).toMatch(/merged/);
+    });
+
+    it("returns 409 when repo policy blocks merge", async () => {
+      (harnessPlan.resolveSessionHarnessContext as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+        workId: "INT-432",
+        workState: { work_id: "INT-432", work_status: "review" },
+        reconciliation: {
+          work_id: "INT-432",
+          next_action: "operator_review",
+          reason: "final review still required",
+        },
+        dispatchPlan: null,
+      });
+      const req = makeRequest("/api/prs/432/merge", { method: "POST" });
+      const res = await mergePOST(req, { params: Promise.resolve({ id: "432" }) });
+      expect(res.status).toBe(409);
+      const data = await res.json();
+      expect(data.error).toMatch(/repo policy/);
+      expect(data.nextAction).toBe("operator_review");
+    });
+
+    it("returns 409 when work status is terminal", async () => {
+      (harnessPlan.resolveSessionHarnessContext as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+        workId: "INT-432",
+        workState: { work_id: "INT-432", work_status: "killed" },
+        reconciliation: null,
+        dispatchPlan: null,
+      });
+      const req = makeRequest("/api/prs/432/merge", { method: "POST" });
+      const res = await mergePOST(req, { params: Promise.resolve({ id: "432" }) });
+      expect(res.status).toBe(409);
+      const data = await res.json();
+      expect(data.error).toMatch(/work is killed/);
+    });
+
+    it("returns 409 when dispatch plan still has a pending action", async () => {
+      (harnessPlan.resolveSessionHarnessContext as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+        workId: "INT-432",
+        workState: { work_id: "INT-432", work_status: "approved" },
+        reconciliation: null,
+        dispatchPlan: {
+          work_id: "INT-432",
+          work_status: "approved",
+          next_action: "operator_review",
+          priority: 90,
+          reason: "operator sign-off still pending",
+        },
+      });
+      const req = makeRequest("/api/prs/432/merge", { method: "POST" });
+      const res = await mergePOST(req, { params: Promise.resolve({ id: "432" }) });
+      expect(res.status).toBe(409);
+      const data = await res.json();
+      expect(data.error).toMatch(/pending harness action/);
+      expect(data.nextAction).toBe("operator_review");
+    });
+
+    it("returns 409 when score gates require revision", async () => {
+      (harnessPlan.resolveSessionHarnessContext as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+        workId: "INT-432",
+        workState: { work_id: "INT-432", work_status: "review" },
+        reconciliation: null,
+        dispatchPlan: null,
+      });
+      (harnessPlan.loadHarnessSnapshot as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        dispatchPlan: [],
+        workState: [],
+        reconciliationState: [],
+        scoreSummaryByTicket: [],
+        needsRescore: [
+          {
+            subject_id: "INT-432",
+            artifact_id: "ART-1",
+            score_total: 68,
+            score_band: "revise",
+            recommended_action: "revise",
+            blocking_findings_count: 1,
+          },
+        ],
+      });
+      const req = makeRequest("/api/prs/432/merge", { method: "POST" });
+      const res = await mergePOST(req, { params: Promise.resolve({ id: "432" }) });
+      expect(res.status).toBe(409);
+      const data = await res.json();
+      expect(data.error).toMatch(/scorecard requires revision/);
+      expect(data.scoreBand).toBe("revise");
     });
   });
 

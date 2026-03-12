@@ -1,10 +1,15 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { CIBadge, CICheckList } from "@/components/CIBadge";
 import { PRStatus } from "@/components/PRStatus";
 import { SessionCard } from "@/components/SessionCard";
 import { AttentionZone } from "@/components/AttentionZone";
 import { ActivityDot } from "@/components/ActivityDot";
+import { OperatorQueue } from "@/components/OperatorQueue";
+import { HarnessPlanPanel } from "@/components/HarnessPlanPanel";
+import { QuickCommandDeck } from "@/components/QuickCommandDeck";
+import { RecentActivityFeed } from "@/components/RecentActivityFeed";
+import { SessionHarnessPanel } from "@/components/SessionHarnessPanel";
 import { makeSession, makePR } from "./helpers";
 
 // ── ActivityDot ───────────────────────────────────────────────────────
@@ -430,6 +435,174 @@ describe("SessionCard", () => {
     const { container } = render(<SessionCard session={session} />);
     fireEvent.click(container.firstElementChild!);
     expect(screen.getByText("terminate")).toBeInTheDocument();
+  });
+});
+
+describe("OperatorQueue", () => {
+  it("renders merge-ready action first", () => {
+    const mergeSession = makeSession({
+      id: "merge-1",
+      status: "mergeable",
+      activity: "idle",
+      pr: makePR(),
+    });
+    const respondSession = makeSession({
+      id: "respond-1",
+      status: "needs_input",
+      activity: "waiting_input",
+      pr: null,
+    });
+    render(<OperatorQueue sessions={[respondSession, mergeSession]} />);
+    const rows = screen.getAllByRole("button");
+    expect(rows[0]).toHaveTextContent("Merge #100");
+  });
+
+  it("calls onSend for respond action", async () => {
+    const onSend = vi.fn();
+    const respondSession = makeSession({
+      id: "respond-1",
+      status: "needs_input",
+      activity: "waiting_input",
+      pr: null,
+    });
+    render(<OperatorQueue sessions={[respondSession]} onSend={onSend} />);
+    fireEvent.click(screen.getAllByText("Send unblock")[0]);
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledWith(
+        "respond-1",
+        expect.stringContaining("State the blocker"),
+      );
+    });
+  });
+});
+
+describe("HarnessPlanPanel", () => {
+  it("renders focus work and action labels", () => {
+    render(
+      <HarnessPlanPanel
+        items={[
+          {
+            work_id: "TKT-20260310-001",
+            work_status: "needs_input",
+            next_action: "escalate",
+            priority: 95,
+            reason: "ticket is blocked and requires operator input",
+          },
+          {
+            work_id: "TKT-20260310-002",
+            work_status: "queued",
+            next_action: "dispatch",
+            priority: 70,
+            reason: "ticket is eligible for scheduling",
+          },
+        ]}
+        workState={[
+          { work_id: "TKT-20260310-001", work_status: "needs_input" },
+          { work_id: "TKT-20260310-002", work_status: "queued" },
+        ]}
+        reconciliationState={[
+          {
+            work_id: "TKT-20260310-001",
+            next_action: "reconcile_session",
+          },
+        ]}
+      />,
+    );
+    expect(screen.getByText("Harness Plan")).toBeInTheDocument();
+    expect(screen.getByText("Focus Work")).toBeInTheDocument();
+    expect(screen.getAllByText("escalate")[0]).toBeInTheDocument();
+    expect(screen.getByText("dispatch")).toBeInTheDocument();
+    expect(screen.getByText("2 tracked work")).toBeInTheDocument();
+    expect(screen.getByText("1 needs reconcile")).toBeInTheDocument();
+  });
+});
+
+describe("SessionHarnessPanel", () => {
+  it("renders work, reconciliation, and dispatch authority", () => {
+    render(
+      <SessionHarnessPanel
+        harness={{
+          workId: "TKT-20260310-001",
+          workState: {
+            work_id: "TKT-20260310-001",
+            work_status: "review",
+            retry_count: 1,
+            retry_budget: 3,
+          },
+          reconciliation: {
+            work_id: "TKT-20260310-001",
+            next_action: "reconcile_session",
+            reason: "runtime exited during verification",
+          },
+          dispatchPlan: {
+            work_id: "TKT-20260310-001",
+            work_status: "review",
+            next_action: "operator_review",
+            priority: 92,
+            reason: "human review required before merge",
+          },
+        }}
+      />,
+    );
+    expect(screen.getByText("Work Authority")).toBeInTheDocument();
+    expect(screen.getByText("TKT-20260310-001")).toBeInTheDocument();
+    expect(screen.getAllByText("review")).toHaveLength(2);
+    expect(screen.getByText("reconcile")).toBeInTheDocument();
+    expect(screen.getByText("priority 92")).toBeInTheDocument();
+  });
+});
+
+describe("QuickCommandDeck", () => {
+  it("sends preset messages", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<QuickCommandDeck session={makeSession({ id: "backend-1", pr: makePR() })} />);
+    fireEvent.click(screen.getByText("Summarize State"));
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/sessions/backend-1/message",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+    vi.unstubAllGlobals();
+  });
+
+  it("adapts commands to blocked sessions", () => {
+    render(
+      <QuickCommandDeck
+        session={makeSession({
+          id: "backend-2",
+          status: "needs_input",
+          activity: "waiting_input",
+          pr: makePR({
+            ciStatus: "failing",
+            reviewDecision: "changes_requested",
+            mergeability: {
+              mergeable: false,
+              ciPassing: false,
+              approved: false,
+              noConflicts: true,
+              blockers: ["CI is failing"],
+            },
+          }),
+        })}
+      />,
+    );
+    expect(screen.getByText("Unblock Session")).toBeInTheDocument();
+    expect(screen.getByText("Fix Failing CI")).toBeInTheDocument();
+  });
+});
+
+describe("RecentActivityFeed", () => {
+  it("records transitions as props change", () => {
+    const { rerender } = render(
+      <RecentActivityFeed status="working" activity="active" lastActivityAt="2026-03-10T10:00:00Z" />,
+    );
+    rerender(
+      <RecentActivityFeed status="needs_input" activity="waiting_input" lastActivityAt="2026-03-10T10:05:00Z" />,
+    );
+    expect(screen.getByText("needs input")).toBeInTheDocument();
+    expect(screen.getByText("working")).toBeInTheDocument();
   });
 });
 

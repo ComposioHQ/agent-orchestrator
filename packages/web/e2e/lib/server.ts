@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { request } from "node:http";
+import { createRequire } from "node:module";
 
 interface ServerHandle {
   baseUrl: string;
@@ -42,7 +43,9 @@ export async function ensureServer(port: number): Promise<ServerHandle> {
   }
 
   console.log(`Starting dev server on port ${port}...`);
-  const child: ChildProcess = spawn("npx", ["next", "dev", "--port", String(port)], {
+  const require = createRequire(import.meta.url);
+  const nextBin = require.resolve("next/dist/bin/next");
+  const child: ChildProcess = spawn(process.execPath, [nextBin, "dev", "--port", String(port)], {
     cwd: new URL("../../", import.meta.url).pathname,
     stdio: "pipe",
     env: { ...process.env, NODE_ENV: "development" },

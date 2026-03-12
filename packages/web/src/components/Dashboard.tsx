@@ -8,16 +8,19 @@ import {
   type AttentionLevel,
   type GlobalPauseState,
   type DashboardOrchestratorLink,
+  type DispatchPlanItem,
+  type HarnessSnapshot,
   getAttentionLevel,
   isPRRateLimited,
+  isPRMergeReady,
 } from "@/lib/types";
-import { CI_STATUS } from "@composio/ao-core/types";
-import { AttentionZone } from "./AttentionZone";
-import { PRTableRow } from "./PRStatus";
 import { DynamicFavicon } from "./DynamicFavicon";
+import { PRTableRow } from "./PRStatus";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
 import { ProjectSidebar } from "./ProjectSidebar";
 import type { ProjectInfo } from "@/lib/project-name";
+import { DirectTerminal } from "./DirectTerminal";
+import { AttentionZone } from "./AttentionZone";
 
 interface DashboardProps {
   initialSessions: DashboardSession[];
@@ -26,9 +29,41 @@ interface DashboardProps {
   projects?: ProjectInfo[];
   initialGlobalPause?: GlobalPauseState | null;
   orchestrators?: DashboardOrchestratorLink[];
+  dispatchPlan: DispatchPlanItem[];
+  harness: HarnessSnapshot;
+  defaultProjectId?: string | null;
 }
 
-const KANBAN_LEVELS = ["working", "pending", "review", "respond", "merge"] as const;
+type Action = "dispatch" | "send" | "restore" | "review" | "escalate" | "merge" | "kill" | "hold";
+type Mode = "work" | "terminal";
+type Answer = { state: string; blocker: string; allowedActions: Action[]; recommendedAction: Action; evidence: string[] };
+type Work = {
+  workId: string;
+  title: string;
+  status: string;
+  reason: string;
+  recommendedAction: Action;
+  allowedActions: Action[];
+  activeSessionId: string | null;
+  evidence: string[];
+  priority: number;
+  scoreBand: string | null;
+};
+
+const ACTIONS: Action[] = ["dispatch", "send", "restore", "review", "escalate", "merge", "kill", "hold"];
+
+function normalizeAction(raw: string | null | undefined): Action {
+  const text = (raw ?? "").toLowerCase();
+  if (ACTIONS.includes(text as Action)) return text as Action;
+  if (text.includes("merge")) return "merge";
+  if (text.includes("send") || text.includes("input")) return "send";
+  if (text.includes("restore")) return "restore";
+  if (text.includes("dispatch")) return "dispatch";
+  if (text.includes("review")) return "review";
+  if (text.includes("escalate")) return "escalate";
+  if (text.includes("kill")) return "kill";
+  return "hold";
+}
 
 export function Dashboard({
   initialSessions,
@@ -37,6 +72,9 @@ export function Dashboard({
   projects = [],
   initialGlobalPause = null,
   orchestrators = [],
+  dispatchPlan,
+  harness,
+  defaultProjectId,
 }: DashboardProps) {
   const { sessions, globalPause } = useSessionEvents(
     initialSessions,
@@ -48,6 +86,8 @@ export function Dashboard({
   const showSidebar = projects.length > 1;
   const allProjectsView = showSidebar && projectId === undefined;
 
+  const sessionById = useMemo(() => new Map(sessions.map((s) => [s.id, s])), [sessions]);
+
   const grouped = useMemo(() => {
     const zones: Record<AttentionLevel, DashboardSession[]> = {
       merge: [],
@@ -57,11 +97,24 @@ export function Dashboard({
       working: [],
       done: [],
     };
+
     for (const session of sessions) {
       zones[getAttentionLevel(session)].push(session);
     }
+
     return zones;
   }, [sessions]);
+
+  const KANBAN_LEVELS: AttentionLevel[] = ["merge", "respond", "review", "pending", "working"];
+
+  const mergeScore = (pr: DashboardPR) => {
+    let score = 0;
+    if (pr.mergeability.mergeable) score += 100;
+    if (pr.mergeability.ciPassing) score += 10;
+    if (pr.mergeability.approved) score += 10;
+    if (pr.mergeability.noConflicts) score += 10;
+    return -score;
+  };
 
   const openPRs = useMemo(() => {
     return sessions
@@ -72,6 +125,193 @@ export function Dashboard({
       .map((session) => session.pr)
       .sort((a, b) => mergeScore(a) - mergeScore(b));
   }, [sessions]);
+
+  const works = useMemo<Work[]>(() => {
+    const workState = new Map(harness.workState.map((w) => [w.work_id, w]));
+    const recState = new Map(harness.reconciliationState.map((r) => [r.work_id, r]));
+    const scores = new Map(harness.scoreSummaryByTicket.map((s) => [s.subject_id, s]));
+    const plannedWorks = dispatchPlan
+      .map((d) => {
+        const w = workState.get(d.work_id);
+        const r = recState.get(d.work_id);
+        const s = scores.get(d.work_id);
+        const activeSessionId = w?.active_session_id ?? r?.active_session_id ?? null;
+        const active = activeSessionId ? sessionById.get(activeSessionId) ?? null : null;
+        const recommendedAction = normalizeAction(r?.next_action ?? d.next_action);
+        const dynamicActions: Action[] = active
+          ? [
+              "send",
+              "kill",
+              ...(active.activity === "exited" ? (["restore"] as Action[]) : []),
+              ...(active.pr?.mergeability.mergeable ? (["merge"] as Action[]) : []),
+            ]
+          : ["dispatch"];
+        const allowedActions = Array.from(new Set<Action>([recommendedAction, ...dynamicActions]));
+        return {
+          workId: d.work_id,
+          title: active?.issueTitle ?? active?.issueLabel ?? d.work_id,
+          status: w?.work_status ?? d.work_status,
+          reason: r?.reason ?? d.reason,
+          recommendedAction,
+          allowedActions,
+          activeSessionId,
+          evidence: [r?.reason ?? d.reason, d.latest_decision_id ?? "", d.latest_scorecard_id ?? ""].filter(Boolean),
+          priority: d.priority,
+          scoreBand: s?.score_band ?? null,
+        } satisfies Work;
+      })
+      .sort((a, b) => b.priority - a.priority);
+    if (plannedWorks.length > 0) {
+      return plannedWorks;
+    }
+
+    // Fallback for non-harness environments: build actionable work cards from live sessions.
+    const priorityByAttention: Record<AttentionLevel, number> = {
+      merge: 100,
+      respond: 90,
+      review: 80,
+      pending: 50,
+      working: 40,
+      done: 10,
+    };
+
+    const actionByAttention: Record<AttentionLevel, Action> = {
+      merge: "merge",
+      respond: "send",
+      review: "review",
+      pending: "hold",
+      working: "hold",
+      done: "hold",
+    };
+
+    return sessions
+      .map((s) => {
+        const attention = getAttentionLevel(s);
+        const recommendedAction = actionByAttention[attention];
+        const baseActions: Action[] = ["send", "kill"];
+        if (s.activity === "exited") baseActions.push("restore");
+        if (s.pr && isPRMergeReady(s.pr)) baseActions.push("merge");
+        const allowedActions = Array.from(new Set<Action>([recommendedAction, ...baseActions]));
+        const reason =
+          s.issueTitle ??
+          s.summary ??
+          (s.pr ? `PR #${s.pr.number} ${s.pr.title}` : `session ${s.id} is ${attention}`);
+        return {
+          workId: s.id,
+          title: s.issueTitle ?? s.issueLabel ?? s.summary ?? s.id,
+          status: s.status,
+          reason,
+          recommendedAction,
+          allowedActions,
+          activeSessionId: s.id,
+          evidence: [s.issueLabel ?? "", s.pr?.url ?? "", s.branch ?? ""].filter(Boolean),
+          priority: priorityByAttention[attention],
+          scoreBand: null,
+        } satisfies Work;
+      })
+      .sort((a, b) => b.priority - a.priority);
+  }, [dispatchPlan, harness.reconciliationState, harness.scoreSummaryByTicket, harness.workState, sessionById, sessions]);
+
+  const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null);
+  const [mode, setMode] = useState<Mode>("work");
+  const [command, setCommand] = useState("");
+  const [answer, setAnswer] = useState<Answer | null>(null);
+  const [busy, setBusy] = useState(false);
+  const selectedWork = useMemo(() => works.find((w) => w.workId === selectedWorkId) ?? works[0] ?? null, [works, selectedWorkId]);
+  const selectedSession = selectedWork?.activeSessionId ? sessionById.get(selectedWork.activeSessionId) ?? null : null;
+
+  // Find the first orchestrator id for the current project
+  const orchestratorId = orchestrators.length > 0 ? orchestrators[0].id : null;
+
+  useEffect(() => {
+    if (!selectedWorkId && works[0]) setSelectedWorkId(works[0].workId);
+  }, [selectedWorkId, works]);
+
+  const runAction = async (work: Work, action: Action) => {
+    if (!work.allowedActions.includes(action)) throw new Error(`Action not allowed: ${action}`);
+    if (action === "dispatch") {
+      const pid = sessions[0]?.projectId ?? defaultProjectId ?? null;
+      if (!pid) throw new Error("No projectId for dispatch");
+      const r = await fetch("/api/spawn", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId: pid, issueId: work.workId }) });
+      if (!r.ok) throw new Error(await r.text());
+    } else if (action === "merge") {
+      const pr = work.activeSessionId ? sessionById.get(work.activeSessionId)?.pr : null;
+      if (!pr) throw new Error("No PR to merge");
+      const r = await fetch(`/api/prs/${pr.number}/merge`, { method: "POST" });
+      if (!r.ok) throw new Error(await r.text());
+    } else {
+      const sessionId = action === "escalate" || action === "review" || action === "hold" ? orchestratorId : work.activeSessionId;
+      if (!sessionId) throw new Error("No target session");
+      const path = action === "restore" ? "restore" : action === "kill" ? "kill" : "send";
+      const body = path === "send" ? { message: `work ${work.workId} action=${action} reason=${work.reason}` } : undefined;
+      const r = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/${path}`, {
+        method: "POST",
+        headers: body ? { "Content-Type": "application/json" } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      if (!r.ok) throw new Error(await r.text());
+    }
+    setAnswer({
+      state: work.status,
+      blocker: work.reason,
+      allowedActions: work.allowedActions,
+      recommendedAction: work.recommendedAction,
+      evidence: work.evidence,
+    });
+  };
+
+  const runCommand = async () => {
+    const [cmd, arg1, arg2] = command.trim().split(/\s+/);
+    if (!cmd) return;
+    const current = arg1 ? works.find((w) => w.workId === arg1) ?? null : selectedWork;
+    if (!current && !["next", "dispatch", "spawn", "session"].includes(cmd)) return;
+    setBusy(true);
+    try {
+      if (cmd === "next") {
+        if (!works[0]) throw new Error("No work");
+        setSelectedWorkId(works[0].workId);
+        setMode("work");
+        setAnswer({ state: works[0].status, blocker: works[0].reason, allowedActions: works[0].allowedActions, recommendedAction: works[0].recommendedAction, evidence: works[0].evidence });
+      } else if (cmd === "dispatch" || cmd === "spawn") {
+        const issueId = arg1 ?? selectedWork?.workId;
+        if (!issueId) throw new Error("Missing issue id");
+        const pid = sessions[0]?.projectId ?? defaultProjectId ?? null;
+        if (!pid) throw new Error("No project configured for dispatch");
+        const r = await fetch("/api/spawn", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ projectId: pid, issueId }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        setAnswer({
+          state: "spawned",
+          blocker: "none",
+          allowedActions: ["send", "kill", "restore"],
+          recommendedAction: "send",
+          evidence: [`project=${pid}`, `issue=${issueId}`],
+        });
+      } else if (cmd === "explain" || cmd === "status" || cmd === "diff") {
+        if (!current) throw new Error("Unknown work");
+        setSelectedWorkId(current.workId);
+        setAnswer({ state: current.status, blocker: current.reason, allowedActions: current.allowedActions, recommendedAction: current.recommendedAction, evidence: cmd === "diff" ? [`changed-since-last-run unavailable`, ...current.evidence] : current.evidence });
+      } else if (cmd === "act") {
+        if (!current) throw new Error("Unknown work");
+        await runAction(current, normalizeAction(arg2));
+      } else if (cmd === "session") {
+        const sid = arg1 ?? selectedWork?.activeSessionId;
+        if (!sid) throw new Error("Missing session-id");
+        setMode("terminal");
+        setAnswer({ state: sessionById.get(sid)?.status ?? "unknown", blocker: "none", allowedActions: ["send", "restore", "kill"], recommendedAction: "send", evidence: [`session:${sid}`] });
+      } else {
+        throw new Error("Unknown command");
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "failed";
+      setAnswer({ state: "error", blocker: message, allowedActions: [], recommendedAction: "hold", evidence: [message] });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const projectOverviews = useMemo(() => {
     if (!allProjectsView) return [];
@@ -109,7 +349,7 @@ export function Dashboard({
       body: JSON.stringify({ message }),
     });
     if (!res.ok) {
-      console.error(`Failed to send message to ${sessionId}:`, await res.text());
+      console.error(`Failed to send to ${sessionId}:`, await res.text());
     }
   };
 
@@ -169,6 +409,21 @@ export function Dashboard({
   useEffect(() => {
     setGlobalPauseDismissed(false);
   }, [globalPause?.pausedUntil, globalPause?.reason, globalPause?.sourceSessionId]);
+
+  const focus = works[0] ?? null;
+  const needsDecision = works.find((w) => w.allowedActions.includes("merge") || w.allowedActions.includes("kill")) ?? null;
+  const needsInput = works.find((w) => w.recommendedAction === "send") ?? null;
+  const blocked = works.find((w) => /policy|blocked|forbid/i.test(w.reason)) ?? null;
+  const mergeReady = works.find((w) => w.allowedActions.includes("merge")) ?? null;
+  const needsReconcile = works.find((w) => w.reason.toLowerCase().includes("reconcile")) ?? null;
+  const inbox = [
+    { label: "Focus Work", work: focus },
+    { label: "Needs Decision", work: needsDecision },
+    { label: "Needs Input", work: needsInput },
+    { label: "Blocked by Policy", work: blocked },
+    { label: "Merge Ready", work: mergeReady },
+    { label: "Needs Reconcile", work: needsReconcile },
+  ];
 
   return (
     <div className="flex h-screen">
@@ -329,6 +584,88 @@ export function Dashboard({
                   ))}
                 </tbody>
               </table>
+            </div>
+          </div>
+        )}
+
+        {/* Work-first harness control panel */}
+        {works.length > 0 && (
+          <div className="mt-8 rounded-[10px] border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] p-4">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-[14px] font-semibold text-[var(--color-text-primary)]">Work Queue</h2>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setMode("work")} className={`px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.08em] rounded ${mode === "work" ? "bg-[var(--color-text-primary)] text-[var(--color-bg-surface)]" : "border border-[var(--color-border-default)] text-[var(--color-text-muted)]"}`}>work</button>
+                <button type="button" onClick={() => setMode("terminal")} className={`px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.08em] rounded ${mode === "terminal" ? "bg-[var(--color-text-primary)] text-[var(--color-bg-surface)]" : "border border-[var(--color-border-default)] text-[var(--color-text-muted)]"}`}>terminal</button>
+              </div>
+            </div>
+            <div className="flex gap-4">
+              <div className="w-[280px] shrink-0 space-y-2 overflow-y-auto max-h-[400px]">
+                {inbox.map((item) => (
+                  <button
+                    key={item.label}
+                    type="button"
+                    onClick={() => item.work && setSelectedWorkId(item.work.workId)}
+                    className="w-full rounded border border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)] p-3 text-left transition hover:border-[var(--color-text-primary)]"
+                  >
+                    <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-tertiary)]">{item.label}</div>
+                    {item.work ? (
+                      <>
+                        <div className="mt-1 font-mono text-[11px] text-[var(--color-accent)]">{item.work.workId}</div>
+                        <div className="mt-1 text-[13px] font-bold tracking-tight text-[var(--color-text-primary)]">{item.work.recommendedAction}</div>
+                        <div className="mt-1 line-clamp-2 text-[11px] text-[var(--color-text-muted)]">{item.work.reason}</div>
+                      </>
+                    ) : (
+                      <div className="mt-1 text-[11px] text-[var(--color-text-tertiary)]">none</div>
+                    )}
+                  </button>
+                ))}
+              </div>
+              <div className="min-w-0 flex-1">
+                {!selectedWork ? (
+                  <div className="text-[12px] text-[var(--color-text-muted)]">No work</div>
+                ) : mode === "work" ? (
+                  <div className="space-y-3 text-[12px]">
+                    <div className="rounded border-l-2 border-[var(--color-accent)] bg-[var(--color-bg-surface)] p-3"><b>1. current verdict</b><div className="mt-1">{selectedWork.status}</div></div>
+                    <div className="rounded border-l-2 border-[var(--color-text-primary)] bg-[var(--color-bg-surface)] p-3"><b>2. recommended next action</b><div className="mt-1">{selectedWork.recommendedAction}</div></div>
+                    <div className="rounded border-l-2 border-[var(--color-text-primary)] bg-[var(--color-bg-surface)] p-3"><b>3. blocker / stop condition</b><div className="mt-1">{selectedWork.reason}</div></div>
+                    <div className="rounded border-l-2 border-[var(--color-text-primary)] bg-[var(--color-bg-surface)] p-3"><b>4. evidence</b><div className="mt-1">{selectedWork.evidence.join(" | ") || "none"}</div></div>
+                    <div className="rounded border-l-2 border-[var(--color-text-primary)] bg-[var(--color-bg-surface)] p-3"><b>5. active session</b><div className="mt-1">{selectedWork.activeSessionId ?? "none"}</div></div>
+                    <div className="rounded border-l-2 border-[var(--color-text-primary)] bg-[var(--color-bg-surface)] p-3">
+                      <b>allowed actions</b>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {selectedWork.allowedActions.map((a) => (
+                          <button key={a} type="button" disabled={busy} onClick={() => void runAction(selectedWork, a)} className="rounded border border-[var(--color-border-default)] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50">{a}</button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ) : selectedSession && selectedSession.runtimeName === "tmux" ? (
+                  <DirectTerminal sessionId={selectedSession.id} variant="agent" height="400px" />
+                ) : (
+                  <div className="text-[12px] text-[var(--color-text-muted)]">Direct terminal requires tmux runtime</div>
+                )}
+              </div>
+            </div>
+            <div className="mt-4 border-t border-[var(--color-border-subtle)] pt-4">
+              <div className="mb-2 text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-tertiary)]">Orchestrator Chat</div>
+              <div className="mb-2 text-[11px] text-[var(--color-text-muted)]">next | explain &lt;work-id&gt; | status | diff | act | session | dispatch &lt;issue-id&gt;</div>
+              <div className="mb-3 rounded border border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)] p-3 text-[11px]">
+                {answer ? `state=${answer.state} blocker=${answer.blocker} action=${answer.recommendedAction}` : "run command"}
+              </div>
+              <form onSubmit={(e) => { e.preventDefault(); void runCommand(); }} className="flex gap-2">
+                <input
+                  value={command}
+                  onChange={(e) => setCommand(e.target.value)}
+                  className="flex-1 rounded border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] px-3 py-2 text-[12px] outline-none focus:border-[var(--color-accent)]"
+                  placeholder="next / dispatch 123 / explain TKT-... / act TKT-... send"
+                />
+                <button type="submit" disabled={busy} className="rounded bg-[var(--color-text-primary)] px-4 py-2 text-[12px] font-bold uppercase tracking-[0.08em] text-[var(--color-bg-surface)] disabled:opacity-50">{busy ? "..." : "run"}</button>
+              </form>
+              {orchestratorId && (
+                <a href={`/sessions/${encodeURIComponent(orchestratorId)}`} className="mt-3 inline-block text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--color-accent)] hover:underline">
+                  open orchestrator session
+                </a>
+              )}
             </div>
           </div>
         )}
@@ -529,17 +866,4 @@ function StatusLine({ stats }: { stats: DashboardStats }) {
       ))}
     </div>
   );
-}
-
-function mergeScore(
-  pr: Pick<DashboardPR, "ciStatus" | "reviewDecision" | "mergeability" | "unresolvedThreads">,
-): number {
-  let score = 0;
-  if (!pr.mergeability.noConflicts) score += 40;
-  if (pr.ciStatus === CI_STATUS.FAILING) score += 30;
-  else if (pr.ciStatus === CI_STATUS.PENDING) score += 5;
-  if (pr.reviewDecision === "changes_requested") score += 20;
-  else if (pr.reviewDecision !== "approved") score += 10;
-  score += pr.unresolvedThreads * 5;
-  return score;
 }

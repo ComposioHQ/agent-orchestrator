@@ -5,13 +5,24 @@ import type { RuntimeHandle } from "@composio/ao-core";
 // ---------------------------------------------------------------------------
 // Hoisted mock — must be set up before import
 // ---------------------------------------------------------------------------
-const { mockSpawn } = vi.hoisted(() => ({
+const { mockSpawn, mockExecFile } = vi.hoisted(() => ({
   mockSpawn: vi.fn(),
+  mockExecFile: vi.fn(),
 }));
 
-vi.mock("node:child_process", () => ({
-  spawn: mockSpawn,
-}));
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  (mockExecFile as any)[Symbol.for("nodejs.util.promisify.custom")] = vi.fn();
+  (mockExecFile as any)[Symbol.for("nodejs.util.promisify.custom")].mockResolvedValue({
+    stdout: "",
+    stderr: "",
+  });
+  return {
+    ...actual,
+    spawn: mockSpawn,
+    execFile: mockExecFile,
+  };
+});
 
 import { create, manifest, default as defaultExport } from "../index.js";
 
@@ -67,6 +78,10 @@ function defaultConfig(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.restoreAllMocks();
+  (mockExecFile as any)[Symbol.for("nodejs.util.promisify.custom")] = vi.fn().mockResolvedValue({
+    stdout: "",
+    stderr: "",
+  });
 });
 
 // =========================================================================
@@ -253,6 +268,28 @@ describe("destroy()", () => {
   it("does not throw for unknown handle (no-op)", async () => {
     const runtime = create();
     await expect(runtime.destroy(makeHandle("nonexistent"))).resolves.toBeUndefined();
+  });
+
+  it("waits for pid-based fallback destruction to complete", async () => {
+    const runtime = create();
+    const killSpy = vi.spyOn(process, "kill");
+
+    killSpy
+      .mockImplementationOnce(() => true)
+      .mockImplementationOnce(() => true)
+      .mockImplementationOnce(() => {
+        const err = new Error("ESRCH") as Error & { code?: string };
+        err.code = "ESRCH";
+        throw err;
+      });
+
+    await runtime.destroy(makeHandle("fallback"));
+
+    expect(killSpy).toHaveBeenCalledWith(12345, 0);
+    expect(killSpy).toHaveBeenCalledWith(12345, 0);
+    expect(mockExecFile).toHaveBeenCalled();
+
+    killSpy.mockRestore();
   });
 
   it("does not attempt kill if process already exited", async () => {

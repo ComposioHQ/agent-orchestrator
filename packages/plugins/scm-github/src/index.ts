@@ -36,6 +36,13 @@ import {
 
 const execFileAsync = promisify(execFile);
 
+function sanitizeGhEnv(baseEnv: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env = { ...baseEnv };
+  delete env["GH_TOKEN"];
+  delete env["GITHUB_TOKEN"];
+  return env;
+}
+
 /** Known bot logins that produce automated review comments */
 const BOT_AUTHORS = new Set([
   "cursor[bot]",
@@ -60,6 +67,7 @@ async function execCli(bin: ExecCommand, args: string[], cwd?: string): Promise<
   try {
     const { stdout } = await execFileAsync(bin, args, {
       ...(cwd ? { cwd } : {}),
+      env: bin === "gh" ? sanitizeGhEnv() : process.env,
       maxBuffer: 10 * 1024 * 1024,
       timeout: 30_000,
     });
@@ -89,6 +97,14 @@ function parseProjectRepo(projectRepo: string): [string, string] {
     throw new Error(`Invalid repo format "${projectRepo}", expected "owner/repo"`);
   }
   return [parts[0], parts[1]];
+}
+
+async function checkoutPrViaGitFallback(pr: PRInfo, workspacePath: string): Promise<void> {
+  const fetchRef = `pull/${pr.number}/head`;
+  const tempBranch = `ao/pr-${pr.number}`;
+
+  await git(["fetch", "origin", `${fetchRef}:${tempBranch}`], workspacePath);
+  await git(["checkout", "-B", pr.branch, tempBranch], workspacePath);
 }
 
 function prInfoFromView(
@@ -581,7 +597,19 @@ function createGitHubSCM(): SCM {
         );
       }
 
-      await ghInDir(["pr", "checkout", String(pr.number), "--repo", repoFlag(pr)], workspacePath);
+      try {
+        await ghInDir(["pr", "checkout", String(pr.number), "--repo", repoFlag(pr)], workspacePath);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const isGitRepoDetectionFailure =
+          message.includes("failed to run git: fatal: not a git repository");
+
+        if (!isGitRepoDetectionFailure) {
+          throw err;
+        }
+
+        await checkoutPrViaGitFallback(pr, workspacePath);
+      }
       return true;
     },
 

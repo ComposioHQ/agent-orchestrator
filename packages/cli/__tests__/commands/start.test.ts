@@ -238,6 +238,47 @@ function createFakeRepo(dir: string, remoteUrl: string, files?: Record<string, s
 // ---------------------------------------------------------------------------
 
 describe("start command — project resolution", () => {
+  it("loads explicit config path when --config is provided", async () => {
+    const explicitConfigPath = join(tmpDir, "custom.tmux.yaml");
+    const repoPath = join(tmpDir, "main-repo");
+    mkdirSync(repoPath, { recursive: true });
+    writeFileSync(
+      explicitConfigPath,
+      [
+        "port: 3011",
+        "defaults:",
+        "  runtime: tmux",
+        "  agent: claude-code",
+        "  workspace: worktree",
+        "  notifiers: []",
+        "projects:",
+        "  my-app:",
+        "    name: My App",
+        "    repo: org/my-app",
+        `    path: ${repoPath.replace(/\\/g, "/")}`,
+        "    defaultBranch: main",
+        "    sessionPrefix: app",
+      ].join("\n"),
+    );
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "start",
+      "--config",
+      explicitConfigPath,
+      "--no-dashboard",
+      "--no-orchestrator",
+    ]);
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("My App");
+    expect(output).toContain("Startup complete");
+  });
+
   it("uses single project when no arg given", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
 

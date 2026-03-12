@@ -49,6 +49,12 @@ function makeHandle(id: string): RuntimeHandle {
   return { id, runtimeName: "mock", data: {} };
 }
 
+function writeProjectOsIndex(name: string, payload: unknown): void {
+  const indexDir = join(tmpDir, "project-os", "indexes");
+  mkdirSync(indexDir, { recursive: true });
+  writeFileSync(join(indexDir, name), JSON.stringify(payload, null, 2) + "\n", "utf-8");
+}
+
 function installMockOpencode(
   sessionListJson: string,
   deleteLogPath: string,
@@ -434,6 +440,50 @@ describe("spawn", () => {
     expect(meta!.status).toBe("spawning");
     expect(meta!.project).toBe("my-app");
     expect(meta!.issue).toBe("INT-42");
+  });
+
+  it("blocks spawn when repo policy does not allow dispatch", async () => {
+    writeProjectOsIndex("dispatch_plan.json", [
+      {
+        work_id: "INT-42",
+        next_action: "escalate",
+        reason: "ticket is blocked and requires operator input",
+        priority: 100,
+      },
+    ]);
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await expect(sm.spawn({ projectId: "my-app", issueId: "INT-42" })).rejects.toThrow(
+      "Spawn blocked by repo policy",
+    );
+    expect(mockWorkspace.create).not.toHaveBeenCalled();
+    expect(mockRuntime.create).not.toHaveBeenCalled();
+  });
+
+  it("persists active session into work state store after guarded spawn", async () => {
+    writeProjectOsIndex("dispatch_plan.json", [
+      {
+        work_id: "INT-42",
+        next_action: "dispatch",
+        reason: "ticket is eligible for scheduling",
+        priority: 70,
+      },
+    ]);
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.spawn({ projectId: "my-app", issueId: "INT-42" });
+
+    const persisted = JSON.parse(
+      readFileSync(join(tmpDir, "project-os", "indexes", "work_state_store.json"), "utf-8"),
+    ) as Array<Record<string, unknown>>;
+
+    expect(persisted).toEqual([
+      expect.objectContaining({
+        work_id: "INT-42",
+        work_status: "dispatched",
+        active_session_id: "app-1",
+      }),
+    ]);
   });
 
   it("reuses OpenCode session mapping by issue when available", async () => {
@@ -1595,6 +1645,49 @@ describe("kill", () => {
     expect(readMetadata(sessionsDir, "app-1")).toBeNull(); // archived + deleted
   });
 
+  it("preserves workspace and clears active session state when killing non-terminal work", async () => {
+    const managedWorktree = join(getWorktreesDir(configPath, join(tmpDir, "my-app")), "app-1");
+    mkdirSync(managedWorktree, { recursive: true });
+    writeProjectOsIndex("work_state_store.json", [
+      {
+        work_id: "TEST-1",
+        work_status: "dispatched",
+        active_session_id: "app-1",
+      },
+    ]);
+    writeProjectOsIndex("reconciliation_state.json", [
+      {
+        work_id: "TEST-1",
+        active_session_id: "app-1",
+        next_action: "reconcile_session",
+      },
+    ]);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: managedWorktree,
+      branch: "feat/TEST-1",
+      status: "working",
+      issue: "TEST-1",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.kill("app-1");
+
+    expect(mockWorkspace.destroy).not.toHaveBeenCalled();
+    const persisted = JSON.parse(
+      readFileSync(join(tmpDir, "project-os", "indexes", "work_state_store.json"), "utf-8"),
+    ) as Array<Record<string, unknown>>;
+    expect(persisted).toEqual([
+      expect.objectContaining({
+        work_id: "TEST-1",
+        work_status: "needs_input",
+        active_session_id: null,
+      }),
+    ]);
+  });
+
   it("does not destroy workspace paths outside managed roots", async () => {
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp/ws",
@@ -1850,6 +1943,43 @@ describe("cleanup", () => {
     expect(deleteLog).toContain("session delete ses_cleanup");
   });
 
+  it("skips cleanup for dead runtime when repo policy says reconcile instead of terminal", async () => {
+    const managedWorktree = join(getWorktreesDir(configPath, join(tmpDir, "my-app")), "app-1");
+    mkdirSync(managedWorktree, { recursive: true });
+    writeProjectOsIndex("work_state_store.json", [
+      {
+        work_id: "TEST-1",
+        work_status: "dispatched",
+        active_session_id: "app-1",
+      },
+    ]);
+    writeProjectOsIndex("reconciliation_state.json", [
+      {
+        work_id: "TEST-1",
+        active_session_id: "app-1",
+        next_action: "reconcile_session",
+      },
+    ]);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: managedWorktree,
+      branch: "feat/TEST-1",
+      status: "working",
+      issue: "TEST-1",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    vi.mocked(mockRuntime.isAlive).mockResolvedValue(false);
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const result = await sm.cleanup();
+
+    expect(result.skipped).toContain("app-1");
+    expect(result.killed).not.toContain("app-1");
+    expect(mockWorkspace.destroy).not.toHaveBeenCalled();
+  });
+
   it("treats missing mapped OpenCode session as already cleaned", async () => {
     const mockBin = installMockOpencodeWithNotFoundDelete("[]");
     process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
@@ -1920,6 +2050,44 @@ describe("cleanup", () => {
     expect(result.killed).toContain("app-6");
     const deleteLog = readFileSync(deleteLogPath, "utf-8");
     expect(deleteLog).toContain("session delete ses_archived");
+  });
+
+  it("skips archived cleanup when repo policy says the work is non-terminal", async () => {
+    const deleteLogPath = join(tmpDir, "opencode-delete-archived-nonterminal.log");
+    const mockBin = installMockOpencode("[]", deleteLogPath);
+    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+    writeProjectOsIndex("work_state_store.json", [
+      {
+        work_id: "TEST-ARCHIVE",
+        work_status: "review",
+      },
+    ]);
+    writeProjectOsIndex("reconciliation_state.json", [
+      {
+        work_id: "TEST-ARCHIVE",
+        next_action: "operator_review",
+        reason: "awaiting review",
+      },
+    ]);
+
+    writeMetadata(sessionsDir, "app-7", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "killed",
+      project: "my-app",
+      issue: "TEST-ARCHIVE",
+      agent: "opencode",
+      opencodeSessionId: "ses_archived_nonterminal",
+      runtimeHandle: JSON.stringify(makeHandle("rt-7")),
+    });
+    deleteMetadata(sessionsDir, "app-7", true);
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const result = await sm.cleanup();
+
+    expect(result.killed).not.toContain("app-7");
+    expect(result.skipped).toContain("app-7");
+    expect(existsSync(deleteLogPath)).toBe(false);
   });
 
   it("does not skip archived cleanup for matching session IDs in other projects", async () => {
@@ -2284,6 +2452,28 @@ describe("send", () => {
     expect(mockRuntime.sendMessage).toHaveBeenCalledWith(makeHandle("rt-1"), "hello");
   });
 
+  it("blocks send when repo policy marks the work as terminal", async () => {
+    writeProjectOsIndex("work_state_store.json", [
+      {
+        work_id: "TEST-1",
+        work_status: "done",
+        active_session_id: "app-1",
+      },
+    ]);
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      issue: "TEST-1",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await expect(sm.send("app-1", "hello")).rejects.toThrow("Send blocked by repo policy");
+    expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
+  });
+
   it("re-discovers OpenCode mapping before sending when stored mapping is invalid", async () => {
     const deleteLogPath = join(tmpDir, "opencode-send-remap-invalid.log");
     const mockBin = installMockOpencode(
@@ -2313,6 +2503,48 @@ describe("send", () => {
     const meta = readMetadataRaw(sessionsDir, "app-1");
     expect(meta?.["opencodeSessionId"]).toBe("ses_send_discovered_valid");
     expect(mockRuntime.sendMessage).toHaveBeenCalledWith(makeHandle("rt-1"), "hello");
+  });
+});
+
+describe("kill", () => {
+  it("waits for runtime to report stopped before archiving metadata", async () => {
+    const handle = { id: "rt-1", runtimeName: "tmux", data: {} };
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(handle),
+    });
+
+    vi.mocked(mockRuntime.isAlive)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.kill("app-1");
+
+    expect(mockRuntime.destroy).toHaveBeenCalledWith(handle);
+    expect(mockRuntime.isAlive).toHaveBeenCalledWith(handle);
+    expect(readMetadataRaw(sessionsDir, "app-1")).toBeNull();
+  });
+
+  it("does not archive metadata while runtime remains alive", async () => {
+    const handle = { id: "rt-1", runtimeName: "tmux", data: {} };
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(handle),
+    });
+
+    vi.mocked(mockRuntime.isAlive).mockResolvedValue(true);
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await expect(sm.kill("app-1")).rejects.toThrow("did not stop");
+    expect(readMetadataRaw(sessionsDir, "app-1")).not.toBeNull();
   });
 });
 
@@ -3466,6 +3698,86 @@ describe("restore", () => {
     await expect(sm.restore("app-1")).rejects.toThrow(SessionNotRestorableError);
   });
 
+  it("blocks restore when repo policy requires a different reconciliation action", async () => {
+    const wsPath = join(tmpDir, "ws-app-1");
+    mkdirSync(wsPath, { recursive: true });
+    writeProjectOsIndex("work_state_store.json", [
+      {
+        work_id: "TEST-1",
+        work_status: "dispatched",
+        active_session_id: "app-1",
+      },
+    ]);
+    writeProjectOsIndex("reconciliation_state.json", [
+      {
+        work_id: "TEST-1",
+        next_action: "operator_review",
+        reason: "ticket is awaiting review",
+        active_session_id: "app-1",
+      },
+    ]);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/TEST-1",
+      status: "killed",
+      project: "my-app",
+      issue: "TEST-1",
+      runtimeHandle: JSON.stringify(makeHandle("rt-old")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await expect(sm.restore("app-1")).rejects.toThrow("Restore blocked by repo policy");
+    expect(mockRuntime.create).not.toHaveBeenCalled();
+  });
+
+  it("persists active session after allowed restore", async () => {
+    const wsPath = join(tmpDir, "ws-app-1");
+    mkdirSync(wsPath, { recursive: true });
+    writeProjectOsIndex("work_state_store.json", [
+      {
+        work_id: "TEST-1",
+        work_status: "dispatched",
+        retry_count: 1,
+        retry_budget: 2,
+        active_session_id: "app-1",
+      },
+    ]);
+    writeProjectOsIndex("reconciliation_state.json", [
+      {
+        work_id: "TEST-1",
+        next_action: "reconcile_session",
+        reason: "persisted session exists without active run snapshot",
+        active_session_id: "app-1",
+      },
+    ]);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/TEST-1",
+      status: "killed",
+      project: "my-app",
+      issue: "TEST-1",
+      runtimeHandle: JSON.stringify(makeHandle("rt-old")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.restore("app-1");
+
+    const persisted = JSON.parse(
+      readFileSync(join(tmpDir, "project-os", "indexes", "work_state_store.json"), "utf-8"),
+    ) as Array<Record<string, unknown>>;
+    expect(persisted).toEqual([
+      expect.objectContaining({
+        work_id: "TEST-1",
+        work_status: "dispatched",
+        retry_count: 1,
+        retry_budget: 2,
+        active_session_id: "app-1",
+      }),
+    ]);
+  });
+
   it("throws SessionNotRestorableError for working sessions", async () => {
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp",
@@ -3545,6 +3857,40 @@ describe("restore", () => {
     expect(meta).not.toBeNull();
     expect(meta!["issue"]).toBe("TEST-1");
     expect(meta!["pr"]).toBe("https://github.com/org/my-app/pull/10");
+  });
+
+  it("restores archived work using issue-based reconciliation fallback", async () => {
+    const wsPath = join(tmpDir, "ws-app-issue-fallback");
+    mkdirSync(wsPath, { recursive: true });
+    writeProjectOsIndex("work_state_store.json", [
+      {
+        work_id: "TEST-RESTORE",
+        work_status: "dispatched",
+      },
+    ]);
+    writeProjectOsIndex("reconciliation_state.json", [
+      {
+        work_id: "TEST-RESTORE",
+        next_action: "reconcile_session",
+        reason: "restore is allowed from issue-scoped state",
+      },
+    ]);
+
+    writeMetadata(sessionsDir, "app-9", {
+      worktree: wsPath,
+      branch: "feat/TEST-RESTORE",
+      status: "killed",
+      project: "my-app",
+      issue: "TEST-RESTORE",
+      runtimeHandle: JSON.stringify(makeHandle("rt-old")),
+    });
+    deleteMetadata(sessionsDir, "app-9");
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const restored = await sm.restore("app-9");
+
+    expect(restored.id).toBe("app-9");
+    expect(restored.status).toBe("spawning");
   });
 
   it("restores from archive with multiple archived versions (picks latest)", async () => {

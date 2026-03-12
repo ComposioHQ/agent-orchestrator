@@ -1,21 +1,23 @@
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { setTimeout as sleep } from "node:timers/promises";
 import { randomUUID } from "node:crypto";
 import { writeFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
+import { promisify } from "node:util";
 import type {
+  AttachInfo,
   PluginModule,
   Runtime,
   RuntimeCreateConfig,
   RuntimeHandle,
   RuntimeMetrics,
-  AttachInfo,
 } from "@composio/ao-core";
 
 const execFileAsync = promisify(execFile);
 const TMUX_COMMAND_TIMEOUT_MS = 5_000;
+const TMUX_DESTROY_WAIT_MS = 5_000;
+const TMUX_DESTROY_POLL_MS = 100;
 
 export const manifest = {
   name: "tmux",
@@ -24,7 +26,6 @@ export const manifest = {
   version: "0.1.0",
 };
 
-/** Only allow safe characters in session IDs */
 const SAFE_SESSION_ID = /^[a-zA-Z0-9_-]+$/;
 
 function assertValidSessionId(id: string): void {
@@ -33,12 +34,20 @@ function assertValidSessionId(id: string): void {
   }
 }
 
-/** Run a tmux command and return stdout */
 async function tmux(...args: string[]): Promise<string> {
   const { stdout } = await execFileAsync("tmux", args, {
     timeout: TMUX_COMMAND_TIMEOUT_MS,
   });
   return stdout.trimEnd();
+}
+
+async function isSessionAlive(sessionId: string): Promise<boolean> {
+  try {
+    await tmux("has-session", "-t", sessionId);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function create(): Runtime {
@@ -49,18 +58,13 @@ export function create(): Runtime {
       assertValidSessionId(config.sessionId);
       const sessionName = config.sessionId;
 
-      // Build environment flags: -e KEY=VALUE for each env var
       const envArgs: string[] = [];
       for (const [key, value] of Object.entries(config.environment ?? {})) {
         envArgs.push("-e", `${key}=${value}`);
       }
 
-      // Create tmux session in detached mode
       await tmux("new-session", "-d", "-s", sessionName, "-c", config.workspacePath, ...envArgs);
 
-      // Send the launch command — clean up the session if this fails.
-      // Use load-buffer + paste-buffer for long commands to avoid tmux/zsh
-      // truncation issues (commands >200 chars get mangled by send-keys).
       try {
         if (config.launchCommand.length > 200) {
           const bufferName = `ao-launch-${randomUUID().slice(0, 8)}`;
@@ -73,7 +77,7 @@ export function create(): Runtime {
             try {
               unlinkSync(tmpPath);
             } catch {
-              /* ignore cleanup errors */
+              // ignore cleanup errors
             }
           }
           await sleep(300);
@@ -107,16 +111,21 @@ export function create(): Runtime {
       try {
         await tmux("kill-session", "-t", handle.id);
       } catch {
-        // Session may already be dead — that's fine
+        // Session may already be dead
+      }
+
+      const deadline = Date.now() + TMUX_DESTROY_WAIT_MS;
+      while (Date.now() < deadline) {
+        if (!(await isSessionAlive(handle.id))) {
+          return;
+        }
+        await sleep(TMUX_DESTROY_POLL_MS);
       }
     },
 
     async sendMessage(handle: RuntimeHandle, message: string): Promise<void> {
-      // Clear any partial input
       await tmux("send-keys", "-t", handle.id, "C-u");
 
-      // For long or multiline messages, use load-buffer + paste-buffer
-      // Use randomUUID to avoid temp file collisions on concurrent sends
       if (message.includes("\n") || message.length > 200) {
         const bufferName = `ao-${randomUUID()}`;
         const tmpPath = join(tmpdir(), `ao-send-${randomUUID()}.txt`);
@@ -125,8 +134,6 @@ export function create(): Runtime {
           await tmux("load-buffer", "-b", bufferName, tmpPath);
           await tmux("paste-buffer", "-b", bufferName, "-t", handle.id, "-d");
         } finally {
-          // Clean up temp file and tmux buffer (in case paste-buffer failed
-          // and the -d flag didn't delete it)
           try {
             unlinkSync(tmpPath);
           } catch {
@@ -135,17 +142,13 @@ export function create(): Runtime {
           try {
             await tmux("delete-buffer", "-b", bufferName);
           } catch {
-            // Buffer may already be deleted by -d flag — that's fine
+            // Buffer may already be gone
           }
         }
       } else {
-        // Use -l (literal) so text like "Enter" or "Space" isn't interpreted
-        // as tmux key names
         await tmux("send-keys", "-t", handle.id, "-l", message);
       }
 
-      // Small delay to let tmux process the pasted text before pressing Enter.
-      // Without this, Enter can arrive before the text is fully rendered.
       await sleep(300);
       await tmux("send-keys", "-t", handle.id, "Enter");
     },
@@ -159,12 +162,7 @@ export function create(): Runtime {
     },
 
     async isAlive(handle: RuntimeHandle): Promise<boolean> {
-      try {
-        await tmux("has-session", "-t", handle.id);
-        return true;
-      } catch {
-        return false;
-      }
+      return isSessionAlive(handle.id);
     },
 
     async getMetrics(handle: RuntimeHandle): Promise<RuntimeMetrics> {

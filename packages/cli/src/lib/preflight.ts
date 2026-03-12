@@ -12,6 +12,13 @@ import { resolve } from "node:path";
 import { isPortAvailable } from "./web-dir.js";
 import { exec } from "./shell.js";
 
+function sanitizeGhEnv(baseEnv: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env = { ...baseEnv };
+  delete env["GH_TOKEN"];
+  delete env["GITHUB_TOKEN"];
+  return env;
+}
+
 /**
  * Check that the dashboard port is free.
  * Throws if the port is already in use.
@@ -67,7 +74,9 @@ async function checkGhAuth(): Promise<void> {
   }
 
   try {
-    await exec("gh", ["auth", "status"]);
+    await exec("gh", ["auth", "status"], {
+      env: sanitizeGhEnv(),
+    });
   } catch {
     throw new Error("GitHub CLI is not authenticated. Run: gh auth login");
   }

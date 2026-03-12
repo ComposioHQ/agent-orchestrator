@@ -6,11 +6,13 @@ import {
   enrichSessionPR,
   enrichSessionsMetadata,
 } from "@/lib/serialize";
+import { loadHarnessSnapshot, resolveSessionHarnessContext } from "@/lib/harness-plan";
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
     const { config, registry, sessionManager } = await getServices();
+    const harnessSnapshot = await loadHarnessSnapshot(config);
 
     const coreSession = await sessionManager.get(id);
     if (!coreSession) {
@@ -34,6 +36,12 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
         }
       }
     }
+
+    dashboardSession.harness = resolveSessionHarnessContext(
+      harnessSnapshot,
+      coreSession.id,
+      coreSession.issueId,
+    );
 
     return NextResponse.json(dashboardSession);
   } catch (error) {

@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently \"npm:dev:next\" \"npm:dev:terminal\" \"npm:dev:direct-terminal\"",
-    "dev:next": "next dev -p ${PORT:-3000}",
+    "dev:next": "node -e \"const { spawn } = require('node:child_process'); const child = spawn(process.platform === 'win32' ? 'next.cmd' : 'next', ['dev', '-p', process.env.PORT || '3000'], { stdio: 'inherit', shell: process.platform === 'win32' }); child.on('exit', (code) => process.exit(code ?? 0));\"",
     "dev:terminal": "tsx watch server/terminal-websocket.ts",
     "dev:direct-terminal": "tsx watch server/direct-terminal-ws.ts",
     "build": "next build",
@@ -15,13 +15,17 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rm -rf .next",
+    "e2e:operator": "tsx e2e/operator-flows.ts",
+    "e2e:dashboard": "tsx e2e/dashboard-flows.ts",
     "screenshot": "tsx e2e/screenshot.ts",
     "screenshot:install": "npx playwright install chromium"
   },
   "dependencies": {
     "@composio/ao-core": "workspace:*",
     "@composio/ao-plugin-agent-claude-code": "workspace:*",
+    "@composio/ao-plugin-agent-codex": "workspace:*",
     "@composio/ao-plugin-agent-opencode": "workspace:*",
+    "@composio/ao-plugin-runtime-process": "workspace:*",
     "@composio/ao-plugin-runtime-tmux": "workspace:*",
     "@composio/ao-plugin-scm-github": "workspace:*",
     "@composio/ao-plugin-tracker-github": "workspace:*",
