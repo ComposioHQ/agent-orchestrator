@@ -77,15 +77,14 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
   let prAutoDetect = 
     raw["prAutoDetect"] === "off" ? "off" : raw["prAutoDetect"] === "on" ? "on" : undefined;
 
-  if (isOrchestrator) {
-    // Always disable PR auto-detect for orchestrators
-    prAutoDetect = "off";
-    
-    // Clear legacy PR attachments
-    if (raw["pr"] && prAutoDetect !== "off") {
-      pr = undefined;
-    }
+if (isOrchestrator) {
+  // Always disable PR auto-detect for orchestrators
+  prAutoDetect = "off";
+  // Clear legacy PR attachments from orchestrator sessions
+  if (raw["pr"]) {
+    pr = undefined;
   }
+}
 
   return {
     worktree: raw["worktree"] ?? "",
