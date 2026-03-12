@@ -96,7 +96,7 @@ function installMockOpencodeSequence(
   const cases = sessionListJsons
     .map((entry, index) => {
       const escaped = entry.replace(/'/g, "'\\''");
-      return `if [[ \"$idx\" == \"${index}\" ]]; then printf '%s\\n' '${escaped}'; exit 0; fi`;
+      return `if [[ "$idx" == "${index}" ]]; then printf '%s\\n' '${escaped}'; exit 0; fi`;
     })
     .join("\n");
   const final = sessionListJsons.at(-1)?.replace(/'/g, "'\\''") ?? "[]";
