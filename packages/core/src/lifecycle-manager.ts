@@ -36,12 +36,6 @@ import {
 import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
 import { createCorrelationId, createProjectObserver } from "./observability.js";
-import {
-  GLOBAL_PAUSE_UNTIL_KEY,
-  GLOBAL_PAUSE_REASON_KEY,
-  GLOBAL_PAUSE_SOURCE_KEY,
-  parsePauseUntil,
-} from "./global-pause.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
