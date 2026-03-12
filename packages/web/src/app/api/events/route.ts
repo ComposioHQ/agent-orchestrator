@@ -1,7 +1,11 @@
 import { getServices } from "@/lib/services";
 import { sessionToDashboard } from "@/lib/serialize";
 import { getAttentionLevel } from "@/lib/types";
-import { createCorrelationId, createProjectObserver } from "@composio/ao-core";
+import {
+  createCorrelationId,
+  createProjectObserver,
+  type ProjectObserver,
+} from "@composio/ao-core";
 
 export const dynamic = "force-dynamic";
 
@@ -17,16 +21,29 @@ export async function GET(): Promise<Response> {
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   let updates: ReturnType<typeof setInterval> | undefined;
   let observerProjectId: string | undefined;
+  let observer: ProjectObserver | null = null;
+
+  const ensureObserver = (config: {
+    projects: Record<string, unknown>;
+  }): ProjectObserver | null => {
+    if (!observerProjectId) {
+      observerProjectId = Object.keys(config.projects)[0];
+    }
+    if (!observerProjectId) return null;
+    if (!observer) {
+      observer = createProjectObserver(config, "web-events");
+    }
+    return observer;
+  };
 
   const stream = new ReadableStream({
     start(controller) {
       void (async () => {
         try {
           const { config } = await getServices();
-          observerProjectId = Object.keys(config.projects)[0];
-          if (observerProjectId) {
-            const observer = createProjectObserver(config, "web-events");
-            observer.recordOperation({
+          const projectObserver = ensureObserver(config);
+          if (projectObserver && observerProjectId) {
+            projectObserver.recordOperation({
               metric: "sse_connect",
               operation: "sse.connect",
               outcome: "success",
@@ -35,7 +52,7 @@ export async function GET(): Promise<Response> {
               data: { path: "/api/events" },
               level: "info",
             });
-            observer.setHealth({
+            projectObserver.setHealth({
               surface: "sse.events",
               status: "ok",
               projectId: observerProjectId,
@@ -54,8 +71,7 @@ export async function GET(): Promise<Response> {
           const { config, sessionManager } = await getServices();
           const sessions = await sessionManager.list();
           const dashboardSessions = sessions.map(sessionToDashboard);
-          const projectId = observerProjectId ?? Object.keys(config.projects)[0];
-          const observer = projectId ? createProjectObserver(config, "web-events") : null;
+          const projectObserver = ensureObserver(config);
 
           const initialEvent = {
             type: "snapshot",
@@ -70,13 +86,13 @@ export async function GET(): Promise<Response> {
             })),
           };
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(initialEvent)}\n\n`));
-          if (observer && projectId) {
-            observer.recordOperation({
+          if (projectObserver && observerProjectId) {
+            projectObserver.recordOperation({
               metric: "sse_snapshot",
               operation: "sse.snapshot",
               outcome: "success",
               correlationId,
-              projectId,
+              projectId: observerProjectId,
               data: { sessionCount: dashboardSessions.length, initial: true },
               level: "info",
             });
@@ -109,17 +125,16 @@ export async function GET(): Promise<Response> {
             const { config, sessionManager } = await getServices();
             const sessions = await sessionManager.list();
             dashboardSessions = sessions.map(sessionToDashboard);
-            const projectId = observerProjectId ?? Object.keys(config.projects)[0];
-            const observer = projectId ? createProjectObserver(config, "web-events") : null;
+            const projectObserver = ensureObserver(config);
 
-            if (observer && projectId) {
-              observer.setHealth({
+            if (projectObserver && observerProjectId) {
+              projectObserver.setHealth({
                 surface: "sse.events",
                 status: "ok",
-                projectId,
+                projectId: observerProjectId,
                 correlationId,
                 details: {
-                  projectId,
+                  projectId: observerProjectId,
                   sessionCount: dashboardSessions.length,
                   lastEventAt: new Date().toISOString(),
                 },
@@ -140,13 +155,13 @@ export async function GET(): Promise<Response> {
                 })),
               };
               controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-              if (observer && projectId) {
-                observer.recordOperation({
+              if (projectObserver && observerProjectId) {
+                projectObserver.recordOperation({
                   metric: "sse_snapshot",
                   operation: "sse.snapshot",
                   outcome: "success",
                   correlationId,
-                  projectId,
+                  projectId: observerProjectId,
                   data: { sessionCount: dashboardSessions.length, initial: false },
                   level: "info",
                 });
@@ -169,25 +184,24 @@ export async function GET(): Promise<Response> {
       void (async () => {
         try {
           const { config } = await getServices();
-          const projectId = observerProjectId ?? Object.keys(config.projects)[0];
-          if (!projectId) return;
-          const observer = createProjectObserver(config, "web-events");
-          observer.recordOperation({
+          const projectObserver = ensureObserver(config);
+          if (!projectObserver || !observerProjectId) return;
+          projectObserver.recordOperation({
             metric: "sse_disconnect",
             operation: "sse.disconnect",
             outcome: "success",
             correlationId,
-            projectId,
+            projectId: observerProjectId,
             data: { path: "/api/events" },
             level: "info",
           });
-          observer.setHealth({
+          projectObserver.setHealth({
             surface: "sse.events",
             status: "warn",
-            projectId,
+            projectId: observerProjectId,
             correlationId,
             reason: "SSE connection closed",
-            details: { projectId, connection: "closed" },
+            details: { projectId: observerProjectId, connection: "closed" },
           });
         } catch {
           void 0;

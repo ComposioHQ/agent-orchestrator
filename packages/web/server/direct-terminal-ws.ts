@@ -189,15 +189,6 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
     }
 
     console.log(`[DirectTerminal] New connection for session: ${tmuxSessionId}`);
-    metrics.totalConnections += 1;
-    metrics.activeConnections = activeSessions.size + 1;
-    metrics.lastConnectedAt = new Date().toISOString();
-    recordWebsocketMetric({
-      metric: "websocket_connect",
-      outcome: "success",
-      sessionId,
-      data: { activeConnections: metrics.activeConnections },
-    });
 
     // Enable mouse mode for scrollback support
     const mouseProc = spawn(TMUX, ["set-option", "-t", tmuxSessionId, "mouse", "on"]);
@@ -258,6 +249,32 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
     const session: TerminalSession = { sessionId, pty, ws };
     activeSessions.set(sessionId, session);
 
+    metrics.totalConnections += 1;
+    metrics.activeConnections = activeSessions.size;
+    metrics.lastConnectedAt = new Date().toISOString();
+    recordWebsocketMetric({
+      metric: "websocket_connect",
+      outcome: "success",
+      sessionId,
+      data: { activeConnections: metrics.activeConnections },
+    });
+
+    let disconnectRecorded = false;
+    const recordDisconnect = (outcome: "success" | "failure", reason: string) => {
+      if (disconnectRecorded) return;
+      disconnectRecorded = true;
+      metrics.activeConnections = activeSessions.size;
+      metrics.totalDisconnects += 1;
+      metrics.lastDisconnectedAt = new Date().toISOString();
+      metrics.lastDisconnectReason = reason;
+      recordWebsocketMetric({
+        metric: "websocket_disconnect",
+        outcome,
+        sessionId,
+        reason,
+      });
+    };
+
     // PTY -> WebSocket
     pty.onData((data) => {
       if (ws.readyState === WebSocket.OPEN) {
@@ -273,16 +290,7 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
       if (activeSessions.get(sessionId)?.pty === pty) {
         activeSessions.delete(sessionId);
       }
-      metrics.activeConnections = activeSessions.size;
-      metrics.totalDisconnects += 1;
-      metrics.lastDisconnectedAt = new Date().toISOString();
-      metrics.lastDisconnectReason = `pty_exit:${exitCode}`;
-      recordWebsocketMetric({
-        metric: "websocket_disconnect",
-        outcome: exitCode === 0 ? "success" : "failure",
-        sessionId,
-        reason: `pty_exit:${exitCode}`,
-      });
+      recordDisconnect(exitCode === 0 ? "success" : "failure", `pty_exit:${exitCode}`);
       if (ws.readyState === WebSocket.OPEN) {
         ws.close(1000, "Terminal session ended");
       }
@@ -316,16 +324,7 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
       if (activeSessions.get(sessionId)?.pty === pty) {
         activeSessions.delete(sessionId);
       }
-      metrics.activeConnections = activeSessions.size;
-      metrics.totalDisconnects += 1;
-      metrics.lastDisconnectedAt = new Date().toISOString();
-      metrics.lastDisconnectReason = "ws_close";
-      recordWebsocketMetric({
-        metric: "websocket_disconnect",
-        outcome: "success",
-        sessionId,
-        reason: "ws_close",
-      });
+      recordDisconnect("success", "ws_close");
       pty.kill();
     });
 
