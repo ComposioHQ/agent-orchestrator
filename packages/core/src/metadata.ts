@@ -71,15 +71,30 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
   const content = readFileSync(path, "utf-8");
   const raw = parseKeyValueContent(content);
 
+  // Detect and repair orchestrator session metadata
+  const isOrchestrator = raw["role"] === "orchestrator" || sessionId.endsWith("-orchestrator");
+  let pr = raw["pr"];
+  let prAutoDetect = 
+    raw["prAutoDetect"] === "off" ? "off" : raw["prAutoDetect"] === "on" ? "on" : undefined;
+
+  if (isOrchestrator) {
+    // Always disable PR auto-detect for orchestrators
+    prAutoDetect = "off";
+    
+    // Clear legacy PR attachments
+    if (raw["pr"] && prAutoDetect !== "off") {
+      pr = undefined;
+    }
+  }
+
   return {
     worktree: raw["worktree"] ?? "",
     branch: raw["branch"] ?? "",
     status: raw["status"] ?? "unknown",
     tmuxName: raw["tmuxName"],
     issue: raw["issue"],
-    pr: raw["pr"],
-    prAutoDetect:
-      raw["prAutoDetect"] === "off" ? "off" : raw["prAutoDetect"] === "on" ? "on" : undefined,
+    pr,
+    prAutoDetect,
     summary: raw["summary"],
     project: raw["project"],
     agent: raw["agent"],

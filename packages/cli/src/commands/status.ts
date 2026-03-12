@@ -52,11 +52,15 @@ async function gatherSessionInfo(
   scm: SCM,
   projectConfig: ReturnType<typeof loadConfig>,
 ): Promise<SessionInfo> {
-  const suppressPROwnership = isOrchestratorSession(session);
+  const config = loadConfig();
+  const projectConfig = config.projects[session.projectId] || {};
+  const isOrchestrator = isOrchestratorSession(session) || 
+    projectConfig.orchestratorDisablePROwnership;
+  
   let branch = session.branch;
   const status = session.status;
   const summary = session.metadata["summary"] ?? null;
-  const prUrl = suppressPROwnership ? null : (session.metadata["pr"] ?? null);
+  const prUrl = isOrchestrator ? null : (session.metadata["pr"] ?? null);
   const issue = session.issueId;
 
   // Get live branch from worktree if available

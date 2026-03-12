@@ -974,6 +974,12 @@ export interface ProjectConfig {
     | "ignore-new"
     | "kill-previous";
 
+  /** Prevent orchestrator sessions from owning PRs */
+  orchestratorDisablePROwnership?: boolean;
+  
+  /** Clean up stale PR attachments from orchestrator sessions */
+  orchestratorCleanupPRAttachments?: boolean;
+
   opencodeIssueSessionStrategy?: "reuse" | "delete" | "ignore";
 
   /** Task decomposition configuration */

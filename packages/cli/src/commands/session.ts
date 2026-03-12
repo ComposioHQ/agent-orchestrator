@@ -171,10 +171,14 @@ export function registerSession(program: Command): void {
           }
         }
       } else {
-        const result = await sm.cleanup(opts.project);
+        const cleanupOptions = opts.dryRun ? { dryRun: true } : { 
+          pruneOrchestratorPRs: true
+        };
+        const result = await sm.cleanup(opts.project, cleanupOptions);
 
         if (result.killed.length === 0 && result.errors.length === 0) {
-          console.log(chalk.dim("  No sessions to clean up."));
+          const cleanedPRs = result.prunedPRs ? ` and ${result.prunedPRs} PR attachments` : '';
+          console.log(chalk.dim(`  No sessions to clean up${cleanedPRs}.`));
         } else {
           if (result.killed.length > 0) {
             for (const id of result.killed) {
