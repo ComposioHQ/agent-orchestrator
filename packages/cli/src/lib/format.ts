@@ -105,7 +105,7 @@ export function activityIcon(activity: ActivityState | null): string {
 }
 
 // eslint-disable-next-line no-control-regex
-const ANSI_RE = /\u001b\[[0-9;]*m/g;
+const ANSI_RE = /\u001b\[[0-9;]*m|\u001b\]8;;[^\u0007]*\u0007/g;
 
 /** Pad/truncate a string to exactly `width` visible characters */
 export function padCol(str: string, width: number): string {
