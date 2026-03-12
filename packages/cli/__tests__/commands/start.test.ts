@@ -15,26 +15,38 @@ import type { SessionManager } from "@composio/ao-core";
 // Hoisted mocks
 // ---------------------------------------------------------------------------
 
-const { mockExec, mockExecSilent, mockConfigRef, mockSessionManager, mockWaitForPortAndOpen, mockSpawn, mockRegistry, mockLifecycleManager } =
-  vi.hoisted(() => ({
-    mockExec: vi.fn(),
-    mockExecSilent: vi.fn(),
-    mockConfigRef: { current: null as Record<string, unknown> | null },
-    mockSessionManager: {
-      list: vi.fn(),
-      kill: vi.fn(),
-      cleanup: vi.fn(),
-      get: vi.fn(),
-      spawn: vi.fn(),
-      spawnOrchestrator: vi.fn(),
-      send: vi.fn(),
-    },
-    mockWaitForPortAndOpen: vi.fn().mockResolvedValue(undefined),
-    mockSpawn: vi.fn(),
-    mockRegistry: {},
-    mockLifecycleManager: { start: vi.fn(), stop: vi.fn() },
-  }),
-);
+const {
+  mockExec,
+  mockExecSilent,
+  mockConfigRef,
+  mockSessionManager,
+  mockWaitForPortAndOpen,
+  mockSpawn,
+  mockRegistry,
+  mockLifecycleManager,
+  mockEnsureLifecycleWorker,
+  mockStopLifecycleWorker,
+} = vi.hoisted(() => ({
+  mockExec: vi.fn(),
+  mockExecSilent: vi.fn(),
+  mockConfigRef: { current: null as Record<string, unknown> | null },
+  mockSessionManager: {
+    list: vi.fn(),
+    kill: vi.fn(),
+    cleanup: vi.fn(),
+    get: vi.fn(),
+    spawn: vi.fn(),
+    spawnOrchestrator: vi.fn(),
+    send: vi.fn(),
+    claimPR: vi.fn(),
+  },
+  mockWaitForPortAndOpen: vi.fn().mockResolvedValue(undefined),
+  mockSpawn: vi.fn(),
+  mockRegistry: {},
+  mockLifecycleManager: { start: vi.fn(), stop: vi.fn() },
+  mockEnsureLifecycleWorker: vi.fn(),
+  mockStopLifecycleWorker: vi.fn(),
+}));
 
 vi.mock("../../src/lib/shell.js", () => ({
   tmux: vi.fn(),
@@ -59,8 +71,17 @@ vi.mock("ora", () => ({
 vi.mock("@composio/ao-core", async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const actual = await importOriginal<typeof import("@composio/ao-core")>();
+  const normalizeOrchestratorSessionStrategy =
+    actual.normalizeOrchestratorSessionStrategy ??
+    ((strategy: string | undefined) => {
+      if (strategy === "kill-previous" || strategy === "delete-new") return "delete";
+      if (strategy === "ignore-new") return "ignore";
+      return strategy ?? "reuse";
+    });
+
   return {
     ...actual,
+    normalizeOrchestratorSessionStrategy,
     loadConfig: (path?: string) => {
       if (path) return actual.loadConfig(path);
       return mockConfigRef.current;
@@ -72,6 +93,11 @@ vi.mock("@composio/ao-core", async (importOriginal) => {
 vi.mock("../../src/lib/create-session-manager.js", () => ({
   getSessionManager: async (): Promise<SessionManager> => mockSessionManager as SessionManager,
   getRegistry: async () => mockRegistry,
+}));
+
+vi.mock("../../src/lib/lifecycle-service.js", () => ({
+  ensureLifecycleWorker: (...args: unknown[]) => mockEnsureLifecycleWorker(...args),
+  stopLifecycleWorker: (...args: unknown[]) => mockStopLifecycleWorker(...args),
 }));
 
 vi.mock("../../src/lib/web-dir.js", () => ({
@@ -144,6 +170,16 @@ beforeEach(() => {
   mockExecSilent.mockResolvedValue(null);
   mockWaitForPortAndOpen.mockReset();
   mockWaitForPortAndOpen.mockResolvedValue(undefined);
+  mockEnsureLifecycleWorker.mockReset();
+  mockEnsureLifecycleWorker.mockResolvedValue({
+    running: true,
+    started: true,
+    pid: 12345,
+    pidFile: "/tmp/lifecycle-worker.pid",
+    logFile: "/tmp/lifecycle-worker.log",
+  });
+  mockStopLifecycleWorker.mockReset();
+  mockStopLifecycleWorker.mockResolvedValue(true);
   mockSpawn.mockClear();
 });
 
@@ -195,10 +231,7 @@ function createFakeRepo(dir: string, remoteUrl: string, files?: Record<string, s
   mkdirSync(join(dir, ".git", "refs", "remotes", "origin"), { recursive: true });
   writeFileSync(join(dir, ".git", "HEAD"), "ref: refs/heads/main\n");
   writeFileSync(join(dir, ".git", "refs", "remotes", "origin", "main"), "abc\n");
-  writeFileSync(
-    join(dir, ".git", "config"),
-    `[remote "origin"]\n\turl = ${remoteUrl}\n`,
-  );
+  writeFileSync(join(dir, ".git", "config"), `[remote "origin"]\n\turl = ${remoteUrl}\n`);
   if (files) {
     for (const [name, content] of Object.entries(files)) {
       writeFileSync(join(dir, name), content);
@@ -216,7 +249,10 @@ describe("start command — project resolution", () => {
 
     await program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]);
 
-    const output = vi.mocked(console.log).mock.calls.map((c) => c.join(" ")).join("\n");
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
     expect(output).toContain("My App");
     expect(output).toContain("Startup complete");
   });
@@ -236,7 +272,10 @@ describe("start command — project resolution", () => {
       "--no-orchestrator",
     ]);
 
-    const output = vi.mocked(console.log).mock.calls.map((c) => c.join(" ")).join("\n");
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
     expect(output).toContain("Backend");
   });
 
@@ -254,7 +293,10 @@ describe("start command — project resolution", () => {
       ]),
     ).rejects.toThrow("process.exit(1)");
 
-    const errors = vi.mocked(console.error).mock.calls.map((c) => c.join(" ")).join("\n");
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
     expect(errors).toContain("not found");
   });
 
@@ -268,7 +310,10 @@ describe("start command — project resolution", () => {
       program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]),
     ).rejects.toThrow("process.exit(1)");
 
-    const errors = vi.mocked(console.error).mock.calls.map((c) => c.join(" ")).join("\n");
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
     expect(errors).toContain("Multiple projects");
   });
 
@@ -279,7 +324,10 @@ describe("start command — project resolution", () => {
       program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]),
     ).rejects.toThrow("process.exit(1)");
 
-    const errors = vi.mocked(console.error).mock.calls.map((c) => c.join(" ")).join("\n");
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
     expect(errors).toContain("No projects configured");
   });
 });
@@ -309,7 +357,10 @@ describe("start command — URL argument", () => {
     // Config should have been generated
     expect(existsSync(join(repoDir, "agent-orchestrator.yaml"))).toBe(true);
 
-    const output = vi.mocked(console.log).mock.calls.map((c) => c.join(" ")).join("\n");
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
     expect(output).toContain("Reusing existing clone");
     expect(output).toContain("Startup complete");
   });
@@ -346,7 +397,10 @@ describe("start command — URL argument", () => {
       expect.anything(),
     );
 
-    const output = vi.mocked(console.log).mock.calls.map((c) => c.join(" ")).join("\n");
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
     expect(output).toContain("Startup complete");
   });
 
@@ -393,7 +447,10 @@ describe("start command — URL argument", () => {
       expect.anything(),
     );
 
-    const output = vi.mocked(console.log).mock.calls.map((c) => c.join(" ")).join("\n");
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
     expect(output).toContain("Startup complete");
   });
 
@@ -430,7 +487,10 @@ describe("start command — URL argument", () => {
       "--no-orchestrator",
     ]);
 
-    const output = vi.mocked(console.log).mock.calls.map((c) => c.join(" ")).join("\n");
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
     expect(output).toContain("Using existing config");
     expect(output).toContain("Configured App");
   });
@@ -474,7 +534,10 @@ describe("start command — URL argument", () => {
       "--no-orchestrator",
     ]);
 
-    const output = vi.mocked(console.log).mock.calls.map((c) => c.join(" ")).join("\n");
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
     // Should pick "Multi Proj" by matching repo field, not error with "Multiple projects"
     expect(output).toContain("Multi Proj");
     expect(output).toContain("Startup complete");
@@ -495,7 +558,10 @@ describe("start command — URL argument", () => {
       ]),
     ).rejects.toThrow("process.exit(1)");
 
-    const errors = vi.mocked(console.error).mock.calls.map((c) => c.join(" ")).join("\n");
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
     expect(errors).toContain("Failed to clone");
   });
 });
@@ -528,15 +594,112 @@ describe("start command — browser open waits for port", () => {
     expect(port).toBe(3000);
     expect(url).toContain("/sessions/app-orchestrator");
     expect(signal).toBeInstanceOf(AbortSignal);
+    expect(mockEnsureLifecycleWorker).toHaveBeenCalledWith(
+      expect.objectContaining({ configPath: expect.any(String) }),
+      "my-app",
+    );
   });
 
-  it("skips browser open with --no-dashboard", async () => {
+  it("skips browser open and lifecycle with --no-dashboard --no-orchestrator", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
 
     await program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]);
 
     expect(mockWaitForPortAndOpen).not.toHaveBeenCalled();
+    expect(mockEnsureLifecycleWorker).not.toHaveBeenCalled();
   });
+
+  it("skips browser open but still starts lifecycle with --no-dashboard alone", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    mockSessionManager.get.mockResolvedValue(null);
+    mockSessionManager.spawnOrchestrator.mockResolvedValue({ id: "app-orchestrator" });
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
+
+    expect(mockWaitForPortAndOpen).not.toHaveBeenCalled();
+    expect(mockEnsureLifecycleWorker).toHaveBeenCalledWith(
+      expect.objectContaining({ configPath: expect.any(String) }),
+      "my-app",
+    );
+  });
+});
+
+describe("start command — orchestrator session strategy display", () => {
+  function getLoggedOutput(): string {
+    return vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+  }
+
+  it("shows reused messaging when strategy is reuse and metadata marks the session reused", async () => {
+    mockConfigRef.current = makeConfig({
+      "my-app": makeProject({ orchestratorSessionStrategy: "reuse" }),
+    });
+
+    mockSessionManager.get.mockResolvedValue({
+      id: "app-orchestrator",
+      runtimeHandle: { id: "tmux-session-1" },
+    });
+    mockSessionManager.spawnOrchestrator.mockResolvedValue({
+      id: "app-orchestrator",
+      runtimeHandle: { id: "tmux-session-1" },
+      metadata: { orchestratorSessionReused: "true" },
+    });
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
+
+    const output = getLoggedOutput();
+    expect(output).toContain("reused existing session (app-orchestrator)");
+    expect(output).not.toContain("tmux attach -t tmux-session-1");
+  });
+
+  it("falls back to attach messaging when strategy is reuse but metadata is missing", async () => {
+    mockConfigRef.current = makeConfig({
+      "my-app": makeProject({ orchestratorSessionStrategy: "reuse" }),
+    });
+
+    mockSessionManager.get.mockResolvedValue({
+      id: "app-orchestrator",
+      runtimeHandle: { id: "tmux-session-1" },
+    });
+    mockSessionManager.spawnOrchestrator.mockResolvedValue({
+      id: "app-orchestrator",
+      runtimeHandle: { id: "tmux-session-1" },
+    });
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
+
+    const output = getLoggedOutput();
+    expect(output).toContain("tmux attach -t tmux-session-1");
+    expect(output).not.toContain("reused existing session");
+  });
+
+  it.each(["delete", "ignore", "delete-new", "ignore-new", "kill-previous"] as const)(
+    "uses attach messaging when strategy is %s",
+    async (orchestratorSessionStrategy) => {
+      mockConfigRef.current = makeConfig({
+        "my-app": makeProject({ orchestratorSessionStrategy }),
+      });
+
+      mockSessionManager.get.mockResolvedValue({
+        id: "app-orchestrator",
+        runtimeHandle: { id: "tmux-session-1" },
+      });
+      mockSessionManager.spawnOrchestrator.mockResolvedValue({
+        id: "app-orchestrator",
+        runtimeHandle: { id: "tmux-session-1" },
+        metadata: { orchestratorSessionReused: "true" },
+      });
+
+      await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
+
+      const output = getLoggedOutput();
+      expect(output).toContain("tmux attach -t tmux-session-1");
+      expect(output).not.toContain("reused existing session");
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -552,8 +715,17 @@ describe("stop command", () => {
 
     await program.parseAsync(["node", "test", "stop"]);
 
-    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator");
-    const output = vi.mocked(console.log).mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator", {
+      purgeOpenCode: true,
+    });
+    expect(mockStopLifecycleWorker).toHaveBeenCalledWith(
+      expect.objectContaining({ configPath: expect.any(String) }),
+      "my-app",
+    );
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
     expect(output).toContain("Orchestrator stopped");
   });
 
@@ -565,7 +737,50 @@ describe("stop command", () => {
     await program.parseAsync(["node", "test", "stop"]);
 
     expect(mockSessionManager.kill).not.toHaveBeenCalled();
-    const output = vi.mocked(console.log).mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(mockStopLifecycleWorker).toHaveBeenCalledWith(
+      expect.objectContaining({ configPath: expect.any(String) }),
+      "my-app",
+    );
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
     expect(output).toContain("is not running");
+  });
+
+  it("defaults to purge OpenCode session when stopping orchestrator", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockSessionManager.get.mockResolvedValue({ id: "app-orchestrator", status: "running" });
+    mockSessionManager.kill.mockResolvedValue(undefined);
+
+    await program.parseAsync(["node", "test", "stop"]);
+
+    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator", {
+      purgeOpenCode: true,
+    });
+  });
+
+  it("keeps OpenCode session when stopping with --keep-session", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockSessionManager.get.mockResolvedValue({ id: "app-orchestrator", status: "running" });
+    mockSessionManager.kill.mockResolvedValue(undefined);
+
+    await program.parseAsync(["node", "test", "stop", "--keep-session"]);
+
+    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator", {
+      purgeOpenCode: false,
+    });
+  });
+
+  it("passes purge flag when stopping orchestrator with --purge-session", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockSessionManager.get.mockResolvedValue({ id: "app-orchestrator", status: "running" });
+    mockSessionManager.kill.mockResolvedValue(undefined);
+
+    await program.parseAsync(["node", "test", "stop", "--purge-session"]);
+
+    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator", {
+      purgeOpenCode: true,
+    });
   });
 });

@@ -5,11 +5,15 @@
  */
 
 import { execFile } from "node:child_process";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 import {
   CI_STATUS,
   type PluginModule,
   type SCM,
+  type SCMWebhookEvent,
+  type SCMWebhookRequest,
+  type SCMWebhookVerificationResult,
   type Session,
   type ProjectConfig,
   type PRInfo,
@@ -23,6 +27,12 @@ import {
   type AutomatedComment,
   type MergeReadiness,
 } from "@composio/ao-core";
+import {
+  getWebhookHeader,
+  parseWebhookBranchRef,
+  parseWebhookJsonObject,
+  parseWebhookTimestamp,
+} from "@composio/ao-core/scm-webhook-utils";
 
 const execFileAsync = promisify(execFile);
 
@@ -44,18 +54,381 @@ const BOT_AUTHORS = new Set([
 // Helpers
 // ---------------------------------------------------------------------------
 
-async function gh(args: string[]): Promise<string> {
+type ExecCommand = "gh" | "git";
+
+async function execCli(bin: ExecCommand, args: string[], cwd?: string): Promise<string> {
   try {
-    const { stdout } = await execFileAsync("gh", args, {
+    const { stdout } = await execFileAsync(bin, args, {
+      ...(cwd ? { cwd } : {}),
       maxBuffer: 10 * 1024 * 1024,
       timeout: 30_000,
     });
     return stdout.trim();
   } catch (err) {
-    throw new Error(`gh ${args.slice(0, 3).join(" ")} failed: ${(err as Error).message}`, {
+    throw new Error(`${bin} ${args.slice(0, 3).join(" ")} failed: ${(err as Error).message}`, {
       cause: err,
     });
   }
+}
+
+async function gh(args: string[]): Promise<string> {
+  return execCli("gh", args);
+}
+
+async function ghInDir(args: string[], cwd: string): Promise<string> {
+  return execCli("gh", args, cwd);
+}
+
+async function git(args: string[], cwd: string): Promise<string> {
+  return execCli("git", args, cwd);
+}
+
+function parseProjectRepo(projectRepo: string): [string, string] {
+  const parts = projectRepo.split("/");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    throw new Error(`Invalid repo format "${projectRepo}", expected "owner/repo"`);
+  }
+  return [parts[0], parts[1]];
+}
+
+function prInfoFromView(
+  data: {
+    number: number;
+    url: string;
+    title: string;
+    headRefName: string;
+    baseRefName: string;
+    isDraft: boolean;
+  },
+  projectRepo: string,
+): PRInfo {
+  const [owner, repo] = parseProjectRepo(projectRepo);
+
+  return {
+    number: data.number,
+    url: data.url,
+    title: data.title,
+    owner,
+    repo,
+    branch: data.headRefName,
+    baseBranch: data.baseRefName,
+    isDraft: data.isDraft,
+  };
+}
+
+function isUnsupportedPrChecksJsonError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return /pr checks/i.test(err.message) && /unknown json field/i.test(err.message);
+}
+
+function mapRawCheckStateToStatus(rawState: string | undefined): CICheck["status"] {
+  const state = (rawState ?? "").toUpperCase();
+  if (state === "IN_PROGRESS") return "running";
+  if (
+    state === "PENDING" ||
+    state === "QUEUED" ||
+    state === "REQUESTED" ||
+    state === "WAITING" ||
+    state === "EXPECTED"
+  ) {
+    return "pending";
+  }
+  if (state === "SUCCESS") return "passed";
+  if (
+    state === "FAILURE" ||
+    state === "TIMED_OUT" ||
+    state === "CANCELLED" ||
+    state === "ACTION_REQUIRED" ||
+    state === "ERROR"
+  ) {
+    return "failed";
+  }
+  if (
+    state === "SKIPPED" ||
+    state === "NEUTRAL" ||
+    state === "STALE" ||
+    state === "NOT_REQUIRED" ||
+    state === "NONE" ||
+    state === ""
+  ) {
+    return "skipped";
+  }
+
+  return "skipped";
+}
+
+async function getCIChecksFromStatusRollup(pr: PRInfo): Promise<CICheck[]> {
+  const raw = await gh([
+    "pr",
+    "view",
+    String(pr.number),
+    "--repo",
+    repoFlag(pr),
+    "--json",
+    "statusCheckRollup",
+  ]);
+
+  const data: { statusCheckRollup?: unknown[] } = JSON.parse(raw);
+  const rollup = Array.isArray(data.statusCheckRollup) ? data.statusCheckRollup : [];
+
+  return rollup
+    .map((entry): CICheck | null => {
+      if (!entry || typeof entry !== "object") return null;
+      const row = entry as Record<string, unknown>;
+      const name =
+        (typeof row["name"] === "string" && row["name"]) ||
+        (typeof row["context"] === "string" && row["context"]);
+      if (!name) return null;
+
+      const rawState =
+        typeof row["conclusion"] === "string"
+          ? row["conclusion"]
+          : typeof row["state"] === "string"
+            ? row["state"]
+            : typeof row["status"] === "string"
+              ? row["status"]
+              : undefined;
+
+      const url =
+        (typeof row["link"] === "string" && row["link"]) ||
+        (typeof row["detailsUrl"] === "string" && row["detailsUrl"]) ||
+        (typeof row["targetUrl"] === "string" && row["targetUrl"]) ||
+        undefined;
+
+      const startedAtRaw =
+        typeof row["startedAt"] === "string"
+          ? row["startedAt"]
+          : typeof row["createdAt"] === "string"
+            ? row["createdAt"]
+            : undefined;
+      const completedAtRaw =
+        typeof row["completedAt"] === "string" ? row["completedAt"] : undefined;
+
+      const check: CICheck = {
+        name,
+        status: mapRawCheckStateToStatus(rawState),
+        conclusion: typeof rawState === "string" ? rawState.toUpperCase() : undefined,
+        startedAt: startedAtRaw ? new Date(startedAtRaw) : undefined,
+        completedAt: completedAtRaw ? new Date(completedAtRaw) : undefined,
+      };
+
+      if (url) {
+        check.url = url;
+      }
+
+      return check;
+    })
+    .filter((check): check is CICheck => check !== null);
+}
+
+function getGitHubWebhookConfig(project: ProjectConfig) {
+  const webhook = project.scm?.webhook;
+  return {
+    enabled: webhook?.enabled !== false,
+    path: webhook?.path ?? "/api/webhooks/github",
+    secretEnvVar: webhook?.secretEnvVar,
+    signatureHeader: webhook?.signatureHeader ?? "x-hub-signature-256",
+    eventHeader: webhook?.eventHeader ?? "x-github-event",
+    deliveryHeader: webhook?.deliveryHeader ?? "x-github-delivery",
+    maxBodyBytes: webhook?.maxBodyBytes,
+  };
+}
+
+function verifyGitHubSignature(
+  body: string | Uint8Array,
+  secret: string,
+  signatureHeader: string,
+): boolean {
+  if (!signatureHeader.startsWith("sha256=")) return false;
+  const expected = createHmac("sha256", secret).update(body).digest("hex");
+  const provided = signatureHeader.slice("sha256=".length);
+  const expectedBuffer = Buffer.from(expected, "hex");
+  const providedBuffer = Buffer.from(provided, "hex");
+  if (expectedBuffer.length !== providedBuffer.length) return false;
+  return timingSafeEqual(expectedBuffer, providedBuffer);
+}
+
+function parseGitHubRepository(payload: Record<string, unknown>) {
+  const repository = payload["repository"];
+  if (!repository || typeof repository !== "object") return undefined;
+  const repo = repository as Record<string, unknown>;
+  const ownerValue = repo["owner"];
+  const ownerLogin =
+    ownerValue && typeof ownerValue === "object"
+      ? (ownerValue as Record<string, unknown>)["login"]
+      : undefined;
+  const owner = typeof ownerLogin === "string" ? ownerLogin : undefined;
+  const name = typeof repo["name"] === "string" ? repo["name"] : undefined;
+  if (!owner || !name) return undefined;
+  return { owner, name };
+}
+
+function parseGitHubWebhookEvent(
+  request: SCMWebhookRequest,
+  payload: Record<string, unknown>,
+  config: ReturnType<typeof getGitHubWebhookConfig>,
+): SCMWebhookEvent | null {
+  const rawEventType = getWebhookHeader(request.headers, config.eventHeader);
+  if (!rawEventType) return null;
+
+  const deliveryId = getWebhookHeader(request.headers, config.deliveryHeader);
+  const repository = parseGitHubRepository(payload);
+  const action = typeof payload["action"] === "string" ? payload["action"] : rawEventType;
+
+  if (rawEventType === "pull_request") {
+    const pullRequest = payload["pull_request"];
+    if (!pullRequest || typeof pullRequest !== "object") return null;
+    const pr = pullRequest as Record<string, unknown>;
+    const head = pr["head"] as Record<string, unknown> | undefined;
+    return {
+      provider: "github",
+      kind: "pull_request",
+      action,
+      rawEventType,
+      deliveryId,
+      repository,
+      prNumber:
+        typeof payload["number"] === "number"
+          ? (payload["number"] as number)
+          : typeof pr["number"] === "number"
+            ? (pr["number"] as number)
+            : undefined,
+      branch: typeof head?.["ref"] === "string" ? head["ref"] : undefined,
+      sha: typeof head?.["sha"] === "string" ? head["sha"] : undefined,
+      timestamp: parseWebhookTimestamp(pr["updated_at"]),
+      data: payload,
+    };
+  }
+
+  if (rawEventType === "pull_request_review" || rawEventType === "pull_request_review_comment") {
+    const pullRequest = payload["pull_request"];
+    if (!pullRequest || typeof pullRequest !== "object") return null;
+    const pr = pullRequest as Record<string, unknown>;
+    const head = pr["head"] as Record<string, unknown> | undefined;
+    return {
+      provider: "github",
+      kind: rawEventType === "pull_request_review" ? "review" : "comment",
+      action,
+      rawEventType,
+      deliveryId,
+      repository,
+      prNumber:
+        typeof payload["number"] === "number"
+          ? (payload["number"] as number)
+          : typeof pr["number"] === "number"
+            ? (pr["number"] as number)
+            : undefined,
+      branch: typeof head?.["ref"] === "string" ? head["ref"] : undefined,
+      sha: typeof head?.["sha"] === "string" ? head["sha"] : undefined,
+      timestamp:
+        rawEventType === "pull_request_review"
+          ? parseWebhookTimestamp(
+              (payload["review"] as Record<string, unknown> | undefined)?.["submitted_at"],
+            )
+          : parseWebhookTimestamp(
+              (payload["comment"] as Record<string, unknown> | undefined)?.["updated_at"] ??
+                (payload["comment"] as Record<string, unknown> | undefined)?.["created_at"],
+            ),
+      data: payload,
+    };
+  }
+
+  if (rawEventType === "issue_comment") {
+    const issue = payload["issue"];
+    if (!issue || typeof issue !== "object") return null;
+    const issueRecord = issue as Record<string, unknown>;
+    if (!("pull_request" in issueRecord)) return null;
+    return {
+      provider: "github",
+      kind: "comment",
+      action,
+      rawEventType,
+      deliveryId,
+      repository,
+      prNumber: typeof issueRecord["number"] === "number" ? issueRecord["number"] : undefined,
+      timestamp: parseWebhookTimestamp(
+        (payload["comment"] as Record<string, unknown> | undefined)?.["updated_at"] ??
+          (payload["comment"] as Record<string, unknown> | undefined)?.["created_at"],
+      ),
+      data: payload,
+    };
+  }
+
+  if (rawEventType === "check_run" || rawEventType === "check_suite") {
+    const check = payload[rawEventType] as Record<string, unknown> | undefined;
+    const pullRequests = Array.isArray(check?.["pull_requests"])
+      ? (check?.["pull_requests"] as Array<Record<string, unknown>>)
+      : [];
+    const firstPR = pullRequests[0];
+    return {
+      provider: "github",
+      kind: "ci",
+      action,
+      rawEventType,
+      deliveryId,
+      repository,
+      prNumber: typeof firstPR?.["number"] === "number" ? firstPR["number"] : undefined,
+      branch:
+        typeof check?.["head_branch"] === "string"
+          ? (check["head_branch"] as string)
+          : typeof (check?.["check_suite"] as Record<string, unknown> | undefined)?.[
+                "head_branch"
+              ] === "string"
+            ? ((check?.["check_suite"] as Record<string, unknown>)["head_branch"] as string)
+            : undefined,
+      sha: typeof check?.["head_sha"] === "string" ? (check["head_sha"] as string) : undefined,
+      timestamp: parseWebhookTimestamp(check?.["updated_at"]),
+      data: payload,
+    };
+  }
+
+  if (rawEventType === "status") {
+    const branches = Array.isArray(payload["branches"])
+      ? (payload["branches"] as Array<Record<string, unknown>>)
+      : [];
+    return {
+      provider: "github",
+      kind: "ci",
+      action: typeof payload["state"] === "string" ? (payload["state"] as string) : action,
+      rawEventType,
+      deliveryId,
+      repository,
+      branch: parseWebhookBranchRef(branches[0]?.["name"] ?? payload["ref"]),
+      sha: typeof payload["sha"] === "string" ? (payload["sha"] as string) : undefined,
+      timestamp: parseWebhookTimestamp(payload["updated_at"]),
+      data: payload,
+    };
+  }
+
+  if (rawEventType === "push") {
+    const headCommit =
+      payload["head_commit"] && typeof payload["head_commit"] === "object"
+        ? (payload["head_commit"] as Record<string, unknown>)
+        : undefined;
+    return {
+      provider: "github",
+      kind: "push",
+      action,
+      rawEventType,
+      deliveryId,
+      repository,
+      branch: parseWebhookBranchRef(payload["ref"]),
+      sha: typeof payload["after"] === "string" ? (payload["after"] as string) : undefined,
+      timestamp: parseWebhookTimestamp(headCommit?.["timestamp"] ?? payload["updated_at"]),
+      data: payload,
+    };
+  }
+
+  return {
+    provider: "github",
+    kind: "unknown",
+    action,
+    rawEventType,
+    deliveryId,
+    repository,
+    timestamp: parseWebhookTimestamp(payload["updated_at"]),
+    data: payload,
+  };
 }
 
 function repoFlag(pr: PRInfo): string {
@@ -76,14 +449,69 @@ function createGitHubSCM(): SCM {
   return {
     name: "github",
 
+    async verifyWebhook(
+      request: SCMWebhookRequest,
+      project: ProjectConfig,
+    ): Promise<SCMWebhookVerificationResult> {
+      const config = getGitHubWebhookConfig(project);
+      if (!config.enabled) {
+        return { ok: false, reason: "Webhook is disabled for this project" };
+      }
+      if (request.method.toUpperCase() !== "POST") {
+        return { ok: false, reason: "Webhook requests must use POST" };
+      }
+      if (
+        config.maxBodyBytes !== undefined &&
+        Buffer.byteLength(request.body, "utf8") > config.maxBodyBytes
+      ) {
+        return { ok: false, reason: "Webhook payload exceeds configured maxBodyBytes" };
+      }
+
+      const eventType = getWebhookHeader(request.headers, config.eventHeader);
+      if (!eventType) {
+        return { ok: false, reason: `Missing ${config.eventHeader} header` };
+      }
+
+      const deliveryId = getWebhookHeader(request.headers, config.deliveryHeader);
+      const secretName = config.secretEnvVar;
+      if (!secretName) {
+        return { ok: true, deliveryId, eventType };
+      }
+
+      const secret = process.env[secretName];
+      if (!secret) {
+        return { ok: false, reason: `Webhook secret env var ${secretName} is not configured` };
+      }
+
+      const signature = getWebhookHeader(request.headers, config.signatureHeader);
+      if (!signature) {
+        return { ok: false, reason: `Missing ${config.signatureHeader} header` };
+      }
+
+      if (!verifyGitHubSignature(request.rawBody ?? request.body, secret, signature)) {
+        return {
+          ok: false,
+          reason: "Webhook signature verification failed",
+          deliveryId,
+          eventType,
+        };
+      }
+
+      return { ok: true, deliveryId, eventType };
+    },
+
+    async parseWebhook(
+      request: SCMWebhookRequest,
+      project: ProjectConfig,
+    ): Promise<SCMWebhookEvent | null> {
+      const config = getGitHubWebhookConfig(project);
+      const payload = parseWebhookJsonObject(request.body);
+      return parseGitHubWebhookEvent(request, payload, config);
+    },
+
     async detectPR(session: Session, project: ProjectConfig): Promise<PRInfo | null> {
       if (!session.branch) return null;
-
-      const parts = project.repo.split("/");
-      if (parts.length !== 2 || !parts[0] || !parts[1]) {
-        throw new Error(`Invalid repo format "${project.repo}", expected "owner/repo"`);
-      }
-      const [owner, repo] = parts;
+      parseProjectRepo(project.repo);
       try {
         const raw = await gh([
           "pr",
@@ -109,20 +537,52 @@ function createGitHubSCM(): SCM {
 
         if (prs.length === 0) return null;
 
-        const pr = prs[0];
-        return {
-          number: pr.number,
-          url: pr.url,
-          title: pr.title,
-          owner,
-          repo,
-          branch: pr.headRefName,
-          baseBranch: pr.baseRefName,
-          isDraft: pr.isDraft,
-        };
+        return prInfoFromView(prs[0], project.repo);
       } catch {
         return null;
       }
+    },
+
+    async resolvePR(reference: string, project: ProjectConfig): Promise<PRInfo> {
+      const raw = await gh([
+        "pr",
+        "view",
+        reference,
+        "--repo",
+        project.repo,
+        "--json",
+        "number,url,title,headRefName,baseRefName,isDraft",
+      ]);
+
+      const data: {
+        number: number;
+        url: string;
+        title: string;
+        headRefName: string;
+        baseRefName: string;
+        isDraft: boolean;
+      } = JSON.parse(raw);
+
+      return prInfoFromView(data, project.repo);
+    },
+
+    async assignPRToCurrentUser(pr: PRInfo): Promise<void> {
+      await gh(["pr", "edit", String(pr.number), "--repo", repoFlag(pr), "--add-assignee", "@me"]);
+    },
+
+    async checkoutPR(pr: PRInfo, workspacePath: string): Promise<boolean> {
+      const currentBranch = await git(["branch", "--show-current"], workspacePath);
+      if (currentBranch === pr.branch) return false;
+
+      const dirty = await git(["status", "--porcelain"], workspacePath);
+      if (dirty) {
+        throw new Error(
+          `Workspace has uncommitted changes; cannot switch to PR branch "${pr.branch}" safely`,
+        );
+      }
+
+      await ghInDir(["pr", "checkout", String(pr.number), "--repo", repoFlag(pr)], workspacePath);
+      return true;
     },
 
     async getPRState(pr: PRInfo): Promise<PRState> {
@@ -199,43 +659,21 @@ function createGitHubSCM(): SCM {
         }> = JSON.parse(raw);
 
         return checks.map((c) => {
-          let status: CICheck["status"];
           const state = c.state?.toUpperCase();
-
-          // gh pr checks returns state directly: SUCCESS, FAILURE, PENDING, QUEUED, etc.
-          if (state === "PENDING" || state === "QUEUED") {
-            status = "pending";
-          } else if (state === "IN_PROGRESS") {
-            status = "running";
-          } else if (state === "SUCCESS") {
-            status = "passed";
-          } else if (
-            state === "FAILURE" ||
-            state === "TIMED_OUT" ||
-            state === "CANCELLED" ||
-            state === "ACTION_REQUIRED"
-          ) {
-            status = "failed";
-          } else if (state === "SKIPPED" || state === "NEUTRAL") {
-            status = "skipped";
-          } else {
-            // Unknown state on a check — fail closed for safety
-            status = "failed";
-          }
 
           return {
             name: c.name,
-            status,
+            status: mapRawCheckStateToStatus(state),
             url: c.link || undefined,
-            conclusion: state || undefined, // Store original state for debugging
+            conclusion: state || undefined,
             startedAt: c.startedAt ? new Date(c.startedAt) : undefined,
             completedAt: c.completedAt ? new Date(c.completedAt) : undefined,
           };
         });
       } catch (err) {
-        // Propagate so callers (getCISummary) can decide how to handle.
-        // Do NOT silently return [] — that causes a fail-open where CI
-        // appears healthy when we simply failed to fetch check status.
+        if (isUnsupportedPrChecksJsonError(err)) {
+          return getCIChecksFromStatusRollup(pr);
+        }
         throw new Error("Failed to fetch CI checks", { cause: err });
       }
     },
@@ -415,8 +853,8 @@ function createGitHubSCM(): SCM {
               url: c.url,
             };
           });
-      } catch {
-        return [];
+      } catch (err) {
+        throw new Error("Failed to fetch pending comments", { cause: err });
       }
     },
 
@@ -473,8 +911,8 @@ function createGitHubSCM(): SCM {
               url: c.html_url,
             };
           });
-      } catch {
-        return [];
+      } catch (err) {
+        throw new Error("Failed to fetch automated comments", { cause: err });
       }
     },
 

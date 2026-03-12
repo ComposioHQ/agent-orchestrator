@@ -36,6 +36,17 @@ projects:
     #   plugin: linear
     #   teamId: "your-team-id"
 
+    # SCM webhook acceleration (optional)
+    # scm:
+    #   plugin: github
+    #   webhook:
+    #     path: /api/webhooks/github
+    #     secretEnvVar: GITHUB_WEBHOOK_SECRET
+    #     signatureHeader: x-hub-signature-256
+    #     eventHeader: x-github-event
+    #     deliveryHeader: x-github-delivery
+    #     maxBodyBytes: 1048576
+
     # Files to symlink into workspaces
     # symlinks: [.env, .claude]
 
@@ -59,6 +70,9 @@ projects:
     # Rules for the orchestrator agent (reserved for future use)
     # orchestratorRules: |
     #   Prefer to batch-spawn related issues together.
+
+    # OpenCode issue session strategy (only for agent: opencode)
+    # opencodeIssueSessionStrategy: reuse   # reuse | delete | ignore
 
     # Per-project reaction overrides
     # reactions:

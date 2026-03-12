@@ -19,6 +19,42 @@ interface DirectTerminalProps {
   /** CSS height for the terminal container in normal (non-fullscreen) mode.
    *  Defaults to "max(440px, calc(100vh - 440px))". */
   height?: string;
+  isOpenCodeSession?: boolean;
+  reloadCommand?: string;
+}
+
+interface DirectTerminalLocation {
+  protocol: string;
+  hostname: string;
+  host: string;
+  port: string;
+}
+
+interface DirectTerminalWsUrlOptions {
+  location: DirectTerminalLocation;
+  sessionId: string;
+  proxyWsPath?: string;
+  directTerminalPort?: string;
+}
+
+export function buildDirectTerminalWsUrl({
+  location,
+  sessionId,
+  proxyWsPath,
+  directTerminalPort,
+}: DirectTerminalWsUrlOptions): string {
+  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  if (proxyWsPath) {
+    // Path-based proxy uses host so non-standard ports are preserved.
+    return `${protocol}//${location.host}${proxyWsPath}?session=${encodeURIComponent(sessionId)}`;
+  }
+
+  if (location.port === "" || location.port === "443" || location.port === "80") {
+    return `${protocol}//${location.hostname}/ao-terminal-ws?session=${encodeURIComponent(sessionId)}`;
+  }
+
+  const port = directTerminalPort ?? "14801";
+  return `${protocol}//${location.hostname}:${port}/ws?session=${encodeURIComponent(sessionId)}`;
 }
 
 /**
@@ -36,6 +72,8 @@ export function DirectTerminal({
   startFullscreen = false,
   variant = "agent",
   height = "max(440px, calc(100vh - 440px))",
+  isOpenCodeSession = false,
+  reloadCommand,
 }: DirectTerminalProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -51,6 +89,8 @@ export function DirectTerminal({
   const [fullscreen, setFullscreen] = useState(startFullscreen);
   const [status, setStatus] = useState<"connecting" | "connected" | "error">("connecting");
   const [error, setError] = useState<string | null>(null);
+  const [reloading, setReloading] = useState(false);
+  const [reloadError, setReloadError] = useState<string | null>(null);
 
   // Update URL when fullscreen changes
   useEffect(() => {
@@ -65,6 +105,45 @@ export function DirectTerminal({
     const newUrl = params.toString() ? `${pathname}?${params.toString()}` : pathname;
     router.replace(newUrl, { scroll: false });
   }, [fullscreen, pathname, router, searchParams]);
+
+  async function handleReload(): Promise<void> {
+    if (!isOpenCodeSession || reloading) return;
+    setReloadError(null);
+    setReloading(true);
+    try {
+      let commandToSend = reloadCommand;
+
+      if (!commandToSend) {
+        const remapRes = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/remap`, {
+          method: "POST",
+        });
+        if (!remapRes.ok) {
+          throw new Error(`Failed to remap OpenCode session: ${remapRes.status}`);
+        }
+        const remapData = (await remapRes.json()) as { opencodeSessionId?: unknown };
+        if (
+          typeof remapData.opencodeSessionId !== "string" ||
+          remapData.opencodeSessionId.length === 0
+        ) {
+          throw new Error("Missing OpenCode session id after remap");
+        }
+        commandToSend = `/exit\nopencode --session ${remapData.opencodeSessionId}\n`;
+      }
+
+      const sendRes = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: commandToSend }),
+      });
+      if (!sendRes.ok) {
+        throw new Error(`Failed to send reload command: ${sendRes.status}`);
+      }
+    } catch (err) {
+      setReloadError(err instanceof Error ? err.message : "Failed to reload OpenCode session");
+    } finally {
+      setReloading(false);
+    }
+  }
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -93,9 +172,7 @@ export function DirectTerminal({
         // agent = blue (#5b7ef8), orchestrator = violet (#a371f7)
         const cursorColor = variant === "orchestrator" ? "#a371f7" : "#5b7ef8";
         const selectionColor =
-          variant === "orchestrator"
-            ? "rgba(163, 113, 247, 0.25)"
-            : "rgba(91, 126, 248, 0.3)";
+          variant === "orchestrator" ? "rgba(163, 113, 247, 0.25)" : "rgba(91, 126, 248, 0.3)";
 
         // Initialize xterm.js Terminal
         const terminal = new Terminal({
@@ -109,22 +186,22 @@ export function DirectTerminal({
             cursorAccent: "#0a0a0f",
             selectionBackground: selectionColor,
             // ANSI colors — slightly warmer than pure defaults
-            black:         "#1a1a24",
-            red:           "#ef4444",
-            green:         "#22c55e",
-            yellow:        "#f59e0b",
-            blue:          "#5b7ef8",
-            magenta:       "#a371f7",
-            cyan:          "#22d3ee",
-            white:         "#d4d4d8",
-            brightBlack:   "#50506a",
-            brightRed:     "#f87171",
-            brightGreen:   "#4ade80",
-            brightYellow:  "#fbbf24",
-            brightBlue:    "#7b9cfb",
+            black: "#1a1a24",
+            red: "#ef4444",
+            green: "#22c55e",
+            yellow: "#f59e0b",
+            blue: "#5b7ef8",
+            magenta: "#a371f7",
+            cyan: "#22d3ee",
+            white: "#d4d4d8",
+            brightBlack: "#50506a",
+            brightRed: "#f87171",
+            brightGreen: "#4ade80",
+            brightYellow: "#fbbf24",
+            brightBlue: "#7b9cfb",
             brightMagenta: "#c084fc",
-            brightCyan:    "#67e8f9",
-            brightWhite:   "#eeeef5",
+            brightCyan: "#67e8f9",
+            brightWhite: "#eeeef5",
           },
           scrollback: 10000,
           allowProposedApi: true,
@@ -184,10 +261,14 @@ export function DirectTerminal({
         fit.fit();
 
         // WebSocket URL (stable across reconnects)
-        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-        const hostname = window.location.hostname;
-        const port = process.env.NEXT_PUBLIC_DIRECT_TERMINAL_PORT ?? "14801";
-        const wsUrl = `${protocol}//${hostname}:${port}/ws?session=${encodeURIComponent(sessionId)}`;
+        // When accessed via reverse proxy (HTTPS on standard port), use path-based
+        // WebSocket endpoint instead of direct port access.
+        const wsUrl = buildDirectTerminalWsUrl({
+          location: window.location,
+          sessionId,
+          proxyWsPath: process.env.NEXT_PUBLIC_TERMINAL_WS_PATH,
+          directTerminalPort: process.env.NEXT_PUBLIC_DIRECT_TERMINAL_PORT,
+        });
 
         // ── Preserve selection while terminal receives output ────────
         // xterm.js clears the selection on every terminal.write(). We
@@ -201,7 +282,10 @@ export function DirectTerminal({
         const MAX_BUFFER_BYTES = 1_048_576; // 1 MB
 
         const flushWriteBuffer = () => {
-          if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null; }
+          if (safetyTimer) {
+            clearTimeout(safetyTimer);
+            safetyTimer = null;
+          }
           if (writeBuffer.length > 0) {
             terminal.write(writeBuffer.join(""));
             writeBuffer.length = 0;
@@ -464,7 +548,8 @@ export function DirectTerminal({
     };
   }, [fullscreen]);
 
-  const accentColor = variant === "orchestrator" ? "var(--color-accent-violet)" : "var(--color-accent)";
+  const accentColor =
+    variant === "orchestrator" ? "var(--color-accent-violet)" : "var(--color-accent)";
 
   const statusDotClass =
     status === "connected"
@@ -474,11 +559,7 @@ export function DirectTerminal({
         : "bg-[var(--color-status-attention)] animate-[pulse_1.5s_ease-in-out_infinite]";
 
   const statusText =
-    status === "connected"
-      ? "Connected"
-      : status === "error"
-        ? (error ?? "Error")
-        : "Connecting…";
+    status === "connected" ? "Connected" : status === "error" ? (error ?? "Error") : "Connecting…";
 
   const statusTextColor =
     status === "connected"
@@ -498,13 +579,12 @@ export function DirectTerminal({
       {/* Terminal chrome bar */}
       <div className="flex items-center gap-2 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] px-3 py-2">
         <div className={cn("h-2 w-2 shrink-0 rounded-full", statusDotClass)} />
-        <span
-          className="font-[var(--font-mono)] text-[11px]"
-          style={{ color: accentColor }}
-        >
+        <span className="font-[var(--font-mono)] text-[11px]" style={{ color: accentColor }}>
           {sessionId}
         </span>
-        <span className={cn("text-[10px] font-medium uppercase tracking-[0.06em]", statusTextColor)}>
+        <span
+          className={cn("text-[10px] font-medium uppercase tracking-[0.06em]", statusTextColor)}
+        >
           {statusText}
         </span>
         {/* XDA clipboard badge */}
@@ -517,20 +597,81 @@ export function DirectTerminal({
         >
           XDA
         </span>
+        {isOpenCodeSession ? (
+          <button
+            onClick={handleReload}
+            disabled={reloading || status !== "connected"}
+            title="Restart OpenCode session (/exit then resume mapped session)"
+            aria-label="Restart OpenCode session"
+            className="ml-auto flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)] disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {reloading ? (
+              <>
+                <svg
+                  className="h-3 w-3 animate-spin"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  viewBox="0 0 24 24"
+                >
+                  <path d="M12 3a9 9 0 109 9" />
+                </svg>
+                restarting
+              </>
+            ) : (
+              <>
+                <svg
+                  className="h-3 w-3"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  viewBox="0 0 24 24"
+                >
+                  <path d="M21 12a9 9 0 11-2.64-6.36" />
+                  <path d="M21 3v6h-6" />
+                </svg>
+                restart
+              </>
+            )}
+          </button>
+        ) : null}
+        {reloadError ? (
+          <span
+            className="max-w-[40ch] truncate text-[10px] font-medium text-[var(--color-status-error)]"
+            title={reloadError}
+          >
+            {reloadError}
+          </span>
+        ) : null}
         <button
           onClick={() => setFullscreen(!fullscreen)}
-          className="ml-auto flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]"
+          className={cn(
+            "flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]",
+            !isOpenCodeSession && "ml-auto",
+          )}
         >
           {fullscreen ? (
             <>
-              <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <svg
+                className="h-3 w-3"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                viewBox="0 0 24 24"
+              >
                 <path d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3" />
               </svg>
               exit fullscreen
             </>
           ) : (
             <>
-              <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <svg
+                className="h-3 w-3"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                viewBox="0 0 24 24"
+              >
                 <path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3" />
               </svg>
               fullscreen

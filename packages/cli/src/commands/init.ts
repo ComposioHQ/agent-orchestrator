@@ -147,10 +147,7 @@ export function registerInit(program: Command): void {
     .description("Interactive setup wizard — creates agent-orchestrator.yaml")
     .option("-o, --output <path>", "Output file path", "agent-orchestrator.yaml")
     .option("--auto", "Auto-generate config with sensible defaults (no prompts)")
-    .option(
-      "--smart",
-      "Analyze project and generate custom rules (coming soon — requires --auto)",
-    )
+    .option("--smart", "Analyze project and generate custom rules (coming soon — requires --auto)")
     .action(async (opts: { output: string; auto?: boolean; smart?: boolean }) => {
       const outputPath = resolve(opts.output);
 
@@ -260,7 +257,11 @@ export function registerInit(program: Command): void {
         // Default plugins
         console.log(chalk.bold("\n  Default Plugins\n"));
         const runtime = await prompt(rl, "Runtime (tmux, process)", "tmux");
-        const agent = await prompt(rl, "Agent (claude-code, codex, aider)", "claude-code");
+        const agent = await prompt(
+          rl,
+          "Agent (claude-code, codex, aider, opencode)",
+          "claude-code",
+        );
         const workspace = await prompt(rl, "Workspace (worktree, clone)", "worktree");
         const notifiersStr = await prompt(
           rl,

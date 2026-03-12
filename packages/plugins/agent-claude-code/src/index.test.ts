@@ -149,8 +149,20 @@ describe("getLaunchCommand", () => {
     expect(cmd).not.toContain("unset");
   });
 
-  it("includes --dangerously-skip-permissions when permissions=skip", () => {
-    const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "skip" }));
+  it("includes --dangerously-skip-permissions when permissions=permissionless", () => {
+    const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "permissionless" }));
+    expect(cmd).toContain("--dangerously-skip-permissions");
+  });
+
+  it("treats legacy permissions=skip as permissionless", () => {
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({ permissions: "skip" as unknown as AgentLaunchConfig["permissions"] }),
+    );
+    expect(cmd).toContain("--dangerously-skip-permissions");
+  });
+
+  it("maps permissions=auto-edit to no-prompt mode on Claude", () => {
+    const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "auto-edit" }));
     expect(cmd).toContain("--dangerously-skip-permissions");
   });
 
@@ -167,7 +179,7 @@ describe("getLaunchCommand", () => {
 
   it("combines all options without prompt", () => {
     const cmd = agent.getLaunchCommand(
-      makeLaunchConfig({ permissions: "skip", model: "opus", prompt: "Hello" }),
+      makeLaunchConfig({ permissions: "permissionless", model: "opus", prompt: "Hello" }),
     );
     expect(cmd).toBe("claude --dangerously-skip-permissions --model 'opus'");
   });
@@ -658,4 +670,3 @@ describe("getSessionInfo", () => {
     });
   });
 });
-

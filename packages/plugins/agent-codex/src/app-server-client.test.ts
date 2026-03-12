@@ -212,7 +212,7 @@ describe("CodexAppServerClient", () => {
       const params = initReq!["params"] as Record<string, unknown>;
       const clientInfo = params["clientInfo"] as Record<string, unknown>;
       expect(clientInfo["name"]).toBe("ao-agent-codex");
-      expect(clientInfo["version"]).toBe("0.1.0");
+      expect(clientInfo["version"]).toBe("0.1.1");
 
       await closeClient(client, proc);
     });

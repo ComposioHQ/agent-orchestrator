@@ -31,17 +31,21 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
   { slot: "agent", name: "claude-code", pkg: "@composio/ao-plugin-agent-claude-code" },
   { slot: "agent", name: "codex", pkg: "@composio/ao-plugin-agent-codex" },
   { slot: "agent", name: "aider", pkg: "@composio/ao-plugin-agent-aider" },
+  { slot: "agent", name: "opencode", pkg: "@composio/ao-plugin-agent-opencode" },
   // Workspaces
   { slot: "workspace", name: "worktree", pkg: "@composio/ao-plugin-workspace-worktree" },
   { slot: "workspace", name: "clone", pkg: "@composio/ao-plugin-workspace-clone" },
   // Trackers
   { slot: "tracker", name: "github", pkg: "@composio/ao-plugin-tracker-github" },
   { slot: "tracker", name: "linear", pkg: "@composio/ao-plugin-tracker-linear" },
+  { slot: "tracker", name: "gitlab", pkg: "@composio/ao-plugin-tracker-gitlab" },
   // SCM
   { slot: "scm", name: "github", pkg: "@composio/ao-plugin-scm-github" },
+  { slot: "scm", name: "gitlab", pkg: "@composio/ao-plugin-scm-gitlab" },
   // Notifiers
   { slot: "notifier", name: "composio", pkg: "@composio/ao-plugin-notifier-composio" },
   { slot: "notifier", name: "desktop", pkg: "@composio/ao-plugin-notifier-desktop" },
+  { slot: "notifier", name: "openclaw", pkg: "@composio/ao-plugin-notifier-openclaw" },
   { slot: "notifier", name: "slack", pkg: "@composio/ao-plugin-notifier-slack" },
   { slot: "notifier", name: "webhook", pkg: "@composio/ao-plugin-notifier-webhook" },
   // Terminals
@@ -51,11 +55,25 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
 
 /** Extract plugin-specific config from orchestrator config */
 function extractPluginConfig(
-  _slot: PluginSlot,
-  _name: string,
-  _config: OrchestratorConfig,
+  slot: PluginSlot,
+  name: string,
+  config: OrchestratorConfig,
 ): Record<string, unknown> | undefined {
-  // Reserved for future plugin-specific config mapping
+  // Notifiers are configured under config.notifiers.<id>.
+  // Match by key (e.g. "openclaw") or explicit plugin field.
+  if (slot === "notifier") {
+    for (const [notifierName, notifierConfig] of Object.entries(config.notifiers ?? {})) {
+      if (!notifierConfig || typeof notifierConfig !== "object") continue;
+      const configuredPlugin = (notifierConfig as Record<string, unknown>)["plugin"];
+      const hasExplicitPlugin = typeof configuredPlugin === "string" && configuredPlugin.length > 0;
+      const matches = hasExplicitPlugin ? configuredPlugin === name : notifierName === name;
+      if (matches) {
+        const { plugin: _plugin, ...rest } = notifierConfig as Record<string, unknown>;
+        return rest;
+      }
+    }
+  }
+
   return undefined;
 }
 

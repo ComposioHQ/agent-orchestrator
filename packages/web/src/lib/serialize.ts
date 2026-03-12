@@ -5,17 +5,23 @@
  * (string dates, flattened DashboardPR) suitable for JSON serialization.
  */
 
-import type {
-  Session,
-  Agent,
-  SCM,
-  PRInfo,
-  Tracker,
-  ProjectConfig,
-  OrchestratorConfig,
-  PluginRegistry,
+import {
+  isOrchestratorSession,
+  type Session,
+  type Agent,
+  type SCM,
+  type PRInfo,
+  type Tracker,
+  type ProjectConfig,
+  type OrchestratorConfig,
+  type PluginRegistry,
 } from "@composio/ao-core";
-import type { DashboardSession, DashboardPR, DashboardStats } from "./types.js";
+import type {
+  DashboardSession,
+  DashboardPR,
+  DashboardStats,
+  DashboardOrchestratorLink,
+} from "./types.js";
 import { TTLCache, prCache, prCacheKey, type PREnrichmentData } from "./cache";
 
 /** Cache for issue titles (5 min TTL — issue titles rarely change) */
@@ -55,14 +61,26 @@ export function sessionToDashboard(session: Session): DashboardSession {
     issueLabel: null, // Will be enriched by enrichSessionIssue()
     issueTitle: null, // Will be enriched by enrichSessionIssueTitle()
     summary,
-    summaryIsFallback: agentSummary
-      ? (session.agentInfo?.summaryIsFallback ?? false)
-      : false,
+    summaryIsFallback: agentSummary ? (session.agentInfo?.summaryIsFallback ?? false) : false,
     createdAt: session.createdAt.toISOString(),
     lastActivityAt: session.lastActivityAt.toISOString(),
     pr: session.pr ? basicPRToDashboard(session.pr) : null,
     metadata: session.metadata,
   };
+}
+
+export function listDashboardOrchestrators(
+  sessions: Session[],
+  projects: Record<string, ProjectConfig>,
+): DashboardOrchestratorLink[] {
+  return sessions
+    .filter((session) => isOrchestratorSession(session))
+    .map((session) => ({
+      id: session.id,
+      projectId: session.projectId,
+      projectName: projects[session.projectId]?.name ?? session.projectId,
+    }))
+    .sort((a, b) => a.projectName.localeCompare(b.projectName) || a.id.localeCompare(b.id));
 }
 
 /**

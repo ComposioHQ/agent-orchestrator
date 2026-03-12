@@ -22,7 +22,6 @@
 import {
   readFileSync,
   writeFileSync,
-  renameSync,
   existsSync,
   mkdirSync,
   unlinkSync,
@@ -34,25 +33,8 @@ import {
 } from "node:fs";
 import { join, dirname } from "node:path";
 import type { SessionId, SessionMetadata } from "./types.js";
-
-/**
- * Parse a key=value metadata file into a record.
- * Lines starting with # are comments. Empty lines are skipped.
- * Only the first `=` is used as the delimiter (values can contain `=`).
- */
-function parseMetadataFile(content: string): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const line of content.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eqIndex = trimmed.indexOf("=");
-    if (eqIndex === -1) continue;
-    const key = trimmed.slice(0, eqIndex).trim();
-    const value = trimmed.slice(eqIndex + 1).trim();
-    if (key) result[key] = value;
-  }
-  return result;
-}
+import { atomicWriteFileSync } from "./atomic-write.js";
+import { parseKeyValueContent } from "./key-value.js";
 
 /** Serialize a record back to key=value format. */
 function serializeMetadata(data: Record<string, string>): string {
@@ -62,16 +44,6 @@ function serializeMetadata(data: Record<string, string>): string {
       .map(([k, v]) => `${k}=${v}`)
       .join("\n") + "\n"
   );
-}
-
-/**
- * Atomically write a file by writing to a temp file then renaming.
- * rename() is atomic on POSIX, so concurrent writers never produce torn data.
- */
-function atomicWriteFileSync(filePath: string, content: string): void {
-  const tmpPath = `${filePath}.tmp.${process.pid}.${Date.now()}`;
-  writeFileSync(tmpPath, content, "utf-8");
-  renameSync(tmpPath, filePath);
 }
 
 /** Validate sessionId to prevent path traversal. */
@@ -97,7 +69,7 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
   if (!existsSync(path)) return null;
 
   const content = readFileSync(path, "utf-8");
-  const raw = parseMetadataFile(content);
+  const raw = parseKeyValueContent(content);
 
   return {
     worktree: raw["worktree"] ?? "",
@@ -106,6 +78,8 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
     tmuxName: raw["tmuxName"],
     issue: raw["issue"],
     pr: raw["pr"],
+    prAutoDetect:
+      raw["prAutoDetect"] === "off" ? "off" : raw["prAutoDetect"] === "on" ? "on" : undefined,
     summary: raw["summary"],
     project: raw["project"],
     agent: raw["agent"],
@@ -115,7 +89,10 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
     role: raw["role"],
     dashboardPort: raw["dashboardPort"] ? Number(raw["dashboardPort"]) : undefined,
     terminalWsPort: raw["terminalWsPort"] ? Number(raw["terminalWsPort"]) : undefined,
-    directTerminalWsPort: raw["directTerminalWsPort"] ? Number(raw["directTerminalWsPort"]) : undefined,
+    directTerminalWsPort: raw["directTerminalWsPort"]
+      ? Number(raw["directTerminalWsPort"])
+      : undefined,
+    opencodeSessionId: raw["opencodeSessionId"],
   };
 }
 
@@ -128,7 +105,7 @@ export function readMetadataRaw(
 ): Record<string, string> | null {
   const path = metadataPath(dataDir, sessionId);
   if (!existsSync(path)) return null;
-  return parseMetadataFile(readFileSync(path, "utf-8"));
+  return parseKeyValueContent(readFileSync(path, "utf-8"));
 }
 
 /**
@@ -151,6 +128,7 @@ export function writeMetadata(
   if (metadata.tmuxName) data["tmuxName"] = metadata.tmuxName;
   if (metadata.issue) data["issue"] = metadata.issue;
   if (metadata.pr) data["pr"] = metadata.pr;
+  if (metadata.prAutoDetect) data["prAutoDetect"] = metadata.prAutoDetect;
   if (metadata.summary) data["summary"] = metadata.summary;
   if (metadata.project) data["project"] = metadata.project;
   if (metadata.agent) data["agent"] = metadata.agent;
@@ -158,12 +136,12 @@ export function writeMetadata(
   if (metadata.runtimeHandle) data["runtimeHandle"] = metadata.runtimeHandle;
   if (metadata.restoredAt) data["restoredAt"] = metadata.restoredAt;
   if (metadata.role) data["role"] = metadata.role;
-  if (metadata.dashboardPort !== undefined)
-    data["dashboardPort"] = String(metadata.dashboardPort);
+  if (metadata.dashboardPort !== undefined) data["dashboardPort"] = String(metadata.dashboardPort);
   if (metadata.terminalWsPort !== undefined)
     data["terminalWsPort"] = String(metadata.terminalWsPort);
   if (metadata.directTerminalWsPort !== undefined)
     data["directTerminalWsPort"] = String(metadata.directTerminalWsPort);
+  if (metadata.opencodeSessionId) data["opencodeSessionId"] = metadata.opencodeSessionId;
 
   atomicWriteFileSync(path, serializeMetadata(data));
 }
@@ -181,7 +159,7 @@ export function updateMetadata(
   let existing: Record<string, string> = {};
 
   if (existsSync(path)) {
-    existing = parseMetadataFile(readFileSync(path, "utf-8"));
+    existing = parseKeyValueContent(readFileSync(path, "utf-8"));
   }
 
   // Merge updates — remove keys set to empty string
@@ -248,10 +226,53 @@ export function readArchivedMetadataRaw(
 
   if (!latest) return null;
   try {
-    return parseMetadataFile(readFileSync(join(archiveDir, latest), "utf-8"));
+    return parseKeyValueContent(readFileSync(join(archiveDir, latest), "utf-8"));
   } catch {
     return null;
   }
+}
+
+export function updateArchivedMetadata(
+  dataDir: string,
+  sessionId: SessionId,
+  updates: Partial<Record<string, string>>,
+): boolean {
+  validateSessionId(sessionId);
+  const archiveDir = join(dataDir, "archive");
+  if (!existsSync(archiveDir)) return false;
+
+  const prefix = `${sessionId}_`;
+  let latest: string | null = null;
+
+  for (const file of readdirSync(archiveDir)) {
+    if (!file.startsWith(prefix)) continue;
+    const charAfterPrefix = file[prefix.length];
+    if (!charAfterPrefix || charAfterPrefix < "0" || charAfterPrefix > "9") continue;
+    if (!latest || file > latest) latest = file;
+  }
+
+  if (!latest) return false;
+
+  const archivePath = join(archiveDir, latest);
+  let existing: Record<string, string>;
+  try {
+    existing = parseKeyValueContent(readFileSync(archivePath, "utf-8"));
+  } catch {
+    return false;
+  }
+
+  for (const [key, value] of Object.entries(updates)) {
+    if (value === undefined) continue;
+    if (value === "") {
+      const { [key]: _, ...rest } = existing;
+      existing = rest;
+    } else {
+      existing[key] = value;
+    }
+  }
+
+  atomicWriteFileSync(archivePath, serializeMetadata(existing));
+  return true;
 }
 
 /**

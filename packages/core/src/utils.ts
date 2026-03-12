@@ -33,6 +33,30 @@ export function validateUrl(url: string, label: string): void {
 }
 
 /**
+ * Returns true if an HTTP status code should be retried.
+ * Retry only 429 (rate-limit) and 5xx (server) failures.
+ */
+export function isRetryableHttpStatus(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+/**
+ * Normalize retry config from plugin config with sane defaults.
+ */
+export function normalizeRetryConfig(
+  config: Record<string, unknown> | undefined,
+  defaults: { retries: number; retryDelayMs: number } = { retries: 2, retryDelayMs: 1000 },
+): { retries: number; retryDelayMs: number } {
+  const rawRetries = config?.retries as number | undefined;
+  const rawDelay = config?.retryDelayMs as number | undefined;
+  const retries = Number.isFinite(rawRetries) ? Math.max(0, rawRetries ?? 0) : defaults.retries;
+  const retryDelayMs = Number.isFinite(rawDelay) && (rawDelay ?? -1) >= 0
+    ? (rawDelay as number)
+    : defaults.retryDelayMs;
+  return { retries, retryDelayMs };
+}
+
+/**
  * Read the last line from a file by reading backwards from the end.
  * Pure Node.js — no external binaries. Handles any file size.
  */
@@ -92,7 +116,6 @@ export async function readLastJsonlEntry(
 ): Promise<{ lastType: string | null; modifiedAt: Date } | null> {
   try {
     const [line, fileStat] = await Promise.all([readLastLine(filePath), stat(filePath)]);
-
 
     if (!line) return null;
 

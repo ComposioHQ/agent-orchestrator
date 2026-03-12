@@ -24,8 +24,41 @@ import { randomBytes } from "node:crypto";
 
 const execFileAsync = promisify(execFile);
 
+function normalizePermissionMode(mode: string | undefined): "permissionless" | "default" | "auto-edit" | "suggest" | undefined {
+  if (!mode) return undefined;
+  if (mode === "skip") return "permissionless";
+  if (mode === "permissionless" || mode === "default" || mode === "auto-edit" || mode === "suggest") {
+    return mode;
+  }
+  return undefined;
+}
+
 /** Shared bin directory for ao shell wrappers (prepended to PATH) */
 const AO_BIN_DIR = join(homedir(), ".ao", "bin");
+const DEFAULT_PATH = "/usr/bin:/bin";
+const PREFERRED_GH_BIN_DIR = "/usr/local/bin";
+const PREFERRED_GH_PATH = `${PREFERRED_GH_BIN_DIR}/gh`;
+
+function buildAgentPath(basePath: string | undefined): string {
+  const inherited = (basePath ?? DEFAULT_PATH).split(":").filter(Boolean);
+  const ordered: string[] = [];
+  const seen = new Set<string>();
+
+  const add = (entry: string): void => {
+    if (!entry || seen.has(entry)) return;
+    ordered.push(entry);
+    seen.add(entry);
+  };
+
+  // Ensure wrappers are always first, then prioritize /usr/local/bin so
+  // wrapper-discovered `gh` resolves there before linuxbrew paths.
+  add(AO_BIN_DIR);
+  add(PREFERRED_GH_BIN_DIR);
+
+  for (const entry of inherited) add(entry);
+
+  return ordered.join(":");
+}
 
 // =============================================================================
 // Plugin Manifest
@@ -35,7 +68,7 @@ export const manifest = {
   name: "codex",
   slot: "agent" as const,
   description: "Agent plugin: OpenAI Codex CLI",
-  version: "0.1.0",
+  version: "0.1.1",
 };
 
 // =============================================================================
@@ -109,7 +142,20 @@ const GH_WRAPPER = `#!/usr/bin/env bash
 ao_bin_dir="\$(cd "\$(dirname "\$0")" && pwd)"
 clean_path="\$(echo "\$PATH" | tr ':' '\\n' | grep -Fxv "\$ao_bin_dir" | grep . | tr '\\n' ':')"
 clean_path="\${clean_path%:}"
-real_gh="\$(PATH="\$clean_path" command -v gh 2>/dev/null)"
+real_gh=""
+
+# Prefer explicit gh path when provided by AO environment.
+# Guard against recursive self-reference to the wrapper in ~/.ao/bin.
+if [[ -n "\${GH_PATH:-}" && -x "\$GH_PATH" ]]; then
+  gh_dir="\$(cd "\$(dirname "\$GH_PATH")" 2>/dev/null && pwd)"
+  if [[ "\$gh_dir" != "\$ao_bin_dir" ]]; then
+    real_gh="\$GH_PATH"
+  fi
+fi
+
+if [[ -z "\$real_gh" ]]; then
+  real_gh="\$(PATH="\$clean_path" command -v gh 2>/dev/null)"
+fi
 
 if [[ -z "\$real_gh" ]]; then
   echo "ao-wrapper: gh not found in PATH" >&2
@@ -240,7 +286,7 @@ async function setupCodexWorkspace(workspacePath: string): Promise<void> {
 
   // Only write wrappers if they don't exist or are outdated (check marker)
   const markerPath = join(AO_BIN_DIR, ".ao-version");
-  const currentVersion = "0.1.0";
+  const currentVersion = "0.1.1";
   let needsUpdate = true;
   try {
     const existing = await readFile(markerPath, "utf-8");
@@ -516,11 +562,12 @@ export async function resolveCodexBinary(): Promise<string> {
 
 /** Append approval-policy flags to a command parts array */
 function appendApprovalFlags(parts: string[], permissions: string | undefined): void {
-  if (permissions === "skip") {
+  const mode = normalizePermissionMode(permissions);
+  if (mode === "permissionless") {
     parts.push("--dangerously-bypass-approvals-and-sandbox");
-  } else if (permissions === "auto-edit") {
+  } else if (mode === "auto-edit") {
     parts.push("--ask-for-approval", "never");
-  } else if (permissions === "suggest") {
+  } else if (mode === "suggest") {
     parts.push("--ask-for-approval", "untrusted");
   }
 }
@@ -536,6 +583,11 @@ function appendModelFlags(parts: string[], model: string | undefined): void {
   if (/^o[34]/i.test(model)) {
     parts.push("-c", "model_reasoning_effort=high");
   }
+}
+
+/** Disable Codex startup update checks/prompts in non-interactive sessions */
+function appendNoUpdateCheckFlag(parts: string[]): void {
+  parts.push("-c", "check_for_update_on_startup=false");
 }
 
 /** TTL for session file path cache (ms). Prevents redundant filesystem scans
@@ -570,8 +622,9 @@ function createCodexAgent(): Agent {
     getLaunchCommand(config: AgentLaunchConfig): string {
       const binary = resolvedBinary ?? "codex";
       const parts: string[] = [shellEscape(binary)];
+      appendNoUpdateCheckFlag(parts);
 
-      appendApprovalFlags(parts, config.permissions as string | undefined);
+      appendApprovalFlags(parts, config.permissions);
       appendModelFlags(parts, config.model);
 
       if (config.systemPromptFile) {
@@ -602,7 +655,10 @@ function createCodexAgent(): Agent {
       // Prepend ~/.ao/bin to PATH so our gh/git wrappers intercept commands.
       // The wrappers strip this directory from PATH before calling the real
       // binary, so there's no infinite recursion.
-      env["PATH"] = `${AO_BIN_DIR}:${process.env["PATH"] ?? "/usr/bin:/bin"}`;
+      env["PATH"] = buildAgentPath(process.env["PATH"]);
+      env["GH_PATH"] = PREFERRED_GH_PATH;
+      // Disable Codex's version check/update prompt for non-interactive AO sessions.
+      env["CODEX_DISABLE_UPDATE_CHECK"] = "1";
 
       return env;
     },
@@ -759,8 +815,9 @@ function createCodexAgent(): Agent {
       // Flags are placed before the positional threadId for CLI parser compatibility.
       const binary = resolvedBinary ?? "codex";
       const parts: string[] = [shellEscape(binary), "resume"];
+      appendNoUpdateCheckFlag(parts);
 
-      appendApprovalFlags(parts, project.agentConfig?.permissions as string | undefined);
+      appendApprovalFlags(parts, project.agentConfig?.permissions);
       const effectiveModel = (project.agentConfig?.model ?? data.model) as string | undefined;
       appendModelFlags(parts, effectiveModel ?? undefined);
 

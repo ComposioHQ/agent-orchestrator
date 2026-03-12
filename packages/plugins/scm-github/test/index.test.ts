@@ -15,7 +15,7 @@ vi.mock("node:child_process", () => {
 });
 
 import { create, manifest } from "../src/index.js";
-import type { PRInfo, Session, ProjectConfig } from "@composio/ao-core";
+import type { PRInfo, SCMWebhookRequest, Session, ProjectConfig } from "@composio/ao-core";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -67,6 +67,26 @@ function mockGhError(msg = "Command failed") {
   ghMock.mockRejectedValueOnce(new Error(msg));
 }
 
+function makeWebhookRequest(overrides: Partial<SCMWebhookRequest> = {}): SCMWebhookRequest {
+  return {
+    method: "POST",
+    headers: {
+      "x-github-event": "pull_request",
+      "x-github-delivery": "delivery-1",
+    },
+    body: JSON.stringify({
+      action: "opened",
+      repository: { owner: { login: "acme" }, name: "repo" },
+      pull_request: {
+        number: 42,
+        updated_at: "2026-03-10T12:00:00Z",
+        head: { ref: "feat/my-feature", sha: "abc123" },
+      },
+    }),
+    ...overrides,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -77,6 +97,7 @@ describe("scm-github plugin", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     scm = create();
+    delete process.env["GITHUB_WEBHOOK_SECRET"];
   });
 
   // ---- manifest ----------------------------------------------------------
@@ -94,6 +115,271 @@ describe("scm-github plugin", () => {
   describe("create()", () => {
     it("returns an SCM with correct name", () => {
       expect(scm.name).toBe("github");
+    });
+  });
+
+  describe("verifyWebhook", () => {
+    it("accepts unsigned webhooks when no secret is configured", async () => {
+      await expect(scm.verifyWebhook?.(makeWebhookRequest(), project)).resolves.toEqual({
+        ok: true,
+        deliveryId: "delivery-1",
+        eventType: "pull_request",
+      });
+    });
+
+    it("verifies a valid HMAC signature", async () => {
+      process.env["GITHUB_WEBHOOK_SECRET"] = "topsecret";
+      const body = makeWebhookRequest().body;
+      const signature = await import("node:crypto").then(
+        ({ createHmac }) =>
+          `sha256=${createHmac("sha256", "topsecret").update(body).digest("hex")}`,
+      );
+
+      const result = await scm.verifyWebhook?.(
+        makeWebhookRequest({
+          headers: {
+            "x-github-event": "pull_request",
+            "x-github-delivery": "delivery-1",
+            "x-hub-signature-256": signature,
+          },
+        }),
+        {
+          ...project,
+          scm: { plugin: "github", webhook: { secretEnvVar: "GITHUB_WEBHOOK_SECRET" } },
+        },
+      );
+
+      expect(result?.ok).toBe(true);
+    });
+
+    it("rejects an invalid HMAC signature", async () => {
+      process.env["GITHUB_WEBHOOK_SECRET"] = "topsecret";
+
+      const result = await scm.verifyWebhook?.(
+        makeWebhookRequest({
+          headers: {
+            "x-github-event": "pull_request",
+            "x-github-delivery": "delivery-1",
+            "x-hub-signature-256": "sha256=deadbeef",
+          },
+        }),
+        {
+          ...project,
+          scm: { plugin: "github", webhook: { secretEnvVar: "GITHUB_WEBHOOK_SECRET" } },
+        },
+      );
+
+      expect(result).toEqual(
+        expect.objectContaining({ ok: false, reason: "Webhook signature verification failed" }),
+      );
+    });
+  });
+
+  describe("parseWebhook", () => {
+    it("parses pull_request events", async () => {
+      const event = await scm.parseWebhook?.(makeWebhookRequest(), project);
+      expect(event).toEqual(
+        expect.objectContaining({
+          provider: "github",
+          kind: "pull_request",
+          action: "opened",
+          prNumber: 42,
+          branch: "feat/my-feature",
+          sha: "abc123",
+        }),
+      );
+    });
+
+    it("omits repository when owner.login is not a string", async () => {
+      const event = await scm.parseWebhook?.(
+        makeWebhookRequest({
+          body: JSON.stringify({
+            action: "opened",
+            repository: { owner: { login: 123 }, name: "repo" },
+            pull_request: {
+              number: 42,
+              updated_at: "2026-03-10T12:00:00Z",
+              head: { ref: "feat/my-feature", sha: "abc123" },
+            },
+          }),
+        }),
+        project,
+      );
+
+      expect(event).toEqual(
+        expect.objectContaining({ kind: "pull_request", repository: undefined }),
+      );
+    });
+
+    it("parses issue_comment events on pull requests as comment events", async () => {
+      const event = await scm.parseWebhook?.(
+        makeWebhookRequest({
+          headers: { "x-github-event": "issue_comment" },
+          body: JSON.stringify({
+            action: "created",
+            repository: { owner: { login: "acme" }, name: "repo" },
+            issue: { number: 42, pull_request: { url: "https://api.github.com/..." } },
+            comment: { updated_at: "2026-03-10T12:00:00Z" },
+          }),
+        }),
+        project,
+      );
+
+      expect(event).toEqual(
+        expect.objectContaining({ provider: "github", kind: "comment", prNumber: 42 }),
+      );
+    });
+
+    it("falls back to comment.created_at for issue_comment timestamps", async () => {
+      const event = await scm.parseWebhook?.(
+        makeWebhookRequest({
+          headers: { "x-github-event": "issue_comment" },
+          body: JSON.stringify({
+            action: "created",
+            repository: { owner: { login: "acme" }, name: "repo" },
+            issue: { number: 42, pull_request: { url: "https://api.github.com/..." } },
+            comment: { created_at: "2026-03-10T12:00:00Z" },
+          }),
+        }),
+        project,
+      );
+
+      expect(event).toEqual(
+        expect.objectContaining({ provider: "github", kind: "comment", prNumber: 42 }),
+      );
+      expect(event?.timestamp?.toISOString()).toBe("2026-03-10T12:00:00.000Z");
+    });
+
+    it("parses pull_request_review_comment timestamp from comment payload", async () => {
+      const event = await scm.parseWebhook?.(
+        makeWebhookRequest({
+          headers: { "x-github-event": "pull_request_review_comment" },
+          body: JSON.stringify({
+            action: "created",
+            repository: { owner: { login: "acme" }, name: "repo" },
+            number: 42,
+            pull_request: {
+              number: 42,
+              head: { ref: "feat/my-feature", sha: "abc123" },
+            },
+            comment: { created_at: "2026-03-10T12:00:00Z" },
+          }),
+        }),
+        project,
+      );
+
+      expect(event).toEqual(
+        expect.objectContaining({
+          provider: "github",
+          kind: "comment",
+          prNumber: 42,
+        }),
+      );
+      expect(event?.timestamp?.toISOString()).toBe("2026-03-10T12:00:00.000Z");
+    });
+
+    it("parses status events with branch info", async () => {
+      const event = await scm.parseWebhook?.(
+        makeWebhookRequest({
+          headers: { "x-github-event": "status" },
+          body: JSON.stringify({
+            state: "failure",
+            repository: { owner: { login: "acme" }, name: "repo" },
+            sha: "def456",
+            branches: [{ name: "feat/my-feature" }],
+            updated_at: "2026-03-10T12:00:00Z",
+          }),
+        }),
+        project,
+      );
+
+      expect(event).toEqual(
+        expect.objectContaining({
+          provider: "github",
+          kind: "ci",
+          action: "failure",
+          branch: "feat/my-feature",
+          sha: "def456",
+        }),
+      );
+    });
+
+    it("parses check_run events using check_suite.head_branch", async () => {
+      const event = await scm.parseWebhook?.(
+        makeWebhookRequest({
+          headers: { "x-github-event": "check_run" },
+          body: JSON.stringify({
+            action: "completed",
+            repository: { owner: { login: "acme" }, name: "repo" },
+            check_run: {
+              head_sha: "def456",
+              updated_at: "2026-03-10T12:00:00Z",
+              pull_requests: [{ number: 42 }],
+              check_suite: { head_branch: "feat/my-feature" },
+            },
+          }),
+        }),
+        project,
+      );
+
+      expect(event).toEqual(
+        expect.objectContaining({
+          provider: "github",
+          kind: "ci",
+          branch: "feat/my-feature",
+          sha: "def456",
+          prNumber: 42,
+        }),
+      );
+    });
+
+    it("parses push events with branch and sha", async () => {
+      const event = await scm.parseWebhook?.(
+        makeWebhookRequest({
+          headers: { "x-github-event": "push" },
+          body: JSON.stringify({
+            ref: "refs/heads/feat/my-feature",
+            after: "abcde12345",
+            repository: { owner: { login: "acme" }, name: "repo" },
+            head_commit: { timestamp: "2026-03-10T12:01:00Z" },
+          }),
+        }),
+        project,
+      );
+
+      expect(event).toEqual(
+        expect.objectContaining({
+          provider: "github",
+          kind: "push",
+          branch: "feat/my-feature",
+          sha: "abcde12345",
+        }),
+      );
+      expect(event?.timestamp?.toISOString()).toBe("2026-03-10T12:01:00.000Z");
+    });
+
+    it("does not set branch for tag push refs", async () => {
+      const event = await scm.parseWebhook?.(
+        makeWebhookRequest({
+          headers: { "x-github-event": "push" },
+          body: JSON.stringify({
+            ref: "refs/tags/v1.0.0",
+            after: "abcde12345",
+            repository: { owner: { login: "acme" }, name: "repo" },
+            head_commit: { timestamp: "2026-03-10T12:01:00Z" },
+          }),
+        }),
+        project,
+      );
+
+      expect(event).toEqual(
+        expect.objectContaining({
+          provider: "github",
+          kind: "push",
+          branch: undefined,
+          sha: "abcde12345",
+        }),
+      );
     });
   });
 
@@ -148,6 +434,11 @@ describe("scm-github plugin", () => {
       await expect(scm.detectPR(makeSession(), badProject)).rejects.toThrow("Invalid repo format");
     });
 
+    it("rejects repo strings with extra path segments", async () => {
+      const badProject = { ...project, repo: "acme/repo/extra" };
+      await expect(scm.detectPR(makeSession(), badProject)).rejects.toThrow("Invalid repo format");
+    });
+
     it("detects draft PRs", async () => {
       mockGh([
         {
@@ -161,6 +452,39 @@ describe("scm-github plugin", () => {
       ]);
       const result = await scm.detectPR(makeSession(), project);
       expect(result?.isDraft).toBe(true);
+    });
+
+    it("resolves PR by reference", async () => {
+      mockGh({
+        number: 42,
+        url: "https://github.com/acme/repo/pull/42",
+        title: "feat: add feature",
+        headRefName: "feat/my-feature",
+        baseRefName: "main",
+        isDraft: false,
+      });
+
+      const result = await scm.resolvePR?.("42", project);
+      expect(result).toEqual(pr);
+    });
+
+    it("assigns PR to current user", async () => {
+      ghMock.mockResolvedValueOnce({ stdout: "" });
+      await scm.assignPRToCurrentUser?.(pr);
+      expect(ghMock).toHaveBeenCalledWith(
+        "gh",
+        ["pr", "edit", "42", "--repo", "acme/repo", "--add-assignee", "@me"],
+        expect.any(Object),
+      );
+    });
+
+    it("checks out PR when workspace is clean and branch differs", async () => {
+      ghMock.mockResolvedValueOnce({ stdout: "main\n" });
+      ghMock.mockResolvedValueOnce({ stdout: "" });
+      ghMock.mockResolvedValueOnce({ stdout: "" });
+
+      const changed = await scm.checkoutPR?.(pr, "/tmp/repo");
+      expect(changed).toBe(true);
     });
   });
 
@@ -290,6 +614,25 @@ describe("scm-github plugin", () => {
       expect(checks[0].url).toBeUndefined();
       expect(checks[0].startedAt).toBeUndefined();
       expect(checks[0].completedAt).toBeUndefined();
+    });
+
+    it("falls back to statusCheckRollup when pr checks json is unsupported", async () => {
+      mockGhError("gh pr checks failed: unknown json field 'state'");
+      mockGh({
+        statusCheckRollup: [
+          {
+            name: "build",
+            state: "SUCCESS",
+            detailsUrl: "https://ci/1",
+            startedAt: "2025-01-01T00:00:00Z",
+            completedAt: "2025-01-01T00:01:00Z",
+          },
+        ],
+      });
+
+      const checks = await scm.getCIChecks(pr);
+      expect(checks).toHaveLength(1);
+      expect(checks[0]).toMatchObject({ name: "build", status: "passed" });
     });
   });
 
@@ -536,9 +879,9 @@ describe("scm-github plugin", () => {
       expect(comments[0].author).toBe("alice");
     });
 
-    it("returns empty on error", async () => {
+    it("throws on error", async () => {
       mockGhError("API rate limit");
-      expect(await scm.getPendingComments(pr)).toEqual([]);
+      await expect(scm.getPendingComments(pr)).rejects.toThrow("Failed to fetch pending comments");
     });
 
     it("handles null path and line", async () => {
@@ -654,9 +997,11 @@ describe("scm-github plugin", () => {
       expect(comments).toEqual([]);
     });
 
-    it("returns empty on error", async () => {
+    it("throws on error", async () => {
       mockGhError("network failure");
-      expect(await scm.getAutomatedComments(pr)).toEqual([]);
+      await expect(scm.getAutomatedComments(pr)).rejects.toThrow(
+        "Failed to fetch automated comments",
+      );
     });
 
     it("uses original_line as fallback", async () => {

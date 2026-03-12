@@ -1,5 +1,6 @@
 import {
   shellEscape,
+  asValidOpenCodeSessionId,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
@@ -8,11 +9,108 @@ import {
   type PluginModule,
   type RuntimeHandle,
   type Session,
+  type OpenCodeAgentConfig,
 } from "@composio/ao-core";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+
+interface OpenCodeSessionListEntry {
+  id: string;
+  title?: string;
+  updated?: string;
+}
+
+function parseSessionList(raw: string): OpenCodeSessionListEntry[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter((item): item is OpenCodeSessionListEntry => {
+    if (!item || typeof item !== "object") return false;
+    const record = item as Record<string, unknown>;
+    return asValidOpenCodeSessionId(record["id"]) !== undefined;
+  });
+}
+
+/**
+ * Parse JSON stream lines from `opencode run --format json` output.
+ * Each line is a JSON object. We look for objects containing a session_id field.
+ * The step_start event typically contains the session_id.
+ */
+function buildSessionIdCaptureScript(): string {
+  const script = `
+let buffer = '';
+let captured = null;
+process.stdin.on('data', chunk => {
+  buffer += chunk;
+  const lines = buffer.split('\\n');
+  buffer = lines.pop() || '';
+  for (const line of lines) {
+    if (captured) continue;
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const obj = JSON.parse(trimmed);
+      if (obj && typeof obj.session_id === 'string' && /^ses_[A-Za-z0-9_-]+$/.test(obj.session_id)) {
+        captured = obj.session_id;
+      }
+    } catch {}
+  }
+}).on('end', () => {
+  if (buffer.trim()) {
+    try {
+      const obj = JSON.parse(buffer.trim());
+      if (obj && typeof obj.session_id === 'string' && /^ses_[A-Za-z0-9_-]+$/.test(obj.session_id)) {
+        captured = obj.session_id;
+      }
+    } catch {}
+  }
+  if (captured) {
+    process.stdout.write(captured);
+    process.exit(0);
+  }
+  process.exit(1);
+});
+  `.trim();
+  return script.replace(/\n/g, " ").replace(/\s+/g, " ");
+}
+
+function buildSessionLookupScript(): string {
+  const script = `
+let input = '';
+process.stdin.on('data', c => input += c).on('end', () => {
+  const title = process.argv[1];
+  let rows;
+  try { rows = JSON.parse(input); } catch { process.exit(1); }
+  if (!Array.isArray(rows)) process.exit(1);
+  const isValidId = id => /^ses_[A-Za-z0-9_-]+$/.test(id);
+  const timestamp = value => {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string') {
+      const parsed = Date.parse(value);
+      return Number.isNaN(parsed) ? Number.NEGATIVE_INFINITY : parsed;
+    }
+    return Number.NEGATIVE_INFINITY;
+  };
+  const matches = rows
+    .filter(r => r && r.title === title && typeof r.id === 'string' && isValidId(r.id))
+    .sort((a, b) => {
+      const ta = timestamp(a.updated);
+      const tb = timestamp(b.updated);
+      if (ta === tb) return 0;
+      return tb - ta;
+    });
+  if (matches.length === 0) process.exit(1);
+  process.stdout.write(matches[0].id);
+});
+  `.trim();
+  return script.replace(/\n/g, " ").replace(/\s+/g, " ");
+}
 
 // =============================================================================
 // Plugin Manifest
@@ -35,17 +133,71 @@ function createOpenCodeAgent(): Agent {
     processName: "opencode",
 
     getLaunchCommand(config: AgentLaunchConfig): string {
-      const parts: string[] = ["opencode"];
+      const options: string[] = [];
+      const sharedOptions: string[] = [];
 
+      const existingSessionId = asValidOpenCodeSessionId(
+        (config.projectConfig.agentConfig as OpenCodeAgentConfig | undefined)?.opencodeSessionId,
+      );
+
+      if (existingSessionId) {
+        options.push("--session", shellEscape(existingSessionId));
+      }
+
+      // Select specific OpenCode subagent if configured
+      if (config.subagent) {
+        sharedOptions.push("--agent", shellEscape(config.subagent));
+      }
+
+      let promptValue: string | undefined;
       if (config.prompt) {
-        parts.push("run", shellEscape(config.prompt));
+        if (config.systemPromptFile) {
+          promptValue = `"$(cat ${shellEscape(config.systemPromptFile)}; printf '\\n\\n'; printf %s ${shellEscape(config.prompt)})"`;
+        } else if (config.systemPrompt) {
+          promptValue = shellEscape(`${config.systemPrompt}\n\n${config.prompt}`);
+        } else {
+          promptValue = shellEscape(config.prompt);
+        }
+      } else if (config.systemPromptFile) {
+        promptValue = `"$(cat ${shellEscape(config.systemPromptFile)})"`;
+      } else if (config.systemPrompt) {
+        promptValue = shellEscape(config.systemPrompt);
       }
 
       if (config.model) {
-        parts.push("--model", shellEscape(config.model));
+        sharedOptions.push("--model", shellEscape(config.model));
       }
 
-      return parts.join(" ");
+      if (!existingSessionId) {
+        const runOptions = [
+          "--format",
+          "json",
+          "--title",
+          shellEscape(`AO:${config.sessionId}`),
+          ...sharedOptions,
+        ];
+        const captureScript = buildSessionIdCaptureScript();
+        const fallbackScript = buildSessionLookupScript();
+        const runCommand = ["opencode", "run", ...runOptions, "--command", "true"].join(" ");
+        const resumeOptions = [...(promptValue ? ["--prompt", promptValue] : []), ...sharedOptions];
+        const resumeOptionsSuffix = resumeOptions.length > 0 ? ` ${resumeOptions.join(" ")}` : "";
+        const missingSessionError = shellEscape(
+          `failed to discover OpenCode session ID for AO:${config.sessionId}`,
+        );
+        return [
+          `SES_ID=$(${runCommand} | node -e ${shellEscape(captureScript)})`,
+          `if [ -z "$SES_ID" ]; then SES_ID=$(opencode session list --format json | node -e ${shellEscape(fallbackScript)} ${shellEscape(`AO:${config.sessionId}`)}); fi`,
+          `[ -n "$SES_ID" ] && exec opencode --session "$SES_ID"${resumeOptionsSuffix}; echo ${missingSessionError} >&2; exit 1`,
+        ].join("; ");
+      }
+
+      if (promptValue) {
+        options.push("--prompt", promptValue);
+      }
+
+      options.push(...sharedOptions);
+
+      return ["opencode", ...options].join(" ");
     },
 
     getEnvironment(config: AgentLaunchConfig): Record<string, string> {
@@ -64,20 +216,42 @@ function createOpenCodeAgent(): Agent {
       return "active";
     },
 
-    async getActivityState(session: Session, _readyThresholdMs?: number): Promise<ActivityDetection | null> {
+    async getActivityState(
+      session: Session,
+      _readyThresholdMs?: number,
+    ): Promise<ActivityDetection | null> {
       // Check if process is running first
       const exitedAt = new Date();
       if (!session.runtimeHandle) return { state: "exited", timestamp: exitedAt };
       const running = await this.isProcessRunning(session.runtimeHandle);
       if (!running) return { state: "exited", timestamp: exitedAt };
 
-      // NOTE: OpenCode stores all session data in a single global SQLite database
-      // at ~/.local/share/opencode/opencode.db without per-workspace scoping. When
-      // multiple OpenCode sessions run in parallel, database modifications from any
-      // session will cause all sessions to appear active. Until OpenCode provides
-      // per-workspace session tracking, we return null (unknown) rather than guessing.
-      //
-      // TODO: Implement proper per-session activity detection when OpenCode supports it.
+      if (session.metadata?.opencodeSessionId) {
+        try {
+          const { stdout } = await execFileAsync(
+            "opencode",
+            ["session", "list", "--format", "json"],
+            { timeout: 30_000 },
+          );
+
+          const sessions = parseSessionList(stdout);
+          const targetSession = sessions.find((s) => s.id === session.metadata.opencodeSessionId);
+
+          if (targetSession) {
+            const lastActivity = targetSession.updated
+              ? new Date(targetSession.updated)
+              : undefined;
+            return {
+              state: "active",
+              ...(lastActivity &&
+                !Number.isNaN(lastActivity.getTime()) && { timestamp: lastActivity }),
+            };
+          }
+        } catch {
+          return null;
+        }
+      }
+
       return null;
     },
 

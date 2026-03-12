@@ -23,6 +23,15 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
+function normalizePermissionMode(mode: string | undefined): "permissionless" | "default" | "auto-edit" | "suggest" | undefined {
+  if (!mode) return undefined;
+  if (mode === "skip") return "permissionless";
+  if (mode === "permissionless" || mode === "default" || mode === "auto-edit" || mode === "suggest") {
+    return mode;
+  }
+  return undefined;
+}
+
 // =============================================================================
 // Metadata Updater Hook Script
 // =============================================================================
@@ -635,7 +644,8 @@ function createClaudeCodeAgent(): Agent {
       // This command must be safe for both shell and execFile contexts.
       const parts: string[] = ["claude"];
 
-      if (config.permissions === "skip") {
+      const permissionMode = normalizePermissionMode(config.permissions);
+      if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
         parts.push("--dangerously-skip-permissions");
       }
 
@@ -794,7 +804,8 @@ function createClaudeCodeAgent(): Agent {
       // Build resume command
       const parts: string[] = ["claude", "--resume", shellEscape(sessionUuid)];
 
-      if (project.agentConfig?.permissions === "skip") {
+      const permissionMode = normalizePermissionMode(project.agentConfig?.permissions);
+      if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
         parts.push("--dangerously-skip-permissions");
       }
 
