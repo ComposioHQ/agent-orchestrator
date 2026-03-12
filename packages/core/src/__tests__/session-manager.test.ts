@@ -3216,6 +3216,36 @@ describe("spawnOrchestrator", () => {
     );
   });
 
+  it("keeps orchestrator launch permissionless even when shared config sets permissions", async () => {
+    const configWithSharedPermissions: OrchestratorConfig = {
+      ...config,
+      projects: {
+        ...config.projects,
+        "my-app": {
+          ...config.projects["my-app"],
+          agentConfig: {
+            permissions: "suggest",
+          },
+        },
+      },
+    };
+
+    const sm = createSessionManager({
+      config: configWithSharedPermissions,
+      registry: mockRegistry,
+    });
+    await sm.spawnOrchestrator({ projectId: "my-app" });
+
+    expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        permissions: "permissionless",
+        projectConfig: expect.objectContaining({
+          agentConfig: expect.objectContaining({ permissions: "permissionless" }),
+        }),
+      }),
+    );
+  });
+
   it("uses project orchestrator agent when configured", async () => {
     const mockCodexAgent: Agent = {
       ...mockAgent,

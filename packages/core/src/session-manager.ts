@@ -1305,6 +1305,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         ...project,
         agentConfig: {
           ...selection.agentConfig,
+          permissions: "permissionless" as const,
           ...(reusableOpenCodeSessionId ? { opencodeSessionId: reusableOpenCodeSessionId } : {}),
         },
       },
@@ -2221,6 +2222,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         ...project,
         agentConfig: {
           ...selection.agentConfig,
+          ...(selection.role === "orchestrator" ? { permissions: "permissionless" as const } : {}),
           ...(session.metadata?.opencodeSessionId
             ? { opencodeSessionId: session.metadata.opencodeSessionId }
             : {}),

@@ -72,6 +72,9 @@ export function resolveAgentSelection(params: {
   const permissions = normalizeAgentPermissionMode(
     typeof agentConfig.permissions === "string" ? agentConfig.permissions : undefined,
   );
+  if (permissions !== undefined) {
+    agentConfig.permissions = permissions;
+  }
   const subagent =
     typeof agentConfig["subagent"] === "string" ? agentConfig["subagent"] : undefined;
 
