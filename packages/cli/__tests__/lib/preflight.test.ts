@@ -30,7 +30,6 @@ beforeEach(() => {
   mockResolveDashboardRuntime.mockReturnValue({
     mode: "dev",
     webDir: "/web",
-    standaloneServerPath: null,
   });
 });
 

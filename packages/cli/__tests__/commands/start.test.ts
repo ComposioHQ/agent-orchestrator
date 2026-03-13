@@ -181,7 +181,6 @@ beforeEach(() => {
   mockResolveDashboardRuntime.mockReturnValue({
     mode: "dev",
     webDir: "/fake/web",
-    standaloneServerPath: null,
   });
   mockSpawn.mockClear();
 });

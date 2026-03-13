@@ -161,6 +161,20 @@ export function DirectTerminal({
     const PERMANENT_CLOSE_CODES = new Set([4001, 4004]); // auth failure, session not found
     const MAX_RECONNECT_DELAY = 15_000;
 
+    const scheduleReconnect = () => {
+      if (!mounted) return;
+
+      const attempt = reconnectAttemptRef.current;
+      const delay = Math.min(1000 * Math.pow(2, attempt), MAX_RECONNECT_DELAY);
+      reconnectAttemptRef.current = attempt + 1;
+
+      console.log(`[DirectTerminal] Reconnecting in ${delay}ms (attempt ${attempt + 1})`);
+      setStatus("connecting");
+      setError(null);
+
+      reconnectTimerRef.current = setTimeout(connectWebSocket, delay);
+    };
+
     Promise.all([
       import("xterm").then((mod) => mod.Terminal),
       import("@xterm/addon-fit").then((mod) => mod.FitAddon),
@@ -355,9 +369,9 @@ export function DirectTerminal({
             directTerminalPort = (await fetchRuntimeConfig()).directTerminalPort;
           } catch (err) {
             console.error("[DirectTerminal] Failed to load runtime config:", err);
-            permanentErrorRef.current = true;
-            setStatus("error");
-            setError("Failed to load terminal configuration");
+            setStatus("connecting");
+            setError("Retrying terminal connection...");
+            scheduleReconnect();
             return;
           }
 
@@ -423,15 +437,7 @@ export function DirectTerminal({
             }
 
             // Transient failure — schedule reconnect with exponential backoff
-            const attempt = reconnectAttemptRef.current;
-            const delay = Math.min(1000 * Math.pow(2, attempt), MAX_RECONNECT_DELAY);
-            reconnectAttemptRef.current = attempt + 1;
-
-            console.log(`[DirectTerminal] Reconnecting in ${delay}ms (attempt ${attempt + 1})`);
-            setStatus("connecting");
-            setError(null);
-
-            reconnectTimerRef.current = setTimeout(connectWebSocket, delay);
+            scheduleReconnect();
           };
         }
 

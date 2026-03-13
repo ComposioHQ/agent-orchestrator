@@ -43,7 +43,6 @@ export const MAX_PORT_SCAN = 100;
 export interface DashboardRuntime {
   mode: "dev" | "built";
   webDir: string;
-  standaloneServerPath: string | null;
 }
 
 /**
@@ -176,19 +175,17 @@ function findStandaloneServerPath(webDir: string): string | null {
 }
 
 export function resolveDashboardRuntime(webDir = findWebDir()): DashboardRuntime {
-  const standaloneServerPath = findStandaloneServerPath(webDir);
   const terminalServerPath = resolve(webDir, "dist", "server", "terminal-websocket.js");
   const directTerminalServerPath = resolve(webDir, "dist", "server", "direct-terminal-ws.js");
 
   const built =
-    standaloneServerPath !== null &&
+    findStandaloneServerPath(webDir) !== null &&
     existsSync(terminalServerPath) &&
     existsSync(directTerminalServerPath);
 
   return {
     mode: built ? "built" : "dev",
     webDir,
-    standaloneServerPath,
   };
 }
 
