@@ -88,7 +88,7 @@ export function registerDashboard(program: Command): void {
               stdio: ["inherit", "inherit", "pipe"],
               env,
             })
-          : spawn("npx", ["next", "dev", "-p", String(port)], {
+          : spawn("pnpm", ["run", "dev"], {
               cwd: webDir,
               stdio: ["inherit", "inherit", "pipe"],
               env,
