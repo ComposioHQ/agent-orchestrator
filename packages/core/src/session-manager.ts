@@ -1702,10 +1702,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         }
 
         if (shouldKill) {
-          if (isCleanupProtectedSession(project, session.id, session.metadata)) {
-            pushSkipped(session.projectId, session.id);
-            continue;
-          }
           if (!options?.dryRun) {
             await kill(session.id, { purgeOpenCode: shouldPurgeOpenCode });
           }
