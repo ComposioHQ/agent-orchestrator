@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/cn";
+import { useTerminalHealth } from "@/hooks/useTerminalHealth";
 
 // Import xterm CSS (must be imported in client component)
 import "xterm/css/xterm.css";
@@ -91,6 +92,7 @@ export function DirectTerminal({
   const [error, setError] = useState<string | null>(null);
   const [reloading, setReloading] = useState(false);
   const [reloadError, setReloadError] = useState<string | null>(null);
+  const { terminalHealth } = useTerminalHealth();
 
   // Update URL when fullscreen changes
   useEffect(() => {
@@ -552,17 +554,28 @@ export function DirectTerminal({
     variant === "orchestrator" ? "var(--color-accent-violet)" : "var(--color-accent)";
 
   const statusDotClass =
-    status === "connected"
+    status === "connected" && terminalHealth?.services.directTerminalWebsocket.healthy !== false
       ? "bg-[var(--color-status-ready)]"
       : status === "error"
         ? "bg-[var(--color-status-error)]"
         : "bg-[var(--color-status-attention)] animate-[pulse_1.5s_ease-in-out_infinite]";
 
-  const statusText =
-    status === "connected" ? "Connected" : status === "error" ? (error ?? "Error") : "Connecting…";
+  const degradedTransportMessage =
+    terminalHealth?.services.directTerminalWebsocket.healthy === false
+      ? terminalHealth.services.directTerminalWebsocket.message
+      : null;
 
-  const statusTextColor =
-    status === "connected"
+  const statusText =
+    degradedTransportMessage ??
+    (status === "connected"
+      ? "Connected"
+      : status === "error"
+        ? (error ?? "Error")
+        : "Connecting…");
+
+  const statusTextColor = degradedTransportMessage
+    ? "text-[var(--color-status-attention)]"
+    : status === "connected"
       ? "text-[var(--color-status-ready)]"
       : status === "error"
         ? "text-[var(--color-status-error)]"

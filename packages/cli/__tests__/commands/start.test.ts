@@ -132,6 +132,7 @@ vi.mock("node:child_process", async (importOriginal) => {
 
 import { Command } from "commander";
 import { registerStart, registerStop } from "../../src/commands/start.js";
+import { findWebDir } from "../../src/lib/web-dir.js";
 
 let tmpDir: string;
 let program: Command;
@@ -323,6 +324,24 @@ describe("start command — project resolution", () => {
       .mock.calls.map((c) => c.join(" "))
       .join("\n");
     expect(errors).toContain("No projects configured");
+  });
+});
+
+describe("start command — dashboard launch", () => {
+  it("starts Next dev directly so terminal sidecars are supervised in-process", async () => {
+    const webDir = join(tmpDir, "web");
+    mkdirSync(webDir, { recursive: true });
+    writeFileSync(join(webDir, "package.json"), "{}\n");
+    vi.mocked(findWebDir).mockReturnValue(webDir);
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    await program.parseAsync(["node", "test", "start", "--no-orchestrator"]);
+
+    expect(mockSpawn).toHaveBeenCalledWith(
+      "npx",
+      ["next", "dev", "-p", "3000"],
+      expect.objectContaining({ cwd: webDir }),
+    );
   });
 });
 

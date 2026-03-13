@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 
 export const dynamic = "force-dynamic";
 import { Dashboard } from "@/components/Dashboard";
-import type { DashboardSession } from "@/lib/types";
+import type { DashboardSession, TerminalTransportHealth } from "@/lib/types";
 import { getServices, getSCM } from "@/lib/services";
 import {
   sessionToDashboard,
@@ -15,6 +15,7 @@ import { prCache, prCacheKey } from "@/lib/cache";
 import { getPrimaryProjectId, getProjectName, getAllProjects } from "@/lib/project-name";
 import { filterProjectSessions, filterWorkerSessions } from "@/lib/project-utils";
 import { resolveGlobalPause, type GlobalPauseState } from "@/lib/global-pause";
+import { getTerminalTransportHealth } from "@/lib/terminal-transport";
 
 function getSelectedProjectName(projectFilter: string | undefined): string {
   if (projectFilter === "all") return "All Projects";
@@ -42,14 +43,17 @@ export default async function Home(props: { searchParams: Promise<{ project?: st
     sessions: DashboardSession[];
     globalPause: GlobalPauseState | null;
     orchestrators: Array<{ id: string; projectId: string; projectName: string }>;
+    terminalHealth: TerminalTransportHealth | null;
   } = {
     sessions: [],
     globalPause: null,
     orchestrators: [],
+    terminalHealth: null,
   };
 
   try {
     const { config, registry, sessionManager } = await getServices();
+    pageData.terminalHealth = await getTerminalTransportHealth({ heal: false });
     const allSessions = await sessionManager.list();
 
     pageData.globalPause = resolveGlobalPause(allSessions);
@@ -120,6 +124,7 @@ export default async function Home(props: { searchParams: Promise<{ project?: st
     pageData.sessions = [];
     pageData.globalPause = null;
     pageData.orchestrators = [];
+    pageData.terminalHealth = null;
   }
 
   const projectName = getSelectedProjectName(projectFilter);
@@ -134,6 +139,7 @@ export default async function Home(props: { searchParams: Promise<{ project?: st
       projects={projects}
       initialGlobalPause={pageData.globalPause}
       orchestrators={pageData.orchestrators}
+      initialTerminalHealth={pageData.terminalHealth}
     />
   );
 }

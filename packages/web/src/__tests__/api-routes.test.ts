@@ -12,6 +12,51 @@ import {
 } from "@composio/ao-core";
 import * as serialize from "@/lib/serialize";
 import { getSCM } from "@/lib/services";
+import { getTerminalTransportHealth } from "@/lib/terminal-transport";
+import type { TerminalTransportHealth } from "@/lib/types";
+
+const mockTerminalHealth: TerminalTransportHealth = {
+  status: "healthy",
+  degraded: false,
+  message: "Terminal websocket services healthy",
+  checkedAt: new Date().toISOString(),
+  services: {
+    terminalWebsocket: {
+      key: "terminalWebsocket",
+      label: "terminal websocket",
+      port: 14800,
+      healthPath: "/health",
+      status: "healthy",
+      healthy: true,
+      message: "terminal websocket healthy",
+      pid: 111,
+      restartCount: 0,
+      lastCheckedAt: new Date().toISOString(),
+      lastHealthyAt: new Date().toISOString(),
+      lastStartedAt: new Date().toISOString(),
+      lastErrorAt: null,
+      lastError: null,
+      supervisorOwned: true,
+    },
+    directTerminalWebsocket: {
+      key: "directTerminalWebsocket",
+      label: "direct terminal websocket",
+      port: 14801,
+      healthPath: "/health",
+      status: "healthy",
+      healthy: true,
+      message: "direct terminal websocket healthy",
+      pid: 222,
+      restartCount: 0,
+      lastCheckedAt: new Date().toISOString(),
+      lastHealthyAt: new Date().toISOString(),
+      lastStartedAt: new Date().toISOString(),
+      lastErrorAt: null,
+      lastError: null,
+      supervisorOwned: true,
+    },
+  },
+};
 
 // ── Mock Data ─────────────────────────────────────────────────────────
 // Provides test sessions covering the key states the dashboard needs.
@@ -192,9 +237,14 @@ vi.mock("@/lib/services", () => ({
   getSCM: vi.fn(() => mockSCM),
 }));
 
+vi.mock("@/lib/terminal-transport", () => ({
+  getTerminalTransportHealth: vi.fn(async () => mockTerminalHealth),
+}));
+
 // ── Import routes after mocking ───────────────────────────────────────
 
 import { GET as sessionsGET } from "@/app/api/sessions/route";
+import { GET as terminalHealthGET } from "@/app/api/terminal-health/route";
 import { POST as orchestratorsPOST } from "@/app/api/orchestrators/route";
 import { POST as spawnPOST } from "@/app/api/spawn/route";
 import { POST as sendPOST } from "@/app/api/sessions/[id]/send/route";
@@ -235,6 +285,7 @@ describe("API Routes", () => {
       expect(data.sessions.length).toBe(testSessions.length);
       expect(data.stats).toBeDefined();
       expect(data.stats.totalSessions).toBe(data.sessions.length);
+      expect(data.terminalHealth).toEqual(mockTerminalHealth);
     });
 
     it("stats include expected fields", async () => {
@@ -389,6 +440,56 @@ describe("API Routes", () => {
         reason: "Rate limit hit",
         sourceSessionId: "docs-orchestrator",
       });
+    });
+  });
+
+  describe("GET /api/terminal-health", () => {
+    it("returns current terminal transport health", async () => {
+      const res = await terminalHealthGET(makeRequest("http://localhost:3000/api/terminal-health"));
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data).toEqual(mockTerminalHealth);
+    });
+
+    it("rate-limits self-heal side effects across frequent polls", async () => {
+      const degradedHealth: TerminalTransportHealth = {
+        ...mockTerminalHealth,
+        status: "degraded",
+        degraded: true,
+        message: "Terminal transport degraded: direct terminal websocket",
+        services: {
+          ...mockTerminalHealth.services,
+          directTerminalWebsocket: {
+            ...mockTerminalHealth.services.directTerminalWebsocket,
+            healthy: false,
+            status: "restarting",
+          },
+        },
+      };
+
+      const healthMock = vi.mocked(getTerminalTransportHealth);
+      healthMock.mockReset();
+      healthMock.mockResolvedValueOnce(degradedHealth);
+      healthMock.mockResolvedValueOnce(degradedHealth);
+      healthMock.mockResolvedValueOnce(degradedHealth);
+
+      const nowSpy = vi.spyOn(Date, "now");
+      const base = 10_000_000_000_000;
+      nowSpy.mockReturnValueOnce(base);
+      const first = await terminalHealthGET(
+        makeRequest("http://localhost:3000/api/terminal-health"),
+      );
+      expect(first.status).toBe(200);
+
+      nowSpy.mockReturnValueOnce(base + 10);
+      const second = await terminalHealthGET(
+        makeRequest("http://localhost:3000/api/terminal-health"),
+      );
+      expect(second.status).toBe(200);
+
+      expect(healthMock).toHaveBeenNthCalledWith(1, { heal: false });
+      expect(healthMock).toHaveBeenNthCalledWith(2, { heal: true });
+      expect(healthMock).toHaveBeenNthCalledWith(3, { heal: false });
     });
   });
 
