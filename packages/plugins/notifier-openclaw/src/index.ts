@@ -7,6 +7,7 @@ import {
   type PluginModule,
 } from "@composio/ao-core";
 import { isRetryableHttpStatus, normalizeRetryConfig, validateUrl } from "@composio/ao-core/utils";
+import { createHash } from "node:crypto";
 
 export const manifest = {
   name: "openclaw",
@@ -19,6 +20,7 @@ type WakeMode = "now" | "next-heartbeat";
 
 interface OpenClawWebhookPayload {
   message: string;
+  event_id: string;
   name?: string;
   sessionKey?: string;
   wakeMode?: WakeMode;
@@ -98,7 +100,12 @@ function stringifyData(data: Record<string, unknown>): string {
 }
 
 function formatEscalationMessage(event: OrchestratorEvent): string {
-  const parts = [eventHeadline(event), event.message, stringifyData(event.data)].filter(Boolean);
+  const parts = [
+    eventHeadline(event),
+    `Event ID: ${event.id}`,
+    event.message,
+    stringifyData(event.data),
+  ].filter(Boolean);
   return parts.join("\n");
 }
 
@@ -106,6 +113,11 @@ function formatActionsLine(actions: NotifyAction[]): string {
   if (actions.length === 0) return "";
   const labels = actions.map((a) => a.label).join(", ");
   return `Actions available: ${labels}`;
+}
+
+function stableEventId(parts: string[]): string {
+  const input = parts.join("|");
+  return createHash("sha256").update(input).digest("hex").slice(0, 24);
 }
 
 export function create(config?: Record<string, unknown>): Notifier {
@@ -120,8 +132,13 @@ export function create(config?: Record<string, unknown>): Notifier {
     typeof config?.sessionKeyPrefix === "string" ? config.sessionKeyPrefix : "hook:ao:";
   const wakeMode: WakeMode = config?.wakeMode === "next-heartbeat" ? "next-heartbeat" : "now";
   const deliver = typeof config?.deliver === "boolean" ? config.deliver : true;
+  const idempotencyTtlMs =
+    typeof config?.idempotencyTtlMs === "number" && config.idempotencyTtlMs >= 0
+      ? config.idempotencyTtlMs
+      : 300_000;
 
   const { retries, retryDelayMs } = normalizeRetryConfig(config);
+  const recentEventIds = new Map<string, number>();
 
   validateUrl(url, "notifier-openclaw");
 
@@ -131,13 +148,38 @@ export function create(config?: Record<string, unknown>): Notifier {
     );
   }
 
-  async function sendPayload(payload: OpenClawWebhookPayload): Promise<void> {
+  function reserveEventId(sessionKey: string, eventId: string): boolean {
+    if (idempotencyTtlMs === 0) return true;
+
+    const now = Date.now();
+    for (const [key, expiresAt] of recentEventIds.entries()) {
+      if (expiresAt <= now) recentEventIds.delete(key);
+    }
+
+    const dedupeKey = `${sessionKey}:${eventId}`;
+    const expiresAt = recentEventIds.get(dedupeKey);
+    if (typeof expiresAt === "number" && expiresAt > now) {
+      return false;
+    }
+
+    recentEventIds.set(dedupeKey, now + idempotencyTtlMs);
+    return true;
+  }
+
+  async function sendPayload(payload: OpenClawWebhookPayload, dedupe: boolean): Promise<void> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
     if (token) headers["Authorization"] = `Bearer ${token}`;
 
-    const sessionId = payload.sessionKey?.slice(sessionKeyPrefix.length) ?? "default";
+    const sessionKey = payload.sessionKey ?? `${sessionKeyPrefix}default`;
+    const sessionId = sessionKey.slice(sessionKeyPrefix.length) || "default";
+    if (dedupe && !reserveEventId(sessionKey, payload.event_id)) {
+      console.info(
+        `[notifier-openclaw] Skipping duplicate escalation event_id=${payload.event_id} session=${sessionId}`,
+      );
+      return;
+    }
 
     await postWithRetry(url, payload, headers, retries, retryDelayMs, { sessionId });
   }
@@ -149,11 +191,12 @@ export function create(config?: Record<string, unknown>): Notifier {
       const sessionKey = `${sessionKeyPrefix}${sanitizeSessionId(event.sessionId)}`;
       await sendPayload({
         message: formatEscalationMessage(event),
+        event_id: event.id,
         name: senderName,
         sessionKey,
         wakeMode,
         deliver,
-      });
+      }, true);
     },
 
     async notifyWithActions(event: OrchestratorEvent, actions: NotifyAction[]): Promise<void> {
@@ -163,11 +206,12 @@ export function create(config?: Record<string, unknown>): Notifier {
 
       await sendPayload({
         message,
+        event_id: event.id,
         name: senderName,
         sessionKey,
         wakeMode,
         deliver,
-      });
+      }, true);
     },
 
     async post(message: string, context?: NotifyContext): Promise<string | null> {
@@ -176,11 +220,12 @@ export function create(config?: Record<string, unknown>): Notifier {
 
       await sendPayload({
         message,
+        event_id: stableEventId([sessionKey, message]),
         name: senderName,
         sessionKey,
         wakeMode,
         deliver,
-      });
+      }, false);
 
       return null;
     },

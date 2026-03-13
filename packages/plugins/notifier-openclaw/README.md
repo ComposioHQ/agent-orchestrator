@@ -28,8 +28,10 @@ notifiers:
 ## Behavior
 
 - Sends `POST /hooks/agent` payloads with per-session key `hook:ao:<sessionId>`.
+- Adds stable `event_id` to webhook payloads and includes `Event ID: <id>` in escalation messages.
 - Defaults `wakeMode: now` and `deliver: true`.
 - Retries on `429` and `5xx` responses with exponential backoff.
+- Deduplicates recent escalation replays per `sessionKey + event_id` for `idempotencyTtlMs` (default: `300000`).
 
 ## Token rotation
 
@@ -37,8 +39,11 @@ notifiers:
 2. Update `OPENCLAW_HOOKS_TOKEN` used by AO.
 3. Verify old token returns `401` and new token returns `200`.
 
-## Known limitation (Phase 0)
+## Idempotency window config
 
-- OpenClaw hook ingest is not idempotent by default. Replayed webhook payloads are processed as separate runs.
-- Owner: AO integration.
-- Follow-up: add stable event id/idempotency key support.
+```yaml
+notifiers:
+  openclaw:
+    plugin: openclaw
+    idempotencyTtlMs: 300000
+```
