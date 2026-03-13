@@ -7,6 +7,27 @@ import {
   type PluginModule,
 } from "@composio/ao-core";
 import { isRetryableHttpStatus, normalizeRetryConfig, validateUrl } from "@composio/ao-core/utils";
+import { EscalationNoiseController, type OpenClawWebhookPayload } from "./noise-control.js";
+export {
+  createAoCliRunner,
+  type AoCliResult,
+  type AoCliRunner,
+} from "./ao-cli.js";
+export {
+  parseAoAutoReplyCommand,
+  executeAoAutoReplyCommand,
+  type AoAutoReplyCommand,
+  type AoAutoReplyCommandType,
+  type AoAutoReplyResult,
+  type AoAutoReplyMetrics,
+} from "./commands.js";
+export {
+  collectAoHealthSummary,
+  AoHealthPollingService,
+  type AoHealthSummary,
+  type AoHealthPollOptions,
+  type AoHealthServiceOptions,
+} from "./health.js";
 
 export const manifest = {
   name: "openclaw",
@@ -16,14 +37,6 @@ export const manifest = {
 };
 
 type WakeMode = "now" | "next-heartbeat";
-
-interface OpenClawWebhookPayload {
-  message: string;
-  name?: string;
-  sessionKey?: string;
-  wakeMode?: WakeMode;
-  deliver?: boolean;
-}
 
 async function postWithRetry(
   url: string,
@@ -120,6 +133,13 @@ export function create(config?: Record<string, unknown>): Notifier {
     typeof config?.sessionKeyPrefix === "string" ? config.sessionKeyPrefix : "hook:ao:";
   const wakeMode: WakeMode = config?.wakeMode === "next-heartbeat" ? "next-heartbeat" : "now";
   const deliver = typeof config?.deliver === "boolean" ? config.deliver : true;
+  const debounceWindowMs =
+    typeof config?.debounceWindowMs === "number" ? config.debounceWindowMs : 90_000;
+  const batchWindowMs = typeof config?.batchWindowMs === "number" ? config.batchWindowMs : 20_000;
+  const batchTriggerCount =
+    typeof config?.batchTriggerCount === "number" ? config.batchTriggerCount : 3;
+  const batchSessionKey =
+    typeof config?.batchSessionKey === "string" ? config.batchSessionKey : `${sessionKeyPrefix}ops`;
 
   const { retries, retryDelayMs } = normalizeRetryConfig(config);
 
@@ -142,10 +162,39 @@ export function create(config?: Record<string, unknown>): Notifier {
     await postWithRetry(url, payload, headers, retries, retryDelayMs, { sessionId });
   }
 
+  const noiseController = new EscalationNoiseController({
+    debounceWindowMs,
+    batchWindowMs,
+    batchTriggerCount,
+    batchSessionKey,
+    senderName,
+    wakeMode,
+    deliver,
+    onBatchReady: async (payload) => {
+      await sendPayload(payload);
+    },
+  });
+
+  async function shouldSendEvent(event: OrchestratorEvent): Promise<boolean> {
+    const decision = noiseController.evaluateEvent(event);
+    if (decision === "send") return true;
+    if (decision === "debounced") {
+      console.info(
+        `[notifier-openclaw] Debounced repeated escalation session=${event.sessionId} type=${event.type}`,
+      );
+      return false;
+    }
+    console.info(
+      `[notifier-openclaw] Batched escalation session=${event.sessionId} type=${event.type}`,
+    );
+    return false;
+  }
+
   return {
     name: "openclaw",
 
     async notify(event: OrchestratorEvent): Promise<void> {
+      if (!(await shouldSendEvent(event))) return;
       const sessionKey = `${sessionKeyPrefix}${sanitizeSessionId(event.sessionId)}`;
       await sendPayload({
         message: formatEscalationMessage(event),
@@ -157,6 +206,7 @@ export function create(config?: Record<string, unknown>): Notifier {
     },
 
     async notifyWithActions(event: OrchestratorEvent, actions: NotifyAction[]): Promise<void> {
+      if (!(await shouldSendEvent(event))) return;
       const sessionKey = `${sessionKeyPrefix}${sanitizeSessionId(event.sessionId)}`;
       const actionsLine = formatActionsLine(actions);
       const message = [formatEscalationMessage(event), actionsLine].filter(Boolean).join("\n");
