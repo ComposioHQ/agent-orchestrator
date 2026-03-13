@@ -1093,6 +1093,11 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     }
 
     // Write metadata and run post-launch setup — clean up on failure
+    const sessionMetadata: Record<string, string> = {
+      ...(spawnConfig.metadata ?? {}),
+      ...(reusedOpenCodeSessionId ? { opencodeSessionId: reusedOpenCodeSessionId } : {}),
+    };
+
     const session: Session = {
       id: sessionId,
       projectId: spawnConfig.projectId,
@@ -1106,9 +1111,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       agentInfo: null,
       createdAt: new Date(),
       lastActivityAt: new Date(),
-      metadata: {
-        ...(reusedOpenCodeSessionId ? { opencodeSessionId: reusedOpenCodeSessionId } : {}),
-      },
+      metadata: sessionMetadata,
     };
 
     try {
