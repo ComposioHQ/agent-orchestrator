@@ -1149,6 +1149,93 @@ describe("reactions", () => {
     expect(mockNotifier.notify).not.toHaveBeenCalled();
   });
 
+  it("tracks CI retry escalation per CI run and resets on a new failing run", async () => {
+    config.reactions = {
+      "ci-failed": {
+        auto: true,
+        action: "send-to-agent",
+        message: "Fix CI failure.",
+        retries: 1,
+        escalateAfter: 1,
+      },
+    };
+
+    const mockNotifier: Notifier = {
+      name: "mock-notifier",
+      notify: vi.fn().mockResolvedValue(undefined),
+    };
+
+    let ciChecksCall = 0;
+    const run1Time = new Date("2026-01-01T00:00:00.000Z");
+    const run2Time = new Date("2026-01-01T00:10:00.000Z");
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn().mockImplementation(async () => {
+        ciChecksCall++;
+        const startedAt = ciChecksCall <= 2 ? run1Time : run2Time;
+        return [{ name: "test", status: "failed", conclusion: "failure", startedAt }];
+      }),
+      getCISummary: vi.fn().mockResolvedValue("failing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("none"),
+      getPendingComments: vi.fn().mockResolvedValue([]),
+      getAutomatedComments: vi.fn().mockResolvedValue([]),
+      getMergeability: vi.fn(),
+    };
+
+    const registryWithSCMAndNotifier: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "notifier" && name === "desktop") return mockNotifier;
+        return null;
+      }),
+    };
+
+    vi.mocked(mockSessionManager.send).mockRejectedValue(new Error("send failed"));
+    const session = makeSession({ status: "ci_failed", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "ci_failed",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCMAndNotifier,
+      sessionManager: mockSessionManager,
+    });
+
+    // Run 1: first failed send (attempt 1), then escalation on next retry (attempt 2)
+    await lm.check("app-1");
+    await lm.check("app-1");
+
+    // Run 2: fingerprint changes, retries should reset (new send attempt, then escalation again)
+    await lm.check("app-1");
+    await lm.check("app-1");
+
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(2);
+    expect(mockNotifier.notify).toHaveBeenCalledTimes(2);
+    expect(mockNotifier.notify).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ type: "reaction.escalated" }),
+    );
+    expect(mockNotifier.notify).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ type: "reaction.escalated" }),
+    );
+  });
+
   it("dispatches unresolved review comments even when reviewDecision stays unchanged", async () => {
     config.reactions = {
       "changes-requested": {

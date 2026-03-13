@@ -145,6 +145,7 @@ describe.skipIf(!realProject)("path encoding & JSONL reading (real Claude data)"
         "error",
         "summary",
         "result",
+        "last-prompt",
         "file-history-snapshot",
         "queue-operation",
         "pr-link",
