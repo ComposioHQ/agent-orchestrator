@@ -24,6 +24,7 @@ const {
   mockSpawn,
   mockEnsureLifecycleWorker,
   mockStopLifecycleWorker,
+  mockResolveDashboardRuntime,
 } = vi.hoisted(() => ({
   mockExec: vi.fn(),
   mockExecSilent: vi.fn(),
@@ -42,6 +43,7 @@ const {
   mockSpawn: vi.fn(),
   mockEnsureLifecycleWorker: vi.fn(),
   mockStopLifecycleWorker: vi.fn(),
+  mockResolveDashboardRuntime: vi.fn(),
 }));
 
 vi.mock("../../src/lib/shell.js", () => ({
@@ -100,6 +102,7 @@ vi.mock("../../src/lib/web-dir.js", () => ({
   waitForPortAndOpen: (...args: unknown[]) => mockWaitForPortAndOpen(...args),
   isPortAvailable: vi.fn().mockResolvedValue(true),
   findFreePort: vi.fn().mockResolvedValue(3000),
+  resolveDashboardRuntime: (...args: unknown[]) => mockResolveDashboardRuntime(...args),
 }));
 
 vi.mock("../../src/lib/dashboard-rebuild.js", () => ({
@@ -174,6 +177,12 @@ beforeEach(() => {
   });
   mockStopLifecycleWorker.mockReset();
   mockStopLifecycleWorker.mockResolvedValue(true);
+  mockResolveDashboardRuntime.mockReset();
+  mockResolveDashboardRuntime.mockReturnValue({
+    mode: "dev",
+    webDir: "/fake/web",
+    standaloneServerPath: null,
+  });
   mockSpawn.mockClear();
 });
 
