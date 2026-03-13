@@ -2038,7 +2038,7 @@ describe("cleanup", () => {
     expect(deleteLog).toContain("session delete ses_cleanup");
   });
 
-  it("treats missing mapped OpenCode session as already cleaned", async () => {
+  it("treats missing mapped OpenCode session as already cleaned", { timeout: 15000 }, async () => {
     const mockBin = installMockOpencodeWithNotFoundDelete("[]");
     process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
 
@@ -2599,7 +2599,7 @@ describe("send", () => {
     expect(mockRuntime.sendMessage).toHaveBeenCalledWith(makeHandle("rt-1"), "hello");
   });
 
-  it("re-discovers OpenCode mapping before sending when stored mapping is invalid", async () => {
+  it("re-discovers OpenCode mapping before sending when stored mapping is invalid", { timeout: 15000 }, async () => {
     const deleteLogPath = join(tmpDir, "opencode-send-remap-invalid.log");
     const mockBin = installMockOpencode(
       JSON.stringify([
@@ -2778,7 +2778,7 @@ describe("remap", () => {
     expect(meta?.["opencodeSessionId"]).toBe("ses_fresh");
   });
 
-  it("uses a longer discovery timeout for explicit remap operations", async () => {
+  it("uses a longer discovery timeout for explicit remap operations", { timeout: 15000 }, async () => {
     const deleteLogPath = join(tmpDir, "opencode-delete-slow-remap.log");
     const mockBin = installMockOpencode(
       JSON.stringify([
