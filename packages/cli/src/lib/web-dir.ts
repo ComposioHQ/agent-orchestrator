@@ -156,8 +156,6 @@ export async function buildDashboardEnv(
 
   env["TERMINAL_PORT"] = String(resolvedTerminal);
   env["DIRECT_TERMINAL_PORT"] = String(resolvedDirect);
-  env["NEXT_PUBLIC_TERMINAL_PORT"] = String(resolvedTerminal);
-  env["NEXT_PUBLIC_DIRECT_TERMINAL_PORT"] = String(resolvedDirect);
 
   return env;
 }

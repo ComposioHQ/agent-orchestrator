@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/cn";
+import { fetchRuntimeConfig } from "@/lib/runtime-config";
 
 // Import xterm CSS (must be imported in client component)
 import "xterm/css/xterm.css";
@@ -263,13 +264,6 @@ export function DirectTerminal({
         // WebSocket URL (stable across reconnects)
         // When accessed via reverse proxy (HTTPS on standard port), use path-based
         // WebSocket endpoint instead of direct port access.
-        const wsUrl = buildDirectTerminalWsUrl({
-          location: window.location,
-          sessionId,
-          proxyWsPath: process.env.NEXT_PUBLIC_TERMINAL_WS_PATH,
-          directTerminalPort: process.env.NEXT_PUBLIC_DIRECT_TERMINAL_PORT,
-        });
-
         // ── Preserve selection while terminal receives output ────────
         // xterm.js clears the selection on every terminal.write(). We
         // buffer incoming data while a selection is active so the
@@ -353,8 +347,26 @@ export function DirectTerminal({
           }
         });
 
-        function connectWebSocket() {
+        async function connectWebSocket() {
           if (!mounted) return;
+
+          let directTerminalPort: string | undefined;
+          try {
+            directTerminalPort = (await fetchRuntimeConfig()).directTerminalPort;
+          } catch (err) {
+            console.error("[DirectTerminal] Failed to load runtime config:", err);
+            permanentErrorRef.current = true;
+            setStatus("error");
+            setError("Failed to load terminal configuration");
+            return;
+          }
+
+          const wsUrl = buildDirectTerminalWsUrl({
+            location: window.location,
+            sessionId,
+            proxyWsPath: process.env.NEXT_PUBLIC_TERMINAL_WS_PATH,
+            directTerminalPort,
+          });
 
           console.log("[DirectTerminal] Connecting to:", wsUrl);
           const websocket = new WebSocket(wsUrl);
