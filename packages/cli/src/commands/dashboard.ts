@@ -1,38 +1,18 @@
-import { spawn } from "node:child_process";
 import { resolve } from "node:path";
-import { accessSync, constants, existsSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import chalk from "chalk";
 import type { Command } from "commander";
 import { loadConfig } from "@composio/ao-core";
 import { findWebDir, buildDashboardEnv, resolveDashboardRuntime, waitForPortAndOpen } from "../lib/web-dir.js";
-import { cleanNextCache, findRunningDashboardPid, findProcessWebDir, waitForPortFree } from "../lib/dashboard-rebuild.js";
-
-function assertDashboardRebuildAvailable(webDir: string): void {
-  try {
-    accessSync(webDir, constants.W_OK);
-  } catch {
-    throw new Error("Dashboard rebuild is unavailable for packaged installs.");
-  }
-}
-
-async function rebuildDashboard(webDir: string): Promise<void> {
-  assertDashboardRebuildAvailable(webDir);
-  await new Promise<void>((resolvePromise, reject) => {
-    const child = spawn("pnpm", ["build"], {
-      cwd: webDir,
-      stdio: "inherit",
-    });
-
-    child.on("error", reject);
-    child.on("exit", (code) => {
-      if (code === 0) {
-        resolvePromise();
-        return;
-      }
-      reject(new Error(`pnpm build exited with code ${code ?? "null"}`));
-    });
-  });
-}
+import {
+  assertDashboardRebuildAvailable,
+  cleanNextCache,
+  findRunningDashboardPid,
+  findProcessWebDir,
+  rebuildDashboard,
+  waitForPortFree,
+} from "../lib/dashboard-rebuild.js";
 
 export function registerDashboard(program: Command): void {
   program

@@ -10,7 +10,7 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { accessSync, constants, existsSync, writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import chalk from "chalk";
 import ora from "ora";
@@ -41,7 +41,7 @@ import {
   findFreePort,
   MAX_PORT_SCAN,
 } from "../lib/web-dir.js";
-import { cleanNextCache } from "../lib/dashboard-rebuild.js";
+import { assertDashboardRebuildAvailable, cleanNextCache, rebuildDashboard } from "../lib/dashboard-rebuild.js";
 import { preflight } from "../lib/preflight.js";
 
 const DEFAULT_PORT = 3000;
@@ -257,33 +257,6 @@ async function startDashboard(
   });
 
   return child;
-}
-
-async function rebuildDashboard(webDir: string): Promise<void> {
-  assertDashboardRebuildAvailable(webDir);
-  await new Promise<void>((resolvePromise, reject) => {
-    const child = spawn("pnpm", ["build"], {
-      cwd: webDir,
-      stdio: "inherit",
-    });
-
-    child.on("error", reject);
-    child.on("exit", (code) => {
-      if (code === 0) {
-        resolvePromise();
-        return;
-      }
-      reject(new Error(`pnpm build exited with code ${code ?? "null"}`));
-    });
-  });
-}
-
-function assertDashboardRebuildAvailable(webDir: string): void {
-  try {
-    accessSync(webDir, constants.W_OK);
-  } catch {
-    throw new Error("Dashboard rebuild is unavailable for packaged installs.");
-  }
 }
 
 /**

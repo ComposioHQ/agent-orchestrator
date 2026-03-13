@@ -47,9 +47,12 @@ const directTerminalServer = requirePath(
   "direct terminal server build output",
 );
 
+// Next standalone reads HOSTNAME for the bind address. Many Linux shells export
+// HOSTNAME as the machine name, which is not a safe default bind target here.
+const bindHost = process.env.HOST || "0.0.0.0";
 const nextEnv = {
   ...process.env,
-  HOSTNAME: process.env.HOSTNAME ?? "0.0.0.0",
+  HOSTNAME: bindHost,
 };
 
 const services = [
