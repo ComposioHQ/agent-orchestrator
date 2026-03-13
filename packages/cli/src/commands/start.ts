@@ -260,12 +260,7 @@ async function startDashboard(
 }
 
 async function rebuildDashboard(webDir: string): Promise<void> {
-  try {
-    accessSync(webDir, constants.W_OK);
-  } catch {
-    throw new Error("Dashboard rebuild is unavailable for packaged installs.");
-  }
-
+  assertDashboardRebuildAvailable(webDir);
   await new Promise<void>((resolvePromise, reject) => {
     const child = spawn("pnpm", ["build"], {
       cwd: webDir,
@@ -281,6 +276,14 @@ async function rebuildDashboard(webDir: string): Promise<void> {
       reject(new Error(`pnpm build exited with code ${code ?? "null"}`));
     });
   });
+}
+
+function assertDashboardRebuildAvailable(webDir: string): void {
+  try {
+    accessSync(webDir, constants.W_OK);
+  } catch {
+    throw new Error("Dashboard rebuild is unavailable for packaged installs.");
+  }
 }
 
 /**
@@ -332,6 +335,7 @@ async function runStartup(
 
     if (opts?.rebuild) {
       spinner.start("Rebuilding dashboard bundle");
+      assertDashboardRebuildAvailable(webDir);
       await cleanNextCache(webDir);
       await rebuildDashboard(webDir);
       spinner.succeed("Dashboard bundle rebuilt");

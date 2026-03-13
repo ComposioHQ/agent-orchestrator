@@ -7,13 +7,16 @@ import { loadConfig } from "@composio/ao-core";
 import { findWebDir, buildDashboardEnv, resolveDashboardRuntime, waitForPortAndOpen } from "../lib/web-dir.js";
 import { cleanNextCache, findRunningDashboardPid, findProcessWebDir, waitForPortFree } from "../lib/dashboard-rebuild.js";
 
-async function rebuildDashboard(webDir: string): Promise<void> {
+function assertDashboardRebuildAvailable(webDir: string): void {
   try {
     accessSync(webDir, constants.W_OK);
   } catch {
     throw new Error("Dashboard rebuild is unavailable for packaged installs.");
   }
+}
 
+async function rebuildDashboard(webDir: string): Promise<void> {
+  assertDashboardRebuildAvailable(webDir);
   await new Promise<void>((resolvePromise, reject) => {
     const child = spawn("pnpm", ["build"], {
       cwd: webDir,
@@ -63,6 +66,8 @@ export function registerDashboard(program: Command): void {
         const runningPid = await findRunningDashboardPid(port);
         const runningWebDir = runningPid ? await findProcessWebDir(runningPid) : null;
         const targetWebDir = runningWebDir ?? localWebDir;
+        assertDashboardRebuildAvailable(targetWebDir);
+        assertDashboardRebuildAvailable(localWebDir);
 
         if (runningPid) {
           // Kill the running server, clean .next, then start fresh below.
