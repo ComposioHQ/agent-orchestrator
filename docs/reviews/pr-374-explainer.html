@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PR #374 Explainer - Long Message Delivery Reliability</title>
+  <style>
+    :root {
+      --bg: #f6f7fb;
+      --card: #ffffff;
+      --text: #14213d;
+      --muted: #4a5568;
+      --accent: #0f766e;
+      --warn: #9a3412;
+      --ok: #166534;
+      --border: #d9e2ec;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", Tahoma, sans-serif;
+      background: linear-gradient(160deg, #f6f7fb 0%, #e8eef5 100%);
+      color: var(--text);
+      line-height: 1.55;
+    }
+    .wrap {
+      max-width: 980px;
+      margin: 28px auto;
+      padding: 0 16px 32px;
+    }
+    .hero {
+      background: linear-gradient(135deg, #0f766e, #115e59);
+      color: #fff;
+      border-radius: 14px;
+      padding: 22px;
+      box-shadow: 0 10px 24px rgba(17, 94, 89, 0.18);
+    }
+    .hero h1 { margin: 0 0 8px; font-size: 1.6rem; }
+    .hero p { margin: 0; opacity: 0.95; }
+    .grid {
+      margin-top: 16px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 12px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+    }
+    h2 { margin: 0 0 8px; font-size: 1.12rem; }
+    h3 { margin: 10px 0 6px; font-size: 1rem; }
+    ul { margin: 8px 0 0 18px; }
+    code { background: #eef2ff; padding: 1px 5px; border-radius: 4px; }
+    .ok { color: var(--ok); font-weight: 700; }
+    .warn { color: var(--warn); font-weight: 700; }
+    .muted { color: var(--muted); }
+    .footer {
+      margin-top: 14px;
+      font-size: 0.92rem;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="hero">
+      <h1>PR #374 Explainer: Reliable Long Message Delivery in tmux</h1>
+      <p>Issue #373 fix for swallowed Enter after paste-buffer in <code>ao send</code> paths, including multi-chunk paste and busy render races.</p>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <h2>What This PR Does</h2>
+        <ul>
+          <li>Hardens long/multiline tmux send flow where messages are delivered through paste-buffer.</li>
+          <li>Adds adaptive wait + Enter retry behavior with pane-change confirmation in core tmux helper.</li>
+          <li>Hardens runtime-tmux plugin with paste-settle detection and submission verification heuristics.</li>
+          <li>Fixes review feedback issues: baseline timing bug, unbounded delay, and timer-flaky tests.</li>
+        </ul>
+      </article>
+
+      <article class="card">
+        <h2>Architecture and Design Choices</h2>
+        <h3>Core tmux helper (<code>packages/core/src/tmux.ts</code>)</h3>
+        <ul>
+          <li>Capture pane baseline right before first Enter (not before adaptive delay).</li>
+          <li>Cap adaptive delay with <code>MAX_ADAPTIVE_PASTE_DELAY_MS = 15000</code>.</li>
+          <li>Retry Enter with staggered delays when output does not progress.</li>
+        </ul>
+        <h3>Runtime tmux plugin (<code>packages/plugins/runtime-tmux/src/index.ts</code>)</h3>
+        <ul>
+          <li>Waits for paste rendering to settle to handle chunked paste markers.</li>
+          <li>Detects submission start via draft marker disappearance / prompt transition.</li>
+          <li>Retries Enter if submission not confirmed.</li>
+        </ul>
+      </article>
+
+      <article class="card">
+        <h2>Iterations and Feedback Addressed</h2>
+        <ul>
+          <li><strong>Iteration 1:</strong> initial adaptive delay + retry in core helper.</li>
+          <li><strong>Iteration 2:</strong> production path hardening in runtime-tmux plugin.</li>
+          <li><strong>Iteration 3:</strong> baseline capture ordering fix (Bugbot high severity).</li>
+          <li><strong>Iteration 4:</strong> capped adaptive delay + timer-mock tests (Bugbot medium findings).</li>
+        </ul>
+      </article>
+
+      <article class="card">
+        <h2>Testing Performed</h2>
+        <ul>
+          <li><code>pnpm -C packages/core test src/__tests__/tmux.test.ts</code> → <span class="ok">PASS (25/25)</span></li>
+          <li><code>pnpm -C packages/plugins/runtime-tmux test src/__tests__/index.test.ts</code> → <span class="ok">PASS (26/26)</span></li>
+          <li><code>ao review-check --dry-run</code> → cannot run in this workspace (missing <code>agent-orchestrator.yaml</code>); manual deep review fallback executed.</li>
+        </ul>
+      </article>
+
+      <article class="card">
+        <h2>CI and Bugbot Status</h2>
+        <p class="muted">Post-push snapshot is green for CI checks; Cursor Bugbot is still processing at snapshot time, and previously reported inline findings are already addressed in follow-up commits.</p>
+        <ul>
+          <li>CI: Lint/Test/Typecheck/Integration/Security checks passing in latest completed run snapshot.</li>
+          <li>Bugbot: reported issues addressed with code and tests; replies posted on review threads.</li>
+        </ul>
+      </article>
+
+      <article class="card">
+        <h2>Remaining Risks</h2>
+        <ul>
+          <li>Terminal output heuristics are inherently environment-sensitive (different prompts/agents).</li>
+          <li>Very large payload behavior remains bounded by delay cap; retries may still be needed in unusually slow terminals.</li>
+        </ul>
+      </article>
+
+      <article class="card">
+        <h2>Merge Recommendation</h2>
+        <p><strong class="ok">Recommend MERGE</strong>, conditional on latest post-push CI remaining green.</p>
+        <p>Quality self-assessment:</p>
+        <ul>
+          <li>Satisfied with implementation quality: <strong>Yes</strong></li>
+          <li>Should be merged: <strong>Yes</strong></li>
+          <li>Proud of this PR: <strong>Yes</strong></li>
+        </ul>
+      </article>
+    </section>
+
+    <p class="footer">Generated for PR #374 pre-merge quality sweep.</p>
+  </main>
+</body>
+</html>
