@@ -2289,6 +2289,101 @@ describe("cleanup", () => {
     expect(result.skipped).toContain("app-orchestrator");
   });
 
+  it("never cleans the canonical orchestrator session even with stale worker-like metadata", async () => {
+    const deleteLogPath = join(tmpDir, "opencode-delete-orchestrator.log");
+    const mockBin = installMockOpencode("[]", deleteLogPath);
+    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+
+    const deadRuntime: Runtime = {
+      ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(false),
+    };
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("merged"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn(),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn(),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+    const mockTracker: Tracker = {
+      name: "mock-tracker",
+      getIssue: vi.fn().mockResolvedValue({
+        id: "INT-42",
+        title: "Issue",
+        description: "",
+        url: "https://example.com/INT-42",
+        state: "closed",
+        labels: [],
+      }),
+      isCompleted: vi.fn().mockResolvedValue(true),
+      issueUrl: vi.fn().mockReturnValue("https://example.com/INT-42"),
+      branchName: vi.fn().mockReturnValue("feat/INT-42"),
+      generatePrompt: vi.fn().mockResolvedValue(""),
+    };
+    const registryWithSignals: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return deadRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        if (slot === "scm") return mockSCM;
+        if (slot === "tracker") return mockTracker;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-orchestrator", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "ci_failed",
+      project: "my-app",
+      issue: "INT-42",
+      pr: "https://github.com/org/repo/pull/10",
+      agent: "opencode",
+      opencodeSessionId: "ses_orchestrator_active",
+      runtimeHandle: JSON.stringify(makeHandle("rt-orchestrator")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithSignals });
+    const result = await sm.cleanup();
+
+    expect(result.killed).not.toContain("app-orchestrator");
+    expect(result.skipped).toContain("app-orchestrator");
+    expect(existsSync(deleteLogPath)).toBe(false);
+  });
+
+  it("never cleans archived orchestrator mappings even when metadata looks stale", async () => {
+    const deleteLogPath = join(tmpDir, "opencode-delete-archived-orchestrator.log");
+    const mockBin = installMockOpencode("[]", deleteLogPath);
+    process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
+
+    writeMetadata(sessionsDir, "app-orchestrator", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "killed",
+      project: "my-app",
+      agent: "opencode",
+      opencodeSessionId: "ses_orchestrator_archived",
+      pr: "https://github.com/org/repo/pull/88",
+      runtimeHandle: JSON.stringify(makeHandle("rt-orchestrator")),
+    });
+    deleteMetadata(sessionsDir, "app-orchestrator", true);
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const result = await sm.cleanup();
+
+    expect(result.killed).not.toContain("app-orchestrator");
+    expect(result.skipped).toContain("app-orchestrator");
+    expect(existsSync(deleteLogPath)).toBe(false);
+  });
+
   it("kills sessions with dead runtimes", async () => {
     const deadRuntime: Runtime = {
       ...mockRuntime,

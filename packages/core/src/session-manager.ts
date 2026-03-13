@@ -363,6 +363,18 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return raw["role"] === "orchestrator" || sessionId.endsWith("-orchestrator");
   }
 
+  function isCleanupProtectedSession(
+    project: ProjectConfig,
+    sessionId: string,
+    metadata?: Record<string, string> | null,
+  ): boolean {
+    const canonicalOrchestratorId = `${project.sessionPrefix}-orchestrator`;
+    return (
+      sessionId === canonicalOrchestratorId ||
+      isOrchestratorSession({ id: sessionId, metadata: metadata ?? undefined })
+    );
+  }
+
   function applyMetadataUpdatesToRaw(
     raw: Record<string, string>,
     updates: Partial<Record<string, string>>,
@@ -1643,16 +1655,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     for (const session of sessions) {
       try {
-        // Never clean up orchestrator sessions — they manage the lifecycle.
-        // Check explicit role metadata first, fall back to naming convention
-        // for pre-existing sessions spawned before the role field was added.
-        if (isOrchestratorSession(session)) {
+        const project = config.projects[session.projectId];
+        if (!project) {
           pushSkipped(session.projectId, session.id);
           continue;
         }
 
-        const project = config.projects[session.projectId];
-        if (!project) {
+        if (isCleanupProtectedSession(project, session.id, session.metadata)) {
           pushSkipped(session.projectId, session.id);
           continue;
         }
@@ -1693,6 +1702,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         }
 
         if (shouldKill) {
+          if (isCleanupProtectedSession(project, session.id, session.metadata)) {
+            pushSkipped(session.projectId, session.id);
+            continue;
+          }
           if (!options?.dryRun) {
             await kill(session.id, { purgeOpenCode: shouldPurgeOpenCode });
           }
@@ -1718,7 +1731,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         const archived = readArchivedMetadataRaw(sessionsDir, archivedId);
         if (!archived) continue;
 
-        if (isOrchestratorSession({ id: archivedId, metadata: archived })) {
+        if (isCleanupProtectedSession(project, archivedId, archived)) {
           pushSkipped(projectKey, archivedId);
           continue;
         }
