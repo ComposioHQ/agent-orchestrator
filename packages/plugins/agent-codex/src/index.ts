@@ -1,5 +1,6 @@
 import {
   DEFAULT_READY_THRESHOLD_MS,
+  readLastJsonlEntry,
   shellEscape,
   type Agent,
   type AgentSessionInfo,
@@ -338,6 +339,10 @@ interface CodexJsonlLine {
   // User message content (from user input events)
   content?: string;
   role?: string;
+  // Summary text from summary events
+  summary?: string;
+  // Direct cost field (preferred over token-based estimation)
+  costUSD?: number;
   // event_msg with token_count subtype
   msg?: {
     type?: string;
@@ -345,6 +350,8 @@ interface CodexJsonlLine {
     output_tokens?: number;
     cached_tokens?: number;
     reasoning_tokens?: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
   };
 }
 
@@ -471,6 +478,11 @@ interface CodexSessionData {
   threadId: string | null;
   inputTokens: number;
   outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+  totalCostUsd: number;
+  summary: string | null;
+  firstUserMessage: string | null;
 }
 
 /**
@@ -480,7 +492,17 @@ interface CodexSessionData {
  */
 async function streamCodexSessionData(filePath: string): Promise<CodexSessionData | null> {
   try {
-    const data: CodexSessionData = { model: null, threadId: null, inputTokens: 0, outputTokens: 0 };
+    const data: CodexSessionData = {
+      model: null,
+      threadId: null,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      totalCostUsd: 0,
+      summary: null,
+      firstUserMessage: null,
+    };
     const rl = createInterface({
       input: createReadStream(filePath, { encoding: "utf-8" }),
       crlfDelay: Infinity,
@@ -500,9 +522,31 @@ async function streamCodexSessionData(filePath: string): Promise<CodexSessionDat
         if (typeof entry.threadId === "string" && entry.threadId) {
           data.threadId = entry.threadId;
         }
+
+        // Summary extraction: prefer explicit summary events, track first user message as fallback
+        if (entry.type === "summary" && typeof entry.summary === "string" && entry.summary) {
+          data.summary = entry.summary;
+        }
+        if (
+          data.firstUserMessage === null &&
+          (entry.type === "user" || entry.role === "user") &&
+          typeof entry.content === "string" &&
+          entry.content.trim().length > 0
+        ) {
+          data.firstUserMessage = entry.content.trim();
+        }
+
+        // Cost: prefer direct costUSD field
+        if (typeof entry.costUSD === "number") {
+          data.totalCostUsd += entry.costUSD;
+        }
+
+        // Token counts from event_msg with token_count subtype
         if (entry.type === "event_msg" && entry.msg?.type === "token_count") {
           data.inputTokens += entry.msg.input_tokens ?? 0;
           data.outputTokens += entry.msg.output_tokens ?? 0;
+          data.cacheReadInputTokens += entry.msg.cache_read_input_tokens ?? 0;
+          data.cacheCreationInputTokens += entry.msg.cache_creation_input_tokens ?? 0;
         }
       } catch {
         // Skip malformed lines
@@ -609,6 +653,76 @@ async function findCodexSessionFileCached(workspacePath: string): Promise<string
   return result;
 }
 
+// =============================================================================
+// PS Process Cache
+// =============================================================================
+
+/**
+ * TTL cache for `ps -eo pid,tty,args` output. Without this, listing N sessions
+ * would spawn N concurrent `ps` processes. The cache ensures `ps` is called at
+ * most once per TTL window regardless of how many sessions are being enriched.
+ */
+let psCache: { output: string; timestamp: number; promise?: Promise<string> } | null = null;
+const PS_CACHE_TTL_MS = 5_000;
+
+/** Reset the ps cache. Exported for testing only. */
+export function _resetPsCache(): void {
+  psCache = null;
+}
+
+async function getCachedProcessList(): Promise<string> {
+  const now = Date.now();
+  if (psCache && now - psCache.timestamp < PS_CACHE_TTL_MS) {
+    if (psCache.promise) return psCache.promise;
+    return psCache.output;
+  }
+
+  const promise = execFileAsync("ps", ["-eo", "pid,tty,args"], {
+    timeout: 5_000,
+  }).then(({ stdout }) => {
+    if (psCache?.promise === promise) {
+      psCache = { output: stdout, timestamp: Date.now() };
+    }
+    return stdout;
+  });
+
+  psCache = { output: "", timestamp: now, promise };
+
+  try {
+    return await promise;
+  } catch {
+    if (psCache?.promise === promise) {
+      psCache = null;
+    }
+    return "";
+  }
+}
+
+// =============================================================================
+// Model Pricing
+// =============================================================================
+
+/** Per-model pricing (USD per million tokens). Falls back to GPT-4o pricing. */
+const MODEL_PRICING: Record<string, { input: number; output: number }> = {
+  "gpt-4o": { input: 2.5, output: 10.0 },
+  "gpt-4o-mini": { input: 0.15, output: 0.6 },
+  "o3": { input: 10.0, output: 40.0 },
+  "o3-mini": { input: 1.1, output: 4.4 },
+  "o4-mini": { input: 1.1, output: 4.4 },
+};
+const DEFAULT_PRICING = { input: 2.5, output: 10.0 };
+
+function getModelPricing(model: string | null): { input: number; output: number } {
+  if (!model) return DEFAULT_PRICING;
+  if (MODEL_PRICING[model]) return MODEL_PRICING[model];
+  // Prefix match: try longest keys first so "o3-mini-2025" matches "o3-mini" not "o3"
+  const keys = Object.keys(MODEL_PRICING).sort((a, b) => b.length - a.length);
+  for (const key of keys) {
+    if (model.startsWith(key)) return MODEL_PRICING[key];
+  }
+  return DEFAULT_PRICING;
+}
+
 function createCodexAgent(): Agent {
   /** Cached resolved binary path (populated by init or first getLaunchCommand) */
   let resolvedBinary: string | null = null;
@@ -691,28 +805,39 @@ function createCodexAgent(): Agent {
       const running = await this.isProcessRunning(session.runtimeHandle);
       if (!running) return { state: "exited", timestamp: exitedAt };
 
-      // Use session file mtime as a proxy for activity. Codex continuously
-      // appends to its rollout JSONL file while working, so a recently
-      // modified file means the agent is active.
       if (!session.workspacePath) return null;
 
       const sessionFile = await findCodexSessionFileCached(session.workspacePath);
       if (!sessionFile) return null;
 
-      try {
-        const s = await stat(sessionFile);
-        const timestamp = s.mtime;
-        const ageMs = Date.now() - s.mtimeMs;
+      // Read the last JSONL entry to classify activity by entry type,
+      // matching Claude Code's 5-state activity detection.
+      const entry = await readLastJsonlEntry(sessionFile);
+      if (!entry) return null;
 
-        if (ageMs <= threshold) {
-          // File was recently modified — agent is actively working
-          return { state: "active", timestamp };
-        }
+      const ageMs = Date.now() - entry.modifiedAt.getTime();
+      const timestamp = entry.modifiedAt;
 
-        // File is stale — agent finished or is idle
-        return { state: "idle", timestamp };
-      } catch {
-        return null;
+      switch (entry.lastType) {
+        case "user":
+        case "tool_use":
+        case "progress":
+          return { state: ageMs > threshold ? "idle" : "active", timestamp };
+
+        case "assistant":
+        case "system":
+        case "summary":
+        case "result":
+          return { state: ageMs > threshold ? "idle" : "ready", timestamp };
+
+        case "permission_request":
+          return { state: "waiting_input", timestamp };
+
+        case "error":
+          return { state: "blocked", timestamp };
+
+        default:
+          return { state: ageMs > threshold ? "idle" : "active", timestamp };
       }
     },
 
@@ -722,7 +847,7 @@ function createCodexAgent(): Agent {
           const { stdout: ttyOut } = await execFileAsync(
             "tmux",
             ["list-panes", "-t", handle.id, "-F", "#{pane_tty}"],
-            { timeout: 30_000 },
+            { timeout: 5_000 },
           );
           const ttys = ttyOut
             .trim()
@@ -731,9 +856,9 @@ function createCodexAgent(): Agent {
             .filter(Boolean);
           if (ttys.length === 0) return false;
 
-          const { stdout: psOut } = await execFileAsync("ps", ["-eo", "pid,tty,args"], {
-            timeout: 30_000,
-          });
+          const psOut = await getCachedProcessList();
+          if (!psOut) return false;
+
           const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
           const processRe = /(?:^|\/)codex(?:\s|$)/;
           for (const line of psOut.split("\n")) {
@@ -780,19 +905,45 @@ function createCodexAgent(): Agent {
 
       const agentSessionId = basename(sessionFile, ".jsonl");
 
-      const cost: CostEstimate | undefined =
-        data.inputTokens === 0 && data.outputTokens === 0
-          ? undefined
-          : {
-              inputTokens: data.inputTokens,
-              outputTokens: data.outputTokens,
-              estimatedCostUsd:
-                (data.inputTokens / 1_000_000) * 2.5 + (data.outputTokens / 1_000_000) * 10.0,
-            };
+      // Summary: prefer explicit summary events, fall back to first user message
+      let summary: string | null = null;
+      let summaryIsFallback = true;
+      if (data.summary) {
+        summary = data.summary;
+        summaryIsFallback = false;
+      } else if (data.firstUserMessage) {
+        const msg = data.firstUserMessage;
+        summary = msg.length > 120 ? msg.substring(0, 120) + "..." : msg;
+        summaryIsFallback = true;
+      } else if (data.model) {
+        summary = `Codex session (${data.model})`;
+        summaryIsFallback = true;
+      }
+
+      // Cost: prefer direct costUSD, then token-based with model-aware pricing
+      const totalInputTokens = data.inputTokens + data.cacheReadInputTokens + data.cacheCreationInputTokens;
+      const hasTokens = totalInputTokens > 0 || data.outputTokens > 0;
+      const hasCost = data.totalCostUsd > 0;
+      let cost: CostEstimate | undefined;
+
+      if (hasCost || hasTokens) {
+        let estimatedCostUsd = data.totalCostUsd;
+        if (estimatedCostUsd === 0 && hasTokens) {
+          const pricing = getModelPricing(data.model);
+          estimatedCostUsd =
+            (totalInputTokens / 1_000_000) * pricing.input +
+            (data.outputTokens / 1_000_000) * pricing.output;
+        }
+        cost = {
+          inputTokens: totalInputTokens,
+          outputTokens: data.outputTokens,
+          estimatedCostUsd,
+        };
+      }
 
       return {
-        summary: data.model ? `Codex session (${data.model})` : null,
-        summaryIsFallback: true,
+        summary,
+        summaryIsFallback,
         agentSessionId,
         cost,
       };

@@ -16,6 +16,7 @@ const {
   mockOpen,
   mockCreateReadStream,
   mockHomedir,
+  mockReadLastJsonlEntry,
 } = vi.hoisted(() => ({
   mockExecFileAsync: vi.fn(),
   mockWriteFile: vi.fn().mockResolvedValue(undefined),
@@ -28,6 +29,7 @@ const {
   mockOpen: vi.fn(),
   mockCreateReadStream: vi.fn(),
   mockHomedir: vi.fn(() => "/mock/home"),
+  mockReadLastJsonlEntry: vi.fn(),
 }));
 
 vi.mock("node:child_process", () => {
@@ -61,8 +63,13 @@ vi.mock("node:os", () => ({
   homedir: mockHomedir,
 }));
 
+vi.mock("@composio/ao-core", async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...(actual as Record<string, unknown>), readLastJsonlEntry: mockReadLastJsonlEntry };
+});
+
 import { Readable } from "node:stream";
-import { create, manifest, default as defaultExport, resolveCodexBinary, _resetSessionFileCache } from "./index.js";
+import { create, manifest, default as defaultExport, resolveCodexBinary, _resetSessionFileCache, _resetPsCache } from "./index.js";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -167,6 +174,7 @@ function setupMockStream(content: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   _resetSessionFileCache();
+  _resetPsCache();
   mockHomedir.mockReturnValue("/mock/home");
   // Default: open() returns a handle with empty content (no session_meta match).
   // Session tests call setupMockOpen(content) to override.
@@ -643,13 +651,26 @@ describe("getActivityState", () => {
     expect(await agent.getActivityState(session)).toBeNull();
   });
 
-  it("returns active when session file was recently modified", async () => {
+  it("returns null when session file exists but readLastJsonlEntry returns null", async () => {
     mockTmuxWithProcess("codex");
     const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
-    // mtime = now (just modified)
-    mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+    mockReadLastJsonlEntry.mockResolvedValue(null);
+
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    expect(await agent.getActivityState(session)).toBeNull();
+  });
+
+  // --- Active states (user, tool_use, progress) ---
+  it("returns active when last entry is user type and recent", async () => {
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+    mockReadLastJsonlEntry.mockResolvedValue({ lastType: "user", modifiedAt: new Date() });
 
     const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
     const result = await agent.getActivityState(session);
@@ -657,19 +678,133 @@ describe("getActivityState", () => {
     expect(result?.timestamp).toBeInstanceOf(Date);
   });
 
-  it("returns idle when session file is stale", async () => {
+  it("returns active when last entry is tool_use type and recent", async () => {
     mockTmuxWithProcess("codex");
     const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
-    // mtime = 10 minutes ago (past the 5-minute threshold)
-    const staleTime = Date.now() - 600_000;
-    mockStat.mockResolvedValue({ mtimeMs: staleTime, mtime: new Date(staleTime) });
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+    mockReadLastJsonlEntry.mockResolvedValue({ lastType: "tool_use", modifiedAt: new Date() });
 
     const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
-    const result = await agent.getActivityState(session);
-    expect(result?.state).toBe("idle");
-    expect(result?.timestamp).toBeInstanceOf(Date);
+    expect((await agent.getActivityState(session))?.state).toBe("active");
+  });
+
+  it("returns active when last entry is progress type and recent", async () => {
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+    mockReadLastJsonlEntry.mockResolvedValue({ lastType: "progress", modifiedAt: new Date() });
+
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    expect((await agent.getActivityState(session))?.state).toBe("active");
+  });
+
+  // --- Ready states (assistant, system, summary, result) ---
+  it("returns ready when last entry is assistant type and recent", async () => {
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+    mockReadLastJsonlEntry.mockResolvedValue({ lastType: "assistant", modifiedAt: new Date() });
+
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    expect((await agent.getActivityState(session))?.state).toBe("ready");
+  });
+
+  it("returns ready when last entry is summary type and recent", async () => {
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+    mockReadLastJsonlEntry.mockResolvedValue({ lastType: "summary", modifiedAt: new Date() });
+
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    expect((await agent.getActivityState(session))?.state).toBe("ready");
+  });
+
+  it("returns ready when last entry is result type and recent", async () => {
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+    mockReadLastJsonlEntry.mockResolvedValue({ lastType: "result", modifiedAt: new Date() });
+
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    expect((await agent.getActivityState(session))?.state).toBe("ready");
+  });
+
+  // --- Waiting input state (permission_request) ---
+  it("returns waiting_input when last entry is permission_request", async () => {
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+    // permission_request returns waiting_input regardless of age
+    const staleTime = new Date(Date.now() - 600_000);
+    mockReadLastJsonlEntry.mockResolvedValue({ lastType: "permission_request", modifiedAt: staleTime });
+
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    expect((await agent.getActivityState(session))?.state).toBe("waiting_input");
+  });
+
+  // --- Blocked state (error) ---
+  it("returns blocked when last entry is error", async () => {
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+    mockReadLastJsonlEntry.mockResolvedValue({ lastType: "error", modifiedAt: new Date() });
+
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    expect((await agent.getActivityState(session))?.state).toBe("blocked");
+  });
+
+  // --- Idle (stale entries) ---
+  it("returns idle when active-type entry is stale", async () => {
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+    const staleTime = new Date(Date.now() - 600_000);
+    mockReadLastJsonlEntry.mockResolvedValue({ lastType: "user", modifiedAt: staleTime });
+
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    expect((await agent.getActivityState(session))?.state).toBe("idle");
+  });
+
+  it("returns idle when ready-type entry is stale", async () => {
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+    const staleTime = new Date(Date.now() - 600_000);
+    mockReadLastJsonlEntry.mockResolvedValue({ lastType: "assistant", modifiedAt: staleTime });
+
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    expect((await agent.getActivityState(session))?.state).toBe("idle");
+  });
+
+  // --- Default (unknown type) ---
+  it("returns active for unknown entry type when recent", async () => {
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+    mockReadLastJsonlEntry.mockResolvedValue({ lastType: "unknown_type", modifiedAt: new Date() });
+
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    expect((await agent.getActivityState(session))?.state).toBe("active");
   });
 
   it("returns exited when process handle has dead PID", async () => {
@@ -804,7 +939,7 @@ describe("getSessionInfo", () => {
     expect(result!.cost!.outputTokens).toBe(200);
   });
 
-  it("returns null summary when no model in session_meta", async () => {
+  it("returns null summary when no model, no summary event, and no user message", async () => {
     const content = jsonl(
       { type: "session_meta", cwd: "/workspace/test" },
       { type: "event_msg", msg: { type: "token_count", input_tokens: 100, output_tokens: 50 } },
@@ -933,6 +1068,292 @@ describe("getSessionInfo", () => {
       (call: string[]) => typeof call[0] === "string" && call[0].includes("sessions/"),
     );
     expect(readFileCalls.length).toBe(0); // streaming replaces readFile for full parse
+  });
+});
+
+// =========================================================================
+// getSessionInfo — summary extraction
+// =========================================================================
+describe("getSessionInfo — summary extraction", () => {
+  const agent = create();
+
+  function jsonl(...lines: Record<string, unknown>[]): string {
+    return lines.map((l) => JSON.stringify(l)).join("\n") + "\n";
+  }
+
+  it("extracts summary from summary event", async () => {
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
+      { type: "summary", summary: "Implemented auth flow" },
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
+    expect(result!.summary).toBe("Implemented auth flow");
+    expect(result!.summaryIsFallback).toBe(false);
+  });
+
+  it("falls back to first user message when no summary event", async () => {
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
+      { type: "user", content: "Fix the login bug in auth.ts" },
+      { type: "assistant", content: "I'll look into it" },
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
+    expect(result!.summary).toBe("Fix the login bug in auth.ts");
+    expect(result!.summaryIsFallback).toBe(true);
+  });
+
+  it("truncates long user messages to 120 chars with ellipsis", async () => {
+    const longMessage = "A".repeat(200);
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
+      { type: "user", content: longMessage },
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
+    expect(result!.summary).toBe("A".repeat(120) + "...");
+    expect(result!.summaryIsFallback).toBe(true);
+  });
+
+  it("uses role=user as fallback for user message detection", async () => {
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
+      { role: "user", content: "Help me debug this" },
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
+    expect(result!.summary).toBe("Help me debug this");
+    expect(result!.summaryIsFallback).toBe(true);
+  });
+
+  it("prefers summary event over user message", async () => {
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
+      { type: "user", content: "Fix the bug" },
+      { type: "summary", summary: "Fixed authentication bug in login flow" },
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
+    expect(result!.summary).toBe("Fixed authentication bug in login flow");
+    expect(result!.summaryIsFallback).toBe(false);
+  });
+
+  it("falls back to model name when no summary and no user message", async () => {
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "o3-mini" },
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
+    expect(result!.summary).toBe("Codex session (o3-mini)");
+    expect(result!.summaryIsFallback).toBe(true);
+  });
+});
+
+// =========================================================================
+// getSessionInfo — cost estimation
+// =========================================================================
+describe("getSessionInfo — cost estimation", () => {
+  const agent = create();
+
+  function jsonl(...lines: Record<string, unknown>[]): string {
+    return lines.map((l) => JSON.stringify(l)).join("\n") + "\n";
+  }
+
+  it("uses costUSD field when available", async () => {
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
+      { costUSD: 0.05 },
+      { costUSD: 0.03 },
+      { type: "event_msg", msg: { type: "token_count", input_tokens: 1000, output_tokens: 500 } },
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
+    expect(result!.cost).toBeDefined();
+    // costUSD takes precedence: 0.05 + 0.03 = 0.08
+    expect(result!.cost!.estimatedCostUsd).toBeCloseTo(0.08);
+  });
+
+  it("tracks cache_read_input_tokens and cache_creation_input_tokens", async () => {
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
+      { type: "event_msg", msg: {
+        type: "token_count",
+        input_tokens: 1000,
+        output_tokens: 500,
+        cache_read_input_tokens: 200,
+        cache_creation_input_tokens: 100,
+      }},
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
+    expect(result!.cost).toBeDefined();
+    // Total input = 1000 + 200 + 100 = 1300
+    expect(result!.cost!.inputTokens).toBe(1300);
+    expect(result!.cost!.outputTokens).toBe(500);
+  });
+
+  it("uses gpt-4o pricing for gpt-4o model", async () => {
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
+      { type: "event_msg", msg: { type: "token_count", input_tokens: 1_000_000, output_tokens: 1_000_000 } },
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
+    // gpt-4o: $2.5/M input + $10/M output = $12.50
+    expect(result!.cost!.estimatedCostUsd).toBeCloseTo(12.5);
+  });
+
+  it("uses o3 pricing for o3 model", async () => {
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "o3" },
+      { type: "event_msg", msg: { type: "token_count", input_tokens: 1_000_000, output_tokens: 1_000_000 } },
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
+    // o3: $10/M input + $40/M output = $50
+    expect(result!.cost!.estimatedCostUsd).toBeCloseTo(50.0);
+  });
+
+  it("uses o4-mini pricing for o4-mini model", async () => {
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "o4-mini" },
+      { type: "event_msg", msg: { type: "token_count", input_tokens: 1_000_000, output_tokens: 1_000_000 } },
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
+    // o4-mini: $1.1/M input + $4.4/M output = $5.50
+    expect(result!.cost!.estimatedCostUsd).toBeCloseTo(5.5);
+  });
+
+  it("uses default pricing for unknown model", async () => {
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "some-future-model" },
+      { type: "event_msg", msg: { type: "token_count", input_tokens: 1_000_000, output_tokens: 1_000_000 } },
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
+    // default: $2.5/M input + $10/M output = $12.50
+    expect(result!.cost!.estimatedCostUsd).toBeCloseTo(12.5);
+  });
+
+  it("matches model prefix for versioned model names", async () => {
+    const content = jsonl(
+      { type: "session_meta", cwd: "/workspace/test", model: "o3-mini-2025-01-31" },
+      { type: "event_msg", msg: { type: "token_count", input_tokens: 1_000_000, output_tokens: 1_000_000 } },
+    );
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    setupMockStream(content);
+    mockStat.mockResolvedValue({ mtimeMs: 1000 });
+
+    const result = await agent.getSessionInfo(makeSession({ workspacePath: "/workspace/test" }));
+    // o3-mini: $1.1/M input + $4.4/M output = $5.50
+    expect(result!.cost!.estimatedCostUsd).toBeCloseTo(5.5);
+  });
+});
+
+// =========================================================================
+// PS process cache
+// =========================================================================
+describe("PS process cache", () => {
+  const agent = create();
+
+  it("reuses cached ps output for multiple isProcessRunning calls", async () => {
+    let psCallCount = 0;
+    mockExecFileAsync.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === "tmux" && args[0] === "list-panes") {
+        return Promise.resolve({ stdout: "/dev/ttys001\n", stderr: "" });
+      }
+      if (cmd === "ps") {
+        psCallCount++;
+        return Promise.resolve({
+          stdout: "  PID TT       ARGS\n  100 ttys001  codex\n",
+          stderr: "",
+        });
+      }
+      return Promise.reject(new Error("unexpected"));
+    });
+
+    // Call isProcessRunning twice — ps should only be called once (cached)
+    await agent.isProcessRunning(makeTmuxHandle());
+    await agent.isProcessRunning(makeTmuxHandle());
+
+    expect(psCallCount).toBe(1);
+  });
+
+  it("refreshes cache after TTL expires", async () => {
+    let psCallCount = 0;
+    mockExecFileAsync.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === "tmux" && args[0] === "list-panes") {
+        return Promise.resolve({ stdout: "/dev/ttys001\n", stderr: "" });
+      }
+      if (cmd === "ps") {
+        psCallCount++;
+        return Promise.resolve({
+          stdout: "  PID TT       ARGS\n  100 ttys001  codex\n",
+          stderr: "",
+        });
+      }
+      return Promise.reject(new Error("unexpected"));
+    });
+
+    await agent.isProcessRunning(makeTmuxHandle());
+    expect(psCallCount).toBe(1);
+
+    // Reset cache to simulate TTL expiry
+    _resetPsCache();
+
+    await agent.isProcessRunning(makeTmuxHandle());
+    expect(psCallCount).toBe(2);
   });
 });
 
