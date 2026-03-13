@@ -905,6 +905,51 @@ describe("scm-github plugin", () => {
     });
   });
 
+  describe("getReviewThreadSnapshots", () => {
+    function makeSnapshotResponse(author: string) {
+      return {
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                nodes: [
+                  {
+                    id: "thread-1",
+                    isResolved: false,
+                    comments: {
+                      nodes: [
+                        {
+                          body: "Potential issue",
+                          path: "src/a.ts",
+                          createdAt: "2025-01-01T00:00:00Z",
+                          author: author ? { login: author } : null,
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      };
+    }
+
+    it("classifies cursor bot review threads as bugbot", async () => {
+      mockGh(makeSnapshotResponse("cursor[bot]"));
+      const threads = await scm.getReviewThreadSnapshots?.(pr);
+      expect(threads).toHaveLength(1);
+      expect(threads?.[0]?.source).toBe("bugbot");
+    });
+
+    it("classifies non-review bots as other", async () => {
+      mockGh(makeSnapshotResponse("dependabot[bot]"));
+      const threads = await scm.getReviewThreadSnapshots?.(pr);
+      expect(threads).toHaveLength(1);
+      expect(threads?.[0]?.source).toBe("other");
+    });
+  });
+
   // ---- getAutomatedComments ----------------------------------------------
 
   describe("getAutomatedComments", () => {

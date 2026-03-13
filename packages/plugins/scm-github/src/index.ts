@@ -5,7 +5,7 @@
  */
 
 import { execFile } from "node:child_process";
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 import {
   CI_STATUS,
@@ -24,8 +24,10 @@ import {
   type Review,
   type ReviewDecision,
   type ReviewComment,
+  type ReviewThreadSnapshot,
   type AutomatedComment,
   type MergeReadiness,
+  type SCMCheckRunInput,
 } from "@composio/ao-core";
 import {
   getWebhookHeader,
@@ -49,6 +51,8 @@ const BOT_AUTHORS = new Set([
   "snyk-bot",
   "lgtm-com[bot]",
 ]);
+
+const REVIEW_INTEGRITY_BOT_AUTHORS = new Set(["cursor[bot]"]);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -441,6 +445,23 @@ function parseDate(val: string | undefined | null): Date {
   return isNaN(d.getTime()) ? new Date(0) : d;
 }
 
+function detectThreadSource(author: string): ReviewThreadSnapshot["source"] {
+  if (REVIEW_INTEGRITY_BOT_AUTHORS.has(author)) return "bugbot";
+  if (BOT_AUTHORS.has(author)) return "other";
+  if (!author) return "other";
+  return "human";
+}
+
+function detectSeverity(body: string): ReviewThreadSnapshot["severity"] {
+  const normalized = body.toLowerCase();
+  if (normalized.includes("critical") || normalized.includes("security")) return "high";
+  if (normalized.includes("error") || normalized.includes("bug") || normalized.includes("fail")) {
+    return "medium";
+  }
+  if (normalized.includes("nit") || normalized.includes("style")) return "low";
+  return "unknown";
+}
+
 // ---------------------------------------------------------------------------
 // SCM implementation
 // ---------------------------------------------------------------------------
@@ -766,6 +787,148 @@ function createGitHubSCM(): SCM {
       if (d === "CHANGES_REQUESTED") return "changes_requested";
       if (d === "REVIEW_REQUIRED") return "pending";
       return "none";
+    },
+
+    async getPRHeadSha(pr: PRInfo): Promise<string> {
+      const raw = await gh([
+        "pr",
+        "view",
+        String(pr.number),
+        "--repo",
+        repoFlag(pr),
+        "--json",
+        "headRefOid",
+      ]);
+      const data: { headRefOid?: string } = JSON.parse(raw);
+      if (!data.headRefOid) throw new Error("Failed to resolve PR head SHA");
+      return data.headRefOid;
+    },
+
+    async getReviewThreadSnapshots(pr: PRInfo): Promise<ReviewThreadSnapshot[]> {
+      const raw = await gh([
+        "api",
+        "graphql",
+        "-f",
+        `owner=${pr.owner}`,
+        "-f",
+        `name=${pr.repo}`,
+        "-F",
+        `number=${pr.number}`,
+        "-f",
+        `query=query($owner: String!, $name: String!, $number: Int!) {
+          repository(owner: $owner, name: $name) {
+            pullRequest(number: $number) {
+              reviewThreads(first: 100) {
+                nodes {
+                  id
+                  isResolved
+                  comments(first: 1) {
+                    nodes {
+                      body
+                      path
+                      createdAt
+                      author { login }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }`,
+      ]);
+
+      const data: {
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                nodes: Array<{
+                  id: string;
+                  isResolved: boolean;
+                  comments: {
+                    nodes: Array<{
+                      body: string;
+                      path: string | null;
+                      createdAt: string;
+                      author: { login: string } | null;
+                    }>;
+                  };
+                }>;
+              };
+            };
+          };
+        };
+      } = JSON.parse(raw);
+
+      const threads = data.data.repository.pullRequest.reviewThreads.nodes;
+      const snapshots: ReviewThreadSnapshot[] = [];
+      for (const thread of threads) {
+        const comment = thread.comments.nodes[0];
+        if (!comment) continue;
+        const author = comment.author?.login ?? "";
+        snapshots.push({
+          prNumber: pr.number,
+          threadId: thread.id,
+          source: detectThreadSource(author),
+          path: comment.path ?? undefined,
+          bodyHash: createHash("sha256").update(comment.body).digest("hex").slice(0, 16),
+          severity: detectSeverity(comment.body),
+          status: thread.isResolved ? "resolved" : "open",
+          capturedAt: new Date(),
+        });
+      }
+      return snapshots;
+    },
+
+    async resolveReviewThread(_pr: PRInfo, threadId: string): Promise<void> {
+      await gh([
+        "api",
+        "graphql",
+        "-f",
+        `query=mutation($threadId:ID!){resolveReviewThread(input:{threadId:$threadId}){thread{id isResolved}}}`,
+        "-f",
+        `threadId=${threadId}`,
+      ]);
+    },
+
+    async publishCheckRun(input: SCMCheckRunInput): Promise<void> {
+      const headSha = await this.getPRHeadSha?.(input.pr);
+      if (!headSha) return;
+      await gh([
+        "api",
+        "--method",
+        "POST",
+        "-H",
+        "Accept: application/vnd.github+json",
+        `repos/${repoFlag(input.pr)}/check-runs`,
+        "-f",
+        `name=${input.name}`,
+        "-f",
+        `head_sha=${headSha}`,
+        "-f",
+        `status=${input.status}`,
+        "-f",
+        `conclusion=${input.conclusion}`,
+        "-f",
+        `output[title]=${input.name}`,
+        "-f",
+        `output[summary]=${input.summary}`,
+        "-f",
+        `output[text]=${input.text ?? input.summary}`,
+      ]).catch(async () => {
+        await gh([
+          "api",
+          "--method",
+          "POST",
+          `repos/${repoFlag(input.pr)}/statuses/${headSha}`,
+          "-f",
+          `state=${input.conclusion === "success" ? "success" : "failure"}`,
+          "-f",
+          `context=${input.name}`,
+          "-f",
+          `description=${input.summary}`,
+        ]);
+      });
     },
 
     async getPendingComments(pr: PRInfo): Promise<ReviewComment[]> {

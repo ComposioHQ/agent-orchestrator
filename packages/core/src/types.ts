@@ -15,6 +15,8 @@
  *   8. Lifecycle Manager (core, not pluggable)
  */
 
+import type { ReviewThreadSnapshot } from "./review-integrity.js";
+
 // =============================================================================
 // SESSION
 // =============================================================================
@@ -585,6 +587,14 @@ export interface SCM {
   /** Get pending (unresolved) review comments */
   getPendingComments(pr: PRInfo): Promise<ReviewComment[]>;
 
+  getReviewThreadSnapshots?(pr: PRInfo): Promise<ReviewThreadSnapshot[]>;
+
+  getPRHeadSha?(pr: PRInfo): Promise<string>;
+
+  resolveReviewThread?(pr: PRInfo, threadId: string): Promise<void>;
+
+  publishCheckRun?(input: SCMCheckRunInput): Promise<void>;
+
   /** Get automated review comments (bots, linters, security scanners) */
   getAutomatedComments(pr: PRInfo): Promise<AutomatedComment[]>;
 
@@ -706,6 +716,15 @@ export interface AutomatedComment {
   severity: "error" | "warning" | "info";
   createdAt: Date;
   url: string;
+}
+
+export interface SCMCheckRunInput {
+  pr: PRInfo;
+  name: string;
+  status: "completed";
+  conclusion: "success" | "failure";
+  summary: string;
+  text?: string;
 }
 
 // --- Merge Readiness ---

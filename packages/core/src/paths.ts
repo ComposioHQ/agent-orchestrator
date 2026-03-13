@@ -119,6 +119,10 @@ export function getFeedbackReportsDir(configPath: string, projectPath: string): 
   return join(getProjectBaseDir(configPath, projectPath), "feedback-reports");
 }
 
+export function getReviewIntegrityDir(configPath: string, projectPath: string): string {
+  return join(getProjectBaseDir(configPath, projectPath), "review-integrity");
+}
+
 /**
  * Get the archive directory for a project.
  * Format: ~/.agent-orchestrator/{hash}-{projectId}/archive

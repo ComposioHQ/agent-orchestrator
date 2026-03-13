@@ -146,6 +146,7 @@ export {
   getSessionsDir,
   getWorktreesDir,
   getFeedbackReportsDir,
+  getReviewIntegrityDir,
   getObservabilityBaseDir,
   getArchiveDir,
   getOriginFilePath,
@@ -155,6 +156,30 @@ export {
   expandHome,
   validateAndStoreOrigin,
 } from "./paths.js";
+
+export {
+  ReviewResolutionStore,
+  createResolutionRecord,
+  validateResolutionRecord,
+  evaluateReviewIntegrity,
+  evaluateMergeGuard,
+} from "./review-integrity.js";
+export type {
+  ReviewThreadSource,
+  ReviewThreadSeverity,
+  ReviewThreadStatus,
+  ReviewThreadSnapshot,
+  ResolutionType,
+  ResolutionActorType,
+  VerificationStatus,
+  ResolutionEvidence,
+  ResolutionRecord,
+  ReviewIntegrityEvaluation,
+  MergeGuardEvaluation,
+  IntegrityBlocker,
+  MergeGuardInput,
+  ResolutionValidationOptions,
+} from "./review-integrity.js";
 
 // Config generator — auto-generate config from repo URL
 export {

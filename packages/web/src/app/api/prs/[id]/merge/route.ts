@@ -1,6 +1,13 @@
+import type { SCM } from "@composio/ao-core";
 import { type NextRequest } from "next/server";
 import { getServices, getSCM } from "@/lib/services";
 import { getCorrelationId, jsonWithCorrelation, recordApiObservation } from "@/lib/observability";
+import {
+  REVIEW_INTEGRITY_DEFAULTS,
+  evaluateMergeGuardForPR,
+  getReviewResolutionStore,
+  publishGuardChecks,
+} from "@/lib/review-integrity";
 
 /** POST /api/prs/:id/merge — Merge a PR */
 export async function POST(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -22,7 +29,7 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
     }
 
     const project = config.projects[session.projectId];
-    const scm = getSCM(registry, project);
+    const scm = getSCM(registry, project) as SCM | null;
     if (!scm) {
       return jsonWithCorrelation(
         { error: "No SCM plugin configured for this project" },
@@ -42,9 +49,27 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
     }
 
     const mergeability = await scm.getMergeability(session.pr);
-    if (!mergeability.mergeable) {
+    const store = getReviewResolutionStore(config, project);
+    const recordsByThread = store.latestByThread(prNumber);
+    const { integrity, guard } = await evaluateMergeGuardForPR({
+      scm,
+      pr: session.pr,
+      recordsByThread,
+      requiredChecks: [...REVIEW_INTEGRITY_DEFAULTS.requiredChecks],
+      requireEvidenceForBotThreads: REVIEW_INTEGRITY_DEFAULTS.requireEvidenceForBotThreads,
+      reverifyOnNewCommits: REVIEW_INTEGRITY_DEFAULTS.reverifyOnNewCommits,
+    });
+
+    await publishGuardChecks(scm, session.pr, integrity, guard).catch(() => {});
+
+    if (!mergeability.mergeable || !guard.allowMerge) {
       return jsonWithCorrelation(
-        { error: "PR is not mergeable", blockers: mergeability.blockers },
+        {
+          error: "PR is not mergeable",
+          blockers: [...mergeability.blockers, ...guard.blockers.map((b) => b.message)],
+          guardBlockers: guard.blockers,
+          reviewIntegrityStatus: integrity.status,
+        },
         { status: 422 },
         correlationId,
       );
