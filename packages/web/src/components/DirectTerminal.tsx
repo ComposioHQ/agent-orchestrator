@@ -161,20 +161,6 @@ export function DirectTerminal({
     const PERMANENT_CLOSE_CODES = new Set([4001, 4004]); // auth failure, session not found
     const MAX_RECONNECT_DELAY = 15_000;
 
-    const scheduleReconnect = () => {
-      if (!mounted) return;
-
-      const attempt = reconnectAttemptRef.current;
-      const delay = Math.min(1000 * Math.pow(2, attempt), MAX_RECONNECT_DELAY);
-      reconnectAttemptRef.current = attempt + 1;
-
-      console.log(`[DirectTerminal] Reconnecting in ${delay}ms (attempt ${attempt + 1})`);
-      setStatus("connecting");
-      setError(null);
-
-      reconnectTimerRef.current = setTimeout(connectWebSocket, delay);
-    };
-
     Promise.all([
       import("xterm").then((mod) => mod.Terminal),
       import("@xterm/addon-fit").then((mod) => mod.FitAddon),
@@ -361,7 +347,27 @@ export function DirectTerminal({
           }
         });
 
-        async function connectWebSocket() {
+        let connectWebSocket: (() => Promise<void>) | null = null;
+
+        const scheduleReconnect = () => {
+          if (!mounted) return;
+
+          const attempt = reconnectAttemptRef.current;
+          const delay = Math.min(1000 * Math.pow(2, attempt), MAX_RECONNECT_DELAY);
+          reconnectAttemptRef.current = attempt + 1;
+
+          console.log(`[DirectTerminal] Reconnecting in ${delay}ms (attempt ${attempt + 1})`);
+          setStatus("connecting");
+          setError(null);
+
+          reconnectTimerRef.current = setTimeout(() => {
+            if (connectWebSocket) {
+              void connectWebSocket();
+            }
+          }, delay);
+        };
+
+        connectWebSocket = async () => {
           if (!mounted) return;
 
           let directTerminalPort: string | undefined;
@@ -439,9 +445,9 @@ export function DirectTerminal({
             // Transient failure — schedule reconnect with exponential backoff
             scheduleReconnect();
           };
-        }
+        };
 
-        connectWebSocket();
+        void connectWebSocket();
 
         // Store cleanup function to be called from useEffect cleanup
         cleanup = () => {
