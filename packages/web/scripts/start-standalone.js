@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* global console, process, setTimeout */
 
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
