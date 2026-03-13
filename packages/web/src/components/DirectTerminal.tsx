@@ -381,6 +381,8 @@ export function DirectTerminal({
             return;
           }
 
+          if (!mounted) return;
+
           const wsUrl = buildDirectTerminalWsUrl({
             location: window.location,
             sessionId,
@@ -390,6 +392,10 @@ export function DirectTerminal({
 
           console.log("[DirectTerminal] Connecting to:", wsUrl);
           const websocket = new WebSocket(wsUrl);
+          if (!mounted) {
+            websocket.close();
+            return;
+          }
           ws.current = websocket;
           websocket.binaryType = "arraybuffer";
 

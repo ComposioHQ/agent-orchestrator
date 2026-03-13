@@ -11,6 +11,11 @@ useDefault = true
 [allowlist]
 description = "Allowlisted patterns"
 
+commits = [
+  # Historical local config file that was removed; keep scan strict for new commits.
+  "0393ab70a83e090883895d2168aa39a76f997ec8",
+]
+
 paths = [
   "node_modules/",
   "dist/",
