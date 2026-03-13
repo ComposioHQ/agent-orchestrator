@@ -565,6 +565,77 @@ describe("session cleanup", () => {
     expect(output).toContain("Cleaned: app-2");
   });
 
+  it("suppresses orchestrator cleanup output while preserving worker cleanup output", async () => {
+    mockSessionManager.cleanup.mockResolvedValue({
+      killed: ["app-orchestrator", "app-2"],
+      skipped: [],
+      errors: [{ sessionId: "app-orchestrator", error: "should never surface" }],
+    } satisfies CleanupResult);
+
+    await program.parseAsync(["node", "test", "session", "cleanup"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    const errOutput = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => String(c[0]))
+      .join("\n");
+
+    expect(output).toContain("Cleaned: app-2");
+    expect(output).not.toContain("app-orchestrator");
+    expect(output).toContain("Cleanup complete. 1 sessions cleaned");
+    expect(errOutput).not.toContain("app-orchestrator");
+  });
+
+  it("treats orchestrator-only cleanup results as no-op output", async () => {
+    mockSessionManager.cleanup.mockResolvedValue({
+      killed: ["app-orchestrator"],
+      skipped: [],
+      errors: [],
+    } satisfies CleanupResult);
+
+    await program.parseAsync(["node", "test", "session", "cleanup"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("No sessions to clean up");
+    expect(output).not.toContain("app-orchestrator");
+  });
+
+  it("suppresses orchestrators in cleanup dry-run output", async () => {
+    mockSessionManager.cleanup.mockResolvedValue({
+      killed: ["app-orchestrator", "app-3"],
+      skipped: [],
+      errors: [],
+    } satisfies CleanupResult);
+
+    await program.parseAsync(["node", "test", "session", "cleanup", "--dry-run"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("Would kill app-3");
+    expect(output).not.toContain("app-orchestrator");
+    expect(output).toContain("1 session would be cleaned");
+  });
+
+  it("suppresses project-prefixed orchestrator cleanup results", async () => {
+    mockSessionManager.cleanup.mockResolvedValue({
+      killed: ["my-app:app-orchestrator", "my-app:app-4"],
+      skipped: [],
+      errors: [{ sessionId: "my-app:app-orchestrator", error: "should never surface" }],
+    } satisfies CleanupResult);
+
+    await program.parseAsync(["node", "test", "session", "cleanup"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    const errOutput = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => String(c[0]))
+      .join("\n");
+
+    expect(output).toContain("Cleaned: my-app:app-4");
+    expect(output).not.toContain("my-app:app-orchestrator");
+    expect(output).toContain("Cleanup complete. 1 sessions cleaned");
+    expect(errOutput).not.toContain("my-app:app-orchestrator");
+  });
+
   it("skips sessions without metadata", async () => {
     // No metadata files exist — list returns empty, cleanup returns empty
     mockSessionManager.cleanup.mockResolvedValue({

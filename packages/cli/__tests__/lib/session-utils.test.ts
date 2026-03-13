@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { escapeRegex, matchesPrefix, findProjectForSession } from "../../src/lib/session-utils.js";
+import {
+  escapeRegex,
+  matchesPrefix,
+  findProjectForSession,
+  isOrchestratorSessionName,
+} from "../../src/lib/session-utils.js";
 import type { OrchestratorConfig } from "@composio/ao-core";
 
 describe("escapeRegex", () => {
@@ -101,5 +106,44 @@ describe("findProjectForSession", () => {
     });
     expect(findProjectForSession(config, "a-1")).toBe("alpha");
     expect(findProjectForSession(config, "b-2")).toBe("beta");
+  });
+});
+
+describe("isOrchestratorSessionName", () => {
+  const makeConfig = (projects: Record<string, { sessionPrefix?: string }>): OrchestratorConfig =>
+    ({
+      dataDir: "/tmp",
+      worktreeDir: "/tmp/wt",
+      port: 3000,
+      defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+      projects: Object.fromEntries(
+        Object.entries(projects).map(([id, p]) => [
+          id,
+          { name: id, repo: "", path: "", defaultBranch: "main", ...p },
+        ]),
+      ),
+      notifiers: {},
+      notificationRouting: {},
+      reactions: {},
+    }) as OrchestratorConfig;
+
+  it("matches the canonical orchestrator ID for a known project", () => {
+    const config = makeConfig({ "my-app": { sessionPrefix: "app" } });
+    expect(isOrchestratorSessionName(config, "app-orchestrator", "my-app")).toBe(true);
+  });
+
+  it("matches orchestrator IDs across configured projects without an explicit project", () => {
+    const config = makeConfig({ "my-app": { sessionPrefix: "app" } });
+    expect(isOrchestratorSessionName(config, "app-orchestrator")).toBe(true);
+  });
+
+  it("falls back to suffix detection for legacy orchestrator names", () => {
+    const config = makeConfig({ "my-app": { sessionPrefix: "app" } });
+    expect(isOrchestratorSessionName(config, "legacy-orchestrator")).toBe(true);
+  });
+
+  it("does not classify worker session IDs as orchestrators", () => {
+    const config = makeConfig({ "my-app": { sessionPrefix: "app" } });
+    expect(isOrchestratorSessionName(config, "app-12", "my-app")).toBe(false);
   });
 });

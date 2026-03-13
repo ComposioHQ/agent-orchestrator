@@ -5,6 +5,7 @@ import { loadConfig, SessionNotRestorableError, WorkspaceMissingError } from "@c
 import { git, getTmuxActivity, tmux } from "../lib/shell.js";
 import { formatAge } from "../lib/format.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
+import { isOrchestratorSessionName } from "../lib/session-utils.js";
 
 export function registerSession(program: Command): void {
   const session = program
@@ -145,10 +146,31 @@ export function registerSession(program: Command): void {
 
       const sm = await getSessionManager(config);
 
+      const filterCleanupIds = (ids: string[]): string[] =>
+        ids.filter((entry) => {
+          const separator = entry.indexOf(":");
+          const entryProjectId = separator === -1 ? opts.project : entry.slice(0, separator);
+          const sessionId = separator === -1 ? entry : entry.slice(separator + 1);
+          return !isOrchestratorSessionName(config, sessionId, entryProjectId);
+        });
+
+      const filterCleanupErrors = (errors: Array<{ sessionId: string; error: string }>) =>
+        errors.filter(({ sessionId }) => {
+          const separator = sessionId.indexOf(":");
+          const entryProjectId = separator === -1 ? opts.project : sessionId.slice(0, separator);
+          const normalizedSessionId = separator === -1 ? sessionId : sessionId.slice(separator + 1);
+          return !isOrchestratorSessionName(config, normalizedSessionId, entryProjectId);
+        });
+
       if (opts.dryRun) {
         // Dry-run delegates to sm.cleanup() with dryRun flag so it uses the
         // same live checks (PR state, runtime alive, tracker) as actual cleanup.
-        const result = await sm.cleanup(opts.project, { dryRun: true });
+        const rawResult = await sm.cleanup(opts.project, { dryRun: true });
+        const result = {
+          ...rawResult,
+          killed: filterCleanupIds(rawResult.killed),
+          errors: filterCleanupErrors(rawResult.errors),
+        };
 
         if (result.errors.length > 0) {
           for (const { sessionId, error } of result.errors) {
@@ -171,7 +193,12 @@ export function registerSession(program: Command): void {
           }
         }
       } else {
-        const result = await sm.cleanup(opts.project);
+        const rawResult = await sm.cleanup(opts.project);
+        const result = {
+          ...rawResult,
+          killed: filterCleanupIds(rawResult.killed),
+          errors: filterCleanupErrors(rawResult.errors),
+        };
 
         if (result.killed.length === 0 && result.errors.length === 0) {
           console.log(chalk.dim("  No sessions to clean up."));
