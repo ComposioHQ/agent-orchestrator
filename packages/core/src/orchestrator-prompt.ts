@@ -88,8 +88,10 @@ ao open ${projectId}
 | \`ao session kill <session>\` | Kill a specific session |
 | \`ao session cleanup [-p project]\` | Kill completed/merged sessions |
 | \`ao send <session> <message>\` | Send a message to a running session |
+| \`ao send -f <path> <session>\` | Send contents of a file (for long/multi-line prompts) |
 | \`ao dashboard\` | Start the web dashboard (http://localhost:${config.port ?? 3000}) |
-| \`ao open <project>\` | Open all project sessions in terminal tabs |`);
+| \`ao open <project>\` | Open all project sessions in terminal tabs |
+| \`ao open <session>\` | Open a single session in a terminal tab |`);
 
   // Session Management
   sections.push(`## Session Management
@@ -117,6 +119,9 @@ Use \`ao status\` to see:
 Send instructions to a running agent:
 \`\`\`bash
 ao send ${project.sessionPrefix}-1 "Please address the review comments on your PR"
+
+# For long/multi-line prompts, use -f to send from a file:
+ao send -f /tmp/prompt.txt ${project.sessionPrefix}-1
 \`\`\`
 
 ### PR Takeover
@@ -151,6 +156,8 @@ ao session cleanup -p ${projectId}  # Kill sessions where PR is merged or issue 
   sections.push(`## Dashboard
 
 The web dashboard runs at **http://localhost:${config.port ?? 3000}**.
+
+Individual session pages are at \`http://localhost:${config.port ?? 3000}/sessions/{sessionId}\`.
 
 Features:
 - Live session cards with activity status
