@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/cn";
+import { apiPath } from "@/lib/api-path";
 
 // Import xterm CSS (must be imported in client component)
 import "xterm/css/xterm.css";
@@ -114,9 +115,12 @@ export function DirectTerminal({
       let commandToSend = reloadCommand;
 
       if (!commandToSend) {
-        const remapRes = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/remap`, {
-          method: "POST",
-        });
+        const remapRes = await fetch(
+          apiPath(`/api/sessions/${encodeURIComponent(sessionId)}/remap`),
+          {
+            method: "POST",
+          },
+        );
         if (!remapRes.ok) {
           throw new Error(`Failed to remap OpenCode session: ${remapRes.status}`);
         }
@@ -130,7 +134,7 @@ export function DirectTerminal({
         commandToSend = `/exit\nopencode --session ${remapData.opencodeSessionId}\n`;
       }
 
-      const sendRes = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/send`, {
+      const sendRes = await fetch(apiPath(`/api/sessions/${encodeURIComponent(sessionId)}/send`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: commandToSend }),

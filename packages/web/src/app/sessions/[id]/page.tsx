@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { isOrchestratorSession } from "@composio/ao-core/types";
 import { SessionDetail } from "@/components/SessionDetail";
 import { type DashboardSession, getAttentionLevel, type AttentionLevel } from "@/lib/types";
 import { activityIcon } from "@/lib/activity-icons";
+import { apiPath } from "@/lib/api-path";
 
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + "..." : s;
@@ -64,7 +66,7 @@ export default function SessionPage() {
   // Fetch session data (memoized to avoid recreating on every render)
   const fetchSession = useCallback(async () => {
     try {
-      const res = await fetch(`/api/sessions/${encodeURIComponent(id)}`);
+      const res = await fetch(apiPath(`/api/sessions/${encodeURIComponent(id)}`));
       if (res.status === 404) {
         setError("Session not found");
         setLoading(false);
@@ -85,7 +87,7 @@ export default function SessionPage() {
   const fetchZoneCounts = useCallback(async () => {
     if (!sessionIsOrchestrator || !sessionProjectId) return;
     try {
-      const res = await fetch(`/api/sessions?project=${encodeURIComponent(sessionProjectId)}`);
+      const res = await fetch(apiPath(`/api/sessions?project=${encodeURIComponent(sessionProjectId)}`));
       if (!res.ok) return;
       const body = (await res.json()) as { sessions: DashboardSession[] };
       const sessions = body.sessions ?? [];
@@ -139,9 +141,9 @@ export default function SessionPage() {
         <div className="text-[13px] text-[var(--color-status-error)]">
           {error ?? "Session not found"}
         </div>
-        <a href="/" className="text-[12px] text-[var(--color-accent)] hover:underline">
+        <Link href="/" className="text-[12px] text-[var(--color-accent)] hover:underline">
           ← Back to dashboard
-        </a>
+        </Link>
       </div>
     );
   }
