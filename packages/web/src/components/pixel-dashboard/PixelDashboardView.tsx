@@ -2,10 +2,11 @@ import type {
   DashboardPR,
   DashboardSession,
 } from "@/lib/types";
-import { getAttentionLevel } from "@/lib/types";
+import { ATTENTION_LEVEL_ORDER, getAttentionLevel } from "@/lib/types";
 import { buildDashboardHref } from "@/lib/dashboard-route-state";
 import type { ProjectInfo } from "@/lib/project-name";
 import type { ProjectOverview } from "../Dashboard";
+import { PixelWorldScene } from "./PixelWorldScene";
 
 interface PixelDashboardViewProps {
   allProjectsView: boolean;
@@ -20,14 +21,13 @@ interface PixelDashboardViewProps {
   spawningProjectIds: string[];
 }
 
-const DISTRICT_ORDER = ["merge", "respond", "review", "pending", "working", "done"] as const;
-
 export function PixelDashboardView({
   allProjectsView,
   onSpawnOrchestrator,
   openPRs,
   projectName,
   projectOverviews,
+  projects,
   sessions,
   sessionsByProject,
   spawnErrors,
@@ -39,14 +39,15 @@ export function PixelDashboardView({
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-[rgba(191,219,254,0.8)]">
-              Phase 1 Pixel Mode
+              Phase 2 Pixel World
             </div>
             <h2 className="text-[22px] font-semibold tracking-[-0.03em]">
-              {allProjectsView ? "Project districts" : `${projectName ?? "Project"} scene preview`}
+              {allProjectsView ? "District world map" : `${projectName ?? "Project"} district`}
             </h2>
             <p className="mt-2 max-w-[620px] text-[13px] leading-6 text-[rgba(226,232,240,0.78)]">
-              The shell, live data, and URL state are now shared. This bounded body previews how the
-              pixel dashboard groups operator attention before the full world renderer lands in Phase 2.
+              Shared shell chrome and live data stay untouched while the pixel mode now renders a
+              stable DOM world with fixed districts, attention neighborhoods, and always-visible
+              worker labels.
             </p>
           </div>
           <div className="grid min-w-[240px] grid-cols-2 gap-2">
@@ -63,6 +64,13 @@ export function PixelDashboardView({
           </div>
         </div>
       </section>
+
+      <PixelWorldScene
+        allProjectsView={allProjectsView}
+        projectName={projectName}
+        projects={projects}
+        sessions={sessions}
+      />
 
       {allProjectsView ? (
         <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
@@ -90,7 +98,7 @@ export function PixelDashboardView({
               </div>
 
               <div className="mt-4 grid grid-cols-3 gap-2">
-                {DISTRICT_ORDER.map((level) => (
+                {ATTENTION_LEVEL_ORDER.map((level) => (
                   <div
                     key={level}
                     className="rounded-[10px] border border-[rgba(148,163,184,0.18)] bg-[rgba(15,23,42,0.66)] px-3 py-2"
@@ -153,7 +161,7 @@ export function PixelDashboardView({
             </div>
 
             <div className="grid gap-3 md:grid-cols-2">
-              {DISTRICT_ORDER.filter((level) =>
+              {ATTENTION_LEVEL_ORDER.filter((level) =>
                 sessions.some((session) => getAttentionLevel(session) === level),
               ).map((level) => (
                 <div
@@ -210,7 +218,7 @@ export function PixelDashboardView({
                     </span>
                   </div>
                   <div className="mt-2 flex flex-wrap gap-2 text-[10px] uppercase tracking-[0.12em] text-[var(--color-text-tertiary)]">
-                    {DISTRICT_ORDER.map((level) => {
+                    {ATTENTION_LEVEL_ORDER.map((level) => {
                       const count = projectSessions.filter(
                         (session) => getAttentionLevel(session) === level,
                       ).length;
