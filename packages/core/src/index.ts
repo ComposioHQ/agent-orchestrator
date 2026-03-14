@@ -94,6 +94,7 @@ export {
   isRetryableHttpStatus,
   normalizeRetryConfig,
   readLastJsonlEntry,
+  resolveProjectIdForSessionId,
 } from "./utils.js";
 export {
   getWebhookHeader,

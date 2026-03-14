@@ -44,33 +44,40 @@ Agent Orchestrator manages fleets of AI coding agents working in parallel on you
 
 ## Quick Start
 
-**Option A — From a repo URL (fastest):**
+**Option A — Install via npm (recommended):**
 
 ```bash
-# Install
+npm install -g @composio/agent-orchestrator
+
+# Permission denied? Use one of these:
+sudo npm install -g @composio/agent-orchestrator   # quick fix
+npx @composio/agent-orchestrator                    # no install needed
+```
+
+> **Prerequisites:** [Node.js 20+](https://nodejs.org), [Git 2.25+](https://git-scm.com), [tmux](https://github.com/tmux/tmux/wiki/Installing), [`gh` CLI](https://cli.github.com). Install tmux via `brew install tmux` (macOS) or `sudo apt install tmux` (Linux).
+
+**Option B — Install from source (for contributors):**
+
+```bash
 git clone https://github.com/ComposioHQ/agent-orchestrator.git
 cd agent-orchestrator && bash scripts/setup.sh
+```
 
-# One command to clone, configure, and launch
+Then set up your project:
+
+```bash
+# From a repo URL (fastest — clones, configures, and launches in one command)
 ao start https://github.com/your-org/your-repo
-```
 
-Auto-detects language, package manager, SCM platform, and default branch. Generates `agent-orchestrator.yaml` and starts the dashboard + orchestrator.
-
-**Option B — From an existing local repo:**
-
-```bash
-cd ~/your-project && ao init
+# Or from an existing local repo
+cd ~/your-project && ao init    # auto-detects everything, zero prompts
 ao start
-```
 
-**Option C — Add more projects to an existing setup:**
-
-```bash
+# Add more projects to an existing setup
 ao add-project ~/path/to/another-repo
 ```
 
-Then spawn agents:
+Spawn agents:
 
 ```bash
 ao spawn my-project 123    # GitHub issue, Linear ticket, or ad-hoc

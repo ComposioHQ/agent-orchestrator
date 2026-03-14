@@ -7,6 +7,7 @@ import chalk from "chalk";
 import type { Command } from "commander";
 import { generateSessionPrefix } from "@composio/ao-core";
 import { git, gh, execSilent } from "../lib/shell.js";
+import { detectDefaultBranch } from "../lib/git-utils.js";
 import { findFreePort, MAX_PORT_SCAN } from "../lib/web-dir.js";
 import {
   detectProjectType,
@@ -39,48 +40,7 @@ interface EnvironmentInfo {
   hasSlackWebhook: boolean;
 }
 
-async function detectDefaultBranch(
-  workingDir: string,
-  ownerRepo: string | null,
-): Promise<string | null> {
-  // Method 1: Try to get from git symbolic-ref (most reliable)
-  const symbolicRef = await git(["symbolic-ref", "refs/remotes/origin/HEAD"], workingDir);
-  if (symbolicRef) {
-    // Output: refs/remotes/origin/main
-    const match = symbolicRef.match(/refs\/remotes\/origin\/(.+)$/);
-    if (match) {
-      return match[1];
-    }
-  }
-
-  // Method 2: Try GitHub API via gh CLI
-  if (ownerRepo) {
-    const ghResult = await gh([
-      "repo",
-      "view",
-      ownerRepo,
-      "--json",
-      "defaultBranchRef",
-      "-q",
-      ".defaultBranchRef.name",
-    ]);
-    if (ghResult) {
-      return ghResult;
-    }
-  }
-
-  // Method 3: Check which common branch exists locally
-  const commonBranches = ["main", "master", "next", "develop"];
-  for (const branch of commonBranches) {
-    const exists = await git(["rev-parse", "--verify", `origin/${branch}`], workingDir);
-    if (exists) {
-      return branch;
-    }
-  }
-
-  // Fallback: return "main" as a reasonable default
-  return "main";
-}
+// detectDefaultBranch is shared — see packages/cli/src/lib/git-utils.ts
 
 async function detectEnvironment(workingDir: string): Promise<EnvironmentInfo> {
   // Check if in git repo

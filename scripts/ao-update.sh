@@ -123,7 +123,8 @@ if [ "$SMOKE_ONLY" = false ]; then
       printf '  Permission denied. Retrying with sudo...\n'
       sudo npm link
     else
-      printf '  Permission denied. Run manually: cd %s/packages/cli && sudo npm link\n' "$REPO_ROOT"
+      printf 'ERROR: Permission denied. Run manually: cd %s/packages/cli && sudo npm link\n' "$REPO_ROOT"
+      exit 1
     fi
   )
 

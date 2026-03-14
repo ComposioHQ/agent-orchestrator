@@ -143,7 +143,8 @@ elif [ "$INTERACTIVE" = true ]; then
   echo "  Permission denied. Retrying with sudo..."
   sudo npm link
 else
-  echo "  Permission denied. Run manually: cd packages/cli && sudo npm link"
+  echo "ERROR: Permission denied. Run manually: cd packages/cli && sudo npm link"
+  exit 1
 fi
 cd "$REPO_ROOT"
 

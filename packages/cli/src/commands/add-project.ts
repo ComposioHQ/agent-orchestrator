@@ -4,44 +4,13 @@ import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import chalk from "chalk";
 import type { Command } from "commander";
 import { generateSessionPrefix, findConfigFile } from "@composio/ao-core";
-import { git, gh, execSilent } from "../lib/shell.js";
+import { git, execSilent } from "../lib/shell.js";
+import { detectDefaultBranch } from "../lib/git-utils.js";
 import {
   detectProjectType,
   generateRulesFromTemplates,
   formatProjectTypeForDisplay,
 } from "../lib/project-detection.js";
-
-async function detectDefaultBranch(
-  workingDir: string,
-  ownerRepo: string | null,
-): Promise<string> {
-  const symbolicRef = await git(["symbolic-ref", "refs/remotes/origin/HEAD"], workingDir);
-  if (symbolicRef) {
-    const match = symbolicRef.match(/refs\/remotes\/origin\/(.+)$/);
-    if (match) return match[1];
-  }
-
-  if (ownerRepo) {
-    const ghResult = await gh([
-      "repo",
-      "view",
-      ownerRepo,
-      "--json",
-      "defaultBranchRef",
-      "-q",
-      ".defaultBranchRef.name",
-    ]);
-    if (ghResult) return ghResult;
-  }
-
-  const commonBranches = ["main", "master", "next", "develop"];
-  for (const branch of commonBranches) {
-    const exists = await git(["rev-parse", "--verify", `origin/${branch}`], workingDir);
-    if (exists) return branch;
-  }
-
-  return "main";
-}
 
 export function registerAddProject(program: Command): void {
   program

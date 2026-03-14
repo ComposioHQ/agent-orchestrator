@@ -552,7 +552,7 @@
     </div>
 
     <h2>Motivation</h2>
-    <p>New users hitting Agent Orchestrator for the first time faced multiple friction points that could cause them to abandon setup before ever spawning an agent. The goal of this PR is to make the path from <code>git clone</code> to <code>ao spawn</code> as smooth as possible — ideally zero interruptions.</p>
+    <p>New users hitting Agent Orchestrator for the first time faced multiple friction points that could cause them to abandon setup before ever spawning an agent. The goal of this PR is to make the path from <code>npm install</code> or <code>git clone</code> to <code>ao spawn</code> as smooth as possible — ideally zero interruptions. Fixes cover <strong>both</strong> the npm install path and the source/contributor path.</p>
 
     <h2>Problems Identified</h2>
     <table>
@@ -602,6 +602,42 @@
           <td><span class="badge badge-medium">Medium friction</span></td>
           <td>Every new user</td>
         </tr>
+        <tr>
+          <td>8</td>
+          <td><code>ao start</code> crashes for npm users — <code>@composio/ao-web</code> (dashboard) was never published</td>
+          <td><span class="badge badge-blocking">Blocking</span></td>
+          <td>Every npm user</td>
+        </tr>
+        <tr>
+          <td>9</td>
+          <td><code>npm install -g</code> fails with EACCES on default macOS Node — no guidance provided</td>
+          <td><span class="badge badge-high">High friction</span></td>
+          <td>npm users on macOS</td>
+        </tr>
+        <tr>
+          <td>10</td>
+          <td>Dashboard production server uses <code>npx next start</code> — slow global lookup, may download Next.js at runtime</td>
+          <td><span class="badge badge-medium">Medium friction</span></td>
+          <td>npm users</td>
+        </tr>
+        <tr>
+          <td>11</td>
+          <td><code>findWebDir()</code> returns a nonexistent path instead of throwing — error message says "Run: pnpm install" (wrong for npm users)</td>
+          <td><span class="badge badge-medium">Medium friction</span></td>
+          <td>npm users when package resolution fails</td>
+        </tr>
+        <tr>
+          <td>12</td>
+          <td><code>setup.sh</code> / <code>ao-update.sh</code> — non-interactive <code>npm link</code> failure exits 0 (CI sees green, <code>ao</code> not linked)</td>
+          <td><span class="badge badge-medium">Medium friction</span></td>
+          <td>CI pipelines</td>
+        </tr>
+        <tr>
+          <td>13</td>
+          <td><code>detectDefaultBranch</code> duplicated in <code>init.ts</code> and <code>add-project.ts</code> — bug fixes won't propagate</td>
+          <td><span class="badge badge-low">Low friction</span></td>
+          <td>Maintainers</td>
+        </tr>
       </tbody>
     </table>
 
@@ -615,7 +651,7 @@
       </div>
       <div class="after">
         <h4>After</h4>
-        <p>Tries <code>npm link</code> first. If it fails and terminal is interactive, auto-retries with <code>sudo</code>. If non-interactive (CI), prints the manual command.</p>
+        <p>Tries <code>npm link</code> first. If it fails and terminal is interactive, auto-retries with <code>sudo</code>. If non-interactive (CI), prints the manual command and exits with code 1.</p>
       </div>
     </div>
     <div class="flowchart">
@@ -646,7 +682,7 @@
             <div class="fc-branch-arm">
               <div class="fc-label">NO (CI)</div>
               <div class="fc-arrow">&#x2193;</div>
-              <div class="fc-node fc-error">Print manual fix command</div>
+              <div class="fc-node fc-error">Print manual fix + exit 1</div>
             </div>
           </div>
         </div>
@@ -875,21 +911,192 @@ What's next:
       <li class="new">packages/cli/src/commands/add-project.ts</li>
     </ul>
 
+    <h3>7. Publish <code>@composio/ao-web</code> dashboard on npm</h3>
+    <div class="before-after">
+      <div class="before">
+        <h4>Before</h4>
+        <p>The dashboard package (<code>@composio/ao-web</code>) had <code>"private": true</code>, was in the changeset <code>ignore</code> list, and used dev-only tooling (<code>pnpm run dev</code> via <code>concurrently</code>). npm users who ran <code>ao start</code> got: <em>"Could not find @composio/ao-web"</em> — a fatal crash with no workaround.</p>
+      </div>
+      <div class="after">
+        <h4>After</h4>
+        <p>Dashboard is a proper npm package: production entry point (<code>start-all.js</code>), pre-compiled server files, optimized <code>files</code> field (1 MB vs 67 MB), <code>node-pty</code> made optional. CLI auto-detects dev vs production mode.</p>
+      </div>
+    </div>
+    <div class="flowchart">
+      <div class="flowchart-title">ao start — dev vs production detection</div>
+      <div class="fc-node fc-start"><code>ao start</code></div>
+      <div class="fc-arrow">&#x2193;</div>
+      <div class="fc-node fc-process">Locate <code>@composio/ao-web</code> package directory</div>
+      <div class="fc-arrow">&#x2193;</div>
+      <div class="fc-node fc-decision"><code>server/</code> source dir exists?</div>
+      <div class="fc-arrow">&#x2193;</div>
+      <div class="fc-branch">
+        <div class="fc-branch-arm">
+          <div class="fc-label">YES (monorepo/source)</div>
+          <div class="fc-arrow">&#x2193;</div>
+          <div class="fc-node fc-process">Launch via <code>pnpm run dev</code></div>
+          <div class="fc-arrow">&#x2193;</div>
+          <div class="fc-node fc-success">Dev mode &#10003;</div>
+        </div>
+        <div class="fc-branch-arm">
+          <div class="fc-label">NO (npm package)</div>
+          <div class="fc-arrow">&#x2193;</div>
+          <div class="fc-node fc-process">Launch via <code>node dist-server/start-all.js</code></div>
+          <div class="fc-arrow">&#x2193;</div>
+          <div class="fc-node fc-success">Production mode &#10003;</div>
+        </div>
+      </div>
+    </div>
+    <ul class="files-changed">
+      <li>packages/web/package.json — removed <code>private: true</code>, added <code>files</code> field, made <code>node-pty</code> optional</li>
+      <li class="new">packages/web/server/start-all.ts — production entry point</li>
+      <li class="new">packages/web/tsconfig.server.json — server compilation config</li>
+      <li>packages/web/next.config.js — added all workspace deps to <code>transpilePackages</code></li>
+      <li>packages/web/server/direct-terminal-ws.ts — dynamic <code>node-pty</code> import with graceful fallback</li>
+      <li>packages/cli/src/commands/start.ts — dev vs production mode detection</li>
+      <li>packages/cli/package.json — added <code>@composio/ao-web</code> dependency</li>
+      <li>.changeset/config.json — removed from ignore, added to linked</li>
+      <li>packages/core/src/utils.ts — moved <code>resolveProjectIdForSessionId</code> here</li>
+    </ul>
+
+    <h3>8. Add EACCES permission guidance for npm users</h3>
+    <div class="before-after">
+      <div class="before">
+        <h4>Before</h4>
+        <p><code>npm install -g @composio/agent-orchestrator</code> fails with EACCES on macOS default Node installs. User gets a wall of error text with no actionable fix.</p>
+      </div>
+      <div class="after">
+        <h4>After</h4>
+        <p>README and SETUP.md document 3 options: <code>sudo npm install -g</code> (quick fix), <code>npx @composio/agent-orchestrator</code> (no install), or fix the npm prefix directory (permanent). npm is now listed as Option A (recommended) in README.</p>
+      </div>
+    </div>
+    <ul class="files-changed">
+      <li>README.md — npm is Option A, added EACCES fix + npx alternative</li>
+      <li>SETUP.md — added EACCES section with 3 options</li>
+    </ul>
+
+    <h3>9. Use local Next.js binary in production</h3>
+    <div class="before-after">
+      <div class="before">
+        <h4>Before</h4>
+        <p><code>start-all.ts</code> launched the dashboard with <code>npx next start</code>. <code>npx</code> does a global PATH lookup and, if <code>next</code> isn't found, tries to download it at runtime — adding 30+ seconds or failing on slow/offline networks.</p>
+      </div>
+      <div class="after">
+        <h4>After</h4>
+        <p>Uses the local binary directly: <code>node_modules/.bin/next</code>. Instant startup, no network dependency.</p>
+      </div>
+    </div>
+    <ul class="files-changed">
+      <li>packages/web/server/start-all.ts</li>
+    </ul>
+
+    <h3>10. Fix <code>findWebDir()</code> error handling</h3>
+    <div class="before-after">
+      <div class="before">
+        <h4>Before</h4>
+        <p><code>findWebDir()</code> silently returned a nonexistent path when all resolution methods failed. The caller then showed <em>"Could not find @composio/ao-web. Run: pnpm install"</em> — wrong advice for npm users.</p>
+      </div>
+      <div class="after">
+        <h4>After</h4>
+        <p><code>findWebDir()</code> throws with install-specific guidance: <code>npm install -g</code> for npm users, <code>pnpm install && pnpm build</code> for source users. Redundant checks in <code>start.ts</code> and <code>dashboard.ts</code> removed.</p>
+      </div>
+    </div>
+    <ul class="files-changed">
+      <li>packages/cli/src/lib/web-dir.ts — throw instead of returning broken path</li>
+      <li>packages/cli/src/commands/start.ts — removed redundant <code>existsSync</code> check</li>
+      <li>packages/cli/src/commands/dashboard.ts — removed redundant check + unused imports</li>
+    </ul>
+
+    <h3>11. Fix CI-silent failure in setup scripts</h3>
+    <div class="before-after">
+      <div class="before">
+        <h4>Before</h4>
+        <p>In non-interactive mode, <code>npm link</code> failure printed a message but the script continued with exit code 0. CI pipelines saw green while <code>ao</code> was not actually linked.</p>
+      </div>
+      <div class="after">
+        <h4>After</h4>
+        <p>Non-interactive <code>npm link</code> failure now calls <code>exit 1</code>, making CI pipelines correctly report the failure.</p>
+      </div>
+    </div>
+    <ul class="files-changed">
+      <li>scripts/setup.sh</li>
+      <li>scripts/ao-update.sh</li>
+    </ul>
+
+    <h3>12. Deduplicate <code>detectDefaultBranch</code></h3>
+    <div class="before-after">
+      <div class="before">
+        <h4>Before</h4>
+        <p>The same 30-line function (3-method fallback: symbolic-ref → GitHub API → local refs) was copy-pasted in both <code>init.ts</code> and <code>add-project.ts</code>. Bug fixes to one wouldn't propagate to the other.</p>
+      </div>
+      <div class="after">
+        <h4>After</h4>
+        <p>Single implementation in <code>packages/cli/src/lib/git-utils.ts</code>, imported by both commands.</p>
+      </div>
+    </div>
+    <ul class="files-changed">
+      <li class="new">packages/cli/src/lib/git-utils.ts — shared implementation</li>
+      <li>packages/cli/src/commands/init.ts — imports from git-utils</li>
+      <li>packages/cli/src/commands/add-project.ts — imports from git-utils</li>
+    </ul>
+
+    <h2>Known Limitations</h2>
+    <p>The following issues were investigated and determined to not need fixes:</p>
+    <table>
+      <thead>
+        <tr><th>Issue</th><th>Verdict</th><th>Reason</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>node-pty</code> optional — terminal panels broken?</td>
+          <td><span class="badge badge-low">Not an issue</span></td>
+          <td>Main terminal view uses ttyd (iframe), not node-pty. Direct terminal is a separate feature that degrades gracefully with a server-side log.</td>
+        </tr>
+        <tr>
+          <td>Git remote regex is GitHub-only</td>
+          <td><span class="badge badge-low">By design</span></td>
+          <td>AO only ships GitHub SCM/tracker plugins. Non-GitHub repos would fail at <code>ao spawn</code> anyway. A warning could be added later.</td>
+        </tr>
+        <tr>
+          <td><code>start-all.ts</code> cleanup doesn't wait for children</td>
+          <td><span class="badge badge-low">Not an issue</span></td>
+          <td>Children are independent OS processes that handle SIGTERM on their own. <code>next start</code> is read-only (no cache writes). On Ctrl+C, the terminal sends SIGINT to the entire process group regardless.</td>
+        </tr>
+        <tr>
+          <td><code>ao add-project</code> crashes on malformed YAML</td>
+          <td><span class="badge badge-low">Acceptable</span></td>
+          <td>The <code>yaml</code> library produces readable errors with line/column numbers. Same pattern as <code>loadConfig()</code> in core. Not worth a special wrapper.</td>
+        </tr>
+        <tr>
+          <td><code>ao add-project</code> non-atomic write</td>
+          <td><span class="badge badge-low">Not an issue</span></td>
+          <td><code>writeFileSync</code> is effectively atomic for small files (config is well under the OS block size). Same pattern used everywhere in the codebase.</td>
+        </tr>
+        <tr>
+          <td>EACCES on <code>npm install -g</code> is docs-only</td>
+          <td><span class="badge badge-low">Unfixable</span></td>
+          <td>The error happens inside npm before any of our code runs. A <code>postinstall</code> script only executes after successful install. Documentation is the correct mitigation.</td>
+        </tr>
+      </tbody>
+    </table>
+
     <h2>New Onboarding Flow</h2>
+
+    <h3>npm install path (most users)</h3>
     <div class="flow-comparison">
       <div>
         <h4 style="color: var(--red);">Before (5+ min, multiple failure points)</h4>
         <div class="flow-step problem">
           <div class="num">1</div>
-          <div><code>bash scripts/setup.sh</code><br><span class="comment">Could crash on npm link. No next-step guidance.</span></div>
+          <div><code>git clone ...</code><br><span class="comment">Required even for non-contributors</span></div>
         </div>
         <div class="flow-step problem">
           <div class="num">2</div>
-          <div><code>cd ~/my-project</code><br><span class="comment">User has to figure out "where do I go?" on their own</span></div>
+          <div><code>bash scripts/setup.sh</code><br><span class="comment">Could crash on npm link</span></div>
         </div>
         <div class="flow-step problem">
           <div class="num">3</div>
-          <div><code>ao init</code><br><span class="comment">13 interactive prompts</span></div>
+          <div><code>cd ~/my-project && ao init</code><br><span class="comment">13 interactive prompts</span></div>
         </div>
         <div class="flow-step problem">
           <div class="num">4</div>
@@ -905,7 +1112,45 @@ What's next:
         </div>
       </div>
       <div>
-        <h4 style="color: var(--green);">After (2 min, zero interruptions, guided)</h4>
+        <h4 style="color: var(--green);">After (under 1 min, fully guided)</h4>
+        <div class="flow-step">
+          <div class="num">1</div>
+          <div><code>npm install -g @composio/agent-orchestrator</code><br><span class="comment" style="color: var(--green);">One command, no clone needed</span></div>
+        </div>
+        <div class="flow-step">
+          <div class="num">2</div>
+          <div><code>ao start https://github.com/org/repo</code><br><span class="comment" style="color: var(--green);">Clones, configures, and launches — prints "ao spawn"</span></div>
+        </div>
+        <div class="flow-step">
+          <div class="num">3</div>
+          <div><code>ao spawn my-project 123</code><br><span class="comment" style="color: var(--green);">Start working!</span></div>
+        </div>
+      </div>
+    </div>
+
+    <h3>Source install path (contributors)</h3>
+    <div class="flow-comparison">
+      <div>
+        <h4 style="color: var(--red);">Before</h4>
+        <div class="flow-step problem">
+          <div class="num">1</div>
+          <div><code>bash scripts/setup.sh</code><br><span class="comment">Could crash on npm link. No next-step guidance.</span></div>
+        </div>
+        <div class="flow-step problem">
+          <div class="num">2</div>
+          <div><code>cd ~/my-project</code><br><span class="comment">User has to figure out "where do I go?" on their own</span></div>
+        </div>
+        <div class="flow-step problem">
+          <div class="num">3</div>
+          <div><code>ao init</code><br><span class="comment">13 interactive prompts</span></div>
+        </div>
+        <div class="flow-step problem">
+          <div class="num">4</div>
+          <div><code>ao start</code><br><span class="comment">Could crash on port conflict</span></div>
+        </div>
+      </div>
+      <div>
+        <h4 style="color: var(--green);">After (guided)</h4>
         <div class="flow-step">
           <div class="num">1</div>
           <div><code>bash scripts/setup.sh</code><br><span class="comment" style="color: var(--green);">Handles permissions + prints "cd ~/your-project && ao init"</span></div>
@@ -916,14 +1161,10 @@ What's next:
         </div>
         <div class="flow-step">
           <div class="num">3</div>
-          <div><code>ao add-project ~/other-project</code><br><span class="comment" style="color: var(--green);">Auto-detects + prints "ao start" and "ao spawn"</span></div>
-        </div>
-        <div class="flow-step">
-          <div class="num">4</div>
           <div><code>ao start</code><br><span class="comment" style="color: var(--green);">Auto-finds free port + prints "ao spawn &lt;project&gt; &lt;issue&gt;"</span></div>
         </div>
         <div class="flow-step">
-          <div class="num">5</div>
+          <div class="num">4</div>
           <div><code>ao spawn my-project 123</code><br><span class="comment" style="color: var(--green);">Start working!</span></div>
         </div>
       </div>
@@ -955,8 +1196,8 @@ What's next:
         </div>
         <div class="bar-row">
           <div class="bar-label"></div>
-          <div class="bar-track"><div class="bar-fill after" style="width: 57%;">After</div></div>
-          <div class="bar-value after">4</div>
+          <div class="bar-track"><div class="bar-fill after" style="width: 43%;">After (npm)</div></div>
+          <div class="bar-value after">3</div>
         </div>
       </div>
 
@@ -1010,8 +1251,8 @@ What's next:
       <div class="impact-item">
         <div class="number before">6+</div>
         <div class="arrow">&darr;</div>
-        <div class="number after">4</div>
-        <div class="label">Steps to first <code>ao spawn</code></div>
+        <div class="number after">3</div>
+        <div class="label">Steps to first <code>ao spawn</code> (npm)</div>
       </div>
       <div class="impact-item">
         <div class="number before">3</div>
@@ -1026,13 +1267,18 @@ What's next:
         <tr><th>Metric</th><th>Before</th><th>After</th></tr>
       </thead>
       <tbody>
-        <tr><td>Steps to first <code>ao spawn</code></td><td>6+ (with manual edits)</td><td>4 (all automated)</td></tr>
+        <tr><td>Steps to first <code>ao spawn</code></td><td>6+ (with manual edits)</td><td>3 via npm, 4 from source</td></tr>
         <tr><td>Interactive prompts in <code>ao init</code></td><td>13</td><td>0</td></tr>
         <tr><td>Permission errors during setup</td><td>Fatal crash</td><td>Auto-handled</td></tr>
         <tr><td>Port conflicts on <code>ao start</code></td><td>Fatal crash</td><td>Auto-resolved</td></tr>
         <tr><td>Adding a second project</td><td>Manual YAML editing</td><td><code>ao add-project &lt;path&gt;</code></td></tr>
         <tr><td>Dead CLI flags</td><td><code>--smart</code> shows "coming soon"</td><td>Removed</td></tr>
         <tr><td>"What's next" guidance</td><td>None — user guesses</td><td>Every command prints the next step + directory</td></tr>
+        <tr><td>Dashboard for npm users</td><td>Fatal crash (<code>@composio/ao-web</code> not published)</td><td>Published + production entry point</td></tr>
+        <tr><td>Dashboard startup speed (npm)</td><td><code>npx next start</code> (slow global lookup)</td><td>Direct <code>node_modules/.bin/next</code> binary</td></tr>
+        <tr><td>Error messages for missing packages</td><td>Generic "Run: pnpm install" for all users</td><td>Install-specific guidance (npm vs source)</td></tr>
+        <tr><td>CI reliability</td><td>Scripts exit 0 on <code>npm link</code> failure</td><td>Non-interactive failures exit 1</td></tr>
+        <tr><td>Code duplication</td><td><code>detectDefaultBranch</code> copied in 2 files</td><td>Single shared implementation</td></tr>
       </tbody>
     </table>
 
@@ -1067,6 +1313,15 @@ What's next:
       <li><code>ao init</code> completion → prints <code>ao start</code> with directory context</li>
       <li><code>ao start</code> completion → prints <code>ao spawn &lt;project&gt; &lt;issue&gt;</code></li>
       <li><code>ao add-project</code> completion → prints <code>ao start</code> and <code>ao spawn</code></li>
+      <li><code>npm install -g @composio/agent-orchestrator</code> → <code>ao start</code> finds and launches dashboard (no "Could not find @composio/ao-web" error)</li>
+      <li>npm-installed <code>ao start</code> launches via <code>dist-server/start-all.js</code> (production mode), not <code>pnpm run dev</code></li>
+      <li>Dashboard package size is under 5 MB on npm (no <code>.next/cache</code> bloat)</li>
+      <li>Direct terminal gracefully degrades when <code>node-pty</code> is unavailable</li>
+      <li>Production dashboard uses local <code>node_modules/.bin/next</code>, not <code>npx</code> (check <code>start-all.ts</code>)</li>
+      <li><code>findWebDir()</code> throws with install-specific message when package is missing (not a silent broken path)</li>
+      <li><code>setup.sh</code> in non-interactive mode (e.g. <code>bash setup.sh < /dev/null</code>) exits 1 on <code>npm link</code> failure</li>
+      <li><code>ao-update.sh</code> in non-interactive mode exits 1 on <code>npm link</code> failure</li>
+      <li><code>detectDefaultBranch</code> is imported from <code>lib/git-utils.ts</code> in both <code>init.ts</code> and <code>add-project.ts</code> (no duplication)</li>
     </ul>
   </div>
 </body>
