@@ -17,12 +17,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/ComposioHQ/agent-orchestrator.git",
+    "url": "https://github.com/jleechanorg/agent-orchestrator.git",
     "directory": "packages/plugins/agent-cursor"
   },
-  "homepage": "https://github.com/ComposioHQ/agent-orchestrator",
+  "homepage": "https://github.com/jleechanorg/agent-orchestrator",
   "bugs": {
-    "url": "https://github.com/ComposioHQ/agent-orchestrator/issues"
+    "url": "https://github.com/jleechanorg/agent-orchestrator/issues"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -34,8 +34,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@composio/ao-core": "workspace:*",
-    "@composio/ao-plugin-agent-base": "workspace:*"
+    "@composio/ao-core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^25.2.3",
