@@ -13,11 +13,11 @@ type SearchParamsLike =
   | Record<string, string | string[] | undefined>;
 
 function getSearchParam(searchParams: SearchParamsLike, key: string): string | undefined {
-  if ("get" in searchParams) {
+  if ("get" in searchParams && typeof searchParams.get === "function") {
     return searchParams.get(key) ?? undefined;
   }
 
-  const value = searchParams[key];
+  const value = (searchParams as Record<string, string | string[] | undefined>)[key];
   return Array.isArray(value) ? value[0] : value;
 }
 
