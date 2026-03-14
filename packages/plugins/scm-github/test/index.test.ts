@@ -116,6 +116,125 @@ describe("scm-github plugin", () => {
     it("returns an SCM with correct name", () => {
       expect(scm.name).toBe("github");
     });
+
+    it("accepts extraBotAuthors config and includes those bots in getAutomatedComments", async () => {
+      // Create SCM with custom extraBotAuthors
+      const customSCM = create({ extraBotAuthors: ["custom-bot[bot]", "my-ci-bot"] });
+
+      // Mock gh to return comments from default bots + custom bots + human
+      mockGh([
+        {
+          id: 1,
+          user: { login: "custom-bot[bot]" },
+          body: "Automated check",
+          path: "a.ts",
+          line: 1,
+          original_line: null,
+          created_at: "2025-01-01T00:00:00Z",
+          html_url: "u1",
+        },
+        {
+          id: 2,
+          user: { login: "my-ci-bot" },
+          body: "CI result",
+          path: "b.ts",
+          line: 2,
+          original_line: null,
+          created_at: "2025-01-01T00:00:00Z",
+          html_url: "u2",
+        },
+        {
+          id: 3,
+          user: { login: "cursor[bot]" },
+          body: "Found a potential issue",
+          path: "c.ts",
+          line: 3,
+          original_line: null,
+          created_at: "2025-01-01T00:00:00Z",
+          html_url: "u3",
+        },
+        {
+          id: 4,
+          user: { login: "alice" },
+          body: "Human comment",
+          path: "d.ts",
+          line: 4,
+          original_line: null,
+          created_at: "2025-01-01T00:00:00Z",
+          html_url: "u4",
+        },
+      ]);
+
+      // getAutomatedComments returns ONLY bot comments (filters for bots)
+      const comments = await customSCM.getAutomatedComments(pr);
+      // Should include custom bots + default bots, but NOT human
+      expect(comments).toHaveLength(3);
+      const botNames = comments.map((c) => c.botName);
+      // Custom bots should be included alongside default bots
+      expect(botNames).toContain("custom-bot[bot]");
+      expect(botNames).toContain("my-ci-bot");
+      expect(botNames).toContain("cursor[bot]");
+      // Human should NOT be included
+      expect(botNames).not.toContain("alice");
+    });
+
+    it("accepts extraBotAuthors config and filters those bots in getPendingComments", async () => {
+      // Create SCM with custom extraBotAuthors
+      const customSCM = create({ extraBotAuthors: ["review-bot[bot]"] });
+
+      // Create mock GraphQL threads with custom bot
+      const mockThreads = {
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                nodes: [
+                  {
+                    isResolved: false,
+                    comments: {
+                      nodes: [
+                        {
+                          id: "C1",
+                          author: { login: "review-bot[bot]" },
+                          body: "Bot review",
+                          path: "a.ts",
+                          line: 1,
+                          url: "u1",
+                          createdAt: "2025-01-01T00:00:00Z",
+                        },
+                      ],
+                    },
+                  },
+                  {
+                    isResolved: false,
+                    comments: {
+                      nodes: [
+                        {
+                          id: "C2",
+                          author: { login: "alice" },
+                          body: "Human review",
+                          path: "b.ts",
+                          line: 2,
+                          url: "u2",
+                          createdAt: "2025-01-01T00:00:00Z",
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      };
+
+      mockGh(mockThreads);
+
+      // getPendingComments filters OUT bots (returns only human comments)
+      const comments = await customSCM.getPendingComments(pr);
+      expect(comments).toHaveLength(1);
+      expect(comments[0].author).toBe("alice");
+    });
   });
 
   describe("verifyWebhook", () => {

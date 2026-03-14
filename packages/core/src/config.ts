@@ -196,6 +196,7 @@ const OrchestratorConfigSchema = z.object({
     info: ["composio"],
   }),
   reactions: z.record(ReactionConfigSchema).default({}),
+  plugins: z.record(z.record(z.unknown())).optional(),
 });
 
 // =============================================================================
