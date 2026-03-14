@@ -273,7 +273,7 @@ function getSlotPosition(
   const column = slotIndex % columns;
   const row = Math.floor(slotIndex / columns);
   const availableWidth = bounds.width - SLOT_PADDING_X * 2;
-  const columnGap = columns === 1 ? 0 : Math.max(SLOT_SPACING_X, availableWidth / (columns - 1));
+  const columnGap = Math.max(SLOT_SPACING_X, availableWidth / (columns - 1));
 
   return {
     x: bounds.x + SLOT_PADDING_X + column * columnGap,
