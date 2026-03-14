@@ -59,7 +59,7 @@ Plans:
 **Plans**: TBD
 
 Plans:
-- [ ] 03-01: Build the inspect drawer and parity detail surfaces
+- [x] 03-01: Build the inspect drawer and parity detail surfaces
 - [ ] 03-02: Wire current session and PR actions into the pixel dashboard
 
 ### Phase 4: Trust And Operational Polish
@@ -86,5 +86,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Shared Dashboard Foundation | 2/2 | Complete | 2026-03-14 |
 | 2. Pixel World Core | 2/2 | Complete | 2026-03-14 |
-| 3. Operator Workflow Parity | 0/2 | Not started | - |
+| 3. Operator Workflow Parity | 1/2 | In Progress | - |
 | 4. Trust And Operational Polish | 0/2 | Not started | - |

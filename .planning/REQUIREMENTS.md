@@ -22,8 +22,8 @@ Requirements for the first usable pixel dashboard release.
 
 ### Session Inspection
 
-- [ ] **INSP-01**: Operator can inspect selected session details including summary, branch, issue context, and recent state
-- [ ] **INSP-02**: Operator can inspect PR state for a selected session including review, CI, and merge readiness cues
+- [x] **INSP-01**: Operator can inspect selected session details including summary, branch, issue context, and recent state
+- [x] **INSP-02**: Operator can inspect PR state for a selected session including review, CI, and merge readiness cues
 - [ ] **INSP-03**: Operator can tell when session or PR information is stale, paused, or limited by current backend conditions
 
 ### Actions
@@ -42,7 +42,7 @@ Requirements for the first usable pixel dashboard release.
 ### Experience
 
 - [ ] **UX-01**: Operator can distinguish working, waiting, review-needed, merge-ready, and done sessions through clear visual cues in the pixel dashboard
-- [ ] **UX-02**: Operator can access dense operational details through a non-canvas UI surface so the pixel scene stays readable
+- [x] **UX-02**: Operator can access dense operational details through a non-canvas UI surface so the pixel scene stays readable
 - [ ] **UX-03**: Operator can use the pixel dashboard on common desktop viewport sizes without the scene becoming unusable
 
 ## v2 Requirements
@@ -84,8 +84,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SCENE-02 | Phase 2 | Complete |
 | SCENE-03 | Phase 2 | Complete |
 | SCENE-04 | Phase 2 | Complete |
-| INSP-01 | Phase 3 | Pending |
-| INSP-02 | Phase 3 | Pending |
+| INSP-01 | Phase 3 | Complete |
+| INSP-02 | Phase 3 | Complete |
 | INSP-03 | Phase 4 | Pending |
 | ACT-01 | Phase 3 | Pending |
 | ACT-02 | Phase 3 | Pending |
@@ -95,7 +95,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | LIVE-02 | Phase 1 | Complete |
 | LIVE-03 | Phase 4 | Pending |
 | UX-01 | Phase 4 | Pending |
-| UX-02 | Phase 3 | Pending |
+| UX-02 | Phase 3 | Complete |
 | UX-03 | Phase 4 | Pending |
 
 **Coverage:**
