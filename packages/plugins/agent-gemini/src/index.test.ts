@@ -76,7 +76,7 @@ function makeLaunchConfig(overrides: Partial<AgentLaunchConfig> = {}): AgentLaun
   };
 }
 
-function mockTmuxWithProcess(processName = "claude", tty = "/dev/ttys001", pid = 12345) {
+function mockTmuxWithProcess(processName = "gemini", tty = "/dev/ttys001", pid = 12345) {
   mockExecFileAsync.mockImplementation((cmd: string, args: string[]) => {
     if (cmd === "tmux" && args[0] === "list-panes") {
       return Promise.resolve({ stdout: `${tty}\n`, stderr: "" });
@@ -115,17 +115,17 @@ beforeEach(() => {
 describe("plugin manifest & exports", () => {
   it("has correct manifest", () => {
     expect(manifest).toEqual({
-      name: "claude-code",
+      name: "gemini",
       slot: "agent",
-      description: "Agent plugin: Claude Code CLI",
+      description: "Agent plugin: Gemini CLI",
       version: "0.1.0",
     });
   });
 
   it("create() returns an agent with correct name and processName", () => {
     const agent = create();
-    expect(agent.name).toBe("claude-code");
-    expect(agent.processName).toBe("claude");
+    expect(agent.name).toBe("gemini");
+    expect(agent.processName).toBe("gemini");
     expect(agent.promptDelivery).toBe("post-launch");
   });
 
@@ -143,7 +143,7 @@ describe("getLaunchCommand", () => {
 
   it("generates base command without shell syntax", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "default" }));
-    expect(cmd).toBe("claude");
+    expect(cmd).toBe("gemini");
     // Must not contain shell operators (execFile-safe)
     expect(cmd).not.toContain("&&");
     expect(cmd).not.toContain("unset");
@@ -252,7 +252,7 @@ describe("isProcessRunning", () => {
   const agent = create();
 
   it("returns true when claude is found on tmux pane TTY", async () => {
-    mockTmuxWithProcess("claude");
+    mockTmuxWithProcess("gemini");
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(true);
   });
 
@@ -464,7 +464,7 @@ describe("getSessionInfo", () => {
       mockJsonlFiles('{"type":"user","message":{"content":"hello"}}');
       await agent.getSessionInfo(makeSession({ workspacePath: "/Users/dev/.worktrees/ao/ao-3" }));
       expect(mockReaddir).toHaveBeenCalledWith(
-        "/mock/home/.claude/projects/-Users-dev--worktrees-ao-ao-3",
+        "/mock/home/.gemini/projects/-Users-dev--worktrees-ao-ao-3",
       );
     });
   });

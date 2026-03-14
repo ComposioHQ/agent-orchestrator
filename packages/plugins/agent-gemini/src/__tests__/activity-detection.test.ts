@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { toClaudeProjectPath, create } from "../index.js";
+import { toGeminiProjectPath, create } from "../index.js";
 import type { Session, RuntimeHandle } from "@composio/ao-core";
 
 // Mock homedir() so getActivityState looks in our temp dir
@@ -53,34 +53,34 @@ function writeJsonl(
 }
 
 // =============================================================================
-// toClaudeProjectPath
+// toGeminiProjectPath
 // =============================================================================
 
-describe("Claude Code Activity Detection", () => {
-  describe("toClaudeProjectPath", () => {
+describe("Gemini CLI Activity Detection", () => {
+  describe("toGeminiProjectPath", () => {
     it("encodes paths with leading dash", () => {
-      expect(toClaudeProjectPath("/Users/dev/.worktrees/ao")).toBe("-Users-dev--worktrees-ao");
+      expect(toGeminiProjectPath("/Users/dev/.worktrees/ao")).toBe("-Users-dev--worktrees-ao");
     });
 
     it("preserves leading slash as leading dash", () => {
-      expect(toClaudeProjectPath("/tmp/test")).toBe("-tmp-test");
+      expect(toGeminiProjectPath("/tmp/test")).toBe("-tmp-test");
     });
 
     it("replaces dots with dashes", () => {
-      expect(toClaudeProjectPath("/path/to/.hidden")).toBe("-path-to--hidden");
+      expect(toGeminiProjectPath("/path/to/.hidden")).toBe("-path-to--hidden");
     });
 
     it("handles Windows paths (no leading slash)", () => {
-      expect(toClaudeProjectPath("C:\\Users\\dev\\project")).toBe("C-Users-dev-project");
+      expect(toGeminiProjectPath("C:\\Users\\dev\\project")).toBe("C-Users-dev-project");
     });
 
     it("handles consecutive dots and slashes", () => {
       // /a/../b/./c → -a-  -- -b- - -c → -a----b---c
-      expect(toClaudeProjectPath("/a/../b/./c")).toBe("-a----b---c");
+      expect(toGeminiProjectPath("/a/../b/./c")).toBe("-a----b---c");
     });
 
     it("handles paths with multiple dot-directories", () => {
-      expect(toClaudeProjectPath("/Users/dev/.config/.local/share")).toBe(
+      expect(toGeminiProjectPath("/Users/dev/.config/.local/share")).toBe(
         "-Users-dev--config--local-share",
       );
     });
@@ -98,9 +98,9 @@ describe("Claude Code Activity Detection", () => {
       workspacePath = join(fakeHome, "workspace");
       mkdirSync(workspacePath, { recursive: true });
 
-      // Create the Claude project directory matching the workspace path
-      const encoded = toClaudeProjectPath(workspacePath);
-      projectDir = join(fakeHome, ".claude", "projects", encoded);
+      // Create the Gemini project directory matching the workspace path
+      const encoded = toGeminiProjectPath(workspacePath);
+      projectDir = join(fakeHome, ".gemini", "projects", encoded);
       mkdirSync(projectDir, { recursive: true });
 
       // Mock isProcessRunning to always return true (we test exited separately)
@@ -152,10 +152,10 @@ describe("Claude Code Activity Detection", () => {
     });
 
     // -----------------------------------------------------------------------
-    // Real Claude Code entry types (observed in production)
+    // Real Gemini CLI entry types (observed in production)
     // -----------------------------------------------------------------------
 
-    describe("real Claude Code entry types", () => {
+    describe("real Gemini CLI entry types", () => {
       it("returns 'active' for recent 'progress' entry (streaming)", async () => {
         writeJsonl([{ type: "progress", status: "running tool" }]);
         expect((await agent.getActivityState(makeSession()))?.state).toBe("active");
