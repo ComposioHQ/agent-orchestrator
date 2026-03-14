@@ -15,8 +15,8 @@ Requirements for the first usable pixel dashboard release.
 
 ### Scene
 
-- [ ] **SCENE-01**: Operator can see one stable scene entity for each worker session shown by the current dashboard
-- [ ] **SCENE-02**: Operator can recognize session urgency in the pixel scene using the same underlying attention semantics as the current dashboard
+- [x] **SCENE-01**: Operator can see one stable scene entity for each worker session shown by the current dashboard
+- [x] **SCENE-02**: Operator can recognize session urgency in the pixel scene using the same underlying attention semantics as the current dashboard
 - [ ] **SCENE-03**: Operator can pan and zoom the pixel scene without breaking access to shared shell controls or future detail surfaces
 - [ ] **SCENE-04**: Operator can select a session entity in the scene and keep that selection stable while live updates arrive
 
@@ -80,8 +80,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | NAV-01 | Phase 1 | Complete |
 | NAV-02 | Phase 1 | Complete |
 | NAV-03 | Phase 1 | Complete |
-| SCENE-01 | Phase 2 | Pending |
-| SCENE-02 | Phase 2 | Pending |
+| SCENE-01 | Phase 2 | Complete |
+| SCENE-02 | Phase 2 | Complete |
 | SCENE-03 | Phase 2 | Pending |
 | SCENE-04 | Phase 2 | Pending |
 | INSP-01 | Phase 3 | Pending |

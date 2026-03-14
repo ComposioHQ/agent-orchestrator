@@ -44,7 +44,7 @@ Plans:
 **Plans**: TBD
 
 Plans:
-- [ ] 02-01: Build the DOM scene renderer, world model, and session-to-entity mapping
+- [x] 02-01: Build the DOM scene renderer, world model, and session-to-entity mapping
 - [ ] 02-02: Add camera controls, selection behavior, and scene interaction boundaries
 
 ### Phase 3: Operator Workflow Parity
@@ -85,6 +85,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Shared Dashboard Foundation | 2/2 | Complete | 2026-03-14 |
-| 2. Pixel World Core | 0/2 | Not started | - |
+| 2. Pixel World Core | 1/2 | In Progress | - |
 | 3. Operator Workflow Parity | 0/2 | Not started | - |
 | 4. Trust And Operational Polish | 0/2 | Not started | - |
