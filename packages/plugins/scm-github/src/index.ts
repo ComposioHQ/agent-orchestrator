@@ -456,8 +456,8 @@ function parseDate(val: string | undefined | null): Date {
 // SCM implementation
 // ---------------------------------------------------------------------------
 
-function createGitHubSCM(config?: Record<string, unknown>): SCM {
-  const BOT_AUTHORS = buildBotAuthors(config);
+function createGitHubSCM(pluginConfig?: Record<string, unknown>): SCM {
+  const BOT_AUTHORS = buildBotAuthors(pluginConfig);
   return {
     name: "github",
 
