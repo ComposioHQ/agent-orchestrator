@@ -244,9 +244,28 @@ async function startDashboard(
     console.error(chalk.red("Dashboard failed to start:"), err.message);
     // Emit synthetic exit so callers listening on "exit" can clean up
     child.emit("exit", 1, null);
+    // IMPORTANT: Reject promise so caller's try/catch catches this error
+    // Without rejection, Promise resolves even after emit("exit"), making errors
+    // uncatchable by the try/catch in runStartup()
+    // Clean up orchestrator on spawn errors
+    cleanupOrchestratorOnFailure(config, projectId, orchestratorNewlyCreated).catch(() => {
+      /* best effort */
+    });
   });
 
-  return child;
+  // Listen for "exit" event - clean up when process terminates (success or failure)
+  const exitPromise = new Promise<void>((resolve, reject) => {
+    child.on("exit", (code) => {
+      if (code !== 0) {
+        reject(new Error(`Dashboard exited with code ${code}`));
+      } else {
+        resolve();
+      }
+    });
+  });
+
+  // If we already have an error, the exit listener will reject
+  return child.then(() => exitPromise);
 }
 
 /**
@@ -319,16 +338,6 @@ async function runStartup(
       );
     } catch (err) {
       spinner.fail("Lifecycle worker failed to start");
-      // Clean up orchestrator since we started it but lifecycle won't work
-      // Only clean up if we created a NEW orchestrator session (not reused)
-      if (opts?.orchestrator !== false && orchestratorNewlyCreated) {
-        try {
-          const sm = await getSessionManager(config);
-          await sm.kill(sessionId).catch(() => undefined);
-        } catch {
-          /* best effort cleanup */
-        }
-      }
       throw new Error(
         `Failed to start lifecycle worker: ${err instanceof Error ? err.message : String(err)}`,
         { cause: err },
@@ -381,26 +390,6 @@ async function runStartup(
       console.log(chalk.dim("  (Dashboard will be ready in a few seconds)\n"));
     } catch (err) {
       spinner.fail("Dashboard failed to start");
-      // Clean up resources we started in this run (orchestrator and lifecycle worker)
-      // Only clean up if we created a NEW orchestrator session (not reused)
-      // Pass { purgeOpenCode: true } to match `ao stop` behavior and avoid stray sessions
-      if (opts?.orchestrator !== false && orchestratorNewlyCreated) {
-        try {
-          const sm = await getSessionManager(config);
-          await sm.kill(sessionId, { purgeOpenCode: true }).catch(() => undefined);
-        } catch {
-          /* best effort cleanup */
-        }
-      }
-      // Stop lifecycle worker if we started it (it runs as detached process)
-      // Without cleanup, the worker continues running as an orphan
-      if (lifecycleStatus?.started) {
-        try {
-          await stopLifecycleWorker(config, projectId);
-        } catch {
-          /* best effort cleanup */
-        }
-      }
       throw new Error(
         `Failed to start dashboard: ${err instanceof Error ? err.message : String(err)}`,
         { cause: err },
@@ -450,7 +439,24 @@ async function runStartup(
       }
       process.exit(code ?? 0);
     });
+/**
+ * Cleanup orchestrator session on failure.
+ * Called when dashboard or lifecycle worker fails to start.
+ * Only cleans up if we created a NEW session (not reused).
+ */
+async function cleanupOrchestratorOnFailure(
+  config: OrchestratorConfig,
+  projectId: string,
+  orchestratorNewlyCreated: boolean,
+): Promise<void> {
+  try {
+    const sm = await getSessionManager(config);
+    await sm.kill(projectId, { purgeOpenCode: true }).catch(() => undefined);
+  } catch {
+    /* best effort cleanup */
   }
+}
+
 }
 
 /**
