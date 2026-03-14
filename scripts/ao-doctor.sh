@@ -319,6 +319,11 @@ check_stale_temp_files() {
   warn "$stale_count stale temp files older than 60 minutes found under $temp_root. Fix: rerun ao doctor --fix"
 }
 
+# Allow sourcing without running the full doctor (e.g. for unit tests)
+if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+  return 0
+fi
+
 printf 'Agent Orchestrator Doctor\n\n'
 
 check_node
