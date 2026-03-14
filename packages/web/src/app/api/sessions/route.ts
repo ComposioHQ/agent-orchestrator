@@ -1,5 +1,6 @@
 import { ACTIVITY_STATE, isOrchestratorSession } from "@composio/ao-core";
 import { getServices, getSCM } from "@/lib/services";
+import { resolveSessionsDir } from "@/lib/session-metadata";
 import {
   sessionToDashboard,
   resolveProject,
@@ -78,11 +79,23 @@ export async function GET(request: Request) {
         if (remainingMs <= 0) break;
 
         const project = resolveProject(core, config.projects);
+        if (!project) continue;
+
         const scm = getSCM(registry, project);
         if (!scm) continue;
 
+        const sessionsDir = resolveSessionsDir(config.configPath, project.path);
+
         await settlesWithin(
-          enrichSessionPR(dashboardSessions[i], scm, core.pr),
+          enrichSessionPR(dashboardSessions[i], scm, core.pr, {
+            metadata: sessionsDir
+              ? {
+                  sessionsDir,
+                  sessionId: core.id,
+                  currentStatus: core.status,
+                }
+              : undefined,
+          }),
           Math.min(remainingMs, PER_PR_ENRICH_TIMEOUT_MS),
         );
       }

@@ -2,7 +2,12 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
-import { type DashboardSession, type DashboardPR, isPRMergeReady } from "@/lib/types";
+import {
+  type DashboardSession,
+  type DashboardPR,
+  isPRMergeReady,
+  isPRRateLimited,
+} from "@/lib/types";
 import { CI_STATUS } from "@composio/ao-core/types";
 import { cn } from "@/lib/cn";
 import { CICheckList } from "./CIBadge";
@@ -517,6 +522,7 @@ function PRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
   };
 
   const allGreen = isPRMergeReady(pr);
+  const rateLimited = isPRRateLimited(pr);
 
   const failedChecks = pr.ciChecks.filter((c) => c.status === "failed");
 
@@ -539,6 +545,11 @@ function PRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
           PR #{pr.number}: {pr.title}
         </a>
         <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px]">
+          {rateLimited && (
+            <span className="rounded-full bg-[rgba(210,153,34,0.12)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-status-attention)]">
+              data may be stale
+            </span>
+          )}
           <span>
             <span className="text-[var(--color-status-ready)]">+{pr.additions}</span>{" "}
             <span className="text-[var(--color-status-error)]">-{pr.deletions}</span>
@@ -587,7 +598,12 @@ function PRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
 
         {/* CI Checks */}
         {pr.ciChecks.length > 0 && (
-          <div className="mt-4 border-t border-[var(--color-border-subtle)] pt-4">
+          <div
+            className={cn(
+              "mt-4 border-t border-[var(--color-border-subtle)] pt-4",
+              rateLimited && "opacity-60",
+            )}
+          >
             <CICheckList
               checks={pr.ciChecks}
               layout={failedChecks.length > 0 ? "expanded" : "inline"}
@@ -678,6 +694,25 @@ function PRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
 // ── Issues list (pre-merge blockers) ─────────────────────────────────
 
 function IssuesList({ pr }: { pr: DashboardPR }) {
+  const rateLimited = isPRRateLimited(pr);
+  if (rateLimited) {
+    return (
+      <div className="space-y-1.5">
+        <h4 className="mb-2 text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--color-text-tertiary)]">
+          Blockers
+        </h4>
+        <div className="flex items-center gap-2.5 text-[12px]">
+          <span className="w-3 shrink-0 text-center text-[11px] text-[var(--color-status-attention)]">
+            ●
+          </span>
+          <span className="text-[var(--color-text-secondary)]">
+            GitHub API rate limited, PR checks may be stale
+          </span>
+        </div>
+      </div>
+    );
+  }
+
   const issues: Array<{ icon: string; color: string; text: string }> = [];
 
   if (pr.ciStatus === CI_STATUS.FAILING) {
