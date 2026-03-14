@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: ready
-stopped_at: Completed 02-pixel-world-core-01-PLAN.md
-last_updated: "2026-03-14T19:04:21.982Z"
-last_activity: 2026-03-14 - Completed Phase 2 plan 01 pixel world scene foundation
+stopped_at: Completed 02-pixel-world-core-02-PLAN.md
+last_updated: "2026-03-14T19:14:43.211Z"
+last_activity: 2026-03-14 - Completed Phase 2 plan 02 camera and selection
 progress:
   total_phases: 4
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 4
-  completed_plans: 3
-  percent: 75
+  completed_plans: 4
+  percent: 100
 ---
 
 # Project State
@@ -21,41 +21,42 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-03-14)
 
 **Core value:** Operators can use a pixel-style dashboard without losing the core workflows they rely on in the current dashboard.
-**Current focus:** Phase 2 - Pixel World Core
+**Current focus:** Phase 3 - Operator Workflow Parity
 
 ## Current Position
 
-Phase: 2 of 4 (Pixel World Core)
-Plan: 1 of 2 in current phase
-Status: In progress
-Last activity: 2026-03-14 - Completed Phase 2 plan 01 pixel world scene foundation
+Phase: 3 of 4 (Operator Workflow Parity)
+Plan: 0 of 2 in current phase
+Status: Ready
+Last activity: 2026-03-14 - Completed Phase 2 plan 02 camera and selection
 
-Progress: [████████░░] 75%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 3
-- Average duration: 5.7 min
-- Total execution time: 0.3 hours
+- Total plans completed: 4
+- Average duration: 5.5 min
+- Total execution time: 0.4 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 1 | 2 | 11 min | 5.5 min |
-| 2 | 1 | 6 min | 6 min |
+| 2 | 2 | 11 min | 5.5 min |
 | 3 | 0 | 0 min | 0 min |
 | 4 | 0 | 0 min | 0 min |
 
 **Recent Trend:**
-- Last 5 plans: 02-pixel-world-core/01 (6 min), 01-shared-dashboard-foundation/02 (7 min), 01-shared-dashboard-foundation/01 (4 min)
+- Last 5 plans: 02-pixel-world-core/02 (5 min), 02-pixel-world-core/01 (6 min), 01-shared-dashboard-foundation/02 (7 min), 01-shared-dashboard-foundation/01 (4 min)
 - Trend: Stable
 
 **Recorded plan metrics:**
 - Phase 01-shared-dashboard-foundation P01 | 4 min | 3 tasks | 12 files
 - Phase 01-shared-dashboard-foundation P02 | 7 min | 3 tasks | 6 files
 - Phase 02-pixel-world-core P01 | 6 min | 3 tasks | 7 files
+- Phase 02-pixel-world-core P02 | 5 min | 3 tasks | 9 files
 
 ## Accumulated Context
 
@@ -74,6 +75,9 @@ Recent decisions affecting current work:
 - [Phase 01-shared-dashboard-foundation]: Keep the Phase 1 pixel body bounded to district previews so Phase 2 still owns world rendering.
 - [Phase 02-pixel-world-core]: Use a pure scene-model module plus a DOM renderer instead of introducing canvas or a game engine.
 - [Phase 02-pixel-world-core]: Keep project districts and attention neighborhoods fixed so refreshes only move sessions when their semantic placement changes.
+- [Phase 02-pixel-world-core]: Reset pixel camera framing only on mode or project-scope transitions, never on ordinary live session updates.
+- [Phase 02-pixel-world-core]: Keep selectedSessionId in Dashboard so later non-scene detail surfaces can consume the same selection contract.
+- [Phase 02-pixel-world-core]: Show offscreen selection through a locator overlay instead of recentering or clearing the selection.
 
 ### Pending Todos
 
@@ -81,11 +85,10 @@ None yet.
 
 ### Blockers/Concerns
 
-- Camera controls and id-based selection persistence still need completion in Phase 2 plan 02.
 - Manual browser verification for live refresh stability and shell interaction is still pending after this execution turn.
 
 ## Session Continuity
 
-Last session: 2026-03-14T19:04:21.980Z
-Stopped at: Completed 02-pixel-world-core-01-PLAN.md
+Last session: 2026-03-14T19:14:43.208Z
+Stopped at: Completed 02-pixel-world-core-02-PLAN.md
 Resume file: None
