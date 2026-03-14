@@ -39,12 +39,12 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. Operator can see one stable scene entity for each worker session shown by the current dashboard.
   2. Operator can recognize urgency in the world using the same underlying attention semantics as the legacy dashboard.
-  3. Operator can pan and zoom the scene without losing access to essential controls or details.
+  3. Operator can pan and zoom the scene without losing access to shared shell controls or blocking future detail surfaces.
   4. Operator can select a session entity and keep that selection stable while live updates arrive.
 **Plans**: TBD
 
 Plans:
-- [ ] 02-01: Build the canvas renderer, world model, and session-to-entity mapping
+- [ ] 02-01: Build the DOM scene renderer, world model, and session-to-entity mapping
 - [ ] 02-02: Add camera controls, selection behavior, and scene interaction boundaries
 
 ### Phase 3: Operator Workflow Parity

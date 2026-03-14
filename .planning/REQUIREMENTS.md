@@ -17,7 +17,7 @@ Requirements for the first usable pixel dashboard release.
 
 - [ ] **SCENE-01**: Operator can see one stable scene entity for each worker session shown by the current dashboard
 - [ ] **SCENE-02**: Operator can recognize session urgency in the pixel scene using the same underlying attention semantics as the current dashboard
-- [ ] **SCENE-03**: Operator can pan and zoom the pixel scene without breaking access to controls or session details
+- [ ] **SCENE-03**: Operator can pan and zoom the pixel scene without breaking access to shared shell controls or future detail surfaces
 - [ ] **SCENE-04**: Operator can select a session entity in the scene and keep that selection stable while live updates arrive
 
 ### Session Inspection
