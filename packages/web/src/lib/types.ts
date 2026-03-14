@@ -51,6 +51,15 @@ export { TERMINAL_STATUSES, TERMINAL_ACTIVITIES, NON_RESTORABLE_STATUSES };
  */
 export type AttentionLevel = "merge" | "respond" | "review" | "pending" | "working" | "done";
 
+export const ATTENTION_LEVEL_ORDER = [
+  "merge",
+  "respond",
+  "review",
+  "pending",
+  "working",
+  "done",
+] as const satisfies readonly AttentionLevel[];
+
 /**
  * Flattened session for dashboard rendering.
  * Maps to core Session but uses string dates (JSON-serializable for SSR/client boundary)
