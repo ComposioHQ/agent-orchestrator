@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import type {
   DashboardPR,
   DashboardSession,
@@ -6,6 +7,7 @@ import { ATTENTION_LEVEL_ORDER, getAttentionLevel } from "@/lib/types";
 import { buildDashboardHref } from "@/lib/dashboard-route-state";
 import type { ProjectInfo } from "@/lib/project-name";
 import type { ProjectOverview } from "../Dashboard";
+import { PixelSessionDrawer } from "./PixelSessionDrawer";
 import { PixelWorldScene } from "./PixelWorldScene";
 
 interface PixelDashboardViewProps {
@@ -37,6 +39,18 @@ export function PixelDashboardView({
   spawnErrors,
   spawningProjectIds,
 }: PixelDashboardViewProps) {
+  const selectedSession = useMemo(
+    () => sessions.find((session) => session.id === selectedSessionId) ?? null,
+    [selectedSessionId, sessions],
+  );
+  const selectedProjectOverview = useMemo(
+    () =>
+      selectedSession
+        ? projectOverviews.find((overview) => overview.project.id === selectedSession.projectId) ?? null
+        : null,
+    [projectOverviews, selectedSession],
+  );
+
   return (
     <div className="space-y-6">
       <section className="overflow-hidden rounded-[18px] border border-[var(--color-border-default)] bg-[radial-gradient(circle_at_top_left,rgba(80,180,255,0.18),transparent_38%),linear-gradient(135deg,rgba(11,18,32,0.96),rgba(18,35,60,0.92))] p-5 text-[var(--color-text-primary)] shadow-[0_18px_50px_rgba(3,8,20,0.24)]">
@@ -69,14 +83,22 @@ export function PixelDashboardView({
         </div>
       </section>
 
-      <PixelWorldScene
-        allProjectsView={allProjectsView}
-        onSelectSession={onSelectSession}
-        projectName={projectName}
-        projects={projects}
-        selectedSessionId={selectedSessionId}
-        sessions={sessions}
-      />
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px] 2xl:grid-cols-[minmax(0,1fr)_420px]">
+        <PixelWorldScene
+          allProjectsView={allProjectsView}
+          onSelectSession={onSelectSession}
+          projectName={projectName}
+          projects={projects}
+          selectedSessionId={selectedSessionId}
+          sessions={sessions}
+        />
+        <PixelSessionDrawer
+          allProjectsView={allProjectsView}
+          onClose={() => onSelectSession(null)}
+          projectOverview={selectedProjectOverview}
+          selectedSession={selectedSession}
+        />
+      </div>
 
       {allProjectsView ? (
         <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
