@@ -57,6 +57,7 @@ export function SessionSprite({ entity }: SessionSpriteProps) {
   return (
     <div
       className="absolute"
+      aria-label={`${entity.label} ${entity.attentionLevel} session`}
       data-attention-level={entity.attentionLevel}
       data-archived={entity.isArchived ? "true" : "false"}
       data-testid={`session-sprite-${entity.sessionId}`}
@@ -72,6 +73,10 @@ export function SessionSprite({ entity }: SessionSpriteProps) {
           aria-hidden="true"
         />
         <div
+          className={`absolute left-1/2 top-[-8px] h-2 w-2 -translate-x-1/2 rounded-full ${tokens.body}`}
+          aria-hidden="true"
+        />
+        <div
           className={`relative flex h-10 w-10 items-end justify-center rounded-[14px] border border-[rgba(255,255,255,0.12)] bg-[rgba(15,23,42,0.84)] ${tokens.aura}`}
         >
           <div className={`mb-1 h-5 w-5 rounded-[7px] ${tokens.body}`} aria-hidden="true" />
@@ -80,6 +85,9 @@ export function SessionSprite({ entity }: SessionSpriteProps) {
           <div className={`truncate text-[11px] font-semibold ${tokens.accent}`}>{entity.label}</div>
           <div className="truncate text-[10px] text-[rgba(148,163,184,0.82)]">
             {entity.branch ?? entity.summary}
+          </div>
+          <div className="mt-1 text-[9px] font-bold uppercase tracking-[0.14em] text-[rgba(148,163,184,0.72)]">
+            {entity.isArchived ? "Archived" : entity.attentionLevel}
           </div>
         </div>
       </div>

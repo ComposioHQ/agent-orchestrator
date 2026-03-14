@@ -134,7 +134,11 @@ describe("PixelDashboardView", () => {
     expect(mergeSprite).toHaveAttribute("data-attention-level", "merge");
     expect(doneSprite).toHaveAttribute("data-attention-level", "done");
     expect(doneSprite).toHaveAttribute("data-archived", "true");
+    expect(mergeSprite).toHaveAttribute("aria-label", expect.stringContaining("merge session"));
+    expect(archive).toHaveAttribute("data-attention-level", "done");
     expect(within(district).getByText("Archive grove")).toBeInTheDocument();
+    expect(within(district).getByText("archive")).toBeInTheDocument();
+    expect(screen.getByText("Archived")).toBeInTheDocument();
     expect(archive).toBeInTheDocument();
   });
 });
