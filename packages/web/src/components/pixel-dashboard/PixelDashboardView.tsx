@@ -12,7 +12,11 @@ import { PixelWorldScene } from "./PixelWorldScene";
 
 interface PixelDashboardViewProps {
   allProjectsView: boolean;
+  onKill: (sessionId: string) => Promise<unknown>;
+  onMerge: (prNumber: number) => Promise<unknown>;
   onSpawnOrchestrator: (project: ProjectInfo) => Promise<void>;
+  onRestore: (sessionId: string) => Promise<unknown>;
+  onSend: (sessionId: string, message: string) => Promise<unknown>;
   onSelectSession: (sessionId: string | null) => void;
   openPRs: DashboardPR[];
   projectName?: string;
@@ -27,7 +31,11 @@ interface PixelDashboardViewProps {
 
 export function PixelDashboardView({
   allProjectsView,
+  onKill,
+  onMerge,
   onSpawnOrchestrator,
+  onRestore,
+  onSend,
   onSelectSession,
   openPRs,
   projectName,
@@ -94,6 +102,10 @@ export function PixelDashboardView({
         <PixelSessionDrawer
           allProjectsView={allProjectsView}
           onClose={() => onSelectSession(null)}
+          onKill={onKill}
+          onMerge={onMerge}
+          onRestore={onRestore}
+          onSend={onSend}
           projectOverview={selectedProjectOverview}
           selectedSession={selectedSession}
         />

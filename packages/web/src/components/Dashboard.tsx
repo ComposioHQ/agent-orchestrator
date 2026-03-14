@@ -40,6 +40,11 @@ export interface ProjectOverview {
   counts: Record<AttentionLevel, number>;
 }
 
+interface SessionActionResult {
+  ok: boolean;
+  message?: string;
+}
+
 function mergeOrchestrators(
   current: DashboardOrchestratorLink[],
   incoming: DashboardOrchestratorLink[],
@@ -154,43 +159,68 @@ export function Dashboard({
     });
   }, [activeOrchestrators, allProjectsView, projects, sessionsByProject]);
 
-  const handleSend = useCallback(async (sessionId: string, message: string) => {
+  const parseActionError = useCallback(async (response: Response, fallback: string) => {
+    const payload = (await response.json().catch(() => null)) as { error?: string; message?: string } | null;
+    return payload?.error ?? payload?.message ?? (await response.text().catch(() => "")) ?? fallback;
+  }, []);
+
+  const performSend = useCallback(async (sessionId: string, message: string): Promise<SessionActionResult> => {
     const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/send`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message }),
     });
     if (!res.ok) {
-      console.error(`Failed to send message to ${sessionId}:`, await res.text());
+      throw new Error(await parseActionError(res, `Failed to send message to ${sessionId}`));
     }
-  }, []);
+    return { ok: true, message: "Message sent" };
+  }, [parseActionError]);
 
-  const handleKill = useCallback(async (sessionId: string) => {
-    if (!confirm(`Kill session ${sessionId}?`)) return;
+  const performKill = useCallback(async (sessionId: string): Promise<SessionActionResult> => {
     const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/kill`, {
       method: "POST",
     });
     if (!res.ok) {
-      console.error(`Failed to kill ${sessionId}:`, await res.text());
+      throw new Error(await parseActionError(res, `Failed to kill ${sessionId}`));
     }
-  }, []);
+    return { ok: true, message: "Session terminated" };
+  }, [parseActionError]);
 
-  const handleMerge = useCallback(async (prNumber: number) => {
+  const performMerge = useCallback(async (prNumber: number): Promise<SessionActionResult> => {
     const res = await fetch(`/api/prs/${prNumber}/merge`, { method: "POST" });
     if (!res.ok) {
-      console.error(`Failed to merge PR #${prNumber}:`, await res.text());
+      throw new Error(await parseActionError(res, `Failed to merge PR #${prNumber}`));
     }
-  }, []);
+    return { ok: true, message: `PR #${prNumber} merged` };
+  }, [parseActionError]);
 
-  const handleRestore = useCallback(async (sessionId: string) => {
-    if (!confirm(`Restore session ${sessionId}?`)) return;
+  const performRestore = useCallback(async (sessionId: string): Promise<SessionActionResult> => {
     const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/restore`, {
       method: "POST",
     });
     if (!res.ok) {
-      console.error(`Failed to restore ${sessionId}:`, await res.text());
+      throw new Error(await parseActionError(res, `Failed to restore ${sessionId}`));
     }
-  }, []);
+    return { ok: true, message: "Session restore started" };
+  }, [parseActionError]);
+
+  const handleSend = useCallback(async (sessionId: string, message: string) => {
+    await performSend(sessionId, message);
+  }, [performSend]);
+
+  const handleKill = useCallback(async (sessionId: string) => {
+    if (!confirm(`Kill session ${sessionId}?`)) return;
+    await performKill(sessionId);
+  }, [performKill]);
+
+  const handleMerge = useCallback(async (prNumber: number) => {
+    await performMerge(prNumber);
+  }, [performMerge]);
+
+  const handleRestore = useCallback(async (sessionId: string) => {
+    if (!confirm(`Restore session ${sessionId}?`)) return;
+    await performRestore(sessionId);
+  }, [performRestore]);
 
   const handleSpawnOrchestrator = async (project: ProjectInfo) => {
     setSpawningProjectIds((current) =>
@@ -287,7 +317,11 @@ export function Dashboard({
           {view === "pixel" ? (
             <PixelDashboardView
               allProjectsView={allProjectsView}
+              onKill={performKill}
+              onMerge={performMerge}
               onSpawnOrchestrator={handleSpawnOrchestrator}
+              onRestore={performRestore}
+              onSend={performSend}
               openPRs={openPRs}
               projectName={projectName}
               projectOverviews={projectOverviews}

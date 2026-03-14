@@ -9,9 +9,9 @@ import {
   TERMINAL_STATUSES,
   TERMINAL_ACTIVITIES,
 } from "@/lib/types";
-import { CI_STATUS } from "@composio/ao-core/types";
 import { cn } from "@/lib/cn";
 import { getSessionTitle } from "@/lib/format";
+import { canMergePR, canRestoreSession, getSessionAlerts } from "./session-actions";
 import { PRStatus } from "./PRStatus";
 import { CICheckList } from "./CIBadge";
 import { ActivityDot } from "./ActivityDot";
@@ -54,12 +54,12 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
   };
 
   const rateLimited = pr ? isPRRateLimited(pr) : false;
-  const alerts = getAlerts(session);
-  const isReadyToMerge = !rateLimited && pr?.mergeability.mergeable && pr.state === "open";
+  const alerts = getSessionAlerts(session);
+  const isReadyToMerge = canMergePR(pr);
   const isTerminal =
     TERMINAL_STATUSES.has(session.status) ||
     (session.activity !== null && TERMINAL_ACTIVITIES.has(session.activity));
-  const isRestorable = isTerminal && session.status !== "merged";
+  const isRestorable = canRestoreSession(session);
 
   const title = getSessionTitle(session);
 
@@ -353,94 +353,4 @@ function DetailSection({ label, children }: { label: string; children: React.Rea
       {children}
     </div>
   );
-}
-
-interface Alert {
-  key: string;
-  label: string;
-  className: string;
-  url: string;
-  count?: number;
-  actionLabel?: string;
-  actionMessage?: string;
-}
-
-function getAlerts(session: DashboardSession): Alert[] {
-  const pr = session.pr;
-  if (!pr || pr.state !== "open") return [];
-  if (isPRRateLimited(pr)) return [];
-
-  const alerts: Alert[] = [];
-
-  if (pr.ciStatus === CI_STATUS.FAILING) {
-    const failedCheck = pr.ciChecks.find((c) => c.status === "failed");
-    const failCount = pr.ciChecks.filter((c) => c.status === "failed").length;
-    if (failCount === 0) {
-      alerts.push({
-        key: "ci-unknown",
-        label: "CI unknown",
-        className:
-          "border-[rgba(245,158,11,0.3)] bg-[rgba(245,158,11,0.08)] text-[var(--color-status-attention)]",
-        url: pr.url + "/checks",
-      });
-    } else {
-      alerts.push({
-        key: "ci-fail",
-        label: `${failCount} CI check${failCount > 1 ? "s" : ""} failing`,
-        className:
-          "border-[rgba(239,68,68,0.3)] bg-[rgba(239,68,68,0.08)] text-[var(--color-status-error)]",
-        url: failedCheck?.url ?? pr.url + "/checks",
-        actionLabel: "ask to fix",
-        actionMessage: `Please fix the failing CI checks on ${pr.url}`,
-      });
-    }
-  }
-
-  if (pr.reviewDecision === "changes_requested") {
-    alerts.push({
-      key: "changes",
-      label: "changes requested",
-      className:
-        "border-[rgba(239,68,68,0.3)] bg-[rgba(239,68,68,0.08)] text-[var(--color-status-error)]",
-      url: pr.url,
-    });
-  } else if (!pr.isDraft && (pr.reviewDecision === "pending" || pr.reviewDecision === "none")) {
-    alerts.push({
-      key: "review",
-      label: "needs review",
-      className:
-        "border-[rgba(245,158,11,0.3)] bg-[rgba(245,158,11,0.08)] text-[var(--color-status-attention)]",
-      url: pr.url,
-      actionLabel: "ask to post",
-      actionMessage: `Post ${pr.url} on slack asking for a review.`,
-    });
-  }
-
-  if (!pr.mergeability.noConflicts) {
-    alerts.push({
-      key: "conflict",
-      label: "merge conflict",
-      className:
-        "border-[rgba(239,68,68,0.3)] bg-[rgba(239,68,68,0.08)] text-[var(--color-status-error)]",
-      url: pr.url,
-      actionLabel: "ask to fix",
-      actionMessage: `Please resolve the merge conflicts on ${pr.url} by rebasing on the base branch`,
-    });
-  }
-
-  if (pr.unresolvedThreads > 0) {
-    const firstUrl = pr.unresolvedComments[0]?.url ?? pr.url + "/files";
-    alerts.push({
-      key: "comments",
-      label: "unresolved comments",
-      count: pr.unresolvedThreads,
-      className:
-        "border-[rgba(239,68,68,0.3)] bg-[rgba(239,68,68,0.08)] text-[var(--color-status-error)]",
-      url: firstUrl,
-      actionLabel: "ask to resolve",
-      actionMessage: `Please address all unresolved review comments on ${pr.url}`,
-    });
-  }
-
-  return alerts;
 }

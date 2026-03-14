@@ -5,6 +5,10 @@ import { PixelSessionDrawerContent } from "./pixel-session-drawer";
 interface PixelSessionDrawerProps {
   allProjectsView: boolean;
   onClose: () => void;
+  onKill: (sessionId: string) => Promise<unknown>;
+  onMerge: (prNumber: number) => Promise<unknown>;
+  onRestore: (sessionId: string) => Promise<unknown>;
+  onSend: (sessionId: string, message: string) => Promise<unknown>;
   projectOverview?: ProjectOverview | null;
   selectedSession: DashboardSession | null;
 }
@@ -12,6 +16,10 @@ interface PixelSessionDrawerProps {
 export function PixelSessionDrawer({
   allProjectsView,
   onClose,
+  onKill,
+  onMerge,
+  onRestore,
+  onSend,
   projectOverview,
   selectedSession,
 }: PixelSessionDrawerProps) {
@@ -43,6 +51,10 @@ export function PixelSessionDrawer({
       {selectedSession ? (
         <PixelSessionDrawerContent
           allProjectsView={allProjectsView}
+          onKill={onKill}
+          onMerge={onMerge}
+          onRestore={onRestore}
+          onSend={onSend}
           projectOverview={projectOverview}
           selectedSession={selectedSession}
         />
