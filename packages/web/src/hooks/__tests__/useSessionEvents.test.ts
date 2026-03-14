@@ -618,5 +618,55 @@ describe("useSessionEvents", () => {
       expect(result.current.sessions).toHaveLength(1);
       expect(result.current.sessions[0].id).toBe("session-0");
     });
+
+    it("preserves the current dashboard view on membership refresh", async () => {
+      const sessions = makeSessions(1);
+
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          sessions,
+          globalPause: null,
+          stats: {
+            totalSessions: sessions.length,
+            workingSessions: sessions.length,
+            openPRs: 0,
+            needsReview: 0,
+          },
+          orchestrators: [],
+          view: "pixel",
+        }),
+      } as unknown as Response);
+
+      renderHook(() => useSessionEvents(sessions, null, "alpha", "pixel"));
+
+      await act(async () => {
+        eventSourceMock!.onmessage!.call(eventSourceMock, {
+          data: JSON.stringify({
+            type: "snapshot",
+            sessions: [
+              {
+                id: "session-0",
+                status: "working",
+                activity: "active",
+                lastActivityAt: new Date().toISOString(),
+              },
+              {
+                id: "session-new",
+                status: "working",
+                activity: "active",
+                lastActivityAt: new Date().toISOString(),
+              },
+            ],
+          }),
+        } as MessageEvent);
+      });
+
+      await waitFor(() => {
+        expect(fetch).toHaveBeenCalledWith("/api/sessions?project=alpha&view=pixel", {
+          signal: expect.any(AbortSignal),
+        });
+      });
+    });
   });
 });

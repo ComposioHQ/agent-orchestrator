@@ -6,6 +6,7 @@ import {
   type DashboardStats,
   type DashboardPR,
   type AttentionLevel,
+  type DashboardView,
   type GlobalPauseState,
   type DashboardOrchestratorLink,
   getAttentionLevel,
@@ -17,6 +18,7 @@ import { PRTableRow } from "./PRStatus";
 import { DynamicFavicon } from "./DynamicFavicon";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
 import { ProjectSidebar } from "./ProjectSidebar";
+import { buildDashboardHref } from "@/lib/dashboard-route-state";
 import type { ProjectInfo } from "@/lib/project-name";
 
 interface DashboardProps {
@@ -26,6 +28,7 @@ interface DashboardProps {
   projects?: ProjectInfo[];
   initialGlobalPause?: GlobalPauseState | null;
   orchestrators?: DashboardOrchestratorLink[];
+  view?: DashboardView;
 }
 
 const KANBAN_LEVELS = ["working", "pending", "review", "respond", "merge"] as const;
@@ -51,12 +54,14 @@ export function Dashboard({
   projects = [],
   initialGlobalPause = null,
   orchestrators,
+  view = "legacy",
 }: DashboardProps) {
   const orchestratorLinks = orchestrators ?? EMPTY_ORCHESTRATORS;
   const { sessions, globalPause } = useSessionEvents(
     initialSessions,
     initialGlobalPause,
     projectId,
+    view,
   );
   const [rateLimitDismissed, setRateLimitDismissed] = useState(false);
   const [globalPauseDismissed, setGlobalPauseDismissed] = useState(false);
@@ -338,6 +343,7 @@ export function Dashboard({
             onSpawnOrchestrator={handleSpawnOrchestrator}
             spawningProjectIds={spawningProjectIds}
             spawnErrors={spawnErrors}
+            view={view}
           />
         )}
 
@@ -492,6 +498,7 @@ function ProjectOverviewGrid({
   onSpawnOrchestrator,
   spawningProjectIds,
   spawnErrors,
+  view,
 }: {
   overviews: Array<{
     project: ProjectInfo;
@@ -503,6 +510,7 @@ function ProjectOverviewGrid({
   onSpawnOrchestrator: (project: ProjectInfo) => Promise<void>;
   spawningProjectIds: string[];
   spawnErrors: Record<string, string>;
+  view: DashboardView;
 }) {
   return (
     <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -522,7 +530,7 @@ function ProjectOverviewGrid({
               </div>
             </div>
             <a
-              href={`/?project=${encodeURIComponent(project.id)}`}
+              href={buildDashboardHref("/", { project: project.id, view })}
               className="rounded-[7px] border border-[var(--color-border-default)] px-3 py-1.5 text-[11px] font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:no-underline"
             >
               Open project

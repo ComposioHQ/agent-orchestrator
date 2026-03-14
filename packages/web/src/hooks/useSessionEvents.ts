@@ -1,7 +1,13 @@
 "use client";
 
 import { useEffect, useReducer, useRef } from "react";
-import type { DashboardSession, GlobalPauseState, SSESnapshotEvent } from "@/lib/types";
+import type {
+  DashboardPayload,
+  DashboardSession,
+  DashboardView,
+  GlobalPauseState,
+  SSESnapshotEvent,
+} from "@/lib/types";
 
 const MEMBERSHIP_REFRESH_DELAY_MS = 120;
 const STALE_REFRESH_INTERVAL_MS = 15000;
@@ -58,6 +64,7 @@ export function useSessionEvents(
   initialSessions: DashboardSession[],
   initialGlobalPause?: GlobalPauseState | null,
   project?: string,
+  view: DashboardView = "legacy",
 ): State {
   const [state, dispatch] = useReducer(reducer, {
     sessions: initialSessions,
@@ -104,21 +111,23 @@ export function useSessionEvents(
         const sessionsUrl = project
           ? `/api/sessions?project=${encodeURIComponent(project)}`
           : "/api/sessions";
+        const requestUrl =
+          view === "legacy"
+            ? sessionsUrl
+            : `${sessionsUrl}${sessionsUrl.includes("?") ? "&" : "?"}view=${view}`;
 
-        void fetch(sessionsUrl, { signal: refreshController.signal })
+        void fetch(requestUrl, { signal: refreshController.signal })
           .then((res) => (res.ok ? res.json() : null))
-          .then(
-            (updated: { sessions?: DashboardSession[]; globalPause?: GlobalPauseState } | null) => {
-              if (disposed || refreshController.signal.aborted || !updated?.sessions) return;
+          .then((updated: DashboardPayload | null) => {
+            if (disposed || refreshController.signal.aborted || !updated?.sessions) return;
 
-              lastRefreshAtRef.current = Date.now();
-              dispatch({
-                type: "reset",
-                sessions: updated.sessions,
-                globalPause: updated.globalPause ?? null,
-              });
-            },
-          )
+            lastRefreshAtRef.current = Date.now();
+            dispatch({
+              type: "reset",
+              sessions: updated.sessions,
+              globalPause: updated.globalPause ?? null,
+            });
+          })
           .catch(() => undefined)
           .finally(() => {
             if (activeRefreshController === refreshController) {
@@ -180,7 +189,7 @@ export function useSessionEvents(
       clearRefreshTimer();
       es.close();
     };
-  }, [project]);
+  }, [project, view]);
 
   return state;
 }

@@ -237,6 +237,12 @@ describe("API Routes", () => {
       expect(data.stats.totalSessions).toBe(data.sessions.length);
     });
 
+    it("returns the canonical dashboard view in the shared payload", async () => {
+      const res = await sessionsGET(makeRequest("http://localhost:3000/api/sessions?view=pixel"));
+      const data = await res.json();
+      expect(data.view).toBe("pixel");
+    });
+
     it("stats include expected fields", async () => {
       const res = await sessionsGET(makeRequest("http://localhost:3000/api/sessions"));
       const data = await res.json();
