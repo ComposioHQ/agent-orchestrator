@@ -4,10 +4,12 @@ import { ProjectSidebar } from "@/components/ProjectSidebar";
 
 const mockPush = vi.fn();
 const mockPathname = "/";
+const mockSearchParams = new URLSearchParams();
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
   usePathname: () => mockPathname,
+  useSearchParams: () => mockSearchParams,
 }));
 
 describe("ProjectSidebar", () => {
@@ -19,6 +21,8 @@ describe("ProjectSidebar", () => {
 
   beforeEach(() => {
     mockPush.mockClear();
+    mockSearchParams.delete("project");
+    mockSearchParams.delete("view");
   });
 
   it("renders nothing when there is only one project", () => {
@@ -74,5 +78,14 @@ describe("ProjectSidebar", () => {
     render(<ProjectSidebar projects={projectsWithSpecialChars} activeProjectId="my-app" />);
     fireEvent.click(screen.getByRole("button", { name: "Other Project" }));
     expect(mockPush).toHaveBeenCalledWith("/?project=other-project");
+  });
+
+  it("preserves the current view query param when changing project scope", () => {
+    mockSearchParams.set("view", "pixel");
+
+    render(<ProjectSidebar projects={projects} activeProjectId="project-1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Project Two" }));
+
+    expect(mockPush).toHaveBeenCalledWith("/?project=project-2&view=pixel");
   });
 });
