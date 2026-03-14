@@ -912,6 +912,9 @@ export interface OrchestratorConfig {
 
   /** Default reaction configs */
   reactions: Record<string, ReactionConfig>;
+
+  /** Plugin-specific configs (e.g., scm-github.extraBotAuthors) */
+  plugins?: Record<string, Record<string, unknown>>;
 }
 
 export interface DefaultPlugins {
