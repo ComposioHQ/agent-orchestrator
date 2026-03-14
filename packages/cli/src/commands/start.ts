@@ -298,6 +298,7 @@ async function runStartup(
   let dashboardProcess: ChildProcess | null = null;
   let reused = false;
   let orchestratorNewlyCreated = false;
+  let orchestratorCreatedBeforeLifecycle = false;
 
   // Create orchestrator session FIRST (unless --no-orchestrator)
   // This ensures dashboard will find a live session when it polls /api/sessions
@@ -316,6 +317,7 @@ async function runStartup(
         orchestratorSessionStrategy === "reuse" &&
         session.metadata?.["orchestratorSessionReused"] === "true";
       orchestratorNewlyCreated = !reused;  // Track if we created a NEW session
+      orchestratorCreatedBeforeLifecycle = true;  // Track created BEFORE lifecycle starts
       spinner.succeed(reused ? "Orchestrator session reused" : "Orchestrator session created");
     } catch (err) {
       spinner.fail("Orchestrator setup failed");
@@ -395,7 +397,6 @@ async function runStartup(
         { cause: err },
       );
     }
-  }
 
   // Print summary
   console.log(chalk.bold.green("\n✓ Startup complete\n"));
