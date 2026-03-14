@@ -2,6 +2,15 @@
 
 import { type DashboardPR, isPRRateLimited } from "@/lib/types";
 import { CIBadge } from "./CIBadge";
+import { getPRStatusBadges } from "./session-inspection";
+
+const badgeToneClassName = {
+  danger: "bg-[rgba(248,81,73,0.12)] text-[var(--color-accent-red)]",
+  muted: "bg-[rgba(125,133,144,0.08)] text-[var(--color-text-muted)]",
+  neutral: "bg-[rgba(148,163,184,0.12)] text-[var(--color-text-secondary)]",
+  success: "bg-[rgba(63,185,80,0.1)] text-[var(--color-accent-green)]",
+  warning: "bg-[rgba(210,153,34,0.12)] text-[var(--color-accent-yellow)]",
+} as const;
 
 function getSizeLabel(additions: number, deletions: number): string {
   const size = additions + deletions;
@@ -15,6 +24,7 @@ interface PRStatusProps {
 export function PRStatus({ pr }: PRStatusProps) {
   const sizeLabel = getSizeLabel(pr.additions, pr.deletions);
   const rateLimited = isPRRateLimited(pr);
+  const badges = getPRStatusBadges(pr).filter((badge) => badge.key !== "ci");
 
   return (
     <div className="flex flex-wrap items-center gap-1.5">
@@ -55,12 +65,14 @@ export function PRStatus({ pr }: PRStatusProps) {
         <CIBadge status={pr.ciStatus} checks={pr.ciChecks} />
       )}
 
-      {/* Review decision (only for open PRs with real data) */}
-      {pr.state === "open" && pr.reviewDecision === "approved" && !rateLimited && (
-        <span className="inline-flex items-center rounded-full bg-[rgba(63,185,80,0.1)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-accent-green)]">
-          approved
+      {badges.map((badge) => (
+        <span
+          key={badge.key}
+          className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${badgeToneClassName[badge.tone]}`}
+        >
+          {badge.label}
         </span>
-      )}
+      ))}
     </div>
   );
 }
