@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { makePR, makeSession } from "@/__tests__/helpers";
 import { PixelDashboardView } from "../PixelDashboardView";
@@ -9,6 +9,7 @@ describe("PixelDashboardView", () => {
       <PixelDashboardView
         allProjectsView={true}
         onSpawnOrchestrator={vi.fn().mockResolvedValue(undefined)}
+        onSelectSession={vi.fn()}
         openPRs={[]}
         projectOverviews={[
           {
@@ -27,6 +28,7 @@ describe("PixelDashboardView", () => {
           },
         ]}
         projects={[{ id: "alpha", name: "Alpha" }]}
+        selectedSessionId={null}
         sessions={[
           makeSession({
             id: "alpha-merge",
@@ -80,10 +82,12 @@ describe("PixelDashboardView", () => {
       <PixelDashboardView
         allProjectsView={false}
         onSpawnOrchestrator={vi.fn().mockResolvedValue(undefined)}
+        onSelectSession={vi.fn()}
         openPRs={[]}
         projectName="Alpha"
         projectOverviews={[]}
         projects={[{ id: "alpha", name: "Alpha" }]}
+        selectedSessionId={null}
         sessions={[
           makeSession({
             id: "merge-agent",
@@ -140,5 +144,56 @@ describe("PixelDashboardView", () => {
     expect(within(district).getByText("archive")).toBeInTheDocument();
     expect(screen.getByText("Archived")).toBeInTheDocument();
     expect(archive).toBeInTheDocument();
+  });
+
+  it("pins the clicked session and keeps the selected state on the sprite", () => {
+    const onSelectSession = vi.fn();
+
+    render(
+      <PixelDashboardView
+        allProjectsView={false}
+        onSpawnOrchestrator={vi.fn().mockResolvedValue(undefined)}
+        onSelectSession={onSelectSession}
+        openPRs={[]}
+        projectName="Alpha"
+        projectOverviews={[]}
+        projects={[{ id: "alpha", name: "Alpha" }]}
+        selectedSessionId="alpha-merge"
+        sessions={[
+          makeSession({
+            id: "alpha-merge",
+            projectId: "alpha",
+            summary: "Merge train",
+            issueLabel: "INT-101",
+            pr: makePR(),
+          }),
+        ]}
+        sessionsByProject={
+          new Map([
+            [
+              "alpha",
+              [
+                makeSession({
+                  id: "alpha-merge",
+                  projectId: "alpha",
+                  summary: "Merge train",
+                  issueLabel: "INT-101",
+                  pr: makePR(),
+                }),
+              ],
+            ],
+          ])
+        }
+        spawnErrors={{}}
+        spawningProjectIds={[]}
+      />,
+    );
+
+    const sprite = screen.getByTestId("session-sprite-alpha-merge");
+    fireEvent.click(sprite);
+
+    expect(onSelectSession).toHaveBeenCalledWith("alpha-merge");
+    expect(sprite).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("Selected: INT-101")).toBeInTheDocument();
   });
 });

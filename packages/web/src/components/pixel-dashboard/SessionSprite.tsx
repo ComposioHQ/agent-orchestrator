@@ -2,6 +2,8 @@ import type { SceneEntity } from "./scene-model";
 
 interface SessionSpriteProps {
   entity: SceneEntity;
+  isSelected?: boolean;
+  onSelect?: (sessionId: string) => void;
 }
 
 const ATTENTION_TOKENS: Record<
@@ -51,16 +53,24 @@ const ATTENTION_TOKENS: Record<
   },
 };
 
-export function SessionSprite({ entity }: SessionSpriteProps) {
+export function SessionSprite({ entity, isSelected = false, onSelect }: SessionSpriteProps) {
   const tokens = ATTENTION_TOKENS[entity.attentionLevel];
 
   return (
-    <div
+    <button
+      type="button"
       className="absolute"
       aria-label={`${entity.label} ${entity.attentionLevel} session`}
+      aria-pressed={isSelected}
       data-attention-level={entity.attentionLevel}
       data-archived={entity.isArchived ? "true" : "false"}
+      data-selected={isSelected ? "true" : "false"}
       data-testid={`session-sprite-${entity.sessionId}`}
+      onClick={(event) => {
+        event.stopPropagation();
+        onSelect?.(entity.sessionId);
+      }}
+      onPointerDown={(event) => event.stopPropagation()}
       style={{
         left: entity.position.x,
         top: entity.position.y,
@@ -77,7 +87,11 @@ export function SessionSprite({ entity }: SessionSpriteProps) {
           aria-hidden="true"
         />
         <div
-          className={`relative flex h-10 w-10 items-end justify-center rounded-[14px] border border-[rgba(255,255,255,0.12)] bg-[rgba(15,23,42,0.84)] ${tokens.aura}`}
+          className={`relative flex h-10 w-10 items-end justify-center rounded-[14px] border bg-[rgba(15,23,42,0.84)] ${tokens.aura} ${
+            isSelected
+              ? "border-[rgba(191,219,254,0.9)] ring-2 ring-[rgba(96,165,250,0.65)]"
+              : "border-[rgba(255,255,255,0.12)]"
+          }`}
         >
           <div className={`mb-1 h-5 w-5 rounded-[7px] ${tokens.body}`} aria-hidden="true" />
         </div>
@@ -91,6 +105,6 @@ export function SessionSprite({ entity }: SessionSpriteProps) {
           </div>
         </div>
       </div>
-    </div>
+    </button>
   );
 }

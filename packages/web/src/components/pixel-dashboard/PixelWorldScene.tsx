@@ -11,6 +11,7 @@ import {
   type CameraState,
   type CameraViewport,
 } from "./camera";
+import { getOffscreenSelectionCue, resolveSelectedSceneEntity } from "./selection";
 import { buildPixelWorldModel } from "./scene-model";
 import { SessionSprite } from "./SessionSprite";
 
@@ -25,10 +26,10 @@ interface PixelWorldSceneProps {
 
 export function PixelWorldScene({
   allProjectsView,
-  onSelectSession: _onSelectSession,
+  onSelectSession,
   projectName,
   projects,
-  selectedSessionId: _selectedSessionId,
+  selectedSessionId,
   sessions,
 }: PixelWorldSceneProps) {
   const world = useMemo(
@@ -84,6 +85,14 @@ export function PixelWorldScene({
   }, [scopeKey, viewport.height, viewport.width, world]);
 
   const visibleRect = useMemo(() => getVisibleWorldRect(camera, viewport, world), [camera, viewport, world]);
+  const selected = useMemo(
+    () => resolveSelectedSceneEntity(selectedSessionId ?? null, sessions, world.entities),
+    [selectedSessionId, sessions, world.entities],
+  );
+  const offscreenCue = useMemo(
+    () => getOffscreenSelectionCue(selected.entity, camera, viewport),
+    [camera, selected.entity, viewport],
+  );
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
@@ -142,6 +151,11 @@ export function PixelWorldScene({
           <p className="mt-1 text-[12px] text-[rgba(191,219,254,0.78)]">
             Drag to pan. Use the wheel or zoom controls. Framing stays put during live updates.
           </p>
+          {selected.session ? (
+            <p className="mt-1 text-[12px] text-[rgba(148,163,184,0.92)]">
+              Selected: {selected.session.issueLabel ?? selected.session.summary ?? selected.session.id}
+            </p>
+          ) : null}
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -197,6 +211,20 @@ export function PixelWorldScene({
           View {Math.round(visibleRect.x)}-{Math.round(visibleRect.x + visibleRect.width)} /{" "}
           {Math.round(visibleRect.y)}-{Math.round(visibleRect.y + visibleRect.height)}
         </div>
+        {offscreenCue?.isOffscreen && selected.session ? (
+          <div
+            className="pointer-events-none absolute z-20 flex -translate-x-1/2 -translate-y-1/2 items-center gap-2 rounded-full border border-[rgba(96,165,250,0.42)] bg-[rgba(15,23,42,0.92)] px-3 py-1.5 text-[11px] font-semibold text-[rgba(191,219,254,0.94)] shadow-[0_12px_24px_rgba(8,15,27,0.34)]"
+            data-direction={offscreenCue.direction}
+            data-testid="selected-session-locator"
+            style={{
+              left: offscreenCue.x,
+              top: offscreenCue.y,
+            }}
+          >
+            <span aria-hidden="true">{DIRECTION_GLYPHS[offscreenCue.direction]}</span>
+            <span>{selected.session.issueLabel ?? selected.session.summary ?? selected.session.id}</span>
+          </div>
+        ) : null}
         <div
           className="absolute left-0 top-0 will-change-transform"
           style={{
@@ -261,7 +289,12 @@ export function PixelWorldScene({
           ))}
 
           {world.entities.map((entity) => (
-            <SessionSprite key={entity.id} entity={entity} />
+            <SessionSprite
+              key={entity.id}
+              entity={entity}
+              isSelected={entity.sessionId === selectedSessionId}
+              onSelect={onSelectSession}
+            />
           ))}
         </div>
       </div>
@@ -307,4 +340,11 @@ const NEIGHBORHOOD_TOKENS: Record<
     cue: "archive",
     surface: "border-[rgba(148,163,184,0.14)] bg-[rgba(15,23,42,0.16)]",
   },
+};
+
+const DIRECTION_GLYPHS: Record<"down" | "left" | "right" | "up", string> = {
+  down: "v",
+  left: "<",
+  right: ">",
+  up: "^",
 };

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { makePR, makeSession } from "@/__tests__/helpers";
 import {
+  getOffscreenSelectionCue,
   reconcileSelectedSessionId,
   resolveSelectedSceneEntity,
 } from "../selection";
@@ -51,5 +52,39 @@ describe("selection helpers", () => {
       entity: null,
       session: null,
     });
+  });
+
+  it("computes an offscreen locator instead of clearing the selected entity", () => {
+    const sessions = [
+      makeSession({
+        id: "alpha-working",
+        projectId: "alpha",
+        issueLabel: "INT-301",
+      }),
+    ];
+    const world = buildPixelWorldModel({
+      allProjectsView: false,
+      projectName: "Alpha",
+      projects,
+      sessions,
+    });
+    const selected = resolveSelectedSceneEntity("alpha-working", sessions, world.entities);
+
+    const cue = getOffscreenSelectionCue(
+      selected.entity,
+      {
+        x: -260,
+        y: -140,
+        zoom: 1.45,
+      },
+      { width: 220, height: 180 },
+    );
+
+    expect(cue).toMatchObject({
+      direction: "down",
+      isOffscreen: true,
+    });
+    expect(cue?.x).toBeGreaterThanOrEqual(24);
+    expect(cue?.y).toBeGreaterThanOrEqual(24);
   });
 });
