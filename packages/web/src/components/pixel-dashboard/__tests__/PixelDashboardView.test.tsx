@@ -285,4 +285,60 @@ describe("PixelDashboardView", () => {
     );
     expect(within(drawer).getByText("District orchestrator online")).toBeInTheDocument();
   });
+
+  it("keeps the drawer selection stable across refreshes that replace session objects", () => {
+    const { rerender } = render(
+      <PixelDashboardView
+        allProjectsView={false}
+        onSpawnOrchestrator={vi.fn().mockResolvedValue(undefined)}
+        onSelectSession={vi.fn()}
+        openPRs={[]}
+        projectName="Alpha"
+        projectOverviews={[]}
+        projects={[{ id: "alpha", name: "Alpha" }]}
+        selectedSessionId="alpha-merge"
+        sessions={[
+          makeSession({
+            id: "alpha-merge",
+            projectId: "alpha",
+            summary: "Initial summary",
+            issueLabel: "INT-101",
+            pr: makePR(),
+          }),
+        ]}
+        sessionsByProject={new Map([["alpha", [makeSession({ id: "alpha-merge", projectId: "alpha", summary: "Initial summary", issueLabel: "INT-101", pr: makePR() })]]])}
+        spawnErrors={{}}
+        spawningProjectIds={[]}
+      />,
+    );
+
+    rerender(
+      <PixelDashboardView
+        allProjectsView={false}
+        onSpawnOrchestrator={vi.fn().mockResolvedValue(undefined)}
+        onSelectSession={vi.fn()}
+        openPRs={[]}
+        projectName="Alpha"
+        projectOverviews={[]}
+        projects={[{ id: "alpha", name: "Alpha" }]}
+        selectedSessionId="alpha-merge"
+        sessions={[
+          makeSession({
+            id: "alpha-merge",
+            projectId: "alpha",
+            summary: "Refreshed summary",
+            issueLabel: "INT-101",
+            pr: makePR({ number: 101 }),
+          }),
+        ]}
+        sessionsByProject={new Map([["alpha", [makeSession({ id: "alpha-merge", projectId: "alpha", summary: "Refreshed summary", issueLabel: "INT-101", pr: makePR({ number: 101 }) })]]])}
+        spawnErrors={{}}
+        spawningProjectIds={[]}
+      />,
+    );
+
+    const drawer = screen.getByTestId("pixel-session-drawer");
+    expect(within(drawer).getByText("Refreshed summary")).toBeInTheDocument();
+    expect(within(drawer).getByText("PR #101")).toBeInTheDocument();
+  });
 });

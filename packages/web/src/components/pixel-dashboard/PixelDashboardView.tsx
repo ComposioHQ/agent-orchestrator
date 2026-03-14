@@ -57,15 +57,14 @@ export function PixelDashboardView({
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-[rgba(191,219,254,0.8)]">
-              Phase 2 Pixel World
+              Phase 3 Operator Parity
             </div>
             <h2 className="text-[22px] font-semibold tracking-[-0.03em]">
               {allProjectsView ? "District world map" : `${projectName ?? "Project"} district`}
             </h2>
             <p className="mt-2 max-w-[620px] text-[13px] leading-6 text-[rgba(226,232,240,0.78)]">
-              Shared shell chrome and live data stay untouched while the pixel mode now renders a
-              stable DOM world with fixed districts, attention neighborhoods, and always-visible
-              worker labels.
+              Shared shell chrome and live data stay untouched while the pixel mode keeps the world
+              mounted beside a persistent inspection drawer for summary-first session triage.
             </p>
           </div>
           <div className="grid min-w-[240px] grid-cols-2 gap-2">

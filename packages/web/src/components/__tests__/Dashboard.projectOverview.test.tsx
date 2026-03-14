@@ -177,7 +177,7 @@ describe("Dashboard project overview cards", () => {
       />,
     );
 
-    expect(screen.getByText("Project districts")).toBeInTheDocument();
+    expect(screen.getByText("District world map")).toBeInTheDocument();
     expect(screen.getAllByText("District")).toHaveLength(2);
     expect(screen.getAllByRole("link", { name: "Enter" })).toHaveLength(2);
   });
