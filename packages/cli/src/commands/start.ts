@@ -252,6 +252,12 @@ async function startDashboard(
 /**
  * Shared startup logic: launch dashboard + orchestrator session, print summary.
  * Used by both normal and URL-based start flows.
+ *
+ * IMPORTANT: Startup order matters to prevent race condition where dashboard
+ * polls /api/sessions before orchestrator session exists, showing "Exited".
+ * Order: 1. Create orchestrator, 2. Start lifecycle, 3. Start dashboard
+ *
+ * See: https://github.com/ComposioHQ/agent-orchestrator/issues/456
  */
 async function runStartup(
   config: OrchestratorConfig,
@@ -273,7 +279,53 @@ async function runStartup(
   let dashboardProcess: ChildProcess | null = null;
   let reused = false;
 
-  // Start dashboard (unless --no-dashboard)
+  // Create orchestrator session FIRST (unless --no-orchestrator)
+  // This ensures dashboard will find a live session when it polls /api/sessions
+  let tmuxTarget = sessionId;
+  if (opts?.orchestrator !== false) {
+    const sm = await getSessionManager(config);
+
+    try {
+      spinner.start("Creating orchestrator session");
+      const systemPrompt = generateOrchestratorPrompt({ config, projectId, project });
+      const session = await sm.spawnOrchestrator({ projectId, systemPrompt });
+      if (session.runtimeHandle?.id) {
+        tmuxTarget = session.runtimeHandle.id;
+      }
+      reused =
+        orchestratorSessionStrategy === "reuse" &&
+        session.metadata?.["orchestratorSessionReused"] === "true";
+      spinner.succeed(reused ? "Orchestrator session reused" : "Orchestrator session created");
+    } catch (err) {
+      spinner.fail("Orchestrator setup failed");
+      throw new Error(
+        `Failed to setup orchestrator: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err },
+      );
+    }
+  }
+
+  // Start lifecycle worker (if needed)
+  if (shouldStartLifecycle) {
+    try {
+      spinner.start("Starting lifecycle worker");
+      lifecycleStatus = await ensureLifecycleWorker(config, projectId);
+      spinner.succeed(
+        lifecycleStatus.started
+          ? `Lifecycle worker started${lifecycleStatus.pid ? ` (PID ${lifecycleStatus.pid})` : ""}`
+          : `Lifecycle worker already running${lifecycleStatus.pid ? ` (PID ${lifecycleStatus.pid})` : ""}`,
+      );
+    } catch (err) {
+      spinner.fail("Lifecycle worker failed to start");
+      throw new Error(
+        `Failed to start lifecycle worker: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err },
+      );
+    }
+  }
+
+  // Start dashboard LAST (unless --no-dashboard)
+  // By this point, orchestrator session exists and is ready for dashboard to poll
   if (opts?.dashboard !== false) {
     if (opts?.autoPort) {
       // Port was auto-selected during config generation — if it's now busy
@@ -301,61 +353,29 @@ async function runStartup(
     }
 
     spinner.start("Starting dashboard");
-    dashboardProcess = await startDashboard(
-      port,
-      webDir,
-      config.configPath,
-      config.terminalPort,
-      config.directTerminalPort,
-    );
-    spinner.succeed(`Dashboard starting on http://localhost:${port}`);
-    console.log(chalk.dim("  (Dashboard will be ready in a few seconds)\n"));
-  }
-
-  if (shouldStartLifecycle) {
     try {
-      spinner.start("Starting lifecycle worker");
-      lifecycleStatus = await ensureLifecycleWorker(config, projectId);
-      spinner.succeed(
-        lifecycleStatus.started
-          ? `Lifecycle worker started${lifecycleStatus.pid ? ` (PID ${lifecycleStatus.pid})` : ""}`
-          : `Lifecycle worker already running${lifecycleStatus.pid ? ` (PID ${lifecycleStatus.pid})` : ""}`,
+      dashboardProcess = await startDashboard(
+        port,
+        webDir,
+        config.configPath,
+        config.terminalPort,
+        config.directTerminalPort,
       );
+      spinner.succeed(`Dashboard starting on http://localhost:${port}`);
+      console.log(chalk.dim("  (Dashboard will be ready in a few seconds)\n"));
     } catch (err) {
-      spinner.fail("Lifecycle worker failed to start");
-      if (dashboardProcess) {
-        dashboardProcess.kill();
+      spinner.fail("Dashboard failed to start");
+      // Clean up orchestrator since we started it but dashboard won't work
+      if (opts?.orchestrator !== false) {
+        try {
+          const sm = await getSessionManager(config);
+          await sm.kill(sessionId).catch(() => undefined);
+        } catch {
+          /* best effort cleanup */
+        }
       }
       throw new Error(
-        `Failed to start lifecycle worker: ${err instanceof Error ? err.message : String(err)}`,
-        { cause: err },
-      );
-    }
-  }
-
-  // Create orchestrator session (unless --no-orchestrator or already exists)
-  let tmuxTarget = sessionId;
-  if (opts?.orchestrator !== false) {
-    const sm = await getSessionManager(config);
-
-    try {
-      spinner.start("Creating orchestrator session");
-      const systemPrompt = generateOrchestratorPrompt({ config, projectId, project });
-      const session = await sm.spawnOrchestrator({ projectId, systemPrompt });
-      if (session.runtimeHandle?.id) {
-        tmuxTarget = session.runtimeHandle.id;
-      }
-      reused =
-        orchestratorSessionStrategy === "reuse" &&
-        session.metadata?.["orchestratorSessionReused"] === "true";
-      spinner.succeed(reused ? "Orchestrator session reused" : "Orchestrator session created");
-    } catch (err) {
-      spinner.fail("Orchestrator setup failed");
-      if (dashboardProcess) {
-        dashboardProcess.kill();
-      }
-      throw new Error(
-        `Failed to setup orchestrator: ${err instanceof Error ? err.message : String(err)}`,
+        `Failed to start dashboard: ${err instanceof Error ? err.message : String(err)}`,
         { cause: err },
       );
     }
