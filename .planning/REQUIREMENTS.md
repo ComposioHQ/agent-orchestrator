@@ -28,10 +28,10 @@ Requirements for the first usable pixel dashboard release.
 
 ### Actions
 
-- [ ] **ACT-01**: Operator can send a message to a selected session from the pixel dashboard
-- [ ] **ACT-02**: Operator can kill a selected session from the pixel dashboard
-- [ ] **ACT-03**: Operator can restore a restorable session from the pixel dashboard
-- [ ] **ACT-04**: Operator can merge a merge-ready PR from the pixel dashboard
+- [x] **ACT-01**: Operator can send a message to a selected session from the pixel dashboard
+- [x] **ACT-02**: Operator can kill a selected session from the pixel dashboard
+- [x] **ACT-03**: Operator can restore a restorable session from the pixel dashboard
+- [x] **ACT-04**: Operator can merge a merge-ready PR from the pixel dashboard
 
 ### Live State
 
@@ -87,10 +87,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | INSP-01 | Phase 3 | Complete |
 | INSP-02 | Phase 3 | Complete |
 | INSP-03 | Phase 4 | Pending |
-| ACT-01 | Phase 3 | Pending |
-| ACT-02 | Phase 3 | Pending |
-| ACT-03 | Phase 3 | Pending |
-| ACT-04 | Phase 3 | Pending |
+| ACT-01 | Phase 3 | Complete |
+| ACT-02 | Phase 3 | Complete |
+| ACT-03 | Phase 3 | Complete |
+| ACT-04 | Phase 3 | Complete |
 | LIVE-01 | Phase 1 | Complete |
 | LIVE-02 | Phase 1 | Complete |
 | LIVE-03 | Phase 4 | Pending |
