@@ -136,6 +136,16 @@ export interface DashboardOrchestratorLink {
   projectName: string;
 }
 
+export type DashboardView = "legacy" | "pixel";
+
+export interface DashboardPayload {
+  sessions: DashboardSession[];
+  stats: DashboardStats;
+  orchestrators: DashboardOrchestratorLink[];
+  globalPause: GlobalPauseState | null;
+  view: DashboardView;
+}
+
 /** SSE snapshot event from /api/events */
 export interface SSESnapshotEvent {
   type: "snapshot";
