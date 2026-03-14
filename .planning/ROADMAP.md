@@ -10,7 +10,7 @@ This roadmap delivers a second dashboard mode for `agent-orchestrator` without s
 - Integer phases (1, 2, 3): Planned milestone work
 - Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
-- [ ] **Phase 1: Shared Dashboard Foundation** - Add the mode switcher and shared live-state seams that keep both dashboards aligned.
+- [x] **Phase 1: Shared Dashboard Foundation** - Add the mode switcher and shared live-state seams that keep both dashboards aligned. Completed 2026-03-14.
 - [ ] **Phase 2: Pixel World Core** - Render the pixel scene with stable session entities, navigation, and selection.
 - [ ] **Phase 3: Operator Workflow Parity** - Restore the main inspection and action workflows inside the pixel dashboard.
 - [ ] **Phase 4: Trust And Operational Polish** - Tighten stale-state signaling, visual scanability, and desktop usability so operators can trust the mode daily.
@@ -30,7 +30,7 @@ This roadmap delivers a second dashboard mode for `agent-orchestrator` without s
 
 Plans:
 - [x] 01-01: Reuse the current session/event loading path and shared route-state for both dashboard modes
-- [ ] 01-02: Define the shared dashboard shell, mode switcher, and Phase 1 pixel body seam
+- [x] 01-02: Define the shared dashboard shell, mode switcher, and Phase 1 pixel body seam
 
 ### Phase 2: Pixel World Core
 **Goal**: Translate current dashboard sessions into a usable 2D pixel world with stable scene behavior and selection.
@@ -84,7 +84,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Shared Dashboard Foundation | 1/2 | In Progress | 01-01 |
+| 1. Shared Dashboard Foundation | 2/2 | Complete | 2026-03-14 |
 | 2. Pixel World Core | 0/2 | Not started | - |
 | 3. Operator Workflow Parity | 0/2 | Not started | - |
 | 4. Trust And Operational Polish | 0/2 | Not started | - |

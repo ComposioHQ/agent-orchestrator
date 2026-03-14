@@ -9,9 +9,9 @@ Requirements for the first usable pixel dashboard release.
 
 ### Navigation
 
-- [ ] **NAV-01**: Operator can switch between the legacy dashboard and the pixel dashboard from a visible in-app control
+- [x] **NAV-01**: Operator can switch between the legacy dashboard and the pixel dashboard from a visible in-app control
 - [x] **NAV-02**: Operator keeps the current project scope when switching dashboard views
-- [ ] **NAV-03**: Operator can use the pixel dashboard in both single-project and all-project contexts
+- [x] **NAV-03**: Operator can use the pixel dashboard in both single-project and all-project contexts
 
 ### Scene
 
@@ -77,9 +77,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| NAV-01 | Phase 1 | Pending |
+| NAV-01 | Phase 1 | Complete |
 | NAV-02 | Phase 1 | Complete |
-| NAV-03 | Phase 1 | Pending |
+| NAV-03 | Phase 1 | Complete |
 | SCENE-01 | Phase 2 | Pending |
 | SCENE-02 | Phase 2 | Pending |
 | SCENE-03 | Phase 2 | Pending |
@@ -105,4 +105,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-03-14*
-*Last updated: 2026-03-14 after initial definition*
+*Last updated: 2026-03-14 after Phase 1 completion*
