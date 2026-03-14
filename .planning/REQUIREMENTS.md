@@ -10,7 +10,7 @@ Requirements for the first usable pixel dashboard release.
 ### Navigation
 
 - [ ] **NAV-01**: Operator can switch between the legacy dashboard and the pixel dashboard from a visible in-app control
-- [ ] **NAV-02**: Operator keeps the current project scope when switching dashboard views
+- [x] **NAV-02**: Operator keeps the current project scope when switching dashboard views
 - [ ] **NAV-03**: Operator can use the pixel dashboard in both single-project and all-project contexts
 
 ### Scene
@@ -35,8 +35,8 @@ Requirements for the first usable pixel dashboard release.
 
 ### Live State
 
-- [ ] **LIVE-01**: Operator sees live session status and activity changes in the pixel dashboard using the same session/event contract as the current dashboard
-- [ ] **LIVE-02**: Operator sees session additions and removals reflected in the pixel scene without needing a manual page refresh
+- [x] **LIVE-01**: Operator sees live session status and activity changes in the pixel dashboard using the same session/event contract as the current dashboard
+- [x] **LIVE-02**: Operator sees session additions and removals reflected in the pixel scene without needing a manual page refresh
 - [ ] **LIVE-03**: Operator can trust that counts and core states shown in the pixel dashboard stay aligned with the legacy dashboard
 
 ### Experience
@@ -78,7 +78,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | NAV-01 | Phase 1 | Pending |
-| NAV-02 | Phase 1 | Pending |
+| NAV-02 | Phase 1 | Complete |
 | NAV-03 | Phase 1 | Pending |
 | SCENE-01 | Phase 2 | Pending |
 | SCENE-02 | Phase 2 | Pending |
@@ -91,8 +91,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ACT-02 | Phase 3 | Pending |
 | ACT-03 | Phase 3 | Pending |
 | ACT-04 | Phase 3 | Pending |
-| LIVE-01 | Phase 1 | Pending |
-| LIVE-02 | Phase 1 | Pending |
+| LIVE-01 | Phase 1 | Complete |
+| LIVE-02 | Phase 1 | Complete |
 | LIVE-03 | Phase 4 | Pending |
 | UX-01 | Phase 4 | Pending |
 | UX-02 | Phase 3 | Pending |

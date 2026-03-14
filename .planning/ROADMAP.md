@@ -29,8 +29,8 @@ This roadmap delivers a second dashboard mode for `agent-orchestrator` without s
 **Plans**: TBD
 
 Plans:
-- [ ] 01-01: Define shared dashboard shell, mode state, and routing/view-switch seam
-- [ ] 01-02: Reuse the current session/event loading path for both dashboard modes
+- [x] 01-01: Reuse the current session/event loading path and shared route-state for both dashboard modes
+- [ ] 01-02: Define the shared dashboard shell, mode switcher, and Phase 1 pixel body seam
 
 ### Phase 2: Pixel World Core
 **Goal**: Translate current dashboard sessions into a usable 2D pixel world with stable scene behavior and selection.
@@ -84,7 +84,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Shared Dashboard Foundation | 0/2 | Not started | - |
+| 1. Shared Dashboard Foundation | 1/2 | In Progress | 01-01 |
 | 2. Pixel World Core | 0/2 | Not started | - |
 | 3. Operator Workflow Parity | 0/2 | Not started | - |
 | 4. Trust And Operational Polish | 0/2 | Not started | - |
