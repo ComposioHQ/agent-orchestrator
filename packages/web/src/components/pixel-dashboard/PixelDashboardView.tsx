@@ -11,10 +11,12 @@ import { PixelWorldScene } from "./PixelWorldScene";
 interface PixelDashboardViewProps {
   allProjectsView: boolean;
   onSpawnOrchestrator: (project: ProjectInfo) => Promise<void>;
+  onSelectSession: (sessionId: string | null) => void;
   openPRs: DashboardPR[];
   projectName?: string;
   projectOverviews: ProjectOverview[];
   projects: ProjectInfo[];
+  selectedSessionId: string | null;
   sessions: DashboardSession[];
   sessionsByProject: Map<string, DashboardSession[]>;
   spawnErrors: Record<string, string>;
@@ -24,10 +26,12 @@ interface PixelDashboardViewProps {
 export function PixelDashboardView({
   allProjectsView,
   onSpawnOrchestrator,
+  onSelectSession,
   openPRs,
   projectName,
   projectOverviews,
   projects,
+  selectedSessionId,
   sessions,
   sessionsByProject,
   spawnErrors,
@@ -67,8 +71,10 @@ export function PixelDashboardView({
 
       <PixelWorldScene
         allProjectsView={allProjectsView}
+        onSelectSession={onSelectSession}
         projectName={projectName}
         projects={projects}
+        selectedSessionId={selectedSessionId}
         sessions={sessions}
       />
 

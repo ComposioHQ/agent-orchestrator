@@ -16,15 +16,19 @@ import { SessionSprite } from "./SessionSprite";
 
 interface PixelWorldSceneProps {
   allProjectsView: boolean;
+  onSelectSession?: (sessionId: string | null) => void;
   projectName?: string;
   projects: ProjectInfo[];
+  selectedSessionId?: string | null;
   sessions: DashboardSession[];
 }
 
 export function PixelWorldScene({
   allProjectsView,
+  onSelectSession: _onSelectSession,
   projectName,
   projects,
+  selectedSessionId: _selectedSessionId,
   sessions,
 }: PixelWorldSceneProps) {
   const world = useMemo(

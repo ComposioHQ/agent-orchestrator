@@ -75,6 +75,7 @@ export function Dashboard({
     useState<DashboardOrchestratorLink[]>(orchestratorLinks);
   const [spawningProjectIds, setSpawningProjectIds] = useState<string[]>([]);
   const [spawnErrors, setSpawnErrors] = useState<Record<string, string>>({});
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const showSidebar = projects.length > 1;
   const allProjectsView = showSidebar && projectId === undefined;
 
@@ -257,6 +258,12 @@ export function Dashboard({
     setGlobalPauseDismissed(false);
   }, [globalPause?.pausedUntil, globalPause?.reason, globalPause?.sourceSessionId]);
 
+  useEffect(() => {
+    if (!selectedSessionId) return;
+    if (sessions.some((session) => session.id === selectedSessionId)) return;
+    setSelectedSessionId(null);
+  }, [selectedSessionId, sessions]);
+
   return (
     <div className="flex h-screen">
       {showSidebar && <ProjectSidebar projects={projects} activeProjectId={projectId} />}
@@ -285,6 +292,8 @@ export function Dashboard({
               projectName={projectName}
               projectOverviews={projectOverviews}
               projects={projects}
+              selectedSessionId={selectedSessionId}
+              onSelectSession={setSelectedSessionId}
               sessions={sessions}
               sessionsByProject={sessionsByProject}
               spawnErrors={spawnErrors}
