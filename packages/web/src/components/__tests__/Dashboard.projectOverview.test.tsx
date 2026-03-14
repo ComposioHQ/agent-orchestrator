@@ -3,13 +3,20 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Dashboard } from "@/components/Dashboard";
 import { makeSession } from "@/__tests__/helpers";
 
+const mockPush = vi.fn();
+const mockSearchParams = new URLSearchParams();
+
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+  useRouter: () => ({ push: mockPush, replace: vi.fn(), refresh: vi.fn() }),
   usePathname: () => "/",
+  useSearchParams: () => mockSearchParams,
 }));
 
 describe("Dashboard project overview cards", () => {
   beforeEach(() => {
+    mockPush.mockClear();
+    mockSearchParams.delete("project");
+    mockSearchParams.delete("view");
     global.EventSource = vi.fn(
       () =>
         ({
@@ -133,5 +140,45 @@ describe("Dashboard project overview cards", () => {
       expect(screen.getByText("Project is paused")).toBeInTheDocument();
     });
     expect(screen.getAllByRole("button", { name: "Spawn Orchestrator" })).toHaveLength(2);
+  });
+
+  it("shows the visible mode switcher and preserves project scope when switching views", () => {
+    mockSearchParams.set("project", "docs-app");
+
+    render(
+      <Dashboard
+        initialSessions={[makeSession({ projectId: "docs-app" })]}
+        projectId="docs-app"
+        projectName="Docs App"
+        projects={[
+          { id: "my-app", name: "My App" },
+          { id: "docs-app", name: "Docs App" },
+        ]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Pixel" }));
+
+    expect(mockPush).toHaveBeenCalledWith("/?project=docs-app&view=pixel");
+  });
+
+  it("renders pixel districts in all-project mode", () => {
+    render(
+      <Dashboard
+        initialSessions={[
+          makeSession({ projectId: "my-app", summary: "Alpha worker" }),
+          makeSession({ projectId: "docs-app", summary: "Docs worker" }),
+        ]}
+        projects={[
+          { id: "my-app", name: "My App" },
+          { id: "docs-app", name: "Docs App" },
+        ]}
+        view="pixel"
+      />,
+    );
+
+    expect(screen.getByText("Project districts")).toBeInTheDocument();
+    expect(screen.getAllByText("District")).toHaveLength(2);
+    expect(screen.getAllByRole("link", { name: "Enter" })).toHaveLength(2);
   });
 });
