@@ -98,9 +98,9 @@ export function SessionSprite({ entity, isSelected = false, onSelect }: SessionS
         transform: "translate(-50%, -50%)",
       }}
     >
-      <div className="relative flex flex-col items-center gap-2">
+      <div className="relative flex w-[108px] flex-col items-center gap-1.5">
         <div
-          className={`absolute left-1/2 top-[34px] h-5 w-14 -translate-x-1/2 rounded-full border ${tokens.ring}`}
+          className={`absolute left-1/2 top-[32px] h-4 w-12 -translate-x-1/2 rounded-full border ${tokens.ring}`}
           aria-hidden="true"
         />
         <div
@@ -108,21 +108,21 @@ export function SessionSprite({ entity, isSelected = false, onSelect }: SessionS
           aria-hidden="true"
         />
         <div
-          className={`relative flex h-10 w-10 items-end justify-center rounded-[14px] border bg-[rgba(15,23,42,0.84)] ${tokens.aura} ${
+          className={`relative flex h-9 w-9 items-end justify-center rounded-[12px] border bg-[rgba(15,23,42,0.84)] ${tokens.aura} ${
             isSelected
               ? "border-[rgba(191,219,254,0.9)] ring-2 ring-[rgba(96,165,250,0.65)]"
               : "border-[rgba(255,255,255,0.12)]"
           }`}
         >
-          <div className={`mb-1 h-5 w-5 ${tokens.bodyClass} ${tokens.body}`} aria-hidden="true" />
+          <div className={`mb-1 h-[18px] w-[18px] ${tokens.bodyClass} ${tokens.body}`} aria-hidden="true" />
         </div>
-        <div className="max-w-[122px] text-center">
-          <div className={`truncate text-[11px] font-semibold ${tokens.accent}`}>{entity.label}</div>
-          <div className="truncate text-[10px] text-[rgba(148,163,184,0.82)]">
+        <div className="w-full text-center">
+          <div className={`truncate text-[10px] font-semibold leading-4 ${tokens.accent}`}>{entity.label}</div>
+          <div className="truncate text-[9px] leading-4 text-[rgba(148,163,184,0.82)]">
             {entity.branch ?? entity.summary}
           </div>
           <div
-            className={`mt-1 inline-flex rounded-full border px-2 py-0.5 text-[8px] font-bold uppercase tracking-[0.18em] ${tokens.chip}`}
+            className={`mt-0.5 inline-flex rounded-full border px-1.5 py-0.5 text-[7px] font-bold uppercase tracking-[0.16em] ${tokens.chip}`}
           >
             {entity.isArchived ? "archived" : tokens.chipLabel}
           </div>

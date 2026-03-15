@@ -61,14 +61,22 @@ interface BuildWorldModelOptions {
   sessions: DashboardSession[];
 }
 
-const DISTRICT_WIDTH = 500;
-const DISTRICT_HEIGHT = 420;
+const DISTRICT_MIN_HEIGHT = 420;
 const DISTRICT_GAP = 40;
 const WORLD_PADDING = 48;
-const SLOT_SPACING_X = 52;
-const SLOT_SPACING_Y = 46;
-const SLOT_PADDING_X = 28;
-const SLOT_PADDING_Y = 34;
+const DISTRICT_HEADER_HEIGHT = 88;
+const DISTRICT_INSET_X = 28;
+const DISTRICT_BOTTOM_PADDING = 28;
+const NEIGHBORHOOD_GAP = 18;
+const NEIGHBORHOOD_HEADER_HEIGHT = 38;
+const NEIGHBORHOOD_PADDING_X = 18;
+const NEIGHBORHOOD_PADDING_TOP = 14;
+const NEIGHBORHOOD_PADDING_BOTTOM = 18;
+const ENTITY_FOOTPRINT_WIDTH = 108;
+const ENTITY_FOOTPRINT_HEIGHT = 80;
+const ENTITY_GAP_X = 16;
+const ENTITY_GAP_Y = 16;
+const DISTRICT_WIDTH_LARGE = 620;
 
 export function buildPixelWorldModel({
   allProjectsView,
@@ -86,45 +94,58 @@ export function buildPixelWorldModel({
     ]),
   );
 
-  const districtBounds = orderedProjectIds.map((projectId, index) => {
-    const columns = orderedProjectIds.length > 1 ? Math.min(2, orderedProjectIds.length) : 1;
-    const column = index % columns;
-    const row = Math.floor(index / columns);
-
-    return {
+  const districtsByProject = new Map(
+    orderedProjectIds.map((projectId) => [
+      projectId,
+      sessions.filter((session) => session.projectId === projectId),
+    ]),
+  );
+  const districtDrafts = orderedProjectIds.map((projectId, index) =>
+    buildDistrictDraft({
       id: projectId,
       index,
+      name: districtNames.get(projectId) ?? projectId,
+      sessions: districtsByProject.get(projectId) ?? [],
+    }),
+  );
+  const columns = districtDrafts.length > 1 ? Math.min(2, districtDrafts.length) : 1;
+  const rowHeights = districtDrafts.reduce<number[]>((heights, district, index) => {
+    const row = Math.floor(index / columns);
+    heights[row] = Math.max(heights[row] ?? 0, district.bounds.height);
+    return heights;
+  }, []);
+
+  const districts = districtDrafts.map((district, index) => {
+    const column = index % columns;
+    const row = Math.floor(index / columns);
+    const offsetY =
+      WORLD_PADDING +
+      rowHeights.slice(0, row).reduce((total, height) => total + height + DISTRICT_GAP, 0);
+    const offsetX = WORLD_PADDING + column * (DISTRICT_WIDTH_LARGE + DISTRICT_GAP);
+    return {
+      ...district,
       bounds: {
-        x: WORLD_PADDING + column * (DISTRICT_WIDTH + DISTRICT_GAP),
-        y: WORLD_PADDING + row * (DISTRICT_HEIGHT + DISTRICT_GAP),
-        width: DISTRICT_WIDTH,
-        height: DISTRICT_HEIGHT,
+        ...district.bounds,
+        x: offsetX,
+        y: offsetY,
       },
+      neighborhoods: translateNeighborhoods(district.neighborhoods, offsetX, offsetY),
     };
   });
 
-  const districts = districtBounds.map(({ id, index, bounds }) => ({
-    id,
-    name: districtNames.get(id) ?? id,
-    index,
-    bounds,
-    neighborhoods: buildNeighborhoods(bounds),
-    sessionCount: sessions.filter((session) => session.projectId === id).length,
-  }));
+  const entities = districts.flatMap((district) =>
+    buildDistrictEntities(district, districtsByProject.get(district.id) ?? []),
+  );
 
-  const districtMap = new Map(districts.map((district) => [district.id, district]));
-  const entities = districts.flatMap((district) => {
-    const districtSessions = sessions.filter((session) => session.projectId === district.id);
-    return buildDistrictEntities(district, districtSessions);
-  });
-
-  const columns = districts.length > 1 ? Math.min(2, districts.length) : 1;
   const rows = Math.max(1, Math.ceil(districts.length / columns));
 
   return {
-    width: WORLD_PADDING * 2 + columns * DISTRICT_WIDTH + (columns - 1) * DISTRICT_GAP,
-    height: WORLD_PADDING * 2 + rows * DISTRICT_HEIGHT + (rows - 1) * DISTRICT_GAP,
-    districts: districts.map((district) => districtMap.get(district.id) ?? district),
+    width: WORLD_PADDING * 2 + columns * DISTRICT_WIDTH_LARGE + (columns - 1) * DISTRICT_GAP,
+    height:
+      WORLD_PADDING * 2 +
+      rowHeights.reduce((total, height) => total + height, 0) +
+      Math.max(0, rows - 1) * DISTRICT_GAP,
+    districts,
     entities,
   };
 }
@@ -152,73 +173,70 @@ function getOrderedProjectIds({
   return ordered;
 }
 
-function buildNeighborhoods(bounds: SceneRect): Record<AttentionLevel, SceneNeighborhood> {
-  const x = bounds.x;
-  const y = bounds.y;
-  const width = bounds.width;
-  const height = bounds.height;
+function buildDistrictDraft({
+  id,
+  index,
+  name,
+  sessions,
+}: {
+  id: string;
+  index: number;
+  name: string;
+  sessions: DashboardSession[];
+}): SceneDistrict {
+  const counts = countSessionsByAttention(sessions);
+  const contentWidth = DISTRICT_WIDTH_LARGE - DISTRICT_INSET_X * 2;
+  const sideWidth = Math.floor((contentWidth - NEIGHBORHOOD_GAP) / 2);
+  const doneWidth = 174;
+  const workingWidth = contentWidth - doneWidth - NEIGHBORHOOD_GAP;
+  const topHeight = Math.max(
+    getNeighborhoodHeight(sideWidth, "merge", counts.merge),
+    getNeighborhoodHeight(sideWidth, "respond", counts.respond),
+  );
+  const middleHeight = Math.max(
+    getNeighborhoodHeight(sideWidth, "review", counts.review),
+    getNeighborhoodHeight(sideWidth, "pending", counts.pending),
+  );
+  const bottomHeight = Math.max(
+    getNeighborhoodHeight(workingWidth, "working", counts.working),
+    getNeighborhoodHeight(doneWidth, "done", counts.done),
+  );
+  const districtHeight = Math.max(
+    DISTRICT_MIN_HEIGHT,
+    DISTRICT_HEADER_HEIGHT +
+      topHeight +
+      NEIGHBORHOOD_GAP +
+      middleHeight +
+      NEIGHBORHOOD_GAP +
+      bottomHeight +
+      DISTRICT_BOTTOM_PADDING,
+  );
+  const topY = DISTRICT_HEADER_HEIGHT;
+  const middleY = topY + topHeight + NEIGHBORHOOD_GAP;
+  const bottomY = middleY + middleHeight + NEIGHBORHOOD_GAP;
+  const leftX = 0;
+  const rightX = leftX + sideWidth + NEIGHBORHOOD_GAP;
+  const bottomDoneX = contentWidth - doneWidth;
 
   return {
-    merge: {
-      attentionLevel: "merge",
-      label: "Merge gate",
-      bounds: {
-        x: x + 28,
-        y: y + 62,
-        width: 196,
-        height: 108,
-      },
+    id,
+    index,
+    name,
+    bounds: {
+      x: 0,
+      y: 0,
+      width: DISTRICT_WIDTH_LARGE,
+      height: districtHeight,
     },
-    respond: {
-      attentionLevel: "respond",
-      label: "Response yard",
-      bounds: {
-        x: x + width - 224,
-        y: y + 62,
-        width: 196,
-        height: 108,
-      },
+    neighborhoods: {
+      merge: createNeighborhood("merge", "Merge gate", leftX, topY, sideWidth, topHeight),
+      respond: createNeighborhood("respond", "Response yard", rightX, topY, sideWidth, topHeight),
+      review: createNeighborhood("review", "Review forge", leftX, middleY, sideWidth, middleHeight),
+      pending: createNeighborhood("pending", "Waiting square", rightX, middleY, sideWidth, middleHeight),
+      working: createNeighborhood("working", "Workshop", leftX, bottomY, workingWidth, bottomHeight),
+      done: createNeighborhood("done", "Archive grove", bottomDoneX, bottomY, doneWidth, bottomHeight),
     },
-    review: {
-      attentionLevel: "review",
-      label: "Review forge",
-      bounds: {
-        x: x + 28,
-        y: y + 188,
-        width: 196,
-        height: 104,
-      },
-    },
-    pending: {
-      attentionLevel: "pending",
-      label: "Waiting square",
-      bounds: {
-        x: x + width - 224,
-        y: y + 188,
-        width: 196,
-        height: 104,
-      },
-    },
-    working: {
-      attentionLevel: "working",
-      label: "Workshop",
-      bounds: {
-        x: x + 28,
-        y: y + height - 132,
-        width: 286,
-        height: 86,
-      },
-    },
-    done: {
-      attentionLevel: "done",
-      label: "Archive grove",
-      bounds: {
-        x: x + width - 168,
-        y: y + height - 150,
-        width: 140,
-        height: 104,
-      },
-    },
+    sessionCount: sessions.length,
   };
 }
 
@@ -269,14 +287,106 @@ function getSlotPosition(
   attentionLevel: AttentionLevel,
   slotIndex: number,
 ): { x: number; y: number } {
-  const columns = attentionLevel === "working" ? 4 : attentionLevel === "done" ? 2 : 3;
+  const columns = getNeighborhoodColumns(bounds.width, attentionLevel, slotIndex + 1);
   const column = slotIndex % columns;
   const row = Math.floor(slotIndex / columns);
-  const availableWidth = bounds.width - SLOT_PADDING_X * 2;
-  const columnGap = Math.max(SLOT_SPACING_X, availableWidth / (columns - 1));
+  const contentWidth = bounds.width - NEIGHBORHOOD_PADDING_X * 2;
+  const usedWidth = columns * ENTITY_FOOTPRINT_WIDTH + (columns - 1) * ENTITY_GAP_X;
+  const startX = bounds.x + NEIGHBORHOOD_PADDING_X + Math.max(0, (contentWidth - usedWidth) / 2);
+  const startY = bounds.y + NEIGHBORHOOD_HEADER_HEIGHT + NEIGHBORHOOD_PADDING_TOP;
 
   return {
-    x: bounds.x + SLOT_PADDING_X + column * columnGap,
-    y: bounds.y + SLOT_PADDING_Y + row * SLOT_SPACING_Y,
+    x: startX + column * (ENTITY_FOOTPRINT_WIDTH + ENTITY_GAP_X) + ENTITY_FOOTPRINT_WIDTH / 2,
+    y: startY + row * (ENTITY_FOOTPRINT_HEIGHT + ENTITY_GAP_Y) + ENTITY_FOOTPRINT_HEIGHT / 2,
   };
+}
+
+function createNeighborhood(
+  attentionLevel: AttentionLevel,
+  label: string,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+): SceneNeighborhood {
+  return {
+    attentionLevel,
+    label,
+    bounds: { x, y, width, height },
+  };
+}
+
+function countSessionsByAttention(
+  sessions: DashboardSession[],
+): Record<AttentionLevel, number> {
+  return sessions.reduce<Record<AttentionLevel, number>>(
+    (counts, session) => {
+      counts[getAttentionLevel(session)] += 1;
+      return counts;
+    },
+    {
+      merge: 0,
+      respond: 0,
+      review: 0,
+      pending: 0,
+      working: 0,
+      done: 0,
+    },
+  );
+}
+
+function getNeighborhoodColumns(
+  width: number,
+  attentionLevel: AttentionLevel,
+  sessionCount: number,
+): number {
+  const preferredColumns =
+    attentionLevel === "working" ? 3 : attentionLevel === "done" ? 1 : 2;
+  const contentWidth = width - NEIGHBORHOOD_PADDING_X * 2;
+  const fitColumns = Math.max(
+    1,
+    Math.floor((contentWidth + ENTITY_GAP_X) / (ENTITY_FOOTPRINT_WIDTH + ENTITY_GAP_X)),
+  );
+  return Math.max(1, Math.min(preferredColumns, fitColumns, Math.max(sessionCount, 1)));
+}
+
+function getNeighborhoodHeight(
+  width: number,
+  attentionLevel: AttentionLevel,
+  sessionCount: number,
+): number {
+  if (sessionCount === 0) {
+    return 120;
+  }
+
+  const columns = getNeighborhoodColumns(width, attentionLevel, sessionCount);
+  const rows = Math.ceil(sessionCount / columns);
+
+  return (
+    NEIGHBORHOOD_HEADER_HEIGHT +
+    NEIGHBORHOOD_PADDING_TOP +
+    rows * ENTITY_FOOTPRINT_HEIGHT +
+    Math.max(0, rows - 1) * ENTITY_GAP_Y +
+    NEIGHBORHOOD_PADDING_BOTTOM
+  );
+}
+
+function translateNeighborhoods(
+  neighborhoods: Record<AttentionLevel, SceneNeighborhood>,
+  offsetX: number,
+  offsetY: number,
+): Record<AttentionLevel, SceneNeighborhood> {
+  return Object.fromEntries(
+    Object.entries(neighborhoods).map(([key, neighborhood]) => [
+      key,
+      {
+        ...neighborhood,
+        bounds: {
+          ...neighborhood.bounds,
+          x: neighborhood.bounds.x + offsetX + DISTRICT_INSET_X,
+          y: neighborhood.bounds.y + offsetY,
+        },
+      },
+    ]),
+  ) as Record<AttentionLevel, SceneNeighborhood>;
 }
