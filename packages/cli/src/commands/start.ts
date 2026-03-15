@@ -407,7 +407,7 @@ async function runStartup(
       }
 
       spinner.start("Starting dashboard");
-      dashboardProcess = startDashboard(
+      dashboardProcess = await startDashboard(
         port,
         webDir,
         config.configPath,
