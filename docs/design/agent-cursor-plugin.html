@@ -121,7 +121,7 @@
           <span class="tag">process: cursor-agent</span>
           <span class="tag">session path: ~/.cursor/projects/</span>
           <span class="tag">runtime: tmux</span>
-          <span class="tag">permission flag: --dangerously-skip-permissions</span>
+          <span class="tag">permission flag: --force</span>
         </p>
       </section>
 
@@ -139,17 +139,18 @@
         <article class="card">
           <h2>Relationship to agent-claude-code</h2>
           <p>
-            The implementation is structurally identical to <code>agent-claude-code</code>
-            (~87% shared code). The two differ only in agent-specific constants:
+            Both plugins are thin wrappers around <code>@composio/ao-plugin-agent-base</code>,
+            which provides the full <code>Agent</code> implementation via
+            <code>createAgentPlugin(config, overrides?)</code>. The two differ only in config:
           </p>
           <ul>
             <li>Process name: <code>cursor-agent</code> vs <code>claude</code></li>
             <li>Session directory: <code>~/.cursor/projects/</code> vs <code>~/.claude/projects/</code></li>
-            <li>Resume flag: <code>--resume &lt;chatId&gt;</code> vs <code>--resume &lt;uuid&gt;</code></li>
-            <li>Workspace hook path: <code>.cursor/</code> vs <code>.claude/</code></li>
+            <li>Permission flag: <code>--force</code> vs <code>--dangerously-skip-permissions</code></li>
+            <li>System prompt: not supported (undefined) vs <code>--append-system-prompt</code></li>
           </ul>
           <p class="muted" style="margin-top:0.5rem;font-size:0.9rem;">
-            A shared <code>agent-jsonl-utils</code> extraction is tracked as a follow-up.
+            Shared implementation lives in <code>packages/plugins/agent-base</code>.
           </p>
         </article>
       </section>
@@ -159,8 +160,7 @@
           <h3>Launch</h3>
           <ul>
             <li><code>cursor-agent</code> — base command</li>
-            <li><code>--resume &lt;chatId&gt;</code> — resume existing session</li>
-            <li><code>--dangerously-skip-permissions</code> — permissionless mode</li>
+            <li><code>--force</code> — permissionless / auto-edit mode</li>
             <li><code>--model &lt;name&gt;</code> — optional model override</li>
             <li>Prompt delivered post-launch via <code>sendMessage()</code></li>
           </ul>
@@ -224,12 +224,18 @@ export const builtinPlugins = [
           <h2>Differences from Claude Code</h2>
           <ul>
             <li>
-              <strong>Resume flag</strong>: Cursor uses <code>--resume &lt;chatId&gt;</code>;
-              the chat ID is parsed from the JSONL session filename, not a UUID field.
+              <strong>Permission flag</strong>: <code>--force</code> vs
+              <code>--dangerously-skip-permissions</code>.
             </li>
             <li>
               <strong>No <code>--append-system-prompt</code></strong>: Cursor Agent CLI
-              does not support this flag; system context must be woven into the initial prompt.
+              does not support this flag; system context must be included in the first
+              <code>sendMessage()</code> call post-launch.
+            </li>
+            <li>
+              <strong>Session restore</strong>: Claude Code uses JSONL-derived UUIDs with
+              <code>--resume</code>; Cursor requires SQLite lookup (unimplemented, returns
+              <code>null</code>).
             </li>
             <li>
               <strong>JSONL schema</strong>: Cursor session files follow a similar envelope
@@ -242,17 +248,20 @@ export const builtinPlugins = [
           <h2>Constraints &amp; Known Gaps</h2>
           <ul>
             <li>
-              <strong>Headless reliability</strong>: <code>cursor-agent --print</code> exits
-              after one response; interactive mode (<code>cursor-agent</code> alone) is required
-              for multi-turn sessions.
+              <strong>Session restore unimplemented</strong>: <code>getRestoreCommand</code>
+              returns <code>null</code>. Cursor stores sessions in SQLite at
+              <code>~/.cursor/chats/</code>, not JSONL. Resume requires SQLite introspection
+              (chat ID lookup) which is not yet implemented.
             </li>
             <li>
-              <strong>Cost estimation</strong>: Uses Claude pricing as a placeholder; Cursor
-              does not expose per-token costs in its JSONL output yet.
+              <strong>No system prompt at launch</strong>: Cursor Agent CLI has no equivalent
+              of <code>--append-system-prompt</code>. System context must be woven into the
+              initial <code>sendMessage()</code> call post-launch.
             </li>
             <li>
-              <strong>Code duplication</strong>: ~700 lines shared verbatim with
-              <code>agent-claude-code</code>. Tracked for extraction to a shared utility module.
+              <strong>Cost estimation</strong>: Uses Claude Sonnet pricing as a placeholder
+              (<code>$3/M</code> input, <code>$15/M</code> output). Cursor does not expose
+              per-token costs in its JSONL output.
             </li>
           </ul>
         </article>
@@ -271,7 +280,7 @@ export const builtinPlugins = [
         <article class="card">
           <h2>Future Work</h2>
           <ul>
-            <li>Extract shared JSONL utilities (<code>parseJsonlFileTail</code>, <code>extractCost</code>, <code>normalizePermissionMode</code>, etc.) to a shared internal package shared with <code>agent-claude-code</code> and <code>agent-gemini</code></li>
+            <li>Implement <code>getRestoreCommand</code> via SQLite introspection of <code>~/.cursor/chats/</code> to enable session resume</li>
             <li>Update cost estimation when Cursor exposes token pricing in JSONL</li>
             <li>Validate <code>--resume</code> chat ID parsing against Cursor CLI versioned output format</li>
           </ul>
