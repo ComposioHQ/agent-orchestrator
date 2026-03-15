@@ -229,15 +229,22 @@ function sleep(ms: number): Promise<void> {
 }
 
 /** Build the initial task message sent to an agent after it claims a PR. */
-export function buildInitialPRTaskMessage(pr: { number: number; url: string; repo: string; branch: string; baseBranch: string }): string {
+export function buildInitialPRTaskMessage(pr: {
+  number: number;
+  url: string;
+  owner: string;
+  repo: string;
+  branch: string;
+  baseBranch: string;
+}): string {
   return `You own PR #${pr.number} (${pr.url}) on branch \`${pr.branch}\`.
 Your goal: make this PR green — CI passing, all review comments resolved, CodeRabbit approved, no merge conflicts.
 
 Steps:
-1. Read all PR comments: \`gh pr view ${pr.number} --repo ${pr.repo} --comments\`
-2. Read bot reviews: \`gh api repos/${pr.repo}/pulls/${pr.number}/reviews\`
-3. Read inline code comments: \`gh api repos/${pr.repo}/pulls/${pr.number}/comments | jq '.[] | {path:.path, line:.line, body:.body}'\`
-4. Check CI status: \`gh pr checks ${pr.number} --repo ${pr.repo}\`
+1. Read all PR comments: \`gh pr view ${pr.number} --repo ${pr.owner}/${pr.repo} --comments\`
+2. Read bot reviews: \`gh api repos/${pr.owner}/${pr.repo}/pulls/${pr.number}/reviews\`
+3. Read inline code comments: \`gh api repos/${pr.owner}/${pr.repo}/pulls/${pr.number}/comments | jq '.[] | {path:.path, line:.line, body:.body}'\`
+4. Check CI status: \`gh pr checks ${pr.number} --repo ${pr.owner}/${pr.repo}\`
 5. Fix EVERY actionable item: CI failures, CodeRabbit issues, reviewer comments, merge conflicts.
 6. Push your fixes.
 7. Only AFTER all comments are addressed: post \`@coderabbitai all good?\`
