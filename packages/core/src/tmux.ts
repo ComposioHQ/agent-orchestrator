@@ -164,7 +164,9 @@ export async function sendKeys(
     // Higher delay needed when using paste-buffer to ensure tmux processes the paste
     // before receiving the Enter keystroke (especially with Claude permission prompts)
     if (text.includes("\n") || text.length > 200) {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      const baseDelay = 1000;
+      const lengthDelay = Math.floor((text.length / 1000) * 500);
+      await new Promise((resolve) => setTimeout(resolve, baseDelay + lengthDelay));
     }
     await tmux("send-keys", "-t", sessionName, "Enter");
   }
