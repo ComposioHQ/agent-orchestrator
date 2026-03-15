@@ -15,7 +15,7 @@ import {
 } from "@composio/ao-core";
 import { execFile } from "node:child_process";
 import { readdir, readFile, stat, open, writeFile, mkdir, chmod } from "node:fs/promises";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
@@ -56,35 +56,10 @@ export interface AgentPluginConfig {
    * Fallback cost rates used when JSONL contains token counts but no direct
    * cost field. Units are USD per million tokens.
    */
-  defaultCostRate?: {
+  defaultCostRate: {
     inputPerMillion: number;
     outputPerMillion: number;
   };
-  /**
-   * Environment variable used to pass a system prompt file path to the agent.
-   * Set when the CLI uses an env var instead of a flag (e.g. "GEMINI_SYSTEM_MD").
-   * Mutually exclusive with systemPromptFlag — set only one.
-   */
-  systemPromptEnvVar?: string;
-  /**
-   * Override the session directory path for a given workspace.
-   * Defaults to `~/<configDir>/projects/<toAgentProjectPath(workspacePath)>`.
-   * Override when the agent uses a different directory structure
-   * (e.g. Gemini CLI uses `~/.gemini/tmp/<sha256>/chats/`).
-   */
-  getSessionDir?: (workspacePath: string) => string;
-  /**
-   * File extension for session files in the session directory.
-   * Defaults to ".jsonl". Override for agents that use a different extension
-   * (e.g. Gemini CLI uses ".json").
-   */
-  sessionFileExtension?: string;
-  /**
-   * Hook tool matcher - regex pattern for PostToolUse hook to match against.
-   * Defaults to "Bash". Override for agents that use different shell tools
-   * (e.g. Gemini uses "run_shell_command").
-   */
-  hookToolMatcher?: string;
 }
 
 // =============================================================================
@@ -127,8 +102,8 @@ if [[ "$exit_code" -ne 0 ]]; then
   exit 0
 fi
 
-# Only process shell tool calls (Claude uses "Bash"; Gemini CLI uses "run_shell_command")
-if [[ "$tool_name" != "Bash" && "$tool_name" != "run_shell_command" ]]; then
+# Only process Bash tool calls
+if [[ "$tool_name" != "Bash" ]]; then
   echo '{}' # Empty JSON output
   exit 0
 fi
@@ -257,11 +232,8 @@ export function toAgentProjectPath(workspacePath: string): string {
 // JSONL Helpers
 // =============================================================================
 
-/** Find the most recently modified session file in a directory */
-async function findLatestSessionFile(
-  projectDir: string,
-  ext = ".jsonl",
-): Promise<string | null> {
+/** Find the most recently modified .jsonl session file in a directory */
+async function findLatestSessionFile(projectDir: string): Promise<string | null> {
   let entries: string[];
   try {
     entries = await readdir(projectDir);
@@ -269,7 +241,7 @@ async function findLatestSessionFile(
     return null;
   }
 
-  const jsonlFiles = entries.filter((f) => f.endsWith(ext) && !f.startsWith("agent-"));
+  const jsonlFiles = entries.filter((f) => f.endsWith(".jsonl") && !f.startsWith("agent-"));
   if (jsonlFiles.length === 0) return null;
 
   // Sort by mtime descending
@@ -327,8 +299,8 @@ async function parseJsonlFileTail(filePath: string, maxBytes = 131_072): Promise
       try {
         const length = size - offset;
         const buffer = Buffer.allocUnsafe(length);
-        const { bytesRead } = await handle.read(buffer, 0, length, offset);
-        content = buffer.slice(0, bytesRead).toString("utf-8");
+        await handle.read(buffer, 0, length, offset);
+        content = buffer.toString("utf-8");
       } finally {
         await handle.close();
       }
@@ -426,7 +398,7 @@ function extractCost(
   }
 
   // Rough estimate when no direct cost data — use the configured rate.
-  if (totalCost === 0 && defaultCostRate && (inputTokens > 0 || outputTokens > 0)) {
+  if (totalCost === 0 && (inputTokens > 0 || outputTokens > 0)) {
     totalCost =
       (inputTokens / 1_000_000) * defaultCostRate.inputPerMillion +
       (outputTokens / 1_000_000) * defaultCostRate.outputPerMillion;
@@ -465,7 +437,7 @@ async function getCachedProcessList(): Promise<string> {
   // Guard both callbacks so they only update psCache if it still belongs to
   // this request — a newer request may have replaced it while we were waiting.
   const promise = execFileAsync("ps", ["-eo", "pid,tty,args"], {
-    timeout: 30_000,
+    timeout: 5_000,
   }).then(({ stdout }) => {
     if (psCache?.promise === promise) {
       psCache = { output: stdout, timestamp: Date.now() };
@@ -591,7 +563,6 @@ async function setupHookInWorkspace(
   workspacePath: string,
   configDir: string,
   hookCommand: string,
-  hookMatcher = "Bash",
 ): Promise<void> {
   const agentDir = join(workspacePath, configDir);
   const settingsPath = join(agentDir, "settings.json");
@@ -619,15 +590,9 @@ async function setupHookInWorkspace(
     }
   }
 
-  // Merge hooks configuration — type-guard before casting to avoid runtime
-  // errors on malformed or older settings.json files
-  const rawHooks = existingSettings["hooks"];
-  const hooks: Record<string, unknown> =
-    typeof rawHooks === "object" && rawHooks !== null && !Array.isArray(rawHooks)
-      ? (rawHooks as Record<string, unknown>)
-      : {};
-  const rawPostToolUse = hooks["PostToolUse"];
-  const postToolUse: Array<unknown> = Array.isArray(rawPostToolUse) ? rawPostToolUse : [];
+  // Merge hooks configuration
+  const hooks = (existingSettings["hooks"] as Record<string, unknown>) ?? {};
+  const postToolUse = (hooks["PostToolUse"] as Array<unknown>) ?? [];
 
   // Check if our hook is already configured
   let hookIndex = -1;
@@ -655,7 +620,7 @@ async function setupHookInWorkspace(
   if (hookIndex === -1) {
     // No metadata hook exists, add it
     postToolUse.push({
-      matcher: hookMatcher,
+      matcher: "Bash",
       hooks: [
         {
           type: "command",
@@ -665,92 +630,14 @@ async function setupHookInWorkspace(
       ],
     });
   } else {
-    // Hook exists, update the command — but preserve an existing AO_DATA_DIR
-    // prefix if the new command doesn't include one (e.g. postLaunchSetup
-    // doesn't have access to hookConfig.dataDir and would silently drop it).
+    // Hook exists, update the command
     const hook = postToolUse[hookIndex] as Record<string, unknown>;
     const hooksList = hook["hooks"] as Array<Record<string, unknown>>;
-    const existingCommand = hooksList[hookDefIndex]["command"] as string | undefined;
-    const newCommandDropsDataDir =
-      !hookCommand.includes("AO_DATA_DIR=") &&
-      typeof existingCommand === "string" &&
-      existingCommand.includes("AO_DATA_DIR=");
-    if (!newCommandDropsDataDir) {
-      hooksList[hookDefIndex]["command"] = hookCommand;
-    }
+    hooksList[hookDefIndex]["command"] = hookCommand;
   }
 
   hooks["PostToolUse"] = postToolUse;
   existingSettings["hooks"] = hooks;
-
-  // Write updated settings
-  await writeFile(settingsPath, JSON.stringify(existingSettings, null, 2) + "\n", "utf-8");
-}
-
-/**
- * Configure MCP mail server in workspace settings.
- * This enables agents to send coordination messages via MCP mail.
- * 
- * MCP mail server config:
- * - name: mcp-agent-mail
- * - url: http://127.0.0.1:8765/mcp/ (configurable via MCP_AGENT_MAIL_URL env var)
- * - headers: auth token (configurable via MCP_AGENT_MAIL_TOKEN env var)
- */
-async function setupMcpMailInWorkspace(
-  workspacePath: string,
-  configDir: string,
-): Promise<void> {
-  const agentDir = join(workspacePath, configDir);
-  const settingsPath = join(agentDir, "settings.json");
-
-  // Get MCP mail config - only configure if explicitly enabled via env var
-  // This makes MCP mail opt-in rather than opt-out
-  const mcpMailUrl = process.env.MCP_AGENT_MAIL_URL;
-
-  // Skip if MCP mail URL is not set, disabled, or empty string
-  if (mcpMailUrl === undefined || mcpMailUrl === "disabled" || mcpMailUrl === "") {
-    return;
-  }
-
-  const mcpMailToken = process.env.MCP_AGENT_MAIL_TOKEN || "";
-
-  // Create config directory if it doesn't exist
-  try {
-    await mkdir(agentDir, { recursive: true });
-  } catch {
-    // Directory might already exist
-  }
-
-  // Read existing settings if present
-  let existingSettings: Record<string, unknown> = {};
-  if (existsSync(settingsPath)) {
-    try {
-      const content = await readFile(settingsPath, "utf-8");
-      existingSettings = JSON.parse(content) as Record<string, unknown>;
-    } catch {
-      // Invalid JSON or read error — start fresh
-    }
-  }
-
-  // Initialize mcpServers if not present
-  const rawMcpServers = existingSettings["mcpServers"];
-  const mcpServers: Record<string, unknown> =
-    typeof rawMcpServers === "object" && rawMcpServers !== null && !Array.isArray(rawMcpServers)
-      ? (rawMcpServers as Record<string, unknown>)
-      : {};
-
-  // Always configure/update mcp-agent-mail to support token rotation and URL changes
-  // NOTE: Auth token is NOT stored in worktree settings.json to avoid
-  // accidentally committing secrets. Users should set MCP_AGENT_MAIL_TOKEN
-  // in their shell environment when launching the agent instead.
-
-  // Add mcp-agent-mail server configuration
-  const serverConfig: Record<string, unknown> = {
-    url: mcpMailUrl,
-  };
-
-  mcpServers["mcp-agent-mail"] = serverConfig;
-  existingSettings["mcpServers"] = mcpServers;
 
   // Write updated settings
   await writeFile(settingsPath, JSON.stringify(existingSettings, null, 2) + "\n", "utf-8");
@@ -769,11 +656,9 @@ async function setupMcpMailInWorkspace(
  * a different session format (e.g. Cursor's SQLite storage instead of JSONL).
  */
 export function createAgentPlugin(config: AgentPluginConfig, overrides?: Partial<Agent>): Agent {
-  // Escape regex metacharacters in processName to prevent injection (e.g., "gemini+" would match "gemini" and "+").
-  const escapedProcessName = config.processName.replace(/[.+*?^${}()|[\]\\]/g, "\\$&");
   // Build process regex once — matches the process name as a word boundary
   // to prevent false positives (e.g. "gemini-pro" matching "gemini").
-  const processRe = new RegExp(`(?:^|/)${escapedProcessName}(?:\\s|$)`);
+  const processRe = new RegExp(`(?:^|/)${config.processName}(?:\\s|$)`);
 
   return {
     name: config.name,
@@ -819,7 +704,6 @@ export function createAgentPlugin(config: AgentPluginConfig, overrides?: Partial
       env["CLAUDECODE"] = "";
 
       // Set session info for introspection
-      env["AO_SESSION"] = launchConfig.sessionId;
       env["AO_SESSION_ID"] = launchConfig.sessionId;
 
       // NOTE: AO_PROJECT_ID is NOT set here - it's the caller's responsibility
@@ -827,35 +711,6 @@ export function createAgentPlugin(config: AgentPluginConfig, overrides?: Partial
 
       if (launchConfig.issueId) {
         env["AO_ISSUE_ID"] = launchConfig.issueId;
-      }
-
-      // Pass MCP mail configuration to the agent if available
-      // These enable the agent to send coordination messages via MCP mail
-      if (process.env.MCP_AGENT_MAIL_URL) {
-        env["MCP_AGENT_MAIL_URL"] = process.env.MCP_AGENT_MAIL_URL;
-      }
-      if (process.env.MCP_AGENT_MAIL_TOKEN) {
-        env["MCP_AGENT_MAIL_TOKEN"] = process.env.MCP_AGENT_MAIL_TOKEN;
-      }
-
-      // Handle system prompt via environment variable (e.g. GEMINI_SYSTEM_MD).
-      // Used for agents that don't support a system prompt CLI flag.
-      if (config.systemPromptEnvVar) {
-        if (launchConfig.systemPromptFile) {
-          env[config.systemPromptEnvVar] = launchConfig.systemPromptFile;
-        } else if (launchConfig.systemPrompt) {
-          // Write the inline prompt to a temp file — env vars can't inline multi-KB prompts.
-          const tmpDir = join(homedir(), ".ao-sessions", "tmp");
-          const tmpFile = join(tmpDir, `system-${launchConfig.sessionId}.md`);
-          try {
-            mkdirSync(tmpDir, { recursive: true, mode: 0o700 });
-            writeFileSync(tmpFile, launchConfig.systemPrompt, { encoding: "utf-8", mode: 0o600 });
-            env[config.systemPromptEnvVar] = tmpFile;
-          } catch {
-            // Could not write temp file — leave env var unset so the agent
-            // falls back to its built-in defaults.
-          }
-        }
       }
 
       return env;
@@ -888,11 +743,10 @@ export function createAgentPlugin(config: AgentPluginConfig, overrides?: Partial
         return null;
       }
 
-      const projectDir = config.getSessionDir
-        ? config.getSessionDir(session.workspacePath)
-        : join(homedir(), config.configDir, "projects", toAgentProjectPath(session.workspacePath));
+      const projectPath = toAgentProjectPath(session.workspacePath);
+      const projectDir = join(homedir(), config.configDir, "projects", projectPath);
 
-      const sessionFile = await findLatestSessionFile(projectDir, config.sessionFileExtension);
+      const sessionFile = await findLatestSessionFile(projectDir);
       if (!sessionFile) {
         // No session file found — cannot determine activity
         return null;
@@ -933,12 +787,11 @@ export function createAgentPlugin(config: AgentPluginConfig, overrides?: Partial
     async getSessionInfo(session: Session): Promise<AgentSessionInfo | null> {
       if (!session.workspacePath) return null;
 
-      const projectDir = config.getSessionDir
-        ? config.getSessionDir(session.workspacePath)
-        : join(homedir(), config.configDir, "projects", toAgentProjectPath(session.workspacePath));
+      const projectPath = toAgentProjectPath(session.workspacePath);
+      const projectDir = join(homedir(), config.configDir, "projects", projectPath);
 
       // Find the latest session JSONL file
-      const sessionFile = await findLatestSessionFile(projectDir, config.sessionFileExtension);
+      const sessionFile = await findLatestSessionFile(projectDir);
       if (!sessionFile) return null;
 
       // Parse only the tail — summaries are always near the end, files can be 100MB+
@@ -946,7 +799,7 @@ export function createAgentPlugin(config: AgentPluginConfig, overrides?: Partial
       if (lines.length === 0) return null;
 
       // Extract session ID from filename
-      const agentSessionId = basename(sessionFile, config.sessionFileExtension ?? ".jsonl");
+      const agentSessionId = basename(sessionFile, ".jsonl");
 
       const summaryResult = extractSummary(lines);
       return {
@@ -960,16 +813,15 @@ export function createAgentPlugin(config: AgentPluginConfig, overrides?: Partial
     async getRestoreCommand(session: Session, project: ProjectConfig): Promise<string | null> {
       if (!session.workspacePath) return null;
 
-      const projectDir = config.getSessionDir
-        ? config.getSessionDir(session.workspacePath)
-        : join(homedir(), config.configDir, "projects", toAgentProjectPath(session.workspacePath));
+      const projectPath = toAgentProjectPath(session.workspacePath);
+      const projectDir = join(homedir(), config.configDir, "projects", projectPath);
 
       // Find the latest session JSONL file
-      const sessionFile = await findLatestSessionFile(projectDir, config.sessionFileExtension);
+      const sessionFile = await findLatestSessionFile(projectDir);
       if (!sessionFile) return null;
 
       // Extract session UUID from filename (e.g. "abc123-def456.jsonl" → "abc123-def456")
-      const sessionUuid = basename(sessionFile, config.sessionFileExtension ?? ".jsonl");
+      const sessionUuid = basename(sessionFile, ".jsonl");
       if (!sessionUuid) return null;
 
       // Build resume command
@@ -989,15 +841,10 @@ export function createAgentPlugin(config: AgentPluginConfig, overrides?: Partial
 
     async setupWorkspaceHooks(
       workspacePath: string,
-      hookConfig: WorkspaceHooksConfig,
+      _hookConfig: WorkspaceHooksConfig,
     ): Promise<void> {
       const hookScriptPath = join(workspacePath, config.configDir, "metadata-updater.sh");
-      // Prefix AO_DATA_DIR so the hook writes to the configured data directory
-      // rather than the default $HOME/.ao-sessions.
-      const hookCommand = `AO_DATA_DIR=${shellEscape(hookConfig.dataDir)} ${shellEscape(hookScriptPath)}`;
-      await setupHookInWorkspace(workspacePath, config.configDir, hookCommand, config.hookToolMatcher ?? "Bash");
-      // Also configure MCP mail server for agent coordination
-      await setupMcpMailInWorkspace(workspacePath, config.configDir);
+      await setupHookInWorkspace(workspacePath, config.configDir, hookScriptPath);
     },
 
     async postLaunchSetup(session: Session): Promise<void> {
@@ -1007,10 +854,7 @@ export function createAgentPlugin(config: AgentPluginConfig, overrides?: Partial
         config.configDir,
         "metadata-updater.sh",
       );
-      // postLaunchSetup does not receive hookConfig — use the env-var default
-      await setupHookInWorkspace(session.workspacePath, config.configDir, shellEscape(hookScriptPath), config.hookToolMatcher ?? "Bash");
-      // Also configure MCP mail server for agent coordination
-      await setupMcpMailInWorkspace(session.workspacePath, config.configDir);
+      await setupHookInWorkspace(session.workspacePath, config.configDir, hookScriptPath);
     },
 
     ...overrides,
@@ -1021,11 +865,6 @@ export function createAgentPlugin(config: AgentPluginConfig, overrides?: Partial
 // Internal helpers
 // =============================================================================
 
-/**
- * Normalize an agent permission mode string to a canonical value.
- * Maps the legacy "skip" alias to "permissionless"; returns undefined for
- * unrecognised or missing values.
- */
 function normalizePermissionMode(
   mode: string | undefined,
 ): "permissionless" | "default" | "auto-edit" | "suggest" | undefined {

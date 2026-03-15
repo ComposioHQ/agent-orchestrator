@@ -253,8 +253,9 @@
               initial <code>sendMessage()</code> call post-launch.
             </li>
             <li>
-              <strong>Cost not tracked</strong>: <code>defaultCostRate</code> was removed from config.
-              Cost estimation returns 0 until Cursor exposes per-token costs in its output.
+              <strong>Cost estimation</strong>: Uses Claude Sonnet pricing as a placeholder
+              (<code>$3/M</code> input, <code>$15/M</code> output). Cursor does not expose
+              per-token costs in its JSONL output.
             </li>
           </ul>
         </article>
