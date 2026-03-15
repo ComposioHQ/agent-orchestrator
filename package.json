@@ -22,7 +22,7 @@
     "clean": "pnpm -r clean",
     "changeset": "changeset",
     "version-packages": "changeset version",
-    "release": "pnpm -r --filter '!@composio/ao-web' build && changeset publish",
+    "release": "pnpm -r build && changeset publish",
     "prepare": "husky",
     "postinstall": "node scripts/rebuild-node-pty.js"
   },

@@ -24,11 +24,12 @@
       "@composio/ao-plugin-notifier-webhook",
       "@composio/ao-plugin-notifier-composio",
       "@composio/ao-plugin-terminal-iterm2",
-      "@composio/ao-plugin-terminal-web"
+      "@composio/ao-plugin-terminal-web",
+      "@composio/ao-web"
     ]
   ],
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": ["@composio/ao-web", "@composio/ao-integration-tests"]
+  "ignore": ["@composio/ao-integration-tests"]
 }

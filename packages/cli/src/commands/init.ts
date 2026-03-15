@@ -7,6 +7,7 @@ import chalk from "chalk";
 import type { Command } from "commander";
 import { generateSessionPrefix } from "@composio/ao-core";
 import { git, gh, execSilent } from "../lib/shell.js";
+import { detectDefaultBranch } from "../lib/git-utils.js";
 import { findFreePort, MAX_PORT_SCAN } from "../lib/web-dir.js";
 import {
   detectProjectType,
@@ -39,48 +40,7 @@ interface EnvironmentInfo {
   hasSlackWebhook: boolean;
 }
 
-async function detectDefaultBranch(
-  workingDir: string,
-  ownerRepo: string | null,
-): Promise<string | null> {
-  // Method 1: Try to get from git symbolic-ref (most reliable)
-  const symbolicRef = await git(["symbolic-ref", "refs/remotes/origin/HEAD"], workingDir);
-  if (symbolicRef) {
-    // Output: refs/remotes/origin/main
-    const match = symbolicRef.match(/refs\/remotes\/origin\/(.+)$/);
-    if (match) {
-      return match[1];
-    }
-  }
-
-  // Method 2: Try GitHub API via gh CLI
-  if (ownerRepo) {
-    const ghResult = await gh([
-      "repo",
-      "view",
-      ownerRepo,
-      "--json",
-      "defaultBranchRef",
-      "-q",
-      ".defaultBranchRef.name",
-    ]);
-    if (ghResult) {
-      return ghResult;
-    }
-  }
-
-  // Method 3: Check which common branch exists locally
-  const commonBranches = ["main", "master", "next", "develop"];
-  for (const branch of commonBranches) {
-    const exists = await git(["rev-parse", "--verify", `origin/${branch}`], workingDir);
-    if (exists) {
-      return branch;
-    }
-  }
-
-  // Fallback: return "main" as a reasonable default
-  return "main";
-}
+// detectDefaultBranch is shared — see packages/cli/src/lib/git-utils.ts
 
 async function detectEnvironment(workingDir: string): Promise<EnvironmentInfo> {
   // Check if in git repo
@@ -144,11 +104,10 @@ async function detectEnvironment(workingDir: string): Promise<EnvironmentInfo> {
 export function registerInit(program: Command): void {
   program
     .command("init")
-    .description("Interactive setup wizard — creates agent-orchestrator.yaml")
+    .description("Auto-detect project and create agent-orchestrator.yaml")
     .option("-o, --output <path>", "Output file path", "agent-orchestrator.yaml")
-    .option("--auto", "Auto-generate config with sensible defaults (no prompts)")
-    .option("--smart", "Analyze project and generate custom rules (coming soon — requires --auto)")
-    .action(async (opts: { output: string; auto?: boolean; smart?: boolean }) => {
+    .option("-i, --interactive", "Run the full interactive setup wizard instead of auto-detection")
+    .action(async (opts: { output: string; interactive?: boolean }) => {
       const outputPath = resolve(opts.output);
 
       if (existsSync(outputPath)) {
@@ -157,16 +116,9 @@ export function registerInit(program: Command): void {
         process.exit(1);
       }
 
-      // Validate --smart requires --auto
-      if (opts.smart && !opts.auto) {
-        console.error(chalk.red("Error: --smart requires --auto"));
-        console.log(chalk.dim("Use: ao init --auto --smart"));
-        process.exit(1);
-      }
-
-      // Handle --auto mode
-      if (opts.auto) {
-        await handleAutoMode(outputPath, opts.smart || false);
+      // Default: auto mode. Use --interactive for the wizard.
+      if (!opts.interactive) {
+        await handleAutoMode(outputPath, false);
         return;
       }
 
@@ -367,17 +319,18 @@ export function registerInit(program: Command): void {
         // Success message and next steps
         console.log(chalk.green(`\n✓ Config written to ${outputPath}\n`));
         console.log(chalk.bold("Next steps:\n"));
-        console.log("  1. Review the config (optional):");
-        console.log(chalk.cyan(`     nano ${outputPath}\n`));
-        console.log("  2. Start orchestrator + dashboard:");
+        console.log(chalk.dim(`  Run the following commands from this directory (${workingDir}):\n`));
+        console.log("  1. Start orchestrator + dashboard:");
         console.log(chalk.cyan("     ao start\n"));
 
         if (projectId) {
-          console.log("  3. Spawn agent sessions:");
+          console.log("  2. Spawn agent sessions:");
           console.log(chalk.cyan(`     ao spawn ${projectId} ISSUE-123\n`));
+          console.log("  Want to add more projects?");
+          console.log(chalk.cyan("     ao add-project ~/path/to/another-repo\n"));
         } else {
-          console.log("  3. Add a project to the config:");
-          console.log(chalk.cyan(`     nano ${outputPath}\n`));
+          console.log("  2. Add a project to the config:");
+          console.log(chalk.cyan(`     ao add-project ~/path/to/your-repo\n`));
         }
 
         console.log(chalk.dim("See SETUP.md for detailed configuration options.\n"));
@@ -397,16 +350,11 @@ export function registerInit(program: Command): void {
     });
 }
 
-async function handleAutoMode(outputPath: string, smart: boolean): Promise<void> {
+async function handleAutoMode(outputPath: string, _smart: boolean): Promise<void> {
   const workingDir = cwd();
 
   console.log(chalk.bold.cyan("\n  Agent Orchestrator — Auto Setup\n"));
-
-  if (smart) {
-    console.log(chalk.dim("  🤖 Analyzing your project...\n"));
-  } else {
-    console.log(chalk.dim("  🚀 Auto-generating config with smart defaults...\n"));
-  }
+  console.log(chalk.dim("  Detecting project and generating config...\n"));
 
   // Detect environment
   const env = await detectEnvironment(workingDir);
@@ -434,13 +382,6 @@ async function handleAutoMode(outputPath: string, smart: boolean): Promise<void>
   }
 
   console.log();
-
-  // Generate agent rules
-  if (smart) {
-    // TODO: Implement AI-powered rule generation in future PR
-    console.log(chalk.yellow("  ⚠ AI-powered rule generation not yet implemented"));
-    console.log(chalk.dim("  Using template-based rules for now...\n"));
-  }
 
   const agentRules = generateRulesFromTemplates(projectType);
 
@@ -510,6 +451,8 @@ async function handleAutoMode(outputPath: string, smart: boolean): Promise<void>
   // Show next steps
   console.log(chalk.bold("Next steps:\n"));
 
+  console.log(chalk.dim(`  Run the following commands from this directory (${workingDir}):\n`));
+
   if (hasPlaceholderRepo) {
     console.log("  1. Edit config and update 'repo' field:");
     console.log(chalk.cyan(`     nano ${outputPath}\n`));
@@ -518,12 +461,12 @@ async function handleAutoMode(outputPath: string, smart: boolean): Promise<void>
     console.log("  3. Spawn agent sessions:");
     console.log(chalk.cyan(`     ao spawn ${projectId} ISSUE-123\n`));
   } else {
-    console.log("  1. Review the config (optional):");
-    console.log(chalk.cyan(`     nano ${outputPath}\n`));
-    console.log("  2. Start orchestrator + dashboard:");
+    console.log("  1. Start orchestrator + dashboard:");
     console.log(chalk.cyan("     ao start\n"));
-    console.log("  3. Spawn agent sessions:");
+    console.log("  2. Spawn agent sessions:");
     console.log(chalk.cyan(`     ao spawn ${projectId} ISSUE-123\n`));
+    console.log("  Want to add more projects?");
+    console.log(chalk.cyan("     ao add-project ~/path/to/another-repo\n"));
   }
 
   // Show warnings

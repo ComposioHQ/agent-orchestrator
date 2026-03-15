@@ -44,27 +44,40 @@ Agent Orchestrator manages fleets of AI coding agents working in parallel on you
 
 ## Quick Start
 
-**Option A — From a repo URL (fastest):**
+**Option A — Install via npm (recommended):**
 
 ```bash
-# Install
+npm install -g @composio/agent-orchestrator
+
+# Permission denied? Use one of these:
+sudo npm install -g @composio/agent-orchestrator   # quick fix
+npx @composio/agent-orchestrator                    # no install needed
+```
+
+> **Prerequisites:** [Node.js 20+](https://nodejs.org), [Git 2.25+](https://git-scm.com), [tmux](https://github.com/tmux/tmux/wiki/Installing), [`gh` CLI](https://cli.github.com). Install tmux via `brew install tmux` (macOS) or `sudo apt install tmux` (Linux).
+
+**Option B — Install from source (for contributors):**
+
+```bash
 git clone https://github.com/ComposioHQ/agent-orchestrator.git
 cd agent-orchestrator && bash scripts/setup.sh
-
-# One command to clone, configure, and launch
-ao start https://github.com/your-org/your-repo
 ```
 
-Auto-detects language, package manager, SCM platform, and default branch. Generates `agent-orchestrator.yaml` and starts the dashboard + orchestrator.
-
-**Option B — From an existing local repo:**
+Then set up your project:
 
 ```bash
-cd ~/your-project && ao init --auto
+# From a repo URL (fastest — clones, configures, and launches in one command)
+ao start https://github.com/your-org/your-repo
+
+# Or from an existing local repo
+cd ~/your-project && ao init    # auto-detects everything, zero prompts
 ao start
+
+# Add more projects to an existing setup
+ao add-project ~/path/to/another-repo
 ```
 
-Then spawn agents:
+Spawn agents:
 
 ```bash
 ao spawn my-project 123    # GitHub issue, Linear ticket, or ad-hoc
@@ -142,6 +155,10 @@ See [`agent-orchestrator.yaml.example`](agent-orchestrator.yaml.example) for the
 ## CLI
 
 ```bash
+ao init                                # Auto-detect project and generate config
+ao init --interactive                  # Full setup wizard with manual prompts
+ao add-project <path>                  # Add another project to existing config
+ao start [project]                     # Start dashboard + orchestrator
 ao status                              # Overview of all sessions
 ao spawn <project> [issue]             # Spawn an agent
 ao send <session> "Fix the tests"      # Send instructions

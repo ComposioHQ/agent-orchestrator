@@ -57,35 +57,51 @@ Comprehensive guide to installing, configuring, and troubleshooting Agent Orches
 
 ## Installation
 
-### Build from Source (Current Method)
+### Install via npm (recommended)
 
-The package is not yet published to npm. Install by building from source:
+```bash
+npm install -g @composio/agent-orchestrator
+
+# Verify
+ao --version
+```
+
+This installs the `ao` CLI globally along with all default plugins and the web dashboard.
+
+**Permission denied (EACCES)?** This is common on macOS. Three options:
+
+```bash
+# Option 1: Use sudo
+sudo npm install -g @composio/agent-orchestrator
+
+# Option 2: Use npx (no global install needed)
+npx @composio/agent-orchestrator start
+
+# Option 3: Fix npm permissions permanently (recommended)
+mkdir -p ~/.npm-global
+npm config set prefix '~/.npm-global'
+echo 'export PATH=~/.npm-global/bin:$PATH' >> ~/.zshrc
+source ~/.zshrc
+npm install -g @composio/agent-orchestrator
+```
+
+### Build from Source (for contributors)
+
+If you want to develop or contribute to Agent Orchestrator:
 
 ```bash
 # Clone the repository
 git clone https://github.com/ComposioHQ/agent-orchestrator
 cd agent-orchestrator
 
-# Install dependencies (requires pnpm)
-pnpm install
-
-# Build all packages
-pnpm build
-
-# Link CLI globally
-npm link -g packages/cli
+# Run the setup script (installs deps, builds, links CLI)
+bash scripts/setup.sh
 
 # Verify
 ao --version
 ```
 
-> **Coming soon:** `npm install -g @composio/ao-cli` once published to npm.
-
-**If you don't have pnpm:**
-
-```bash
-npm install -g pnpm
-```
+The setup script handles pnpm installation, dependency resolution, building all packages, and linking the `ao` command globally (with automatic permission handling on macOS).
 
 ## First-Time Configuration
 

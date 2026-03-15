@@ -14,6 +14,7 @@ import { registerLifecycleWorker } from "./commands/lifecycle-worker.js";
 import { registerVerify } from "./commands/verify.js";
 import { registerDoctor } from "./commands/doctor.js";
 import { registerUpdate } from "./commands/update.js";
+import { registerAddProject } from "./commands/add-project.js";
 
 const program = new Command();
 
@@ -37,5 +38,6 @@ registerLifecycleWorker(program);
 registerVerify(program);
 registerDoctor(program);
 registerUpdate(program);
+registerAddProject(program);
 
 program.parse();
