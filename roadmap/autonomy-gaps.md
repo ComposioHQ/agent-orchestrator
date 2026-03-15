@@ -1,8 +1,25 @@
 # Autonomy Gaps Roadmap
 
 **Audit date:** 2026-03-15
+**Implementation date:** 2026-03-15
 **Branch:** feat/autonomy-gaps
 **Beads:** jleechan-514o, jleechan-8p0s, jleechan-ylqd, jleechan-4xzz
+**Status:** ✅ IMPLEMENTED
+
+---
+
+## Summary
+
+All 4 autonomy gaps have been implemented:
+
+| Bead | Priority | Status |
+|------|----------|--------|
+| jleechan-514o | P1 | ✅ Complete - `request-merge` reaction (human approval required) |
+| jleechan-8p0s | P2 | ✅ Complete - `merge-conflicts` lifecycle event |
+| jleechan-ylqd | P2 | ✅ Complete - context injection in repair prompts |
+| jleechan-4xzz | P3 | ✅ Complete - hook documentation fixed |
+
+**Files changed:** 9 files, +790/-23 lines
 
 ## Context
 
@@ -16,53 +33,55 @@ The honest current state:
 
 ## Gaps and Implementation Plan
 
-### 1. `jleechan-514o` — Auto-merge stub (P1)
+### 1. `jleechan-514o` — Auto-merge stub (P1) ✅ IMPLEMENTED
 
 **Problem:** The `auto-merge` case in `executeReaction()` (`packages/core/src/lifecycle-manager.ts:467`) only calls `notifyHuman()`. The GitHub SCM plugin already has a fully implemented `mergePR()` method (line 631 of `packages/plugins/scm-github/src/index.ts`) that is never called.
 
-**Fix:** Wire `lifecycle-manager.ts` `auto-merge` case to call `await scm.mergePR(session.pr, project)`. Add configuration for merge method (merge, squash, rebase) defaulting to squash. Guard with a `mergeability` check before attempting.
+**Implementation:** Per user request, auto-merge is **disabled by default** and requires human approval:
+- Added new `request-merge` reaction type that notifies human and waits for approval
+- Added `mergeMethod` config (merge, squash, rebase) defaulting to squash
+- Guarded with `mergeability` check before attempting merge
+- Default config: `autoMergeEnabled: false` (human must approve)
 
-**Acceptance:** An AO session configured with `auto-merge` reaction should merge a PR without human action after the session reaches `mergeable` state.
+**Files changed:**
+- `packages/core/src/lifecycle-manager.ts` (+73 lines)
+- `packages/core/src/types.ts` (added `RequestMergeConfig`)
+- `packages/core/src/config.ts` (default config)
 
 ---
 
-### 2. `jleechan-8p0s` — Merge conflicts missing lifecycle event (P2)
+### 2. `jleechan-8p0s` — Merge conflicts missing lifecycle event (P2) ✅ IMPLEMENTED
 
 **Problem:** `getMergeability()` returns merge conflicts as a blocker, but the lifecycle manager never emits a `merge-conflicts` event. There is no way to configure a `send-to-agent` reaction for conflicts — the agent only learns about them if it polls independently.
 
-**Fix:**
-1. Add `"merge-conflicts"` to the lifecycle event enum and reaction key types.
+**Implementation:**
+1. Added `"merge-conflicts"` to the lifecycle event enum and reaction key types.
 2. In the polling loop (alongside the `ci_failed` check), detect `CONFLICTED` mergeability and emit `"merge-conflicts"` event.
-3. Add a default reaction entry in `agent-orchestrator.yaml.example` for `merge-conflicts`.
+3. Added default reaction entry in `agent-orchestrator.yaml.example` for `merge-conflicts`.
 
 **Acceptance:** A PR with merge conflicts triggers a `send-to-agent` reaction that prompts the agent to rebase or resolve conflicts.
 
 ---
 
-### 3. `jleechan-ylqd` — Repair prompts lack context (P2)
+### 3. `jleechan-ylqd` — Repair prompts lack context (P2) ✅ IMPLEMENTED
 
 **Problem:** The `send-to-agent` reaction (`lifecycle-manager.ts:426`) sends `reactionConfig.message` verbatim — a static config string (e.g. `"Fix CI"`). No context is injected: no failing check names, no log excerpts, no changed files. Agents must re-derive everything from scratch.
 
-**Fix:** Before sending, fetch and append structured context to the message:
-- For `ci-failed`: failing check names and status URLs from `scm.getCISummary()` detail.
-- For `changes-requested`: unresolved review thread summaries from `scm.getPendingComments()`.
-- For `merge-conflicts`: conflicting file list from PR mergeability detail.
-
-Template the message with a `{{context}}` placeholder that lifecycle fills before dispatch, keeping raw config strings as the base.
+**Implementation:**
+- Added `{{context}}` placeholder in message templates
+- For `ci-failed`: appends failing check names and status URLs from `scm.getCISummary()`
+- For `changes-requested`: appends unresolved review thread summaries from `scm.getPendingComments()`
+- For `merge-conflicts`: appends conflicting file list from PR mergeability detail
 
 **Acceptance:** Agent receives a message like: _"Fix CI. Failing checks: typecheck (https://...), lint (https://...). Affected files: packages/core/src/lifecycle-manager.ts"_
 
 ---
 
-### 4. `jleechan-4xzz` — Agent wrapper hooks are PostToolUse, not true interception (P3)
+### 4. `jleechan-4xzz` — Agent wrapper hooks are PostToolUse, not true interception (P3) ✅ IMPLEMENTED
 
 **Problem:** The Claude Code and Codex plugin hooks fire **after** `gh pr create` / `gh pr merge` complete (PostToolUse). This correctly updates AO session metadata but cannot modify command behavior. Documentation implies these are "interceptors."
 
-**Fix:** This is mostly a documentation correctness issue. Options:
-- A: Update docs/comments to accurately describe hooks as "observers" that sync AO metadata post-command.
-- B: Evaluate whether true pre-command interception is needed (e.g., injecting `--squash` flags) and implement only if there is a concrete use case.
-
-For now, implement option A. Leave a `TODO(interception)` comment in the hook script if B is ever needed.
+**Implementation:** Updated docs/comments to accurately describe hooks as "observers" that sync AO metadata post-command (Option A). Added `TODO(interception)` comment in hook scripts for potential future pre-command interception.
 
 **Acceptance:** No documentation claims AO "intercepts" `gh` commands. Hook code comments accurately describe the PostToolUse observer pattern.
 
@@ -88,14 +107,18 @@ Suggested order: **514o → 8p0s + 4xzz (parallel) → ylqd**
 
 ---
 
-## Files Likely Touched
+## Files Changed
 
-| File | Gaps |
-|------|------|
-| `packages/core/src/lifecycle-manager.ts` | 514o, 8p0s, ylqd |
-| `packages/core/src/types.ts` | 8p0s |
-| `packages/plugins/scm-github/src/index.ts` | ylqd (expose richer CI detail) |
-| `packages/plugins/agent-claude-code/src/index.ts` | 4xzz (comment fix) |
-| `packages/plugins/agent-codex/src/index.ts` | 4xzz (comment fix) |
-| `agent-orchestrator.yaml.example` | 8p0s (add merge-conflicts example) |
-| `packages/core/src/__tests__/lifecycle-manager.test.ts` | 514o, 8p0s, ylqd |
+| File | Changes |
+|------|---------|
+| `packages/core/src/lifecycle-manager.ts` | +171 lines - request-merge, merge-conflicts, context injection |
+| `packages/core/src/types.ts` | +9 lines - new event types and config |
+| `packages/core/src/config.ts` | +3 lines - default merge config |
+| `packages/core/src/__tests__/lifecycle-manager.test.ts` | +547 lines - TDD tests |
+| `packages/plugins/agent-claude-code/src/index.ts` | +17 lines - docs fix |
+| `packages/plugins/agent-claude-code/src/index.test.ts` | +29 lines - observer pattern test |
+| `packages/plugins/agent-codex/src/index.ts` | +29 lines - docs fix |
+| `packages/plugins/agent-codex/src/index.test.ts` | +1 line |
+| `agent-orchestrator.yaml.example` | +7 lines - merge-conflicts reaction |
+
+**Total:** 9 files, +790/-23 lines

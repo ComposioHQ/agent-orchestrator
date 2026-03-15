@@ -120,6 +120,13 @@ projects:
 #     action: send-to-agent
 #     escalateAfter: 30m
 #
+#   merge-conflicts:
+#     auto: true
+#     action: send-to-agent
+#     message: "Resolve merge conflicts and push the resolution."
+#     retries: 3
+#     escalateAfter: 1h
+#
 #   approved-and-green:
 #     auto: false              # set to true for auto-merge
 #     action: notify

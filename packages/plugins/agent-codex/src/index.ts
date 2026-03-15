@@ -72,8 +72,20 @@ export const manifest = {
 };
 
 // =============================================================================
-// Shell Wrappers (automatic metadata updates — like Claude Code's PostToolUse)
+// Shell Wrappers (PostToolUse Observer Pattern)
 // =============================================================================
+/*
+ * NOTE: These are PATH-based wrappers that wrap gh/git commands to sync
+ * session metadata AFTER command completion (post-command observer pattern).
+ * They CANNOT modify command behavior or inject flags — they only observe
+ * the output and update AO metadata.
+ *
+ * This approach is similar to Claude Code's PostToolUse hooks but uses
+ * shell wrappers instead of the Claude Code hooks system.
+ *
+ * TODO(interception): If pre-command interception is needed (e.g., injecting
+ * --squash flags), implement a different approach.
+ */
 
 /**
  * Helper script sourced by both gh and git wrappers.
@@ -132,8 +144,11 @@ update_ao_metadata() {
 `;
 
 /**
- * gh wrapper — intercepts `gh pr create` and `gh pr merge` to auto-update
- * session metadata. All other commands pass through transparently.
+ * gh wrapper — observes `gh pr create` and `gh pr merge` output to auto-update
+ * session metadata AFTER command completion. All other commands pass through.
+ *
+ * NOTE: This is a post-command observer, NOT an interceptor.
+ * The command runs first, then this wrapper captures output to sync metadata.
  */
 const GH_WRAPPER = `#!/usr/bin/env bash
 # ao gh wrapper — auto-updates session metadata on PR operations
@@ -200,8 +215,10 @@ esac
 `;
 
 /**
- * git wrapper — intercepts branch creation commands to auto-update metadata.
- * All other commands pass through transparently.
+ * git wrapper — observes branch creation commands to auto-update metadata
+ * AFTER command completion. All other commands pass through transparently.
+ *
+ * NOTE: This is a post-command observer, NOT an interceptor.
  */
 const GIT_WRAPPER = `#!/usr/bin/env bash
 # ao git wrapper — auto-updates session metadata on branch operations
@@ -652,7 +669,7 @@ function createCodexAgent(): Agent {
         env["AO_ISSUE_ID"] = config.issueId;
       }
 
-      // Prepend ~/.ao/bin to PATH so our gh/git wrappers intercept commands.
+      // Prepend ~/.ao/bin to PATH so our gh/git wrappers observe commands post-execution.
       // The wrappers strip this directory from PATH before calling the real
       // binary, so there's no infinite recursion.
       env["PATH"] = buildAgentPath(process.env["PATH"]);
