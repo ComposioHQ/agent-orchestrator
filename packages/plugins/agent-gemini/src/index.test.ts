@@ -195,20 +195,20 @@ describe("getLaunchCommand", () => {
     expect(cmd).not.toContain("-p");
   });
 
-  it("does not include --append-system-prompt (unsupported by Gemini CLI)", () => {
-    const cmd = agent.getLaunchCommand(
+  it("omits system prompt args (Gemini CLI delivers prompts post-launch, not via flags)", () => {
+    const cmdFromInline = agent.getLaunchCommand(
       makeLaunchConfig({ systemPrompt: "You are a helper", prompt: "Do the task" }),
     );
-    expect(cmd).not.toContain("--append-system-prompt");
-    expect(cmd).not.toContain("Do the task");
-  });
+    expect(cmdFromInline).not.toContain("--append-system-prompt");
+    expect(cmdFromInline).not.toContain("You are a helper");
+    expect(cmdFromInline).not.toContain("Do the task");
 
-  it("does not include systemPromptFile flag (unsupported by Gemini CLI)", () => {
-    const cmd = agent.getLaunchCommand(
+    const cmdFromFile = agent.getLaunchCommand(
       makeLaunchConfig({ systemPromptFile: "/tmp/prompt.md", prompt: "Do the task" }),
     );
-    expect(cmd).not.toContain("--append-system-prompt");
-    expect(cmd).not.toContain("Do the task");
+    expect(cmdFromFile).not.toContain("--append-system-prompt");
+    expect(cmdFromFile).not.toContain("/tmp/prompt.md");
+    expect(cmdFromFile).not.toContain("Do the task");
   });
 });
 
