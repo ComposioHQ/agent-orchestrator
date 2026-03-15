@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Agent Cursor Plugin — Design Reference</title>
+    <title>Agent Gemini Plugin — Design Reference</title>
     <style>
       :root {
         --bg: #f2efe7;
@@ -112,16 +112,16 @@
   <body>
     <main class="wrap">
       <section class="hero">
-        <h1>Agent Cursor Plugin</h1>
+        <h1>Agent Gemini Plugin</h1>
         <p class="muted">
-          Design reference for <code>@composio/ao-plugin-agent-cursor</code> — integrates
-          Cursor Agent CLI into the AO plugin system as a first-class agent backend.
+          Design reference for <code>@composio/ao-plugin-agent-gemini</code> — integrates
+          Gemini CLI into the AO plugin system as a first-class agent backend.
         </p>
         <p>
-          <span class="tag">process: cursor-agent</span>
-          <span class="tag">session path: ~/.cursor/projects/</span>
+          <span class="tag">process: gemini</span>
+          <span class="tag">session path: ~/.gemini/projects/</span>
           <span class="tag">runtime: tmux</span>
-          <span class="tag">permission flag: --force</span>
+          <span class="tag">permission flag: --yolo</span>
         </p>
       </section>
 
@@ -129,8 +129,8 @@
         <article class="card">
           <h2>Purpose</h2>
           <p>
-            Wraps the <code>cursor-agent</code> CLI so AO can spawn, supervise, resume, and
-            introspect Cursor Agent sessions the same way it manages Claude Code and Codex
+            Wraps the <code>gemini</code> CLI so AO can spawn, supervise, resume, and
+            introspect Gemini CLI sessions the same way it manages Claude Code and Codex
             sessions. No AO core changes required — the plugin implements the standard
             <code>Agent</code> interface from <code>@composio/ao-core</code>.
           </p>
@@ -141,13 +141,14 @@
           <p>
             Both plugins are thin wrappers around <code>@composio/ao-plugin-agent-base</code>,
             which provides the full <code>Agent</code> implementation via
-            <code>createAgentPlugin(config, overrides?)</code>. The two differ only in config:
+            <code>createAgentPlugin(config)</code>. The two differ only in config:
           </p>
           <ul>
-            <li>Process name: <code>cursor-agent</code> vs <code>claude</code></li>
-            <li>Session directory: <code>~/.cursor/projects/</code> vs <code>~/.claude/projects/</code></li>
-            <li>Permission flag: <code>--force</code> vs <code>--dangerously-skip-permissions</code></li>
-            <li>System prompt: not supported (undefined) vs <code>--append-system-prompt</code></li>
+            <li>Process name: <code>gemini</code> vs <code>claude</code></li>
+            <li>Session directory: <code>~/.gemini/projects/</code> vs <code>~/.claude/projects/</code></li>
+            <li>Permission flag: <code>--yolo</code> vs <code>--dangerously-skip-permissions</code></li>
+            <li>No <code>--append-system-prompt</code> support in Gemini CLI</li>
+            <li>Cost rates: $0.10/$0.40 per M tokens vs $3/$15 (Gemini Flash baseline)</li>
           </ul>
           <p class="muted" style="margin-top:0.5rem;font-size:0.9rem;">
             Shared implementation lives in <code>packages/plugins/agent-base</code>.
@@ -159,20 +160,22 @@
         <article class="card">
           <h3>Launch</h3>
           <ul>
-            <li><code>cursor-agent</code> — base command</li>
-            <li><code>--force</code> — permissionless / auto-edit mode</li>
+            <li><code>gemini</code> — base command</li>
+            <li><code>-r / --resume &lt;sessionId&gt;</code> — resume existing session</li>
+            <li><code>--yolo</code> — auto-approval / permissionless mode</li>
             <li><code>--model &lt;name&gt;</code> — optional model override</li>
             <li>Prompt delivered post-launch via <code>sendMessage()</code></li>
+            <li>System prompts also delivered post-launch (no CLI flag support)</li>
           </ul>
         </article>
 
         <article class="card">
           <h3>Session Tracking</h3>
           <ul>
-            <li>JSONL files in <code>~/.cursor/projects/&lt;encoded-path&gt;/</code></li>
+            <li>JSONL files in <code>~/.gemini/projects/&lt;encoded-path&gt;/</code></li>
             <li>Latest file selected by <code>mtime</code></li>
             <li>Tail-parse for summary, cost, and session ID</li>
-            <li><code>toCursorProjectPath()</code> encodes workspace path identically to how Cursor CLI does</li>
+            <li><code>toGeminiProjectPath()</code> encodes workspace path identically to how Gemini CLI does</li>
           </ul>
         </article>
 
@@ -191,21 +194,27 @@
         <article class="card">
           <h2>Agent Interface Implementation</h2>
           <ul>
-            <li><code>getLaunchCommand(config)</code> — builds the <code>cursor-agent</code> CLI string</li>
+            <li><code>getLaunchCommand(config)</code> — builds the <code>gemini</code> CLI string</li>
             <li><code>getEnvironment(config)</code> — injects <code>AO_SESSION_ID</code> and metadata env vars</li>
-            <li><code>isProcessRunning(handle)</code> — checks tmux pane TTYs via <code>ps</code> for <code>cursor-agent</code></li>
+            <li><code>isProcessRunning(handle)</code> — checks tmux pane TTYs via <code>ps</code> for <code>gemini</code></li>
             <li><code>getActivityState(handle)</code> — JSONL mtime-based idle/working/stuck classification</li>
             <li><code>getSessionInfo(session)</code> — extracts summary, cost, and session UUID from JSONL tail</li>
-            <li><code>getWorkspaceHooks()</code> — installs <code>.cursor/metadata-updater.sh</code> hook</li>
+            <li><code>getWorkspaceHooks()</code> — installs metadata-updater hook</li>
           </ul>
         </article>
 
         <article class="card">
           <h2>Plugin Registration</h2>
-          <p>Registered in the core built-in plugin registry:</p>
-<pre><code>// packages/core/src/plugin-registry.ts
-{ slot: "agent", name: "cursor",
-  pkg: "@composio/ao-plugin-agent-cursor" },</code></pre>
+          <p>Registered as a built-in plugin in the AO plugin loader:</p>
+<pre><code>// packages/plugins/dist/index.js
+import geminiPlugin from "@composio/ao-plugin-agent-gemini";
+
+export const builtinPlugins = [
+  claudeCodePlugin,
+  codexPlugin,
+  geminiPlugin,   // ← added
+  ...
+];</code></pre>
           <p>
             Consumers can also override it per-project via <code>ao.config.json</code>
             <code>agentPlugin</code> key.
@@ -215,25 +224,22 @@
 
       <section class="grid two">
         <article class="card">
-          <h2>Differences from Claude Code</h2>
+          <h2>Key Differences from Claude Code</h2>
           <ul>
             <li>
-              <strong>Permission flag</strong>: <code>--force</code> vs
-              <code>--dangerously-skip-permissions</code>.
+              <strong>Permission flag</strong>: Gemini uses <code>--yolo</code> for
+              auto-approval; both <code>permissionless</code> and <code>auto-edit</code>
+              modes map to this flag.
             </li>
             <li>
-              <strong>No <code>--append-system-prompt</code></strong>: Cursor Agent CLI
-              does not support this flag; system context must be included in the first
-              <code>sendMessage()</code> call post-launch.
+              <strong>No system prompt flag</strong>: Gemini CLI has no
+              <code>--append-system-prompt</code> equivalent. System context and prompts
+              are both delivered post-launch via <code>sendMessage()</code>.
             </li>
             <li>
-              <strong>Session restore</strong>: Claude Code uses JSONL-derived UUIDs with
-              <code>--resume</code>; Cursor requires SQLite lookup (unimplemented, returns
-              <code>null</code>).
-            </li>
-            <li>
-              <strong>JSONL schema</strong>: Cursor session files follow a similar envelope
-              structure but use Cursor-specific event types for tool calls.
+              <strong>Cost estimation</strong>: Falls back to Gemini 2.0 Flash pricing
+              ($0.10/M input, $0.40/M output) when no direct <code>costUSD</code> field
+              is present in the JSONL.
             </li>
           </ul>
         </article>
@@ -242,20 +248,20 @@
           <h2>Constraints &amp; Known Gaps</h2>
           <ul>
             <li>
-              <strong>Session restore unimplemented</strong>: <code>getRestoreCommand</code>
-              returns <code>null</code>. Cursor stores sessions in SQLite at
-              <code>~/.cursor/chats/</code>, not JSONL. Resume requires SQLite introspection
-              (chat ID lookup) which is not yet implemented.
+              <strong>Interactive mode by design</strong>: AO never passes <code>-p</code> /
+              <code>--prompt</code> — that would cause one-shot exit. The agent is always
+              launched without a prompt, then driven via <code>sendMessage()</code>
+              (<code>promptDelivery: "post-launch"</code>). This is intentional, not a gap.
             </li>
             <li>
-              <strong>No system prompt at launch</strong>: Cursor Agent CLI has no equivalent
-              of <code>--append-system-prompt</code>. System context must be woven into the
-              initial <code>sendMessage()</code> call post-launch.
+              <strong>Cost estimation accuracy</strong>: Gemini 2.0 Flash pricing ($0.10/M
+              input, $0.40/M output) is used as a baseline. Multi-modal inputs and premium
+              models will be mis-estimated until Gemini CLI exposes per-call cost in JSONL.
             </li>
             <li>
-              <strong>Cost estimation</strong>: Uses Claude Sonnet pricing as a placeholder
-              (<code>$3/M</code> input, <code>$15/M</code> output). Cursor does not expose
-              per-token costs in its JSONL output.
+              <strong>No system prompt at launch</strong>: Gemini CLI has no
+              <code>--append-system-prompt</code> equivalent. System context must be woven
+              into the initial <code>sendMessage()</code> call post-launch.
             </li>
           </ul>
         </article>
@@ -265,18 +271,18 @@
         <article class="card">
           <h2>Testing</h2>
           <ul>
-            <li><code>src/index.test.ts</code> — manifest, launch command, process detection, session parsing (68 tests)</li>
+            <li><code>src/index.test.ts</code> — manifest, launch command, process detection, session parsing (67 tests)</li>
             <li><code>src/__tests__/activity-detection.test.ts</code> — JSONL mtime-based activity states with real temp directories (42 tests)</li>
-            <li>All 110 tests pass; no mocks of the filesystem in activity tests (real <code>fs</code> operations)</li>
+            <li>All 109 tests pass; no mocks of the filesystem in activity tests (real <code>fs</code> operations)</li>
           </ul>
         </article>
 
         <article class="card">
           <h2>Future Work</h2>
           <ul>
-            <li>Implement <code>getRestoreCommand</code> via SQLite introspection of <code>~/.cursor/chats/</code> to enable session resume</li>
-            <li>Update cost estimation when Cursor exposes token pricing in JSONL</li>
-            <li>Validate <code>--resume</code> chat ID parsing against Cursor CLI versioned output format</li>
+            <li>Make pricing configurable per-model so operators running non-Flash models get accurate estimates (currently hardcoded in <code>AgentPluginConfig.defaultCostRate</code>)</li>
+            <li>Update cost estimation when Gemini CLI exposes per-call token pricing in JSONL output</li>
+            <li>Investigate <code>--append-system-prompt</code> equivalent when Gemini CLI adds system prompt support</li>
           </ul>
         </article>
       </section>
