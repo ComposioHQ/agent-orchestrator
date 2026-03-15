@@ -1,11 +1,18 @@
-import { spawn } from "node:child_process";
 import { resolve } from "node:path";
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import chalk from "chalk";
 import type { Command } from "commander";
 import { loadConfig } from "@composio/ao-core";
-import { findWebDir, buildDashboardEnv, waitForPortAndOpen } from "../lib/web-dir.js";
-import { cleanNextCache, findRunningDashboardPid, findProcessWebDir, waitForPortFree } from "../lib/dashboard-rebuild.js";
+import { findWebDir, buildDashboardEnv, resolveDashboardRuntime, waitForPortAndOpen } from "../lib/web-dir.js";
+import {
+  assertDashboardRebuildAvailable,
+  cleanNextCache,
+  findRunningDashboardPid,
+  findProcessWebDir,
+  rebuildDashboard,
+  waitForPortFree,
+} from "../lib/dashboard-rebuild.js";
 
 export function registerDashboard(program: Command): void {
   program
@@ -39,6 +46,8 @@ export function registerDashboard(program: Command): void {
         const runningPid = await findRunningDashboardPid(port);
         const runningWebDir = runningPid ? await findProcessWebDir(runningPid) : null;
         const targetWebDir = runningWebDir ?? localWebDir;
+        assertDashboardRebuildAvailable(targetWebDir);
+        assertDashboardRebuildAvailable(localWebDir);
 
         if (runningPid) {
           // Kill the running server, clean .next, then start fresh below.
@@ -55,10 +64,13 @@ export function registerDashboard(program: Command): void {
         }
 
         await cleanNextCache(targetWebDir);
+        console.log(chalk.dim("Rebuilding dashboard bundle..."));
+        await rebuildDashboard(localWebDir);
         // Fall through to start the dashboard on this port.
       }
 
-      const webDir = localWebDir;
+      const runtime = resolveDashboardRuntime(localWebDir);
+      const webDir = runtime.webDir;
 
       console.log(chalk.bold(`Starting dashboard on http://localhost:${port}\n`));
 
@@ -69,11 +81,18 @@ export function registerDashboard(program: Command): void {
         config.directTerminalPort,
       );
 
-      const child = spawn("npx", ["next", "dev", "-p", String(port)], {
-        cwd: webDir,
-        stdio: ["inherit", "inherit", "pipe"],
-        env,
-      });
+      const child =
+        runtime.mode === "built"
+          ? spawn("node", [resolve(webDir, "scripts", "start-standalone.js")], {
+              cwd: webDir,
+              stdio: ["inherit", "inherit", "pipe"],
+              env,
+            })
+          : spawn("pnpm", ["run", "dev"], {
+              cwd: webDir,
+              stdio: ["inherit", "inherit", "pipe"],
+              env,
+            });
 
       const stderrChunks: string[] = [];
 
@@ -89,7 +108,13 @@ export function registerDashboard(program: Command): void {
       });
 
       child.on("error", (err) => {
-        console.error(chalk.red("Could not start dashboard. Ensure Next.js is installed."));
+        console.error(
+          chalk.red(
+            runtime.mode === "built"
+              ? "Could not start built dashboard. Ensure the bundle exists: pnpm build"
+              : "Could not start dashboard. Ensure Next.js is installed.",
+          ),
+        );
         console.error(chalk.dim(String(err)));
         process.exit(1);
       });
@@ -104,7 +129,7 @@ export function registerDashboard(program: Command): void {
       child.on("exit", (code) => {
         if (openAbort) openAbort.abort();
 
-        if (code !== 0 && code !== null && !opts.rebuild) {
+        if (code !== 0 && code !== null && !opts.rebuild && runtime.mode === "dev") {
           const stderr = stderrChunks.join("");
           if (looksLikeStaleBuild(stderr)) {
             console.error(

@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockExec, mockIsPortAvailable, mockExistsSync } = vi.hoisted(() => ({
+const { mockExec, mockIsPortAvailable, mockExistsSync, mockResolveDashboardRuntime } = vi.hoisted(() => ({
   mockExec: vi.fn(),
   mockIsPortAvailable: vi.fn(),
   mockExistsSync: vi.fn(),
+  mockResolveDashboardRuntime: vi.fn(),
 }));
 
 vi.mock("../../src/lib/shell.js", () => ({
@@ -12,6 +13,7 @@ vi.mock("../../src/lib/shell.js", () => ({
 
 vi.mock("../../src/lib/web-dir.js", () => ({
   isPortAvailable: mockIsPortAvailable,
+  resolveDashboardRuntime: mockResolveDashboardRuntime,
 }));
 
 vi.mock("node:fs", () => ({
@@ -24,6 +26,11 @@ beforeEach(() => {
   mockExec.mockReset();
   mockIsPortAvailable.mockReset();
   mockExistsSync.mockReset();
+  mockResolveDashboardRuntime.mockReset();
+  mockResolveDashboardRuntime.mockReturnValue({
+    mode: "dev",
+    webDir: "/web",
+  });
 });
 
 describe("preflight.checkPort", () => {

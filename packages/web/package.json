@@ -4,13 +4,21 @@
   "description": "Web dashboard for agent-orchestrator",
   "private": true,
   "type": "module",
+  "files": [
+    ".next/standalone",
+    ".next/static",
+    "dist",
+    "public",
+    "scripts/start-standalone.js"
+  ],
   "scripts": {
     "dev": "concurrently \"npm:dev:next\" \"npm:dev:terminal\" \"npm:dev:direct-terminal\"",
     "dev:next": "next dev -p ${PORT:-3000}",
     "dev:terminal": "tsx watch server/terminal-websocket.ts",
     "dev:direct-terminal": "tsx watch server/direct-terminal-ws.ts",
-    "build": "next build",
+    "build": "next build && tsc -p tsconfig.server.json",
     "start": "next start",
+    "start:standalone": "node scripts/start-standalone.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

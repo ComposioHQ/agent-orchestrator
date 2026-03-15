@@ -35,12 +35,13 @@ import { ensureLifecycleWorker, stopLifecycleWorker } from "../lib/lifecycle-ser
 import {
   findWebDir,
   buildDashboardEnv,
+  resolveDashboardRuntime,
   waitForPortAndOpen,
   isPortAvailable,
   findFreePort,
   MAX_PORT_SCAN,
 } from "../lib/web-dir.js";
-import { cleanNextCache } from "../lib/dashboard-rebuild.js";
+import { assertDashboardRebuildAvailable, cleanNextCache, rebuildDashboard } from "../lib/dashboard-rebuild.js";
 import { preflight } from "../lib/preflight.js";
 
 const DEFAULT_PORT = 3000;
@@ -225,6 +226,7 @@ async function handleUrlStart(
  * Returns the child process handle for cleanup.
  */
 async function startDashboard(
+  runtimeMode: "dev" | "built",
   port: number,
   webDir: string,
   configPath: string | null,
@@ -233,12 +235,20 @@ async function startDashboard(
 ): Promise<ChildProcess> {
   const env = await buildDashboardEnv(port, configPath, terminalPort, directTerminalPort);
 
-  const child = spawn("pnpm", ["run", "dev"], {
-    cwd: webDir,
-    stdio: "inherit",
-    detached: false,
-    env,
-  });
+  const child =
+    runtimeMode === "built"
+      ? spawn("node", [resolve(webDir, "scripts", "start-standalone.js")], {
+          cwd: webDir,
+          stdio: "inherit",
+          detached: false,
+          env,
+        })
+      : spawn("pnpm", ["run", "dev"], {
+          cwd: webDir,
+          stdio: "inherit",
+          detached: false,
+          env,
+        });
 
   child.on("error", (err) => {
     console.error(chalk.red("Dashboard failed to start:"), err.message);
@@ -297,18 +307,27 @@ async function runStartup(
     await preflight.checkBuilt(webDir);
 
     if (opts?.rebuild) {
+      spinner.start("Rebuilding dashboard bundle");
+      assertDashboardRebuildAvailable(webDir);
       await cleanNextCache(webDir);
+      await rebuildDashboard(webDir);
+      spinner.succeed("Dashboard bundle rebuilt");
     }
+
+    const runtime = resolveDashboardRuntime(webDir);
 
     spinner.start("Starting dashboard");
     dashboardProcess = await startDashboard(
+      runtime.mode,
       port,
       webDir,
       config.configPath,
       config.terminalPort,
       config.directTerminalPort,
     );
-    spinner.succeed(`Dashboard starting on http://localhost:${port}`);
+    spinner.succeed(
+      `Dashboard (${runtime.mode === "built" ? "built" : "dev"}) starting on http://localhost:${port}`,
+    );
     console.log(chalk.dim("  (Dashboard will be ready in a few seconds)\n"));
   }
 

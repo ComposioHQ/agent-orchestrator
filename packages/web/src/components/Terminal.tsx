@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { cn } from "@/lib/cn";
+import { fetchRuntimeConfig } from "@/lib/runtime-config";
 
 interface TerminalProps {
   sessionId: string;
@@ -18,23 +19,35 @@ export function Terminal({ sessionId }: TerminalProps) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const port = process.env.NEXT_PUBLIC_TERMINAL_PORT ?? "14800";
-    // Use current hostname instead of hardcoded localhost
-    const protocol = window.location.protocol;
-    const hostname = window.location.hostname;
-    // URL-encode sessionId to prevent special characters from breaking the URL
-    fetch(`${protocol}//${hostname}:${port}/terminal?session=${encodeURIComponent(sessionId)}`)
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json() as Promise<{ url: string }>;
+    let cancelled = false;
+
+    fetchRuntimeConfig()
+      .then(({ terminalPort }) => {
+        const protocol = window.location.protocol;
+        const hostname = window.location.hostname;
+        return fetch(
+          `${protocol}//${hostname}:${terminalPort}/terminal?session=${encodeURIComponent(sessionId)}`,
+        );
+      })
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json() as Promise<{ url: string }>;
       })
       .then((data) => {
-        setTerminalUrl(data.url);
+        if (!cancelled) {
+          setTerminalUrl(data.url);
+        }
       })
       .catch((err) => {
         console.error("[Terminal] Failed to get terminal URL:", err);
-        setError("Failed to connect to terminal server");
+        if (!cancelled) {
+          setError("Failed to connect to terminal server");
+        }
       });
+
+    return () => {
+      cancelled = true;
+    };
   }, [sessionId]);
 
   return (
