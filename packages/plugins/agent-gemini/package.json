@@ -34,7 +34,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@composio/ao-core": "workspace:*"
+    "@composio/ao-core": "workspace:*",
+    "@composio/ao-plugin-agent-base": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^25.2.3",
