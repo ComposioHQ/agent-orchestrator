@@ -15,6 +15,30 @@ import {
 } from "../lib/project-detection.js";
 
 const DEFAULT_PORT = 3000;
+function defaultProjectBaseDir(): string {
+  const configPath = process.env["AO_CONFIG_PATH"];
+  if (configPath) {
+    const resolved = resolve(configPath);
+    return resolve(resolved, "..");
+  }
+
+  const workingDir = cwd();
+  if (workingDir === "/projects" || workingDir.startsWith("/projects/")) {
+    return "/projects";
+  }
+
+  return process.env.HOME || "~";
+}
+
+function defaultProjectPath(projectId: string, repo?: string): string {
+  const repoName = repo?.split("/").pop()?.trim();
+  const leaf = repoName || projectId || "my-project";
+  const baseDir = defaultProjectBaseDir();
+  if (baseDir === "~") {
+    return `~/${leaf}`;
+  }
+  return resolve(baseDir, leaf);
+}
 
 async function prompt(
   rl: ReturnType<typeof createInterface>,
@@ -293,7 +317,7 @@ export function registerInit(program: Command): void {
           projectPath = await prompt(
             rl,
             "Local path to repo",
-            env.isGitRepo ? workingDir : `~/${projectId}`,
+            env.isGitRepo ? workingDir : defaultProjectPath(projectId, repo),
           );
           const defaultBranch = await prompt(rl, "Default branch", env.defaultBranch || "main");
 
@@ -448,7 +472,7 @@ async function handleAutoMode(outputPath: string, smart: boolean): Promise<void>
   const projectId = env.isGitRepo ? basename(workingDir) : "my-project";
   const repo = env.ownerRepo || "owner/repo";
   const hasPlaceholderRepo = repo === "owner/repo";
-  const path = env.isGitRepo ? workingDir : `~/${projectId}`;
+  const path = env.isGitRepo ? workingDir : defaultProjectPath(projectId, repo);
   const defaultBranch = env.defaultBranch || "main";
 
   const port = await findFreePort(DEFAULT_PORT);

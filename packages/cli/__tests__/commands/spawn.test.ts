@@ -526,6 +526,8 @@ describe("spawn pre-flight checks", () => {
     await program.parseAsync(["node", "test", "spawn", "my-app"]);
 
     expect(mockSessionManager.spawn).toHaveBeenCalled();
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("process runtime");
   });
 
   it("checks gh auth when tracker is github", async () => {

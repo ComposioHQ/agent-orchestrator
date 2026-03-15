@@ -138,6 +138,7 @@ let program: Command;
 let cwdSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
+  delete process.env["AO_CONFIG_PATH"];
   tmpDir = mkdtempSync(join(tmpdir(), "ao-start-test-"));
 
   program = new Command();
@@ -178,6 +179,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  delete process.env["AO_CONFIG_PATH"];
   if (cwdSpy) cwdSpy.mockRestore();
   rmSync(tmpDir, { recursive: true, force: true });
   vi.restoreAllMocks();
@@ -489,6 +491,42 @@ describe("start command — URL argument", () => {
     expect(output).toContain("Configured App");
   });
 
+  it("writes generated config to AO_CONFIG_PATH when set", async () => {
+    const repoDir = join(tmpDir, "agent-sandbox");
+    const outputConfig = join(tmpDir, "projects", "agent-orchestrator.yaml");
+    mockCwd(tmpDir);
+    process.env["AO_CONFIG_PATH"] = outputConfig;
+
+    mockExecSilent.mockResolvedValue("Logged in");
+    mockExec.mockImplementation(async (cmd: string, args: string[]) => {
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "clone") {
+        createFakeRepo(repoDir, "https://github.com/zvictor/agent-sandbox.git", {
+          "package.json": "{}",
+        });
+        return { stdout: "", stderr: "" };
+      }
+      return { stdout: "", stderr: "" };
+    });
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "start",
+      "https://github.com/zvictor/agent-sandbox",
+      "--no-dashboard",
+      "--no-orchestrator",
+    ]);
+
+    expect(existsSync(outputConfig)).toBe(true);
+    expect(existsSync(join(repoDir, "agent-orchestrator.yaml"))).toBe(false);
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain(`Config generated: ${outputConfig}`);
+  });
+
   it("resolves correct project when existing config has multiple projects", async () => {
     const repoDir = join(tmpDir, "multi-proj");
     createFakeRepo(repoDir, "https://github.com/org/multi-proj.git");
@@ -694,6 +732,25 @@ describe("start command — orchestrator session strategy display", () => {
       expect(output).not.toContain("reused existing session");
     },
   );
+
+  it("shows process runtime details when the orchestrator is not using tmux", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject({ runtime: "process" }) });
+
+    mockSessionManager.get.mockResolvedValue({
+      id: "app-orchestrator",
+      runtimeHandle: { id: "proc-1", runtimeName: "process", data: { pid: 4242 } },
+    });
+    mockSessionManager.spawnOrchestrator.mockResolvedValue({
+      id: "app-orchestrator",
+      runtimeHandle: { id: "proc-1", runtimeName: "process", data: { pid: 4242 } },
+    });
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
+
+    const output = getLoggedOutput();
+    expect(output).toContain("process runtime (PID 4242)");
+    expect(output).not.toContain("tmux attach -t");
+  });
 });
 
 // ---------------------------------------------------------------------------

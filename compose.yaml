@@ -1,0 +1,36 @@
+services:
+  agent-orchestrator:
+    image: ghcr.io/composiohq/agent-orchestrator:latest
+    build:
+      context: .
+      dockerfile: Containerfile
+      args:
+        AO_INSTALL_AGENTS: ${AO_INSTALL_AGENTS:-claude-code,codex,aider,goose}
+    init: true
+    command: ["start"]
+    ports:
+      - '${AO_PORT:-3000}:3000'
+      - '${AO_TERMINAL_PORT:-14800}:14800'
+      - '${AO_DIRECT_TERMINAL_PORT:-14801}:14801'
+    environment:
+      - GITHUB_TOKEN
+      - ANTHROPIC_API_KEY
+    volumes:
+      - type: bind
+        source: '${AO_PROJECTS_DIR:-./projects}'
+        target: /projects
+      - type: bind
+        source: '${KUBECONFIG_DIR:-./.kube}'
+        target: /root/.kube
+        read_only: true
+      - type: bind
+        source: '${GH_CONFIG_DIR:-./.gh}'
+        target: /root/.config/gh
+        read_only: true
+      - type: volume
+        source: ao-data
+        target: /root/.agent-orchestrator
+    restart: unless-stopped
+
+volumes:
+  ao-data: null

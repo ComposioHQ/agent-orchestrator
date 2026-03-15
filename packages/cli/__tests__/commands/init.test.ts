@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync, mkdirSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 import { Command } from "commander";
@@ -8,8 +8,12 @@ import { parse as yamlParse } from "yaml";
 import { registerInit } from "../../src/commands/init.js";
 
 let tmpDir: string;
+let cwdSpy: ReturnType<typeof vi.spyOn> | undefined;
 
 afterEach(() => {
+  delete process.env["AO_CONFIG_PATH"];
+  cwdSpy?.mockRestore();
+  cwdSpy = undefined;
   if (tmpDir) rmSync(tmpDir, { recursive: true, force: true });
   vi.restoreAllMocks();
 });
@@ -194,5 +198,30 @@ describe("init command", () => {
 
     // sessionPrefix must match what generateSessionPrefix produces
     expect(project.sessionPrefix).toBe(generateSessionPrefix(projectId));
+  });
+
+  it("auto mode uses /projects-based path defaults when AO_CONFIG_PATH is set", async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "ao-init-test-"));
+    const projectsDir = join(tmpDir, "projects");
+    mkdirSync(projectsDir, { recursive: true });
+    const outputPath = join(projectsDir, "agent-orchestrator.yaml");
+    process.env["AO_CONFIG_PATH"] = outputPath;
+    cwdSpy = vi.spyOn(process, "cwd").mockReturnValue(projectsDir);
+
+    const program = new Command();
+    program.exitOverride();
+    registerInit(program);
+
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await program.parseAsync(["node", "test", "init", "--auto", "--output", outputPath]);
+
+    const content = readFileSync(outputPath, "utf-8");
+    const config = yamlParse(content) as Record<string, unknown>;
+    const projects = config.projects as Record<string, Record<string, unknown>>;
+    const projectId = Object.keys(projects)[0];
+    const project = projects[projectId];
+
+    expect(project.path).toBe(resolve(projectsDir, projectId));
   });
 });
