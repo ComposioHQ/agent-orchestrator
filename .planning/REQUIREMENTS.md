@@ -24,7 +24,7 @@ Requirements for the first usable pixel dashboard release.
 
 - [x] **INSP-01**: Operator can inspect selected session details including summary, branch, issue context, and recent state
 - [x] **INSP-02**: Operator can inspect PR state for a selected session including review, CI, and merge readiness cues
-- [ ] **INSP-03**: Operator can tell when session or PR information is stale, paused, or limited by current backend conditions
+- [x] **INSP-03**: Operator can tell when session or PR information is stale, paused, or limited by current backend conditions
 
 ### Actions
 
@@ -37,13 +37,13 @@ Requirements for the first usable pixel dashboard release.
 
 - [x] **LIVE-01**: Operator sees live session status and activity changes in the pixel dashboard using the same session/event contract as the current dashboard
 - [x] **LIVE-02**: Operator sees session additions and removals reflected in the pixel scene without needing a manual page refresh
-- [ ] **LIVE-03**: Operator can trust that counts and core states shown in the pixel dashboard stay aligned with the legacy dashboard
+- [x] **LIVE-03**: Operator can trust that counts and core states shown in the pixel dashboard stay aligned with the legacy dashboard
 
 ### Experience
 
-- [ ] **UX-01**: Operator can distinguish working, waiting, review-needed, merge-ready, and done sessions through clear visual cues in the pixel dashboard
+- [x] **UX-01**: Operator can distinguish working, waiting, review-needed, merge-ready, and done sessions through clear visual cues in the pixel dashboard
 - [x] **UX-02**: Operator can access dense operational details through a non-canvas UI surface so the pixel scene stays readable
-- [ ] **UX-03**: Operator can use the pixel dashboard on common desktop viewport sizes without the scene becoming unusable
+- [x] **UX-03**: Operator can use the pixel dashboard on common desktop viewport sizes without the scene becoming unusable
 
 ## v2 Requirements
 
@@ -86,17 +86,17 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SCENE-04 | Phase 2 | Complete |
 | INSP-01 | Phase 3 | Complete |
 | INSP-02 | Phase 3 | Complete |
-| INSP-03 | Phase 4 | Pending |
+| INSP-03 | Phase 4 | Complete |
 | ACT-01 | Phase 3 | Complete |
 | ACT-02 | Phase 3 | Complete |
 | ACT-03 | Phase 3 | Complete |
 | ACT-04 | Phase 3 | Complete |
 | LIVE-01 | Phase 1 | Complete |
 | LIVE-02 | Phase 1 | Complete |
-| LIVE-03 | Phase 4 | Pending |
-| UX-01 | Phase 4 | Pending |
+| LIVE-03 | Phase 4 | Complete |
+| UX-01 | Phase 4 | Complete |
 | UX-02 | Phase 3 | Complete |
-| UX-03 | Phase 4 | Pending |
+| UX-03 | Phase 4 | Complete |
 
 **Coverage:**
 - v1 requirements: 20 total
@@ -105,4 +105,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-03-14*
-*Last updated: 2026-03-14 after Phase 2 completion*
+*Last updated: 2026-03-15 after Phase 4 completion*
