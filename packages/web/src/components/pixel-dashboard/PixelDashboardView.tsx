@@ -66,38 +66,24 @@ export function PixelDashboardView({
 
   return (
     <div className="space-y-6">
-      <section className="overflow-hidden rounded-[18px] border border-[var(--color-border-default)] bg-[radial-gradient(circle_at_top_left,rgba(80,180,255,0.18),transparent_38%),linear-gradient(135deg,rgba(11,18,32,0.96),rgba(18,35,60,0.92))] p-5 text-[var(--color-text-primary)] shadow-[0_18px_50px_rgba(3,8,20,0.24)]">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-[rgba(191,219,254,0.8)]">
-              Phase 4 Trust And Polish
-            </div>
-            <h2 className="text-[22px] font-semibold tracking-[-0.03em]">
-              {allProjectsView ? "District world map" : `${projectName ?? "Project"} district`}
-            </h2>
-            <p className="mt-2 max-w-[620px] text-[13px] leading-6 text-[rgba(226,232,240,0.78)]">
-              Pixel mode stays tied to the shared dashboard refresh contract, with trust cues kept
-              visible in the shell, the world, and the selected-session drawer.
-            </p>
-          </div>
-          <div className="grid min-w-[240px] grid-cols-2 gap-2">
-            <SceneStat label="Workers" value={sessions.length} />
-            <SceneStat label="Open PRs" value={openPRs.length} />
-            <SceneStat
-              label="Needs Response"
-              value={sessions.filter((session) => getAttentionLevel(session) === "respond").length}
-            />
-            <SceneStat
-              label="Merge Ready"
-              value={sessions.filter((session) => getAttentionLevel(session) === "merge").length}
-            />
-          </div>
+      <section className="space-y-3">
+        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+          <SceneStat label="Workers" value={sessions.length} />
+          <SceneStat label="Open PRs" value={openPRs.length} />
+          <SceneStat
+            label="Needs Response"
+            value={sessions.filter((session) => getAttentionLevel(session) === "respond").length}
+          />
+          <SceneStat
+            label="Merge Ready"
+            value={sessions.filter((session) => getAttentionLevel(session) === "merge").length}
+          />
         </div>
 
         {(dashboardTrust.paused ||
           dashboardTrust.limited ||
           dashboardTrust.alignment.status !== "aligned") && (
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-[rgba(148,163,184,0.24)] bg-[rgba(8,15,27,0.45)] px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-[rgba(148,163,184,0.24)] bg-[rgba(8,15,27,0.45)] px-4 py-3">
             <div>
               <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-[rgba(191,219,254,0.75)]">
                 Pixel trust state
