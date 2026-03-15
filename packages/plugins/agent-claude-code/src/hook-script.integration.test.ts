@@ -100,6 +100,15 @@ describe("hook script: gh pr create", () => {
     expect(metadata).toContain("status=pr_open");
   });
 
+  it("detects gh pr create when later arguments contain spaced &&", () => {
+    const { metadata } = runHook({
+      command: `cd /tmp && gh pr create --title "a && b" --base master`,
+      output: prUrl,
+    });
+    expect(metadata).toContain(`pr=${prUrl}`);
+    expect(metadata).toContain("status=pr_open");
+  });
+
   it("detects gh pr create with cd ; prefix", () => {
     const { metadata } = runHook({
       command: `cd /some/path ; gh pr create --title "test" --body "body"`,

@@ -136,12 +136,13 @@ update_metadata_key() {
 #   cd ~/.worktrees/project && gh pr create ...
 # are correctly detected. Agents frequently cd into a worktree first.
 # Store the regex pattern in a variable for clarity.
-# Uses space-padded (&&|;) to avoid breaking on paths containing & or ; chars.
-cd_prefix_pattern='^[[:space:]]*cd[[:space:]]+.*[[:space:]]+(&&|;)[[:space:]]+(.*)'
+# Match a single cd argument (quoted or unquoted) before the separator so we
+# always split on the first command separator, not a later one in arguments.
+cd_prefix_pattern="^[[:space:]]*cd[[:space:]]+([^[:space:]]+|\\"[^\\"]*\\"|'[^']*')[[:space:]]+(&&|;)[[:space:]]+(.*)"
 clean_command="$command"
 while [[ "$clean_command" =~ ^[[:space:]]*cd[[:space:]] ]]; do
   if [[ "$clean_command" =~ $cd_prefix_pattern ]]; then
-    clean_command="\${BASH_REMATCH[2]}"
+    clean_command="\${BASH_REMATCH[3]}"
   else
     break
   fi
