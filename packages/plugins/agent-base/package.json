@@ -1,7 +1,7 @@
 {
-  "name": "@composio/ao-plugin-agent-cursor",
+  "name": "@composio/ao-plugin-agent-base",
   "version": "0.1.0",
-  "description": "Agent plugin: Cursor Agent",
+  "description": "Shared JSONL-based agent plugin factory for AO",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
@@ -18,7 +18,7 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/ComposioHQ/agent-orchestrator.git",
-    "directory": "packages/plugins/agent-cursor"
+    "directory": "packages/plugins/agent-base"
   },
   "homepage": "https://github.com/ComposioHQ/agent-orchestrator",
   "bugs": {
@@ -30,16 +30,13 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@composio/ao-core": "workspace:*",
-    "@composio/ao-plugin-agent-base": "workspace:*"
+    "@composio/ao-core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^25.2.3",
-    "typescript": "^5.7.0",
-    "vitest": "^3.0.0"
+    "typescript": "^5.7.0"
   }
 }
