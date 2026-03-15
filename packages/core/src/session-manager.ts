@@ -2143,13 +2143,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     const branchChanged = await scm.checkoutPR(pr, workspacePath);
 
-    updateMetadata(sessionsDir, sessionId, {
-      pr: pr.url,
-      status: "pr_open",
-      branch: pr.branch,
-      prAutoDetect: "",
-    });
-
     for (const previousSessionId of takenOverFrom) {
       const previousRaw = readMetadataRaw(sessionsDir, previousSessionId);
       if (!previousRaw) continue;
@@ -2183,6 +2176,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         // Non-fatal: session may not be ready yet; lifecycle reactions will re-send context
       }
     }
+
+    updateMetadata(sessionsDir, sessionId, {
+      pr: pr.url,
+      status: "pr_open",
+      branch: pr.branch,
+      prAutoDetect: "",
+    });
 
     return {
       sessionId,
