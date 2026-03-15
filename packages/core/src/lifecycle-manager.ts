@@ -534,9 +534,9 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
 
       case "request-merge": {
-        // Get session and project for SCM operations
-        const session = await sessionManager.get(sessionId);
-        if (!session) {
+        // Get fresh session state for SCM operations
+        const freshSession = await sessionManager.get(sessionId);
+        if (!freshSession) {
           return {
             reactionType: reactionKey,
             success: false,
@@ -545,7 +545,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           };
         }
 
-        const project = config.projects[session.projectId];
+        const project = config.projects[freshSession.projectId];
         if (!project) {
           return {
             reactionType: reactionKey,
@@ -557,7 +557,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
         // Get SCM plugin
         const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
-        if (!scm || !session.pr) {
+        if (!scm || !freshSession.pr) {
           // No SCM or no PR - just notify
           const event = createEvent("reaction.triggered", {
             sessionId,
@@ -575,7 +575,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         }
 
         // Check mergeability before notifying
-        const mergeReadiness = await scm.getMergeability(session.pr);
+        const mergeReadiness = await scm.getMergeability(freshSession.pr);
         if (!mergeReadiness.mergeable) {
           const event = createEvent("reaction.triggered", {
             sessionId,
@@ -598,12 +598,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const approvalEvent = createEvent("merge.approval_requested", {
           sessionId,
           projectId,
-          message: `PR #${session.pr.number} is ready to merge (${mergeMethod}). Approve to proceed?`,
+          message: `PR #${freshSession.pr.number} is ready to merge (${mergeMethod}). Approve to proceed?`,
           data: {
             reactionKey,
             action,
-            prNumber: session.pr.number,
-            prUrl: session.pr.url,
+            prNumber: freshSession.pr.number,
+            prUrl: freshSession.pr.url,
             mergeMethod,
           },
         });
@@ -618,9 +618,9 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
 
       case "auto-merge": {
-        // Get session and project for SCM operations
-        const session = await sessionManager.get(sessionId);
-        if (!session) {
+        // Get fresh session state for SCM operations
+        const freshSession = await sessionManager.get(sessionId);
+        if (!freshSession) {
           return {
             reactionType: reactionKey,
             success: false,
@@ -629,7 +629,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           };
         }
 
-        const project = config.projects[session.projectId];
+        const project = config.projects[freshSession.projectId];
         if (!project) {
           return {
             reactionType: reactionKey,
@@ -641,7 +641,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
         // Get SCM plugin
         const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
-        if (!scm || !session.pr) {
+        if (!scm || !freshSession.pr) {
           // No SCM or no PR - just notify
           const event = createEvent("reaction.triggered", {
             sessionId,
@@ -659,7 +659,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         }
 
         // Check mergeability before attempting
-        const mergeReadiness = await scm.getMergeability(session.pr);
+        const mergeReadiness = await scm.getMergeability(freshSession.pr);
         if (!mergeReadiness.mergeable) {
           const event = createEvent("reaction.triggered", {
             sessionId,
@@ -678,21 +678,37 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
         // Auto-merge: execute merge immediately
         const mergeMethod = reactionConfig.mergeMethod ?? "squash";
-        await scm.mergePR(session.pr, mergeMethod);
+        try {
+          await scm.mergePR(freshSession.pr, mergeMethod);
 
-        const successEvent = createEvent("reaction.triggered", {
-          sessionId,
-          projectId,
-          message: `Reaction '${reactionKey}' completed ${action} (${mergeMethod})`,
-          data: { reactionKey, action, mergeMethod },
-        });
-        await notifyHuman(successEvent, "action");
-        return {
-          reactionType: reactionKey,
-          success: true,
-          action,
-          escalated: false,
-        };
+          const successEvent = createEvent("reaction.triggered", {
+            sessionId,
+            projectId,
+            message: `Reaction '${reactionKey}' completed ${action} (${mergeMethod})`,
+            data: { reactionKey, action, mergeMethod },
+          });
+          await notifyHuman(successEvent, "action");
+          return {
+            reactionType: reactionKey,
+            success: true,
+            action,
+            escalated: false,
+          };
+        } catch (error) {
+          const errorEvent = createEvent("reaction.triggered", {
+            sessionId,
+            projectId,
+            message: `Reaction '${reactionKey}' failed: ${error instanceof Error ? error.message : String(error)}`,
+            data: { reactionKey, action, error: error instanceof Error ? error.message : String(error) },
+          });
+          await notifyHuman(errorEvent, "action");
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action,
+            escalated: false,
+          };
+        }
       }
     }
 
