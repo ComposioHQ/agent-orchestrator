@@ -60,6 +60,7 @@ packages/web/agent-orchestrator.yaml
 agent-orchestrator.yaml
 
 # Agent configuration and tracking (personal, not for repo)
+# Note: CLAUDE.md and AGENTS.md are tracked in this fork as shared contributor guidelines
 .claude/
 .opencode/
 .claude/scheduled_tasks.lock
