@@ -74,6 +74,14 @@ function extractPluginConfig(
     }
   }
 
+  // SCM plugins are configured under config.plugins.<plugin-name> (e.g., plugins["scm-github"])
+  if (slot === "scm") {
+    const pluginConfig = config.plugins?.[`scm-${name}`];
+    if (pluginConfig && typeof pluginConfig === "object") {
+      return pluginConfig as Record<string, unknown>;
+    }
+  }
+
   return undefined;
 }
 
