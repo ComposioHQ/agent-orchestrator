@@ -183,6 +183,19 @@ Running one AI agent in a terminal is easy. Running 30 across different issues, 
 - tmux (for default runtime)
 - `gh` CLI (for GitHub integration)
 
+## Development Hierarchy — How to Extend AO
+
+Before writing any code, follow this priority order:
+
+| # | Approach | Example |
+|---|---|---|
+| 1 | **Use config** | Add a reaction, tweak `agentRules`, adjust `notificationRouting` in your yaml |
+| 2 | **New plugin** (existing slot) | New notifier, agent driver, SCM adapter, or runtime |
+| 3 | **New plugin type** (new slot) | New plugin category requiring a new interface in plugin-registry |
+| 4 | **Change core code** | Last resort — justify in PR why 1–3 were insufficient |
+
+Most capability gaps can be closed with config alone. See [AGENTS.md](AGENTS.md) and [CLAUDE.md](CLAUDE.md) for the full guidelines and what counts as a "green" PR.
+
 ## Development
 
 ```bash
