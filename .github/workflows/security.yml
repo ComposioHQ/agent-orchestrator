@@ -25,17 +25,10 @@ jobs:
           fetch-depth: 0 # Full history for comprehensive scan
 
       - name: Run Gitleaks
-        id: gitleaks
         uses: gitleaks/gitleaks-action@v2
-        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
-
-      - name: Check Gitleaks result
-        if: steps.gitleaks.outcome == 'failure'
-        run: |
-          echo "::notice::Gitleaks was skipped due to missing license (common for orgs without paid plan)"
 
   dependency-review:
     name: Dependency Review
