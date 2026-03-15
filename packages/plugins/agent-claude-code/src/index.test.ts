@@ -1,17 +1,30 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Session, RuntimeHandle, AgentLaunchConfig } from "@composio/ao-core";
+import type { Session, RuntimeHandle, AgentLaunchConfig, WorkspaceHooksConfig } from "@composio/ao-core";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks — available inside vi.mock factories
 // ---------------------------------------------------------------------------
-const { mockExecFileAsync, mockReaddir, mockReadFile, mockStat, mockHomedir } =
-  vi.hoisted(() => ({
-    mockExecFileAsync: vi.fn(),
-    mockReaddir: vi.fn(),
-    mockReadFile: vi.fn(),
-    mockStat: vi.fn(),
-    mockHomedir: vi.fn(() => "/mock/home"),
-  }));
+const {
+  mockExecFileAsync,
+  mockReaddir,
+  mockReadFile,
+  mockStat,
+  mockHomedir,
+  mockWriteFile,
+  mockMkdir,
+  mockChmod,
+  mockExistsSync,
+} = vi.hoisted(() => ({
+  mockExecFileAsync: vi.fn(),
+  mockReaddir: vi.fn(),
+  mockReadFile: vi.fn(),
+  mockStat: vi.fn(),
+  mockHomedir: vi.fn(() => "/mock/home"),
+  mockWriteFile: vi.fn().mockResolvedValue(undefined),
+  mockMkdir: vi.fn().mockResolvedValue(undefined),
+  mockChmod: vi.fn().mockResolvedValue(undefined),
+  mockExistsSync: vi.fn().mockReturnValue(false),
+}));
 
 vi.mock("node:child_process", () => {
   const fn = Object.assign((..._args: unknown[]) => {}, {
@@ -24,13 +37,20 @@ vi.mock("node:fs/promises", () => ({
   readdir: mockReaddir,
   readFile: mockReadFile,
   stat: mockStat,
+  writeFile: mockWriteFile,
+  mkdir: mockMkdir,
+  chmod: mockChmod,
+}));
+
+vi.mock("node:fs", () => ({
+  existsSync: mockExistsSync,
 }));
 
 vi.mock("node:os", () => ({
   homedir: mockHomedir,
 }));
 
-import { create, manifest, default as defaultExport, resetPsCache } from "./index.js";
+import { create, manifest, default as defaultExport, resetPsCache, METADATA_UPDATER_SCRIPT } from "./index.js";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -668,5 +688,181 @@ describe("getSessionInfo", () => {
       const result = await agent.getSessionInfo(makeSession());
       expect(result).toBeNull();
     });
+  });
+});
+
+// =========================================================================
+// METADATA_UPDATER_SCRIPT — content verification (unit tests)
+// =========================================================================
+describe("METADATA_UPDATER_SCRIPT content", () => {
+  it("contains clean_command stripping logic for cd prefixes", () => {
+    expect(METADATA_UPDATER_SCRIPT).toContain('clean_command="$command"');
+    expect(METADATA_UPDATER_SCRIPT).toMatch(/while.*clean_command.*cd/);
+  });
+
+  it("uses $clean_command (not $command) for all regex-based command detection", () => {
+    const lines = METADATA_UPDATER_SCRIPT.split("\n");
+    for (const line of lines) {
+      // Skip comment lines, the initial assignment, and the stripping logic itself
+      if (line.trim().startsWith("#")) continue;
+      if (line.includes('clean_command="$command"')) continue;
+      if (line.includes("while") && line.includes("clean_command")) continue;
+
+      // Any regex match line (=~) should use $clean_command, NOT $command
+      if (line.includes("=~") && line.includes("command")) {
+        expect(line).toContain("clean_command");
+        expect(line).not.toMatch(/"\$command"/);
+      }
+    }
+  });
+
+  it("does NOT use ^-anchored regexes directly on $command for gh/git detection", () => {
+    // The old buggy patterns matched $command with ^ anchor.
+    // After the fix, ^ is still used but on $clean_command (which has cd stripped).
+    expect(METADATA_UPDATER_SCRIPT).not.toMatch(
+      /"\$command"\s*=~\s*\^gh/,
+    );
+    expect(METADATA_UPDATER_SCRIPT).not.toMatch(
+      /"\$command"\s*=~\s*\^git/,
+    );
+  });
+
+  it("strips cd prefixes with both && and ; delimiters", () => {
+    expect(METADATA_UPDATER_SCRIPT).toMatch(/&&\|;/);
+  });
+
+  it("handles multiple chained cd commands via while loop", () => {
+    expect(METADATA_UPDATER_SCRIPT).toMatch(/while.*clean_command/);
+  });
+
+  it("detects gh pr create on clean_command", () => {
+    expect(METADATA_UPDATER_SCRIPT).toMatch(
+      /"\$clean_command"\s*=~\s*\^gh\[/,
+    );
+  });
+
+  it("detects git checkout -b on clean_command", () => {
+    expect(METADATA_UPDATER_SCRIPT).toMatch(
+      /"\$clean_command"\s*=~\s*\^git\[.*checkout/,
+    );
+  });
+
+  it("detects gh pr merge on clean_command", () => {
+    expect(METADATA_UPDATER_SCRIPT).toMatch(
+      /"\$clean_command"\s*=~\s*\^gh\[.*merge/,
+    );
+  });
+});
+
+// =========================================================================
+// setupWorkspaceHooks / postLaunchSetup — hook path (symlink safety)
+// =========================================================================
+describe("hook setup — relative path (symlink-safe)", () => {
+  const agent = create();
+
+  /** Extract the hook command from the settings.json that was written */
+  function getWrittenHookCommand(): string {
+    const settingsWrite = mockWriteFile.mock.calls.find(
+      ([path]: unknown[]) => typeof path === "string" && path.endsWith("settings.json"),
+    );
+    expect(settingsWrite).toBeDefined();
+    const parsed = JSON.parse(settingsWrite![1] as string);
+    return parsed.hooks.PostToolUse[0].hooks[0].command;
+  }
+
+  it("setupWorkspaceHooks writes a relative hook command (not absolute)", async () => {
+    await agent.setupWorkspaceHooks!(
+      "/Users/equinox/.worktrees/integrator/integrator-5",
+      {} as WorkspaceHooksConfig,
+    );
+
+    const hookCommand = getWrittenHookCommand();
+    expect(hookCommand).toBe(".claude/metadata-updater.sh");
+    expect(hookCommand).not.toMatch(/^\//);
+  });
+
+  it("postLaunchSetup writes a relative hook command (not absolute)", async () => {
+    await agent.postLaunchSetup!(
+      makeSession({ workspacePath: "/Users/equinox/.worktrees/integrator/integrator-10" }),
+    );
+
+    const hookCommand = getWrittenHookCommand();
+    expect(hookCommand).toBe(".claude/metadata-updater.sh");
+    expect(hookCommand).not.toMatch(/^\//);
+  });
+
+  it("different worktree paths produce identical settings.json content", async () => {
+    await agent.setupWorkspaceHooks!(
+      "/Users/equinox/.worktrees/integrator/integrator-5",
+      {} as WorkspaceHooksConfig,
+    );
+    const settingsWrite1 = mockWriteFile.mock.calls.find(
+      ([path]: unknown[]) => typeof path === "string" && path.endsWith("settings.json"),
+    );
+    const content1 = settingsWrite1![1] as string;
+
+    mockWriteFile.mockClear();
+
+    await agent.setupWorkspaceHooks!(
+      "/Users/equinox/.worktrees/integrator/integrator-10",
+      {} as WorkspaceHooksConfig,
+    );
+    const settingsWrite2 = mockWriteFile.mock.calls.find(
+      ([path]: unknown[]) => typeof path === "string" && path.endsWith("settings.json"),
+    );
+    const content2 = settingsWrite2![1] as string;
+
+    expect(content1).toBe(content2);
+  });
+
+  it("updates an existing absolute hook path to relative", async () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReadFile.mockResolvedValue(
+      JSON.stringify({
+        hooks: {
+          PostToolUse: [
+            {
+              matcher: "Bash",
+              hooks: [
+                {
+                  type: "command",
+                  command:
+                    "/Users/equinox/.worktrees/integrator/integrator-5/.claude/metadata-updater.sh",
+                  timeout: 5000,
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+
+    await agent.setupWorkspaceHooks!(
+      "/Users/equinox/.worktrees/integrator/integrator-10",
+      {} as WorkspaceHooksConfig,
+    );
+
+    const hookCommand = getWrittenHookCommand();
+    expect(hookCommand).toBe(".claude/metadata-updater.sh");
+  });
+
+  it("still writes the script file to the correct absolute filesystem path", async () => {
+    await agent.setupWorkspaceHooks!(
+      "/Users/equinox/.worktrees/integrator/integrator-5",
+      {} as WorkspaceHooksConfig,
+    );
+
+    const scriptWrite = mockWriteFile.mock.calls.find(
+      ([path]: unknown[]) => typeof path === "string" && path.endsWith("metadata-updater.sh"),
+    );
+    expect(scriptWrite).toBeDefined();
+    expect(scriptWrite![0]).toBe(
+      "/Users/equinox/.worktrees/integrator/integrator-5/.claude/metadata-updater.sh",
+    );
+  });
+
+  it("skips postLaunchSetup when workspacePath is null", async () => {
+    await agent.postLaunchSetup!(makeSession({ workspacePath: null }));
+    expect(mockWriteFile).not.toHaveBeenCalled();
   });
 });
