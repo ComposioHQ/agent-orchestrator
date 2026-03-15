@@ -1,7 +1,8 @@
 "use client";
 
-import { useRouter, usePathname } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/cn";
+import { updateDashboardHref } from "@/lib/dashboard-route-state";
 import type { ProjectInfo } from "@/lib/project-name";
 
 interface ProjectSidebarProps {
@@ -12,13 +13,10 @@ interface ProjectSidebarProps {
 export function ProjectSidebar({ projects, activeProjectId }: ProjectSidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
 
   const handleProjectClick = (projectId: string | null) => {
-    if (projectId === null) {
-      router.push(pathname + "?project=all");
-    } else {
-      router.push(pathname + `?project=${encodeURIComponent(projectId)}`);
-    }
+    router.push(updateDashboardHref(pathname, searchParams, { project: projectId ?? "all" }));
   };
 
   if (projects.length <= 1) {

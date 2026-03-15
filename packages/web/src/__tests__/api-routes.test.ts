@@ -237,6 +237,12 @@ describe("API Routes", () => {
       expect(data.stats.totalSessions).toBe(data.sessions.length);
     });
 
+    it("returns the canonical dashboard view in the shared payload", async () => {
+      const res = await sessionsGET(makeRequest("http://localhost:3000/api/sessions?view=pixel"));
+      const data = await res.json();
+      expect(data.view).toBe("pixel");
+    });
+
     it("stats include expected fields", async () => {
       const res = await sessionsGET(makeRequest("http://localhost:3000/api/sessions"));
       const data = await res.json();
@@ -595,6 +601,19 @@ describe("API Routes", () => {
       const data = await res.json();
       expect(data.error).toMatch(/empty/);
     });
+
+    it("sanitizes control characters before sending", async () => {
+      const req = makeRequest("/api/sessions/backend-3/send", {
+        method: "POST",
+        body: JSON.stringify({ message: "please\u0000 merge\u0007 now" }),
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const res = await sendPOST(req, { params: Promise.resolve({ id: "backend-3" }) });
+
+      expect(res.status).toBe(200);
+      expect(mockSessionManager.send).toHaveBeenCalledWith("backend-3", "please merge now");
+    });
   });
 
   describe("POST /api/sessions/:id/message", () => {
@@ -773,6 +792,23 @@ describe("API Routes", () => {
       const data = await res.json();
       expect(data.error).toMatch(/not mergeable/);
       expect(data.blockers).toBeDefined();
+    });
+
+    it("preserves rate-limit blockers when mergeability is unavailable", async () => {
+      (mockSCM.getMergeability as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        mergeable: false,
+        ciPassing: false,
+        approved: false,
+        noConflicts: false,
+        blockers: ["API rate limited or unavailable"],
+      });
+
+      const req = makeRequest("/api/prs/432/merge", { method: "POST" });
+      const res = await mergePOST(req, { params: Promise.resolve({ id: "432" }) });
+
+      expect(res.status).toBe(422);
+      const data = await res.json();
+      expect(data.blockers).toContain("API rate limited or unavailable");
     });
 
     it("returns 400 for non-numeric PR id", async () => {

@@ -19,6 +19,7 @@ export type {
 
 // Re-export global pause state from shared lib (provider-agnostic state contract)
 export type { GlobalPauseState } from "./global-pause";
+import type { GlobalPauseState } from "./global-pause";
 
 import {
   ACTIVITY_STATE,
@@ -49,6 +50,15 @@ export { TERMINAL_STATUSES, TERMINAL_ACTIVITIES, NON_RESTORABLE_STATUSES };
  * 6. done    — Merged or terminated. Archive.
  */
 export type AttentionLevel = "merge" | "respond" | "review" | "pending" | "working" | "done";
+
+export const ATTENTION_LEVEL_ORDER = [
+  "merge",
+  "respond",
+  "review",
+  "pending",
+  "working",
+  "done",
+] as const satisfies readonly AttentionLevel[];
 
 /**
  * Flattened session for dashboard rendering.
@@ -134,6 +144,16 @@ export interface DashboardOrchestratorLink {
   id: string;
   projectId: string;
   projectName: string;
+}
+
+export type DashboardView = "legacy" | "pixel";
+
+export interface DashboardPayload {
+  sessions: DashboardSession[];
+  stats: DashboardStats;
+  orchestrators: DashboardOrchestratorLink[];
+  globalPause: GlobalPauseState | null;
+  view: DashboardView;
 }
 
 /** SSE snapshot event from /api/events */
