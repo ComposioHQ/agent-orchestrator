@@ -32,6 +32,7 @@ export type SessionStatus =
   | "changes_requested"
   | "approved"
   | "mergeable"
+  | "merge_conflicts"
   | "merged"
   | "cleanup"
   | "needs_input"
@@ -81,6 +82,7 @@ export const SESSION_STATUS = {
   CHANGES_REQUESTED: "changes_requested" as const,
   APPROVED: "approved" as const,
   MERGEABLE: "mergeable" as const,
+  MERGE_CONFLICTS: "merge_conflicts" as const,
   MERGED: "merged" as const,
   CLEANUP: "cleanup" as const,
   NEEDS_INPUT: "needs_input" as const,
@@ -843,8 +845,8 @@ export interface ReactionConfig {
   /** Whether this reaction is enabled */
   auto: boolean;
 
-  /** What to do: send message to agent, notify human, auto-merge */
-  action: "send-to-agent" | "notify" | "auto-merge";
+  /** What to do: send message to agent, notify human, auto-merge, request-merge */
+  action: "send-to-agent" | "notify" | "auto-merge" | "request-merge";
 
   /** Message to send (for send-to-agent) */
   message?: string;
@@ -863,6 +865,9 @@ export interface ReactionConfig {
 
   /** Whether to include a summary in the notification */
   includeSummary?: boolean;
+
+  /** Merge method for auto-merge/reaction-merge reaction (merge, squash, or rebase) */
+  mergeMethod?: "merge" | "squash" | "rebase";
 }
 
 export interface ReactionResult {
