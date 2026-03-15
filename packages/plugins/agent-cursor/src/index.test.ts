@@ -149,21 +149,21 @@ describe("getLaunchCommand", () => {
     expect(cmd).not.toContain("unset");
   });
 
-  it("includes --dangerously-skip-permissions when permissions=permissionless", () => {
+  it("includes --force when permissions=permissionless", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "permissionless" }));
-    expect(cmd).toContain("--dangerously-skip-permissions");
+    expect(cmd).toContain("--force");
   });
 
   it("treats legacy permissions=skip as permissionless", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ permissions: "skip" as unknown as AgentLaunchConfig["permissions"] }),
     );
-    expect(cmd).toContain("--dangerously-skip-permissions");
+    expect(cmd).toContain("--force");
   });
 
-  it("maps permissions=auto-edit to no-prompt mode on Claude", () => {
+  it("maps permissions=auto-edit to --force on Cursor", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "auto-edit" }));
-    expect(cmd).toContain("--dangerously-skip-permissions");
+    expect(cmd).toContain("--force");
   });
 
   it("shell-escapes model argument", () => {
@@ -181,12 +181,12 @@ describe("getLaunchCommand", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ permissions: "permissionless", model: "opus", prompt: "Hello" }),
     );
-    expect(cmd).toBe("cursor-agent --dangerously-skip-permissions --model 'opus'");
+    expect(cmd).toBe("cursor-agent --force --model 'opus'");
   });
 
-  it("omits --dangerously-skip-permissions when permissions=default", () => {
+  it("omits --force when permissions=default", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "default" }));
-    expect(cmd).not.toContain("--dangerously-skip-permissions");
+    expect(cmd).not.toContain("--force");
   });
 
   it("omits optional flags when not provided", () => {
@@ -195,24 +195,23 @@ describe("getLaunchCommand", () => {
     expect(cmd).not.toContain("-p");
   });
 
-  it("includes --append-system-prompt alongside omitted -p", () => {
+  it("ignores systemPrompt (no --append-system-prompt flag on Cursor)", () => {
+    // Cursor CLI does not support --append-system-prompt; system prompts are
+    // delivered post-launch via sendMessage().
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ systemPrompt: "You are a helper", prompt: "Do the task" }),
     );
-    expect(cmd).toContain("--append-system-prompt");
-    expect(cmd).toContain("You are a helper");
-    // -p as a standalone flag (not substring of --append-system-prompt)
-    expect(cmd).not.toMatch(/\s-p\s/);
+    expect(cmd).not.toContain("--append-system-prompt");
+    expect(cmd).not.toContain("You are a helper");
     expect(cmd).not.toContain("Do the task");
   });
 
-  it("uses systemPromptFile via shell substitution alongside omitted -p", () => {
+  it("ignores systemPromptFile (no --append-system-prompt flag on Cursor)", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ systemPromptFile: "/tmp/prompt.md", prompt: "Do the task" }),
     );
-    expect(cmd).toContain('--append-system-prompt "$(cat');
-    expect(cmd).toContain("/tmp/prompt.md");
-    expect(cmd).not.toMatch(/\s-p\s/);
+    expect(cmd).not.toContain("--append-system-prompt");
+    expect(cmd).not.toContain("/tmp/prompt.md");
     expect(cmd).not.toContain("Do the task");
   });
 });
