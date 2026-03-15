@@ -149,21 +149,21 @@ describe("getLaunchCommand", () => {
     expect(cmd).not.toContain("unset");
   });
 
-  it("includes --dangerously-skip-permissions when permissions=permissionless", () => {
+  it("includes --yolo when permissions=permissionless", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "permissionless" }));
-    expect(cmd).toContain("--dangerously-skip-permissions");
+    expect(cmd).toContain("--yolo");
   });
 
   it("treats legacy permissions=skip as permissionless", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ permissions: "skip" as unknown as AgentLaunchConfig["permissions"] }),
     );
-    expect(cmd).toContain("--dangerously-skip-permissions");
+    expect(cmd).toContain("--yolo");
   });
 
-  it("maps permissions=auto-edit to no-prompt mode on Claude", () => {
+  it("maps permissions=auto-edit to --yolo on Gemini", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "auto-edit" }));
-    expect(cmd).toContain("--dangerously-skip-permissions");
+    expect(cmd).toContain("--yolo");
   });
 
   it("shell-escapes model argument", () => {
@@ -195,24 +195,19 @@ describe("getLaunchCommand", () => {
     expect(cmd).not.toContain("-p");
   });
 
-  it("includes --append-system-prompt alongside omitted -p", () => {
+  it("does not include --append-system-prompt (unsupported by Gemini CLI)", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ systemPrompt: "You are a helper", prompt: "Do the task" }),
     );
-    expect(cmd).toContain("--append-system-prompt");
-    expect(cmd).toContain("You are a helper");
-    // -p as a standalone flag (not substring of --append-system-prompt)
-    expect(cmd).not.toMatch(/\s-p\s/);
+    expect(cmd).not.toContain("--append-system-prompt");
     expect(cmd).not.toContain("Do the task");
   });
 
-  it("uses systemPromptFile via shell substitution alongside omitted -p", () => {
+  it("does not include systemPromptFile flag (unsupported by Gemini CLI)", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ systemPromptFile: "/tmp/prompt.md", prompt: "Do the task" }),
     );
-    expect(cmd).toContain('--append-system-prompt "$(cat');
-    expect(cmd).toContain("/tmp/prompt.md");
-    expect(cmd).not.toMatch(/\s-p\s/);
+    expect(cmd).not.toContain("--append-system-prompt");
     expect(cmd).not.toContain("Do the task");
   });
 });
@@ -542,7 +537,8 @@ describe("getSessionInfo", () => {
       const result = await agent.getSessionInfo(makeSession());
       expect(result?.cost?.inputTokens).toBe(3000);
       expect(result?.cost?.outputTokens).toBe(800);
-      expect(result?.cost?.estimatedCostUsd).toBeCloseTo(0.009 + 0.012, 6);
+      // Gemini 2.0 Flash pricing: $0.10/M input, $0.40/M output
+      expect(result?.cost?.estimatedCostUsd).toBeCloseTo(3000 * 0.1 / 1e6 + 800 * 0.4 / 1e6, 6);
     });
 
     it("includes cache tokens in input count", async () => {
