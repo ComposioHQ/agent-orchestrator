@@ -292,8 +292,8 @@ async function startDashboard(
     // Silently handle rejection - dashboard exit is handled by runStartup() listener
   });
 
-  // Return the child process
-  return child;
+  // Explicit return to help TypeScript inference
+  return child as ChildProcess;
 }
 
 /**
