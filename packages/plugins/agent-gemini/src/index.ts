@@ -380,12 +380,12 @@ function extractCost(lines: JsonlLine[]): CostEstimate | undefined {
     return undefined;
   }
 
-  // Rough estimate when no direct cost data — uses Sonnet 4.5 pricing as a
-  // baseline. Will be inaccurate for other models (Opus, Haiku) but provides
-  // a useful order-of-magnitude signal. TODO: make pricing configurable or
-  // infer from model field in JSONL.
+  // Rough estimate when no direct cost data — uses Gemini 2.0 Flash pricing as a
+  // baseline ($0.10/M input, $0.40/M output). Will be inaccurate for other models
+  // but provides a useful order-of-magnitude signal. TODO: make pricing configurable
+  // or infer from model field in JSONL.
   if (totalCost === 0 && (inputTokens > 0 || outputTokens > 0)) {
-    totalCost = (inputTokens / 1_000_000) * 3.0 + (outputTokens / 1_000_000) * 15.0;
+    totalCost = (inputTokens / 1_000_000) * 0.10 + (outputTokens / 1_000_000) * 0.40;
   }
 
   return { inputTokens, outputTokens, estimatedCostUsd: totalCost };
@@ -645,25 +645,18 @@ function createGeminiAgent(): Agent {
 
       const permissionMode = normalizePermissionMode(config.permissions);
       if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
-        parts.push("--dangerously-skip-permissions");
+        // Gemini CLI uses --yolo for auto-approval mode
+        parts.push("--yolo");
       }
 
       if (config.model) {
         parts.push("--model", shellEscape(config.model));
       }
 
-      if (config.systemPromptFile) {
-        // Use shell command substitution to read from file at launch time.
-        // This avoids tmux truncation when inlining 2000+ char prompts.
-        // The double quotes allow $() expansion; inner path is single-quoted for safety.
-        parts.push("--append-system-prompt", `"$(cat ${shellEscape(config.systemPromptFile)})"`);
-      } else if (config.systemPrompt) {
-        parts.push("--append-system-prompt", shellEscape(config.systemPrompt));
-      }
-
-      // NOTE: prompt is NOT included here — it's delivered post-launch via
-      // runtime.sendMessage() to keep Gemini in interactive mode.
-      // Using -p causes one-shot mode (Gemini exits after responding).
+      // NOTE: Gemini CLI does not support --append-system-prompt or equivalent flags.
+      // System prompts must be delivered via the interactive prompt after launch.
+      // Prompt is delivered post-launch via runtime.sendMessage() to keep Gemini
+      // in interactive mode. Using -p causes one-shot mode (Gemini exits after responding).
 
       return parts.join(" ");
     },
@@ -803,9 +796,10 @@ function createGeminiAgent(): Agent {
       // Build resume command
       const parts: string[] = ["gemini", "--resume", shellEscape(sessionUuid)];
 
+      // Gemini CLI uses --yolo for auto-approval mode
       const permissionMode = normalizePermissionMode(project.agentConfig?.permissions);
       if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
-        parts.push("--dangerously-skip-permissions");
+        parts.push("--yolo");
       }
 
       if (project.agentConfig?.model) {
