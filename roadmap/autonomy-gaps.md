@@ -35,7 +35,7 @@ The honest current state:
 
 ### 1. `jleechan-514o` — Auto-merge stub (P1) ✅ IMPLEMENTED
 
-**Problem:** The `auto-merge` case in `executeReaction()` (`packages/core/src/lifecycle-manager.ts:467`) only calls `notifyHuman()`. The GitHub SCM plugin already has a fully implemented `mergePR()` method (line 631 of `packages/plugins/scm-github/src/index.ts`) that is never called.
+**Problem:** The `auto-merge` case in `executeReaction()` only calls `notifyHuman()`. The GitHub SCM plugin already has a fully implemented `mergePR()` method that is never called.
 
 **Implementation:** Per user request, auto-merge is **disabled by default** and requires human approval:
 - Added new `request-merge` reaction type that notifies human and waits for approval
@@ -56,7 +56,7 @@ The honest current state:
 
 **Implementation:**
 1. Added `"merge-conflicts"` to the lifecycle event enum and reaction key types.
-2. In the polling loop (alongside the `ci_failed` check), detect `CONFLICTED` mergeability and emit `"merge-conflicts"` event.
+2. In the polling loop (alongside the `ci_failed` check), detect when `mergeReady.noConflicts` is false and emit `"merge-conflicts"` event.
 3. Added default reaction entry in `agent-orchestrator.yaml.example` for `merge-conflicts`.
 
 **Acceptance:** A PR with merge conflicts triggers a `send-to-agent` reaction that prompts the agent to rebase or resolve conflicts.
@@ -65,7 +65,7 @@ The honest current state:
 
 ### 3. `jleechan-ylqd` — Repair prompts lack context (P2) ✅ IMPLEMENTED
 
-**Problem:** The `send-to-agent` reaction (`lifecycle-manager.ts:426`) sends `reactionConfig.message` verbatim — a static config string (e.g. `"Fix CI"`). No context is injected: no failing check names, no log excerpts, no changed files. Agents must re-derive everything from scratch.
+**Problem:** The `send-to-agent` reaction sends `reactionConfig.message` verbatim — a static config string (e.g. `"Fix CI"`). No context is injected: no failing check names, no log excerpts, no changed files. Agents must re-derive everything from scratch.
 
 **Implementation:**
 - Added `{{context}}` placeholder in message templates
@@ -89,7 +89,7 @@ The honest current state:
 
 ## Sequencing
 
-```
+```text
 514o (auto-merge wire-up)     ← highest leverage, closes the loop
   └─ depends on: nothing (mergePR() already exists)
 
