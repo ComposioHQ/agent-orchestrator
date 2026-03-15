@@ -1087,8 +1087,18 @@ describe("reactions", () => {
     };
 
     const failingChecks = [
-      { name: "build", status: "failed" as const, url: "https://github.com/org/repo/runs/123", conclusion: "FAILURE" },
-      { name: "test", status: "failed" as const, url: "https://github.com/org/repo/runs/124", conclusion: "FAILURE" },
+      {
+        name: "build",
+        status: "failed" as const,
+        url: "https://github.com/org/repo/runs/123",
+        conclusion: "FAILURE",
+      },
+      {
+        name: "test",
+        status: "failed" as const,
+        url: "https://github.com/org/repo/runs/124",
+        conclusion: "FAILURE",
+      },
     ];
 
     const mockSCM: SCM = {
@@ -1850,8 +1860,8 @@ describe("getStates", () => {
     expect(mockSCM.mergePR).toHaveBeenCalledWith(session.pr, "squash");
   });
 
-  it("notifies human for approval before merging (auto-merge)", async () => {
-    // auto-merge should notify human first, then merge
+  it("auto-merge merges immediately and notifies of completion", async () => {
+    // auto-merge should merge automatically without waiting for approval
     config.reactions = {
       "approved-and-green": {
         auto: true,
@@ -1915,21 +1925,20 @@ describe("getStates", () => {
 
     await lm.check("app-1");
 
-    // Verify that notifier was called (approval request + success notification)
-    expect(mockNotifier.notify).toHaveBeenCalledTimes(2);
+    // Verify that notifier was called once for success notification
+    expect(mockNotifier.notify).toHaveBeenCalledTimes(1);
 
-    // First call should be the approval request
-    const firstCall = mockNotifier.notify.mock.calls[0][0];
-    expect(firstCall.type).toBe("merge.approval_requested");
-    expect(firstCall.message).toContain("ready to merge");
-    expect(firstCall.message).toContain("Approve to proceed?");
+    // Call should be the success notification
+    const call = mockNotifier.notify.mock.calls[0][0];
+    expect(call.type).toBe("reaction.triggered");
+    expect(call.message).toContain("completed auto-merge");
 
-    // Verify merge was called after notification
+    // Verify merge was called immediately
     expect(mockSCM.mergePR).toHaveBeenCalledWith(session.pr, "squash");
   });
 
-  it("works with request-merge action (alias for auto-merge with approval)", async () => {
-    // request-merge should also notify human first, then merge
+  it("works with request-merge action (notifies human without merging)", async () => {
+    // request-merge should notify human for approval but NOT merge automatically
     config.reactions = {
       "approved-and-green": {
         auto: true,
@@ -1993,14 +2002,14 @@ describe("getStates", () => {
 
     await lm.check("app-1");
 
-    // Verify that notifier was called for approval request
-    expect(mockNotifier.notify).toHaveBeenCalledTimes(2);
+    // Verify that notifier was called once for approval request
+    expect(mockNotifier.notify).toHaveBeenCalledTimes(1);
 
-    // First call should be the approval request
-    const firstCall = mockNotifier.notify.mock.calls[0][0];
-    expect(firstCall.type).toBe("merge.approval_requested");
+    // Call should be the approval request
+    const call = mockNotifier.notify.mock.calls[0][0];
+    expect(call.type).toBe("merge.approval_requested");
 
-    // Verify merge was called with the correct method
-    expect(mockSCM.mergePR).toHaveBeenCalledWith(session.pr, "merge");
+    // Verify merge was NOT called (human must approve manually)
+    expect(mockSCM.mergePR).not.toHaveBeenCalled();
   });
 });
