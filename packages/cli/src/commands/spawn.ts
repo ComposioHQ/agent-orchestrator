@@ -74,6 +74,7 @@ async function spawnSession(
       try {
         const claimResult = await sm.claimPR(session.id, claimOptions.claimPr, {
           assignOnGithub: claimOptions.assignOnGithub,
+          sendInitialMessage: true,
         });
         branchStr = claimResult.pr.branch;
         claimedPrUrl = claimResult.pr.url;
