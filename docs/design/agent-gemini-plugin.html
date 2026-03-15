@@ -161,7 +161,7 @@
           <h3>Launch</h3>
           <ul>
             <li><code>gemini</code> — base command</li>
-            <li><code>-r / --resume &lt;sessionId&gt;</code> — resume existing session</li>
+            <li><code>--resume &lt;sessionId&gt;</code> — resume existing session (via JSONL UUID)</li>
             <li><code>--yolo</code> — auto-approval / permissionless mode</li>
             <li><code>--model &lt;name&gt;</code> — optional model override</li>
             <li>Prompt delivered post-launch via <code>sendMessage()</code></li>
@@ -205,16 +205,10 @@
 
         <article class="card">
           <h2>Plugin Registration</h2>
-          <p>Registered as a built-in plugin in the AO plugin loader:</p>
-<pre><code>// packages/plugins/dist/index.js
-import geminiPlugin from "@composio/ao-plugin-agent-gemini";
-
-export const builtinPlugins = [
-  claudeCodePlugin,
-  codexPlugin,
-  geminiPlugin,   // ← added
-  ...
-];</code></pre>
+          <p>Registered in the core built-in plugin registry:</p>
+<pre><code>// packages/core/src/plugin-registry.ts
+{ slot: "agent", name: "gemini",
+  pkg: "@composio/ao-plugin-agent-gemini" },</code></pre>
           <p>
             Consumers can also override it per-project via <code>ao.config.json</code>
             <code>agentPlugin</code> key.
