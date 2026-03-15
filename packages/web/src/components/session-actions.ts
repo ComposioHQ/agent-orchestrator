@@ -1,4 +1,5 @@
 import { CI_STATUS } from "@composio/ao-core/types";
+import type { DashboardAlignmentState } from "@/hooks/useSessionEvents";
 import {
   NON_RESTORABLE_STATUSES,
   TERMINAL_ACTIVITIES,
@@ -23,6 +24,11 @@ export interface SessionActionAvailability {
   canKill: boolean;
   canRestore: boolean;
   canMerge: boolean;
+}
+
+export interface SessionActionConfidence {
+  label: string;
+  tone: "degraded" | "stable";
 }
 
 export function getSessionAlerts(session: DashboardSession): SessionAlertAction[] {
@@ -144,5 +150,46 @@ export function getSessionActionAvailability(session: DashboardSession): Session
     canKill: canKillSession(session),
     canRestore: canRestoreSession(session),
     canMerge: canMergePR(session.pr),
+  };
+}
+
+export function getSessionActionConfidence(
+  session: DashboardSession,
+  options?: {
+    alignment?: DashboardAlignmentState;
+    paused?: boolean;
+  },
+): SessionActionConfidence {
+  if (options?.paused) {
+    return {
+      label: "Automation is paused. Confirm details before acting.",
+      tone: "degraded",
+    };
+  }
+
+  if (session.pr && isPRRateLimited(session.pr)) {
+    return {
+      label: "GitHub enrichment is limited. Treat PR-dependent actions as guarded.",
+      tone: "degraded",
+    };
+  }
+
+  if (options?.alignment?.status === "drifted") {
+    return {
+      label: "Shell and pixel counts are drifting. Recheck before acting on this session.",
+      tone: "degraded",
+    };
+  }
+
+  if (options?.alignment?.status === "settling") {
+    return {
+      label: "Live refresh is settling. Keep actions focused on the selected session.",
+      tone: "degraded",
+    };
+  }
+
+  return {
+    label: "Shared session state is aligned.",
+    tone: "stable",
   };
 }

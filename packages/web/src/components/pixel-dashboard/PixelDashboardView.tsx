@@ -7,13 +7,16 @@ import { ATTENTION_LEVEL_ORDER, getAttentionLevel } from "@/lib/types";
 import { buildDashboardHref } from "@/lib/dashboard-route-state";
 import type { ProjectInfo } from "@/lib/project-name";
 import type { ProjectOverview } from "../Dashboard";
+import type { DashboardTrust } from "../Dashboard";
 import { PixelSessionDrawer } from "./PixelSessionDrawer";
 import { PixelWorldScene } from "./PixelWorldScene";
 
 interface PixelDashboardViewProps {
   allProjectsView: boolean;
+  dashboardTrust: DashboardTrust;
   onKill: (sessionId: string) => Promise<unknown>;
   onMerge: (prNumber: number) => Promise<unknown>;
+  onRefreshNow: () => void;
   onSpawnOrchestrator: (project: ProjectInfo) => Promise<void>;
   onRestore: (sessionId: string) => Promise<unknown>;
   onSend: (sessionId: string, message: string) => Promise<unknown>;
@@ -31,8 +34,10 @@ interface PixelDashboardViewProps {
 
 export function PixelDashboardView({
   allProjectsView,
+  dashboardTrust,
   onKill,
   onMerge,
+  onRefreshNow,
   onSpawnOrchestrator,
   onRestore,
   onSend,
@@ -65,14 +70,14 @@ export function PixelDashboardView({
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-[rgba(191,219,254,0.8)]">
-              Phase 3 Operator Parity
+              Phase 4 Trust And Polish
             </div>
             <h2 className="text-[22px] font-semibold tracking-[-0.03em]">
               {allProjectsView ? "District world map" : `${projectName ?? "Project"} district`}
             </h2>
             <p className="mt-2 max-w-[620px] text-[13px] leading-6 text-[rgba(226,232,240,0.78)]">
-              Shared shell chrome and live data stay untouched while the pixel mode keeps the world
-              mounted beside a persistent inspection drawer for summary-first session triage.
+              Pixel mode stays tied to the shared dashboard refresh contract, with trust cues kept
+              visible in the shell, the world, and the selected-session drawer.
             </p>
           </div>
           <div className="grid min-w-[240px] grid-cols-2 gap-2">
@@ -88,12 +93,36 @@ export function PixelDashboardView({
             />
           </div>
         </div>
+
+        {(dashboardTrust.paused ||
+          dashboardTrust.limited ||
+          dashboardTrust.alignment.status !== "aligned") && (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-[rgba(148,163,184,0.24)] bg-[rgba(8,15,27,0.45)] px-4 py-3">
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-[rgba(191,219,254,0.75)]">
+                Pixel trust state
+              </div>
+              <p className="mt-1 text-[13px] text-[rgba(226,232,240,0.88)]">
+                {dashboardTrust.summary}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onRefreshNow}
+              className="rounded-[9px] border border-[rgba(147,197,253,0.35)] px-3 py-2 text-[12px] font-semibold text-[rgba(219,234,254,0.96)]"
+            >
+              Refresh shared state
+            </button>
+          </div>
+        )}
       </section>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px] 2xl:grid-cols-[minmax(0,1fr)_420px]">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,34vw)] 2xl:grid-cols-[minmax(0,1fr)_420px]">
         <PixelWorldScene
           allProjectsView={allProjectsView}
+          dashboardTrust={dashboardTrust}
           onSelectSession={onSelectSession}
+          onRefreshNow={onRefreshNow}
           projectName={projectName}
           projects={projects}
           selectedSessionId={selectedSessionId}
@@ -101,6 +130,7 @@ export function PixelDashboardView({
         />
         <PixelSessionDrawer
           allProjectsView={allProjectsView}
+          dashboardTrust={dashboardTrust}
           onClose={() => onSelectSession(null)}
           onKill={onKill}
           onMerge={onMerge}

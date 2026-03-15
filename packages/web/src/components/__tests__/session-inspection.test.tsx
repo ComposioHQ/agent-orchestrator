@@ -5,6 +5,7 @@ import {
   getPRStatusBadges,
   getSessionInspectionChips,
   getSessionMetaSummary,
+  getSessionTrustBadges,
 } from "../session-inspection";
 
 describe("session inspection helpers", () => {
@@ -92,6 +93,37 @@ describe("session inspection helpers", () => {
       expect.objectContaining({ key: "pr", label: "PR #42" }),
       expect.objectContaining({ key: "branch", label: "feat/test", mono: true }),
       expect.objectContaining({ key: "issue", label: "INT-100" }),
+    ]);
+  });
+
+  it("adds persistent trust badges for paused, limited, and drifting session details", () => {
+    const session = makeSession({
+      pr: makePR({
+        mergeability: {
+          mergeable: false,
+          ciPassing: false,
+          approved: false,
+          noConflicts: false,
+          blockers: ["API rate limited or unavailable"],
+        },
+      }),
+    });
+
+    expect(
+      getSessionTrustBadges(session, {
+        alignment: {
+          affectedLevels: ["review"],
+          currentCounts: { merge: 0, respond: 0, review: 0, pending: 0, working: 1, done: 0 },
+          expectedCounts: { merge: 0, respond: 0, review: 1, pending: 0, working: 0, done: 0 },
+          expectedMembershipCount: 1,
+          status: "drifted",
+        },
+        paused: true,
+      }),
+    ).toEqual([
+      expect.objectContaining({ key: "paused", tone: "danger" }),
+      expect.objectContaining({ key: "limited", tone: "warning" }),
+      expect.objectContaining({ key: "drifted", tone: "warning" }),
     ]);
   });
 });

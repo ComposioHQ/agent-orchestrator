@@ -668,5 +668,64 @@ describe("useSessionEvents", () => {
         });
       });
     });
+
+    it("tracks alignment drift from snapshot attention buckets and exposes a manual refresh path", async () => {
+      vi.useFakeTimers();
+      const sessions = [makeSession({ id: "session-0", status: "working", activity: "active" })];
+
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          sessions: [makeSession({ id: "session-0", status: "review_pending", activity: "idle" })],
+          globalPause: null,
+        }),
+      } as Response);
+
+      const { result } = renderHook(() => useSessionEvents(sessions, null));
+
+      await act(async () => {
+        eventSourceMock!.onmessage!.call(eventSourceMock, {
+          data: JSON.stringify({
+            type: "snapshot",
+            sessions: [
+              {
+                id: "session-0",
+                status: "working",
+                activity: "active",
+                attentionLevel: "review",
+                lastActivityAt: new Date().toISOString(),
+              },
+            ],
+          }),
+        } as MessageEvent);
+        await vi.advanceTimersByTimeAsync(2600);
+        eventSourceMock!.onmessage!.call(eventSourceMock, {
+          data: JSON.stringify({
+            type: "snapshot",
+            sessions: [
+              {
+                id: "session-0",
+                status: "working",
+                activity: "active",
+                attentionLevel: "review",
+                lastActivityAt: new Date().toISOString(),
+              },
+            ],
+          }),
+        } as MessageEvent);
+      });
+
+      expect(result.current.alignment.status).toBe("drifted");
+      expect(result.current.alignment.affectedLevels).toEqual(["review", "working"]);
+
+      await act(async () => {
+        result.current.refreshNow();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(result.current.alignment.status).toBe("aligned");
+      expect(result.current.sessions[0].status).toBe("review_pending");
+    });
   });
 });

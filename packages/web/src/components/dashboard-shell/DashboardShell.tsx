@@ -5,16 +5,19 @@ import type {
   DashboardView,
   GlobalPauseState,
 } from "@/lib/types";
+import type { DashboardTrust } from "../Dashboard";
 import { DashboardModeSwitcher } from "./DashboardModeSwitcher";
 
 interface DashboardShellProps {
   allProjectsView: boolean;
   anyRateLimited: boolean;
   children: ReactNode;
+  dashboardTrust: DashboardTrust;
   globalPause: GlobalPauseState | null;
   globalPauseDismissed: boolean;
   onDismissGlobalPause: () => void;
   onDismissRateLimit: () => void;
+  onRefreshNow: () => void;
   orchestrators: DashboardOrchestratorLink[];
   projectId?: string;
   projectName?: string;
@@ -28,10 +31,12 @@ export function DashboardShell({
   allProjectsView,
   anyRateLimited,
   children,
+  dashboardTrust,
   globalPause,
   globalPauseDismissed,
   onDismissGlobalPause,
   onDismissRateLimit,
+  onRefreshNow,
   orchestrators,
   projectName,
   rateLimitDismissed,
@@ -79,6 +84,33 @@ export function DashboardShell({
         >
           GitHub API rate limited. PR data may be stale and will refresh automatically.
         </Banner>
+      )}
+
+      {dashboardTrust.alignment.status !== "aligned" && (
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded border border-[rgba(96,165,250,0.25)] bg-[rgba(37,99,235,0.08)] px-3.5 py-3 text-[11px] text-[rgba(191,219,254,0.92)]">
+          <div className="space-y-1">
+            <div className="font-semibold uppercase tracking-[0.12em]">
+              {dashboardTrust.alignment.status === "drifted"
+                ? "Alignment drift visible"
+                : "Live refresh settling"}
+            </div>
+            <div>
+              Shared shell and pixel mode are rechecking counts for{" "}
+              {dashboardTrust.alignment.expectedMembershipCount} session
+              {dashboardTrust.alignment.expectedMembershipCount === 1 ? "" : "s"}.
+              {dashboardTrust.alignment.affectedLevels.length > 0
+                ? ` Affected lanes: ${dashboardTrust.alignment.affectedLevels.join(", ")}.`
+                : " Membership is changing."}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onRefreshNow}
+            className="rounded-[8px] border border-[rgba(147,197,253,0.35)] px-3 py-1.5 text-[11px] font-semibold text-[rgba(219,234,254,0.96)]"
+          >
+            Recheck now
+          </button>
+        </div>
       )}
 
       {children}

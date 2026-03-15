@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ProjectInfo } from "@/lib/project-name";
 import type { AttentionLevel } from "@/lib/types";
 import type { DashboardSession } from "@/lib/types";
+import type { DashboardTrust } from "../Dashboard";
 import {
   clampZoom,
   createInitialCameraState,
@@ -17,7 +18,9 @@ import { SessionSprite } from "./SessionSprite";
 
 interface PixelWorldSceneProps {
   allProjectsView: boolean;
+  dashboardTrust: DashboardTrust;
   onSelectSession?: (sessionId: string | null) => void;
+  onRefreshNow: () => void;
   projectName?: string;
   projects: ProjectInfo[];
   selectedSessionId?: string | null;
@@ -26,7 +29,9 @@ interface PixelWorldSceneProps {
 
 export function PixelWorldScene({
   allProjectsView,
+  dashboardTrust,
   onSelectSession,
+  onRefreshNow,
   projectName,
   projects,
   selectedSessionId,
@@ -199,7 +204,7 @@ export function PixelWorldScene({
       </div>
       <div
         ref={viewportRef}
-        className="relative mx-auto h-[560px] overflow-hidden rounded-[20px] border border-[rgba(148,163,184,0.12)] bg-[radial-gradient(circle_at_top,rgba(59,130,246,0.12),transparent_32%),linear-gradient(180deg,rgba(15,23,42,0.96),rgba(8,15,27,0.98))] touch-none"
+        className="relative mx-auto h-[clamp(420px,58vh,560px)] overflow-hidden rounded-[20px] border border-[rgba(148,163,184,0.12)] bg-[radial-gradient(circle_at_top,rgba(59,130,246,0.12),transparent_32%),linear-gradient(180deg,rgba(15,23,42,0.96),rgba(8,15,27,0.98))] touch-none"
         data-testid="pixel-world-scene"
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -207,6 +212,31 @@ export function PixelWorldScene({
         onPointerCancel={releasePointer}
         onWheel={handleWheel}
       >
+        {(dashboardTrust.paused ||
+          dashboardTrust.limited ||
+          dashboardTrust.alignment.status !== "aligned") && (
+          <div className="absolute left-4 top-4 z-20 max-w-[320px] rounded-[14px] border border-[rgba(148,163,184,0.24)] bg-[rgba(8,15,27,0.9)] px-4 py-3 text-[12px] text-[rgba(226,232,240,0.92)] shadow-[0_18px_40px_rgba(2,6,23,0.36)]">
+            <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-[rgba(191,219,254,0.78)]">
+              {dashboardTrust.paused
+                ? "World paused"
+                : dashboardTrust.alignment.status === "drifted"
+                  ? "World rechecking alignment"
+                  : dashboardTrust.limited
+                    ? "World showing limited details"
+                    : "World settling"}
+            </div>
+            <p className="mt-1 leading-5">{dashboardTrust.summary}</p>
+            {dashboardTrust.alignment.status !== "aligned" ? (
+              <button
+                type="button"
+                onClick={onRefreshNow}
+                className="mt-3 rounded-[8px] border border-[rgba(147,197,253,0.35)] px-3 py-1.5 text-[11px] font-semibold text-[rgba(219,234,254,0.96)]"
+              >
+                Recheck scene
+              </button>
+            ) : null}
+          </div>
+        )}
         <div className="pointer-events-none absolute right-4 top-4 z-20 rounded-full border border-[rgba(148,163,184,0.2)] bg-[rgba(8,15,27,0.72)] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[rgba(191,219,254,0.85)]">
           View {Math.round(visibleRect.x)}-{Math.round(visibleRect.x + visibleRect.width)} /{" "}
           {Math.round(visibleRect.y)}-{Math.round(visibleRect.y + visibleRect.height)}

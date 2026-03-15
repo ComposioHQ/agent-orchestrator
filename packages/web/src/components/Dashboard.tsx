@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CI_STATUS } from "@composio/ao-core/types";
-import { useSessionEvents } from "@/hooks/useSessionEvents";
+import { useSessionEvents, type DashboardAlignmentState } from "@/hooks/useSessionEvents";
 import type {
   AttentionLevel,
   DashboardOrchestratorLink,
@@ -40,6 +40,13 @@ export interface ProjectOverview {
   counts: Record<AttentionLevel, number>;
 }
 
+export interface DashboardTrust {
+  alignment: DashboardAlignmentState;
+  limited: boolean;
+  paused: boolean;
+  summary: string;
+}
+
 interface SessionActionResult {
   ok: boolean;
   message?: string;
@@ -68,7 +75,7 @@ export function Dashboard({
   view = "legacy",
 }: DashboardProps) {
   const orchestratorLinks = orchestrators ?? EMPTY_ORCHESTRATORS;
-  const { sessions, globalPause } = useSessionEvents(
+  const { sessions, globalPause, alignment, refreshNow } = useSessionEvents(
     initialSessions,
     initialGlobalPause,
     projectId,
@@ -264,6 +271,28 @@ export function Dashboard({
     () => sessions.some((session) => session.pr && isPRRateLimited(session.pr)),
     [sessions],
   );
+  const dashboardTrust = useMemo<DashboardTrust>(() => {
+    const issues: string[] = [];
+
+    if (globalPause) {
+      issues.push("automation paused");
+    }
+    if (alignment.status === "drifted") {
+      issues.push("counts out of alignment");
+    } else if (alignment.status === "settling") {
+      issues.push("live refresh settling");
+    }
+    if (anyRateLimited) {
+      issues.push("GitHub details limited");
+    }
+
+    return {
+      alignment,
+      limited: anyRateLimited,
+      paused: Boolean(globalPause),
+      summary: issues.length > 0 ? issues.join(" · ") : "shared dashboard aligned",
+    };
+  }, [alignment, anyRateLimited, globalPause]);
 
   const liveStats = useMemo<DashboardStats>(
     () => ({
@@ -302,11 +331,13 @@ export function Dashboard({
         <DashboardShell
           allProjectsView={allProjectsView}
           anyRateLimited={anyRateLimited}
+          dashboardTrust={dashboardTrust}
           globalPause={globalPause}
           globalPauseDismissed={globalPauseDismissed}
           onDismissGlobalPause={() => setGlobalPauseDismissed(true)}
           onDismissRateLimit={() => setRateLimitDismissed(true)}
           orchestrators={activeOrchestrators}
+          onRefreshNow={refreshNow}
           projectId={projectId}
           projectName={projectName}
           rateLimitDismissed={rateLimitDismissed}
@@ -317,8 +348,10 @@ export function Dashboard({
           {view === "pixel" ? (
             <PixelDashboardView
               allProjectsView={allProjectsView}
+              dashboardTrust={dashboardTrust}
               onKill={performKill}
               onMerge={performMerge}
+              onRefreshNow={refreshNow}
               onSpawnOrchestrator={handleSpawnOrchestrator}
               onRestore={performRestore}
               onSend={performSend}

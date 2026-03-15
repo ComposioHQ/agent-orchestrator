@@ -1,9 +1,10 @@
 import type { DashboardSession } from "@/lib/types";
-import type { ProjectOverview } from "../Dashboard";
+import type { DashboardTrust, ProjectOverview } from "../Dashboard";
 import { PixelSessionDrawerContent } from "./pixel-session-drawer";
 
 interface PixelSessionDrawerProps {
   allProjectsView: boolean;
+  dashboardTrust: DashboardTrust;
   onClose: () => void;
   onKill: (sessionId: string) => Promise<unknown>;
   onMerge: (prNumber: number) => Promise<unknown>;
@@ -15,6 +16,7 @@ interface PixelSessionDrawerProps {
 
 export function PixelSessionDrawer({
   allProjectsView,
+  dashboardTrust,
   onClose,
   onKill,
   onMerge,
@@ -25,7 +27,7 @@ export function PixelSessionDrawer({
 }: PixelSessionDrawerProps) {
   return (
     <aside
-      className="rounded-[20px] border border-[var(--color-border-default)] bg-[linear-gradient(180deg,rgba(15,23,42,0.98),rgba(15,23,42,0.94))] p-4 shadow-[0_18px_50px_rgba(3,8,20,0.18)] xl:sticky xl:top-0"
+      className="rounded-[20px] border border-[var(--color-border-default)] bg-[linear-gradient(180deg,rgba(15,23,42,0.98),rgba(15,23,42,0.94))] p-4 shadow-[0_18px_50px_rgba(3,8,20,0.18)] lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto"
       data-testid="pixel-session-drawer"
     >
       <div className="mb-4 flex items-center justify-between gap-3 border-b border-[rgba(148,163,184,0.14)] pb-3">
@@ -51,6 +53,7 @@ export function PixelSessionDrawer({
       {selectedSession ? (
         <PixelSessionDrawerContent
           allProjectsView={allProjectsView}
+          dashboardTrust={dashboardTrust}
           onKill={onKill}
           onMerge={onMerge}
           onRestore={onRestore}

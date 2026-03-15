@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { CI_STATUS } from "@composio/ao-core/types";
+import type { DashboardAlignmentState } from "@/hooks/useSessionEvents";
 import { cn } from "@/lib/cn";
 import { type DashboardPR, type DashboardSession, isPRMergeReady, isPRRateLimited } from "@/lib/types";
 import { ActivityDot } from "./ActivityDot";
@@ -34,6 +35,12 @@ export interface PRBlocker {
   color: string;
   icon: string;
   text: string;
+}
+
+export interface SessionTrustBadge {
+  key: string;
+  label: string;
+  tone: "danger" | "neutral" | "warning";
 }
 
 export function humanizeStatus(status: string): string {
@@ -130,6 +137,32 @@ export function getSessionMetaSummary(session: DashboardSession, now = Date.now(
   meta.push(`created ${relativeTime(session.createdAt, now)}`);
   meta.push(`active ${relativeTime(session.lastActivityAt, now)}`);
   return meta;
+}
+
+export function getSessionTrustBadges(
+  session: DashboardSession,
+  options?: {
+    alignment?: DashboardAlignmentState;
+    paused?: boolean;
+  },
+): SessionTrustBadge[] {
+  const badges: SessionTrustBadge[] = [];
+
+  if (options?.paused) {
+    badges.push({ key: "paused", label: "paused by orchestrator", tone: "danger" });
+  }
+
+  if (session.pr && isPRRateLimited(session.pr)) {
+    badges.push({ key: "limited", label: "limited PR details", tone: "warning" });
+  }
+
+  if (options?.alignment?.status === "drifted") {
+    badges.push({ key: "drifted", label: "alignment drift", tone: "warning" });
+  } else if (options?.alignment?.status === "settling") {
+    badges.push({ key: "settling", label: "refresh settling", tone: "neutral" });
+  }
+
+  return badges;
 }
 
 export function getPRStatusBadges(pr: DashboardPR): PRStatusBadge[] {
@@ -307,14 +340,19 @@ function Chip({ chip }: { chip: InspectionLinkChip }) {
 }
 
 export function SessionInspectionSummary({
+  alignment,
   compact = false,
+  paused = false,
   session,
 }: {
+  alignment?: DashboardAlignmentState;
   compact?: boolean;
+  paused?: boolean;
   session: DashboardSession;
 }) {
   const activity = getSessionActivity(session);
   const chips = getSessionInspectionChips(session);
+  const trustBadges = getSessionTrustBadges(session, { alignment, paused });
 
   return (
     <section className={compact ? "space-y-3" : "space-y-4"}>
@@ -362,6 +400,27 @@ export function SessionInspectionSummary({
               </div>
             ))}
           </div>
+
+          {trustBadges.length > 0 ? (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {trustBadges.map((badge) => (
+                <span
+                  key={badge.key}
+                  className={cn(
+                    "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em]",
+                    badge.tone === "danger" &&
+                      "bg-[rgba(248,113,113,0.14)] text-[rgba(254,202,202,0.96)]",
+                    badge.tone === "warning" &&
+                      "bg-[rgba(245,158,11,0.14)] text-[rgba(253,230,138,0.96)]",
+                    badge.tone === "neutral" &&
+                      "bg-[rgba(148,163,184,0.14)] text-[rgba(226,232,240,0.92)]",
+                  )}
+                >
+                  {badge.label}
+                </span>
+              ))}
+            </div>
+          ) : null}
 
           <SessionInspectionTimestamps
             createdAt={session.createdAt}

@@ -10,8 +10,35 @@ function renderPixelDashboard(
   return render(
     <PixelDashboardView
       allProjectsView={false}
+      dashboardTrust={{
+        alignment: {
+          affectedLevels: [],
+          currentCounts: {
+            merge: 0,
+            respond: 0,
+            review: 0,
+            pending: 0,
+            working: 0,
+            done: 0,
+          },
+          expectedCounts: {
+            merge: 0,
+            respond: 0,
+            review: 0,
+            pending: 0,
+            working: 0,
+            done: 0,
+          },
+          expectedMembershipCount: 0,
+          status: "aligned",
+        },
+        limited: false,
+        paused: false,
+        summary: "shared dashboard aligned",
+      }}
       onKill={vi.fn().mockResolvedValue(undefined)}
       onMerge={vi.fn().mockResolvedValue(undefined)}
+      onRefreshNow={vi.fn()}
       onRestore={vi.fn().mockResolvedValue(undefined)}
       onSend={vi.fn().mockResolvedValue(undefined)}
       onSpawnOrchestrator={vi.fn().mockResolvedValue(undefined)}
@@ -144,7 +171,7 @@ describe("PixelDashboardView", () => {
     expect(archive).toHaveAttribute("data-attention-level", "done");
     expect(within(district).getByText("Archive grove")).toBeInTheDocument();
     expect(within(district).getByText("archive")).toBeInTheDocument();
-    expect(screen.getByText("Archived")).toBeInTheDocument();
+    expect(screen.getByText("archived")).toBeInTheDocument();
   });
 
   it("pins the clicked session and keeps the selected state on the sprite", () => {
@@ -351,5 +378,38 @@ describe("PixelDashboardView", () => {
     expect(
       within(drawer).getByText(/PR enrichment is rate-limited, so merge stays disabled/i),
     ).toBeInTheDocument();
+  });
+
+  it("shows drift recovery affordances in the hero, world, and drawer", () => {
+    const session = makeSession({
+      id: "alpha-review",
+      projectId: "alpha",
+      issueLabel: "INT-401",
+      pr: makePR({ mergeability: { mergeable: false, ciPassing: true, approved: true, noConflicts: true, blockers: [] } }),
+    });
+
+    renderPixelDashboard({
+      dashboardTrust: {
+        alignment: {
+          affectedLevels: ["review"],
+          currentCounts: { merge: 0, respond: 0, review: 0, pending: 0, working: 1, done: 0 },
+          expectedCounts: { merge: 0, respond: 0, review: 1, pending: 0, working: 0, done: 0 },
+          expectedMembershipCount: 1,
+          status: "drifted",
+        },
+        limited: false,
+        paused: false,
+        summary: "counts out of alignment",
+      },
+      selectedSessionId: session.id,
+      sessions: [session],
+      sessionsByProject: new Map([["alpha", [session]]]),
+    });
+
+    expect(screen.getByText("Pixel trust state")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Refresh shared state" })).toBeInTheDocument();
+    expect(screen.getByText("World rechecking alignment")).toBeInTheDocument();
+    expect(screen.getByText("alignment drift")).toBeInTheDocument();
+    expect(screen.getByText(/Recheck before acting on this session/i)).toBeInTheDocument();
   });
 });

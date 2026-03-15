@@ -2,14 +2,16 @@ import { useEffect, useMemo, useState } from "react";
 import { buildDashboardHref } from "@/lib/dashboard-route-state";
 import { type DashboardSession, isPRRateLimited } from "@/lib/types";
 import {
+  getSessionActionConfidence,
   getSessionActionAvailability,
   getSessionAlerts,
 } from "../session-actions";
-import type { ProjectOverview } from "../Dashboard";
+import type { DashboardTrust, ProjectOverview } from "../Dashboard";
 import { PRInspectionSummary, SessionInspectionSummary } from "../session-inspection";
 
 interface PixelSessionDrawerContentProps {
   allProjectsView: boolean;
+  dashboardTrust: DashboardTrust;
   onKill: (sessionId: string) => Promise<unknown>;
   onMerge: (prNumber: number) => Promise<unknown>;
   onRestore: (sessionId: string) => Promise<unknown>;
@@ -20,6 +22,7 @@ interface PixelSessionDrawerContentProps {
 
 export function PixelSessionDrawerContent({
   allProjectsView,
+  dashboardTrust,
   onKill,
   onMerge,
   onRestore,
@@ -49,6 +52,14 @@ export function PixelSessionDrawerContent({
     [selectedSession],
   );
   const sendMessage = customMessage.trim() || selectedQuickMessage?.trim() || "";
+  const actionConfidence = useMemo(
+    () =>
+      getSessionActionConfidence(selectedSession, {
+        alignment: dashboardTrust.alignment,
+        paused: dashboardTrust.paused,
+      }),
+    [dashboardTrust.alignment, dashboardTrust.paused, selectedSession],
+  );
   const primaryAction = availability.canMerge
     ? "merge"
     : availability.canRestore
@@ -157,6 +168,16 @@ export function PixelSessionDrawerContent({
               }
             />
           </div>
+        </div>
+
+        <div
+          className={
+            actionConfidence.tone === "degraded"
+              ? "mt-4 rounded-[12px] border border-[rgba(245,158,11,0.28)] bg-[rgba(120,53,15,0.18)] px-3 py-2 text-[12px] text-[rgba(253,230,138,0.96)]"
+              : "mt-4 rounded-[12px] border border-[rgba(96,165,250,0.24)] bg-[rgba(30,41,59,0.3)] px-3 py-2 text-[12px] text-[rgba(191,219,254,0.92)]"
+          }
+        >
+          {actionConfidence.label}
         </div>
 
         {quickMessages.length > 0 ? (
@@ -285,10 +306,24 @@ export function PixelSessionDrawerContent({
             Open full session
           </a>
         </div>
-        <SessionInspectionSummary compact session={selectedSession} />
+        <SessionInspectionSummary
+          alignment={dashboardTrust.alignment}
+          compact
+          paused={dashboardTrust.paused}
+          session={selectedSession}
+        />
       </section>
 
-      {selectedSession.pr ? <PRInspectionSummary compact pr={selectedSession.pr} /> : null}
+      {selectedSession.pr ? (
+        <details className="rounded-[14px] border border-[var(--color-border-subtle)] bg-[rgba(15,23,42,0.72)] p-0">
+          <summary className="cursor-pointer list-none px-4 py-3 text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-tertiary)]">
+            PR trust details
+          </summary>
+          <div className="px-4 pb-4">
+            <PRInspectionSummary compact pr={selectedSession.pr} />
+          </div>
+        </details>
+      ) : null}
     </div>
   );
 }
