@@ -4953,6 +4953,105 @@ describe("claimPR", () => {
   });
 });
 
+describe("claimPR sendInitialMessage", () => {
+  function makeSCMForInitial(overrides: Partial<SCM> = {}): SCM {
+    return {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      resolvePR: vi.fn().mockResolvedValue({
+        number: 99,
+        url: "https://github.com/org/my-app/pull/99",
+        title: "Fix login bug",
+        owner: "org",
+        repo: "my-app",
+        branch: "feat/login-fix",
+        baseBranch: "main",
+        isDraft: false,
+      }),
+      assignPRToCurrentUser: vi.fn().mockResolvedValue(undefined),
+      checkoutPR: vi.fn().mockResolvedValue(true),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      getPRSummary: vi.fn(),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn(),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn(),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  function registryWithSCMForInitial(mockSCM: SCM): PluginRegistry {
+    return {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, _name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+  }
+
+  it("sends initial PR task message when sendInitialMessage is true", async () => {
+    const mockSCM = makeSCMForInitial();
+    writeMetadata(sessionsDir, "app-5", {
+      worktree: "/tmp/ws-app-5",
+      branch: "feat/old",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-5")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithSCMForInitial(mockSCM) });
+    await sm.claimPR("app-5", "99", { sendInitialMessage: true });
+
+    expect(mockRuntime.sendMessage).toHaveBeenCalledOnce();
+    const msg: string = vi.mocked(mockRuntime.sendMessage).mock.calls[0]![1] as string;
+    expect(msg).toContain("PR #99");
+    expect(msg).toContain("https://github.com/org/my-app/pull/99");
+    expect(msg).toContain("gh pr view");
+    expect(msg).toContain("@coderabbitai");
+  });
+
+  it("does NOT send initial message when sendInitialMessage is omitted", async () => {
+    const mockSCM = makeSCMForInitial();
+    writeMetadata(sessionsDir, "app-6", {
+      worktree: "/tmp/ws-app-6",
+      branch: "feat/old",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-6")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithSCMForInitial(mockSCM) });
+    await sm.claimPR("app-6", "99");
+
+    expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("does NOT send initial message when sendInitialMessage is false", async () => {
+    const mockSCM = makeSCMForInitial();
+    writeMetadata(sessionsDir, "app-7", {
+      worktree: "/tmp/ws-app-7",
+      branch: "feat/old",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-7")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithSCMForInitial(mockSCM) });
+    await sm.claimPR("app-7", "99", { sendInitialMessage: false });
+
+    expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
+  });
+});
+
 describe("PluginRegistry.loadBuiltins importFn", () => {
   it("should use provided importFn instead of built-in import", async () => {
     const { createPluginRegistry: createReg } = await import("../plugin-registry.js");
