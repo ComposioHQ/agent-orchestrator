@@ -60,3 +60,12 @@ This repo is `jleechanorg/agent-orchestrator`, forked from `ComposioHQ/agent-orc
 - PRs go against `jleechanorg/agent-orchestrator`, not `ComposioHQ/agent-orchestrator`
 - Upstream improvements can be proposed to ComposioHQ after landing here first
 - Remote `jleechanorg` points to the fork; `origin` points to upstream (read-only)
+
+## PR Target — CRITICAL SAFETY RULE
+
+**NEVER open a PR against `ComposioHQ/agent-orchestrator` (upstream) without explicit approval from jleechan.**
+
+Before creating any PR, confirm the target repo. If the target is `ComposioHQ/agent-orchestrator`, stop and ask:
+> "This would open a PR against the ComposioHQ upstream. Do you approve?"
+
+Only proceed after explicit in-thread approval. Default target is always `jleechanorg/agent-orchestrator`.

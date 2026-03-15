@@ -64,9 +64,16 @@ pnpm test
 
 All tests must pass before pushing. CI failures are blockers — fix them, don't skip.
 
+## PR Target — CRITICAL SAFETY RULE
+
+**NEVER open a PR against `ComposioHQ/agent-orchestrator` (upstream) without explicit approval from jleechan.**
+
+Before running `gh pr create`, verify the `--repo` target or the default remote. If it resolves to `ComposioHQ/agent-orchestrator`, stop and ask for approval before proceeding. The correct default target is always `jleechanorg/agent-orchestrator`.
+
 ## PR Checklist
 
 Before opening a PR, verify:
+- [ ] PR target is `jleechanorg/agent-orchestrator` (not ComposioHQ upstream)
 - [ ] All existing tests pass
 - [ ] New behavior has new tests (TDD)
 - [ ] Config-first hierarchy followed (AGENTS.md §Development Hierarchy)
