@@ -181,7 +181,7 @@ describe("getLaunchCommand", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ permissions: "permissionless", model: "opus", prompt: "Hello" }),
     );
-    expect(cmd).toBe("claude --dangerously-skip-permissions --model 'opus'");
+    expect(cmd).toBe("cursor-agent --dangerously-skip-permissions --model 'opus'");
   });
 
   it("omits --dangerously-skip-permissions when permissions=default", () => {
@@ -310,14 +310,14 @@ describe("isProcessRunning", () => {
     killSpy.mockRestore();
   });
 
-  it("finds claude on any pane in multi-pane session", async () => {
+  it("finds cursor-agent on any pane in multi-pane session", async () => {
     mockExecFileAsync.mockImplementation((cmd: string, args: string[]) => {
       if (cmd === "tmux" && args[0] === "list-panes") {
         return Promise.resolve({ stdout: "/dev/ttys001\n/dev/ttys002\n", stderr: "" });
       }
       if (cmd === "ps") {
         return Promise.resolve({
-          stdout: "  PID TT ARGS\n  100 ttys001  bash\n  200 ttys002  claude -p test\n",
+          stdout: "  PID TT ARGS\n  100 ttys001  bash\n  200 ttys002  cursor-agent --print test\n",
           stderr: "",
         });
       }
