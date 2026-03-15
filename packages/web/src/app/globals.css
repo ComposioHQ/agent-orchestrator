@@ -116,6 +116,11 @@ a:hover {
   to   { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes pixel-agent-frames {
+  from { background-position-x: calc(var(--pixel-agent-frame-offset) * -32px); }
+  to   { background-position-x: calc((var(--pixel-agent-frame-offset) + var(--pixel-agent-frame-count)) * -32px); }
+}
+
 /* ── Orchestrator button ──────────────────────────────────────────────── */
 
 .orchestrator-btn {
@@ -146,6 +151,31 @@ a:hover {
   background: rgba(13, 17, 23, 0.88);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
+}
+
+.pixel-agent-sprite {
+  width: 32px;
+  height: 64px;
+  background-image: var(--pixel-agent-sheet);
+  background-repeat: no-repeat;
+  background-position-x: calc(var(--pixel-agent-frame-offset) * -32px);
+  background-position-y: calc(var(--pixel-agent-row) * -64px);
+  background-size: 224px 192px;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  opacity: var(--pixel-agent-opacity, 1);
+  transform: scaleX(var(--pixel-agent-mirror, 1));
+  transform-origin: center bottom;
+  filter: drop-shadow(0 10px 18px rgba(8, 15, 27, 0.46));
+}
+
+.pixel-agent-sprite--walk {
+  animation: pixel-agent-frames 0.7s steps(3) infinite;
+}
+
+.pixel-agent-sprite--typing,
+.pixel-agent-sprite--reading {
+  animation: pixel-agent-frames 0.95s steps(2) infinite;
 }
 
 /* ── Detail page cards — subtle depth, no hover lift ─────────────────── */

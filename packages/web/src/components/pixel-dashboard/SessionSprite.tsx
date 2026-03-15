@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import type { SceneEntity } from "./scene-model";
 
 interface SessionSpriteProps {
@@ -74,8 +75,76 @@ const ATTENTION_TOKENS: Record<
   },
 };
 
+const ATTENTION_MOTION: Record<
+  SceneEntity["attentionLevel"],
+  {
+    direction: "down" | "up" | "right" | "left";
+    frameCount: number;
+    frameOffset: number;
+    motion: "walk" | "typing" | "reading" | "idle";
+  }
+> = {
+  merge: {
+    direction: "up",
+    frameCount: 3,
+    frameOffset: 0,
+    motion: "walk",
+  },
+  respond: {
+    direction: "right",
+    frameCount: 2,
+    frameOffset: 3,
+    motion: "typing",
+  },
+  review: {
+    direction: "left",
+    frameCount: 2,
+    frameOffset: 5,
+    motion: "reading",
+  },
+  pending: {
+    direction: "down",
+    frameCount: 1,
+    frameOffset: 5,
+    motion: "idle",
+  },
+  working: {
+    direction: "right",
+    frameCount: 2,
+    frameOffset: 3,
+    motion: "typing",
+  },
+  done: {
+    direction: "left",
+    frameCount: 1,
+    frameOffset: 5,
+    motion: "idle",
+  },
+};
+
 export function SessionSprite({ entity, isSelected = false, onSelect }: SessionSpriteProps) {
   const tokens = ATTENTION_TOKENS[entity.attentionLevel];
+  const motion = ATTENTION_MOTION[entity.attentionLevel];
+  const spriteIndex = hashString(entity.sessionId) % 6;
+  const spritePath = `/pixel-agents/assets/characters/char_${spriteIndex}.png`;
+  const spriteRow =
+    motion.direction === "down" ? 0 : motion.direction === "up" ? 1 : 2;
+  const animationClass =
+    motion.motion === "walk"
+      ? "pixel-agent-sprite--walk"
+      : motion.motion === "typing"
+        ? "pixel-agent-sprite--typing"
+        : motion.motion === "reading"
+          ? "pixel-agent-sprite--reading"
+          : "";
+  const spriteStyle = {
+    "--pixel-agent-frame-count": String(motion.frameCount),
+    "--pixel-agent-frame-offset": String(motion.frameOffset),
+    "--pixel-agent-mirror": motion.direction === "left" ? "-1" : "1",
+    "--pixel-agent-opacity": entity.isArchived ? "0.72" : "1",
+    "--pixel-agent-row": String(spriteRow),
+    "--pixel-agent-sheet": `url(${spritePath})`,
+  } as CSSProperties;
 
   return (
     <button
@@ -98,36 +167,47 @@ export function SessionSprite({ entity, isSelected = false, onSelect }: SessionS
         transform: "translate(-50%, -50%)",
       }}
     >
-      <div className="relative flex w-[108px] flex-col items-center gap-1.5">
+      <div className="relative flex w-[84px] flex-col items-center gap-1">
         <div
-          className={`absolute left-1/2 top-[32px] h-4 w-12 -translate-x-1/2 rounded-full border ${tokens.ring}`}
+          className={`absolute left-1/2 top-[43px] h-3.5 w-8 -translate-x-1/2 rounded-full border ${tokens.ring}`}
           aria-hidden="true"
         />
         <div
-          className={`absolute left-1/2 top-[-8px] h-2 w-2 -translate-x-1/2 rounded-full ${tokens.body}`}
-          aria-hidden="true"
-        />
-        <div
-          className={`relative flex h-9 w-9 items-end justify-center rounded-[12px] border bg-[rgba(15,23,42,0.84)] ${tokens.aura} ${
+          className={`relative flex h-[62px] w-[44px] items-end justify-center rounded-[16px] border bg-[linear-gradient(180deg,rgba(15,23,42,0.36),rgba(15,23,42,0.1))] ${tokens.aura} ${
             isSelected
               ? "border-[rgba(191,219,254,0.9)] ring-2 ring-[rgba(96,165,250,0.65)]"
-              : "border-[rgba(255,255,255,0.12)]"
+              : "border-[rgba(255,255,255,0.08)]"
           }`}
         >
-          <div className={`mb-1 h-[18px] w-[18px] ${tokens.bodyClass} ${tokens.body}`} aria-hidden="true" />
+          <div
+            className="pointer-events-none absolute inset-x-3 bottom-2 h-7 rounded-full bg-[radial-gradient(circle,rgba(59,130,246,0.22),transparent_72%)] blur-[6px]"
+            aria-hidden="true"
+          />
+          <div
+            className={`pixel-agent-sprite ${animationClass} ${entity.isArchived ? "opacity-70 saturate-[0.7]" : ""}`}
+            aria-hidden="true"
+            style={spriteStyle}
+          />
         </div>
         <div className="w-full text-center">
-          <div className={`truncate text-[10px] font-semibold leading-4 ${tokens.accent}`}>{entity.label}</div>
-          <div className="truncate text-[9px] leading-4 text-[rgba(148,163,184,0.82)]">
-            {entity.branch ?? entity.summary}
-          </div>
-          <div
-            className={`mt-0.5 inline-flex rounded-full border px-1.5 py-0.5 text-[7px] font-bold uppercase tracking-[0.16em] ${tokens.chip}`}
-          >
-            {entity.isArchived ? "archived" : tokens.chipLabel}
-          </div>
+          <div className={`truncate text-[8px] font-semibold leading-3 ${tokens.accent}`}>{entity.label}</div>
+          {entity.isArchived ? (
+            <div
+              className={`mt-0.5 inline-flex max-w-full truncate rounded-full border px-1.5 py-0.5 text-[6px] font-bold uppercase tracking-[0.12em] ${tokens.chip}`}
+            >
+              archived
+            </div>
+          ) : null}
         </div>
       </div>
     </button>
   );
+}
+
+function hashString(value: string): number {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  }
+  return hash;
 }
