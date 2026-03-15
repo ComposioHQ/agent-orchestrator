@@ -11,7 +11,7 @@ import {
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { createSessionManager } from "../session-manager.js";
+import { createSessionManager, buildInitialPRTaskMessage } from "../session-manager.js";
 import { validateConfig } from "../config.js";
 import {
   writeMetadata,
@@ -4950,6 +4950,37 @@ describe("claimPR", () => {
 
     const oldOwner = readMetadataRaw(sessionsDir, "app-owner");
     expect(oldOwner!["pr"] ?? "").toBe("");
+  });
+});
+
+describe("buildInitialPRTaskMessage", () => {
+  it("uses owner/repo format (not just repo name) in gh commands", () => {
+    const msg = buildInitialPRTaskMessage({
+      number: 42,
+      url: "https://github.com/jleechanorg/jleechanclaw/pull/42",
+      owner: "jleechanorg",
+      repo: "jleechanclaw",
+      branch: "feat/fix",
+      baseBranch: "main",
+    });
+    expect(msg).toContain("--repo jleechanorg/jleechanclaw");
+    expect(msg).not.toMatch(/--repo jleechanclaw(?!\/)/); // never bare repo without owner
+  });
+
+  it("includes PR number, URL, branch, baseBranch, and @coderabbitai", () => {
+    const msg = buildInitialPRTaskMessage({
+      number: 99,
+      url: "https://github.com/org/repo/pull/99",
+      owner: "org",
+      repo: "repo",
+      branch: "feat/thing",
+      baseBranch: "develop",
+    });
+    expect(msg).toContain("PR #99");
+    expect(msg).toContain("https://github.com/org/repo/pull/99");
+    expect(msg).toContain("feat/thing");
+    expect(msg).toContain("origin/develop");
+    expect(msg).toContain("@coderabbitai");
   });
 });
 
