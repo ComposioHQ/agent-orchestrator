@@ -71,13 +71,11 @@ describe.skipIf(!canRun)("agent-cursor (integration)", () => {
     const handle = makeTmuxHandle(sessionName);
     const _session = makeSession("inttest-cursor", handle, tmpDir);
 
-    // Poll until running (cursor-agent takes ~30s to complete, so 15s window is sufficient)
-    const deadline = Date.now() + 15_000;
-    while (Date.now() < deadline) {
-      const running = await agent.isProcessRunning(handle);
-      if (running) { aliveRunning = true; break; }
-      await sleep(500);
-    }
+    // Poll until running using pollUntilEqual for more reliable detection
+    aliveRunning = await pollUntilEqual(() => agent.isProcessRunning(handle), true, {
+      timeoutMs: 30_000,
+      intervalMs: 1_000,
+    }).catch(() => false);
 
     // Wait for agent to exit (up to 3 min — cursor can be slow on first cold start)
     exitedRunning = await pollUntilEqual(() => agent.isProcessRunning(handle), false, {
@@ -112,8 +110,11 @@ describe.skipIf(!canRun)("agent-cursor (integration)", () => {
   });
 
   it("fibonacci.py runs and outputs correct fibonacci numbers", async () => {
-    if (!fileCreated) return;
-    const { stdout } = await execFileAsync("python3", [outputFile], { timeout: 10_000 });
+    // Rely on previous test to verify fileCreated; if we get here and file doesn't exist, let it throw
+    const { stdout } = await execFileAsync(python3Bin!, ["-I", outputFile], {
+      timeout: 10_000,
+      env: { PATH: process.env.PATH ?? "" },
+    });
     const numbers = stdout.trim().split(/\s+/).map(Number).filter(n => !isNaN(n));
     expect(numbers.length).toBeGreaterThanOrEqual(10);
     // First 10 fibonacci numbers
