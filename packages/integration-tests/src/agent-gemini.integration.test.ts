@@ -55,8 +55,8 @@ describe.skipIf(!canRun)("agent-gemini (integration)", () => {
 
     const task = `Write a Python fibonacci program to the file fibonacci.py. The program should print the first 10 fibonacci numbers when run. Write only the file, no explanation.`;
     // --yolo skips all permission prompts; -p runs in one-shot (non-interactive) mode.
-    const cmd = `${geminiBin} --yolo -p '${task}'`;
-    // GEMINI_API_KEY is sourced from ~/.zshenv, which tmux/zsh sessions pick up automatically.
+    // Wrap in zsh -c so ~/.zshenv is sourced (tmux default-shell is bash, which doesn't load it).
+    const cmd = `zsh -c '${geminiBin} --yolo -p "${task}"'`;
     await createSession(sessionName, cmd, tmpDir);
 
     const handle = makeTmuxHandle(sessionName);
