@@ -23,7 +23,7 @@ import {
   reviewDecisionIcon,
   padCol,
 } from "../lib/format.js";
-import { getAgentByName, getSCM } from "../lib/plugins.js";
+import { getAgentByName, getSCM, getTracker } from "../lib/plugins.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 
 interface SessionInfo {
@@ -36,6 +36,7 @@ interface SessionInfo {
   pr: string | null;
   prNumber: number | null;
   issue: string | null;
+  issueUrl: string | null;
   lastActivity: string;
   project: string | null;
   ciStatus: CIStatus | null;
@@ -56,6 +57,20 @@ async function gatherSessionInfo(
   const summary = session.metadata["summary"] ?? null;
   const prUrl = suppressPROwnership ? null : (session.metadata["pr"] ?? null);
   const issue = session.issueId;
+
+  // Resolve issue URL via tracker plugin
+  let issueUrl: string | null = null;
+  if (issue) {
+    try {
+      const tracker = getTracker(projectConfig, session.projectId);
+      const project = projectConfig.projects[session.projectId];
+      if (tracker && project) {
+        issueUrl = tracker.issueUrl(issue, project);
+      }
+    } catch {
+      // Tracker lookup failed — not critical
+    }
+  }
 
   // Get live branch from worktree if available
   if (session.workspacePath) {
@@ -128,6 +143,7 @@ async function gatherSessionInfo(
     pr: prUrl,
     prNumber,
     issue,
+    issueUrl,
     lastActivity,
     project: session.projectId,
     ciStatus,
@@ -140,6 +156,7 @@ async function gatherSessionInfo(
 // Column widths for the table
 const COL = {
   session: 14,
+  issue: 12,
   branch: 24,
   pr: 6,
   ci: 6,
@@ -152,6 +169,7 @@ const COL = {
 function printTableHeader(): void {
   const hdr =
     padCol("Session", COL.session) +
+    padCol("Issue", COL.issue) +
     padCol("Branch", COL.branch) +
     padCol("PR", COL.pr) +
     padCol("CI", COL.ci) +
@@ -161,15 +179,26 @@ function printTableHeader(): void {
     "Age";
   console.log(chalk.dim(`  ${hdr}`));
   const totalWidth =
-    COL.session + COL.branch + COL.pr + COL.ci + COL.review + COL.threads + COL.activity + 3;
+    COL.session + COL.issue + COL.branch + COL.pr + COL.ci + COL.review + COL.threads + COL.activity + 3;
   console.log(chalk.dim(`  ${"─".repeat(totalWidth)}`));
+}
+
+function terminalLink(text: string, url: string): string {
+  return `\u001b]8;;${url}\u0007${text}\u001b]8;;\u0007`;
 }
 
 function printSessionRow(info: SessionInfo): void {
   const prStr = info.prNumber ? `#${info.prNumber}` : "-";
 
+  const issueLabel = info.issue
+    ? info.issueUrl
+      ? chalk.magenta(terminalLink(info.issue, info.issueUrl))
+      : chalk.magenta(info.issue)
+    : chalk.dim("-");
+
   const row =
     padCol(chalk.green(info.name), COL.session) +
+    padCol(issueLabel, COL.issue) +
     padCol(info.branch ? chalk.cyan(info.branch) : chalk.dim("-"), COL.branch) +
     padCol(info.prNumber ? chalk.blue(prStr) : chalk.dim(prStr), COL.pr) +
     padCol(ciStatusIcon(info.ciStatus), COL.ci) +
@@ -188,7 +217,7 @@ function printSessionRow(info: SessionInfo): void {
   // Show summary on a second line if available
   const displaySummary = info.claudeSummary || info.summary;
   if (displaySummary) {
-    console.log(`  ${" ".repeat(COL.session)}${chalk.dim(displaySummary.slice(0, 60))}`);
+    console.log(`  ${" ".repeat(COL.session + COL.issue)}${chalk.dim(displaySummary.slice(0, 60))}`);
   }
 }
 
