@@ -342,7 +342,7 @@ function extractSummary(
       const msg = line.message.content
         .replace(/<[a-zA-Z_-]+>[\s\S]*?<\/[a-zA-Z_-]+>/g, "")
         .trim();
-      if (msg.length > 0) {
+      if (msg.length > 0 && !msg.startsWith("[") && !msg.startsWith("{")) {
         return {
           summary: msg.length > 120 ? msg.substring(0, 120) + "..." : msg,
           isFallback: true,
