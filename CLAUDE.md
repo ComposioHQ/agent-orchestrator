@@ -69,3 +69,14 @@ Before creating any PR, confirm the target repo. If the target is `ComposioHQ/ag
 > "This would open a PR against the ComposioHQ upstream. Do you approve?"
 
 Only proceed after explicit in-thread approval. Default target is always `jleechanorg/agent-orchestrator`.
+
+## Upstreaming to ComposioHQ — What to Strip
+
+When cherry-picking work to a `feat/*-upstream` branch for a ComposioHQ PR, **do not include**:
+
+- `docs/design/*.md` — fork-only markdown design docs (HTML equivalents are fine)
+- `CLAUDE.md` — fork-specific Claude Code instructions
+- `AGENTS.md` — fork-specific agent/contributor guidelines
+- `roadmap/` — fork roadmap docs
+- `.beads/` — local issue tracker
+- Any commit that references fork infrastructure (openclaw, jleechanorg-specific tooling)
