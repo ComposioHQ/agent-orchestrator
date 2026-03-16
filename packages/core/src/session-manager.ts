@@ -228,6 +228,30 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Build the initial task message sent to an agent after it claims a PR. */
+export function buildInitialPRTaskMessage(pr: {
+  number: number;
+  url: string;
+  owner: string;
+  repo: string;
+  branch: string;
+  baseBranch: string;
+}): string {
+  const fullRepo = `${pr.owner}/${pr.repo}`;
+  return `You own PR #${pr.number} (${pr.url}) on branch \`${pr.branch}\`.
+Your goal: make this PR green — CI passing, all review comments resolved, CodeRabbit approved, no merge conflicts.
+
+Steps:
+1. Read all PR comments: \`gh pr view ${pr.number} --repo ${fullRepo} --comments\`
+2. Read bot reviews: \`gh api repos/${fullRepo}/pulls/${pr.number}/reviews\`
+3. Read inline code comments: \`gh api repos/${fullRepo}/pulls/${pr.number}/comments | jq '.[] | {path:.path, line:.line, body:.body}'\`
+4. Check CI status: \`gh pr checks ${pr.number} --repo ${fullRepo}\`
+5. Fix EVERY actionable item: CI failures, CodeRabbit issues, reviewer comments, merge conflicts.
+6. Push your fixes.
+7. Only AFTER all comments are addressed: post \`@coderabbitai all good?\`
+8. If merge conflicts: rebase on the default branch first (\`git fetch origin && git rebase origin/${pr.baseBranch}\`).`;
+}
+
 async function getTmuxForegroundCommand(sessionName: string): Promise<string | null> {
   try {
     const { stdout } = await execFileAsync(
@@ -2119,13 +2143,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     const branchChanged = await scm.checkoutPR(pr, workspacePath);
 
-    updateMetadata(sessionsDir, sessionId, {
-      pr: pr.url,
-      status: "pr_open",
-      branch: pr.branch,
-      prAutoDetect: "",
-    });
-
     for (const previousSessionId of takenOverFrom) {
       const previousRaw = readMetadataRaw(sessionsDir, previousSessionId);
       if (!previousRaw) continue;
@@ -2151,6 +2168,21 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         }
       }
     }
+
+    if (options?.sendInitialMessage) {
+      try {
+        await send(sessionId, buildInitialPRTaskMessage(pr));
+      } catch {
+        // Non-fatal: session may not be ready yet; lifecycle reactions will re-send context
+      }
+    }
+
+    updateMetadata(sessionsDir, sessionId, {
+      pr: pr.url,
+      status: "pr_open",
+      branch: pr.branch,
+      prAutoDetect: "",
+    });
 
     return {
       sessionId,

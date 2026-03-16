@@ -1186,6 +1186,8 @@ export interface OpenCodeSessionManager extends SessionManager {
 export interface ClaimPROptions {
   assignOnGithub?: boolean;
   takeover?: boolean;
+  /** When true, send an initial task message to the agent after claiming the PR. */
+  sendInitialMessage?: boolean;
 }
 
 export interface ClaimPRResult {
