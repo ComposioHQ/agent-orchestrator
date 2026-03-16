@@ -1075,6 +1075,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         },
       },
       issueId: spawnConfig.issueId,
+      issueTitle: resolvedIssue?.title,
       prompt: composedPrompt,
       permissions: selection.permissions,
       model: selection.model,

@@ -322,6 +322,11 @@ function extractSummary(
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
     if (line?.type === "summary" && line.summary) {
+      // Skip summaries that look like raw JSON (e.g. TypeScript diagnostic arrays)
+      const trimmed = line.summary.trim();
+      if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+        continue;
+      }
       return { summary: line.summary, isFallback: false };
     }
   }
@@ -647,6 +652,14 @@ function createClaudeCodeAgent(): Agent {
       // Note: CLAUDECODE is unset via getEnvironment() (set to ""), not here.
       // This command must be safe for both shell and execFile contexts.
       const parts: string[] = ["claude"];
+
+      // Set RC session title via --name
+      if (config.issueId && config.issueTitle) {
+        const name = `${config.issueId}: ${config.issueTitle}`.substring(0, 80);
+        parts.push("--name", shellEscape(name));
+      } else {
+        parts.push("--name", shellEscape(config.sessionId));
+      }
 
       const permissionMode = normalizePermissionMode(config.permissions);
       if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
