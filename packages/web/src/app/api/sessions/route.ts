@@ -11,6 +11,7 @@ import {
 import { getCorrelationId, jsonWithCorrelation, recordApiObservation } from "@/lib/observability";
 import { resolveGlobalPause } from "@/lib/global-pause";
 import { filterProjectSessions } from "@/lib/project-utils";
+import { getTerminalTransportHealth } from "@/lib/terminal-transport";
 
 const METADATA_ENRICH_TIMEOUT_MS = 3_000;
 const PR_ENRICH_TIMEOUT_MS = 4_000;
@@ -40,6 +41,7 @@ export async function GET(request: Request) {
     const activeOnly = searchParams.get("active") === "true";
 
     const { config, registry, sessionManager } = await getServices();
+    const terminalHealth = await getTerminalTransportHealth({ heal: false });
     const requestedProjectId =
       projectFilter && projectFilter !== "all" && config.projects[projectFilter]
         ? projectFilter
@@ -106,6 +108,7 @@ export async function GET(request: Request) {
         orchestratorId,
         orchestrators,
         globalPause: resolveGlobalPause(allSessions),
+        terminalHealth,
       },
       { status: 200 },
       correlationId,

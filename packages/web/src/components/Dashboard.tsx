@@ -8,6 +8,7 @@ import {
   type AttentionLevel,
   type GlobalPauseState,
   type DashboardOrchestratorLink,
+  type TerminalTransportHealth,
   getAttentionLevel,
   isPRRateLimited,
 } from "@/lib/types";
@@ -18,6 +19,7 @@ import { DynamicFavicon } from "./DynamicFavicon";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
 import { ProjectSidebar } from "./ProjectSidebar";
 import type { ProjectInfo } from "@/lib/project-name";
+import { useTerminalHealth } from "@/hooks/useTerminalHealth";
 
 interface DashboardProps {
   initialSessions: DashboardSession[];
@@ -26,6 +28,7 @@ interface DashboardProps {
   projects?: ProjectInfo[];
   initialGlobalPause?: GlobalPauseState | null;
   orchestrators?: DashboardOrchestratorLink[];
+  initialTerminalHealth?: TerminalTransportHealth | null;
 }
 
 const KANBAN_LEVELS = ["working", "pending", "review", "respond", "merge"] as const;
@@ -51,6 +54,7 @@ export function Dashboard({
   projects = [],
   initialGlobalPause = null,
   orchestrators,
+  initialTerminalHealth = null,
 }: DashboardProps) {
   const orchestratorLinks = orchestrators ?? EMPTY_ORCHESTRATORS;
   const { sessions, globalPause } = useSessionEvents(
@@ -64,6 +68,7 @@ export function Dashboard({
     useState<DashboardOrchestratorLink[]>(orchestratorLinks);
   const [spawningProjectIds, setSpawningProjectIds] = useState<string[]>([]);
   const [spawnErrors, setSpawnErrors] = useState<Record<string, string>>({});
+  const { terminalHealth } = useTerminalHealth(initialTerminalHealth);
   const showSidebar = projects.length > 1;
   const allProjectsView = showSidebar && projectId === undefined;
 
@@ -240,6 +245,14 @@ export function Dashboard({
     return new Date(globalPause.pausedUntil).toLocaleString();
   }, [globalPause]);
 
+  const terminalHealthBannerMessage = useMemo(() => {
+    if (!terminalHealth?.degraded) {
+      return null;
+    }
+
+    return terminalHealth.message.replace(/^Terminal transport degraded:\s*/i, "");
+  }, [terminalHealth]);
+
   useEffect(() => {
     setGlobalPauseDismissed(false);
   }, [globalPause?.pausedUntil, globalPause?.reason, globalPause?.sourceSessionId]);
@@ -295,6 +308,25 @@ export function Dashboard({
                 <path d="M18 6 6 18M6 6l12 12" />
               </svg>
             </button>
+          </div>
+        )}
+
+        {terminalHealthBannerMessage && (
+          <div className="mb-6 flex items-center gap-2.5 rounded border border-[rgba(245,158,11,0.25)] bg-[rgba(245,158,11,0.05)] px-3.5 py-2.5 text-[11px] text-[var(--color-status-attention)]">
+            <svg
+              className="h-3.5 w-3.5 shrink-0"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              viewBox="0 0 24 24"
+            >
+              <circle cx="12" cy="12" r="10" />
+              <path d="M12 8v4M12 16h.01" />
+            </svg>
+            <span className="flex-1">
+              <strong>Terminal transport degraded:</strong> {terminalHealthBannerMessage}. Dashboard
+              sessions stay visible while websocket services restart.
+            </span>
           </div>
         )}
 

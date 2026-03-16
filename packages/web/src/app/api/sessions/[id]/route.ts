@@ -7,6 +7,7 @@ import {
   enrichSessionsMetadata,
 } from "@/lib/serialize";
 import { getCorrelationId, jsonWithCorrelation, recordApiObservation } from "@/lib/observability";
+import { getTerminalTransportHealth } from "@/lib/terminal-transport";
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const correlationId = getCorrelationId(_request);
@@ -14,6 +15,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
   try {
     const { id } = await params;
     const { config, registry, sessionManager } = await getServices();
+    const terminalHealth = await getTerminalTransportHealth({ heal: false });
 
     const coreSession = await sessionManager.get(id);
     if (!coreSession) {
@@ -52,7 +54,11 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       sessionId: id,
     });
 
-    return jsonWithCorrelation(dashboardSession, { status: 200 }, correlationId);
+    return jsonWithCorrelation(
+      { ...dashboardSession, terminalHealth },
+      { status: 200 },
+      correlationId,
+    );
   } catch (error) {
     const { id } = await params;
     const { config, sessionManager } = await getServices().catch(() => ({

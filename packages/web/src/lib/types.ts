@@ -75,6 +75,7 @@ export interface DashboardSession {
   lastActivityAt: string;
   pr: DashboardPR | null;
   metadata: Record<string, string>;
+  terminalHealth?: TerminalTransportHealth;
 }
 
 /**
@@ -134,6 +135,35 @@ export interface DashboardOrchestratorLink {
   id: string;
   projectId: string;
   projectName: string;
+}
+
+export type TerminalTransportServiceKey = "terminalWebsocket" | "directTerminalWebsocket";
+export type TerminalTransportServiceStatus = "healthy" | "starting" | "restarting" | "degraded";
+
+export interface TerminalTransportServiceHealth {
+  key: TerminalTransportServiceKey;
+  label: string;
+  port: number;
+  healthPath: string;
+  status: TerminalTransportServiceStatus;
+  healthy: boolean;
+  message: string;
+  pid: number | null;
+  restartCount: number;
+  lastCheckedAt: string;
+  lastHealthyAt: string | null;
+  lastStartedAt: string | null;
+  lastErrorAt: string | null;
+  lastError: string | null;
+  supervisorOwned: boolean;
+}
+
+export interface TerminalTransportHealth {
+  status: "healthy" | "degraded";
+  degraded: boolean;
+  message: string;
+  checkedAt: string;
+  services: Record<TerminalTransportServiceKey, TerminalTransportServiceHealth>;
 }
 
 /** SSE snapshot event from /api/events */
