@@ -178,6 +178,11 @@ describe("getLaunchCommand", () => {
     expect(cmd).toBe("gemini --yolo");
   });
 
+  it("adds --yolo flag for permissionless mode (normalized from skip)", () => {
+    const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "permissionless" }));
+    expect(cmd).toBe("gemini --yolo");
+  });
+
   it("does not add --yolo for default permissions", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "default" }));
     expect(cmd).not.toContain("--yolo");
@@ -399,9 +404,9 @@ describe("getRestoreCommand", () => {
     expect(cmd).toBe("gemini -r latest");
   });
 
-  it("includes --yolo when permissions is skip", async () => {
+  it("includes --yolo when permissions is permissionless", async () => {
     mockReaddir.mockResolvedValue(["project-1"]);
-    const project = makeProjectConfig({ agentConfig: { permissions: "skip" } });
+    const project = makeProjectConfig({ agentConfig: { permissions: "permissionless" } });
     const cmd = await agent.getRestoreCommand!(makeSession(), project);
     expect(cmd).toBe("gemini --yolo -r latest");
   });

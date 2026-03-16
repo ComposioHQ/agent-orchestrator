@@ -20,6 +20,15 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
+function normalizePermissionMode(mode: string | undefined): "permissionless" | "default" | "auto-edit" | "suggest" | undefined {
+  if (!mode) return undefined;
+  if (mode === "skip") return "permissionless";
+  if (mode === "permissionless" || mode === "default" || mode === "auto-edit" || mode === "suggest") {
+    return mode;
+  }
+  return undefined;
+}
+
 /** Shared bin directory for ao shell wrappers (prepended to PATH) */
 const AO_BIN_DIR = join(homedir(), ".ao", "bin");
 
@@ -329,8 +338,8 @@ function createGeminiAgent(): Agent {
 
       const parts: string[] = ["gemini"];
 
-      // --yolo auto-approves all actions (equivalent to "skip" permissions)
-      if (config.permissions === "skip") {
+      // --yolo auto-approves all actions (equivalent to "permissionless" mode)
+      if (normalizePermissionMode(config.permissions) === "permissionless") {
         parts.push("--yolo");
       }
 
@@ -463,7 +472,7 @@ function createGeminiAgent(): Agent {
       // Gemini CLI supports -r latest to resume the most recent session
       const parts: string[] = ["gemini"];
 
-      if ((project.agentConfig?.permissions as string | undefined) === "skip") {
+      if (normalizePermissionMode(project.agentConfig?.permissions as string | undefined) === "permissionless") {
         parts.push("--yolo");
       }
 
