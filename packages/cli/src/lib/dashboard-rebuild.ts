@@ -3,8 +3,9 @@
  * running dashboard processes.
  */
 
+import { spawn } from "node:child_process";
 import { resolve } from "node:path";
-import { existsSync, rmSync } from "node:fs";
+import { accessSync, constants, existsSync, rmSync } from "node:fs";
 import ora from "ora";
 import { execSilent } from "./shell.js";
 
@@ -72,3 +73,35 @@ export async function cleanNextCache(webDir: string): Promise<void> {
   }
 }
 
+/**
+ * Reject rebuild attempts when the dashboard lives in a read-only packaged install.
+ */
+export function assertDashboardRebuildAvailable(webDir: string): void {
+  try {
+    accessSync(webDir, constants.W_OK);
+  } catch {
+    throw new Error("Dashboard rebuild is unavailable for packaged installs.");
+  }
+}
+
+/**
+ * Rebuild the dashboard in-place for mutable workspace installs.
+ */
+export async function rebuildDashboard(webDir: string): Promise<void> {
+  assertDashboardRebuildAvailable(webDir);
+  await new Promise<void>((resolvePromise, reject) => {
+    const child = spawn("pnpm", ["build"], {
+      cwd: webDir,
+      stdio: "inherit",
+    });
+
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) {
+        resolvePromise();
+        return;
+      }
+      reject(new Error(`pnpm build exited with code ${code ?? "null"}`));
+    });
+  });
+}

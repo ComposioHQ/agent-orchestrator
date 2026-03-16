@@ -51,8 +51,8 @@
   --color-accent-purple:  #bc8cff;
 
   /* ── Typography ──────────────────────────────────────────────────── */
-  --font-sans: var(--font-ibm-plex-sans), "SF Pro Text", -apple-system, system-ui, sans-serif;
-  --font-mono: var(--font-ibm-plex-mono), "SF Mono", "Menlo", "Consolas", monospace;
+  --font-sans: "IBM Plex Sans", "SF Pro Text", -apple-system, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", "SF Mono", "Menlo", "Consolas", monospace;
 
   /* ── Border radius ────────────────────────────────────────────────── */
   --radius-sm: 4px;

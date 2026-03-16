@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/cn";
+import { fetchRuntimeConfig } from "@/lib/runtime-config";
 
 // Import xterm CSS (must be imported in client component)
 import "xterm/css/xterm.css";
@@ -263,13 +264,6 @@ export function DirectTerminal({
         // WebSocket URL (stable across reconnects)
         // When accessed via reverse proxy (HTTPS on standard port), use path-based
         // WebSocket endpoint instead of direct port access.
-        const wsUrl = buildDirectTerminalWsUrl({
-          location: window.location,
-          sessionId,
-          proxyWsPath: process.env.NEXT_PUBLIC_TERMINAL_WS_PATH,
-          directTerminalPort: process.env.NEXT_PUBLIC_DIRECT_TERMINAL_PORT,
-        });
-
         // ── Preserve selection while terminal receives output ────────
         // xterm.js clears the selection on every terminal.write(). We
         // buffer incoming data while a selection is active so the
@@ -353,11 +347,55 @@ export function DirectTerminal({
           }
         });
 
-        function connectWebSocket() {
+        let connectWebSocket: (() => Promise<void>) | null = null;
+
+        const scheduleReconnect = () => {
           if (!mounted) return;
+
+          const attempt = reconnectAttemptRef.current;
+          const delay = Math.min(1000 * Math.pow(2, attempt), MAX_RECONNECT_DELAY);
+          reconnectAttemptRef.current = attempt + 1;
+
+          console.log(`[DirectTerminal] Reconnecting in ${delay}ms (attempt ${attempt + 1})`);
+          setStatus("connecting");
+          setError(null);
+
+          reconnectTimerRef.current = setTimeout(() => {
+            if (connectWebSocket) {
+              void connectWebSocket();
+            }
+          }, delay);
+        };
+
+        connectWebSocket = async () => {
+          if (!mounted) return;
+
+          let directTerminalPort: string | undefined;
+          try {
+            directTerminalPort = (await fetchRuntimeConfig()).directTerminalPort;
+          } catch (err) {
+            console.error("[DirectTerminal] Failed to load runtime config:", err);
+            setStatus("connecting");
+            setError("Retrying terminal connection...");
+            scheduleReconnect();
+            return;
+          }
+
+          if (!mounted) return;
+
+          const wsUrl = buildDirectTerminalWsUrl({
+            location: window.location,
+            sessionId,
+            proxyWsPath: process.env.NEXT_PUBLIC_TERMINAL_WS_PATH,
+            directTerminalPort,
+          });
 
           console.log("[DirectTerminal] Connecting to:", wsUrl);
           const websocket = new WebSocket(wsUrl);
+          if (!mounted) {
+            websocket.close();
+            return;
+          }
           ws.current = websocket;
           websocket.binaryType = "arraybuffer";
 
@@ -411,19 +449,11 @@ export function DirectTerminal({
             }
 
             // Transient failure — schedule reconnect with exponential backoff
-            const attempt = reconnectAttemptRef.current;
-            const delay = Math.min(1000 * Math.pow(2, attempt), MAX_RECONNECT_DELAY);
-            reconnectAttemptRef.current = attempt + 1;
-
-            console.log(`[DirectTerminal] Reconnecting in ${delay}ms (attempt ${attempt + 1})`);
-            setStatus("connecting");
-            setError(null);
-
-            reconnectTimerRef.current = setTimeout(connectWebSocket, delay);
+            scheduleReconnect();
           };
-        }
+        };
 
-        connectWebSocket();
+        void connectWebSocket();
 
         // Store cleanup function to be called from useEffect cleanup
         cleanup = () => {
