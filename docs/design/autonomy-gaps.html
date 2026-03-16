@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Autonomy Gaps — Design Reference</title>
+    <style>
+      :root {
+        --bg: #f2efe7;
+        --panel: #fffdf8;
+        --ink: #1f1a16;
+        --muted: #6f6357;
+        --brand: #165a72;
+        --line: #dfd3c2;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+        line-height: 1.5;
+        background:
+          radial-gradient(circle at 12% 10%, #ebdfcb 0%, transparent 35%),
+          radial-gradient(circle at 88% 85%, #e5d4ba 0%, transparent 30%), var(--bg);
+      }
+
+      .wrap { max-width: 1100px; margin: 2rem auto; padding: 0 1rem 3rem; }
+
+      .hero, .card {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--panel);
+      }
+
+      .hero { padding: 1.2rem; }
+      .card { padding: 1rem; }
+
+      h1, h2, h3 {
+        font-family: "IBM Plex Serif", Georgia, serif;
+        margin: 0.6rem 0;
+      }
+
+      .muted { color: var(--muted); }
+
+      .grid { margin-top: 1rem; display: grid; gap: 1rem; }
+
+      @media (min-width: 900px) {
+        .grid.two   { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        .grid.four  { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      }
+
+      ul, ol { margin: 0.4rem 0 0; padding-left: 1rem; }
+
+      code {
+        font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+        background: #f3ebe0;
+        border-radius: 4px;
+        padding: 0.1rem 0.28rem;
+      }
+
+      pre {
+        margin-top: 0.7rem;
+        padding: 0.7rem;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #faf4ec;
+        overflow-x: auto;
+        font-size: 0.88rem;
+      }
+
+      .tag {
+        display: inline-block;
+        font-size: 0.75rem;
+        padding: 0.1rem 0.5rem;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        color: var(--muted);
+        margin-right: 0.3rem;
+      }
+
+      .badge-p1  { background: #fde8e8; border-color: #f5c0c0; color: #8b1a1a; }
+      .badge-p2  { background: #fdf5e6; border-color: #f0d890; color: #7a4e00; }
+      .badge-p3  { background: #edf7f1; border-color: #9fd8b8; color: #1a6b3a; }
+      .badge-done{ background: #edf7f1; border-color: #9fd8b8; color: #1a6b3a; font-weight: 600; }
+
+      table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; font-size: 0.9rem; }
+      th, td { padding: 0.45rem 0.6rem; border: 1px solid var(--line); text-align: left; }
+      th { background: #f3ebe0; }
+
+      .section-label {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+        margin: 1.5rem 0 0.3rem;
+      }
+
+      .callout {
+        border-left: 3px solid var(--brand);
+        padding: 0.6rem 0.8rem;
+        background: #f0f7fb;
+        border-radius: 0 8px 8px 0;
+        margin-top: 0.6rem;
+        font-size: 0.92rem;
+      }
+
+      .flow {
+        display: flex;
+        gap: 0.4rem;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-top: 0.5rem;
+        font-size: 0.88rem;
+      }
+      .flow-step {
+        background: #f3ebe0;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 0.25rem 0.6rem;
+      }
+      .flow-arrow { color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+
+      <section class="hero">
+        <h1>Autonomy Gaps — Design Reference</h1>
+        <p class="muted">
+          Four lifecycle gaps identified in the 2026-03-15 code audit and closed in
+          <code>feat/autonomy-gaps</code>. Covers auto-merge wiring, merge-conflicts lifecycle
+          event, context-rich repair prompts, and hook observer documentation.
+        </p>
+        <p>
+          <span class="tag">PR jleechanorg#8</span>
+          <span class="tag">packages/core/src/lifecycle-manager.ts</span>
+          <span class="tag">+844 / -54 lines</span>
+          <span class="tag badge-done">4/4 gaps closed</span>
+        </p>
+      </section>
+
+      <p class="section-label">Gap overview</p>
+      <section class="grid four">
+        <article class="card">
+          <span class="tag badge-p1">P1</span>
+          <h3 style="margin-top:0.4rem">jleechan-514o</h3>
+          <p>Auto-merge stub</p>
+          <p class="muted" style="font-size:0.88rem">
+            <code>executeReaction()</code> only notified. <code>scm.mergePR()</code>
+            was implemented but never called.
+          </p>
+        </article>
+        <article class="card">
+          <span class="tag badge-p2">P2</span>
+          <h3 style="margin-top:0.4rem">jleechan-8p0s</h3>
+          <p>No merge-conflicts event</p>
+          <p class="muted" style="font-size:0.88rem">
+            Conflicts appeared as mergeability blockers but no lifecycle event fired —
+            no reaction could be configured.
+          </p>
+        </article>
+        <article class="card">
+          <span class="tag badge-p2">P2</span>
+          <h3 style="margin-top:0.4rem">jleechan-ylqd</h3>
+          <p>Generic repair prompts</p>
+          <p class="muted" style="font-size:0.88rem">
+            <code>send-to-agent</code> sent raw config strings. No CI check names,
+            URLs, or file context were injected.
+          </p>
+        </article>
+        <article class="card">
+          <span class="tag badge-p3">P3</span>
+          <h3 style="margin-top:0.4rem">jleechan-4xzz</h3>
+          <p>Hook docs overstate interception</p>
+          <p class="muted" style="font-size:0.88rem">
+            Plugin hooks described as "interceptors". They are PostToolUse observers
+            that fire after command completion.
+          </p>
+        </article>
+      </section>
+
+      <p class="section-label">514o · Auto-merge wiring</p>
+      <section class="grid two">
+        <article class="card">
+          <h2>Before</h2>
+          <pre><code>case "auto-merge": {
+  // For now, just notify
+  await notifyHuman(event, "action");
+  return { action: "auto-merge", success: true };
+}</code></pre>
+          <p class="muted" style="font-size:0.88rem;margin-top:0.5rem">
+            <code>scm.mergePR()</code> existed in <code>scm-github/src/index.ts</code>
+            but was not called from the lifecycle-manager's <code>auto-merge</code> reaction.
+          </p>
+        </article>
+        <article class="card">
+          <h2>After</h2>
+          <pre><code>case "request-merge": {
+  // Check mergeability, then notify human — merge happens externally after approval
+  const mergeReadiness = await scm.getMergeability(session.pr);
+  if (!mergeReadiness.mergeable) { await notifyHuman(blockerEvent, "action"); return { success: false }; }
+  await notifyHuman(approvalEvent, "action");  // human approves and merges
+  return { action, success: true };
+}
+case "auto-merge": {
+  // Check mergeability, then merge immediately
+  const mergeReadiness = await scm.getMergeability(session.pr);
+  if (!mergeReadiness.mergeable) { await notifyHuman(blockerEvent, "action"); return { success: false }; }
+  await scm.mergePR(session.pr, mergeMethod);
+  return { action, mergeMethod, success: true };
+}</code></pre>
+          <ul style="margin-top:0.6rem">
+            <li><strong>auto-merge</strong> — merges directly when session reaches <code>mergeable</code></li>
+            <li><strong>request-merge</strong> — notifies human first, then merges</li>
+            <li><strong>mergeMethod</strong>: <code>merge | squash | rebase</code> (default: squash)</li>
+          </ul>
+        </article>
+      </section>
+
+      <p class="section-label">8p0s · Merge-conflicts lifecycle event</p>
+      <section class="grid two">
+        <article class="card">
+          <h2>New status + event</h2>
+          <pre><code>// types.ts
+type SessionStatus =
+  | "mergeable"
+  | "merge_conflicts"  // new
+  | "merged" | ...
+
+// lifecycle-manager.ts — polling loop
+if (!mergeReady.noConflicts) return "merge_conflicts";
+
+// event map
+case "merge_conflicts": return "merge.conflicts";</code></pre>
+        </article>
+        <article class="card">
+          <h2>Example config</h2>
+          <pre><code>reactions:
+  merge-conflicts:
+    auto: true
+    action: send-to-agent
+    message: &gt;
+      Your PR has merge conflicts.
+      Run: git fetch origin &amp;&amp; git rebase origin/main
+      Resolve conflicts, then push.
+    retries: 2</code></pre>
+          <div class="callout">
+            Without this event, an agent could only learn about conflicts by polling
+            or if a human intervened. Now it is a first-class lifecycle transition.
+          </div>
+        </article>
+      </section>
+
+      <p class="section-label">ylqd · Context injection in repair prompts</p>
+      <section class="grid two">
+        <article class="card">
+          <h2>buildReactionContext()</h2>
+          <p>New helper in <code>lifecycle-manager.ts</code> — fetches real context before dispatch:</p>
+          <table>
+            <tr><th>Reaction</th><th>Context appended</th></tr>
+            <tr>
+              <td><code>ci-failed</code></td>
+              <td>Failing check names + status URLs via <code>scm.getCIChecks()</code></td>
+            </tr>
+            <tr>
+              <td><code>changes-requested</code></td>
+              <td>Unresolved review thread bodies via <code>scm.getPendingComments()</code></td>
+            </tr>
+            <tr>
+              <td><code>merge-conflicts</code></td>
+              <td>Merge blockers from mergeability detail (<code>blockers: string[]</code>)</td>
+            </tr>
+          </table>
+        </article>
+        <article class="card">
+          <h2>Agent receives</h2>
+          <p><em>Before (static):</em></p>
+          <pre><code>Fix CI</code></pre>
+          <p style="margin-top:0.8rem"><em>After (context-enriched):</em></p>
+          <pre><code>Fix CI
+
+Failing checks:
+- typecheck https://github.com/.../runs/123
+- lint      https://github.com/.../runs/124
+
+Affected files: packages/core/src/lifecycle-manager.ts</code></pre>
+        </article>
+      </section>
+
+      <p class="section-label">4xzz · Hook observer documentation</p>
+      <section class="grid two">
+        <article class="card">
+          <h2>What hooks actually do</h2>
+          <div class="flow">
+            <div class="flow-step">Agent runs <code>gh pr create</code></div>
+            <div class="flow-arrow">&#8594;</div>
+            <div class="flow-step">Command completes</div>
+            <div class="flow-arrow">&#8594;</div>
+            <div class="flow-step">PostToolUse hook fires</div>
+            <div class="flow-arrow">&#8594;</div>
+            <div class="flow-step">AO metadata updated</div>
+          </div>
+          <p class="muted" style="margin-top:0.8rem;font-size:0.88rem">
+            The hook cannot modify command behavior, inject flags, or prevent execution.
+            It is an observer that syncs AO session metadata post-command.
+          </p>
+        </article>
+        <article class="card">
+          <h2>Documentation changes</h2>
+          <table>
+            <tr><th>Before</th><th>After</th></tr>
+            <tr><td>"intercepts gh pr create"</td><td>"observes gh pr create output"</td></tr>
+            <tr><td>"Metadata Updater Hook Script"</td><td>"Metadata Updater Hook Script (Observer Pattern)"</td></tr>
+            <tr><td>"wrappers intercept commands"</td><td>"wrappers observe commands post-execution"</td></tr>
+          </table>
+          <p class="muted" style="margin-top:0.6rem;font-size:0.88rem">
+            <code>TODO(interception)</code> stubs left in both plugin files for future pre-command needs.
+          </p>
+        </article>
+      </section>
+
+      <p class="section-label">Autonomy claim — post-fix</p>
+      <section class="grid two">
+        <article class="card">
+          <h2>Full autonomous loop</h2>
+          <div class="flow" style="flex-direction:column;align-items:flex-start;gap:0.3rem">
+            <div class="flow-step">agent works &#8594; PR opens</div>
+            <div class="flow-arrow">&#8595;</div>
+            <div class="flow-step">CI fails &#8594; <strong>context-rich</strong> send-to-agent</div>
+            <div class="flow-arrow">&#8595;</div>
+            <div class="flow-step">merge conflicts &#8594; send-to-agent <em>(new)</em></div>
+            <div class="flow-arrow">&#8595;</div>
+            <div class="flow-step">review comments &#8594; send-to-agent</div>
+            <div class="flow-arrow">&#8595;</div>
+            <div class="flow-step">mergeable &#8594; <strong>auto-merge calls scm.mergePR()</strong></div>
+          </div>
+        </article>
+        <article class="card">
+          <h2>What changed</h2>
+          <table>
+            <tr><th>Capability</th><th>Before</th><th>After</th></tr>
+            <tr><td>Auto-merge</td><td>Stub / notify only</td><td>Calls <code>mergePR()</code></td></tr>
+            <tr><td>Merge conflicts</td><td>No event</td><td><code>merge_conflicts</code> event</td></tr>
+            <tr><td>Repair prompt context</td><td>Static string</td><td>CI names + URLs injected</td></tr>
+            <tr><td>Hook documentation</td><td>Says "intercept"</td><td>Says "observe"</td></tr>
+          </table>
+          <div class="callout">
+            AO can now complete the full loop through merge autonomously when
+            <code>auto-merge</code> is configured. Human approval path available
+            via <code>request-merge</code>.
+          </div>
+        </article>
+      </section>
+
+    </main>
+  </body>
+</html>

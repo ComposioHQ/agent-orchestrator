@@ -107,6 +107,22 @@
         color: var(--muted);
         margin-right: 0.3rem;
       }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 0.5rem;
+      }
+
+      th, td {
+        padding: 0.5rem;
+        border: 1px solid var(--line);
+        text-align: left;
+      }
+
+      th {
+        background: #f3ebe0;
+      }
     </style>
   </head>
   <body>
@@ -139,19 +155,19 @@
         <article class="card">
           <h2>Relationship to agent-claude-code</h2>
           <p>
-            Both plugins are thin wrappers around <code>@composio/ao-plugin-agent-base</code>,
-            which provides the full <code>Agent</code> implementation via
-            <code>createAgentPlugin(config)</code>. The two differ only in config:
+            The implementation is structurally identical to <code>agent-claude-code</code>
+            (~87% shared code). The two differ in agent-specific constants and one
+            behavioral difference in permission flags:
           </p>
-          <ul>
-            <li>Process name: <code>gemini</code> vs <code>claude</code></li>
-            <li>Session directory: <code>~/.gemini/projects/</code> vs <code>~/.claude/projects/</code></li>
-            <li>Permission flag: <code>--yolo</code> vs <code>--dangerously-skip-permissions</code></li>
-            <li>No <code>--append-system-prompt</code> support in Gemini CLI</li>
-            <li>Cost rates: $0.10/$0.40 per M tokens vs $3/$15 (Gemini Flash baseline)</li>
-          </ul>
+          <table>
+            <tr><th>Aspect</th><th>Gemini</th><th>Claude Code</th></tr>
+            <tr><td>Process name</td><td><code>gemini</code></td><td><code>claude</code></td></tr>
+            <tr><td>Session directory</td><td><code>~/.gemini/projects/</code></td><td><code>~/.claude/projects/</code></td></tr>
+            <tr><td>Permission flag</td><td><code>--yolo</code></td><td><code>--dangerously-skip-permissions</code></td></tr>
+            <tr><td>System prompt flag</td><td>Not supported</td><td><code>--append-system-prompt</code></td></tr>
+          </table>
           <p class="muted" style="margin-top:0.5rem;font-size:0.9rem;">
-            Shared implementation lives in <code>packages/plugins/agent-base</code>.
+            A shared <code>agent-jsonl-utils</code> extraction is tracked as a follow-up.
           </p>
         </article>
       </section>
@@ -161,7 +177,7 @@
           <h3>Launch</h3>
           <ul>
             <li><code>gemini</code> — base command</li>
-            <li><code>--resume &lt;sessionId&gt;</code> — resume existing session (via JSONL UUID)</li>
+            <li><code>-r / --resume &lt;sessionId&gt;</code> — resume existing session</li>
             <li><code>--yolo</code> — auto-approval / permissionless mode</li>
             <li><code>--model &lt;name&gt;</code> — optional model override</li>
             <li>Prompt delivered post-launch via <code>sendMessage()</code></li>
@@ -205,10 +221,16 @@
 
         <article class="card">
           <h2>Plugin Registration</h2>
-          <p>Registered in the core built-in plugin registry:</p>
-<pre><code>// packages/core/src/plugin-registry.ts
-{ slot: "agent", name: "gemini",
-  pkg: "@composio/ao-plugin-agent-gemini" },</code></pre>
+          <p>Registered as a built-in plugin in the AO plugin loader:</p>
+<pre><code>// packages/plugins/dist/index.js
+import geminiPlugin from "@composio/ao-plugin-agent-gemini";
+
+export const builtinPlugins = [
+  claudeCodePlugin,
+  codexPlugin,
+  geminiPlugin,   // ← added
+  ...
+];</code></pre>
           <p>
             Consumers can also override it per-project via <code>ao.config.json</code>
             <code>agentPlugin</code> key.
@@ -242,20 +264,18 @@
           <h2>Constraints &amp; Known Gaps</h2>
           <ul>
             <li>
-              <strong>Interactive mode by design</strong>: AO never passes <code>-p</code> /
-              <code>--prompt</code> — that would cause one-shot exit. The agent is always
-              launched without a prompt, then driven via <code>sendMessage()</code>
-              (<code>promptDelivery: "post-launch"</code>). This is intentional, not a gap.
+              <strong>One-shot vs interactive</strong>: <code>gemini -p</code> (headless)
+              exits after one response. Interactive mode (<code>gemini</code> alone, prompt
+              delivered via stdin) is required for multi-turn AO sessions.
             </li>
             <li>
-              <strong>Cost estimation accuracy</strong>: Gemini 2.0 Flash pricing ($0.10/M
-              input, $0.40/M output) is used as a baseline. Multi-modal inputs and premium
-              models will be mis-estimated until Gemini CLI exposes per-call cost in JSONL.
+              <strong>Cost estimation accuracy</strong>: Gemini Flash pricing is used as a
+              rough baseline. Multi-modal inputs and premium models will be mis-estimated
+              until Gemini CLI exposes per-call cost in JSONL.
             </li>
             <li>
-              <strong>No system prompt at launch</strong>: Gemini CLI has no
-              <code>--append-system-prompt</code> equivalent. System context must be woven
-              into the initial <code>sendMessage()</code> call post-launch.
+              <strong>Code duplication</strong>: ~700 lines shared verbatim with
+              <code>agent-claude-code</code>. Tracked for extraction to a shared utility module.
             </li>
           </ul>
         </article>
@@ -274,9 +294,10 @@
         <article class="card">
           <h2>Future Work</h2>
           <ul>
-            <li>Make pricing configurable per-model so operators running non-Flash models get accurate estimates (currently hardcoded in <code>AgentPluginConfig.defaultCostRate</code>)</li>
+            <li>Extract shared JSONL utilities (<code>parseJsonlFileTail</code>, <code>extractCost</code>, <code>normalizePermissionMode</code>, etc.) to a shared package used by <code>agent-claude-code</code>, <code>agent-cursor</code>, and <code>agent-gemini</code></li>
             <li>Update cost estimation when Gemini CLI exposes per-call token pricing in JSONL output</li>
             <li>Investigate <code>--append-system-prompt</code> equivalent when Gemini CLI adds system prompt support</li>
+            <li>Make pricing configurable per-project so operators running non-Flash models get accurate estimates</li>
           </ul>
         </article>
       </section>
