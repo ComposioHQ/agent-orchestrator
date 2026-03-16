@@ -79,6 +79,12 @@ export interface AgentPluginConfig {
    * (e.g. Gemini CLI uses ".json").
    */
   sessionFileExtension?: string;
+  /**
+   * Hook tool matcher - regex pattern for PostToolUse hook to match against.
+   * Defaults to "Bash". Override for agents that use different shell tools
+   * (e.g. Gemini uses "run_shell_command").
+   */
+  hookToolMatcher?: string;
 }
 
 // =============================================================================
@@ -585,6 +591,7 @@ async function setupHookInWorkspace(
   workspacePath: string,
   configDir: string,
   hookCommand: string,
+  hookMatcher = "Bash",
 ): Promise<void> {
   const agentDir = join(workspacePath, configDir);
   const settingsPath = join(agentDir, "settings.json");
@@ -648,7 +655,7 @@ async function setupHookInWorkspace(
   if (hookIndex === -1) {
     // No metadata hook exists, add it
     postToolUse.push({
-      matcher: "Bash",
+      matcher: hookMatcher,
       hooks: [
         {
           type: "command",
@@ -696,14 +703,16 @@ async function setupMcpMailInWorkspace(
   const agentDir = join(workspacePath, configDir);
   const settingsPath = join(agentDir, "settings.json");
 
-  // Get MCP mail config from environment or use defaults
-  const mcpMailUrl = process.env.MCP_AGENT_MAIL_URL ?? "http://127.0.0.1:8765/mcp/";
-  const mcpMailToken = process.env.MCP_AGENT_MAIL_TOKEN || "";
+  // Get MCP mail config - only configure if explicitly enabled via env var
+  // This makes MCP mail opt-in rather than opt-out
+  const mcpMailUrl = process.env.MCP_AGENT_MAIL_URL;
 
-  // Skip if MCP mail URL is explicitly disabled
-  if (mcpMailUrl === "disabled" || mcpMailUrl === "") {
+  // Skip if MCP mail URL is not set, disabled, or empty string
+  if (mcpMailUrl === undefined || mcpMailUrl === "disabled" || mcpMailUrl === "") {
     return;
   }
+
+  const mcpMailToken = process.env.MCP_AGENT_MAIL_TOKEN || "";
 
   // Create config directory if it doesn't exist
   try {
@@ -730,23 +739,15 @@ async function setupMcpMailInWorkspace(
       ? (rawMcpServers as Record<string, unknown>)
       : {};
 
-  // Check if mcp-agent-mail is already configured
-  if (mcpServers["mcp-agent-mail"]) {
-    // Already configured, skip
-    return;
-  }
+  // Always configure/update mcp-agent-mail to support token rotation and URL changes
+  // NOTE: Auth token is NOT stored in worktree settings.json to avoid
+  // accidentally committing secrets. Users should set MCP_AGENT_MAIL_TOKEN
+  // in their shell environment when launching the agent instead.
 
   // Add mcp-agent-mail server configuration
   const serverConfig: Record<string, unknown> = {
     url: mcpMailUrl,
   };
-
-  // Add auth header if token is provided
-  if (mcpMailToken) {
-    serverConfig["headers"] = {
-      Authorization: `Bearer ${mcpMailToken}`,
-    };
-  }
 
   mcpServers["mcp-agent-mail"] = serverConfig;
   existingSettings["mcpServers"] = mcpServers;
@@ -994,7 +995,7 @@ export function createAgentPlugin(config: AgentPluginConfig, overrides?: Partial
       // Prefix AO_DATA_DIR so the hook writes to the configured data directory
       // rather than the default $HOME/.ao-sessions.
       const hookCommand = `AO_DATA_DIR=${shellEscape(hookConfig.dataDir)} ${shellEscape(hookScriptPath)}`;
-      await setupHookInWorkspace(workspacePath, config.configDir, hookCommand);
+      await setupHookInWorkspace(workspacePath, config.configDir, hookCommand, config.hookToolMatcher ?? "Bash");
       // Also configure MCP mail server for agent coordination
       await setupMcpMailInWorkspace(workspacePath, config.configDir);
     },
@@ -1007,7 +1008,7 @@ export function createAgentPlugin(config: AgentPluginConfig, overrides?: Partial
         "metadata-updater.sh",
       );
       // postLaunchSetup does not receive hookConfig — use the env-var default
-      await setupHookInWorkspace(session.workspacePath, config.configDir, shellEscape(hookScriptPath));
+      await setupHookInWorkspace(session.workspacePath, config.configDir, shellEscape(hookScriptPath), config.hookToolMatcher ?? "Bash");
       // Also configure MCP mail server for agent coordination
       await setupMcpMailInWorkspace(session.workspacePath, config.configDir);
     },
