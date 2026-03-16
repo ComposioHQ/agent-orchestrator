@@ -34,8 +34,9 @@ const SESSION_PREFIX = "ao-inttest-gemini-";
 
 const tmuxOk = await isTmuxAvailable();
 const geminiBin = await findBinary(["gemini"]);
+const python3Bin = await findBinary(["python3"]);
 const hasApiKey = Boolean(process.env.GEMINI_API_KEY);
-const canRun = tmuxOk && geminiBin !== null && hasApiKey;
+const canRun = tmuxOk && geminiBin !== null && hasApiKey && python3Bin !== null;
 
 describe.skipIf(!canRun)("agent-gemini (integration)", () => {
   const agent = geminiPlugin.create();

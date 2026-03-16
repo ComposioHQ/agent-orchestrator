@@ -43,8 +43,9 @@ async function isCursorAuthenticated(bin: string): Promise<boolean> {
 
 const tmuxOk = await isTmuxAvailable();
 const cursorBin = await findBinary(["cursor-agent"]);
+const python3Bin = await findBinary(["python3"]);
 const cursorAuthed = cursorBin !== null && (await isCursorAuthenticated(cursorBin));
-const canRun = tmuxOk && cursorBin !== null && cursorAuthed;
+const canRun = tmuxOk && cursorBin !== null && cursorAuthed && python3Bin !== null;
 
 describe.skipIf(!canRun)("agent-cursor (integration)", () => {
   const agent = cursorPlugin.create();
@@ -62,9 +63,9 @@ describe.skipIf(!canRun)("agent-cursor (integration)", () => {
     outputFile = join(tmpDir, "fibonacci.py");
 
     const task = `Write a Python fibonacci program to the file fibonacci.py. The program should print the first 10 fibonacci numbers when run. Write only the file, no explanation.`;
-    // --yolo (alias for --force) allows file writes without interactive confirmation.
+    // --force allows file writes without interactive confirmation (cursor plugin's permissionlessFlag).
     // --print runs non-interactively, exits when done.
-    const cmd = `${cursorBin} --print --yolo '${task}'`;
+    const cmd = `${cursorBin} --print --force '${task}'`;
     await createSession(sessionName, cmd, tmpDir);
 
     const handle = makeTmuxHandle(sessionName);
