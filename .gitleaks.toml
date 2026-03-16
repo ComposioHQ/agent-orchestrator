@@ -28,3 +28,8 @@ regexes = [
   "your-token-here",
   "example\\.com",
 ]
+
+commits = [
+  # Pre-existing example config committed before secret scanning was enabled
+  "0393ab70a83e090883895d2168aa39a76f997ec8",
+]
