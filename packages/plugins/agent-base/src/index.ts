@@ -680,6 +680,81 @@ async function setupHookInWorkspace(
   await writeFile(settingsPath, JSON.stringify(existingSettings, null, 2) + "\n", "utf-8");
 }
 
+/**
+ * Configure MCP mail server in workspace settings.
+ * This enables agents to send coordination messages via MCP mail.
+ * 
+ * MCP mail server config:
+ * - name: mcp-agent-mail
+ * - url: http://127.0.0.1:8765/mcp/ (configurable via MCP_AGENT_MAIL_URL env var)
+ * - headers: auth token (configurable via MCP_AGENT_MAIL_TOKEN env var)
+ */
+async function setupMcpMailInWorkspace(
+  workspacePath: string,
+  configDir: string,
+): Promise<void> {
+  const agentDir = join(workspacePath, configDir);
+  const settingsPath = join(agentDir, "settings.json");
+
+  // Get MCP mail config from environment or use defaults
+  const mcpMailUrl = process.env.MCP_AGENT_MAIL_URL || "http://127.0.0.1:8765/mcp/";
+  const mcpMailToken = process.env.MCP_AGENT_MAIL_TOKEN || "";
+
+  // Skip if MCP mail URL is explicitly disabled
+  if (mcpMailUrl === "disabled" || mcpMailUrl === "") {
+    return;
+  }
+
+  // Create config directory if it doesn't exist
+  try {
+    await mkdir(agentDir, { recursive: true });
+  } catch {
+    // Directory might already exist
+  }
+
+  // Read existing settings if present
+  let existingSettings: Record<string, unknown> = {};
+  if (existsSync(settingsPath)) {
+    try {
+      const content = await readFile(settingsPath, "utf-8");
+      existingSettings = JSON.parse(content) as Record<string, unknown>;
+    } catch {
+      // Invalid JSON or read error — start fresh
+    }
+  }
+
+  // Initialize mcpServers if not present
+  const rawMcpServers = existingSettings["mcpServers"];
+  const mcpServers: Record<string, unknown> =
+    typeof rawMcpServers === "object" && rawMcpServers !== null && !Array.isArray(rawMcpServers)
+      ? (rawMcpServers as Record<string, unknown>)
+      : {};
+
+  // Check if mcp-agent-mail is already configured
+  if (mcpServers["mcp-agent-mail"]) {
+    // Already configured, skip
+    return;
+  }
+
+  // Add mcp-agent-mail server configuration
+  const serverConfig: Record<string, unknown> = {
+    url: mcpMailUrl,
+  };
+
+  // Add auth header if token is provided
+  if (mcpMailToken) {
+    serverConfig["headers"] = {
+      Authorization: `Bearer ${mcpMailToken}`,
+    };
+  }
+
+  mcpServers["mcp-agent-mail"] = serverConfig;
+  existingSettings["mcpServers"] = mcpServers;
+
+  // Write updated settings
+  await writeFile(settingsPath, JSON.stringify(existingSettings, null, 2) + "\n", "utf-8");
+}
+
 // =============================================================================
 // Agent Factory
 // =============================================================================
@@ -748,6 +823,15 @@ export function createAgentPlugin(config: AgentPluginConfig, overrides?: Partial
 
       if (launchConfig.issueId) {
         env["AO_ISSUE_ID"] = launchConfig.issueId;
+      }
+
+      // Pass MCP mail configuration to the agent if available
+      // These enable the agent to send coordination messages via MCP mail
+      if (process.env.MCP_AGENT_MAIL_URL) {
+        env["MCP_AGENT_MAIL_URL"] = process.env.MCP_AGENT_MAIL_URL;
+      }
+      if (process.env.MCP_AGENT_MAIL_TOKEN) {
+        env["MCP_AGENT_MAIL_TOKEN"] = process.env.MCP_AGENT_MAIL_TOKEN;
       }
 
       // Handle system prompt via environment variable (e.g. GEMINI_SYSTEM_MD).
@@ -908,6 +992,8 @@ export function createAgentPlugin(config: AgentPluginConfig, overrides?: Partial
       // rather than the default $HOME/.ao-sessions.
       const hookCommand = `AO_DATA_DIR=${shellEscape(hookConfig.dataDir)} ${shellEscape(hookScriptPath)}`;
       await setupHookInWorkspace(workspacePath, config.configDir, hookCommand);
+      // Also configure MCP mail server for agent coordination
+      await setupMcpMailInWorkspace(workspacePath, config.configDir);
     },
 
     async postLaunchSetup(session: Session): Promise<void> {
@@ -919,6 +1005,8 @@ export function createAgentPlugin(config: AgentPluginConfig, overrides?: Partial
       );
       // postLaunchSetup does not receive hookConfig — use the env-var default
       await setupHookInWorkspace(session.workspacePath, config.configDir, shellEscape(hookScriptPath));
+      // Also configure MCP mail server for agent coordination
+      await setupMcpMailInWorkspace(session.workspacePath, config.configDir);
     },
 
     ...overrides,
