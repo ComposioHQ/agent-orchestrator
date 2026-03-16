@@ -25,27 +25,15 @@ import {
   createSession,
   killSession,
 } from "./helpers/tmux.js";
-import { pollUntilEqual, sleep } from "./helpers/polling.js";
+import { findBinary, pollUntilEqual, sleep } from "./helpers/polling.js";
 import { makeTmuxHandle, makeSession } from "./helpers/session-factory.js";
 
 const execFileAsync = promisify(execFile);
 
 const SESSION_PREFIX = "ao-inttest-gemini-";
 
-async function findGeminiBinary(): Promise<string | null> {
-  for (const bin of ["gemini"]) {
-    try {
-      await execFileAsync("which", [bin], { timeout: 5_000 });
-      return bin;
-    } catch {
-      // not found
-    }
-  }
-  return null;
-}
-
 const tmuxOk = await isTmuxAvailable();
-const geminiBin = await findGeminiBinary();
+const geminiBin = await findBinary(["gemini"]);
 const hasApiKey = Boolean(process.env.GEMINI_API_KEY);
 const canRun = tmuxOk && geminiBin !== null && hasApiKey;
 

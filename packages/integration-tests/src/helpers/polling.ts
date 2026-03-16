@@ -2,6 +2,27 @@
  * Polling utilities for integration tests.
  */
 
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
+
+/**
+ * Resolve the first binary from a list that exists on PATH.
+ * Returns null if none are found.
+ */
+export async function findBinary(candidates: string[]): Promise<string | null> {
+  for (const bin of candidates) {
+    try {
+      await execFileAsync("which", [bin], { timeout: 5_000 });
+      return bin;
+    } catch {
+      // not found
+    }
+  }
+  return null;
+}
+
 /** Sleep for the given number of milliseconds. */
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
