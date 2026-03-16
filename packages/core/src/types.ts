@@ -818,6 +818,7 @@ export type EventType =
   | "merge.ready"
   | "merge.conflicts"
   | "merge.completed"
+  | "merge.approval_requested"
   // Reactions
   | "reaction.triggered"
   | "reaction.escalated"
