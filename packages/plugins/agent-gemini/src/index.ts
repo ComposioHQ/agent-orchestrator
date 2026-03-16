@@ -5,6 +5,9 @@ import {
   type AgentPluginConfig,
 } from "@composio/ao-plugin-agent-base";
 import type { Agent, PluginModule } from "@composio/ao-core";
+import { createHash } from "node:crypto";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 // =============================================================================
 // Plugin Manifest
@@ -18,11 +21,23 @@ export const manifest = {
 };
 
 // =============================================================================
-// Project Path Encoder (alias for tests)
+// Project Path Encoder
 // =============================================================================
 
-/** Convert a workspace path to Gemini's project directory path. */
-export const toGeminiProjectPath = toAgentProjectPath;
+/**
+ * Convert a workspace path to Gemini's project directory hash.
+ * Gemini CLI uses SHA-256 of the workspace path to name its project directory
+ * (`~/.gemini/tmp/<hash>/chats/`), unlike Claude Code which uses path-mangling.
+ *
+ * Exported for testing.
+ */
+export function toGeminiProjectPath(workspacePath: string): string {
+  const normalized = workspacePath.replace(/\\/g, "/");
+  return createHash("sha256").update(normalized).digest("hex");
+}
+
+/** @deprecated Use toGeminiProjectPath instead */
+export { toAgentProjectPath };
 
 // =============================================================================
 // Plugin Config
@@ -36,12 +51,19 @@ const geminiConfig: AgentPluginConfig = {
   configDir: ".gemini",
   // Gemini CLI uses --yolo (equivalent of --dangerously-skip-permissions)
   permissionlessFlag: "--yolo",
-  // Gemini CLI does not support a system prompt flag;
-  // system prompts are delivered post-launch via sendMessage().
+  // Gemini CLI does not support a system prompt CLI flag; prompts are delivered
+  // post-launch via sendMessage(), or inline via the GEMINI_SYSTEM_MD env var.
   systemPromptFlag: undefined,
+  systemPromptEnvVar: "GEMINI_SYSTEM_MD",
   // Gemini 2.0 Flash pricing as baseline ($0.10/M input, $0.40/M output).
   // Will be inaccurate for other Gemini models. TODO: make configurable or infer from JSONL.
   defaultCostRate: { inputPerMillion: 0.10, outputPerMillion: 0.40 },
+  // Gemini CLI stores sessions at ~/.gemini/tmp/<sha256(workspacePath)>/chats/
+  // (SHA-256 encoding), not the path-mangling scheme used by Claude Code.
+  getSessionDir: (workspacePath: string) =>
+    join(homedir(), ".gemini", "tmp", toGeminiProjectPath(workspacePath), "chats"),
+  // Gemini CLI session files use .json extension, not .jsonl
+  sessionFileExtension: ".json",
 };
 
 // =============================================================================
