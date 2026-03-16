@@ -39,9 +39,7 @@ const cursorConfig: AgentPluginConfig = {
   // Cursor Agent CLI does not support a system prompt flag;
   // system prompts are delivered post-launch via sendMessage().
   systemPromptFlag: undefined,
-  // Cursor Agent CLI does not expose per-token costs in JSONL.
-  // Claude pricing is used as a placeholder until Cursor adds cost data.
-  defaultCostRate: { inputPerMillion: 3.0, outputPerMillion: 15.0 },
+  // Cursor Agent CLI does not expose cost or token data in JSONL — cost not tracked.
 };
 
 // =============================================================================
