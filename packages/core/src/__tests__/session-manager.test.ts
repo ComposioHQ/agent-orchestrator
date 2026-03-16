@@ -1354,6 +1354,74 @@ describe("list", () => {
     expect(sessions[0].activity).toBe("exited");
   });
 
+  it("recovers killed session when runtime is actually alive", async () => {
+    const aliveRuntime: Runtime = {
+      ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(true),
+    };
+    const agentWithState: Agent = {
+      ...mockAgent,
+      getActivityState: vi.fn().mockResolvedValue({ state: "active" }),
+    };
+    const registryWithAlive: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return aliveRuntime;
+        if (slot === "agent") return agentWithState;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "a",
+      status: "killed",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithAlive });
+    const sessions = await sm.list();
+
+    expect(sessions[0].status).toBe("working");
+    expect(sessions[0].activity).toBe("active");
+    expect(agentWithState.getActivityState).toHaveBeenCalled();
+  });
+
+  it("keeps killed status when runtime confirms session is dead", async () => {
+    const deadRuntime: Runtime = {
+      ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(false),
+    };
+    const agentWithState: Agent = {
+      ...mockAgent,
+      getActivityState: vi.fn().mockResolvedValue({ state: "active" }),
+    };
+    const registryWithDead: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return deadRuntime;
+        if (slot === "agent") return agentWithState;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "a",
+      status: "killed",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithDead });
+    const sessions = await sm.list();
+
+    expect(sessions[0].status).toBe("killed");
+    expect(sessions[0].activity).toBe("exited");
+    expect(agentWithState.getActivityState).not.toHaveBeenCalled();
+  });
+
   it("detects activity using agent-native mechanism", async () => {
     const agentWithState: Agent = {
       ...mockAgent,
@@ -3932,6 +4000,11 @@ describe("spawnOrchestrator", () => {
 });
 
 describe("restore", () => {
+  beforeEach(() => {
+    // Restore tests operate on killed/terminal sessions — the runtime is dead.
+    vi.mocked(mockRuntime.isAlive).mockResolvedValue(false);
+  });
+
   it("restores a killed session with existing workspace", async () => {
     // Create a workspace directory that exists
     const wsPath = join(tmpDir, "ws-app-1");
@@ -4203,6 +4276,10 @@ describe("restore", () => {
   });
 
   it("does not recreate active metadata from archive when session is not restorable", async () => {
+    // This test verifies a "working" (alive) session cannot be restored.
+    // Override the restore-scoped beforeEach to keep the runtime alive.
+    vi.mocked(mockRuntime.isAlive).mockResolvedValue(true);
+
     const wsPath = join(tmpDir, "ws-app-archive-non-restorable");
     mkdirSync(wsPath, { recursive: true });
 
