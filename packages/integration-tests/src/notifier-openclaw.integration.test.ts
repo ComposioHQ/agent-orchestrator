@@ -47,9 +47,11 @@ describe("notifier-openclaw integration", () => {
     const body = JSON.parse(opts.body);
     expect(body.name).toBe("AO");
     expect(body.sessionKey).toBe("hook:ao:ao-12");
+    expect(body.event_id).toBe("evt-test-1");
     expect(body.wakeMode).toBe("now");
     expect(body.deliver).toBe(true);
     expect(body.message).toContain("[AO URGENT]");
+    expect(body.message).toContain("Event ID: evt-test-1");
     expect(body.message).toContain("CI failed 5 times");
   });
 
@@ -112,5 +114,17 @@ describe("notifier-openclaw integration", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
 
     await promise;
+  });
+
+  it("prevents timeout replay duplicates for the same event id within TTL", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error("timeout"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const notifier = openClawPlugin.create({ token: "tok", retries: 0, idempotencyTtlMs: 60_000 });
+    const event = makeEvent({ id: "evt-replay", sessionId: "ao-8" });
+
+    await expect(notifier.notify(event)).rejects.toThrow("timeout");
+    await expect(notifier.notify(event)).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

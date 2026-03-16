@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PR #395 Explainer</title>
+  <style>
+    :root {
+      --bg: #f7f6f3;
+      --card: #ffffff;
+      --text: #1c2430;
+      --muted: #5a6675;
+      --accent: #0a6d78;
+      --border: #d8dde6;
+    }
+    body { margin: 0; background: linear-gradient(120deg, #f7f6f3, #eef5f8); color: var(--text); font: 16px/1.6 "IBM Plex Sans", "Segoe UI", sans-serif; }
+    .wrap { max-width: 980px; margin: 32px auto; padding: 0 16px 48px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 22px; margin-bottom: 14px; }
+    h1, h2 { margin: 0 0 10px; letter-spacing: 0.01em; }
+    h1 { font-size: 30px; color: #16324a; }
+    h2 { font-size: 20px; color: var(--accent); }
+    ul { margin: 8px 0 0 20px; }
+    code { background: #f1f5f8; padding: 2px 6px; border-radius: 6px; }
+    .kv { color: var(--muted); }
+    .yes { color: #0a6d38; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="card">
+      <h1>PR #395 Pre-merge Explainer</h1>
+      <div class="kv">PR: <a href="https://github.com/ComposioHQ/agent-orchestrator/pull/395">#395</a> · Issue: #380 · Branch: <code>feat/380</code> · Date: 2026-03-10</div>
+    </section>
+
+    <section class="card">
+      <h2>What this PR does</h2>
+      <ul>
+        <li>Adds stable <code>event_id</code> to OpenClaw escalation payloads.</li>
+        <li>Includes <code>Event ID: &lt;id&gt;</code> in escalation text for traceability.</li>
+        <li>Implements AO-side idempotency dedupe keyed by <code>sessionKey + event_id</code> with TTL via <code>idempotencyTtlMs</code> (default 300000 ms).</li>
+        <li>Prevents timeout/retry replay duplicates by reserving keys before outbound send.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Architecture and design choices</h2>
+      <ul>
+        <li>Phase-0 mitigation is client-side only, matching issue scope.</li>
+        <li>Dedupe store is in-memory map with lazy TTL eviction for low overhead.</li>
+        <li>Scoping by session key prevents cross-session suppression of identical event IDs.</li>
+        <li><code>post()</code> path keeps deterministic hash-based event IDs but bypasses escalation dedupe policy.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Iterations and feedback addressed</h2>
+      <ul>
+        <li><strong>Iteration 1:</strong> implemented event_id + TTL dedupe + tests.</li>
+        <li><strong>Iteration 2:</strong> added final status artifact for prior request.</li>
+        <li><strong>Iteration 3:</strong> addressed Cursor Bugbot feedback by removing prior process-only artifact and publishing requested pre-merge docs.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Testing performed (exact commands and results)</h2>
+      <ul>
+        <li><code>pnpm -C packages/plugins/notifier-openclaw test</code> → PASS (16/16 tests)</li>
+        <li><code>pnpm -C packages/integration-tests exec vitest run --config vitest.config.ts src/notifier-openclaw.integration.test.ts</code> → PASS (5/5 tests)</li>
+      </ul>
+      <p>PR CI checks are green: Lint, Typecheck, Test, Test (Web), Integration Tests, Test Fresh Onboarding, Scan for Secrets, Dependency Review, NPM Audit.</p>
+      <p>Cursor Bugbot check is non-blocking (<code>NEUTRAL/skipping</code>), with one review comment handled in this iteration.</p>
+    </section>
+
+    <section class="card">
+      <h2>Review pass command and fallback</h2>
+      <ul>
+        <li>Attempted review command: <code>ao review-check ao</code>.</li>
+        <li>Outcome: environment lacked local <code>agent-orchestrator.yaml</code>, so command could not execute in this worktree context.</li>
+        <li>Fallback used: structured manual deep review (logic, tests, regression surface, residual risk audit).</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Remaining risks</h2>
+      <ul>
+        <li>Dedupe cache is process-local and in-memory only.</li>
+        <li>Cross-instance duplicates remain possible without shared idempotency storage.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Merge recommendation</h2>
+      <p class="yes">MERGE (YES)</p>
+      <p>Quality assessment: satisfied with implementation quality and test coverage for issue #380 scope.</p>
+      <p>Pride statement: yes, this PR is in a merge-ready state and communicates known tradeoffs clearly.</p>
+    </section>
+  </main>
+</body>
+</html>

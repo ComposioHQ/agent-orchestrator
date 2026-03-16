@@ -78,6 +78,7 @@ describe("notifier-openclaw", () => {
 
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body.sessionKey).toBe("hook:ao:ao-12");
+    expect(body.event_id).toBe("evt-1");
   });
 
   it("sanitizes invalid characters in session id", async () => {
@@ -101,6 +102,7 @@ describe("notifier-openclaw", () => {
 
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body.message).toContain("Actions available: retry, kill");
+    expect(body.message).toContain("Event ID: evt-1");
   });
 
   it("post uses context sessionId when provided", async () => {
@@ -113,6 +115,7 @@ describe("notifier-openclaw", () => {
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body.sessionKey).toBe("hook:ao:ao-77");
     expect(body.message).toBe("ready");
+    expect(body.event_id).toMatch(/^[a-f0-9]{24}$/);
   });
 
   it("defaults wakeMode=now and deliver=true", async () => {
@@ -170,6 +173,64 @@ describe("notifier-openclaw", () => {
 
     const notifier = create({ token: "tok", retries: 2, retryDelayMs: 1 });
     await expect(notifier.notify(makeEvent())).rejects.toThrow("OpenClaw webhook failed (401)");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips duplicate escalation event ids within TTL per session", async () => {
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const notifier = create({ token: "tok", idempotencyTtlMs: 60_000 });
+    const event = makeEvent({ id: "evt-dedupe" });
+
+    await notifier.notify(event);
+    await notifier.notify(event);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(infoSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Skipping duplicate escalation event_id=evt-dedupe"),
+    );
+  });
+
+  it("scopes duplicate detection by session key", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const notifier = create({ token: "tok", idempotencyTtlMs: 60_000 });
+
+    await notifier.notify(makeEvent({ id: "evt-same", sessionId: "ao-1" }));
+    await notifier.notify(makeEvent({ id: "evt-same", sessionId: "ao-2" }));
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("allows replay after idempotency TTL expires", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const notifier = create({ token: "tok", idempotencyTtlMs: 100 });
+    const event = makeEvent({ id: "evt-expiry" });
+
+    await notifier.notify(event);
+    await notifier.notify(event);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(101);
+    await notifier.notify(event);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("reserves idempotency key before send to prevent timeout replay duplicates", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error("timeout"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const notifier = create({ token: "tok", retries: 0, idempotencyTtlMs: 60_000 });
+    const event = makeEvent({ id: "evt-timeout" });
+
+    await expect(notifier.notify(event)).rejects.toThrow("timeout");
+    await expect(notifier.notify(event)).resolves.toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
