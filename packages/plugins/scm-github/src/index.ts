@@ -442,10 +442,87 @@ function parseDate(val: string | undefined | null): Date {
 }
 
 // ---------------------------------------------------------------------------
+// TTL cache — reduces redundant gh CLI calls during polling.
+//
+// Each AO session triggers 8+ gh calls per 30s poll cycle, many of which
+// are duplicates (e.g. getPRState is called twice, getCISummary twice).
+// This cache eliminates those duplicates and throttles expensive calls
+// like comment fetching.
+// ---------------------------------------------------------------------------
+
+interface CacheEntry<T> {
+  data: T;
+  expiresAt: number;
+}
+
+class TTLCache<T> {
+  private store = new Map<string, CacheEntry<T>>();
+
+  get(key: string): T | undefined {
+    const entry = this.store.get(key);
+    if (!entry || entry.expiresAt < Date.now()) {
+      if (entry) this.store.delete(key);
+      return undefined;
+    }
+    return entry.data;
+  }
+
+  set(key: string, data: T, ttlMs: number): void {
+    this.store.set(key, { data, expiresAt: Date.now() + ttlMs });
+  }
+
+  invalidate(key: string): void {
+    this.store.delete(key);
+  }
+}
+
+// TTLs chosen to eliminate duplicates within a poll cycle while
+// staying responsive to real changes
+const PR_VIEW_TTL_MS = 25_000;    // 25s — just under the 30s poll interval
+const CI_CHECKS_TTL_MS = 60_000;  // 60s — CI doesn't change that fast
+const COMMENTS_TTL_MS = 120_000;  // 2min — expensive GraphQL + paginated REST
+
+// Max pages to fetch for automated comments (100 comments/page)
+const MAX_COMMENT_PAGES = 3;
+
+// ---------------------------------------------------------------------------
 // SCM implementation
 // ---------------------------------------------------------------------------
 
 function createGitHubSCM(): SCM {
+  // Caches scoped to this SCM instance
+  const prViewCache = new TTLCache<Record<string, unknown>>();
+  const ciChecksCache = new TTLCache<CICheck[]>();
+  const pendingCommentsCache = new TTLCache<ReviewComment[]>();
+  const automatedCommentsCache = new TTLCache<AutomatedComment[]>();
+
+  function prCacheKey(pr: PRInfo): string {
+    return `${pr.owner}/${pr.repo}#${pr.number}`;
+  }
+
+  /**
+   * Fetch PR data from cache or GitHub. Fetches ALL commonly needed fields
+   * in one call to avoid redundant gh pr view invocations.
+   *
+   * Before: getPRState, getReviewDecision, getMergeability each made
+   * separate gh pr view calls (3-4 per poll cycle per session).
+   * After: one call, cached for 25s.
+   */
+  async function cachedPRView(pr: PRInfo): Promise<Record<string, unknown>> {
+    const key = prCacheKey(pr);
+    const cached = prViewCache.get(key);
+    if (cached) return cached;
+
+    const raw = await gh([
+      "pr", "view", String(pr.number),
+      "--repo", repoFlag(pr),
+      "--json", "state,reviewDecision,mergeable,mergeStateStatus,isDraft",
+    ]);
+    const data: Record<string, unknown> = JSON.parse(raw);
+    prViewCache.set(key, data, PR_VIEW_TTL_MS);
+    return data;
+  }
+
   return {
     name: "github",
 
@@ -586,17 +663,8 @@ function createGitHubSCM(): SCM {
     },
 
     async getPRState(pr: PRInfo): Promise<PRState> {
-      const raw = await gh([
-        "pr",
-        "view",
-        String(pr.number),
-        "--repo",
-        repoFlag(pr),
-        "--json",
-        "state",
-      ]);
-      const data: { state: string } = JSON.parse(raw);
-      const s = data.state.toUpperCase();
+      const data = await cachedPRView(pr);
+      const s = ((data.state as string) ?? "").toUpperCase();
       if (s === "MERGED") return "merged";
       if (s === "CLOSED") return "closed";
       return "open";
@@ -639,6 +707,10 @@ function createGitHubSCM(): SCM {
     },
 
     async getCIChecks(pr: PRInfo): Promise<CICheck[]> {
+      const key = prCacheKey(pr);
+      const cached = ciChecksCache.get(key);
+      if (cached) return cached;
+
       try {
         const raw = await gh([
           "pr",
@@ -658,7 +730,7 @@ function createGitHubSCM(): SCM {
           completedAt: string;
         }> = JSON.parse(raw);
 
-        return checks.map((c) => {
+        const result = checks.map((c) => {
           const state = c.state?.toUpperCase();
 
           return {
@@ -670,9 +742,14 @@ function createGitHubSCM(): SCM {
             completedAt: c.completedAt ? new Date(c.completedAt) : undefined,
           };
         });
+
+        ciChecksCache.set(key, result, CI_CHECKS_TTL_MS);
+        return result;
       } catch (err) {
         if (isUnsupportedPrChecksJsonError(err)) {
-          return getCIChecksFromStatusRollup(pr);
+          const result = await getCIChecksFromStatusRollup(pr);
+          ciChecksCache.set(key, result, CI_CHECKS_TTL_MS);
+          return result;
         }
         throw new Error("Failed to fetch CI checks", { cause: err });
       }
@@ -750,18 +827,8 @@ function createGitHubSCM(): SCM {
     },
 
     async getReviewDecision(pr: PRInfo): Promise<ReviewDecision> {
-      const raw = await gh([
-        "pr",
-        "view",
-        String(pr.number),
-        "--repo",
-        repoFlag(pr),
-        "--json",
-        "reviewDecision",
-      ]);
-      const data: { reviewDecision: string } = JSON.parse(raw);
-
-      const d = (data.reviewDecision ?? "").toUpperCase();
+      const data = await cachedPRView(pr);
+      const d = ((data.reviewDecision as string) ?? "").toUpperCase();
       if (d === "APPROVED") return "approved";
       if (d === "CHANGES_REQUESTED") return "changes_requested";
       if (d === "REVIEW_REQUIRED") return "pending";
@@ -769,6 +836,10 @@ function createGitHubSCM(): SCM {
     },
 
     async getPendingComments(pr: PRInfo): Promise<ReviewComment[]> {
+      const key = prCacheKey(pr);
+      const cached = pendingCommentsCache.get(key);
+      if (cached) return cached;
+
       try {
         // Use GraphQL with variables to get review threads with actual isResolved status
         const raw = await gh([
@@ -832,7 +903,7 @@ function createGitHubSCM(): SCM {
 
         const threads = data.data.repository.pullRequest.reviewThreads.nodes;
 
-        return threads
+        const result = threads
           .filter((t) => {
             if (t.isResolved) return false; // only pending (unresolved) threads
             const c = t.comments.nodes[0];
@@ -853,12 +924,19 @@ function createGitHubSCM(): SCM {
               url: c.url,
             };
           });
+
+        pendingCommentsCache.set(key, result, COMMENTS_TTL_MS);
+        return result;
       } catch (err) {
         throw new Error("Failed to fetch pending comments", { cause: err });
       }
     },
 
     async getAutomatedComments(pr: PRInfo): Promise<AutomatedComment[]> {
+      const key = prCacheKey(pr);
+      const cached = automatedCommentsCache.get(key);
+      if (cached) return cached;
+
       try {
         const perPage = 100;
         const comments: Array<{
@@ -872,7 +950,7 @@ function createGitHubSCM(): SCM {
           html_url: string;
         }> = [];
 
-        for (let page = 1; ; page++) {
+        for (let page = 1; page <= MAX_COMMENT_PAGES; page++) {
           const raw = await gh([
             "api",
             "--method",
@@ -900,7 +978,7 @@ function createGitHubSCM(): SCM {
           }
         }
 
-        return comments
+        const result = comments
           .filter((c) => BOT_AUTHORS.has(c.user?.login ?? ""))
           .map((c) => {
             // Determine severity from body content
@@ -932,20 +1010,23 @@ function createGitHubSCM(): SCM {
               url: c.html_url,
             };
           });
+
+        automatedCommentsCache.set(key, result, COMMENTS_TTL_MS);
+        return result;
       } catch (err) {
         throw new Error("Failed to fetch automated comments", { cause: err });
       }
     },
 
     async getMergeability(pr: PRInfo): Promise<MergeReadiness> {
-      const blockers: string[] = [];
+      // cachedPRView gives us state, reviewDecision, mergeable,
+      // mergeStateStatus, isDraft — all from one (cached) gh call.
+      // Before this change, getMergeability made 3 separate gh calls:
+      //   getPRState (duplicate), gh pr view (redundant), getCISummary (duplicate).
+      const data = await cachedPRView(pr);
 
-      // First, check if the PR is merged
-      // GitHub returns mergeable=null for merged PRs, which is not useful
-      // Note: We only skip checks for merged PRs. Closed PRs still need accurate status.
-      const state = await this.getPRState(pr);
-      if (state === "merged") {
-        // For merged PRs, return a clean result without querying mergeable status
+      const prState = ((data.state as string) ?? "").toUpperCase();
+      if (prState === "MERGED") {
         return {
           mergeable: true,
           ciPassing: true,
@@ -955,25 +1036,9 @@ function createGitHubSCM(): SCM {
         };
       }
 
-      // Fetch PR details with merge state
-      const raw = await gh([
-        "pr",
-        "view",
-        String(pr.number),
-        "--repo",
-        repoFlag(pr),
-        "--json",
-        "mergeable,reviewDecision,mergeStateStatus,isDraft",
-      ]);
+      const blockers: string[] = [];
 
-      const data: {
-        mergeable: string;
-        reviewDecision: string;
-        mergeStateStatus: string;
-        isDraft: boolean;
-      } = JSON.parse(raw);
-
-      // CI
+      // CI (uses ciChecksCache — no duplicate call)
       const ciStatus = await this.getCISummary(pr);
       const ciPassing = ciStatus === CI_STATUS.PASSING || ciStatus === CI_STATUS.NONE;
       if (!ciPassing) {
@@ -981,7 +1046,7 @@ function createGitHubSCM(): SCM {
       }
 
       // Reviews
-      const reviewDecision = (data.reviewDecision ?? "").toUpperCase();
+      const reviewDecision = ((data.reviewDecision as string) ?? "").toUpperCase();
       const approved = reviewDecision === "APPROVED";
       if (reviewDecision === "CHANGES_REQUESTED") {
         blockers.push("Changes requested in review");
@@ -990,12 +1055,12 @@ function createGitHubSCM(): SCM {
       }
 
       // Conflicts / merge state
-      const mergeable = (data.mergeable ?? "").toUpperCase();
-      const mergeState = (data.mergeStateStatus ?? "").toUpperCase();
-      const noConflicts = mergeable === "MERGEABLE";
-      if (mergeable === "CONFLICTING") {
+      const mergeableStr = ((data.mergeable as string) ?? "").toUpperCase();
+      const mergeState = ((data.mergeStateStatus as string) ?? "").toUpperCase();
+      const noConflicts = mergeableStr === "MERGEABLE";
+      if (mergeableStr === "CONFLICTING") {
         blockers.push("Merge conflicts");
-      } else if (mergeable === "UNKNOWN" || mergeable === "") {
+      } else if (mergeableStr === "UNKNOWN" || mergeableStr === "") {
         blockers.push("Merge status unknown (GitHub is computing)");
       }
       if (mergeState === "BEHIND") {
