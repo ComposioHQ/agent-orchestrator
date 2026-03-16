@@ -25,24 +25,12 @@ import {
   createSession,
   killSession,
 } from "./helpers/tmux.js";
-import { pollUntilEqual, sleep } from "./helpers/polling.js";
+import { findBinary, pollUntilEqual, sleep } from "./helpers/polling.js";
 import { makeTmuxHandle, makeSession } from "./helpers/session-factory.js";
 
 const execFileAsync = promisify(execFile);
 
 const SESSION_PREFIX = "ao-inttest-cursor-";
-
-async function findCursorBinary(): Promise<string | null> {
-  for (const bin of ["cursor-agent"]) {
-    try {
-      await execFileAsync("which", [bin], { timeout: 5_000 });
-      return bin;
-    } catch {
-      // not found
-    }
-  }
-  return null;
-}
 
 async function isCursorAuthenticated(bin: string): Promise<boolean> {
   try {
@@ -54,7 +42,7 @@ async function isCursorAuthenticated(bin: string): Promise<boolean> {
 }
 
 const tmuxOk = await isTmuxAvailable();
-const cursorBin = await findCursorBinary();
+const cursorBin = await findBinary(["cursor-agent"]);
 const cursorAuthed = cursorBin !== null && (await isCursorAuthenticated(cursorBin));
 const canRun = tmuxOk && cursorBin !== null && cursorAuthed;
 
