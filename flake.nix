@@ -252,10 +252,15 @@
                   --frozen-lockfile
               )
 
-              mkdir -p .deploy/runtime/packages/web/node_modules .deploy/runtime/packages/web/.next
+              mkdir -p .deploy/runtime/packages/web/node_modules/@composio/ao-core .deploy/runtime/packages/web/node_modules/@anthropic-ai .deploy/runtime/packages/web/.next
               cp packages/web/package.json .deploy/runtime/packages/web/package.json
               cp -R packages/web/scripts .deploy/runtime/packages/web/scripts
               cp -R packages/web/dist .deploy/runtime/packages/web/dist
+              cp packages/core/package.json .deploy/runtime/packages/web/node_modules/@composio/ao-core/package.json
+              cp -R packages/core/dist .deploy/runtime/packages/web/node_modules/@composio/ao-core/dist
+              cp -LR packages/core/node_modules/@anthropic-ai/sdk .deploy/runtime/packages/web/node_modules/@anthropic-ai/sdk
+              cp -LR packages/core/node_modules/yaml .deploy/runtime/packages/web/node_modules/yaml
+              cp -LR packages/core/node_modules/zod .deploy/runtime/packages/web/node_modules/zod
               if [ -d packages/web/public ]; then
                 cp -R packages/web/public .deploy/runtime/packages/web/public
               fi
