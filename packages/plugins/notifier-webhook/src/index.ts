@@ -1,11 +1,15 @@
 import {
-  validateUrl,
   type PluginModule,
   type Notifier,
   type OrchestratorEvent,
   type NotifyAction,
   type NotifyContext,
 } from "@composio/ao-core";
+import {
+  isRetryableHttpStatus,
+  normalizeRetryConfig,
+  validateUrl,
+} from "@composio/ao-core/utils";
 
 export const manifest = {
   name: "webhook",
@@ -35,15 +39,6 @@ interface WebhookPayload {
   context?: NotifyContext;
 }
 
-/**
- * Returns true if the HTTP status code should be retried.
- * Only 429 (Too Many Requests) and 5xx (server errors) are retryable.
- * 4xx client errors (400, 401, 403, 404, etc.) are permanent failures.
- */
-function isRetryableStatus(status: number): boolean {
-  return status === 429 || status >= 500;
-}
-
 async function postWithRetry(
   url: string,
   payload: WebhookPayload,
@@ -70,7 +65,7 @@ async function postWithRetry(
       lastError = new Error(`Webhook POST failed (${response.status}): ${body}`);
 
       // Only retry on 429 or 5xx — 4xx client errors are permanent
-      if (!isRetryableStatus(response.status)) {
+      if (!isRetryableHttpStatus(response.status)) {
         throw lastError;
       }
     } catch (err) {
@@ -110,10 +105,7 @@ export function create(config?: Record<string, unknown>): Notifier {
       if (typeof v === "string") customHeaders[k] = v;
     }
   }
-  const rawRetries = (config?.retries as number) ?? 2;
-  const rawDelay = (config?.retryDelayMs as number) ?? 1000;
-  const retries = Number.isFinite(rawRetries) ? Math.max(0, rawRetries) : 2;
-  const retryDelayMs = Number.isFinite(rawDelay) && rawDelay >= 0 ? rawDelay : 1000;
+  const { retries, retryDelayMs } = normalizeRetryConfig(config);
 
   if (!url) {
     console.warn("[notifier-webhook] No url configured — notifications will be no-ops");

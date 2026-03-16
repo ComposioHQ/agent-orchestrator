@@ -139,6 +139,51 @@ Loads and validates `agent-orchestrator.yaml`:
 2. Wire it up in the polling loop
 3. Add config schema in `src/config.ts` if new reaction type
 
+### Feedback Tools (v1)
+
+`@composio/ao-core` exports two structured feedback tool contracts:
+
+- `bug_report`
+- `improvement_suggestion`
+
+Both share the same required input fields:
+
+- `title`
+- `body`
+- `evidence` (array of strings)
+- `session`
+- `source`
+- `confidence` (0..1)
+
+Example:
+
+```ts
+import { FEEDBACK_TOOL_NAMES, FeedbackReportStore, getFeedbackReportsDir } from "@composio/ao-core";
+
+const reportsDir = getFeedbackReportsDir(configPath, projectPath);
+const store = new FeedbackReportStore(reportsDir);
+
+const saved = store.persist(FEEDBACK_TOOL_NAMES.BUG_REPORT, {
+  title: "SSO login loop",
+  body: "Google SSO redirects back to /login repeatedly.",
+  evidence: ["trace_id=abc123", "screenshot: login-loop.png"],
+  session: "ao-22",
+  source: "agent",
+  confidence: 0.84,
+});
+```
+
+Storage format:
+
+- Reports are persisted under `~/.agent-orchestrator/{hash}-{projectId}/feedback-reports`
+- Each report is a typed key=value file (`report_<timestamp>_<id>.kv`) for easy inspection
+- A deterministic dedupe key (`sha256`, 16 hex chars) is generated from normalized tool+content
+
+Migration notes:
+
+- No migration needed for existing AO installs
+- The `feedback-reports` directory is created lazily on first persisted report
+
 ## Testing
 
 ```bash

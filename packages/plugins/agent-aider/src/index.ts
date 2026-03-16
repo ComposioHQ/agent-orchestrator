@@ -18,6 +18,15 @@ import { constants } from "node:fs";
 
 const execFileAsync = promisify(execFile);
 
+function normalizePermissionMode(mode: string | undefined): "permissionless" | "default" | "auto-edit" | "suggest" | undefined {
+  if (!mode) return undefined;
+  if (mode === "skip") return "permissionless";
+  if (mode === "permissionless" || mode === "default" || mode === "auto-edit" || mode === "suggest") {
+    return mode;
+  }
+  return undefined;
+}
+
 // =============================================================================
 // Aider Activity Detection Helpers
 // =============================================================================
@@ -75,7 +84,8 @@ function createAiderAgent(): Agent {
     getLaunchCommand(config: AgentLaunchConfig): string {
       const parts: string[] = ["aider"];
 
-      if (config.permissions === "skip") {
+      const permissionMode = normalizePermissionMode(config.permissions);
+      if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
         parts.push("--yes");
       }
 

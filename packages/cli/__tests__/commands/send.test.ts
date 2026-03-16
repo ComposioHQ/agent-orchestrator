@@ -1,9 +1,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 const { mockTmux, mockExec, mockDetectActivity } = vi.hoisted(() => ({
   mockTmux: vi.fn(),
   mockExec: vi.fn(),
   mockDetectActivity: vi.fn(),
+}));
+
+const { mockConfigRef, mockSessionManager } = vi.hoisted(() => ({
+  mockConfigRef: { current: null as Record<string, unknown> | null },
+  mockSessionManager: {
+    get: vi.fn(),
+    send: vi.fn(),
+  },
 }));
 
 vi.mock("../../src/lib/shell.js", () => ({
@@ -33,8 +44,15 @@ vi.mock("../../src/lib/session-utils.js", () => ({
 
 vi.mock("@composio/ao-core", () => ({
   loadConfig: () => {
-    throw new Error("no config");
+    if (!mockConfigRef.current) {
+      throw new Error("no config");
+    }
+    return mockConfigRef.current;
   },
+}));
+
+vi.mock("../../src/lib/create-session-manager.js", () => ({
+  getSessionManager: async () => mockSessionManager,
 }));
 
 import { Command } from "commander";
@@ -58,6 +76,9 @@ beforeEach(() => {
   mockTmux.mockReset();
   mockExec.mockReset();
   mockDetectActivity.mockReset();
+  mockSessionManager.get.mockReset();
+  mockSessionManager.send.mockReset();
+  mockConfigRef.current = null;
   mockExec.mockResolvedValue({ stdout: "", stderr: "" });
 });
 
@@ -243,6 +264,171 @@ describe("send command", () => {
 
       // C-u should be called to clear input
       expect(mockExec).toHaveBeenCalledWith("tmux", ["send-keys", "-t", "my-session", "C-u"]);
+    });
+  });
+
+  describe("session manager integration", () => {
+    function makeConfig(): Record<string, unknown> {
+      return {
+        configPath: "/tmp/agent-orchestrator.yaml",
+        defaults: {
+          runtime: "tmux",
+          agent: "claude-code",
+          workspace: "worktree",
+          notifiers: [],
+        },
+        projects: {
+          "my-app": {
+            name: "My App",
+            sessionPrefix: "app",
+            path: "/tmp/my-app",
+            defaultBranch: "main",
+            repo: "org/my-app",
+            agent: "claude-code",
+            runtime: "tmux",
+          },
+        },
+        notifiers: {},
+        notificationRouting: {},
+        reactions: {},
+      };
+    }
+
+    it("routes AO sessions through SessionManager.send", async () => {
+      mockConfigRef.current = makeConfig();
+      mockSessionManager.get.mockResolvedValue({
+        id: "app-1",
+        projectId: "my-app",
+        status: "working",
+        activity: "idle",
+        branch: null,
+        issueId: null,
+        pr: null,
+        workspacePath: null,
+        runtimeHandle: { id: "tmux-target-1", runtimeName: "tmux", data: {} },
+        agentInfo: null,
+        createdAt: new Date(),
+        lastActivityAt: new Date(),
+        metadata: { agent: "opencode" },
+      });
+      mockSessionManager.send.mockResolvedValue(undefined);
+      mockTmux.mockImplementation(async (...args: string[]) => {
+        if (args[0] === "capture-pane") return "❯ ";
+        return "";
+      });
+      mockDetectActivity.mockReturnValue("idle");
+
+      await program.parseAsync(["node", "test", "send", "app-1", "hello", "opencode"]);
+
+      expect(mockSessionManager.send).toHaveBeenCalledWith("app-1", "hello opencode");
+      expect(mockExec).not.toHaveBeenCalledWith(
+        "tmux",
+        expect.arrayContaining(["send-keys", "-l", "hello opencode"]),
+      );
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Message sent and processing"),
+      );
+    });
+
+    it("skips tmux busy detection when lifecycle send handles delivery", async () => {
+      mockConfigRef.current = makeConfig();
+      mockSessionManager.get.mockResolvedValue({
+        id: "app-1",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        branch: null,
+        issueId: null,
+        pr: null,
+        workspacePath: null,
+        runtimeHandle: { id: "tmux-target-1", runtimeName: "tmux", data: {} },
+        agentInfo: null,
+        createdAt: new Date(),
+        lastActivityAt: new Date(),
+        metadata: { agent: "opencode" },
+      });
+      mockSessionManager.send.mockResolvedValue(undefined);
+      mockTmux.mockImplementation(async (...args: string[]) => {
+        if (args[0] === "capture-pane") return "some output";
+        return "";
+      });
+      mockDetectActivity.mockReturnValueOnce("active").mockReturnValueOnce("idle");
+
+      await program.parseAsync(["node", "test", "send", "app-1", "fix", "mapping"]);
+
+      expect(mockSessionManager.send).toHaveBeenCalledWith("app-1", "fix mapping");
+      expect(consoleSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining("Waiting for app-1 to become idle"),
+      );
+      expect(mockTmux).not.toHaveBeenCalledWith(
+        "capture-pane",
+        "-t",
+        "tmux-target-1",
+        "-p",
+        "-S",
+        expect.any(String),
+      );
+    });
+
+    it("skips tmux checks for non-tmux AO sessions and still uses lifecycle send", async () => {
+      mockConfigRef.current = makeConfig();
+      mockSessionManager.get.mockResolvedValue({
+        id: "app-1",
+        projectId: "my-app",
+        status: "working",
+        activity: "active",
+        branch: null,
+        issueId: null,
+        pr: null,
+        workspacePath: null,
+        runtimeHandle: { id: "proc-1", runtimeName: "process", data: {} },
+        agentInfo: null,
+        createdAt: new Date(),
+        lastActivityAt: new Date(),
+        metadata: { agent: "opencode" },
+      });
+      mockSessionManager.send.mockResolvedValue(undefined);
+
+      await program.parseAsync(["node", "test", "send", "app-1", "hello"]);
+
+      expect(mockSessionManager.send).toHaveBeenCalledWith("app-1", "hello");
+      expect(mockTmux).not.toHaveBeenCalledWith("has-session", "-t", expect.any(String));
+    });
+
+    it("passes file contents through SessionManager.send for AO sessions", async () => {
+      mockConfigRef.current = makeConfig();
+      mockSessionManager.get.mockResolvedValue({
+        id: "app-1",
+        projectId: "my-app",
+        status: "working",
+        activity: "idle",
+        branch: null,
+        issueId: null,
+        pr: null,
+        workspacePath: null,
+        runtimeHandle: { id: "tmux-target-1", runtimeName: "tmux", data: {} },
+        agentInfo: null,
+        createdAt: new Date(),
+        lastActivityAt: new Date(),
+        metadata: { agent: "opencode" },
+      });
+      mockSessionManager.send.mockResolvedValue(undefined);
+      mockTmux.mockImplementation(async (...args: string[]) => {
+        if (args[0] === "capture-pane") return "❯ ";
+        return "";
+      });
+      mockDetectActivity.mockReturnValue("idle");
+
+      const filePath = join(tmpdir(), `ao-send-message-${Date.now()}.txt`);
+      writeFileSync(filePath, "from file");
+
+      try {
+        await program.parseAsync(["node", "test", "send", "app-1", "--file", filePath]);
+      } finally {
+        rmSync(filePath, { force: true });
+      }
+
+      expect(mockSessionManager.send).toHaveBeenCalledWith("app-1", "from file");
     });
   });
 });

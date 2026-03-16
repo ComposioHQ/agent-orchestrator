@@ -1,35 +1,82 @@
-import { type NextRequest, NextResponse } from "next/server";
+import { type NextRequest } from "next/server";
 import { validateIdentifier } from "@/lib/validation";
 import { getServices } from "@/lib/services";
 import { sessionToDashboard } from "@/lib/serialize";
-import { SessionNotRestorableError, WorkspaceMissingError } from "@composio/ao-core";
+import {
+  SessionNotRestorableError,
+  WorkspaceMissingError,
+  SessionNotFoundError,
+} from "@composio/ao-core";
+import {
+  getCorrelationId,
+  jsonWithCorrelation,
+  recordApiObservation,
+  resolveProjectIdForSessionId,
+} from "@/lib/observability";
 
 /** POST /api/sessions/:id/restore — Restore a terminated session */
 export async function POST(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const correlationId = getCorrelationId(_request);
+  const startedAt = Date.now();
   const { id } = await params;
   const idErr = validateIdentifier(id, "id");
   if (idErr) {
-    return NextResponse.json({ error: idErr }, { status: 400 });
+    return jsonWithCorrelation({ error: idErr }, { status: 400 }, correlationId);
   }
 
   try {
-    const { sessionManager } = await getServices();
+    const { config, sessionManager } = await getServices();
+    const projectId = resolveProjectIdForSessionId(config, id);
     const restored = await sessionManager.restore(id);
 
-    return NextResponse.json({
-      ok: true,
+    recordApiObservation({
+      config,
+      method: "POST",
+      path: "/api/sessions/[id]/restore",
+      correlationId,
+      startedAt,
+      outcome: "success",
+      statusCode: 200,
+      projectId: restored.projectId ?? projectId,
       sessionId: id,
-      session: sessionToDashboard(restored),
     });
+
+    return jsonWithCorrelation(
+      {
+        ok: true,
+        sessionId: id,
+        session: sessionToDashboard(restored),
+      },
+      { status: 200 },
+      correlationId,
+    );
   } catch (err) {
+    if (err instanceof SessionNotFoundError) {
+      return jsonWithCorrelation({ error: err.message }, { status: 404 }, correlationId);
+    }
     if (err instanceof SessionNotRestorableError) {
-      return NextResponse.json({ error: err.message }, { status: 409 });
+      return jsonWithCorrelation({ error: err.message }, { status: 409 }, correlationId);
     }
     if (err instanceof WorkspaceMissingError) {
-      return NextResponse.json({ error: err.message }, { status: 422 });
+      return jsonWithCorrelation({ error: err.message }, { status: 422 }, correlationId);
+    }
+    const { config } = await getServices().catch(() => ({ config: undefined }));
+    const projectId = config ? resolveProjectIdForSessionId(config, id) : undefined;
+    if (config) {
+      recordApiObservation({
+        config,
+        method: "POST",
+        path: "/api/sessions/[id]/restore",
+        correlationId,
+        startedAt,
+        outcome: "failure",
+        statusCode: 500,
+        projectId,
+        sessionId: id,
+        reason: err instanceof Error ? err.message : "Failed to restore session",
+      });
     }
     const msg = err instanceof Error ? err.message : "Failed to restore session";
-    const status = msg.includes("not found") ? 404 : 500;
-    return NextResponse.json({ error: msg }, { status });
+    return jsonWithCorrelation({ error: msg }, { status: 500 }, correlationId);
   }
 }

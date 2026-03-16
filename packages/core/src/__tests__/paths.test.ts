@@ -23,6 +23,7 @@ import {
   getProjectBaseDir,
   getSessionsDir,
   getWorktreesDir,
+  getFeedbackReportsDir,
   getArchiveDir,
   getOriginFilePath,
   generateSessionName,
@@ -271,6 +272,12 @@ describe("Path Construction", () => {
     expect(worktreesDir).toMatch(/\.agent-orchestrator\/[a-f0-9]{12}-integrator\/worktrees$/);
   });
 
+  it("getFeedbackReportsDir returns {baseDir}/feedback-reports", () => {
+    const reportsDir = getFeedbackReportsDir(configPath, "/repos/integrator");
+
+    expect(reportsDir).toMatch(/\.agent-orchestrator\/[a-f0-9]{12}-integrator\/feedback-reports$/);
+  });
+
   it("getArchiveDir returns {baseDir}/sessions/archive", () => {
     const archiveDir = getArchiveDir(configPath, "/repos/integrator");
 
@@ -287,10 +294,12 @@ describe("Path Construction", () => {
     const baseDir = getProjectBaseDir(configPath, "/repos/integrator");
     const sessionsDir = getSessionsDir(configPath, "/repos/integrator");
     const worktreesDir = getWorktreesDir(configPath, "/repos/integrator");
+    const reportsDir = getFeedbackReportsDir(configPath, "/repos/integrator");
     const archiveDir = getArchiveDir(configPath, "/repos/integrator");
 
     expect(sessionsDir).toContain(baseDir);
     expect(worktreesDir).toContain(baseDir);
+    expect(reportsDir).toContain(baseDir);
     expect(archiveDir).toContain(baseDir);
   });
 });

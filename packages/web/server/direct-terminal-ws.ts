@@ -12,12 +12,26 @@ import { spawn } from "node:child_process";
 import { WebSocketServer, WebSocket } from "ws";
 import { spawn as ptySpawn, type IPty } from "node-pty";
 import { homedir, userInfo } from "node:os";
+import { createCorrelationId } from "@composio/ao-core";
 import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
+import { createObserverContext, inferProjectId } from "./terminal-observability.js";
 
 interface TerminalSession {
   sessionId: string;
   pty: IPty;
   ws: WebSocket;
+}
+
+interface WebsocketHealthMetrics {
+  activeConnections: number;
+  totalConnections: number;
+  totalDisconnects: number;
+  totalErrors: number;
+  lastConnectedAt: string | null;
+  lastDisconnectedAt: string | null;
+  lastErrorAt: string | null;
+  lastDisconnectReason: string | null;
+  lastErrorReason: string | null;
 }
 
 export interface DirectTerminalServer {
@@ -34,6 +48,18 @@ export interface DirectTerminalServer {
 export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalServer {
   const TMUX = tmuxPath ?? findTmux();
   const activeSessions = new Map<string, TerminalSession>();
+  const { config, observer } = createObserverContext("terminal-direct-websocket");
+  const metrics: WebsocketHealthMetrics = {
+    activeConnections: 0,
+    totalConnections: 0,
+    totalDisconnects: 0,
+    totalErrors: 0,
+    lastConnectedAt: null,
+    lastDisconnectedAt: null,
+    lastErrorAt: null,
+    lastDisconnectReason: null,
+    lastErrorReason: null,
+  };
 
   const server = createServer((req, res) => {
     if (req.url === "/health") {
@@ -42,6 +68,7 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
         JSON.stringify({
           active: activeSessions.size,
           sessions: Array.from(activeSessions.keys()),
+          metrics,
         }),
       );
       return;
@@ -56,12 +83,41 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
     path: "/ws",
   });
 
+  const recordWebsocketMetric = (input: {
+    metric: "websocket_connect" | "websocket_disconnect" | "websocket_error";
+    outcome: "success" | "failure";
+    sessionId?: string;
+    reason?: string;
+    data?: Record<string, unknown>;
+  }): void => {
+    if (!observer) {
+      return;
+    }
+    const correlationId = createCorrelationId("ws");
+    observer.recordOperation({
+      metric: input.metric,
+      operation: `terminal.websocket.${input.metric}`,
+      outcome: input.outcome,
+      correlationId,
+      projectId: input.sessionId ? inferProjectId(config, input.sessionId) : undefined,
+      sessionId: input.sessionId,
+      reason: input.reason,
+      data: input.data,
+      level: input.outcome === "failure" ? "error" : "info",
+    });
+  };
+
   wss.on("connection", (ws, req) => {
     const url = new URL(req.url ?? "/", "ws://localhost");
     const sessionId = url.searchParams.get("session");
 
     if (!sessionId) {
       console.error("[DirectTerminal] Missing session parameter");
+      recordWebsocketMetric({
+        metric: "websocket_error",
+        outcome: "failure",
+        reason: "Missing session parameter",
+      });
       ws.close(1008, "Missing session parameter");
       return;
     }
@@ -69,6 +125,12 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
     // Validate session ID format
     if (!validateSessionId(sessionId)) {
       console.error("[DirectTerminal] Invalid session ID:", sessionId);
+      recordWebsocketMetric({
+        metric: "websocket_error",
+        outcome: "failure",
+        sessionId,
+        reason: "Invalid session ID",
+      });
       ws.close(1008, "Invalid session ID");
       return;
     }
@@ -78,6 +140,12 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
     const tmuxSessionId = resolveTmuxSession(sessionId, TMUX);
     if (!tmuxSessionId) {
       console.error("[DirectTerminal] tmux session not found:", sessionId);
+      recordWebsocketMetric({
+        metric: "websocket_error",
+        outcome: "failure",
+        sessionId,
+        reason: "Session not found",
+      });
       ws.close(1008, "Session not found");
       return;
     }
@@ -87,10 +155,7 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
     // Enable mouse mode for scrollback support
     const mouseProc = spawn(TMUX, ["set-option", "-t", tmuxSessionId, "mouse", "on"]);
     mouseProc.on("error", (err) => {
-      console.error(
-        `[DirectTerminal] Failed to set mouse mode for ${tmuxSessionId}:`,
-        err.message,
-      );
+      console.error(`[DirectTerminal] Failed to set mouse mode for ${tmuxSessionId}:`, err.message);
     });
 
     // Hide the green status bar for cleaner appearance
@@ -130,12 +195,49 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
       console.log(`[DirectTerminal] PTY spawned successfully`);
     } catch (err) {
       console.error(`[DirectTerminal] Failed to spawn PTY:`, err);
-      ws.close(1011, `Failed to spawn terminal: ${err instanceof Error ? err.message : String(err)}`);
+      recordWebsocketMetric({
+        metric: "websocket_error",
+        outcome: "failure",
+        sessionId,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+      ws.close(
+        1011,
+        `Failed to spawn terminal: ${err instanceof Error ? err.message : String(err)}`,
+      );
       return;
     }
 
     const session: TerminalSession = { sessionId, pty, ws };
     activeSessions.set(sessionId, session);
+
+    metrics.totalConnections += 1;
+    metrics.activeConnections = activeSessions.size;
+    metrics.lastConnectedAt = new Date().toISOString();
+    recordWebsocketMetric({
+      metric: "websocket_connect",
+      outcome: "success",
+      sessionId,
+      data: { activeConnections: metrics.activeConnections },
+    });
+
+    let disconnectRecorded = false;
+    const recordDisconnect = (outcome: "success" | "failure", reason: string) => {
+      if (disconnectRecorded) return;
+      disconnectRecorded = true;
+      const activeConnections = activeSessions.size;
+      metrics.activeConnections = activeConnections;
+      metrics.totalDisconnects += 1;
+      metrics.lastDisconnectedAt = new Date().toISOString();
+      metrics.lastDisconnectReason = reason;
+      recordWebsocketMetric({
+        metric: "websocket_disconnect",
+        outcome,
+        sessionId,
+        reason,
+        data: { activeConnections },
+      });
+    };
 
     // PTY -> WebSocket
     pty.onData((data) => {
@@ -152,6 +254,7 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
       if (activeSessions.get(sessionId)?.pty === pty) {
         activeSessions.delete(sessionId);
       }
+      recordDisconnect(exitCode === 0 ? "success" : "failure", `pty_exit:${exitCode}`);
       if (ws.readyState === WebSocket.OPEN) {
         ws.close(1000, "Terminal session ended");
       }
@@ -185,6 +288,7 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
       if (activeSessions.get(sessionId)?.pty === pty) {
         activeSessions.delete(sessionId);
       }
+      recordDisconnect("success", "ws_close");
       pty.kill();
     });
 
@@ -195,6 +299,16 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
       if (activeSessions.get(sessionId)?.pty === pty) {
         activeSessions.delete(sessionId);
       }
+      recordDisconnect("failure", `ws_error:${err.message}`);
+      metrics.totalErrors += 1;
+      metrics.lastErrorAt = new Date().toISOString();
+      metrics.lastErrorReason = err.message;
+      recordWebsocketMetric({
+        metric: "websocket_error",
+        outcome: "failure",
+        sessionId,
+        reason: err.message,
+      });
       pty.kill();
     });
   });
@@ -212,7 +326,8 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
 
 // --- Run as standalone script ---
 // Only start the server when executed directly (not imported by tests)
-const isMainModule = process.argv[1]?.endsWith("direct-terminal-ws.ts") ||
+const isMainModule =
+  process.argv[1]?.endsWith("direct-terminal-ws.ts") ||
   process.argv[1]?.endsWith("direct-terminal-ws.js");
 
 if (isMainModule) {

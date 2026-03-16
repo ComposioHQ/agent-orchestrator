@@ -1,5 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync, existsSync, readdirSync, readFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  writeFileSync,
+  rmSync,
+  mkdirSync,
+  existsSync,
+  readdirSync,
+  readFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -39,6 +47,7 @@ const {
     spawn: vi.fn(),
     spawnOrchestrator: vi.fn(),
     send: vi.fn(),
+    claimPR: vi.fn(),
   },
   sessionsDirRef: { current: "" },
 }));
@@ -147,6 +156,25 @@ function buildSessionsFromDir(
       metadata: meta,
     } satisfies Session;
   });
+}
+
+function makeSession(overrides: Partial<Session> & { id: string; projectId: string }): Session {
+  return {
+    id: overrides.id,
+    projectId: overrides.projectId,
+    status: "working",
+    activity: null,
+    branch: null,
+    issueId: null,
+    pr: null,
+    workspacePath: null,
+    runtimeHandle: { id: overrides.id, runtimeName: "tmux", data: {} },
+    agentInfo: null,
+    createdAt: new Date(),
+    lastActivityAt: new Date(),
+    metadata: {},
+    ...overrides,
+  } satisfies Session;
 }
 
 vi.mock("../../src/lib/create-session-manager.js", () => ({
@@ -682,5 +710,124 @@ describe("status command", () => {
     const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
     const parsed = JSON.parse(jsonCalls);
     expect(parsed[0].activity).toBe("exited");
+  });
+
+  it("suppresses orchestrator PR ownership in status output", async () => {
+    writeFileSync(
+      join(sessionsDir, "app-orchestrator"),
+      [
+        "worktree=/tmp/wt",
+        "branch=main",
+        "status=working",
+        "role=orchestrator",
+        "pr=https://github.com/org/repo/pull/77",
+      ].join("\n"),
+    );
+
+    mockTmux.mockImplementation(async (...args: string[]) => {
+      if (args[0] === "list-sessions") return "app-orchestrator";
+      if (args[0] === "display-message") return String(Math.floor(Date.now() / 1000));
+      return null;
+    });
+    mockGit.mockResolvedValue("main");
+    mockDetectPR.mockResolvedValue({
+      number: 77,
+      url: "https://github.com/org/repo/pull/77",
+      title: "Orchestrator should not own this",
+      owner: "org",
+      repo: "repo",
+      branch: "main",
+      baseBranch: "main",
+      isDraft: false,
+    });
+
+    await program.parseAsync(["node", "test", "status", "--json"]);
+
+    const parsed = JSON.parse(consoleSpy.mock.calls.map((c) => c[0]).join(""));
+    expect(parsed[0].name).toBe("app-orchestrator");
+    expect(parsed[0].pr).toBeNull();
+    expect(parsed[0].prNumber).toBeNull();
+    expect(mockDetectPR).not.toHaveBeenCalled();
+  });
+
+  it("shows one orchestrator per project without counting them as worker sessions", async () => {
+    mockConfigRef.current = {
+      ...(mockConfigRef.current as Record<string, unknown>),
+      projects: {
+        "my-app": {
+          name: "My App",
+          repo: "org/my-app",
+          path: join(tmpDir, "main-repo"),
+          defaultBranch: "main",
+          sessionPrefix: "app",
+          scm: { plugin: "github" },
+        },
+        docs: {
+          name: "Docs",
+          repo: "org/docs",
+          path: join(tmpDir, "docs-repo"),
+          defaultBranch: "main",
+          sessionPrefix: "docs",
+          scm: { plugin: "github" },
+        },
+      },
+    } as Record<string, unknown>;
+
+    mockSessionManager.list.mockResolvedValue([
+      makeSession({
+        id: "app-orchestrator",
+        projectId: "my-app",
+        metadata: { role: "orchestrator", summary: "Manage app agents" },
+      }),
+      makeSession({ id: "app-1", projectId: "my-app", branch: "feat/app", activity: "active" }),
+      makeSession({
+        id: "docs-orchestrator",
+        projectId: "docs",
+        metadata: { role: "orchestrator" },
+      }),
+    ]);
+    mockGit.mockResolvedValue(null);
+    mockIntrospect.mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "status"]);
+
+    const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(output).toContain("Orchestrator:");
+    expect(output).toContain("app-orchestrator");
+    expect(output).toContain("docs-orchestrator");
+    expect(output).toContain("1 active session across 2 projects · 2 orchestrators");
+  });
+
+  it("includes orchestrators in JSON output with explicit roles", async () => {
+    mockSessionManager.list.mockResolvedValue([
+      makeSession({
+        id: "app-orchestrator",
+        projectId: "my-app",
+        metadata: { role: "orchestrator" },
+      }),
+      makeSession({
+        id: "app-1",
+        projectId: "my-app",
+        branch: "feat/json-worker",
+        activity: "ready",
+      }),
+    ]);
+    mockGit.mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "status", "--json"]);
+
+    const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
+    const parsed = JSON.parse(jsonCalls);
+    expect(parsed).toHaveLength(2);
+    expect(
+      parsed.find((entry: { name: string }) => entry.name === "app-orchestrator"),
+    ).toMatchObject({
+      role: "orchestrator",
+      project: "my-app",
+    });
+    expect(parsed.find((entry: { name: string }) => entry.name === "app-1")).toMatchObject({
+      role: "worker",
+      project: "my-app",
+    });
   });
 });

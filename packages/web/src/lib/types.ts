@@ -17,6 +17,9 @@ export type {
   PRState,
 } from "@composio/ao-core/types";
 
+// Re-export global pause state from shared lib (provider-agnostic state contract)
+export type { GlobalPauseState } from "./global-pause";
+
 import {
   ACTIVITY_STATE,
   SESSION_STATUS,
@@ -127,9 +130,17 @@ export interface DashboardStats {
   needsReview: number;
 }
 
+export interface DashboardOrchestratorLink {
+  id: string;
+  projectId: string;
+  projectName: string;
+}
+
 /** SSE snapshot event from /api/events */
 export interface SSESnapshotEvent {
   type: "snapshot";
+  correlationId?: string;
+  emittedAt?: string;
   sessions: Array<{
     id: string;
     status: SessionStatus;
@@ -156,6 +167,20 @@ export interface SSEActivityEvent {
  */
 export function isPRRateLimited(pr: DashboardPR): boolean {
   return pr.mergeability.blockers.includes("API rate limited or unavailable");
+}
+
+/**
+ * Returns true when a PR is open and all merge criteria are met.
+ * Does NOT return true for merged or closed PRs — those are already done.
+ */
+export function isPRMergeReady(pr: DashboardPR): boolean {
+  return (
+    pr.state === "open" &&
+    pr.mergeability.mergeable &&
+    pr.mergeability.ciPassing &&
+    pr.mergeability.approved &&
+    pr.mergeability.noConflicts
+  );
 }
 
 /** Determines which attention zone a session belongs to */
@@ -187,16 +212,18 @@ export function getAttentionLevel(session: DashboardSession): AttentionLevel {
   }
 
   // ── Respond: agent is waiting for human input ─────────────────────
+  // Check status-based error conditions first — these are authoritative
+  // and should not be masked by a stale activity value.
   if (
-    session.activity === ACTIVITY_STATE.WAITING_INPUT ||
-    session.activity === ACTIVITY_STATE.BLOCKED
+    session.status === SESSION_STATUS.ERRORED ||
+    session.status === SESSION_STATUS.NEEDS_INPUT ||
+    session.status === SESSION_STATUS.STUCK
   ) {
     return "respond";
   }
   if (
-    session.status === SESSION_STATUS.NEEDS_INPUT ||
-    session.status === SESSION_STATUS.STUCK ||
-    session.status === SESSION_STATUS.ERRORED
+    session.activity === ACTIVITY_STATE.WAITING_INPUT ||
+    session.activity === ACTIVITY_STATE.BLOCKED
   ) {
     return "respond";
   }

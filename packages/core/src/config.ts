@@ -18,6 +18,34 @@ import { z } from "zod";
 import type { OrchestratorConfig } from "./types.js";
 import { generateSessionPrefix } from "./paths.js";
 
+function inferScmPlugin(project: {
+  repo: string;
+  scm?: Record<string, unknown>;
+  tracker?: Record<string, unknown>;
+}): "github" | "gitlab" {
+  const scmPlugin = project.scm?.["plugin"];
+  if (scmPlugin === "gitlab") {
+    return "gitlab";
+  }
+
+  const scmHost = project.scm?.["host"];
+  if (typeof scmHost === "string" && scmHost.toLowerCase().includes("gitlab")) {
+    return "gitlab";
+  }
+
+  const trackerPlugin = project.tracker?.["plugin"];
+  if (trackerPlugin === "gitlab") {
+    return "gitlab";
+  }
+
+  const trackerHost = project.tracker?.["host"];
+  if (typeof trackerHost === "string" && trackerHost.toLowerCase().includes("gitlab")) {
+    return "gitlab";
+  }
+
+  return "github";
+}
+
 // =============================================================================
 // ZOD SCHEMAS
 // =============================================================================
@@ -42,6 +70,17 @@ const TrackerConfigSchema = z
 const SCMConfigSchema = z
   .object({
     plugin: z.string(),
+    webhook: z
+      .object({
+        enabled: z.boolean().default(true),
+        path: z.string().optional(),
+        secretEnvVar: z.string().optional(),
+        signatureHeader: z.string().optional(),
+        eventHeader: z.string().optional(),
+        deliveryHeader: z.string().optional(),
+        maxBodyBytes: z.number().int().positive().optional(),
+      })
+      .optional(),
   })
   .passthrough();
 
@@ -51,12 +90,57 @@ const NotifierConfigSchema = z
   })
   .passthrough();
 
+const AgentPermissionSchema = z
+  .enum(["permissionless", "default", "auto-edit", "suggest", "skip"])
+  .default("permissionless")
+  .transform((value) => (value === "skip" ? "permissionless" : value));
+
 const AgentSpecificConfigSchema = z
   .object({
-    permissions: z.enum(["skip", "default"]).default("skip"),
+    permissions: AgentPermissionSchema,
     model: z.string().optional(),
+    orchestratorModel: z.string().optional(),
+    opencodeSessionId: z.string().optional(),
   })
   .passthrough();
+
+const RoleAgentSpecificConfigSchema = z
+  .object({
+    permissions: z
+      .union([z.enum(["permissionless", "default", "auto-edit", "suggest"]), z.literal("skip")])
+      .optional(),
+    model: z.string().optional(),
+    orchestratorModel: z.string().optional(),
+    opencodeSessionId: z.string().optional(),
+  })
+  .passthrough();
+
+const RoleAgentDefaultsSchema = z
+  .object({
+    agent: z.string().optional(),
+  })
+  .optional();
+
+const RoleAgentConfigSchema = z
+  .object({
+    agent: z.string().optional(),
+    agentConfig: RoleAgentSpecificConfigSchema.optional(),
+  })
+  .optional();
+
+const DecomposerConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    maxDepth: z.number().min(1).max(5).default(3),
+    model: z.string().default("claude-sonnet-4-20250514"),
+    requireApproval: z.boolean().default(true),
+  })
+  .default({
+    enabled: false,
+    maxDepth: 3,
+    model: "claude-sonnet-4-20250514",
+    requireApproval: true,
+  });
 
 const ProjectConfigSchema = z.object({
   name: z.string().optional(),
@@ -75,10 +159,17 @@ const ProjectConfigSchema = z.object({
   symlinks: z.array(z.string()).optional(),
   postCreate: z.array(z.string()).optional(),
   agentConfig: AgentSpecificConfigSchema.default({}),
+  orchestrator: RoleAgentConfigSchema,
+  worker: RoleAgentConfigSchema,
   reactions: z.record(ReactionConfigSchema.partial()).optional(),
   agentRules: z.string().optional(),
   agentRulesFile: z.string().optional(),
   orchestratorRules: z.string().optional(),
+  orchestratorSessionStrategy: z
+    .enum(["reuse", "delete", "ignore", "delete-new", "ignore-new", "kill-previous"])
+    .optional(),
+  opencodeIssueSessionStrategy: z.enum(["reuse", "delete", "ignore"]).optional(),
+  decomposer: DecomposerConfigSchema.optional(),
 });
 
 const DefaultPluginsSchema = z.object({
@@ -86,6 +177,8 @@ const DefaultPluginsSchema = z.object({
   agent: z.string().default("claude-code"),
   workspace: z.string().default("worktree"),
   notifiers: z.array(z.string()).default(["composio", "desktop"]),
+  orchestrator: RoleAgentDefaultsSchema,
+  worker: RoleAgentDefaultsSchema,
 });
 
 const OrchestratorConfigSchema = z.object({
@@ -140,14 +233,16 @@ function applyProjectDefaults(config: OrchestratorConfig): OrchestratorConfig {
       project.sessionPrefix = generateSessionPrefix(projectId);
     }
 
+    const inferredPlugin = inferScmPlugin(project);
+
     // Infer SCM from repo if not set
     if (!project.scm && project.repo.includes("/")) {
-      project.scm = { plugin: "github" };
+      project.scm = { plugin: inferredPlugin };
     }
 
     // Infer tracker from repo if not set (default to github issues)
     if (!project.tracker) {
-      project.tracker = { plugin: "github" };
+      project.tracker = { plugin: inferredPlugin };
     }
   }
 
@@ -246,6 +341,14 @@ function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
       action: "notify",
       priority: "action",
       message: "PR is ready to merge",
+    },
+    "agent-idle": {
+      auto: true,
+      action: "send-to-agent",
+      message:
+        "You appear to be idle. If your task is not complete, continue working — write the code, commit, push, and create a PR. If you are blocked, explain what is blocking you.",
+      retries: 2,
+      escalateAfter: "15m",
     },
     "agent-stuck": {
       auto: true,

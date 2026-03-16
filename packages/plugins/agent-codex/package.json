@@ -1,6 +1,6 @@
 {
   "name": "@composio/ao-plugin-agent-codex",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Agent plugin: OpenAI Codex CLI",
   "license": "MIT",
   "type": "module",

@@ -389,6 +389,30 @@ describe("plugin integration", () => {
       expect(result.skipped).toContain("app-1");
       expect(result.killed).not.toContain("app-1");
     });
+
+    it("list() clears enrichment timeout after fast enrichment", async () => {
+      vi.useFakeTimers();
+      const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+
+      const registry = createTestRegistry();
+      const sm = createSessionManager({ config, registry });
+
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: "/tmp/mock-ws/app-1",
+        branch: "feat/issue-99",
+        status: "working",
+        project: "my-app",
+        runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+      });
+
+      const sessions = await sm.list("my-app");
+
+      expect(sessions).toHaveLength(1);
+      expect(clearTimeoutSpy).toHaveBeenCalled();
+
+      clearTimeoutSpy.mockRestore();
+      vi.useRealTimers();
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -480,6 +504,7 @@ describe("plugin integration", () => {
         get: vi.fn().mockResolvedValue(makeSession({ status: "pr_open", pr })),
         kill: vi.fn().mockResolvedValue(undefined),
         send: vi.fn().mockResolvedValue(undefined),
+        claimPR: vi.fn(),
         spawnOrchestrator: vi.fn(),
       };
 
@@ -510,6 +535,7 @@ describe("plugin integration", () => {
         get: vi.fn().mockResolvedValue(makeSession({ status: "pr_open", pr })),
         kill: vi.fn().mockResolvedValue(undefined),
         send: vi.fn().mockResolvedValue(undefined),
+        claimPR: vi.fn(),
         spawnOrchestrator: vi.fn(),
       };
 
@@ -537,6 +563,7 @@ describe("plugin integration", () => {
         get: vi.fn().mockResolvedValue(makeSession({ status: "pr_open", pr })),
         kill: vi.fn().mockResolvedValue(undefined),
         send: vi.fn().mockResolvedValue(undefined),
+        claimPR: vi.fn(),
         spawnOrchestrator: vi.fn(),
       };
 

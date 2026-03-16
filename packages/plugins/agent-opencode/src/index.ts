@@ -1,5 +1,7 @@
 import {
+  DEFAULT_READY_THRESHOLD_MS,
   shellEscape,
+  asValidOpenCodeSessionId,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
@@ -8,19 +10,132 @@ import {
   type PluginModule,
   type RuntimeHandle,
   type Session,
-  type WorkspaceHooksConfig,
+  type OpenCodeAgentConfig,
 } from "@composio/ao-core";
 import { execFile } from "node:child_process";
-import { writeFile, mkdir, readFile, rename } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { randomBytes } from "node:crypto";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-/** Shared bin directory for ao shell wrappers (prepended to PATH) */
-const AO_BIN_DIR = join(homedir(), ".ao", "bin");
+interface OpenCodeSessionListEntry {
+  id: string;
+  title?: string;
+  updated?: string | number;
+}
+
+function parseUpdatedTimestamp(updated: string | number | undefined): Date | null {
+  if (typeof updated === "number") {
+    if (!Number.isFinite(updated)) return null;
+    const date = new Date(updated);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  if (typeof updated !== "string") return null;
+
+  const trimmed = updated.trim();
+  if (trimmed.length === 0) return null;
+
+  if (/^\d+$/.test(trimmed)) {
+    const epochMs = Number(trimmed);
+    if (!Number.isFinite(epochMs)) return null;
+    const date = new Date(epochMs);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  const parsedMs = Date.parse(trimmed);
+  if (!Number.isFinite(parsedMs)) return null;
+  return new Date(parsedMs);
+}
+
+function parseSessionList(raw: string): OpenCodeSessionListEntry[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter((item): item is OpenCodeSessionListEntry => {
+    if (!item || typeof item !== "object") return false;
+    const record = item as Record<string, unknown>;
+    return asValidOpenCodeSessionId(record["id"]) !== undefined;
+  });
+}
+
+/**
+ * Parse JSON stream lines from `opencode run --format json` output.
+ * Each line is a JSON object. We look for objects containing a session_id field.
+ * The step_start event typically contains the session_id.
+ */
+function buildSessionIdCaptureScript(): string {
+  const script = `
+let buffer = '';
+let captured = null;
+process.stdin.on('data', chunk => {
+  buffer += chunk;
+  const lines = buffer.split('\\n');
+  buffer = lines.pop() || '';
+  for (const line of lines) {
+    if (captured) continue;
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const obj = JSON.parse(trimmed);
+      if (obj && typeof obj.session_id === 'string' && /^ses_[A-Za-z0-9_-]+$/.test(obj.session_id)) {
+        captured = obj.session_id;
+      }
+    } catch {}
+  }
+}).on('end', () => {
+  if (buffer.trim()) {
+    try {
+      const obj = JSON.parse(buffer.trim());
+      if (obj && typeof obj.session_id === 'string' && /^ses_[A-Za-z0-9_-]+$/.test(obj.session_id)) {
+        captured = obj.session_id;
+      }
+    } catch {}
+  }
+  if (captured) {
+    process.stdout.write(captured);
+    process.exit(0);
+  }
+  process.exit(1);
+});
+  `.trim();
+  return script.replace(/\n/g, " ").replace(/\s+/g, " ");
+}
+
+function buildSessionLookupScript(): string {
+  const script = `
+let input = '';
+process.stdin.on('data', c => input += c).on('end', () => {
+  const title = process.argv[1];
+  let rows;
+  try { rows = JSON.parse(input); } catch { process.exit(1); }
+  if (!Array.isArray(rows)) process.exit(1);
+  const isValidId = id => /^ses_[A-Za-z0-9_-]+$/.test(id);
+  const timestamp = value => {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string') {
+      const parsed = Date.parse(value);
+      return Number.isNaN(parsed) ? Number.NEGATIVE_INFINITY : parsed;
+    }
+    return Number.NEGATIVE_INFINITY;
+  };
+  const matches = rows
+    .filter(r => r && r.title === title && typeof r.id === 'string' && isValidId(r.id))
+    .sort((a, b) => {
+      const ta = timestamp(a.updated);
+      const tb = timestamp(b.updated);
+      if (ta === tb) return 0;
+      return tb - ta;
+    });
+  if (matches.length === 0) process.exit(1);
+  process.stdout.write(matches[0].id);
+});
+  `.trim();
+  return script.replace(/\n/g, " ").replace(/\s+/g, " ");
+}
 
 // =============================================================================
 // Plugin Manifest
@@ -34,240 +149,6 @@ export const manifest = {
 };
 
 // =============================================================================
-// Shell Wrappers (automatic metadata updates — like Claude Code's PostToolUse)
-// =============================================================================
-
-/**
- * Helper script sourced by both gh and git wrappers.
- * Provides update_ao_metadata() for writing key=value to the session file.
- */
-/* eslint-disable no-useless-escape -- \$ escapes are intentional: bash scripts in JS template literals */
-const AO_METADATA_HELPER = `#!/usr/bin/env bash
-# ao-metadata-helper — shared by gh/git wrappers
-# Provides: update_ao_metadata <key> <value>
-
-update_ao_metadata() {
-  local key="\$1" value="\$2"
-  local ao_dir="\${AO_DATA_DIR:-}"
-  local ao_session="\${AO_SESSION:-}"
-
-  [[ -z "\$ao_dir" || -z "\$ao_session" ]] && return 0
-
-  # Validate: session name must not contain path separators or traversal
-  case "\$ao_session" in
-    */* | *..*) return 0 ;;
-  esac
-
-  # Validate: ao_dir must be an absolute path under known ao directories or /tmp
-  case "\$ao_dir" in
-    "\$HOME"/.ao/* | "\$HOME"/.agent-orchestrator/* | /tmp/*) ;;
-    *) return 0 ;;
-  esac
-
-  local metadata_file="\$ao_dir/\$ao_session"
-
-  # Resolve and verify the file is still within ao_dir
-  local real_dir real_ao_dir
-  real_ao_dir="\$(cd "\$ao_dir" 2>/dev/null && pwd -P)" || return 0
-  real_dir="\$(cd "\$(dirname "\$metadata_file")" 2>/dev/null && pwd -P)" || return 0
-  [[ "\$real_dir" == "\$real_ao_dir"* ]] || return 0
-
-  [[ -f "\$metadata_file" ]] || return 0
-
-  local temp_file="\${metadata_file}.tmp.\$\$"
-
-  # Strip newlines from value to prevent metadata line injection
-  local clean_value="\$(printf '%s' "\$value" | tr -d '\\n')"
-
-  # Escape sed metacharacters in value (& expands to matched text, | breaks delimiter)
-  local escaped_value="\$(printf '%s' "\$clean_value" | sed 's/[&|\\\\]/\\\\&/g')"
-
-  if grep -q "^\${key}=" "\$metadata_file" 2>/dev/null; then
-    sed "s|^\${key}=.*|\${key}=\${escaped_value}|" "\$metadata_file" > "\$temp_file"
-  else
-    cp "\$metadata_file" "\$temp_file"
-    printf '%s=%s\\n' "\$key" "\$clean_value" >> "\$temp_file"
-  fi
-
-  mv "\$temp_file" "\$metadata_file"
-}
-`;
-
-/**
- * gh wrapper — intercepts `gh pr create` and `gh pr merge` to auto-update
- * session metadata. All other commands pass through transparently.
- */
-const GH_WRAPPER = `#!/usr/bin/env bash
-# ao gh wrapper — auto-updates session metadata on PR operations
-
-# Find real gh by removing our wrapper directory from PATH
-ao_bin_dir="\$(cd "\$(dirname "\$0")" && pwd)"
-clean_path="\$(echo "\$PATH" | tr ':' '\\n' | grep -Fxv "\$ao_bin_dir" | grep . | tr '\\n' ':')"
-clean_path="\${clean_path%:}"
-real_gh="\$(PATH="\$clean_path" command -v gh 2>/dev/null)"
-
-if [[ -z "\$real_gh" ]]; then
-  echo "ao-wrapper: gh not found in PATH" >&2
-  exit 127
-fi
-
-# Source the metadata helper
-source "\$ao_bin_dir/ao-metadata-helper.sh" 2>/dev/null || true
-
-# Only capture output for commands we need to parse (pr/create, pr/merge).
-# All other commands pass through transparently without stream merging.
-case "\$1/\$2" in
-  pr/create|pr/merge)
-    tmpout="\$(mktemp)"
-    trap 'rm -f "\$tmpout"' EXIT
-
-    "\$real_gh" "\$@" 2>&1 | tee "\$tmpout"
-    exit_code=\${PIPESTATUS[0]}
-
-    if [[ \$exit_code -eq 0 ]]; then
-      output="\$(cat "\$tmpout")"
-      case "\$1/\$2" in
-        pr/create)
-          pr_url="\$(echo "\$output" | grep -Eo 'https://github\\.com/[^/]+/[^/]+/pull/[0-9]+' | head -1)"
-          if [[ -n "\$pr_url" ]]; then
-            update_ao_metadata pr "\$pr_url"
-            update_ao_metadata status pr_open
-          fi
-          ;;
-        pr/merge)
-          update_ao_metadata status merged
-          ;;
-      esac
-    fi
-
-    exit \$exit_code
-    ;;
-  *)
-    exec "\$real_gh" "\$@"
-    ;;
-esac
-`;
-
-/**
- * git wrapper — intercepts branch creation commands to auto-update metadata.
- * All other commands pass through transparently.
- */
-const GIT_WRAPPER = `#!/usr/bin/env bash
-# ao git wrapper — auto-updates session metadata on branch operations
-
-# Find real git by removing our wrapper directory from PATH
-ao_bin_dir="\$(cd "\$(dirname "\$0")" && pwd)"
-clean_path="\$(echo "\$PATH" | tr ':' '\\n' | grep -Fxv "\$ao_bin_dir" | grep . | tr '\\n' ':')"
-clean_path="\${clean_path%:}"
-real_git="\$(PATH="\$clean_path" command -v git 2>/dev/null)"
-
-if [[ -z "\$real_git" ]]; then
-  echo "ao-wrapper: git not found in PATH" >&2
-  exit 127
-fi
-
-# Source the metadata helper
-source "\$ao_bin_dir/ao-metadata-helper.sh" 2>/dev/null || true
-
-# Run real git
-"\$real_git" "\$@"
-exit_code=\$?
-
-# Only update metadata on success
-if [[ \$exit_code -eq 0 ]]; then
-  case "\$1/\$2" in
-    checkout/-b)
-      update_ao_metadata branch "\$3"
-      ;;
-    switch/-c)
-      update_ao_metadata branch "\$3"
-      ;;
-  esac
-fi
-
-exit \$exit_code
-`;
-
-// =============================================================================
-// Workspace Setup
-// =============================================================================
-
-/**
- * Section appended to AGENTS.md as a secondary signal. The PATH-based wrappers
- * handle metadata updates automatically, but AGENTS.md reinforces the intent
- * and helps if the wrappers are bypassed.
- */
-const AO_AGENTS_MD_SECTION = `
-## Agent Orchestrator (ao) Session
-
-You are running inside an Agent Orchestrator managed workspace.
-Session metadata is updated automatically via shell wrappers.
-
-If automatic updates fail, you can manually update metadata:
-\`\`\`bash
-~/.ao/bin/ao-metadata-helper.sh  # sourced automatically
-# Then call: update_ao_metadata <key> <value>
-\`\`\`
-`;
-/* eslint-enable no-useless-escape */
-
-/**
- * Atomically write a file by writing to a temp file in the same directory,
- * then renaming. This prevents concurrent sessions from reading partially
- * written wrapper scripts.
- */
-async function atomicWriteFile(filePath: string, content: string, mode: number): Promise<void> {
-  const suffix = randomBytes(6).toString("hex");
-  const tmpPath = `${filePath}.tmp.${suffix}`;
-  await writeFile(tmpPath, content, { encoding: "utf-8", mode });
-  await rename(tmpPath, filePath);
-}
-
-async function setupOpenCodeWorkspace(workspacePath: string): Promise<void> {
-  // 1. Write shared wrappers to ~/.ao/bin/
-  await mkdir(AO_BIN_DIR, { recursive: true });
-
-  await atomicWriteFile(
-    join(AO_BIN_DIR, "ao-metadata-helper.sh"),
-    AO_METADATA_HELPER,
-    0o755,
-  );
-
-  // Only write wrappers if they don't exist or are outdated (check marker)
-  const markerPath = join(AO_BIN_DIR, ".ao-version");
-  const currentVersion = "0.1.0";
-  let needsUpdate = true;
-  try {
-    const existing = await readFile(markerPath, "utf-8");
-    if (existing.trim() === currentVersion) needsUpdate = false;
-  } catch {
-    // File doesn't exist — needs update
-  }
-
-  if (needsUpdate) {
-    await atomicWriteFile(join(AO_BIN_DIR, "gh"), GH_WRAPPER, 0o755);
-    await atomicWriteFile(join(AO_BIN_DIR, "git"), GIT_WRAPPER, 0o755);
-    await atomicWriteFile(markerPath, currentVersion, 0o644);
-  }
-
-  // 2. Append ao section to AGENTS.md (create if missing, skip if already present)
-  const agentsMdPath = join(workspacePath, "AGENTS.md");
-  let existing = "";
-  try {
-    existing = await readFile(agentsMdPath, "utf-8");
-  } catch {
-    // File doesn't exist yet
-  }
-
-  if (!existing.includes("Agent Orchestrator (ao) Session")) {
-    const content = existing
-      ? existing.trimEnd() + "\n" + AO_AGENTS_MD_SECTION
-      : AO_AGENTS_MD_SECTION.trimStart();
-    await writeFile(agentsMdPath, content, "utf-8");
-  }
-}
-
-// =============================================================================
 // Agent Implementation
 // =============================================================================
 
@@ -277,20 +158,71 @@ function createOpenCodeAgent(): Agent {
     processName: "opencode",
 
     getLaunchCommand(config: AgentLaunchConfig): string {
-      const parts: string[] = ["opencode"];
+      const options: string[] = [];
+      const sharedOptions: string[] = [];
 
-      // NOTE: OpenCode has no CLI flag to skip permissions / auto-approve.
-      // The `permissions` config is silently ignored for this agent.
+      const existingSessionId = asValidOpenCodeSessionId(
+        (config.projectConfig.agentConfig as OpenCodeAgentConfig | undefined)?.opencodeSessionId,
+      );
 
+      if (existingSessionId) {
+        options.push("--session", shellEscape(existingSessionId));
+      }
+
+      // Select specific OpenCode subagent if configured
+      if (config.subagent) {
+        sharedOptions.push("--agent", shellEscape(config.subagent));
+      }
+
+      let promptValue: string | undefined;
       if (config.prompt) {
-        parts.push("run", shellEscape(config.prompt));
+        if (config.systemPromptFile) {
+          promptValue = `"$(cat ${shellEscape(config.systemPromptFile)}; printf '\\n\\n'; printf %s ${shellEscape(config.prompt)})"`;
+        } else if (config.systemPrompt) {
+          promptValue = shellEscape(`${config.systemPrompt}\n\n${config.prompt}`);
+        } else {
+          promptValue = shellEscape(config.prompt);
+        }
+      } else if (config.systemPromptFile) {
+        promptValue = `"$(cat ${shellEscape(config.systemPromptFile)})"`;
+      } else if (config.systemPrompt) {
+        promptValue = shellEscape(config.systemPrompt);
       }
 
       if (config.model) {
-        parts.push("--model", shellEscape(config.model));
+        sharedOptions.push("--model", shellEscape(config.model));
       }
 
-      return parts.join(" ");
+      if (!existingSessionId) {
+        const runOptions = [
+          "--format",
+          "json",
+          "--title",
+          shellEscape(`AO:${config.sessionId}`),
+          ...sharedOptions,
+        ];
+        const captureScript = buildSessionIdCaptureScript();
+        const fallbackScript = buildSessionLookupScript();
+        const runCommand = ["opencode", "run", ...runOptions, "--command", "true"].join(" ");
+        const resumeOptions = [...(promptValue ? ["--prompt", promptValue] : []), ...sharedOptions];
+        const resumeOptionsSuffix = resumeOptions.length > 0 ? ` ${resumeOptions.join(" ")}` : "";
+        const missingSessionError = shellEscape(
+          `failed to discover OpenCode session ID for AO:${config.sessionId}`,
+        );
+        return [
+          `SES_ID=$(${runCommand} | node -e ${shellEscape(captureScript)})`,
+          `if [ -z "$SES_ID" ]; then SES_ID=$(opencode session list --format json | node -e ${shellEscape(fallbackScript)} ${shellEscape(`AO:${config.sessionId}`)}); fi`,
+          `[ -n "$SES_ID" ] && exec opencode --session "$SES_ID"${resumeOptionsSuffix}; echo ${missingSessionError} >&2; exit 1`,
+        ].join("; ");
+      }
+
+      if (promptValue) {
+        options.push("--prompt", promptValue);
+      }
+
+      options.push(...sharedOptions);
+
+      return ["opencode", ...options].join(" ");
     },
 
     getEnvironment(config: AgentLaunchConfig): Record<string, string> {
@@ -300,12 +232,6 @@ function createOpenCodeAgent(): Agent {
       if (config.issueId) {
         env["AO_ISSUE_ID"] = config.issueId;
       }
-
-      // Prepend ~/.ao/bin to PATH so our gh/git wrappers intercept commands.
-      // The wrappers strip this directory from PATH before calling the real
-      // binary, so there's no infinite recursion.
-      env["PATH"] = `${AO_BIN_DIR}:${process.env["PATH"] ?? "/usr/bin:/bin"}`;
-
       return env;
     },
 
@@ -315,20 +241,54 @@ function createOpenCodeAgent(): Agent {
       return "active";
     },
 
-    async getActivityState(session: Session, _readyThresholdMs?: number): Promise<ActivityDetection | null> {
+    async getActivityState(
+      session: Session,
+      readyThresholdMs?: number,
+    ): Promise<ActivityDetection | null> {
+      const threshold = readyThresholdMs ?? DEFAULT_READY_THRESHOLD_MS;
+      const activeWindowMs = Math.min(30_000, threshold);
+
       // Check if process is running first
       const exitedAt = new Date();
       if (!session.runtimeHandle) return { state: "exited", timestamp: exitedAt };
       const running = await this.isProcessRunning(session.runtimeHandle);
       if (!running) return { state: "exited", timestamp: exitedAt };
 
-      // NOTE: OpenCode stores all session data in a single global SQLite database
-      // at ~/.local/share/opencode/opencode.db without per-workspace scoping. When
-      // multiple OpenCode sessions run in parallel, database modifications from any
-      // session will cause all sessions to appear active. Until OpenCode provides
-      // per-workspace session tracking, we return null (unknown) rather than guessing.
-      //
-      // TODO: Implement proper per-session activity detection when OpenCode supports it.
+      try {
+        const { stdout } = await execFileAsync(
+          "opencode",
+          ["session", "list", "--format", "json"],
+          {
+            timeout: 30_000,
+          },
+        );
+
+        const sessions = parseSessionList(stdout);
+        const targetSession =
+          (session.metadata?.opencodeSessionId
+            ? sessions.find((s) => s.id === session.metadata.opencodeSessionId)
+            : undefined) ?? sessions.find((s) => s.title === `AO:${session.id}`);
+
+        if (targetSession) {
+          const lastActivity = parseUpdatedTimestamp(targetSession.updated);
+
+          if (lastActivity) {
+            const ageMs = Math.max(0, Date.now() - lastActivity.getTime());
+            if (ageMs <= activeWindowMs) {
+              return { state: "active", timestamp: lastActivity };
+            }
+            if (ageMs <= threshold) {
+              return { state: "ready", timestamp: lastActivity };
+            }
+            return { state: "idle", timestamp: lastActivity };
+          }
+
+          return null;
+        }
+      } catch {
+        return null;
+      }
+
       return null;
     },
 
@@ -386,15 +346,6 @@ function createOpenCodeAgent(): Agent {
     async getSessionInfo(_session: Session): Promise<AgentSessionInfo | null> {
       // OpenCode doesn't have JSONL session files for introspection yet
       return null;
-    },
-
-    async setupWorkspaceHooks(workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
-      await setupOpenCodeWorkspace(workspacePath);
-    },
-
-    async postLaunchSetup(session: Session): Promise<void> {
-      if (!session.workspacePath) return;
-      await setupOpenCodeWorkspace(session.workspacePath);
     },
   };
 }

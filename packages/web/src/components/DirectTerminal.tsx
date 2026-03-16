@@ -19,6 +19,42 @@ interface DirectTerminalProps {
   /** CSS height for the terminal container in normal (non-fullscreen) mode.
    *  Defaults to "max(440px, calc(100vh - 440px))". */
   height?: string;
+  isOpenCodeSession?: boolean;
+  reloadCommand?: string;
+}
+
+interface DirectTerminalLocation {
+  protocol: string;
+  hostname: string;
+  host: string;
+  port: string;
+}
+
+interface DirectTerminalWsUrlOptions {
+  location: DirectTerminalLocation;
+  sessionId: string;
+  proxyWsPath?: string;
+  directTerminalPort?: string;
+}
+
+export function buildDirectTerminalWsUrl({
+  location,
+  sessionId,
+  proxyWsPath,
+  directTerminalPort,
+}: DirectTerminalWsUrlOptions): string {
+  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  if (proxyWsPath) {
+    // Path-based proxy uses host so non-standard ports are preserved.
+    return `${protocol}//${location.host}${proxyWsPath}?session=${encodeURIComponent(sessionId)}`;
+  }
+
+  if (location.port === "" || location.port === "443" || location.port === "80") {
+    return `${protocol}//${location.hostname}/ao-terminal-ws?session=${encodeURIComponent(sessionId)}`;
+  }
+
+  const port = directTerminalPort ?? "14801";
+  return `${protocol}//${location.hostname}:${port}/ws?session=${encodeURIComponent(sessionId)}`;
 }
 
 /**
@@ -36,6 +72,8 @@ export function DirectTerminal({
   startFullscreen = false,
   variant = "agent",
   height = "max(440px, calc(100vh - 440px))",
+  isOpenCodeSession = false,
+  reloadCommand,
 }: DirectTerminalProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -45,9 +83,14 @@ export function DirectTerminal({
   const terminalInstance = useRef<TerminalType | null>(null);
   const fitAddon = useRef<FitAddonType | null>(null);
   const ws = useRef<WebSocket | null>(null);
+  const reconnectAttemptRef = useRef(0);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const permanentErrorRef = useRef(false);
   const [fullscreen, setFullscreen] = useState(startFullscreen);
   const [status, setStatus] = useState<"connecting" | "connected" | "error">("connecting");
   const [error, setError] = useState<string | null>(null);
+  const [reloading, setReloading] = useState(false);
+  const [reloadError, setReloadError] = useState<string | null>(null);
 
   // Update URL when fullscreen changes
   useEffect(() => {
@@ -63,14 +106,59 @@ export function DirectTerminal({
     router.replace(newUrl, { scroll: false });
   }, [fullscreen, pathname, router, searchParams]);
 
+  async function handleReload(): Promise<void> {
+    if (!isOpenCodeSession || reloading) return;
+    setReloadError(null);
+    setReloading(true);
+    try {
+      let commandToSend = reloadCommand;
+
+      if (!commandToSend) {
+        const remapRes = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/remap`, {
+          method: "POST",
+        });
+        if (!remapRes.ok) {
+          throw new Error(`Failed to remap OpenCode session: ${remapRes.status}`);
+        }
+        const remapData = (await remapRes.json()) as { opencodeSessionId?: unknown };
+        if (
+          typeof remapData.opencodeSessionId !== "string" ||
+          remapData.opencodeSessionId.length === 0
+        ) {
+          throw new Error("Missing OpenCode session id after remap");
+        }
+        commandToSend = `/exit\nopencode --session ${remapData.opencodeSessionId}\n`;
+      }
+
+      const sendRes = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: commandToSend }),
+      });
+      if (!sendRes.ok) {
+        throw new Error(`Failed to send reload command: ${sendRes.status}`);
+      }
+    } catch (err) {
+      setReloadError(err instanceof Error ? err.message : "Failed to reload OpenCode session");
+    } finally {
+      setReloading(false);
+    }
+  }
+
   useEffect(() => {
     if (!terminalRef.current) return;
-    // Prevent retry loop on persistent errors
-    if (error && status === "error") return;
+
+    // Reset reconnection state when sessionId changes
+    permanentErrorRef.current = false;
+    reconnectAttemptRef.current = 0;
 
     // Dynamically import xterm.js to avoid SSR issues
     let mounted = true;
     let cleanup: (() => void) | null = null;
+    let inputDisposable: { dispose(): void } | null = null;
+
+    const PERMANENT_CLOSE_CODES = new Set([4001, 4004]); // auth failure, session not found
+    const MAX_RECONNECT_DELAY = 15_000;
 
     Promise.all([
       import("xterm").then((mod) => mod.Terminal),
@@ -84,9 +172,7 @@ export function DirectTerminal({
         // agent = blue (#5b7ef8), orchestrator = violet (#a371f7)
         const cursorColor = variant === "orchestrator" ? "#a371f7" : "#5b7ef8";
         const selectionColor =
-          variant === "orchestrator"
-            ? "rgba(163, 113, 247, 0.25)"
-            : "rgba(91, 126, 248, 0.3)";
+          variant === "orchestrator" ? "rgba(163, 113, 247, 0.25)" : "rgba(91, 126, 248, 0.3)";
 
         // Initialize xterm.js Terminal
         const terminal = new Terminal({
@@ -100,22 +186,22 @@ export function DirectTerminal({
             cursorAccent: "#0a0a0f",
             selectionBackground: selectionColor,
             // ANSI colors — slightly warmer than pure defaults
-            black:         "#1a1a24",
-            red:           "#ef4444",
-            green:         "#22c55e",
-            yellow:        "#f59e0b",
-            blue:          "#5b7ef8",
-            magenta:       "#a371f7",
-            cyan:          "#22d3ee",
-            white:         "#d4d4d8",
-            brightBlack:   "#50506a",
-            brightRed:     "#f87171",
-            brightGreen:   "#4ade80",
-            brightYellow:  "#fbbf24",
-            brightBlue:    "#7b9cfb",
+            black: "#1a1a24",
+            red: "#ef4444",
+            green: "#22c55e",
+            yellow: "#f59e0b",
+            blue: "#5b7ef8",
+            magenta: "#a371f7",
+            cyan: "#22d3ee",
+            white: "#d4d4d8",
+            brightBlack: "#50506a",
+            brightRed: "#f87171",
+            brightGreen: "#4ade80",
+            brightYellow: "#fbbf24",
+            brightBlue: "#7b9cfb",
             brightMagenta: "#c084fc",
-            brightCyan:    "#67e8f9",
-            brightWhite:   "#eeeef5",
+            brightCyan: "#67e8f9",
+            brightWhite: "#eeeef5",
           },
           scrollback: 10000,
           allowProposedApi: true,
@@ -148,6 +234,25 @@ export function DirectTerminal({
           },
         );
 
+        // Register OSC 52 handler for clipboard support
+        // tmux sends OSC 52 with base64-encoded text when copying
+        terminal.parser.registerOscHandler(52, (data) => {
+          const parts = data.split(";");
+          if (parts.length < 2) return false;
+          const b64 = parts[parts.length - 1];
+          try {
+            // Decode base64 → binary string → Uint8Array → UTF-8 text
+            // atob() alone only handles Latin-1; TextDecoder is needed for UTF-8
+            const binary = atob(b64);
+            const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+            const text = new TextDecoder().decode(bytes);
+            navigator.clipboard?.writeText(text).catch(() => {});
+          } catch {
+            // Ignore decode errors
+          }
+          return true;
+        });
+
         // Open terminal in DOM
         terminal.open(terminalRef.current);
         terminalInstance.current = terminal;
@@ -155,65 +260,81 @@ export function DirectTerminal({
         // Fit terminal to container
         fit.fit();
 
-        // Connect WebSocket
-        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-        const hostname = window.location.hostname;
-        const port = process.env.NEXT_PUBLIC_DIRECT_TERMINAL_PORT ?? "14801";
-        const wsUrl = `${protocol}//${hostname}:${port}/ws?session=${encodeURIComponent(sessionId)}`;
+        // WebSocket URL (stable across reconnects)
+        // When accessed via reverse proxy (HTTPS on standard port), use path-based
+        // WebSocket endpoint instead of direct port access.
+        const wsUrl = buildDirectTerminalWsUrl({
+          location: window.location,
+          sessionId,
+          proxyWsPath: process.env.NEXT_PUBLIC_TERMINAL_WS_PATH,
+          directTerminalPort: process.env.NEXT_PUBLIC_DIRECT_TERMINAL_PORT,
+        });
 
-        console.log("[DirectTerminal] Connecting to:", wsUrl);
-        const websocket = new WebSocket(wsUrl);
-        ws.current = websocket;
+        // ── Preserve selection while terminal receives output ────────
+        // xterm.js clears the selection on every terminal.write(). We
+        // buffer incoming data while a selection is active so the
+        // highlight stays visible for Cmd+C. The buffer is flushed
+        // when the selection is cleared (click, keypress, etc.).
+        const writeBuffer: string[] = [];
+        let selectionActive = false;
+        let safetyTimer: ReturnType<typeof setTimeout> | null = null;
+        let bufferBytes = 0;
+        const MAX_BUFFER_BYTES = 1_048_576; // 1 MB
 
-        websocket.binaryType = "arraybuffer";
-
-        websocket.onopen = () => {
-          console.log("[DirectTerminal] WebSocket connected");
-          setStatus("connected");
-          setError(null);
-
-          // Send initial size
-          websocket.send(
-            JSON.stringify({
-              type: "resize",
-              cols: terminal.cols,
-              rows: terminal.rows,
-            }),
-          );
-        };
-
-        websocket.onmessage = (event) => {
-          const data =
-            typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data);
-          terminal.write(data);
-        };
-
-        websocket.onerror = (event) => {
-          console.error("[DirectTerminal] WebSocket error:", event);
-          setStatus("error");
-          setError("WebSocket connection error");
-        };
-
-        websocket.onclose = (event) => {
-          console.log("[DirectTerminal] WebSocket closed:", event.code, event.reason);
-          if (status === "connected") {
-            setStatus("error");
-            setError("Connection closed");
+        const flushWriteBuffer = () => {
+          if (safetyTimer) {
+            clearTimeout(safetyTimer);
+            safetyTimer = null;
+          }
+          if (writeBuffer.length > 0) {
+            terminal.write(writeBuffer.join(""));
+            writeBuffer.length = 0;
+            bufferBytes = 0;
           }
         };
 
-        // Terminal input → WebSocket
-        const disposable = terminal.onData((data) => {
-          if (websocket.readyState === WebSocket.OPEN) {
-            websocket.send(data);
+        const selectionDisposable = terminal.onSelectionChange(() => {
+          if (terminal.hasSelection()) {
+            selectionActive = true;
+            // Safety: flush after 5s to prevent unbounded buffering
+            if (!safetyTimer) {
+              safetyTimer = setTimeout(() => {
+                selectionActive = false;
+                flushWriteBuffer();
+              }, 5_000);
+            }
+          } else {
+            selectionActive = false;
+            flushWriteBuffer();
           }
         });
 
-        // Handle window resize
+        // Intercept Cmd+C (Mac) and Ctrl+Shift+C (Linux/Win) for copy.
+        // Paste (Cmd+V / Ctrl+Shift+V) is handled natively by xterm.js
+        // via its internal textarea — no custom handler needed.
+        terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+          if (e.type !== "keydown") return true;
+
+          // Cmd+C / Ctrl+Shift+C — copy selection
+          const isCopy =
+            (e.metaKey && !e.ctrlKey && !e.altKey && e.code === "KeyC") ||
+            (e.ctrlKey && e.shiftKey && e.code === "KeyC");
+          if (isCopy && terminal.hasSelection()) {
+            navigator.clipboard?.writeText(terminal.getSelection()).catch(() => {});
+            // Clear selection so the terminal resumes receiving output
+            terminal.clearSelection();
+            return false;
+          }
+
+          return true;
+        });
+
+        // Handle window resize (works with whatever ws is current)
         const handleResize = () => {
-          if (fit && websocket.readyState === WebSocket.OPEN) {
+          const currentWs = ws.current;
+          if (fit && currentWs?.readyState === WebSocket.OPEN) {
             fit.fit();
-            websocket.send(
+            currentWs.send(
               JSON.stringify({
                 type: "resize",
                 cols: terminal.cols,
@@ -225,22 +346,113 @@ export function DirectTerminal({
 
         window.addEventListener("resize", handleResize);
 
+        // Terminal input → current WebSocket
+        inputDisposable = terminal.onData((data) => {
+          if (ws.current?.readyState === WebSocket.OPEN) {
+            ws.current.send(data);
+          }
+        });
+
+        function connectWebSocket() {
+          if (!mounted) return;
+
+          console.log("[DirectTerminal] Connecting to:", wsUrl);
+          const websocket = new WebSocket(wsUrl);
+          ws.current = websocket;
+          websocket.binaryType = "arraybuffer";
+
+          websocket.onopen = () => {
+            console.log("[DirectTerminal] WebSocket connected");
+            reconnectAttemptRef.current = 0;
+            setStatus("connected");
+            setError(null);
+
+            // Send initial size
+            websocket.send(
+              JSON.stringify({
+                type: "resize",
+                cols: terminal.cols,
+                rows: terminal.rows,
+              }),
+            );
+          };
+
+          websocket.onmessage = (event) => {
+            const data =
+              typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data);
+            if (selectionActive) {
+              writeBuffer.push(data);
+              bufferBytes += data.length;
+              // Flush if buffer exceeds 1 MB to prevent OOM
+              if (bufferBytes > MAX_BUFFER_BYTES) {
+                selectionActive = false;
+                flushWriteBuffer();
+              }
+            } else {
+              terminal.write(data);
+            }
+          };
+
+          websocket.onerror = (event) => {
+            console.error("[DirectTerminal] WebSocket error:", event);
+          };
+
+          websocket.onclose = (event) => {
+            console.log("[DirectTerminal] WebSocket closed:", event.code, event.reason);
+
+            if (!mounted) return;
+
+            // Permanent errors — don't retry
+            if (PERMANENT_CLOSE_CODES.has(event.code)) {
+              permanentErrorRef.current = true;
+              setStatus("error");
+              setError(event.reason || `Connection refused (${event.code})`);
+              return;
+            }
+
+            // Transient failure — schedule reconnect with exponential backoff
+            const attempt = reconnectAttemptRef.current;
+            const delay = Math.min(1000 * Math.pow(2, attempt), MAX_RECONNECT_DELAY);
+            reconnectAttemptRef.current = attempt + 1;
+
+            console.log(`[DirectTerminal] Reconnecting in ${delay}ms (attempt ${attempt + 1})`);
+            setStatus("connecting");
+            setError(null);
+
+            reconnectTimerRef.current = setTimeout(connectWebSocket, delay);
+          };
+        }
+
+        connectWebSocket();
+
         // Store cleanup function to be called from useEffect cleanup
         cleanup = () => {
+          selectionDisposable.dispose();
+          if (safetyTimer) clearTimeout(safetyTimer);
           window.removeEventListener("resize", handleResize);
-          disposable.dispose();
-          websocket.close();
+          inputDisposable?.dispose();
+          inputDisposable = null;
+          if (reconnectTimerRef.current) {
+            clearTimeout(reconnectTimerRef.current);
+            reconnectTimerRef.current = null;
+          }
+          ws.current?.close();
           terminal.dispose();
         };
       })
       .catch((err) => {
         console.error("[DirectTerminal] Failed to load xterm.js:", err);
+        permanentErrorRef.current = true;
         setStatus("error");
         setError("Failed to load terminal");
       });
 
     return () => {
       mounted = false;
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
       cleanup?.();
     };
   }, [sessionId, variant]);
@@ -257,23 +469,23 @@ export function DirectTerminal({
     }
 
     let resizeAttempts = 0;
-    const maxAttempts = 10;
+    const maxAttempts = 60;
+    let cancelled = false;
+    let rafId = 0;
+    let lastHeight = -1;
 
     const resizeTerminal = () => {
+      if (cancelled) return;
       resizeAttempts++;
 
-      // Get container dimensions
-      const rect = container.getBoundingClientRect();
-      const expectedHeight = rect.height;
+      // Wait for the container height to stabilise (CSS transition finished)
+      const currentHeight = container.getBoundingClientRect().height;
+      const settled = lastHeight >= 0 && Math.abs(currentHeight - lastHeight) < 1;
+      lastHeight = currentHeight;
 
-      // Check if container has reached target dimensions (within 10px tolerance)
-      const isFullscreenTarget = fullscreen
-        ? expectedHeight > window.innerHeight - 100
-        : expectedHeight < 700;
-
-      if (!isFullscreenTarget && resizeAttempts < maxAttempts) {
-        // Container hasn't reached target size yet, try again
-        requestAnimationFrame(resizeTerminal);
+      if (!settled && resizeAttempts < maxAttempts) {
+        // Container is still transitioning, try again next frame
+        rafId = requestAnimationFrame(resizeTerminal);
         return;
       }
 
@@ -282,24 +494,31 @@ export function DirectTerminal({
       fit.fit();
       terminal.refresh(0, terminal.rows - 1);
 
-      // Send new size to server
-      websocket.send(
-        JSON.stringify({
-          type: "resize",
-          cols: terminal.cols,
-          rows: terminal.rows,
-        }),
-      );
+      // Send new size to server (use ws.current in case WebSocket reconnected)
+      const currentWs = ws.current;
+      if (currentWs?.readyState === WebSocket.OPEN) {
+        currentWs.send(
+          JSON.stringify({
+            type: "resize",
+            cols: terminal.cols,
+            rows: terminal.rows,
+          }),
+        );
+      }
     };
 
     // Start resize polling
-    requestAnimationFrame(resizeTerminal);
+    rafId = requestAnimationFrame(resizeTerminal);
 
     // Also try on transitionend
     const handleTransitionEnd = (e: TransitionEvent) => {
+      if (cancelled) return;
       if (e.target === container.parentElement) {
         resizeAttempts = 0;
-        setTimeout(() => requestAnimationFrame(resizeTerminal), 50);
+        lastHeight = -1;
+        setTimeout(() => {
+          if (!cancelled) rafId = requestAnimationFrame(resizeTerminal);
+        }, 50);
       }
     };
 
@@ -308,22 +527,29 @@ export function DirectTerminal({
 
     // Backup timers in case RAF polling doesn't work
     const timer1 = setTimeout(() => {
+      if (cancelled) return;
       resizeAttempts = 0;
+      lastHeight = -1;
       resizeTerminal();
     }, 300);
     const timer2 = setTimeout(() => {
+      if (cancelled) return;
       resizeAttempts = 0;
+      lastHeight = -1;
       resizeTerminal();
     }, 600);
 
     return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafId);
       parent?.removeEventListener("transitionend", handleTransitionEnd);
       clearTimeout(timer1);
       clearTimeout(timer2);
     };
   }, [fullscreen]);
 
-  const accentColor = variant === "orchestrator" ? "var(--color-accent-violet)" : "var(--color-accent)";
+  const accentColor =
+    variant === "orchestrator" ? "var(--color-accent-violet)" : "var(--color-accent)";
 
   const statusDotClass =
     status === "connected"
@@ -333,11 +559,7 @@ export function DirectTerminal({
         : "bg-[var(--color-status-attention)] animate-[pulse_1.5s_ease-in-out_infinite]";
 
   const statusText =
-    status === "connected"
-      ? "Connected"
-      : status === "error"
-        ? (error ?? "Error")
-        : "Connecting…";
+    status === "connected" ? "Connected" : status === "error" ? (error ?? "Error") : "Connecting…";
 
   const statusTextColor =
     status === "connected"
@@ -357,13 +579,12 @@ export function DirectTerminal({
       {/* Terminal chrome bar */}
       <div className="flex items-center gap-2 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] px-3 py-2">
         <div className={cn("h-2 w-2 shrink-0 rounded-full", statusDotClass)} />
-        <span
-          className="font-[var(--font-mono)] text-[11px]"
-          style={{ color: accentColor }}
-        >
+        <span className="font-[var(--font-mono)] text-[11px]" style={{ color: accentColor }}>
           {sessionId}
         </span>
-        <span className={cn("text-[10px] font-medium uppercase tracking-[0.06em]", statusTextColor)}>
+        <span
+          className={cn("text-[10px] font-medium uppercase tracking-[0.06em]", statusTextColor)}
+        >
           {statusText}
         </span>
         {/* XDA clipboard badge */}
@@ -376,20 +597,81 @@ export function DirectTerminal({
         >
           XDA
         </span>
+        {isOpenCodeSession ? (
+          <button
+            onClick={handleReload}
+            disabled={reloading || status !== "connected"}
+            title="Restart OpenCode session (/exit then resume mapped session)"
+            aria-label="Restart OpenCode session"
+            className="ml-auto flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)] disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {reloading ? (
+              <>
+                <svg
+                  className="h-3 w-3 animate-spin"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  viewBox="0 0 24 24"
+                >
+                  <path d="M12 3a9 9 0 109 9" />
+                </svg>
+                restarting
+              </>
+            ) : (
+              <>
+                <svg
+                  className="h-3 w-3"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  viewBox="0 0 24 24"
+                >
+                  <path d="M21 12a9 9 0 11-2.64-6.36" />
+                  <path d="M21 3v6h-6" />
+                </svg>
+                restart
+              </>
+            )}
+          </button>
+        ) : null}
+        {reloadError ? (
+          <span
+            className="max-w-[40ch] truncate text-[10px] font-medium text-[var(--color-status-error)]"
+            title={reloadError}
+          >
+            {reloadError}
+          </span>
+        ) : null}
         <button
           onClick={() => setFullscreen(!fullscreen)}
-          className="ml-auto flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]"
+          className={cn(
+            "flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]",
+            !isOpenCodeSession && "ml-auto",
+          )}
         >
           {fullscreen ? (
             <>
-              <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <svg
+                className="h-3 w-3"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                viewBox="0 0 24 24"
+              >
                 <path d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3" />
               </svg>
               exit fullscreen
             </>
           ) : (
             <>
-              <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <svg
+                className="h-3 w-3"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                viewBox="0 0 24 24"
+              >
                 <path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3" />
               </svg>
               fullscreen

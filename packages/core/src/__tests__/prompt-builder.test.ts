@@ -27,9 +27,11 @@ afterEach(() => {
 });
 
 describe("buildPrompt", () => {
-  it("returns null when no issue, no rules, no user prompt", () => {
+  it("includes base prompt on bare spawns", () => {
     const result = buildPrompt({ project, projectId: "test-app" });
-    expect(result).toBeNull();
+    expect(result).toContain(BASE_AGENT_PROMPT);
+    expect(result).toContain("## Project Context");
+    expect(result).toContain("Project: Test App");
   });
 
   it("includes base prompt when issue is provided", () => {
@@ -212,5 +214,6 @@ describe("BASE_AGENT_PROMPT", () => {
     expect(BASE_AGENT_PROMPT).toContain("Session Lifecycle");
     expect(BASE_AGENT_PROMPT).toContain("Git Workflow");
     expect(BASE_AGENT_PROMPT).toContain("PR Best Practices");
+    expect(BASE_AGENT_PROMPT).toContain("ao session claim-pr");
   });
 });

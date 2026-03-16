@@ -1,6 +1,12 @@
-<div align="center">
+<h1 align="center">Agent Orchestrator — The Orchestration Layer for Parallel AI Agents</h1>
 
-# Agent Orchestrator — The Orchestration Layer for Parallel AI Agents
+<p align="center">
+<a href="https://platform.composio.dev/?utm_source=Github&utm_medium=Banner&utm_content=AgentOrchestrator">
+  <img width="800" alt="Agent Orchestrator banner" src="docs/assets/agent_orchestrator_banner.png">
+</a>
+</p>
+
+<div align="center">
 
 Spawn parallel AI coding agents, each in its own git worktree. Agents autonomously fix CI failures, address review comments, and open PRs — you supervise from one dashboard.
 
@@ -8,6 +14,7 @@ Spawn parallel AI coding agents, each in its own git worktree. Agents autonomous
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![PRs merged](https://img.shields.io/badge/PRs_merged-61-brightgreen?style=flat-square)](https://github.com/ComposioHQ/agent-orchestrator/pulls?q=is%3Amerged)
 [![Tests](https://img.shields.io/badge/test_cases-3%2C288-blue?style=flat-square)](https://github.com/ComposioHQ/agent-orchestrator/releases/tag/metrics-v1)
+[![Discord](https://img.shields.io/badge/Discord-Join%20Community-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/UZv7JjxbwG)
 
 </div>
 
@@ -37,16 +44,29 @@ Agent Orchestrator manages fleets of AI coding agents working in parallel on you
 
 ## Quick Start
 
+**Option A — From a repo URL (fastest):**
+
 ```bash
 # Install
 git clone https://github.com/ComposioHQ/agent-orchestrator.git
 cd agent-orchestrator && bash scripts/setup.sh
 
-# Configure your project
-cd ~/your-project && ao init --auto
+# One command to clone, configure, and launch
+ao start https://github.com/your-org/your-repo
+```
 
-# Launch and spawn an agent
+Auto-detects language, package manager, SCM platform, and default branch. Generates `agent-orchestrator.yaml` and starts the dashboard + orchestrator.
+
+**Option B — From an existing local repo:**
+
+```bash
+cd ~/your-project && ao init --auto
 ao start
+```
+
+Then spawn agents:
+
+```bash
 ao spawn my-project 123    # GitHub issue, Linear ticket, or ad-hoc
 ```
 
@@ -69,16 +89,16 @@ ao spawn my-project 123
 
 Eight slots. Every abstraction is swappable.
 
-| Slot | Default | Alternatives |
-|------|---------|-------------|
-| Runtime | tmux | docker, k8s, process |
-| Agent | claude-code | codex, aider, opencode |
-| Workspace | worktree | clone |
-| Tracker | github | linear |
-| SCM | github | — |
-| Notifier | desktop | slack, composio, webhook |
-| Terminal | iterm2 | web |
-| Lifecycle | core | — |
+| Slot      | Default     | Alternatives             |
+| --------- | ----------- | ------------------------ |
+| Runtime   | tmux        | docker, k8s, process     |
+| Agent     | claude-code | codex, aider, opencode   |
+| Workspace | worktree    | clone                    |
+| Tracker   | github      | linear                   |
+| SCM       | github      | —                        |
+| Notifier  | desktop     | slack, composio, webhook |
+| Terminal  | iterm2      | web                      |
+| Lifecycle | core        | —                        |
 
 All interfaces defined in [`packages/core/src/types.ts`](packages/core/src/types.ts). A plugin implements one interface and exports a `PluginModule`. That's it.
 
@@ -111,7 +131,7 @@ reactions:
     action: send-to-agent
     escalateAfter: 30m
   approved-and-green:
-    auto: false       # flip to true for auto-merge
+    auto: false # flip to true for auto-merge
     action: notify
 ```
 
@@ -129,7 +149,24 @@ ao session ls                          # List sessions
 ao session kill <session>              # Kill a session
 ao session restore <session>           # Revive a crashed agent
 ao dashboard                           # Open web dashboard
+ao doctor [--fix]                      # Check install, runtime, and stale temp issues
+ao update                              # Update local AO install and run smoke tests
 ```
+
+## Maintenance
+
+```bash
+# Run deterministic install and runtime checks
+ao doctor
+
+# Apply safe cleanup and launcher fixes
+ao doctor --fix
+
+# Update this local AO checkout, rebuild critical packages, and verify the launcher
+ao update
+```
+
+`ao doctor` checks PATH and launcher resolution, required binaries, tmux and GitHub CLI health, config support directories, stale AO temp files, and core build/runtime sanity. `ao update` fast-forwards the local install repo on `main`, runs `pnpm install`, clean-rebuilds `@composio/ao-core`, `@composio/ao-cli`, and `@composio/ao-web`, refreshes the global `ao` launcher with `npm link`, and finishes with CLI smoke tests.
 
 ## Why Agent Orchestrator?
 
@@ -154,20 +191,21 @@ pnpm test                      # Run tests (3,288 test cases)
 pnpm dev                       # Start web dashboard dev server
 ```
 
-See [CLAUDE.md](CLAUDE.md) for code conventions and architecture details.
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for code conventions and architecture details.
 
 ## Documentation
 
-| Doc | What it covers |
-|-----|---------------|
-| [Setup Guide](SETUP.md) | Detailed installation and configuration |
-| [Examples](examples/) | Config templates (GitHub, Linear, multi-project, auto-merge) |
-| [CLAUDE.md](CLAUDE.md) | Architecture, conventions, plugin pattern |
-| [Troubleshooting](TROUBLESHOOTING.md) | Common issues and fixes |
+| Doc                                      | What it covers                                               |
+| ---------------------------------------- | ------------------------------------------------------------ |
+| [Setup Guide](SETUP.md)                  | Detailed installation and configuration                      |
+| [Examples](examples/)                    | Config templates (GitHub, Linear, multi-project, auto-merge) |
+| [Development Guide](docs/DEVELOPMENT.md) | Architecture, conventions, plugin pattern                    |
+| [Contributing](CONTRIBUTING.md)          | How to contribute, build plugins, PR process                 |
+| [Troubleshooting](TROUBLESHOOTING.md)    | Common issues and fixes                                      |
 
 ## Contributing
 
-Contributions welcome. The plugin system makes it straightforward to add support for new agents, runtimes, trackers, and notification channels. Every plugin is an implementation of a TypeScript interface — see [CLAUDE.md](CLAUDE.md) for the pattern.
+Contributions welcome. The plugin system makes it straightforward to add support for new agents, runtimes, trackers, and notification channels. Every plugin is an implementation of a TypeScript interface — see [CONTRIBUTING.md](CONTRIBUTING.md) and the [Development Guide](docs/DEVELOPMENT.md) for the pattern.
 
 ## License
 

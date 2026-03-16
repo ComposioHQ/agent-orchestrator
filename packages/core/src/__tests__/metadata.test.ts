@@ -46,6 +46,7 @@ describe("writeMetadata + readMetadata", () => {
       status: "pr_open",
       issue: "https://linear.app/team/issue/INT-100",
       pr: "https://github.com/org/repo/pull/42",
+      prAutoDetect: "off",
       summary: "Implementing feature X",
       project: "my-app",
       createdAt: "2025-01-01T00:00:00.000Z",
@@ -56,6 +57,7 @@ describe("writeMetadata + readMetadata", () => {
     expect(meta).not.toBeNull();
     expect(meta!.issue).toBe("https://linear.app/team/issue/INT-100");
     expect(meta!.pr).toBe("https://github.com/org/repo/pull/42");
+    expect(meta!.prAutoDetect).toBe("off");
     expect(meta!.summary).toBe("Implementing feature X");
     expect(meta!.project).toBe("my-app");
     expect(meta!.createdAt).toBe("2025-01-01T00:00:00.000Z");
@@ -320,6 +322,116 @@ describe("readArchivedMetadataRaw", () => {
     expect(archived).not.toBeNull();
     expect(archived!["branch"]).toBe("feat/test");
     expect(archived!["issue"]).toBe("TEST-1");
+  });
+});
+
+describe("atomic writes", () => {
+  it("writeMetadata leaves no .tmp files behind", () => {
+    writeMetadata(dataDir, "atomic-1", {
+      worktree: "/tmp/w",
+      branch: "main",
+      status: "working",
+    });
+
+    const files = readdirSync(dataDir);
+    const tmpFiles = files.filter((f) => f.includes(".tmp."));
+    expect(tmpFiles).toHaveLength(0);
+    // Verify the actual file was written correctly
+    const meta = readMetadata(dataDir, "atomic-1");
+    expect(meta!.status).toBe("working");
+  });
+
+  it("updateMetadata leaves no .tmp files behind", () => {
+    writeMetadata(dataDir, "atomic-2", {
+      worktree: "/tmp/w",
+      branch: "main",
+      status: "spawning",
+    });
+
+    updateMetadata(dataDir, "atomic-2", { status: "working" });
+
+    const files = readdirSync(dataDir);
+    const tmpFiles = files.filter((f) => f.includes(".tmp."));
+    expect(tmpFiles).toHaveLength(0);
+    const meta = readMetadata(dataDir, "atomic-2");
+    expect(meta!.status).toBe("working");
+  });
+
+  it("concurrent writeMetadata calls do not produce corrupt files", () => {
+    // Simulate rapid sequential writes (synchronous, so they serialize naturally,
+    // but each individual write must be atomic — no partial content)
+    for (let i = 0; i < 20; i++) {
+      writeMetadata(dataDir, "atomic-3", {
+        worktree: "/tmp/w",
+        branch: `branch-${i}`,
+        status: "working",
+        summary: `iteration ${i}`,
+      });
+    }
+
+    const meta = readMetadata(dataDir, "atomic-3");
+    expect(meta).not.toBeNull();
+    expect(meta!.branch).toBe("branch-19");
+    expect(meta!.summary).toBe("iteration 19");
+
+    // No leftover temp files
+    const files = readdirSync(dataDir);
+    const tmpFiles = files.filter((f) => f.includes(".tmp."));
+    expect(tmpFiles).toHaveLength(0);
+  });
+});
+
+describe("restoredAt persistence", () => {
+  it("roundtrips restoredAt through writeMetadata and readMetadata", () => {
+    const now = new Date().toISOString();
+    writeMetadata(dataDir, "restore-1", {
+      worktree: "/tmp/w",
+      branch: "main",
+      status: "working",
+      restoredAt: now,
+    });
+
+    const meta = readMetadata(dataDir, "restore-1");
+    expect(meta).not.toBeNull();
+    expect(meta!.restoredAt).toBe(now);
+  });
+
+  it("restoredAt is persisted in the key=value file", () => {
+    const now = "2026-03-01T12:00:00.000Z";
+    writeMetadata(dataDir, "restore-2", {
+      worktree: "/tmp/w",
+      branch: "main",
+      status: "working",
+      restoredAt: now,
+    });
+
+    const content = readFileSync(join(dataDir, "restore-2"), "utf-8");
+    expect(content).toContain(`restoredAt=${now}`);
+  });
+
+  it("restoredAt is undefined when not set", () => {
+    writeMetadata(dataDir, "restore-3", {
+      worktree: "/tmp/w",
+      branch: "main",
+      status: "working",
+    });
+
+    const meta = readMetadata(dataDir, "restore-3");
+    expect(meta!.restoredAt).toBeUndefined();
+  });
+
+  it("updateMetadata can set restoredAt on an existing session", () => {
+    writeMetadata(dataDir, "restore-4", {
+      worktree: "/tmp/w",
+      branch: "main",
+      status: "working",
+    });
+
+    const now = new Date().toISOString();
+    updateMetadata(dataDir, "restore-4", { restoredAt: now });
+
+    const meta = readMetadata(dataDir, "restore-4");
+    expect(meta!.restoredAt).toBe(now);
   });
 });
 

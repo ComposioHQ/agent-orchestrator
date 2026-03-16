@@ -19,6 +19,10 @@ port: 3000
 defaults:
   runtime: tmux           # tmux | process | docker | kubernetes | ssh | e2b
   agent: claude-code      # claude-code | codex | aider | goose | custom
+  # orchestrator:
+  #   agent: claude-code
+  # worker:
+  #   agent: codex
   workspace: worktree     # worktree | clone | copy
   notifiers: [desktop]    # desktop | slack | discord | webhook | email
 
@@ -36,6 +40,17 @@ projects:
     #   plugin: linear
     #   teamId: "your-team-id"
 
+    # SCM webhook acceleration (optional)
+    # scm:
+    #   plugin: github
+    #   webhook:
+    #     path: /api/webhooks/github
+    #     secretEnvVar: GITHUB_WEBHOOK_SECRET
+    #     signatureHeader: x-hub-signature-256
+    #     eventHeader: x-github-event
+    #     deliveryHeader: x-github-delivery
+    #     maxBodyBytes: 1048576
+
     # Files to symlink into workspaces
     # symlinks: [.env, .claude]
 
@@ -48,6 +63,16 @@ projects:
     #   permissions: skip    # --dangerously-skip-permissions
     #   model: opus
 
+    # Optional role-specific agent overrides
+    # orchestrator:
+    #   agent: claude-code
+    #   agentConfig:
+    #     model: claude-sonnet-4-5
+    # worker:
+    #   agent: codex
+    #   agentConfig:
+    #     model: gpt-5-codex
+
     # Inline rules included in every agent prompt for this project
     # agentRules: |
     #   Always run tests before pushing.
@@ -59,6 +84,9 @@ projects:
     # Rules for the orchestrator agent (reserved for future use)
     # orchestratorRules: |
     #   Prefer to batch-spawn related issues together.
+
+    # OpenCode issue session strategy (only for agent: opencode)
+    # opencodeIssueSessionStrategy: reuse   # reuse | delete | ignore
 
     # Per-project reaction overrides
     # reactions:

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { createLifecycleManager } from "../lifecycle-manager.js";
+import { createSessionManager } from "../session-manager.js";
 import { writeMetadata, readMetadataRaw } from "../metadata.js";
 import { getSessionsDir, getProjectBaseDir } from "../paths.js";
 import type {
@@ -84,7 +85,7 @@ beforeEach(() => {
     getLaunchCommand: vi.fn(),
     getEnvironment: vi.fn(),
     detectActivity: vi.fn().mockReturnValue("active" as ActivityState),
-    getActivityState: vi.fn().mockResolvedValue("active" as ActivityState),
+    getActivityState: vi.fn().mockResolvedValue({ state: "active" as ActivityState }),
     isProcessRunning: vi.fn().mockResolvedValue(true),
     getSessionInfo: vi.fn().mockResolvedValue(null),
   };
@@ -110,7 +111,8 @@ beforeEach(() => {
     kill: vi.fn().mockResolvedValue(undefined),
     cleanup: vi.fn(),
     send: vi.fn().mockResolvedValue(undefined),
-  };
+    claimPR: vi.fn(),
+  } as SessionManager;
 
   config = {
     configPath,
@@ -203,6 +205,59 @@ describe("check (single session)", () => {
     expect(meta!["status"]).toBe("working");
   });
 
+  it("uses worker-specific agent fallback when metadata does not persist an agent", async () => {
+    const codexAgent: Agent = {
+      ...mockAgent,
+      name: "codex",
+      processName: "codex",
+      getActivityState: vi.fn().mockResolvedValue({ state: "active" as ActivityState }),
+    };
+    const registryWithMultipleAgents: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") {
+          if (name === "codex") return codexAgent;
+          if (name === "mock-agent") return mockAgent;
+        }
+        return null;
+      }),
+    };
+    const configWithWorkerAgent: OrchestratorConfig = {
+      ...config,
+      projects: {
+        ...config.projects,
+        "my-app": {
+          ...config.projects["my-app"],
+          agent: "mock-agent",
+          worker: {
+            agent: "codex",
+          },
+        },
+      },
+    };
+    const session = makeSession({ status: "working", metadata: {} });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config: configWithWorkerAgent,
+      registry: registryWithMultipleAgents,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(codexAgent.getActivityState).toHaveBeenCalled();
+    expect(mockAgent.getActivityState).not.toHaveBeenCalled();
+  });
+
   it("detects killed state when runtime is dead", async () => {
     vi.mocked(mockRuntime.isAlive).mockResolvedValue(false);
 
@@ -227,7 +282,32 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("killed");
   });
 
-  it("detects killed state when agent process exits (idle terminal + dead process)", async () => {
+  it("detects killed state when getActivityState returns exited", async () => {
+    vi.mocked(mockAgent.getActivityState).mockResolvedValue({ state: "exited" });
+
+    const session = makeSession({ status: "working" });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("killed");
+  });
+
+  it("detects killed via terminal fallback when getActivityState returns null", async () => {
+    vi.mocked(mockAgent.getActivityState).mockResolvedValue(null);
     vi.mocked(mockAgent.detectActivity).mockReturnValue("idle");
     vi.mocked(mockAgent.isProcessRunning).mockResolvedValue(false);
 
@@ -252,34 +332,8 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("killed");
   });
 
-  it("detects killed state when agent process exits (active terminal + dead process)", async () => {
-    // Stub agents (codex, aider, opencode) return "active" for any non-empty
-    // terminal output, including the shell prompt after the agent exits.
-    vi.mocked(mockAgent.detectActivity).mockReturnValue("active");
-    vi.mocked(mockAgent.isProcessRunning).mockResolvedValue(false);
-
-    const session = makeSession({ status: "working" });
-    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
-
-    writeMetadata(sessionsDir, "app-1", {
-      worktree: "/tmp",
-      branch: "main",
-      status: "working",
-      project: "my-app",
-    });
-
-    const lm = createLifecycleManager({
-      config,
-      registry: mockRegistry,
-      sessionManager: mockSessionManager,
-    });
-
-    await lm.check("app-1");
-
-    expect(lm.getStates().get("app-1")).toBe("killed");
-  });
-
-  it("stays working when agent is idle but process is still running", async () => {
+  it("stays working when agent is idle but process is still running (fallback path)", async () => {
+    vi.mocked(mockAgent.getActivityState).mockResolvedValue(null);
     vi.mocked(mockAgent.detectActivity).mockReturnValue("idle");
     vi.mocked(mockAgent.isProcessRunning).mockResolvedValue(true);
 
@@ -305,7 +359,7 @@ describe("check (single session)", () => {
   });
 
   it("detects needs_input from agent", async () => {
-    vi.mocked(mockAgent.detectActivity).mockReturnValue("waiting_input");
+    vi.mocked(mockAgent.getActivityState).mockResolvedValue({ state: "waiting_input" });
 
     const session = makeSession({ status: "working" });
     vi.mocked(mockSessionManager.get).mockResolvedValue(session);
@@ -328,10 +382,164 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("needs_input");
   });
 
-  it("preserves stuck state when detectActivity throws", async () => {
-    vi.mocked(mockAgent.detectActivity).mockImplementation(() => {
-      throw new Error("probe failed");
+  it("transitions to stuck when idle exceeds agent-stuck threshold (OpenCode-style activity)", async () => {
+    config.reactions = {
+      "agent-stuck": {
+        auto: true,
+        action: "notify",
+        threshold: "1m",
+      },
+    };
+
+    vi.mocked(mockAgent.getActivityState).mockResolvedValue({
+      state: "idle",
+      timestamp: new Date(Date.now() - 120_000),
     });
+
+    const session = makeSession({ status: "working", metadata: { agent: "opencode" } });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      agent: "opencode",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("stuck");
+  });
+
+  it("uses global agent-stuck threshold when project override omits threshold", async () => {
+    config.reactions = {
+      "agent-stuck": {
+        auto: true,
+        action: "notify",
+        threshold: "1m",
+      },
+    };
+    config.projects["my-app"] = {
+      ...config.projects["my-app"],
+      reactions: {
+        "agent-stuck": {
+          auto: true,
+          action: "notify",
+        },
+      },
+    };
+
+    vi.mocked(mockAgent.getActivityState).mockResolvedValue({
+      state: "idle",
+      timestamp: new Date(Date.now() - 120_000),
+    });
+
+    const session = makeSession({ status: "working", metadata: { agent: "opencode" } });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      agent: "opencode",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("stuck");
+  });
+
+  it("still auto-detects PR before marking idle sessions as stuck", async () => {
+    config.reactions = {
+      "agent-stuck": {
+        auto: true,
+        action: "notify",
+        threshold: "1m",
+      },
+    };
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn().mockResolvedValue(makePR()),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("passing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("none"),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn().mockResolvedValue({
+        mergeable: false,
+        ciPassing: true,
+        approved: false,
+        noConflicts: true,
+        blockers: [],
+      }),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    vi.mocked(mockAgent.getActivityState).mockResolvedValue({
+      state: "idle",
+      timestamp: new Date(Date.now() - 120_000),
+    });
+
+    const session = makeSession({
+      status: "working",
+      branch: "feat/test",
+      pr: null,
+      metadata: { agent: "opencode" },
+    });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "feat/test",
+      status: "working",
+      project: "my-app",
+      agent: "opencode",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(mockSCM.detectPR).toHaveBeenCalledOnce();
+    const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta?.["pr"]).toBe(makePR().url);
+    expect(lm.getStates().get("app-1")).toBe("stuck");
+  });
+
+  it("preserves stuck state when getActivityState throws", async () => {
+    vi.mocked(mockAgent.getActivityState).mockRejectedValue(new Error("probe failed"));
 
     const session = makeSession({ status: "stuck" });
     vi.mocked(mockSessionManager.get).mockResolvedValue(session);
@@ -355,10 +563,8 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("stuck");
   });
 
-  it("preserves needs_input state when detectActivity throws", async () => {
-    vi.mocked(mockAgent.detectActivity).mockImplementation(() => {
-      throw new Error("probe failed");
-    });
+  it("preserves needs_input state when getActivityState throws", async () => {
+    vi.mocked(mockAgent.getActivityState).mockRejectedValue(new Error("probe failed"));
 
     const session = makeSession({ status: "needs_input" });
     vi.mocked(mockSessionManager.get).mockResolvedValue(session);
@@ -382,7 +588,8 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("needs_input");
   });
 
-  it("preserves stuck state when getOutput throws", async () => {
+  it("preserves stuck state when getActivityState returns null and getOutput throws", async () => {
+    vi.mocked(mockAgent.getActivityState).mockResolvedValue(null);
     vi.mocked(mockRuntime.getOutput).mockRejectedValue(new Error("tmux error"));
 
     const session = makeSession({ status: "stuck" });
@@ -452,6 +659,171 @@ describe("check (single session)", () => {
     await lm.check("app-1");
 
     expect(lm.getStates().get("app-1")).toBe("ci_failed");
+  });
+
+  it("skips PR auto-detection when metadata disables it", async () => {
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn().mockResolvedValue(makePR()),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("passing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("none"),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "feat/test",
+      status: "working",
+      project: "my-app",
+      prAutoDetect: "off",
+    });
+
+    const realSessionManager = createSessionManager({
+      config,
+      registry: registryWithSCM,
+    });
+    const session = await realSessionManager.get("app-1");
+
+    expect(session).not.toBeNull();
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(mockSCM.detectPR).not.toHaveBeenCalled();
+    expect(lm.getStates().get("app-1")).toBe("working");
+  });
+
+  it("skips PR auto-detection for orchestrator sessions", async () => {
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn().mockResolvedValue(makePR()),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("passing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("none"),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "master",
+      status: "working",
+      project: "my-app",
+      role: "orchestrator",
+    });
+
+    const realSessionManager = createSessionManager({
+      config,
+      registry: registryWithSCM,
+    });
+    const session = await realSessionManager.get("app-1");
+
+    expect(session).not.toBeNull();
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(mockSCM.detectPR).not.toHaveBeenCalled();
+    expect(lm.getStates().get("app-1")).toBe("working");
+  });
+
+  it("skips PR auto-detection for orchestrator sessions identified by ID suffix (fallback)", async () => {
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn().mockResolvedValue(makePR()),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("passing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("none"),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    // Session has no role metadata but ID ends with "-orchestrator"
+    writeMetadata(sessionsDir, "app-orchestrator", {
+      worktree: "/tmp",
+      branch: "master",
+      status: "working",
+      project: "my-app",
+    });
+
+    const realSessionManager = createSessionManager({
+      config,
+      registry: registryWithSCM,
+    });
+    const session = await realSessionManager.get("app-orchestrator");
+
+    expect(session).not.toBeNull();
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-orchestrator");
+
+    expect(mockSCM.detectPR).not.toHaveBeenCalled();
+    expect(lm.getStates().get("app-orchestrator")).toBe("working");
   });
 
   it("detects merged PR", async () => {
@@ -775,6 +1147,226 @@ describe("reactions", () => {
     expect(mockSessionManager.send).toHaveBeenCalledWith("app-1", "Fix CI");
     // Notifier should NOT have been called — the reaction is handling it
     expect(mockNotifier.notify).not.toHaveBeenCalled();
+  });
+
+  it("dispatches unresolved review comments even when reviewDecision stays unchanged", async () => {
+    config.reactions = {
+      "changes-requested": {
+        auto: true,
+        action: "send-to-agent",
+        message: "Handle review comments.",
+      },
+    };
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("passing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("none"),
+      getPendingComments: vi.fn().mockResolvedValue([
+        {
+          id: "c1",
+          author: "reviewer",
+          body: "Please rename this helper",
+          path: "src/app.ts",
+          line: 12,
+          isResolved: false,
+          createdAt: new Date(),
+          url: "https://example.com/comment/1",
+        },
+      ]),
+      getAutomatedComments: vi.fn().mockResolvedValue([]),
+      getMergeability: vi.fn(),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    const session = makeSession({ status: "pr_open", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+    vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+    expect(mockSessionManager.send).toHaveBeenCalledWith("app-1", "Handle review comments.");
+
+    vi.mocked(mockSessionManager.send).mockClear();
+    await lm.check("app-1");
+    expect(mockSessionManager.send).not.toHaveBeenCalled();
+
+    const metadata = readMetadataRaw(sessionsDir, "app-1");
+    expect(metadata?.["lastPendingReviewDispatchHash"]).toBe("c1");
+  });
+
+  it("does not double-send when changes_requested transition already triggered the reaction", async () => {
+    config.reactions = {
+      "changes-requested": {
+        auto: true,
+        action: "send-to-agent",
+        message: "Handle requested changes.",
+      },
+    };
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("passing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("changes_requested"),
+      getPendingComments: vi.fn().mockResolvedValue([
+        {
+          id: "c1",
+          author: "reviewer",
+          body: "Please add validation",
+          path: "src/route.ts",
+          line: 44,
+          isResolved: false,
+          createdAt: new Date(),
+          url: "https://example.com/comment/2",
+        },
+      ]),
+      getAutomatedComments: vi.fn().mockResolvedValue([]),
+      getMergeability: vi.fn(),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    const session = makeSession({ status: "pr_open", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+    vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+    await lm.check("app-1");
+
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+    expect(mockSessionManager.send).toHaveBeenCalledWith("app-1", "Handle requested changes.");
+  });
+
+  it("dispatches automated review comments only once for an unchanged backlog", async () => {
+    config.reactions = {
+      "bugbot-comments": {
+        auto: true,
+        action: "send-to-agent",
+        message: "Handle automated review findings.",
+      },
+    };
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("passing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("none"),
+      getPendingComments: vi.fn().mockResolvedValue([]),
+      getAutomatedComments: vi.fn().mockResolvedValue([
+        {
+          id: "bot-1",
+          botName: "cursor[bot]",
+          body: "Potential issue detected",
+          path: "src/worker.ts",
+          line: 9,
+          severity: "warning",
+          createdAt: new Date(),
+          url: "https://example.com/comment/3",
+        },
+      ]),
+      getMergeability: vi.fn(),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    const session = makeSession({ status: "pr_open", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+    vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+    expect(mockSessionManager.send).toHaveBeenCalledWith(
+      "app-1",
+      "Handle automated review findings.",
+    );
+
+    vi.mocked(mockSessionManager.send).mockClear();
+    await lm.check("app-1");
+    expect(mockSessionManager.send).not.toHaveBeenCalled();
+
+    const metadata = readMetadataRaw(sessionsDir, "app-1");
+    expect(metadata?.["lastAutomatedReviewDispatchHash"]).toBe("bot-1");
   });
 
   it("notifies humans on significant transitions without reaction config", async () => {

@@ -1,5 +1,4 @@
-import { ACTIVITY_STATE } from "@composio/ao-core";
-import { NextResponse } from "next/server";
+import { ACTIVITY_STATE, isOrchestratorSession } from "@composio/ao-core";
 import { getServices, getSCM } from "@/lib/services";
 import {
   sessionToDashboard,
@@ -7,58 +6,128 @@ import {
   enrichSessionPR,
   enrichSessionsMetadata,
   computeStats,
+  listDashboardOrchestrators,
 } from "@/lib/serialize";
+import { getCorrelationId, jsonWithCorrelation, recordApiObservation } from "@/lib/observability";
+import { resolveGlobalPause } from "@/lib/global-pause";
+import { filterProjectSessions } from "@/lib/project-utils";
 
-/** GET /api/sessions — List all sessions with full state
- * Query params:
- * - active=true: Only return non-exited sessions
- */
+const METADATA_ENRICH_TIMEOUT_MS = 3_000;
+const PR_ENRICH_TIMEOUT_MS = 4_000;
+const PER_PR_ENRICH_TIMEOUT_MS = 1_500;
+
+async function settlesWithin(promise: Promise<unknown>, timeoutMs: number): Promise<boolean> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<boolean>((resolve) => {
+    timeoutId = setTimeout(() => resolve(false), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise.then(() => true).catch(() => true), timeoutPromise]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
 export async function GET(request: Request) {
+  const correlationId = getCorrelationId(request);
+  const startedAt = Date.now();
   try {
     const { searchParams } = new URL(request.url);
+    const projectFilter = searchParams.get("project");
     const activeOnly = searchParams.get("active") === "true";
 
     const { config, registry, sessionManager } = await getServices();
-    const coreSessions = await sessionManager.list();
+    const requestedProjectId =
+      projectFilter && projectFilter !== "all" && config.projects[projectFilter]
+        ? projectFilter
+        : undefined;
+    const coreSessions = await sessionManager.list(requestedProjectId);
+    const allSessions = requestedProjectId ? await sessionManager.list() : coreSessions;
+    const visibleSessions = filterProjectSessions(coreSessions, projectFilter, config.projects);
+    const orchestrators = listDashboardOrchestrators(visibleSessions, config.projects);
+    const orchestratorId = orchestrators.length === 1 ? (orchestrators[0]?.id ?? null) : null;
 
-    // Filter out orchestrator sessions — they get their own button, not a card
-    let workerSessions = coreSessions.filter((s) => !s.id.endsWith("-orchestrator"));
+    let workerSessions = visibleSessions.filter((session) => !isOrchestratorSession(session));
 
     // Convert to dashboard format
     let dashboardSessions = workerSessions.map(sessionToDashboard);
 
-    // Filter to active sessions only if requested (keep workerSessions in sync)
     if (activeOnly) {
       const activeIndices = dashboardSessions
-        .map((s, i) => (s.activity !== ACTIVITY_STATE.EXITED ? i : -1))
-        .filter((i) => i !== -1);
-      workerSessions = activeIndices.map((i) => workerSessions[i]);
-      dashboardSessions = activeIndices.map((i) => dashboardSessions[i]);
+        .map((session, index) => (session.activity !== ACTIVITY_STATE.EXITED ? index : -1))
+        .filter((index) => index !== -1);
+      workerSessions = activeIndices.map((index) => workerSessions[index]);
+      dashboardSessions = activeIndices.map((index) => dashboardSessions[index]);
     }
 
-    // Enrich metadata (issue labels, agent summaries, issue titles) — cap at 3s
-    const metaTimeout = new Promise<void>((resolve) => setTimeout(resolve, 3_000));
-    await Promise.race([enrichSessionsMetadata(workerSessions, dashboardSessions, config, registry), metaTimeout]);
+    const metadataSettled = await settlesWithin(
+      enrichSessionsMetadata(workerSessions, dashboardSessions, config, registry),
+      METADATA_ENRICH_TIMEOUT_MS,
+    );
 
-    // Enrich sessions that have PRs with live SCM data (CI, reviews, mergeability)
-    const enrichPromises = workerSessions.map((core, i) => {
-      if (!core.pr) return Promise.resolve();
-      const project = resolveProject(core, config.projects);
-      const scm = getSCM(registry, project);
-      if (!scm) return Promise.resolve();
-      return enrichSessionPR(dashboardSessions[i], scm, core.pr);
-    });
-    const enrichTimeout = new Promise<void>((resolve) => setTimeout(resolve, 4_000));
-    await Promise.race([Promise.allSettled(enrichPromises), enrichTimeout]);
+    if (metadataSettled) {
+      const prDeadlineAt = Date.now() + PR_ENRICH_TIMEOUT_MS;
+      for (let i = 0; i < workerSessions.length; i++) {
+        const core = workerSessions[i];
+        if (!core?.pr) continue;
 
-    return NextResponse.json({
-      sessions: dashboardSessions,
-      stats: computeStats(dashboardSessions),
+        const remainingMs = prDeadlineAt - Date.now();
+        if (remainingMs <= 0) break;
+
+        const project = resolveProject(core, config.projects);
+        const scm = getSCM(registry, project);
+        if (!scm) continue;
+
+        await settlesWithin(
+          enrichSessionPR(dashboardSessions[i], scm, core.pr),
+          Math.min(remainingMs, PER_PR_ENRICH_TIMEOUT_MS),
+        );
+      }
+    }
+
+    recordApiObservation({
+      config,
+      method: "GET",
+      path: "/api/sessions",
+      correlationId,
+      startedAt,
+      outcome: "success",
+      statusCode: 200,
+      data: { sessionCount: dashboardSessions.length, activeOnly },
     });
+
+    return jsonWithCorrelation(
+      {
+        sessions: dashboardSessions,
+        stats: computeStats(dashboardSessions),
+        orchestratorId,
+        orchestrators,
+        globalPause: resolveGlobalPause(allSessions),
+      },
+      { status: 200 },
+      correlationId,
+    );
   } catch (err) {
-    return NextResponse.json(
+    const { config } = await getServices().catch(() => ({ config: undefined }));
+    if (config) {
+      recordApiObservation({
+        config,
+        method: "GET",
+        path: "/api/sessions",
+        correlationId,
+        startedAt,
+        outcome: "failure",
+        statusCode: 500,
+        reason: err instanceof Error ? err.message : "Failed to list sessions",
+      });
+    }
+    return jsonWithCorrelation(
       { error: err instanceof Error ? err.message : "Failed to list sessions" },
       { status: 500 },
+      correlationId,
     );
   }
 }
