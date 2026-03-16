@@ -394,10 +394,54 @@ async function runStartup(
     void waitForPortAndOpen(port, orchestratorUrl, openAbort.signal);
   }
 
+  // Graceful shutdown on Ctrl+C — run the same cleanup as `ao stop`.
+  let shuttingDown = false;
+  const gracefulShutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+
+    console.log(chalk.dim("\n\nShutting down...\n"));
+
+    // 1. Kill orchestrator session
+    try {
+      const sm = await getSessionManager(config);
+      const existing = await sm.get(sessionId);
+      if (existing) {
+        await sm.kill(sessionId, { purgeOpenCode: true });
+        console.log(chalk.green("Orchestrator session stopped"));
+      }
+    } catch {
+      // Best effort
+    }
+
+    // 2. Stop lifecycle worker
+    try {
+      const stopped = await stopLifecycleWorker(config, projectId);
+      if (stopped) {
+        console.log(chalk.green("Lifecycle worker stopped"));
+      }
+    } catch {
+      // Best effort
+    }
+
+    // 3. Kill dashboard process directly (no need for lsof — we have the handle)
+    if (dashboardProcess && !dashboardProcess.killed) {
+      dashboardProcess.kill();
+      console.log(chalk.green("Dashboard stopped"));
+    }
+
+    console.log(chalk.bold.green("\n✓ Orchestrator stopped\n"));
+    process.exit(0);
+  };
+
+  process.on("SIGINT", () => void gracefulShutdown());
+  process.on("SIGTERM", () => void gracefulShutdown());
+
   // Keep dashboard process alive if it was started
   if (dashboardProcess) {
     dashboardProcess.on("exit", (code) => {
       if (openAbort) openAbort.abort();
+      if (shuttingDown) return; // Already handling shutdown
       if (code !== 0 && code !== null) {
         console.error(chalk.red(`Dashboard exited with code ${code}`));
       }
