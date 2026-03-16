@@ -457,7 +457,7 @@ describe("setupWorkspaceHooks", () => {
 
   it("skips gh/git wrappers when version marker is current", async () => {
     mockReadFile.mockImplementation((path: string) => {
-      if (path.includes(".ao-version")) return Promise.resolve("0.1.0");
+      if (path.includes(".ao-version")) return Promise.resolve("0.1.1");
       return Promise.reject(new Error("ENOENT"));
     });
 

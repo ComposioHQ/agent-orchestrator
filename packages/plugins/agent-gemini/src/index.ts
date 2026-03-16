@@ -105,7 +105,20 @@ const GH_WRAPPER = `#!/usr/bin/env bash
 ao_bin_dir="\$(cd "\$(dirname "\$0")" && pwd)"
 clean_path="\$(echo "\$PATH" | tr ':' '\\n' | grep -Fxv "\$ao_bin_dir" | grep . | tr '\\n' ':')"
 clean_path="\${clean_path%:}"
-real_gh="\$(PATH="\$clean_path" command -v gh 2>/dev/null)"
+real_gh=""
+
+# Prefer explicit gh path when provided by AO environment.
+# Guard against recursive self-reference to the wrapper in ~/.ao/bin.
+if [[ -n "\${GH_PATH:-}" && -x "\$GH_PATH" ]]; then
+  gh_dir="\$(cd "\$(dirname "\$GH_PATH")" 2>/dev/null && pwd)"
+  if [[ "\$gh_dir" != "\$ao_bin_dir" ]]; then
+    real_gh="\$GH_PATH"
+  fi
+fi
+
+if [[ -z "\$real_gh" ]]; then
+  real_gh="\$(PATH="\$clean_path" command -v gh 2>/dev/null)"
+fi
 
 if [[ -z "\$real_gh" ]]; then
   echo "ao-wrapper: gh not found in PATH" >&2
@@ -236,7 +249,7 @@ async function setupGeminiWorkspace(workspacePath: string): Promise<void> {
 
   // Only write wrappers if they don't exist or are outdated (check marker)
   const markerPath = join(AO_BIN_DIR, ".ao-version");
-  const currentVersion = "0.1.0";
+  const currentVersion = "0.1.1";
   let needsUpdate = true;
   try {
     const existing = await readFile(markerPath, "utf-8");
