@@ -64,7 +64,7 @@ let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 let exitSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
-  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.useFakeTimers();
   program = new Command();
   program.exitOverride();
   registerSend(program);
@@ -121,7 +121,9 @@ describe("send command", () => {
         .mockReturnValueOnce("idle") // wait-for-idle check
         .mockReturnValueOnce("active"); // verification check
 
-      await program.parseAsync(["node", "test", "send", "my-session", "hello", "world"]);
+      const parsePromise = program.parseAsync(["node", "test", "send", "my-session", "hello", "world"]);
+      await vi.runAllTimersAsync();
+      await parsePromise;
 
       // Should have sent keys with -l (literal) flag
       expect(mockExec).toHaveBeenCalledWith("tmux", [
@@ -151,7 +153,9 @@ describe("send command", () => {
         .mockReturnValueOnce("idle") // now idle
         .mockReturnValueOnce("active"); // verification: processing
 
-      await program.parseAsync(["node", "test", "send", "my-session", "fix", "the", "bug"]);
+      const parsePromise = program.parseAsync(["node", "test", "send", "my-session", "fix", "the", "bug"]);
+      await vi.runAllTimersAsync();
+      await parsePromise;
 
       // Should have eventually sent the message
       expect(mockExec).toHaveBeenCalledWith("tmux", [
@@ -173,7 +177,9 @@ describe("send command", () => {
       // Agent detects active for verification
       mockDetectActivity.mockReturnValue("active");
 
-      await program.parseAsync(["node", "test", "send", "--no-wait", "my-session", "urgent"]);
+      const parsePromise = program.parseAsync(["node", "test", "send", "--no-wait", "my-session", "urgent"]);
+      await vi.runAllTimersAsync();
+      await parsePromise;
 
       // Should have sent the message without waiting
       expect(mockExec).toHaveBeenCalledWith("tmux", [
@@ -201,7 +207,9 @@ describe("send command", () => {
       // Agent detects idle for wait-for-idle, then idle for verification (not processing)
       mockDetectActivity.mockReturnValue("idle");
 
-      await program.parseAsync(["node", "test", "send", "my-session", "hello"]);
+      const parsePromise = program.parseAsync(["node", "test", "send", "my-session", "hello"]);
+      await vi.runAllTimersAsync();
+      await parsePromise;
 
       expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("Message queued"));
     });
@@ -220,7 +228,9 @@ describe("send command", () => {
         .mockReturnValueOnce("active"); // verification
 
       const longMsg = "x".repeat(250);
-      await program.parseAsync(["node", "test", "send", "my-session", longMsg]);
+      const parsePromise = program.parseAsync(["node", "test", "send", "my-session", longMsg]);
+      await vi.runAllTimersAsync();
+      await parsePromise;
 
       // Should have used load-buffer for long message
       expect(mockExec).toHaveBeenCalledWith("tmux", expect.arrayContaining(["load-buffer"]));
@@ -238,7 +248,9 @@ describe("send command", () => {
         .mockReturnValueOnce("idle") // wait-for-idle
         .mockReturnValueOnce("active"); // verification
 
-      await program.parseAsync(["node", "test", "send", "my-session", "short", "msg"]);
+      const parsePromise = program.parseAsync(["node", "test", "send", "my-session", "short", "msg"]);
+      await vi.runAllTimersAsync();
+      await parsePromise;
 
       expect(mockExec).toHaveBeenCalledWith("tmux", [
         "send-keys",
@@ -260,7 +272,9 @@ describe("send command", () => {
         .mockReturnValueOnce("idle") // wait-for-idle
         .mockReturnValueOnce("active"); // verification
 
-      await program.parseAsync(["node", "test", "send", "my-session", "hello"]);
+      const parsePromise = program.parseAsync(["node", "test", "send", "my-session", "hello"]);
+      await vi.runAllTimersAsync();
+      await parsePromise;
 
       // C-u should be called to clear input
       expect(mockExec).toHaveBeenCalledWith("tmux", ["send-keys", "-t", "my-session", "C-u"]);
