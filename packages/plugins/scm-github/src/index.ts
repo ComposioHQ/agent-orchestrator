@@ -556,26 +556,30 @@ function createGitHubSCM(config?: Record<string, unknown>): SCM {
     },
 
     async resolvePR(reference: string, project: ProjectConfig): Promise<PRInfo> {
-      const raw = await gh([
-        "pr",
-        "view",
-        reference,
-        "--repo",
-        project.repo,
-        "--json",
-        "number,url,title,headRefName,baseRefName,isDraft",
-      ]);
+      // Use REST API to avoid GraphQL rate limits
+      const [owner, repo] = parseProjectRepo(project.repo);
+      const raw = await gh(["api", `repos/${owner}/${repo}/pulls/${reference}`]);
 
       const data: {
         number: number;
         url: string;
         title: string;
-        headRefName: string;
-        baseRefName: string;
-        isDraft: boolean;
+        head: { ref: string };
+        base: { ref: string };
+        draft: boolean;
       } = JSON.parse(raw);
 
-      return prInfoFromView(data, project.repo);
+      return prInfoFromView(
+        {
+          number: data.number,
+          url: data.url,
+          title: data.title,
+          headRefName: data.head.ref,
+          baseRefName: data.base.ref,
+          isDraft: data.draft,
+        },
+        project.repo,
+      );
     },
 
     async assignPRToCurrentUser(pr: PRInfo): Promise<void> {

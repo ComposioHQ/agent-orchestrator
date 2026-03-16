@@ -574,13 +574,14 @@ describe("scm-github plugin", () => {
     });
 
     it("resolves PR by reference", async () => {
+      // REST API format
       mockGh({
         number: 42,
         url: "https://github.com/acme/repo/pull/42",
         title: "feat: add feature",
-        headRefName: "feat/my-feature",
-        baseRefName: "main",
-        isDraft: false,
+        head: { ref: "feat/my-feature" },
+        base: { ref: "main" },
+        draft: false,
       });
 
       const result = await scm.resolvePR?.("42", project);
