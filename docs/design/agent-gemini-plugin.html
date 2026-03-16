@@ -182,10 +182,10 @@
         <article class="card">
           <h3>Activity Detection</h3>
           <ul>
-            <li>Idle: no JSONL writes in last 8 s</li>
-            <li>Working: recent JSONL write activity</li>
-            <li>Stuck: no new JSONL writes beyond the stuck threshold</li>
-            <li>Process check via <code>ps</code> across all tmux pane TTYs</li>
+            <li>States: <code>active</code>, <code>ready</code>, <code>idle</code>, <code>waiting_input</code>, <code>blocked</code>, <code>exited</code></li>
+            <li>Based on last JSONL entry type + age vs <code>readyThresholdMs</code> (default 5 min)</li>
+            <li>Process liveness via <code>ps</code> across all tmux pane TTYs</li>
+            <li>Returns <code>null</code> if no session file found yet</li>
           </ul>
         </article>
       </section>
@@ -251,11 +251,6 @@
               <strong>Cost estimation accuracy</strong>: Gemini 2.0 Flash pricing ($0.10/M
               input, $0.40/M output) is used as a baseline. Multi-modal inputs and premium
               models will be mis-estimated until Gemini CLI exposes per-call cost in JSONL.
-            </li>
-            <li>
-              <strong>No system prompt at launch</strong>: Gemini CLI has no
-              <code>--append-system-prompt</code> equivalent. System context must be woven
-              into the initial <code>sendMessage()</code> call post-launch.
             </li>
           </ul>
         </article>

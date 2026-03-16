@@ -171,20 +171,18 @@
         <article class="card">
           <h3>Session Tracking</h3>
           <ul>
-            <li>JSONL files in <code>~/.cursor/projects/&lt;encoded-path&gt;/</code></li>
-            <li>Latest file selected by <code>mtime</code></li>
-            <li>Tail-parse for summary, cost, and session ID</li>
-            <li><code>toCursorProjectPath()</code> encodes workspace path identically to how Cursor CLI does</li>
+            <li><strong>Unimplemented (returns <code>null</code>)</strong> — Cursor stores sessions in SQLite at <code>~/.cursor/chats/</code>, not as JSONL files</li>
+            <li>JSONL helper code exists in <code>index.ts</code> but is not called by <code>getSessionInfo</code></li>
+            <li><code>toCursorProjectPath()</code> encodes workspace path the same way as <code>toAgentProjectPath()</code></li>
           </ul>
         </article>
 
         <article class="card">
           <h3>Activity Detection</h3>
           <ul>
-            <li>Idle: no JSONL writes in last 8 s</li>
-            <li>Working: recent JSONL write activity</li>
-            <li>Stuck: no new JSONL writes beyond the stuck threshold</li>
-            <li>Process check via <code>ps</code> across all tmux pane TTYs</li>
+            <li><strong>Unimplemented (returns <code>null</code>)</strong> — requires SQLite introspection not yet built</li>
+            <li>Process liveness check via <code>ps</code> across tmux pane TTYs does work</li>
+            <li>If process is not running, returns <code>{ state: "exited" }</code></li>
           </ul>
         </article>
       </section>
@@ -195,10 +193,11 @@
           <ul>
             <li><code>getLaunchCommand(config)</code> — builds the <code>cursor-agent</code> CLI string</li>
             <li><code>getEnvironment(config)</code> — injects <code>AO_SESSION_ID</code> and metadata env vars</li>
-            <li><code>isProcessRunning(handle)</code> — checks tmux pane TTYs via <code>ps</code> for <code>cursor-agent</code></li>
-            <li><code>getActivityState(handle)</code> — JSONL mtime-based idle/working/stuck classification</li>
-            <li><code>getSessionInfo(session)</code> — extracts summary, cost, and session UUID from JSONL tail</li>
-            <li><code>getWorkspaceHooks()</code> — installs <code>.cursor/metadata-updater.sh</code> hook</li>
+            <li><code>isProcessRunning(handle)</code> — checks tmux pane TTYs via <code>ps</code> for <code>cursor-agent</code> ✓</li>
+            <li><code>getActivityState(handle)</code> — returns <code>null</code> (SQLite introspection unimplemented)</li>
+            <li><code>getSessionInfo(session)</code> — returns <code>null</code> (SQLite introspection unimplemented)</li>
+            <li><code>getRestoreCommand()</code> — returns <code>null</code> (SQLite introspection unimplemented)</li>
+            <li><code>setupWorkspaceHooks()</code> / <code>postLaunchSetup()</code> — installs <code>.cursor/metadata-updater.sh</code> hook ✓</li>
           </ul>
         </article>
 
@@ -234,8 +233,10 @@
               <code>null</code>).
             </li>
             <li>
-              <strong>JSONL schema</strong>: Cursor session files follow a similar envelope
-              structure but use Cursor-specific event types for tool calls.
+              <strong>Activity &amp; session info</strong>: Claude Code reads JSONL to detect
+              idle/active/ready/blocked states and extract cost/summary. Cursor stores sessions
+              in SQLite (<code>~/.cursor/chats/</code>); both <code>getActivityState</code> and
+              <code>getSessionInfo</code> return <code>null</code> until SQLite support is added.
             </li>
           </ul>
         </article>
@@ -244,10 +245,10 @@
           <h2>Constraints &amp; Known Gaps</h2>
           <ul>
             <li>
-              <strong>Session restore unimplemented</strong>: <code>getRestoreCommand</code>
-              returns <code>null</code>. Cursor stores sessions in SQLite at
-              <code>~/.cursor/chats/</code>, not JSONL. Resume requires SQLite introspection
-              (chat ID lookup) which is not yet implemented.
+              <strong>Session introspection unimplemented</strong>: <code>getActivityState</code>,
+              <code>getSessionInfo</code>, and <code>getRestoreCommand</code> all return
+              <code>null</code>. Cursor stores sessions in SQLite at <code>~/.cursor/chats/</code>,
+              not JSONL. All three require SQLite introspection to implement.
             </li>
             <li>
               <strong>No system prompt at launch</strong>: Cursor Agent CLI has no equivalent
@@ -255,9 +256,8 @@
               initial <code>sendMessage()</code> call post-launch.
             </li>
             <li>
-              <strong>Cost estimation</strong>: Uses Claude Sonnet pricing as a placeholder
-              (<code>$3/M</code> input, <code>$15/M</code> output). Cursor does not expose
-              per-token costs in its JSONL output.
+              <strong>No cost estimation</strong>: Cursor does not expose per-token costs.
+              <code>getSessionInfo</code> returns <code>null</code>, so no cost data is reported.
             </li>
           </ul>
         </article>
