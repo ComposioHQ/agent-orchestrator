@@ -14,7 +14,7 @@
 
 import { execFile } from "node:child_process";
 import { mkdtemp, rm, access } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -32,10 +32,22 @@ const execFileAsync = promisify(execFile);
 
 const SESSION_PREFIX = "ao-inttest-gemini-";
 
+async function isGeminiAuthenticated(): Promise<boolean> {
+  // OAuth credentials file is present when logged in via `gemini` OAuth flow.
+  try {
+    await access(join(homedir(), ".gemini", "oauth_creds.json"));
+    return true;
+  } catch {
+    // Fall back to API key
+    return !!process.env.GEMINI_API_KEY;
+  }
+}
+
 const tmuxOk = await isTmuxAvailable();
 const geminiBin = await findBinary(["gemini"]);
 const python3Bin = await findBinary(["python3"]);
-const canRun = tmuxOk && geminiBin !== null && python3Bin !== null;
+const geminiAuthed = geminiBin !== null && (await isGeminiAuthenticated());
+const canRun = tmuxOk && geminiBin !== null && geminiAuthed && python3Bin !== null;
 
 describe.skipIf(!canRun)("agent-gemini (integration)", () => {
   const agent = geminiPlugin.create();
@@ -100,7 +112,7 @@ describe.skipIf(!canRun)("agent-gemini (integration)", () => {
   });
 
   it("fibonacci.py runs and outputs correct fibonacci numbers", async () => {
-    // Rely on previous test to verify fileCreated; if we get here and file doesn't exist, let it throw
+    expect(fileCreated).toBe(true);
     const { stdout } = await execFileAsync(python3Bin!, ["-I", outputFile], {
       timeout: 10_000,
       env: { PATH: process.env.PATH ?? "" },

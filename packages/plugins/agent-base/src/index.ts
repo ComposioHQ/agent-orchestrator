@@ -658,10 +658,19 @@ async function setupHookInWorkspace(
       ],
     });
   } else {
-    // Hook exists, update the command
+    // Hook exists, update the command — but preserve an existing AO_DATA_DIR
+    // prefix if the new command doesn't include one (e.g. postLaunchSetup
+    // doesn't have access to hookConfig.dataDir and would silently drop it).
     const hook = postToolUse[hookIndex] as Record<string, unknown>;
     const hooksList = hook["hooks"] as Array<Record<string, unknown>>;
-    hooksList[hookDefIndex]["command"] = hookCommand;
+    const existingCommand = hooksList[hookDefIndex]["command"] as string | undefined;
+    const newCommandDropsDataDir =
+      !hookCommand.includes("AO_DATA_DIR=") &&
+      typeof existingCommand === "string" &&
+      existingCommand.includes("AO_DATA_DIR=");
+    if (!newCommandDropsDataDir) {
+      hooksList[hookDefIndex]["command"] = hookCommand;
+    }
   }
 
   hooks["PostToolUse"] = postToolUse;
@@ -751,8 +760,8 @@ export function createAgentPlugin(config: AgentPluginConfig, overrides?: Partial
           const tmpDir = join(homedir(), ".ao-sessions", "tmp");
           const tmpFile = join(tmpDir, `system-${launchConfig.sessionId}.md`);
           try {
-            mkdirSync(tmpDir, { recursive: true });
-            writeFileSync(tmpFile, launchConfig.systemPrompt, "utf-8");
+            mkdirSync(tmpDir, { recursive: true, mode: 0o700 });
+            writeFileSync(tmpFile, launchConfig.systemPrompt, { encoding: "utf-8", mode: 0o600 });
             env[config.systemPromptEnvVar] = tmpFile;
           } catch {
             // Could not write temp file — leave env var unset so the agent

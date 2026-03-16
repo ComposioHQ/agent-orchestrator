@@ -110,7 +110,7 @@ describe.skipIf(!canRun)("agent-cursor (integration)", () => {
   });
 
   it("fibonacci.py runs and outputs correct fibonacci numbers", async () => {
-    // Rely on previous test to verify fileCreated; if we get here and file doesn't exist, let it throw
+    expect(fileCreated).toBe(true);
     const { stdout } = await execFileAsync(python3Bin!, ["-I", outputFile], {
       timeout: 10_000,
       env: { PATH: process.env.PATH ?? "" },
