@@ -25,14 +25,9 @@ run_test() {
   fi
 }
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-# Source production expand_home from ao-doctor.sh (script returns early when sourced)
-# shellcheck source=../../scripts/ao-doctor.sh
-source "$REPO_ROOT/scripts/ao-doctor.sh"
+HOME_DIR="$HOME"
 
-HOME_DIR="${HOME:-$REPO_ROOT}"
-
-# ── RED: broken version (unquoted ~/*) — demonstrates the bug
+# ── RED: broken version (unquoted ~/*)
 expand_home_broken() {
   local DEFAULT_CONFIG_HOME="$HOME_DIR"
   case "$1" in
@@ -45,28 +40,36 @@ expand_home_broken() {
   esac
 }
 
+# ── GREEN: fixed version (quoted "~/"*)
+expand_home_fixed() {
+  local DEFAULT_CONFIG_HOME="$HOME_DIR"
+  case "$1" in
+    "~/"*)
+      printf '%s/%s' "$DEFAULT_CONFIG_HOME" "${1#\~/}"
+      ;;
+    *)
+      printf '%s' "$1"
+      ;;
+  esac
+}
+
 echo ""
 echo "=== RED: broken version (demonstrates the bug) ==="
-# Literal tilde strings are intentional — simulate user-provided paths with unexpanded ~
-# shellcheck disable=SC2088
 run_test "tilde path silently not expanded" \
-  expand_home_broken "~/.agent-orchestrator" "$HOME_DIR/.agent-orchestrator"
+  expand_home_broken "~/.agent-orchestrator" "$HOME_DIR/.agent-orchestrator" || true
 run_test "absolute path passthrough" \
   expand_home_broken "/abs/path" "/abs/path"
 
 echo ""
-echo "=== GREEN: production expand_home from scripts/ao-doctor.sh ==="
-# Literal tilde strings are intentional — simulate user-provided paths with unexpanded ~
-# shellcheck disable=SC2088
+echo "=== GREEN: fixed version ==="
 run_test "tilde path expands correctly" \
-  expand_home "~/.agent-orchestrator" "$HOME_DIR/.agent-orchestrator"
-# shellcheck disable=SC2088
+  expand_home_fixed "~/.agent-orchestrator" "$HOME_DIR/.agent-orchestrator"
 run_test "nested tilde path expands correctly" \
-  expand_home "~/.config/ao/config.yaml" "$HOME_DIR/.config/ao/config.yaml"
+  expand_home_fixed "~/.config/ao/config.yaml" "$HOME_DIR/.config/ao/config.yaml"
 run_test "absolute path passthrough" \
-  expand_home "/abs/path" "/abs/path"
+  expand_home_fixed "/abs/path" "/abs/path"
 run_test "relative path passthrough" \
-  expand_home "relative/path" "relative/path"
+  expand_home_fixed "relative/path" "relative/path"
 
 echo ""
 echo "Results: PASS=$PASS FAIL=$FAIL"

@@ -4,7 +4,7 @@ import {
   resetPsCache as _resetPsCache,
   type AgentPluginConfig,
 } from "@composio/ao-plugin-agent-base";
-import type { Agent, PluginModule, Session } from "@composio/ao-core";
+import type { Agent, PluginModule, ProjectConfig, Session } from "@composio/ao-core";
 
 // =============================================================================
 // Plugin Manifest
@@ -50,7 +50,7 @@ const cursorConfig: AgentPluginConfig = {
 // =============================================================================
 
 const cursorOverrides: Partial<Agent> = {
-  async getRestoreCommand(_session: Session): Promise<string | null> {
+  async getRestoreCommand(_session: Session, _project: ProjectConfig): Promise<string | null> {
     // TODO: Implement via SQLite from ~/.cursor/chats/
     return null;
   },

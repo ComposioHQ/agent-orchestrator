@@ -13,7 +13,11 @@
         --brand: #165a72;
         --line: #dfd3c2;
       }
-      * { box-sizing: border-box; }
+
+      * {
+        box-sizing: border-box;
+      }
+
       body {
         margin: 0;
         color: var(--ink);
@@ -23,33 +27,102 @@
           radial-gradient(circle at 12% 10%, #ebdfcb 0%, transparent 35%),
           radial-gradient(circle at 88% 85%, #e5d4ba 0%, transparent 30%), var(--bg);
       }
-      .wrap { max-width: 1100px; margin: 2rem auto; padding: 0 1rem 3rem; }
-      .hero, .card { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
-      .hero { padding: 1.2rem; }
-      .card { padding: 1rem; }
-      h1, h2, h3 { font-family: "IBM Plex Serif", Georgia, serif; margin: 0.6rem 0; }
-      .muted { color: var(--muted); }
-      .grid { margin-top: 1rem; display: grid; gap: 1rem; }
-      @media (min-width: 900px) {
-        .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-        .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+      .wrap {
+        max-width: 1100px;
+        margin: 2rem auto;
+        padding: 0 1rem 3rem;
       }
-      ul, ol { margin: 0.4rem 0 0; padding-left: 1rem; }
+
+      .hero,
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--panel);
+      }
+
+      .hero {
+        padding: 1.2rem;
+      }
+
+      .card {
+        padding: 1rem;
+      }
+
+      h1,
+      h2,
+      h3 {
+        font-family: "IBM Plex Serif", Georgia, serif;
+        margin: 0.6rem 0;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      .grid {
+        margin-top: 1rem;
+        display: grid;
+        gap: 1rem;
+      }
+
+      @media (min-width: 900px) {
+        .grid.two {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .grid.three {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+      }
+
+      ul,
+      ol {
+        margin: 0.4rem 0 0;
+        padding-left: 1rem;
+      }
+
       code {
         font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
-        background: #f3ebe0; border-radius: 4px; padding: 0.1rem 0.28rem;
+        background: #f3ebe0;
+        border-radius: 4px;
+        padding: 0.1rem 0.28rem;
       }
+
       pre {
-        margin-top: 0.7rem; padding: 0.7rem; border: 1px solid var(--line);
-        border-radius: 10px; background: #faf4ec; overflow-x: auto;
+        margin-top: 0.7rem;
+        padding: 0.7rem;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #faf4ec;
+        overflow-x: auto;
       }
+
       .tag {
-        display: inline-block; font-size: 0.75rem; padding: 0.1rem 0.5rem;
-        border-radius: 999px; border: 1px solid var(--line); color: var(--muted); margin-right: 0.3rem;
+        display: inline-block;
+        font-size: 0.75rem;
+        padding: 0.1rem 0.5rem;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        color: var(--muted);
+        margin-right: 0.3rem;
       }
-      table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; }
-      th, td { padding: 0.5rem; border: 1px solid var(--line); text-align: left; }
-      th { background: #f3ebe0; }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 0.5rem;
+      }
+
+      th, td {
+        padding: 0.5rem;
+        border: 1px solid var(--line);
+        text-align: left;
+      }
+
+      th {
+        background: #f3ebe0;
+      }
     </style>
   </head>
   <body>
@@ -62,10 +135,9 @@
         </p>
         <p>
           <span class="tag">process: gemini</span>
-          <span class="tag">session path: ~/.gemini/tmp/&lt;sha256&gt;/chats/</span>
+          <span class="tag">session path: ~/.gemini/projects/</span>
           <span class="tag">runtime: tmux</span>
           <span class="tag">permission flag: --yolo</span>
-          <span class="tag">auth: OAuth (oauth-personal)</span>
         </p>
       </section>
 
@@ -74,7 +146,7 @@
           <h2>Purpose</h2>
           <p>
             Wraps the <code>gemini</code> CLI so AO can spawn, supervise, resume, and
-            introspect Gemini CLI sessions the same way it manages Claude Code and Cursor
+            introspect Gemini CLI sessions the same way it manages Claude Code and Codex
             sessions. No AO core changes required — the plugin implements the standard
             <code>Agent</code> interface from <code>@composio/ao-core</code>.
           </p>
@@ -83,20 +155,19 @@
         <article class="card">
           <h2>Relationship to agent-claude-code</h2>
           <p>
-            Both plugins are thin wrappers around <code>@composio/ao-plugin-agent-base</code>,
-            which provides the full <code>Agent</code> implementation via
-            <code>createAgentPlugin(config, overrides?)</code>. The two differ only in config:
+            The implementation is structurally identical to <code>agent-claude-code</code>
+            (~87% shared code). The two differ in agent-specific constants and one
+            behavioral difference in permission flags:
           </p>
-          <ul>
-            <li>Process name: <code>gemini</code> vs <code>claude</code></li>
-            <li>Session path: <code>~/.gemini/tmp/&lt;sha256&gt;/chats/</code> vs <code>~/.claude/projects/</code></li>
-            <li>Session encoding: SHA-256 hash vs path-mangling</li>
-            <li>Session file extension: <code>.json</code> vs <code>.jsonl</code></li>
-            <li>Permission flag: <code>--yolo</code> vs <code>--dangerously-skip-permissions</code></li>
-            <li>System prompt: <code>GEMINI_SYSTEM_MD</code> env var (no CLI flag) vs <code>--append-system-prompt</code></li>
-          </ul>
+          <table>
+            <tr><th>Aspect</th><th>Gemini</th><th>Claude Code</th></tr>
+            <tr><td>Process name</td><td><code>gemini</code></td><td><code>claude</code></td></tr>
+            <tr><td>Session directory</td><td><code>~/.gemini/projects/</code></td><td><code>~/.claude/projects/</code></td></tr>
+            <tr><td>Permission flag</td><td><code>--yolo</code></td><td><code>--dangerously-skip-permissions</code></td></tr>
+            <tr><td>System prompt flag</td><td>Not supported</td><td><code>--append-system-prompt</code></td></tr>
+          </table>
           <p class="muted" style="margin-top:0.5rem;font-size:0.9rem;">
-            Shared implementation lives in <code>packages/plugins/agent-base</code>.
+            A shared <code>agent-jsonl-utils</code> extraction is tracked as a follow-up.
           </p>
         </article>
       </section>
@@ -110,27 +181,26 @@
             <li><code>--yolo</code> — auto-approval / permissionless mode</li>
             <li><code>--model &lt;name&gt;</code> — optional model override</li>
             <li>Prompt delivered post-launch via <code>sendMessage()</code></li>
-            <li>System context injected via <code>GEMINI_SYSTEM_MD</code> env var (no CLI flag)</li>
+            <li>System prompts also delivered post-launch (no CLI flag support)</li>
           </ul>
         </article>
 
         <article class="card">
           <h3>Session Tracking</h3>
           <ul>
-            <li>JSON files in <code>~/.gemini/tmp/&lt;sha256(workspacePath)&gt;/chats/</code></li>
-            <li>SHA-256 path encoding (distinct from Claude Code's path-mangling)</li>
+            <li>JSONL files in <code>~/.gemini/projects/&lt;encoded-path&gt;/</code></li>
             <li>Latest file selected by <code>mtime</code></li>
             <li>Tail-parse for summary, cost, and session ID</li>
-            <li><code>toGeminiProjectPath()</code> computes SHA-256 of normalized workspace path</li>
+            <li><code>toGeminiProjectPath()</code> encodes workspace path identically to how Gemini CLI does</li>
           </ul>
         </article>
 
         <article class="card">
           <h3>Activity Detection</h3>
           <ul>
-            <li>Idle: no JSON writes in last 8 s</li>
-            <li>Working: recent JSON write activity</li>
-            <li>Stuck: no new JSON writes beyond stuck threshold</li>
+            <li>Idle: no JSONL writes in last 8 s</li>
+            <li>Working: recent JSONL write activity</li>
+            <li>Stuck: no new JSONL writes beyond the stuck threshold</li>
             <li>Process check via <code>ps</code> across all tmux pane TTYs</li>
           </ul>
         </article>
@@ -138,94 +208,15 @@
 
       <section class="grid two">
         <article class="card">
-          <h2>Authentication</h2>
-          <p>
-            Gemini CLI supports two auth modes. AO uses <strong>OAuth (oauth-personal)</strong>
-            — the same file-based approach as Claude Code (<code>~/.claude/</code>) and
-            Cursor (<code>~/.cursor/</code>). No env vars needed at runtime.
-          </p>
-          <table>
-            <thead>
-              <tr><th>Mode</th><th>Setting</th><th>Credentials</th></tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td><strong>OAuth (recommended)</strong></td>
-                <td><code>selectedType: "oauth-personal"</code></td>
-                <td><code>~/.gemini/oauth_creds.json</code> (Google Bearer token)</td>
-              </tr>
-              <tr>
-                <td>API key</td>
-                <td><code>selectedType: "gemini-api-key"</code></td>
-                <td><code>GEMINI_API_KEY</code> env var</td>
-              </tr>
-            </tbody>
-          </table>
-          <p class="muted" style="margin-top:0.5rem;font-size:0.9rem;">
-            Switch via <code>~/.gemini/settings.json</code> → <code>security.auth.selectedType</code>.
-            OAuth shows "Loaded cached credentials." on startup; API key mode requires the env var in every shell context.
-          </p>
-        </article>
-
-        <article class="card">
           <h2>Agent Interface Implementation</h2>
           <ul>
             <li><code>getLaunchCommand(config)</code> — builds the <code>gemini</code> CLI string</li>
-            <li><code>getEnvironment(config)</code> — injects <code>AO_SESSION_ID</code>, metadata env vars, and <code>GEMINI_SYSTEM_MD</code></li>
+            <li><code>getEnvironment(config)</code> — injects <code>AO_SESSION_ID</code> and metadata env vars</li>
             <li><code>isProcessRunning(handle)</code> — checks tmux pane TTYs via <code>ps</code> for <code>gemini</code></li>
-            <li><code>getActivityState(handle)</code> — JSON mtime-based idle/working/stuck classification</li>
-            <li><code>getSessionInfo(session)</code> — extracts summary, cost, and session UUID from JSON tail</li>
+            <li><code>getActivityState(handle)</code> — JSONL mtime-based idle/working/stuck classification</li>
+            <li><code>getSessionInfo(session)</code> — extracts summary, cost, and session UUID from JSONL tail</li>
             <li><code>getWorkspaceHooks()</code> — installs metadata-updater hook</li>
           </ul>
-        </article>
-      </section>
-
-      <section class="grid two">
-        <article class="card">
-          <h2>Comparison: Gemini vs Claude Code vs Cursor</h2>
-          <table>
-            <thead>
-              <tr><th>Capability</th><th>Gemini</th><th>Claude Code</th><th>Cursor</th></tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td><strong>Auth</strong></td>
-                <td>OAuth / API key (configurable)</td>
-                <td>File-based (<code>~/.claude/</code>)</td>
-                <td>File-based (<code>~/.cursor/</code>)</td>
-              </tr>
-              <tr>
-                <td><strong>Permission flag</strong></td>
-                <td><code>--yolo</code></td>
-                <td><code>--dangerously-skip-permissions</code></td>
-                <td><code>--force</code></td>
-              </tr>
-              <tr>
-                <td><strong>System prompt</strong></td>
-                <td><code>GEMINI_SYSTEM_MD</code> env var</td>
-                <td><code>--append-system-prompt</code> flag</td>
-                <td>post-launch <code>sendMessage()</code></td>
-              </tr>
-              <tr>
-                <td><strong>Session resume</strong></td>
-                <td><code>--resume &lt;id&gt;</code> via JSON</td>
-                <td><code>--resume &lt;uuid&gt;</code> via JSONL</td>
-                <td>Not implemented (SQLite)</td>
-              </tr>
-              <tr>
-                <td><strong>Session path encoding</strong></td>
-                <td>SHA-256 hash</td>
-                <td>Path-mangling</td>
-                <td>Path-mangling</td>
-              </tr>
-              <tr>
-                <td><strong>Cost data</strong></td>
-                <td>Estimated (Flash pricing fallback)</td>
-                <td>From JSONL per-call</td>
-                <td>Placeholder (Sonnet pricing)</td>
-              </tr>
-            </tbody>
-          </table>
         </article>
 
         <article class="card">
@@ -249,41 +240,62 @@ export const builtinPlugins = [
 
       <section class="grid two">
         <article class="card">
-          <h2>Constraints &amp; Known Gaps</h2>
+          <h2>Key Differences from Claude Code</h2>
           <ul>
             <li>
-              <strong>One-shot vs interactive</strong>: <code>gemini -p</code> (headless)
-              exits after one response. Interactive mode is required for multi-turn AO sessions.
+              <strong>Permission flag</strong>: Gemini uses <code>--yolo</code> for
+              auto-approval; both <code>permissionless</code> and <code>auto-edit</code>
+              modes map to this flag.
             </li>
             <li>
-              <strong>Cost estimation accuracy</strong>: Gemini 2.0 Flash pricing ($0.10/M input,
-              $0.40/M output) used as baseline. Will be inaccurate for other models until
-              Gemini CLI exposes per-call cost in JSON output.
+              <strong>No system prompt flag</strong>: Gemini CLI has no
+              <code>--append-system-prompt</code> equivalent. System context and prompts
+              are both delivered post-launch via <code>sendMessage()</code>.
             </li>
             <li>
-              <strong>No system prompt flag</strong>: No <code>--append-system-prompt</code>
-              equivalent. System context delivered via <code>GEMINI_SYSTEM_MD</code> env var,
-              injected by <code>getEnvironment()</code>.
+              <strong>Cost estimation</strong>: Falls back to Gemini 2.0 Flash pricing
+              ($0.10/M input, $0.40/M output) when no direct <code>costUSD</code> field
+              is present in the JSONL.
             </li>
           </ul>
         </article>
 
         <article class="card">
-          <h2>Testing</h2>
+          <h2>Constraints &amp; Known Gaps</h2>
           <ul>
             <li>
-              <code>packages/integration-tests/src/agent-gemini.integration.test.ts</code> —
-              spawns real <code>gemini</code> via tmux, verifies <code>fibonacci.py</code> is
-              written and executes correctly (4 tests, ~30s)
+              <strong>One-shot vs interactive</strong>: <code>gemini -p</code> (headless)
+              is only used in integration tests. Production runs <code>gemini</code> interactively
+              via tmux stdin for multi-turn AO sessions.
             </li>
-            <li>Auth: OAuth (<code>oauth-personal</code>) — no env var; reads <code>~/.gemini/oauth_creds.json</code></li>
-            <li>Integration test skipped when <code>gemini</code> binary or <code>python3</code> absent</li>
-            <li>Unit tests in <code>agent-base</code> — process detection, JSON parsing, activity detection</li>
+            <li>
+              <strong>Cost not tracked</strong>: <code>defaultCostRate</code> was removed from config.
+              Cost estimation returns 0 until Gemini CLI exposes per-call costs in JSONL.
+            </li>
+            <li>
+              <strong>Code sharing</strong>: Shared logic extracted to <code>agent-base</code> plugin.
+            </li>
           </ul>
-          <h2 style="margin-top:1rem;">Future Work</h2>
+        </article>
+      </section>
+
+      <section class="grid two">
+        <article class="card">
+          <h2>Testing</h2>
           <ul>
-            <li>Update cost estimation when Gemini CLI exposes per-call token pricing in JSON</li>
-            <li>Make pricing configurable per-project for non-Flash model accuracy</li>
+            <li><code>src/index.test.ts</code> — manifest, launch command, process detection, session parsing (67 tests)</li>
+            <li><code>src/__tests__/activity-detection.test.ts</code> — JSONL mtime-based activity states with real temp directories (42 tests)</li>
+            <li>All 109 tests pass; no mocks of the filesystem in activity tests (real <code>fs</code> operations)</li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h2>Future Work</h2>
+          <ul>
+            <li>Extract shared JSONL utilities (<code>parseJsonlFileTail</code>, <code>extractCost</code>, <code>normalizePermissionMode</code>, etc.) to a shared package used by <code>agent-claude-code</code>, <code>agent-cursor</code>, and <code>agent-gemini</code></li>
+            <li>Update cost estimation when Gemini CLI exposes per-call token pricing in JSONL output</li>
+            <li>Investigate <code>--append-system-prompt</code> equivalent when Gemini CLI adds system prompt support</li>
+            <li>Make pricing configurable per-project so operators running non-Flash models get accurate estimates</li>
           </ul>
         </article>
       </section>
