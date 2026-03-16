@@ -1,33 +1,5 @@
 #!/bin/bash
 
-set -uo pipefail
-
-FIX_MODE=false
-
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --fix)
-      FIX_MODE=true
-      ;;
-    -h|--help)
-      cat <<'EOF'
-Usage: ao doctor [--fix]
-
-Checks install, PATH, binaries, service health, stale temp files, and runtime sanity.
-
-Options:
-  --fix    Apply safe fixes for missing launcher links, missing support dirs, and stale temp files
-EOF
-      exit 0
-      ;;
-    *)
-      printf 'Unknown option: %s\n' "$1" >&2
-      exit 1
-      ;;
-  esac
-  shift
-done
-
 REPO_ROOT="${AO_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 DEFAULT_CONFIG_HOME="${HOME:-$REPO_ROOT}"
 PASS_COUNT=0
@@ -318,6 +290,39 @@ check_stale_temp_files() {
 
   warn "$stale_count stale temp files older than 60 minutes found under $temp_root. Fix: rerun ao doctor --fix"
 }
+
+FIX_MODE=false
+
+# Guard: return early when sourced (e.g., for unit tests) - after functions are defined
+if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+  return 0
+fi
+
+set -uo pipefail
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --fix)
+      FIX_MODE=true
+      ;;
+    -h|--help)
+      cat <<'EOF'
+Usage: ao doctor [--fix]
+
+Checks install, PATH, binaries, service health, stale temp files, and runtime sanity.
+
+Options:
+  --fix    Apply safe fixes for missing launcher links, missing support dirs, and stale temp files
+EOF
+      exit 0
+      ;;
+    *)
+      printf 'Unknown option: %s\n' "$1" >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
 
 printf 'Agent Orchestrator Doctor\n\n'
 
