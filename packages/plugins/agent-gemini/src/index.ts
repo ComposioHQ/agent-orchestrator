@@ -62,6 +62,8 @@ const geminiConfig: AgentPluginConfig = {
     join(homedir(), ".gemini", "tmp", toGeminiProjectPath(workspacePath), "chats"),
   // Gemini CLI session files use .json extension, not .jsonl
   sessionFileExtension: ".json",
+  // Gemini CLI uses "run_shell_command" for shell execution, not "Bash"
+  hookToolMatcher: "run_shell_command",
 };
 
 // =============================================================================
