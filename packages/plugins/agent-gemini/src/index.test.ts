@@ -523,7 +523,7 @@ describe("getSessionInfo", () => {
 
   describe("cost estimation", () => {
     it("aggregates usage.input_tokens and usage.output_tokens with Gemini pricing", async () => {
-      // Gemini 2.0 Flash: $0.10/M input, $0.40/M output
+      // Gemini CLI does not expose cost data — no defaultCostRate configured
       const jsonl = [
         '{"type":"user","message":{"content":"hi"}}',
         '{"type":"assistant","usage":{"input_tokens":1000,"output_tokens":500}}',
@@ -533,8 +533,8 @@ describe("getSessionInfo", () => {
       const result = await agent.getSessionInfo(makeSession());
       expect(result?.cost?.inputTokens).toBe(3000);
       expect(result?.cost?.outputTokens).toBe(800);
-      // 3000 * 0.10/1M + 800 * 0.40/1M = 0.0003 + 0.00032 = 0.00062
-      expect(result?.cost?.estimatedCostUsd).toBeCloseTo(0.00062, 6);
+      // Without defaultCostRate, estimatedCostUsd is 0
+      expect(result?.cost?.estimatedCostUsd).toBe(0);
     });
 
     it("includes cache tokens in input count", async () => {
