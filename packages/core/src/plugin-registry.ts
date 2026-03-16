@@ -29,6 +29,8 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
   { slot: "runtime", name: "process", pkg: "@composio/ao-plugin-runtime-process" },
   // Agents
   { slot: "agent", name: "claude-code", pkg: "@composio/ao-plugin-agent-claude-code" },
+  { slot: "agent", name: "cursor", pkg: "@composio/ao-plugin-agent-cursor" },
+  { slot: "agent", name: "gemini", pkg: "@composio/ao-plugin-agent-gemini" },
   { slot: "agent", name: "codex", pkg: "@composio/ao-plugin-agent-codex" },
   { slot: "agent", name: "aider", pkg: "@composio/ao-plugin-agent-aider" },
   { slot: "agent", name: "opencode", pkg: "@composio/ao-plugin-agent-opencode" },

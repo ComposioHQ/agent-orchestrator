@@ -56,7 +56,7 @@ function writeJsonl(
 // toCursorProjectPath
 // =============================================================================
 
-describe("Claude Code Activity Detection", () => {
+describe("Cursor Agent Activity Detection", () => {
   describe("toCursorProjectPath", () => {
     it("encodes paths with leading dash", () => {
       expect(toCursorProjectPath("/Users/dev/.worktrees/ao")).toBe("-Users-dev--worktrees-ao");

@@ -139,21 +139,19 @@
         <article class="card">
           <h2>Relationship to agent-claude-code</h2>
           <p>
-            Cursor has its own standalone <code>Agent</code> implementation in
-            <code>packages/plugins/agent-cursor/src/index.ts</code> (not yet extracted to
-            <code>@composio/ao-plugin-agent-base</code>). The two differ in:
+            Both plugins use the <code>createAgentPlugin(config)</code> factory from
+            <code>@composio/ao-plugin-agent-base</code>. Cursor additionally overrides the
+            three JSONL-dependent methods (<code>getActivityState</code>,
+            <code>getSessionInfo</code>, <code>getRestoreCommand</code>) to return
+            <code>null</code> until SQLite introspection is built. The two differ in:
           </p>
           <ul>
             <li>Process name: <code>cursor-agent</code> vs <code>claude</code></li>
             <li>Session directory: <code>~/.cursor/projects/</code> vs <code>~/.claude/projects/</code></li>
             <li>Permission flag: <code>--force</code> vs <code>--dangerously-skip-permissions</code></li>
-            <li>System prompt: not supported (undefined) vs <code>--append-system-prompt</code></li>
+            <li>System prompt: not supported vs <code>--append-system-prompt</code></li>
+            <li>No <code>defaultCostRate</code> — Cursor does not expose per-token costs</li>
           </ul>
-          <p class="muted" style="margin-top:0.5rem;font-size:0.9rem;">
-            <code>agent-gemini</code> and <code>agent-claude-code</code> use the shared
-            <code>createAgentPlugin()</code> factory in <code>packages/plugins/agent-base</code>.
-            Migrating cursor to that factory is tracked as future work.
-          </p>
         </article>
       </section>
 
@@ -276,8 +274,7 @@
         <article class="card">
           <h2>Future Work</h2>
           <ul>
-            <li>Migrate to <code>createAgentPlugin()</code> factory in <code>agent-base</code> to eliminate ~800 lines of duplicated implementation shared with claude-code</li>
-            <li>Implement <code>getRestoreCommand</code> via SQLite introspection of <code>~/.cursor/chats/</code> to enable session resume</li>
+            <li>Implement <code>getRestoreCommand</code>, <code>getSessionInfo</code>, and <code>getActivityState</code> via SQLite introspection of <code>~/.cursor/chats/</code></li>
             <li>Update cost estimation when Cursor exposes token pricing in JSONL</li>
             <li>Validate <code>--resume</code> chat ID parsing against Cursor CLI versioned output format</li>
           </ul>
