@@ -287,8 +287,38 @@ async function runStartup(
         }
         port = newPort;
       }
-    } else {
-      await preflight.checkPort(port);
+    } else if (!(await isPortAvailable(port))) {
+      // Port in use — stop the existing instance and continue starting.
+      console.log(chalk.yellow(`Port ${port} in use, restarting...\n`));
+
+      // 1. Kill orchestrator session (best effort)
+      try {
+        const sm = await getSessionManager(config);
+        const existing = await sm.get(sessionId);
+        if (existing) {
+          await sm.kill(sessionId, { purgeOpenCode: true });
+          console.log(chalk.green("  Existing orchestrator session stopped"));
+        }
+      } catch {
+        // best effort
+      }
+
+      // 2. Stop lifecycle worker (best effort)
+      try {
+        const stopped = await stopLifecycleWorker(config, projectId);
+        if (stopped) {
+          console.log(chalk.green("  Existing lifecycle worker stopped"));
+        }
+      } catch {
+        // best effort
+      }
+
+      // 3. Stop dashboard on the port
+      await stopDashboard(port);
+
+      // Give the OS a moment to release the port
+      await new Promise((r) => setTimeout(r, 1000));
+      console.log();
     }
     const webDir = findWebDir();
     if (!existsSync(resolve(webDir, "package.json"))) {
