@@ -4,7 +4,7 @@
  * Requires:
  *   - `gemini` binary on PATH
  *   - tmux installed and running
- *   - GEMINI_API_KEY set
+ *   - Gemini CLI authenticated (OAuth via `gemini` login or GEMINI_API_KEY)
  *
  * Skipped automatically when prerequisites are missing.
  *
@@ -35,8 +35,7 @@ const SESSION_PREFIX = "ao-inttest-gemini-";
 const tmuxOk = await isTmuxAvailable();
 const geminiBin = await findBinary(["gemini"]);
 const python3Bin = await findBinary(["python3"]);
-const hasApiKey = Boolean(process.env.GEMINI_API_KEY);
-const canRun = tmuxOk && geminiBin !== null && hasApiKey && python3Bin !== null;
+const canRun = tmuxOk && geminiBin !== null && python3Bin !== null;
 
 describe.skipIf(!canRun)("agent-gemini (integration)", () => {
   const agent = geminiPlugin.create();
@@ -55,9 +54,9 @@ describe.skipIf(!canRun)("agent-gemini (integration)", () => {
 
     const task = `Write a Python fibonacci program to the file fibonacci.py. The program should print the first 10 fibonacci numbers when run. Write only the file, no explanation.`;
     // --yolo skips all permission prompts; -p runs in one-shot (non-interactive) mode.
-    // Pass GEMINI_API_KEY explicitly to ensure it's available in the tmux session.
+    // Auth via OAuth (oauth-personal) — no env var needed.
     const cmd = `${geminiBin} --yolo -p '${task}'`;
-    await createSession(sessionName, cmd, tmpDir, { GEMINI_API_KEY: process.env.GEMINI_API_KEY ?? "" });
+    await createSession(sessionName, cmd, tmpDir);
 
     const handle = makeTmuxHandle(sessionName);
     const _session = makeSession("inttest-gemini", handle, tmpDir);
