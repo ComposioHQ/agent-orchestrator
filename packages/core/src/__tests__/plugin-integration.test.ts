@@ -573,12 +573,10 @@ describe("plugin integration", () => {
         sessionManager: mockSM,
       });
 
-      // 1. getPRState → open
-      mockGh({ state: "OPEN" });
+      // 1. cachedPRView → single call fetches state + reviewDecision (batched)
+      mockGh({ state: "OPEN", reviewDecision: "CHANGES_REQUESTED" });
       // 2. getCISummary → passing (using correct field names: state and link)
       mockGh([{ name: "lint", state: "SUCCESS", link: "", startedAt: "", completedAt: "" }]);
-      // 3. getReviewDecision (gh pr view with reviewDecision)
-      mockGh({ reviewDecision: "CHANGES_REQUESTED" });
 
       await lm.check("app-1");
 

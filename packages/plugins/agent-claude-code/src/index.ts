@@ -332,7 +332,11 @@ function extractSummary(
       line.message?.content &&
       typeof line.message.content === "string"
     ) {
-      const msg = line.message.content.trim();
+      // Strip XML-like system tags (e.g. <local-command-caveat>...</local-command-caveat>,
+      // <system-reminder>...</system-reminder>) that Claude Code injects into messages.
+      const msg = line.message.content
+        .replace(/<[a-zA-Z_-]+>[\s\S]*?<\/[a-zA-Z_-]+>/g, "")
+        .trim();
       if (msg.length > 0) {
         return {
           summary: msg.length > 120 ? msg.substring(0, 120) + "..." : msg,

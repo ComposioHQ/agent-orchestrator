@@ -830,17 +830,43 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
    * Enrich session with live runtime state (alive/exited) and activity detection.
    * Mutates the session object in place.
    */
-  const TERMINAL_SESSION_STATUSES = new Set(["killed", "done", "merged", "terminated", "cleanup"]);
+  const TERMINAL_SESSION_STATUSES = new Set(["done", "merged", "terminated", "cleanup"]);
 
   async function enrichSessionWithRuntimeState(
     session: Session,
     plugins: ReturnType<typeof resolvePlugins>,
     handleFromMetadata: boolean,
   ): Promise<void> {
-    // Skip all subprocess/IO work for sessions already known to be terminal.
+    // Skip all subprocess/IO work for sessions in intentional final states.
     if (TERMINAL_SESSION_STATUSES.has(session.status)) {
       session.activity = "exited";
       return;
+    }
+
+    // "killed" sessions may have been restarted — check runtime liveness before
+    // committing to the terminal state.  If the runtime is alive, recover the
+    // session back to "working" so activity detection can proceed normally.
+    if (session.status === "killed") {
+      if (handleFromMetadata && session.runtimeHandle && plugins.runtime) {
+        try {
+          const alive = await plugins.runtime.isAlive(session.runtimeHandle);
+          if (alive) {
+            session.status = "working";
+            // Fall through to activity detection below
+          } else {
+            session.activity = "exited";
+            return;
+          }
+        } catch {
+          // Can't determine liveness — treat as terminal
+          session.activity = "exited";
+          return;
+        }
+      } else {
+        // No runtime handle / plugin to check — stay killed
+        session.activity = "exited";
+        return;
+      }
     }
 
     // Check runtime liveness — but only if the handle came from metadata.
