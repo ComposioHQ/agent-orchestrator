@@ -56,7 +56,7 @@ export interface AgentPluginConfig {
    * Fallback cost rates used when JSONL contains token counts but no direct
    * cost field. Units are USD per million tokens.
    */
-  defaultCostRate: {
+  defaultCostRate?: {
     inputPerMillion: number;
     outputPerMillion: number;
   };
@@ -420,7 +420,7 @@ function extractCost(
   }
 
   // Rough estimate when no direct cost data — use the configured rate.
-  if (totalCost === 0 && (inputTokens > 0 || outputTokens > 0)) {
+  if (totalCost === 0 && defaultCostRate && (inputTokens > 0 || outputTokens > 0)) {
     totalCost =
       (inputTokens / 1_000_000) * defaultCostRate.inputPerMillion +
       (outputTokens / 1_000_000) * defaultCostRate.outputPerMillion;

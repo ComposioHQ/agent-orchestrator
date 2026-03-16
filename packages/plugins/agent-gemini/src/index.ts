@@ -55,9 +55,7 @@ const geminiConfig: AgentPluginConfig = {
   // post-launch via sendMessage(), or inline via the GEMINI_SYSTEM_MD env var.
   systemPromptFlag: undefined,
   systemPromptEnvVar: "GEMINI_SYSTEM_MD",
-  // Gemini 2.0 Flash pricing as baseline ($0.10/M input, $0.40/M output).
-  // Will be inaccurate for other Gemini models. TODO: make configurable or infer from JSONL.
-  defaultCostRate: { inputPerMillion: 0.10, outputPerMillion: 0.40 },
+  // Gemini CLI does not expose cost data in its JSON session files — cost not tracked.
   // Gemini CLI stores sessions at ~/.gemini/tmp/<sha256(workspacePath)>/chats/
   // (SHA-256 encoding), not the path-mangling scheme used by Claude Code.
   getSessionDir: (workspacePath: string) =>
