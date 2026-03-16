@@ -25,7 +25,7 @@ import {
   createSession,
   killSession,
 } from "./helpers/tmux.js";
-import { findBinary, pollUntilEqual, sleep } from "./helpers/polling.js";
+import { findBinary, pollUntilEqual } from "./helpers/polling.js";
 import { makeTmuxHandle, makeSession } from "./helpers/session-factory.js";
 
 const execFileAsync = promisify(execFile);
