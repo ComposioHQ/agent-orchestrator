@@ -16,6 +16,10 @@ import type {
 
 const execFileAsync = promisify(execFile);
 const TMUX_COMMAND_TIMEOUT_MS = 5_000;
+const PASTE_BUFFER_THRESHOLD = 200;
+const CAPTURE_LINES = 40;
+const CAPTURE_POLL_MS = 250;
+const ENTER_RETRY_DELAYS_MS = [500, 1000, 1500, 2500] as const;
 
 export const manifest = {
   name: "tmux",
@@ -39,6 +43,76 @@ async function tmux(...args: string[]): Promise<string> {
     timeout: TMUX_COMMAND_TIMEOUT_MS,
   });
   return stdout.trimEnd();
+}
+
+function lastNonEmptyLine(output: string): string {
+  const lines = output.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]?.trim();
+    if (line) return line;
+  }
+  return "";
+}
+
+function isPromptLine(line: string): boolean {
+  return /^[>$#❯]\s*$/.test(line);
+}
+
+function hasPastedDraftMarker(output: string): boolean {
+  return /\[Pasted Content \d+ chars\](?:\s*#\d+)?/.test(output);
+}
+
+function likelyHasDraftInput(output: string, message: string): boolean {
+  if (hasPastedDraftMarker(output)) return true;
+
+  // Fallback for terminals that show raw text instead of paste markers.
+  const tail = message.slice(-Math.min(120, message.length)).trim();
+  if (!tail) return false;
+  return output.includes(tail);
+}
+
+async function capturePane(sessionName: string, lines = CAPTURE_LINES): Promise<string> {
+  try {
+    return await tmux("capture-pane", "-t", sessionName, "-p", "-S", `-${lines}`);
+  } catch {
+    return "";
+  }
+}
+
+async function waitForPasteToSettle(sessionName: string, messageLength: number): Promise<string> {
+  const settleBudgetMs = Math.min(15_000, 1_500 + Math.ceil(messageLength / 1000) * 600);
+  let snapshot = await capturePane(sessionName);
+  let stableCount = 0;
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < settleBudgetMs) {
+    await sleep(CAPTURE_POLL_MS);
+    const next = await capturePane(sessionName);
+    if (next === snapshot) {
+      stableCount++;
+      if (stableCount >= 2) return next;
+    } else {
+      stableCount = 0;
+      snapshot = next;
+    }
+  }
+
+  return snapshot;
+}
+
+function hasSubmissionStarted(opts: { before: string; after: string; message: string }): boolean {
+  const { before, after, message } = opts;
+  if (after === before) return false;
+
+  const beforeHasDraft = likelyHasDraftInput(before, message);
+  const afterHasDraft = likelyHasDraftInput(after, message);
+  if (beforeHasDraft && !afterHasDraft) return true;
+
+  const beforePrompt = isPromptLine(lastNonEmptyLine(before));
+  const afterPrompt = isPromptLine(lastNonEmptyLine(after));
+  if (beforePrompt && !afterPrompt) return true;
+
+  return false;
 }
 
 export function create(): Runtime {
@@ -117,7 +191,8 @@ export function create(): Runtime {
 
       // For long or multiline messages, use load-buffer + paste-buffer
       // Use randomUUID to avoid temp file collisions on concurrent sends
-      if (message.includes("\n") || message.length > 200) {
+      const usesPasteBuffer = message.includes("\n") || message.length > PASTE_BUFFER_THRESHOLD;
+      if (usesPasteBuffer) {
         const bufferName = `ao-${randomUUID()}`;
         const tmpPath = join(tmpdir(), `ao-send-${randomUUID()}.txt`);
         writeFileSync(tmpPath, message, { encoding: "utf-8", mode: 0o600 });
@@ -144,10 +219,25 @@ export function create(): Runtime {
         await tmux("send-keys", "-t", handle.id, "-l", message);
       }
 
-      // Small delay to let tmux process the pasted text before pressing Enter.
-      // Without this, Enter can arrive before the text is fully rendered.
-      await sleep(300);
+      if (!usesPasteBuffer) {
+        await tmux("send-keys", "-t", handle.id, "Enter");
+        return;
+      }
+
+      // Wait for multi-chunk paste rendering to settle before first Enter.
+      let baselinePane = await waitForPasteToSettle(handle.id, message.length);
       await tmux("send-keys", "-t", handle.id, "Enter");
+
+      for (const retryDelayMs of ENTER_RETRY_DELAYS_MS) {
+        await sleep(retryDelayMs);
+        const currentPane = await capturePane(handle.id);
+        if (hasSubmissionStarted({ before: baselinePane, after: currentPane, message })) {
+          return;
+        }
+
+        await tmux("send-keys", "-t", handle.id, "Enter");
+        baselinePane = currentPane;
+      }
     },
 
     async getOutput(handle: RuntimeHandle, lines = 50): Promise<string> {

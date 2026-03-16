@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as childProcess from "node:child_process";
+import { setTimeout as sleep } from "node:timers/promises";
 import {
   isTmuxAvailable,
   listSessions,
@@ -15,8 +16,12 @@ import {
 vi.mock("node:child_process", () => ({
   execFile: vi.fn(),
 }));
+vi.mock("node:timers/promises", () => ({
+  setTimeout: vi.fn().mockResolvedValue(undefined),
+}));
 
 const mockExecFile = vi.mocked(childProcess.execFile);
+const mockSleep = vi.mocked(sleep);
 
 type ExecFileCallback = (error: Error | null, stdout: string, stderr: string) => void;
 
@@ -53,6 +58,7 @@ function mockTmuxSequence(results: Array<{ stdout?: string; error?: string }>) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockSleep.mockResolvedValue(undefined);
 });
 
 describe("isTmuxAvailable", () => {
@@ -209,17 +215,20 @@ describe("sendKeys", () => {
 
   it("uses load-buffer with named buffer for long text", async () => {
     const longText = "a".repeat(250);
-    // Calls: send-keys Escape, load-buffer -b name, paste-buffer -b name -d, send-keys Enter
+    // Calls: Escape, load-buffer, paste-buffer, capture-pane, Enter, capture-pane
     mockTmuxSequence([
       { stdout: "" }, // send-keys Escape
       { stdout: "" }, // load-buffer
       { stdout: "" }, // paste-buffer
+      { stdout: "before submit" }, // capture-pane baseline
       { stdout: "" }, // send-keys Enter
+      { stdout: "after submit" }, // capture-pane changed
+      { stdout: "" }, // optional fallback
     ]);
 
     await sendKeys("app-1", longText);
 
-    expect(mockExecFile).toHaveBeenCalledTimes(4);
+    expect(mockExecFile).toHaveBeenCalledTimes(6);
 
     // Call 0: Escape
     const escapeArgs = mockExecFile.mock.calls[0][1] as string[];
@@ -239,24 +248,72 @@ describe("sendKeys", () => {
     expect(pasteArgs).toContain("-d");
     expect(pasteArgs).toContain("-t");
     expect(pasteArgs).toContain("app-1");
+
+    // Call 3: baseline capture before Enter
+    const baselineCaptureArgs = mockExecFile.mock.calls[3][1] as string[];
+    expect(baselineCaptureArgs).toEqual(["capture-pane", "-t", "app-1", "-p", "-S", "-40"]);
   });
 
   it("uses load-buffer for multiline text", async () => {
-    // Calls: send-keys Escape, load-buffer, paste-buffer, send-keys Enter
+    // Calls: Escape, load-buffer, paste-buffer, capture-pane, Enter, capture-pane
     mockTmuxSequence([
       { stdout: "" }, // send-keys Escape
       { stdout: "" }, // load-buffer
       { stdout: "" }, // paste-buffer
+      { stdout: "before submit" }, // capture-pane baseline
       { stdout: "" }, // send-keys Enter
+      { stdout: "after submit" }, // capture-pane changed
+      { stdout: "" }, // optional fallback
     ]);
 
     await sendKeys("app-1", "line1\nline2");
 
-    expect(mockExecFile).toHaveBeenCalledTimes(4);
+    expect(mockExecFile).toHaveBeenCalledTimes(6);
     // Call 1 (after Escape) should be load-buffer
     const loadArgs = mockExecFile.mock.calls[1][1] as string[];
     expect(loadArgs[0]).toBe("load-buffer");
     expect(loadArgs[1]).toBe("-b"); // named buffer
+  });
+
+  it("retries Enter when pane output is unchanged after paste-buffer submit", async () => {
+    const longText = "a".repeat(4096);
+    mockTmuxSequence([
+      { stdout: "" }, // send-keys Escape
+      { stdout: "" }, // load-buffer
+      { stdout: "" }, // paste-buffer
+      { stdout: "unchanged pane" }, // capture-pane baseline
+      { stdout: "" }, // send-keys Enter (attempt 1)
+      { stdout: "unchanged pane" }, // capture-pane unchanged -> retry
+      { stdout: "" }, // send-keys Enter (attempt 2)
+      { stdout: "processing started" }, // capture-pane changed -> stop retries
+      { stdout: "" }, // optional fallback
+    ]);
+
+    await sendKeys("app-1", longText);
+
+    // Enter should be sent twice because first check remained unchanged
+    const enterCalls = mockExecFile.mock.calls.filter((call) => {
+      const args = call[1] as string[];
+      return args[0] === "send-keys" && args[args.length - 1] === "Enter";
+    });
+    expect(enterCalls).toHaveLength(2);
+  });
+
+  it("caps adaptive paste delay for very large messages", async () => {
+    const hugeText = "x".repeat(1_000_000);
+    mockTmuxSequence([
+      { stdout: "" }, // send-keys Escape
+      { stdout: "" }, // load-buffer
+      { stdout: "" }, // paste-buffer
+      { stdout: "before submit" }, // capture-pane baseline
+      { stdout: "" }, // send-keys Enter
+      { stdout: "processing started" }, // capture-pane changed
+      { stdout: "" }, // optional fallback
+    ]);
+
+    await sendKeys("app-1", hugeText);
+
+    expect(mockSleep).toHaveBeenCalledWith(15_000);
   });
 });
 
