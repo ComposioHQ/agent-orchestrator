@@ -79,3 +79,13 @@ Before opening a PR, verify:
 - [ ] Config-first hierarchy followed (AGENTS.md §Development Hierarchy)
 - [ ] No secrets or tokens committed
 - [ ] Conventional commit messages
+
+## Upstreaming to ComposioHQ — Strip List
+
+When preparing a PR against `ComposioHQ/agent-orchestrator`, cherry-pick only the functional commits and **exclude**:
+
+- `docs/design/*.md` — fork-only markdown design docs (HTML versions are fine to include)
+- `CLAUDE.md` / `AGENTS.md` — fork-specific tooling instructions
+- `roadmap/` — internal roadmap docs
+- `.beads/` — local issue tracker artifacts
+- Commits referencing fork-only infrastructure (openclaw, jleechanorg remotes, etc.)
