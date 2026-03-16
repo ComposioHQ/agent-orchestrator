@@ -1,7 +1,5 @@
 #!/bin/bash
 
-set -uo pipefail
-
 REPO_ROOT="${AO_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 DEFAULT_CONFIG_HOME="${HOME:-$REPO_ROOT}"
 PASS_COUNT=0
@@ -293,12 +291,14 @@ check_stale_temp_files() {
   warn "$stale_count stale temp files older than 60 minutes found under $temp_root. Fix: rerun ao doctor --fix"
 }
 
+FIX_MODE=false
+
 # Guard: return early when sourced (e.g., for unit tests) - after functions are defined
 if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
   return 0
 fi
 
-FIX_MODE=false
+set -uo pipefail
 
 while [ $# -gt 0 ]; do
   case "$1" in
