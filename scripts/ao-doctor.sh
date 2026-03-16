@@ -2,32 +2,6 @@
 
 set -uo pipefail
 
-FIX_MODE=false
-
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --fix)
-      FIX_MODE=true
-      ;;
-    -h|--help)
-      cat <<'EOF'
-Usage: ao doctor [--fix]
-
-Checks install, PATH, binaries, service health, stale temp files, and runtime sanity.
-
-Options:
-  --fix    Apply safe fixes for missing launcher links, missing support dirs, and stale temp files
-EOF
-      exit 0
-      ;;
-    *)
-      printf 'Unknown option: %s\n' "$1" >&2
-      exit 1
-      ;;
-  esac
-  shift
-done
-
 REPO_ROOT="${AO_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 DEFAULT_CONFIG_HOME="${HOME:-$REPO_ROOT}"
 PASS_COUNT=0
@@ -323,6 +297,32 @@ check_stale_temp_files() {
 if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
   return 0
 fi
+
+FIX_MODE=false
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --fix)
+      FIX_MODE=true
+      ;;
+    -h|--help)
+      cat <<'EOF'
+Usage: ao doctor [--fix]
+
+Checks install, PATH, binaries, service health, stale temp files, and runtime sanity.
+
+Options:
+  --fix    Apply safe fixes for missing launcher links, missing support dirs, and stale temp files
+EOF
+      exit 0
+      ;;
+    *)
+      printf 'Unknown option: %s\n' "$1" >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
 
 printf 'Agent Orchestrator Doctor\n\n'
 
