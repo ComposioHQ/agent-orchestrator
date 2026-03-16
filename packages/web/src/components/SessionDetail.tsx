@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { type DashboardSession, type DashboardPR, isPRMergeReady } from "@/lib/types";
 import { CI_STATUS } from "@composio/ao-core/types";
@@ -8,6 +9,7 @@ import { cn } from "@/lib/cn";
 import { CICheckList } from "./CIBadge";
 import { DirectTerminal } from "./DirectTerminal";
 import { ActivityDot } from "./ActivityDot";
+import { apiPath } from "@/lib/api-path";
 
 interface OrchestratorZones {
   merge: number;
@@ -88,7 +90,7 @@ async function askAgentToFix(
   try {
     const { title, description } = cleanBugbotComment(comment.body);
     const message = `Please address this review comment:\n\nFile: ${comment.path}\nComment: ${title}\nDescription: ${description}\n\nComment URL: ${comment.url}\n\nAfter fixing, mark the comment as resolved at ${comment.url}`;
-    const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/message`, {
+    const res = await fetch(apiPath(`/api/sessions/${encodeURIComponent(sessionId)}/message`), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message }),
@@ -221,7 +223,7 @@ export function SessionDetail({
       {/* Nav bar — glass effect */}
       <nav className="nav-glass sticky top-0 z-10 border-b border-[var(--color-border-subtle)]">
         <div className="mx-auto flex max-w-[900px] items-center gap-2 px-8 py-2.5">
-          <a
+          <Link
             href="/"
             className="flex items-center gap-1 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-text-primary)] hover:no-underline"
           >
@@ -235,7 +237,7 @@ export function SessionDetail({
               <path d="M15 18l-6-6 6-6" />
             </svg>
             Orchestrator
-          </a>
+          </Link>
           <span className="text-[var(--color-border-strong)]">/</span>
           <span className="font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]">
             {session.id}

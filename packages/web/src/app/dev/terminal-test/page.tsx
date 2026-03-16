@@ -4,6 +4,7 @@ import { DirectTerminal } from "@/components/DirectTerminal";
 import { Terminal } from "@/components/Terminal";
 import { useSearchParams } from "next/navigation";
 import { useState, useEffect, Suspense } from "react";
+import { apiPath } from "@/lib/api-path";
 
 // Force dynamic rendering (required for useSearchParams)
 export const dynamic = "force-dynamic";
@@ -30,7 +31,7 @@ function TerminalTestPageContent() {
 
   // Fetch available sessions on mount (only active ones)
   useEffect(() => {
-    fetch("/api/sessions?active=true")
+    fetch(apiPath("/api/sessions?active=true"))
       .then((res) => res.json())
       .then((data) => {
         if (data.sessions && Array.isArray(data.sessions)) {

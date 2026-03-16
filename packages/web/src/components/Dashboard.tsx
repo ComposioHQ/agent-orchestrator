@@ -18,6 +18,8 @@ import { DynamicFavicon } from "./DynamicFavicon";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
 import { ProjectSidebar } from "./ProjectSidebar";
 import type { ProjectInfo } from "@/lib/project-name";
+import { apiPath } from "@/lib/api-path";
+import Link from "next/link";
 
 interface DashboardProps {
   initialSessions: DashboardSession[];
@@ -139,7 +141,7 @@ export function Dashboard({
   }, [activeOrchestrators, allProjectsView, projects, sessionsByProject]);
 
   const handleSend = useCallback(async (sessionId: string, message: string) => {
-    const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/send`, {
+    const res = await fetch(apiPath(`/api/sessions/${encodeURIComponent(sessionId)}/send`), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message }),
@@ -151,7 +153,7 @@ export function Dashboard({
 
   const handleKill = useCallback(async (sessionId: string) => {
     if (!confirm(`Kill session ${sessionId}?`)) return;
-    const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/kill`, {
+    const res = await fetch(apiPath(`/api/sessions/${encodeURIComponent(sessionId)}/kill`), {
       method: "POST",
     });
     if (!res.ok) {
@@ -160,7 +162,7 @@ export function Dashboard({
   }, []);
 
   const handleMerge = useCallback(async (prNumber: number) => {
-    const res = await fetch(`/api/prs/${prNumber}/merge`, { method: "POST" });
+    const res = await fetch(apiPath(`/api/prs/${prNumber}/merge`), { method: "POST" });
     if (!res.ok) {
       console.error(`Failed to merge PR #${prNumber}:`, await res.text());
     }
@@ -168,7 +170,7 @@ export function Dashboard({
 
   const handleRestore = useCallback(async (sessionId: string) => {
     if (!confirm(`Restore session ${sessionId}?`)) return;
-    const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/restore`, {
+    const res = await fetch(apiPath(`/api/sessions/${encodeURIComponent(sessionId)}/restore`), {
       method: "POST",
     });
     if (!res.ok) {
@@ -183,7 +185,7 @@ export function Dashboard({
     setSpawnErrors(({ [project.id]: _ignored, ...current }) => current);
 
     try {
-      const res = await fetch("/api/orchestrators", {
+      const res = await fetch(apiPath("/api/orchestrators"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectId: project.id }),
@@ -424,7 +426,7 @@ function OrchestratorControl({ orchestrators }: { orchestrators: DashboardOrches
   if (orchestrators.length === 1) {
     const orchestrator = orchestrators[0];
     return (
-      <a
+      <Link
         href={`/sessions/${encodeURIComponent(orchestrator.id)}`}
         className="orchestrator-btn flex items-center gap-2 rounded-[7px] px-4 py-2 text-[12px] font-semibold hover:no-underline"
       >
@@ -439,7 +441,7 @@ function OrchestratorControl({ orchestrators }: { orchestrators: DashboardOrches
         >
           <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" />
         </svg>
-      </a>
+      </Link>
     );
   }
 
@@ -460,7 +462,7 @@ function OrchestratorControl({ orchestrators }: { orchestrators: DashboardOrches
       </summary>
       <div className="absolute right-0 top-[calc(100%+0.5rem)] z-10 min-w-[220px] overflow-hidden rounded-[10px] border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] shadow-[0_18px_40px_rgba(0,0,0,0.18)]">
         {orchestrators.map((orchestrator, index) => (
-          <a
+          <Link
             key={orchestrator.id}
             href={`/sessions/${encodeURIComponent(orchestrator.id)}`}
             className={`flex items-center justify-between gap-3 px-4 py-3 text-[12px] hover:bg-[var(--color-bg-hover)] hover:no-underline ${
@@ -480,7 +482,7 @@ function OrchestratorControl({ orchestrators }: { orchestrators: DashboardOrches
             >
               <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" />
             </svg>
-          </a>
+          </Link>
         ))}
       </div>
     </details>
@@ -521,12 +523,12 @@ function ProjectOverviewGrid({
                 {openPRCount > 0 ? ` · ${openPRCount} open PR${openPRCount !== 1 ? "s" : ""}` : ""}
               </div>
             </div>
-            <a
+            <Link
               href={`/?project=${encodeURIComponent(project.id)}`}
               className="rounded-[7px] border border-[var(--color-border-default)] px-3 py-1.5 text-[11px] font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:no-underline"
             >
               Open project
-            </a>
+            </Link>
           </div>
 
           <div className="mb-4 flex flex-wrap gap-2">
@@ -555,13 +557,13 @@ function ProjectOverviewGrid({
                 {orchestrator ? "Per-project orchestrator available" : "No running orchestrator"}
               </div>
               {orchestrator ? (
-                <a
+                <Link
                   href={`/sessions/${encodeURIComponent(orchestrator.id)}`}
                   className="orchestrator-btn flex items-center gap-2 rounded-[7px] px-3 py-1.5 text-[11px] font-semibold hover:no-underline"
                 >
                   <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] opacity-80" />
                   orchestrator
-                </a>
+                </Link>
               ) : (
                 <button
                   type="button"
