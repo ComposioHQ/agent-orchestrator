@@ -48,7 +48,7 @@ export function resolveProject(
 /** Convert a core Session to a DashboardSession (without PR/issue enrichment). */
 export function sessionToDashboard(session: Session): DashboardSession {
   const agentSummary = session.agentInfo?.summary;
-  let summary = agentSummary ?? session.metadata["summary"] ?? null;
+  let summary: string | null = agentSummary ?? session.metadata["summary"] ?? null;
 
   // Filter out JSON-like summaries — some plugins extract raw JSON instead of
   // human-readable text.  Nulling them lets the UI fall back gracefully.
