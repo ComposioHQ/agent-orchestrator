@@ -64,5 +64,6 @@ agent-orchestrator.yaml
 .opencode/
 .claude/scheduled_tasks.lock
 
-# Shared contributor guidelines (tracked in this fork)
-# CLAUDE.md and AGENTS.md
+# Fork-specific contributor guidelines (not for upstream)
+CLAUDE.md
+AGENTS.md
