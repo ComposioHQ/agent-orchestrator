@@ -15,6 +15,7 @@
     "@composio/ao-plugin-agent-codex": "workspace:*",
     "@composio/ao-plugin-agent-aider": "workspace:*",
     "@composio/ao-plugin-agent-opencode": "workspace:*",
+    "@composio/ao-plugin-runtime-docker": "workspace:*",
     "@composio/ao-plugin-runtime-tmux": "workspace:*",
     "@composio/ao-plugin-runtime-process": "workspace:*",
     "@composio/ao-plugin-workspace-worktree": "workspace:*",

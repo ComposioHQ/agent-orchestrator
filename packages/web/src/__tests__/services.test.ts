@@ -6,6 +6,7 @@ const {
   mockCreateSessionManager,
   mockRegistry,
   tmuxPlugin,
+  dockerPlugin,
   claudePlugin,
   opencodePlugin,
   worktreePlugin,
@@ -30,6 +31,7 @@ const {
     mockCreateSessionManager,
     mockRegistry,
     tmuxPlugin: { manifest: { name: "tmux" } },
+    dockerPlugin: { manifest: { name: "docker" } },
     claudePlugin: { manifest: { name: "claude-code" } },
     opencodePlugin: { manifest: { name: "opencode" } },
     worktreePlugin: { manifest: { name: "worktree" } },
@@ -58,6 +60,7 @@ vi.mock("@composio/ao-core", () => ({
 }));
 
 vi.mock("@composio/ao-plugin-runtime-tmux", () => ({ default: tmuxPlugin }));
+vi.mock("@composio/ao-plugin-runtime-docker", () => ({ default: dockerPlugin }));
 vi.mock("@composio/ao-plugin-agent-claude-code", () => ({ default: claudePlugin }));
 vi.mock("@composio/ao-plugin-agent-opencode", () => ({ default: opencodePlugin }));
 vi.mock("@composio/ao-plugin-workspace-worktree", () => ({ default: worktreePlugin }));

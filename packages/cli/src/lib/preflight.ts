@@ -55,6 +55,25 @@ async function checkTmux(): Promise<void> {
 }
 
 /**
+ * Check that Docker is installed and the daemon is reachable.
+ */
+async function checkDocker(): Promise<void> {
+  try {
+    await exec("docker", ["--version"]);
+  } catch {
+    throw new Error("Docker is not installed. Install Docker Desktop or docker-ce first.");
+  }
+
+  try {
+    await exec("docker", ["info"]);
+  } catch {
+    throw new Error(
+      "Docker is installed, but the daemon is not reachable. Start Docker and retry.",
+    );
+  }
+}
+
+/**
  * Check that the GitHub CLI is installed and authenticated.
  * Distinguishes between "not installed" and "not authenticated"
  * so the user gets the right troubleshooting guidance.
@@ -77,5 +96,6 @@ export const preflight = {
   checkPort,
   checkBuilt,
   checkTmux,
+  checkDocker,
   checkGhAuth,
 };

@@ -25,6 +25,7 @@ import {
 } from "../lib/format.js";
 import { getAgentByName, getSCM } from "../lib/plugins.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
+import { getLastActivityLabel } from "../lib/runtime.js";
 
 interface SessionInfo {
   name: string;
@@ -63,10 +64,7 @@ async function gatherSessionInfo(
     if (liveBranch) branch = liveBranch;
   }
 
-  // Get last activity time from tmux
-  const tmuxTarget = session.runtimeHandle?.id ?? session.id;
-  const activityTs = await getTmuxActivity(tmuxTarget);
-  const lastActivity = activityTs ? formatAge(activityTs) : "-";
+  const lastActivity = await getLastActivityLabel(session);
 
   // Get agent's auto-generated summary via introspection
   let claudeSummary: string | null = null;

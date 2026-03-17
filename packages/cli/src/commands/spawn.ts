@@ -17,6 +17,8 @@ import { banner } from "../lib/format.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 import { ensureLifecycleWorker } from "../lib/lifecycle-service.js";
 import { preflight } from "../lib/preflight.js";
+import { getAttachCommand } from "../lib/runtime.js";
+import { formatRuntimeSelection, getRuntimeSelection } from "../lib/runtime-selection.js";
 
 interface SpawnClaimOptions {
   claimPr?: string;
@@ -32,11 +34,14 @@ async function runSpawnPreflight(
   config: OrchestratorConfig,
   projectId: string,
   options?: SpawnClaimOptions,
+  runtimeOverride?: string,
 ): Promise<void> {
   const project = config.projects[projectId];
-  const runtime = project?.runtime ?? config.defaults.runtime;
+  const runtime = getRuntimeSelection(config, projectId, runtimeOverride).name;
   if (runtime === "tmux") {
     await preflight.checkTmux();
+  } else if (runtime === "docker") {
+    await preflight.checkDocker();
   }
   const needsGitHubAuth =
     project?.tracker?.plugin === "github" ||
@@ -53,6 +58,7 @@ async function spawnSession(
   openTab?: boolean,
   agent?: string,
   claimOptions?: SpawnClaimOptions,
+  runtime?: string,
 ): Promise<string> {
   const spinner = ora("Creating session").start();
 
@@ -64,10 +70,12 @@ async function spawnSession(
       projectId,
       issueId,
       agent,
+      runtime,
     });
 
     let branchStr = session.branch ?? "";
     let claimedPrUrl: string | null = null;
+    const runtimeSelection = getRuntimeSelection(config, projectId, runtime);
 
     if (claimOptions?.claimPr) {
       spinner.text = `Claiming PR ${claimOptions.claimPr}`;
@@ -94,16 +102,20 @@ async function spawnSession(
     console.log(`  Worktree: ${chalk.dim(session.workspacePath ?? "-")}`);
     if (branchStr) console.log(`  Branch:   ${chalk.dim(branchStr)}`);
     if (claimedPrUrl) console.log(`  PR:       ${chalk.dim(claimedPrUrl)}`);
+    console.log(`  Runtime:  ${chalk.dim(formatRuntimeSelection(runtimeSelection))}`);
+    if (runtimeSelection.source === "flag") {
+      console.log(chalk.dim(`  Persist:  ao runtime set ${projectId} ${runtimeSelection.name}`));
+    }
 
-    // Show the tmux name for attaching (stored in metadata or runtimeHandle)
-    const tmuxTarget = session.runtimeHandle?.id ?? session.id;
-    console.log(`  Attach:   ${chalk.dim(`tmux attach -t ${tmuxTarget}`)}`);
+    console.log(`  Attach:   ${chalk.dim(getAttachCommand(session.runtimeHandle, session.id))}`);
     console.log();
 
     // Open terminal tab if requested
     if (openTab) {
       try {
-        await exec("open-iterm-tab", [tmuxTarget]);
+        if ((session.runtimeHandle?.runtimeName ?? "tmux") === "tmux") {
+          await exec("open-iterm-tab", [session.runtimeHandle?.id ?? session.id]);
+        }
       } catch {
         // Terminal plugin not available
       }
@@ -126,6 +138,7 @@ export function registerSpawn(program: Command): void {
     .argument("[issue]", "Issue identifier (e.g. INT-1234, #42) - must exist in tracker")
     .option("--open", "Open session in terminal tab")
     .option("--agent <name>", "Override the agent plugin (e.g. codex, claude-code)")
+    .option("--runtime <name>", "Temporarily override the runtime plugin (e.g. tmux, docker)")
     .option("--claim-pr <pr>", "Immediately claim an existing PR for the spawned session")
     .option("--assign-on-github", "Assign the claimed PR to the authenticated GitHub user")
     .option("--decompose", "Decompose issue into subtasks before spawning")
@@ -137,6 +150,7 @@ export function registerSpawn(program: Command): void {
         opts: {
           open?: boolean;
           agent?: string;
+          runtime?: string;
           claimPr?: string;
           assignOnGithub?: boolean;
           decompose?: boolean;
@@ -164,7 +178,7 @@ export function registerSpawn(program: Command): void {
         };
 
         try {
-          await runSpawnPreflight(config, projectId, claimOptions);
+          await runSpawnPreflight(config, projectId, claimOptions, opts.runtime);
           await ensureLifecycleWorker(config, projectId);
 
           if (opts.decompose && issueId) {
@@ -191,7 +205,15 @@ export function registerSpawn(program: Command): void {
 
             if (leaves.length <= 1) {
               console.log(chalk.yellow("Task is atomic — spawning directly."));
-              await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions);
+              await spawnSession(
+                config,
+                projectId,
+                issueId,
+                opts.open,
+                opts.agent,
+                claimOptions,
+                opts.runtime,
+              );
             } else {
               // Create child issues and spawn sessions with lineage context
               const sm = await getSessionManager(config);
@@ -207,6 +229,7 @@ export function registerSpawn(program: Command): void {
                     lineage: leaf.lineage,
                     siblings,
                     agent: opts.agent,
+                    runtime: opts.runtime,
                   });
                   console.log(`  ${chalk.green("✓")} ${session.id} — ${leaf.description}`);
                 } catch (err) {
@@ -218,7 +241,15 @@ export function registerSpawn(program: Command): void {
               }
             }
           } else {
-            await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions);
+            await spawnSession(
+              config,
+              projectId,
+              issueId,
+              opts.open,
+              opts.agent,
+              claimOptions,
+              opts.runtime,
+            );
           }
         } catch (err) {
           console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));
@@ -235,102 +266,109 @@ export function registerBatchSpawn(program: Command): void {
     .argument("<project>", "Project ID from config")
     .argument("<issues...>", "Issue identifiers")
     .option("--open", "Open sessions in terminal tabs")
-    .action(async (projectId: string, issues: string[], opts: { open?: boolean }) => {
-      const config = loadConfig();
-      if (!config.projects[projectId]) {
-        console.error(
-          chalk.red(
-            `Unknown project: ${projectId}\nAvailable: ${Object.keys(config.projects).join(", ")}`,
-          ),
-        );
-        process.exit(1);
-      }
-
-      console.log(banner("BATCH SESSION SPAWNER"));
-      console.log();
-      console.log(`  Project: ${chalk.bold(projectId)}`);
-      console.log(`  Issues:  ${issues.join(", ")}`);
-      console.log();
-
-      // Pre-flight once before the loop so a missing prerequisite fails fast
-      try {
-        await runSpawnPreflight(config, projectId);
-        await ensureLifecycleWorker(config, projectId);
-      } catch (err) {
-        console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));
-        process.exit(1);
-      }
-
-      const sm = await getSessionManager(config);
-      const created: Array<{ session: string; issue: string }> = [];
-      const skipped: Array<{ issue: string; existing: string }> = [];
-      const failed: Array<{ issue: string; error: string }> = [];
-      const spawnedIssues = new Set<string>();
-
-      // Load existing sessions once before the loop to avoid repeated reads + enrichment.
-      // Exclude terminal sessions so completed/merged sessions don't block respawning
-      // (e.g. when an issue is reopened after its PR was merged).
-      const existingSessions = await sm.list(projectId);
-      const existingIssueMap = new Map(
-        existingSessions
-          .filter((s) => s.issueId && !TERMINAL_STATUSES.has(s.status))
-          .map((s) => [s.issueId!.toLowerCase(), s.id]),
-      );
-
-      for (const issue of issues) {
-        // Duplicate detection — check both existing sessions and same-run duplicates
-        if (spawnedIssues.has(issue.toLowerCase())) {
-          console.log(chalk.yellow(`  Skip ${issue} — duplicate in this batch`));
-          skipped.push({ issue, existing: "(this batch)" });
-          continue;
-        }
-
-        // Check existing sessions (pre-loaded before loop)
-        const existingSessionId = existingIssueMap.get(issue.toLowerCase());
-        if (existingSessionId) {
-          console.log(chalk.yellow(`  Skip ${issue} — already has session ${existingSessionId}`));
-          skipped.push({ issue, existing: existingSessionId });
-          continue;
-        }
-
-        try {
-          const session = await sm.spawn({ projectId, issueId: issue });
-          created.push({ session: session.id, issue });
-          spawnedIssues.add(issue.toLowerCase());
-          console.log(chalk.green(`  Created ${session.id} for ${issue}`));
-
-          if (opts.open) {
-            try {
-              const tmuxTarget = session.runtimeHandle?.id ?? session.id;
-              await exec("open-iterm-tab", [tmuxTarget]);
-            } catch {
-              // best effort
-            }
-          }
-        } catch (err) {
-          failed.push({
-            issue,
-            error: err instanceof Error ? err.message : String(err),
-          });
-          console.log(
-            chalk.red(`  Failed ${issue} — ${err instanceof Error ? err.message : String(err)}`),
+    .option("--runtime <name>", "Temporarily override the runtime plugin (e.g. tmux, docker)")
+    .action(
+      async (projectId: string, issues: string[], opts: { open?: boolean; runtime?: string }) => {
+        const config = loadConfig();
+        if (!config.projects[projectId]) {
+          console.error(
+            chalk.red(
+              `Unknown project: ${projectId}\nAvailable: ${Object.keys(config.projects).join(", ")}`,
+            ),
           );
+          process.exit(1);
         }
-      }
 
-      console.log();
-      if (created.length > 0) {
-        console.log(chalk.green(`Created ${created.length} sessions:`));
-        for (const item of created) console.log(`  ${item.session} ← ${item.issue}`);
-      }
-      if (skipped.length > 0) {
-        console.log(chalk.yellow(`Skipped ${skipped.length} issues:`));
-        for (const item of skipped) console.log(`  ${item.issue} (existing: ${item.existing})`);
-      }
-      if (failed.length > 0) {
-        console.log(chalk.red(`Failed ${failed.length} issues:`));
-        for (const item of failed) console.log(`  ${item.issue}: ${item.error}`);
-      }
-      console.log();
-    });
+        console.log(banner("BATCH SESSION SPAWNER"));
+        console.log();
+        console.log(`  Project: ${chalk.bold(projectId)}`);
+        console.log(`  Issues:  ${issues.join(", ")}`);
+        console.log(
+          `  Runtime: ${chalk.dim(formatRuntimeSelection(getRuntimeSelection(config, projectId, opts.runtime)))}`,
+        );
+        console.log();
+
+        // Pre-flight once before the loop so a missing prerequisite fails fast
+        try {
+          await runSpawnPreflight(config, projectId, undefined, opts.runtime);
+          await ensureLifecycleWorker(config, projectId);
+        } catch (err) {
+          console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));
+          process.exit(1);
+        }
+
+        const sm = await getSessionManager(config);
+        const created: Array<{ session: string; issue: string }> = [];
+        const skipped: Array<{ issue: string; existing: string }> = [];
+        const failed: Array<{ issue: string; error: string }> = [];
+        const spawnedIssues = new Set<string>();
+
+        // Load existing sessions once before the loop to avoid repeated reads + enrichment.
+        // Exclude terminal sessions so completed/merged sessions don't block respawning
+        // (e.g. when an issue is reopened after its PR was merged).
+        const existingSessions = await sm.list(projectId);
+        const existingIssueMap = new Map(
+          existingSessions
+            .filter((s) => s.issueId && !TERMINAL_STATUSES.has(s.status))
+            .map((s) => [s.issueId!.toLowerCase(), s.id]),
+        );
+
+        for (const issue of issues) {
+          // Duplicate detection — check both existing sessions and same-run duplicates
+          if (spawnedIssues.has(issue.toLowerCase())) {
+            console.log(chalk.yellow(`  Skip ${issue} — duplicate in this batch`));
+            skipped.push({ issue, existing: "(this batch)" });
+            continue;
+          }
+
+          // Check existing sessions (pre-loaded before loop)
+          const existingSessionId = existingIssueMap.get(issue.toLowerCase());
+          if (existingSessionId) {
+            console.log(chalk.yellow(`  Skip ${issue} — already has session ${existingSessionId}`));
+            skipped.push({ issue, existing: existingSessionId });
+            continue;
+          }
+
+          try {
+            const session = await sm.spawn({ projectId, issueId: issue, runtime: opts.runtime });
+            created.push({ session: session.id, issue });
+            spawnedIssues.add(issue.toLowerCase());
+            console.log(chalk.green(`  Created ${session.id} for ${issue}`));
+
+            if (opts.open) {
+              try {
+                if ((session.runtimeHandle?.runtimeName ?? "tmux") === "tmux") {
+                  await exec("open-iterm-tab", [session.runtimeHandle?.id ?? session.id]);
+                }
+              } catch {
+                // best effort
+              }
+            }
+          } catch (err) {
+            failed.push({
+              issue,
+              error: err instanceof Error ? err.message : String(err),
+            });
+            console.log(
+              chalk.red(`  Failed ${issue} — ${err instanceof Error ? err.message : String(err)}`),
+            );
+          }
+        }
+
+        console.log();
+        if (created.length > 0) {
+          console.log(chalk.green(`Created ${created.length} sessions:`));
+          for (const item of created) console.log(`  ${item.session} ← ${item.issue}`);
+        }
+        if (skipped.length > 0) {
+          console.log(chalk.yellow(`Skipped ${skipped.length} issues:`));
+          for (const item of skipped) console.log(`  ${item.issue} (existing: ${item.existing})`);
+        }
+        if (failed.length > 0) {
+          console.log(chalk.red(`Failed ${failed.length} issues:`));
+          for (const item of failed) console.log(`  ${item.issue}: ${item.error}`);
+        }
+        console.log();
+      },
+    );
 }

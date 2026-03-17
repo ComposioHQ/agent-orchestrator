@@ -72,6 +72,33 @@ describe("Config Validation - Project Uniqueness", () => {
   });
 });
 
+describe("Config Validation - Runtime Config", () => {
+  it("accepts arbitrary runtimeConfig objects", () => {
+    const validated = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/integrator",
+          repo: "org/integrator",
+          defaultBranch: "main",
+          runtime: "docker",
+          runtimeConfig: {
+            image: "ghcr.io/example/ao-agent:latest",
+            mountHome: true,
+            mounts: ["~/cache:/cache:ro"],
+          },
+        },
+      },
+    });
+
+    expect(validated.projects.proj1.runtime).toBe("docker");
+    expect(validated.projects.proj1.runtimeConfig).toEqual({
+      image: "ghcr.io/example/ao-agent:latest",
+      mountHome: true,
+      mounts: ["~/cache:/cache:ro"],
+    });
+  });
+});
+
 describe("Config Validation - Session Prefix Uniqueness", () => {
   it("rejects duplicate explicit prefixes", () => {
     const config = {

@@ -36,6 +36,7 @@ import {
 
 // Static plugin imports — webpack needs these to be string literals
 import pluginRuntimeTmux from "@composio/ao-plugin-runtime-tmux";
+import pluginRuntimeDocker from "@composio/ao-plugin-runtime-docker";
 import pluginAgentClaudeCode from "@composio/ao-plugin-agent-claude-code";
 import pluginAgentOpencode from "@composio/ao-plugin-agent-opencode";
 import pluginWorkspaceWorktree from "@composio/ao-plugin-workspace-worktree";
@@ -78,6 +79,7 @@ async function initServices(): Promise<Services> {
 
   // Register plugins explicitly (webpack can't handle dynamic import() in core)
   registry.register(pluginRuntimeTmux);
+  registry.register(pluginRuntimeDocker);
   registry.register(pluginAgentClaudeCode);
   registry.register(pluginAgentOpencode);
   registry.register(pluginWorkspaceWorktree);

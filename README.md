@@ -120,6 +120,10 @@ projects:
     path: ~/my-app
     defaultBranch: main
     sessionPrefix: app
+    # runtime: docker
+    # runtimeConfig:
+    #   image: ghcr.io/your-org/ao-agent:latest
+    #   passHostEnv: [OPENAI_API_KEY, ANTHROPIC_API_KEY, GITHUB_TOKEN]
 
 reactions:
   ci-failed:
@@ -135,6 +139,21 @@ reactions:
     action: notify
 ```
 
+Temporary runtime override for a single command:
+
+```bash
+ao spawn my-app --runtime docker
+ao start my-app --runtime docker
+```
+
+Permanent project runtime:
+
+```bash
+ao runtime show my-app
+ao runtime set my-app docker
+ao runtime clear my-app
+```
+
 CI fails → agent gets the logs and fixes it. Reviewer requests changes → agent addresses them. PR approved with green CI → you get a notification to merge.
 
 See [`agent-orchestrator.yaml.example`](agent-orchestrator.yaml.example) for the full reference.
@@ -147,6 +166,7 @@ ao spawn <project> [issue]             # Spawn an agent
 ao send <session> "Fix the tests"      # Send instructions
 ao session ls                          # List sessions
 ao session kill <session>              # Kill a session
+ao runtime set <project> <runtime>     # Persist a project runtime
 ao session restore <session>           # Revive a crashed agent
 ao dashboard                           # Open web dashboard
 ao doctor [--fix]                      # Check install, runtime, and stale temp issues

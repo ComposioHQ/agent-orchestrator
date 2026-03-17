@@ -1,9 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-const { mockExec, mockConfigRef, mockTmux } = vi.hoisted(() => ({
+const { mockExec, mockConfigRef, mockTmux, mockSessionManager } = vi.hoisted(() => ({
   mockExec: vi.fn(),
   mockTmux: vi.fn(),
   mockConfigRef: { current: null as Record<string, unknown> | null },
+  mockSessionManager: {
+    list: vi.fn(),
+  },
 }));
 
 vi.mock("../../src/lib/shell.js", () => ({
@@ -24,11 +27,23 @@ vi.mock("@composio/ao-core", () => ({
   loadConfig: () => mockConfigRef.current,
 }));
 
+vi.mock("../../src/lib/create-session-manager.js", () => ({
+  getSessionManager: async () => mockSessionManager,
+}));
+
 import { Command } from "commander";
 import { registerOpen } from "../../src/commands/open.js";
 
 let program: Command;
 let consoleSpy: ReturnType<typeof vi.spyOn>;
+
+function makeSession(id: string, projectId: string) {
+  return {
+    id,
+    projectId,
+    runtimeHandle: { id, runtimeName: "tmux", data: {} },
+  };
+}
 
 beforeEach(() => {
   mockConfigRef.current = {
@@ -72,7 +87,13 @@ beforeEach(() => {
 
   mockExec.mockReset();
   mockTmux.mockReset();
+  mockSessionManager.list.mockReset();
   mockExec.mockResolvedValue({ stdout: "", stderr: "" });
+  mockSessionManager.list.mockResolvedValue([
+    makeSession("app-1", "my-app"),
+    makeSession("app-2", "my-app"),
+    makeSession("backend-1", "backend"),
+  ]);
 });
 
 afterEach(() => {
@@ -81,11 +102,6 @@ afterEach(() => {
 
 describe("open command", () => {
   it("opens all sessions when target is 'all'", async () => {
-    mockTmux.mockImplementation(async (...args: string[]) => {
-      if (args[0] === "list-sessions") return "app-1\napp-2\nbackend-1";
-      return null;
-    });
-
     await program.parseAsync(["node", "test", "open", "all"]);
 
     const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
@@ -96,10 +112,7 @@ describe("open command", () => {
   });
 
   it("opens all sessions when no target given", async () => {
-    mockTmux.mockImplementation(async (...args: string[]) => {
-      if (args[0] === "list-sessions") return "app-1";
-      return null;
-    });
+    mockSessionManager.list.mockResolvedValue([makeSession("app-1", "my-app")]);
 
     await program.parseAsync(["node", "test", "open"]);
 
@@ -108,11 +121,6 @@ describe("open command", () => {
   });
 
   it("opens sessions for a specific project", async () => {
-    mockTmux.mockImplementation(async (...args: string[]) => {
-      if (args[0] === "list-sessions") return "app-1\napp-2\nbackend-1";
-      return null;
-    });
-
     await program.parseAsync(["node", "test", "open", "my-app"]);
 
     const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
@@ -123,11 +131,6 @@ describe("open command", () => {
   });
 
   it("opens a single session by name", async () => {
-    mockTmux.mockImplementation(async (...args: string[]) => {
-      if (args[0] === "list-sessions") return "app-1\napp-2";
-      return null;
-    });
-
     await program.parseAsync(["node", "test", "open", "app-1"]);
 
     const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
@@ -136,10 +139,7 @@ describe("open command", () => {
   });
 
   it("rejects unknown target", async () => {
-    mockTmux.mockImplementation(async (...args: string[]) => {
-      if (args[0] === "list-sessions") return "app-1";
-      return null;
-    });
+    mockSessionManager.list.mockResolvedValue([makeSession("app-1", "my-app")]);
 
     await expect(program.parseAsync(["node", "test", "open", "nonexistent"])).rejects.toThrow(
       "process.exit(1)",
@@ -147,10 +147,7 @@ describe("open command", () => {
   });
 
   it("passes --new-window flag to open-iterm-tab", async () => {
-    mockTmux.mockImplementation(async (...args: string[]) => {
-      if (args[0] === "list-sessions") return "app-1";
-      return null;
-    });
+    mockSessionManager.list.mockResolvedValue([makeSession("app-1", "my-app")]);
 
     await program.parseAsync(["node", "test", "open", "-w", "app-1"]);
 
@@ -158,10 +155,7 @@ describe("open command", () => {
   });
 
   it("falls back gracefully when open-iterm-tab fails", async () => {
-    mockTmux.mockImplementation(async (...args: string[]) => {
-      if (args[0] === "list-sessions") return "app-1";
-      return null;
-    });
+    mockSessionManager.list.mockResolvedValue([makeSession("app-1", "my-app")]);
     mockExec.mockRejectedValue(new Error("command not found"));
 
     await program.parseAsync(["node", "test", "open", "app-1"]);
@@ -171,7 +165,7 @@ describe("open command", () => {
   });
 
   it("shows 'No sessions to open' when none exist", async () => {
-    mockTmux.mockResolvedValue(null);
+    mockSessionManager.list.mockResolvedValue([]);
 
     await program.parseAsync(["node", "test", "open", "my-app"]);
 

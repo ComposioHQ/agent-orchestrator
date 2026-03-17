@@ -1,11 +1,10 @@
-import { spawn } from "node:child_process";
 import chalk from "chalk";
 import type { Command } from "commander";
 import { loadConfig, SessionNotRestorableError, WorkspaceMissingError } from "@composio/ao-core";
-import { git, getTmuxActivity, tmux } from "../lib/shell.js";
-import { formatAge } from "../lib/format.js";
+import { git } from "../lib/shell.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 import { isOrchestratorSessionName } from "../lib/session-utils.js";
+import { attachToRuntime, getAttachCommand, getLastActivityLabel } from "../lib/runtime.js";
 
 export function registerSession(program: Command): void {
   const session = program
@@ -59,10 +58,7 @@ export function registerSession(program: Command): void {
             if (liveBranch) branchStr = liveBranch;
           }
 
-          // Get tmux activity age
-          const tmuxTarget = s.runtimeHandle?.id ?? s.id;
-          const activityTs = await getTmuxActivity(tmuxTarget);
-          const age = activityTs ? formatAge(activityTs) : "-";
+          const age = await getLastActivityLabel(s);
 
           const parts = [chalk.green(s.id), chalk.dim(`(${age})`)];
           if (branchStr) parts.push(chalk.cyan(branchStr));
@@ -78,32 +74,22 @@ export function registerSession(program: Command): void {
 
   session
     .command("attach")
-    .description("Attach to a session's tmux window")
+    .description("Attach to a session")
     .argument("<session>", "Session name to attach")
     .action(async (sessionName: string) => {
       const config = loadConfig();
       const sm = await getSessionManager(config);
       const sessionInfo = await sm.get(sessionName);
-      const tmuxTarget = sessionInfo?.runtimeHandle?.id ?? sessionName;
-
-      const exists = await tmux("has-session", "-t", tmuxTarget);
-      if (exists === null) {
+      if (!sessionInfo) {
         console.error(chalk.red(`Session '${sessionName}' does not exist`));
         process.exit(1);
       }
 
-      await new Promise<void>((resolve, reject) => {
-        const child = spawn("tmux", ["attach", "-t", tmuxTarget], { stdio: "inherit" });
-        child.once("error", (err) => reject(err));
-        child.once("exit", (code) => {
-          if (code === 0 || code === null) {
-            resolve();
-            return;
-          }
-          reject(new Error(`tmux attach exited with code ${code}`));
-        });
-      }).catch((err) => {
+      await attachToRuntime(sessionInfo.runtimeHandle, sessionName).catch((err) => {
         console.error(chalk.red(`Failed to attach to session ${sessionName}: ${err}`));
+        console.error(
+          chalk.dim(`Attach command: ${getAttachCommand(sessionInfo.runtimeHandle, sessionName)}`),
+        );
         process.exit(1);
       });
     });
@@ -292,8 +278,9 @@ export function registerSession(program: Command): void {
         if (restored.branch) {
           console.log(chalk.dim(`  Branch:   ${restored.branch}`));
         }
-        const tmuxTarget = restored.runtimeHandle?.id ?? sessionName;
-        console.log(chalk.dim(`  Attach:   tmux attach -t ${tmuxTarget}`));
+        console.log(
+          chalk.dim(`  Attach:   ${getAttachCommand(restored.runtimeHandle, sessionName)}`),
+        );
       } catch (err) {
         if (err instanceof SessionNotRestorableError) {
           console.error(chalk.red(`Cannot restore: ${err.reason}`));

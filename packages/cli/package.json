@@ -43,6 +43,7 @@
     "@composio/ao-plugin-notifier-openclaw": "workspace:*",
     "@composio/ao-plugin-notifier-slack": "workspace:*",
     "@composio/ao-plugin-notifier-webhook": "workspace:*",
+    "@composio/ao-plugin-runtime-docker": "workspace:*",
     "@composio/ao-plugin-runtime-process": "workspace:*",
     "@composio/ao-plugin-runtime-tmux": "workspace:*",
     "@composio/ao-plugin-scm-github": "workspace:*",
