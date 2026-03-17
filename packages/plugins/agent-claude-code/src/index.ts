@@ -688,6 +688,17 @@ function createClaudeCodeAgent(): Agent {
         env["AO_ISSUE_ID"] = config.issueId;
       }
 
+      // Auto-accept interactive prompts that block non-interactive sessions:
+      // - MCP server approval ("New MCP server found in .mcp.json")
+      // - Terms of service acceptance ("Do you accept?")
+      // These prompts require manual keystrokes and block all agents on
+      // first run in repos with .mcp.json or on fresh installations.
+      const permissionMode = normalizePermissionMode(config.permissions);
+      if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
+        env["CLAUDE_CODE_ACCEPT_TOS"] = "1";
+        env["CLAUDE_CODE_TRUST_MCP_SERVERS"] = "1";
+      }
+
       return env;
     },
 
