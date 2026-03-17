@@ -1,5 +1,6 @@
 import {
   DEFAULT_READY_THRESHOLD_MS,
+  readLastJsonlEntry,
   shellEscape,
   type Agent,
   type AgentSessionInfo,
@@ -338,12 +339,16 @@ interface CodexJsonlLine {
   // User message content (from user input events)
   content?: string;
   role?: string;
+  // Aggregated cost reported by Codex (newer versions)
+  costUSD?: number;
   // event_msg with token_count subtype
   msg?: {
     type?: string;
     input_tokens?: number;
     output_tokens?: number;
     cached_tokens?: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
     reasoning_tokens?: number;
   };
 }
@@ -471,6 +476,12 @@ interface CodexSessionData {
   threadId: string | null;
   inputTokens: number;
   outputTokens: number;
+  cachedTokens: number;
+  costUSD: number | null;
+  /** First user message, truncated — used as session summary fallback */
+  summary: string | null;
+  /** Type of the last JSONL entry — used for activity detection */
+  lastEventType: string | null;
 }
 
 /**
@@ -480,7 +491,11 @@ interface CodexSessionData {
  */
 async function streamCodexSessionData(filePath: string): Promise<CodexSessionData | null> {
   try {
-    const data: CodexSessionData = { model: null, threadId: null, inputTokens: 0, outputTokens: 0 };
+    const data: CodexSessionData = {
+      model: null, threadId: null,
+      inputTokens: 0, outputTokens: 0, cachedTokens: 0,
+      costUSD: null, summary: null, lastEventType: null,
+    };
     const rl = createInterface({
       input: createReadStream(filePath, { encoding: "utf-8" }),
       crlfDelay: Infinity,
@@ -494,15 +509,33 @@ async function streamCodexSessionData(filePath: string): Promise<CodexSessionDat
         if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) continue;
         const entry = parsed as CodexJsonlLine;
 
+        // Track event type for activity detection
+        if (entry.type) {
+          data.lastEventType = entry.type;
+        }
+
         if (entry.type === "session_meta" && typeof entry.model === "string") {
           data.model = entry.model;
         }
         if (typeof entry.threadId === "string" && entry.threadId) {
           data.threadId = entry.threadId;
         }
+
+        // Extract first user message as summary fallback
+        if (!data.summary && entry.role === "user" && typeof entry.content === "string" && entry.content.trim()) {
+          data.summary = entry.content.trim().slice(0, 120);
+        }
+
+        // Use Codex-reported cost if available (newer versions)
+        if (typeof entry.costUSD === "number") {
+          data.costUSD = entry.costUSD;
+        }
+
         if (entry.type === "event_msg" && entry.msg?.type === "token_count") {
           data.inputTokens += entry.msg.input_tokens ?? 0;
           data.outputTokens += entry.msg.output_tokens ?? 0;
+          data.cachedTokens += (entry.msg.cached_tokens ?? 0)
+            + (entry.msg.cache_read_input_tokens ?? 0);
         }
       } catch {
         // Skip malformed lines
@@ -609,6 +642,67 @@ async function findCodexSessionFileCached(workspacePath: string): Promise<string
   return result;
 }
 
+// =============================================================================
+// PS Process Cache (shared across all isProcessRunning calls)
+// =============================================================================
+
+/**
+ * Module-level ps output cache with 5-second TTL.
+ * When the lifecycle manager enriches N sessions in one tick, all N
+ * isProcessRunning() calls share a single `ps` invocation.
+ */
+let psCache: { output: string; timestamp: number; promise?: Promise<string> } | null = null;
+const PS_CACHE_TTL_MS = 5_000;
+
+/** @internal Reset the ps cache. Exported for testing only. */
+export function _resetPsCache(): void {
+  psCache = null;
+}
+
+async function getCachedProcessList(): Promise<string> {
+  const now = Date.now();
+  if (psCache && now - psCache.timestamp < PS_CACHE_TTL_MS) {
+    if (psCache.promise) return psCache.promise;
+    return psCache.output;
+  }
+
+  // Cache miss or expired — start a single `ps` call and share the promise.
+  const promise = execFileAsync("ps", ["-eo", "pid,tty,args"], {
+    timeout: 5_000,
+  }).then(({ stdout }) => {
+    if (psCache?.promise === promise) {
+      psCache = { output: stdout, timestamp: Date.now() };
+    }
+    return stdout;
+  });
+
+  psCache = { output: "", timestamp: now, promise };
+
+  try {
+    return await promise;
+  } catch {
+    if (psCache?.promise === promise) {
+      psCache = null;
+    }
+    return "";
+  }
+}
+
+/** Model pricing table (per million tokens) */
+const MODEL_PRICING: Record<string, { input: number; output: number; cachedInput?: number }> = {
+  "o3": { input: 2.0, output: 8.0, cachedInput: 0.5 },
+  "o3-mini": { input: 1.1, output: 4.4, cachedInput: 0.275 },
+  "o4-mini": { input: 1.1, output: 4.4, cachedInput: 0.275 },
+  "gpt-4.1": { input: 2.0, output: 8.0, cachedInput: 0.5 },
+  "gpt-4.1-mini": { input: 0.4, output: 1.6, cachedInput: 0.1 },
+  "gpt-4.1-nano": { input: 0.1, output: 0.4, cachedInput: 0.025 },
+  "gpt-4o": { input: 2.5, output: 10.0, cachedInput: 1.25 },
+  "gpt-4o-mini": { input: 0.15, output: 0.6, cachedInput: 0.075 },
+};
+
+/** Default pricing when model is unknown */
+const DEFAULT_PRICING = { input: 2.5, output: 10.0, cachedInput: 1.25 };
+
 function createCodexAgent(): Agent {
   /** Cached resolved binary path (populated by init or first getLaunchCommand) */
   let resolvedBinary: string | null = null;
@@ -691,9 +785,6 @@ function createCodexAgent(): Agent {
       const running = await this.isProcessRunning(session.runtimeHandle);
       if (!running) return { state: "exited", timestamp: exitedAt };
 
-      // Use session file mtime as a proxy for activity. Codex continuously
-      // appends to its rollout JSONL file while working, so a recently
-      // modified file means the agent is active.
       if (!session.workspacePath) return null;
 
       const sessionFile = await findCodexSessionFileCached(session.workspacePath);
@@ -705,7 +796,24 @@ function createCodexAgent(): Agent {
         const ageMs = Date.now() - s.mtimeMs;
 
         if (ageMs <= threshold) {
-          // File was recently modified — agent is actively working
+          // File was recently modified — classify based on last event type.
+          // Uses readLastJsonlEntry which reads backwards from EOF (O(1) for
+          // any file size), avoiding streaming 100MB+ rollout files.
+          const lastEntry = await readLastJsonlEntry(sessionFile);
+          if (lastEntry?.lastType) {
+            const eventType = lastEntry.lastType;
+            // Map JSONL event types to activity states
+            if (eventType === "permission_request") {
+              return { state: "waiting_input", timestamp };
+            }
+            if (eventType === "error") {
+              return { state: "blocked", timestamp };
+            }
+            if (eventType === "result" || eventType === "summary" || eventType === "assistant" || eventType === "system") {
+              return { state: "ready", timestamp };
+            }
+            // user, tool_use, progress, etc → active
+          }
           return { state: "active", timestamp };
         }
 
@@ -727,14 +835,13 @@ function createCodexAgent(): Agent {
           const ttys = ttyOut
             .trim()
             .split("\n")
-            .map((t) => t.trim())
+            .map((t: string) => t.trim())
             .filter(Boolean);
           if (ttys.length === 0) return false;
 
-          const { stdout: psOut } = await execFileAsync("ps", ["-eo", "pid,tty,args"], {
-            timeout: 30_000,
-          });
-          const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
+          // Use cached ps output to avoid N concurrent ps calls
+          const psOut = await getCachedProcessList();
+          const ttySet = new Set(ttys.map((t: string) => t.replace(/^\/dev\//, "")));
           const processRe = /(?:^|\/)codex(?:\s|$)/;
           for (const line of psOut.split("\n")) {
             const cols = line.trimStart().split(/\s+/);
@@ -780,19 +887,39 @@ function createCodexAgent(): Agent {
 
       const agentSessionId = basename(sessionFile, ".jsonl");
 
-      const cost: CostEstimate | undefined =
-        data.inputTokens === 0 && data.outputTokens === 0
-          ? undefined
-          : {
-              inputTokens: data.inputTokens,
-              outputTokens: data.outputTokens,
-              estimatedCostUsd:
-                (data.inputTokens / 1_000_000) * 2.5 + (data.outputTokens / 1_000_000) * 10.0,
-            };
+      // Build cost estimate — prefer Codex-reported costUSD, fall back to model-aware pricing
+      let cost: CostEstimate | undefined;
+      if (data.costUSD !== null && data.costUSD > 0) {
+        // Use cost directly reported by Codex
+        cost = {
+          inputTokens: data.inputTokens,
+          outputTokens: data.outputTokens,
+          estimatedCostUsd: data.costUSD,
+        };
+      } else if (data.inputTokens > 0 || data.outputTokens > 0) {
+        // Compute from token counts using model-aware pricing
+        const modelKey = data.model?.toLowerCase() ?? "";
+        const pricing = MODEL_PRICING[modelKey] ?? DEFAULT_PRICING;
+        const billableInput = Math.max(0, data.inputTokens - data.cachedTokens);
+        const cachedCost = (data.cachedTokens / 1_000_000) * (pricing.cachedInput ?? pricing.input * 0.5);
+        const inputCost = (billableInput / 1_000_000) * pricing.input;
+        const outputCost = (data.outputTokens / 1_000_000) * pricing.output;
+        cost = {
+          inputTokens: data.inputTokens,
+          outputTokens: data.outputTokens,
+          estimatedCostUsd: inputCost + cachedCost + outputCost,
+        };
+      }
+
+      // Use extracted summary if available, otherwise fallback to model info
+      const summary = data.summary
+        ? data.summary
+        : data.model ? `Codex session (${data.model})` : null;
+      const summaryIsFallback = !data.summary;
 
       return {
-        summary: data.model ? `Codex session (${data.model})` : null,
-        summaryIsFallback: true,
+        summary,
+        summaryIsFallback,
         agentSessionId,
         cost,
       };
