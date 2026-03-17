@@ -613,8 +613,10 @@ async function setupHookInWorkspace(
   }
   if (existingScript !== METADATA_UPDATER_SCRIPT) {
     await writeFile(hookScriptPath, METADATA_UPDATER_SCRIPT, "utf-8");
-    await chmod(hookScriptPath, 0o755); // Make executable
   }
+  // Always ensure executable permissions are set — content may match but permissions
+  // could have been lost (e.g., after manual chmod, copy/restore, or filesystem quirks)
+  await chmod(hookScriptPath, 0o755);
 
   // Read existing settings if present
   let existingSettings: Record<string, unknown> = {};

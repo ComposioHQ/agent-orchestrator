@@ -66,3 +66,6 @@ bd.db
 
 # Branch history (runtime, not versioned)
 .br_history/
+
+# Issues tracking (local-only, per-machine)
+issues.jsonl
