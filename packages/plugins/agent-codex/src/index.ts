@@ -1,5 +1,6 @@
 import {
   DEFAULT_READY_THRESHOLD_MS,
+  readLastJsonlEntry,
   shellEscape,
   type Agent,
   type AgentSessionInfo,
@@ -795,10 +796,12 @@ function createCodexAgent(): Agent {
         const ageMs = Date.now() - s.mtimeMs;
 
         if (ageMs <= threshold) {
-          // File was recently modified — try to classify based on last event type
-          const data = await streamCodexSessionData(sessionFile);
-          if (data?.lastEventType) {
-            const eventType = data.lastEventType;
+          // File was recently modified — classify based on last event type.
+          // Uses readLastJsonlEntry which reads backwards from EOF (O(1) for
+          // any file size), avoiding streaming 100MB+ rollout files.
+          const lastEntry = await readLastJsonlEntry(sessionFile);
+          if (lastEntry?.lastType) {
+            const eventType = lastEntry.lastType;
             // Map JSONL event types to activity states
             if (eventType === "permission_request") {
               return { state: "waiting_input", timestamp };
