@@ -656,6 +656,18 @@ function createCodexAgent(): Agent {
   /** Guard against concurrent resolveGhBinary() calls */
   let resolvingGh: Promise<string> | null = null;
 
+  // Eagerly start GH binary resolution so it's ready by the time
+  // getEnvironment() is called for the first session. Without this,
+  // the first session falls back to the hardcoded path.
+  resolvingGh = resolveGhBinary().then((path) => {
+    resolvedGhPath = path;
+    resolvingGh = null;
+    return path;
+  }).catch(() => {
+    resolvingGh = null;
+    return PREFERRED_GH_PATH_FALLBACK;
+  });
+
   return {
     name: "codex",
     processName: "codex",
@@ -885,10 +897,9 @@ function createCodexAgent(): Agent {
           resolvingBinary = null;
         }
       }
-      if (!resolvedGhPath) {
-        if (!resolvingGh) {
-          resolvingGh = resolveGhBinary();
-        }
+      // GH path is resolved eagerly in createCodexAgent(); postLaunchSetup
+      // only needs to await if it hasn't finished yet.
+      if (!resolvedGhPath && resolvingGh) {
         try {
           resolvedGhPath = await resolvingGh;
         } finally {
