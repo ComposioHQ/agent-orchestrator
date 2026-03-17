@@ -5,20 +5,136 @@
  * This bypasses ttyd and gives us control over terminal initialization,
  * allowing us to implement the XDA (Extended Device Attributes) handler
  * that tmux requires for clipboard support.
+ *
+ * Falls back to child_process.spawn + script when node-pty is unavailable
+ * (e.g. containers without gcc/build-essential).
  */
 
 import { createServer, type Server } from "node:http";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { WebSocketServer, WebSocket } from "ws";
-import { spawn as ptySpawn, type IPty } from "node-pty";
-import { homedir, userInfo } from "node:os";
+import { homedir, userInfo, platform } from "node:os";
 import { createCorrelationId } from "@composio/ao-core";
 import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
 import { createObserverContext, inferProjectId } from "./terminal-observability.js";
 
+// =============================================================================
+// PTY abstraction — node-pty with child_process fallback
+// =============================================================================
+
+/** Minimal interface matching node-pty's IPty for our usage */
+interface IPtyLike {
+  onData(callback: (data: string) => void): void;
+  onExit(callback: (e: { exitCode: number }) => void): void;
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  kill(): void;
+}
+
+/** Whether node-pty is available (set at module init) */
+let nodePtyAvailable = false;
+let ptySpawnFn: ((file: string, args: string[], opts: {
+  name: string; cols: number; rows: number; cwd: string;
+  env: Record<string, string>;
+}) => IPtyLike) | null = null;
+
+try {
+  // Dynamic require to avoid hard failure when native binary is missing
+  const nodePty = await import("node-pty");
+  ptySpawnFn = nodePty.spawn as typeof ptySpawnFn;
+  nodePtyAvailable = true;
+  console.log("[DirectTerminal] node-pty loaded successfully");
+} catch {
+  console.warn(
+    "[DirectTerminal] node-pty unavailable — falling back to child_process.spawn.\n" +
+    "  Terminal resize and some PTY features will be limited.\n" +
+    "  Install build-essential/gcc to enable node-pty.",
+  );
+}
+
+/**
+ * Fallback PTY implementation using child_process.spawn + `script` command.
+ * The `script` command allocates a pseudo-terminal, providing basic PTY
+ * support without native compilation. Resize is not supported.
+ */
+class FallbackPty implements IPtyLike {
+  private proc: ChildProcess;
+  private dataCallbacks: ((data: string) => void)[] = [];
+  private exitCallbacks: ((e: { exitCode: number }) => void)[] = [];
+
+  constructor(
+    file: string,
+    args: string[],
+    opts: { cols: number; rows: number; cwd: string; env: Record<string, string> },
+  ) {
+    // Use `script` to allocate a pseudo-terminal
+    const isLinux = platform() === "linux";
+    const scriptArgs = isLinux
+      ? ["-qfc", [file, ...args].join(" "), "/dev/null"]
+      : ["-q", "/dev/null", file, ...args];
+
+    this.proc = spawn("script", scriptArgs, {
+      cwd: opts.cwd,
+      env: {
+        ...opts.env,
+        TERM: "xterm-256color",
+        COLUMNS: String(opts.cols),
+        LINES: String(opts.rows),
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    this.proc.stdout?.on("data", (data: Buffer) => {
+      const str = data.toString("utf-8");
+      for (const cb of this.dataCallbacks) cb(str);
+    });
+
+    this.proc.stderr?.on("data", (data: Buffer) => {
+      const str = data.toString("utf-8");
+      for (const cb of this.dataCallbacks) cb(str);
+    });
+
+    this.proc.on("exit", (code) => {
+      for (const cb of this.exitCallbacks) cb({ exitCode: code ?? 1 });
+    });
+  }
+
+  onData(callback: (data: string) => void): void {
+    this.dataCallbacks.push(callback);
+  }
+
+  onExit(callback: (e: { exitCode: number }) => void): void {
+    this.exitCallbacks.push(callback);
+  }
+
+  write(data: string): void {
+    this.proc.stdin?.write(data);
+  }
+
+  resize(_cols: number, _rows: number): void {
+    // Resize not supported with script fallback
+  }
+
+  kill(): void {
+    try { this.proc.kill(); } catch { /* already dead */ }
+  }
+}
+
+/** Factory function: uses node-pty if available, fallback otherwise */
+function createPty(
+  file: string,
+  args: string[],
+  opts: { name: string; cols: number; rows: number; cwd: string; env: Record<string, string> },
+): IPtyLike {
+  if (nodePtyAvailable && ptySpawnFn) {
+    return ptySpawnFn(file, args, opts);
+  }
+  return new FallbackPty(file, args, opts);
+}
+
 interface TerminalSession {
   sessionId: string;
-  pty: IPty;
+  pty: IPtyLike;
   ws: WebSocket;
 }
 
@@ -180,11 +296,11 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
       TMPDIR: process.env.TMPDIR || "/tmp",
     };
 
-    let pty: IPty;
+    let pty: IPtyLike;
     try {
       console.log(`[DirectTerminal] Spawning PTY: tmux attach-session -t ${tmuxSessionId}`);
 
-      pty = ptySpawn(TMUX, ["attach-session", "-t", tmuxSessionId], {
+      pty = createPty(TMUX, ["attach-session", "-t", tmuxSessionId], {
         name: "xterm-256color",
         cols: 80,
         rows: 24,
