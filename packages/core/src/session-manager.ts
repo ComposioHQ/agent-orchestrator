@@ -223,6 +223,8 @@ const SEND_CONFIRMATION_POLL_MS = 500;
 const SEND_CONFIRMATION_OUTPUT_LINES = 20;
 const SEND_BOOTSTRAP_READY_TIMEOUT_MS = 20_000;
 const SEND_BOOTSTRAP_STABLE_POLLS = 2;
+const SPAWN_READY_TIMEOUT_MS = 30_000;
+const SPAWN_READY_POLL_MS = 500;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -1177,8 +1179,26 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     // should NOT destroy the session. The agent is running; user can retry with `ao send`.
     if (plugins.agent.promptDelivery === "post-launch" && agentLaunchConfig.prompt) {
       try {
-        // Wait for agent to start and be ready for input
-        await new Promise((resolve) => setTimeout(resolve, 5_000));
+        // Poll terminal output for the agent's ready indicator (e.g. ❯ prompt)
+        // instead of using a fixed sleep. This adapts to machine speed:
+        // fast machines proceed in <1s, slow machines get up to 30s.
+        const deadline = Date.now() + SPAWN_READY_TIMEOUT_MS;
+        let agentReady = false;
+        while (Date.now() < deadline) {
+          await sleep(SPAWN_READY_POLL_MS);
+          try {
+            const output = await plugins.runtime.getOutput(handle, 20);
+            if (output && /^[❯>$#]\s*$/m.test(output)) {
+              agentReady = true;
+              break;
+            }
+          } catch {
+            // Can't read output yet — keep polling
+          }
+        }
+        if (!agentReady) {
+          // Timeout reached — send prompt anyway (best-effort, same as before)
+        }
         await plugins.runtime.sendMessage(handle, agentLaunchConfig.prompt);
       } catch {
         // Non-fatal: agent is running but didn't receive the initial prompt.
