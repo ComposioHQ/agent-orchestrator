@@ -67,10 +67,13 @@ class FallbackPty implements IPtyLike {
     args: string[],
     opts: { cols: number; rows: number; cwd: string; env: Record<string, string> },
   ) {
-    // Use `script` to allocate a pseudo-terminal
+    // Use `script` to allocate a pseudo-terminal.
+    // On Linux, pass the command as separate argv elements via `--` to avoid
+    // shell interpretation (no -c string concatenation = no injection risk).
+    // On macOS, `script` doesn't support `--`, so pass file + args directly.
     const isLinux = platform() === "linux";
     const scriptArgs = isLinux
-      ? ["-qfc", [file, ...args].join(" "), "/dev/null"]
+      ? ["-qf", "/dev/null", "--", file, ...args]
       : ["-q", "/dev/null", file, ...args];
 
     this.proc = spawn("script", scriptArgs, {
@@ -82,6 +85,12 @@ class FallbackPty implements IPtyLike {
         LINES: String(opts.rows),
       },
       stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    // Prevent uncaught exception if `script` binary is unavailable
+    this.proc.on("error", (err: Error) => {
+      console.error("[FallbackPty] spawn error:", err.message);
+      for (const cb of this.exitCallbacks) cb({ exitCode: 1 });
     });
 
     this.proc.stdout?.on("data", (data: Buffer) => {
