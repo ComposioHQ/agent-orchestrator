@@ -274,16 +274,16 @@ async function runStartup(
   let reused = false;
 
   // Start dashboard (unless --no-dashboard)
+  let skipDashboard = false;
   if (opts?.dashboard !== false) {
     // Auto-scan for a free port when configured port is busy.
     // Multi-project setups commonly conflict on the default port (3000).
-    let skipDashboard = false;
     if (!(await isPortAvailable(port))) {
       const newPort = await findFreePort(port + 1);
       if (newPort === null) {
         console.warn(
           chalk.yellow(
-            `⚠ Dashboard unavailable (port ${port}–${port + MAX_PORT_SCAN - 1} all in use). Sessions will still work.`,
+            `⚠ Dashboard unavailable (port ${port}–${port + MAX_PORT_SCAN} all in use). Sessions will still work.`,
           ),
         );
         skipDashboard = true;
@@ -371,7 +371,7 @@ async function runStartup(
   // Print summary
   console.log(chalk.bold.green("\n✓ Startup complete\n"));
 
-  if (opts?.dashboard !== false) {
+  if (opts?.dashboard !== false && !skipDashboard) {
     console.log(chalk.cyan("Dashboard:"), `http://localhost:${port}`);
   }
 
@@ -395,7 +395,7 @@ async function runStartup(
   // Polls the port instead of using a fixed delay — deterministic and works regardless of
   // how long Next.js takes to compile. AbortController cancels polling on early exit.
   let openAbort: AbortController | undefined;
-  if (opts?.dashboard !== false) {
+  if (opts?.dashboard !== false && !skipDashboard) {
     openAbort = new AbortController();
     const orchestratorUrl = `http://localhost:${port}/sessions/${sessionId}`;
     void waitForPortAndOpen(port, orchestratorUrl, openAbort.signal);
