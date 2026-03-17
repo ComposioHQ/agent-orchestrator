@@ -410,7 +410,7 @@ if (isMainModule) {
   const TMUX = findTmux();
   console.log(`[DirectTerminal] Using tmux: ${TMUX}`);
 
-  const { server, shutdown } = createDirectTerminalServer(undefined, ensurePtySpawn());
+  const { server, shutdown } = createDirectTerminalServer(TMUX, ensurePtySpawn());
   const PORT = parseInt(process.env.DIRECT_TERMINAL_PORT ?? "14801", 10);
 
   server.listen(PORT, () => {
