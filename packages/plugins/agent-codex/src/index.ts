@@ -37,7 +37,44 @@ function normalizePermissionMode(mode: string | undefined): "permissionless" | "
 const AO_BIN_DIR = join(homedir(), ".ao", "bin");
 const DEFAULT_PATH = "/usr/bin:/bin";
 const PREFERRED_GH_BIN_DIR = "/usr/local/bin";
-const PREFERRED_GH_PATH = `${PREFERRED_GH_BIN_DIR}/gh`;
+const PREFERRED_GH_PATH_FALLBACK = `${PREFERRED_GH_BIN_DIR}/gh`;
+
+/**
+ * Resolve the real `gh` binary path at plugin init time.
+ * Checks `which gh` (respecting the user's PATH), then falls back to
+ * common locations. This ensures GH_PATH points to the user's configured
+ * and authenticated `gh` regardless of linuxbrew/homebrew ordering.
+ */
+async function resolveGhBinary(): Promise<string> {
+  // 1. Try `which gh` — finds the user's configured gh
+  try {
+    const { stdout } = await execFileAsync("which", ["gh"], { timeout: 5000 });
+    const resolved = stdout.trim();
+    // Skip if it resolves to our own wrapper
+    if (resolved && !resolved.startsWith(AO_BIN_DIR)) return resolved;
+  } catch {
+    // Not found via which
+  }
+
+  // 2. Check common locations (prefer /usr/local/bin, then Homebrew)
+  const candidates = [
+    "/usr/local/bin/gh",
+    "/opt/homebrew/bin/gh",
+    "/home/linuxbrew/.linuxbrew/bin/gh",
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      await stat(candidate);
+      return candidate;
+    } catch {
+      // Not found at this location
+    }
+  }
+
+  // 3. Fallback
+  return PREFERRED_GH_PATH_FALLBACK;
+}
 
 function buildAgentPath(basePath: string | undefined): string {
   const inherited = (basePath ?? DEFAULT_PATH).split(":").filter(Boolean);
@@ -614,6 +651,22 @@ function createCodexAgent(): Agent {
   let resolvedBinary: string | null = null;
   /** Guard against concurrent resolveCodexBinary() calls */
   let resolvingBinary: Promise<string> | null = null;
+  /** Cached resolved gh binary path */
+  let resolvedGhPath: string | null = null;
+  /** Guard against concurrent resolveGhBinary() calls */
+  let resolvingGh: Promise<string> | null = null;
+
+  // Eagerly start GH binary resolution so it's ready by the time
+  // getEnvironment() is called for the first session. Without this,
+  // the first session falls back to the hardcoded path.
+  resolvingGh = resolveGhBinary().then((path) => {
+    resolvedGhPath = path;
+    resolvingGh = null;
+    return path;
+  }).catch(() => {
+    resolvingGh = null;
+    return PREFERRED_GH_PATH_FALLBACK;
+  });
 
   return {
     name: "codex",
@@ -656,7 +709,7 @@ function createCodexAgent(): Agent {
       // The wrappers strip this directory from PATH before calling the real
       // binary, so there's no infinite recursion.
       env["PATH"] = buildAgentPath(process.env["PATH"]);
-      env["GH_PATH"] = PREFERRED_GH_PATH;
+      env["GH_PATH"] = resolvedGhPath ?? PREFERRED_GH_PATH_FALLBACK;
       // Disable Codex's version check/update prompt for non-interactive AO sessions.
       env["CODEX_DISABLE_UPDATE_CHECK"] = "1";
 
@@ -842,6 +895,15 @@ function createCodexAgent(): Agent {
           resolvedBinary = await resolvingBinary;
         } finally {
           resolvingBinary = null;
+        }
+      }
+      // GH path is resolved eagerly in createCodexAgent(); postLaunchSetup
+      // only needs to await if it hasn't finished yet.
+      if (!resolvedGhPath && resolvingGh) {
+        try {
+          resolvedGhPath = await resolvingGh;
+        } finally {
+          resolvingGh = null;
         }
       }
       if (!session.workspacePath) return;
