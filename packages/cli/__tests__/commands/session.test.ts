@@ -410,17 +410,14 @@ describe("session attach", () => {
       metadata: {},
     } satisfies Session);
 
-    mockTmux.mockResolvedValue("");
-
     await program.parseAsync(["node", "test", "session", "attach", "app-1"]);
 
-    expect(mockTmux).toHaveBeenCalledWith("has-session", "-t", "tmux-target-1");
     expect(mockSpawn).toHaveBeenCalledWith("tmux", ["attach", "-t", "tmux-target-1"], {
       stdio: "inherit",
     });
   });
 
-  it("fails when tmux session does not exist", async () => {
+  it("fails when the session cannot be resolved", async () => {
     mockSessionManager.get.mockResolvedValue(null);
     mockTmux.mockResolvedValue(null);
 

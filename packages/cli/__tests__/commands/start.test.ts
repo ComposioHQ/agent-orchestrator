@@ -24,6 +24,10 @@ const {
   mockSpawn,
   mockEnsureLifecycleWorker,
   mockStopLifecycleWorker,
+  mockCheckPort,
+  mockCheckBuilt,
+  mockCheckTmux,
+  mockCheckDocker,
 } = vi.hoisted(() => ({
   mockExec: vi.fn(),
   mockExecSilent: vi.fn(),
@@ -42,6 +46,10 @@ const {
   mockSpawn: vi.fn(),
   mockEnsureLifecycleWorker: vi.fn(),
   mockStopLifecycleWorker: vi.fn(),
+  mockCheckPort: vi.fn(),
+  mockCheckBuilt: vi.fn(),
+  mockCheckTmux: vi.fn(),
+  mockCheckDocker: vi.fn(),
 }));
 
 vi.mock("../../src/lib/shell.js", () => ({
@@ -111,8 +119,10 @@ vi.mock("../../src/lib/dashboard-rebuild.js", () => ({
 
 vi.mock("../../src/lib/preflight.js", () => ({
   preflight: {
-    checkPort: vi.fn(),
-    checkBuilt: vi.fn(),
+    checkPort: (...args: unknown[]) => mockCheckPort(...args),
+    checkBuilt: (...args: unknown[]) => mockCheckBuilt(...args),
+    checkTmux: (...args: unknown[]) => mockCheckTmux(...args),
+    checkDocker: (...args: unknown[]) => mockCheckDocker(...args),
   },
 }));
 
@@ -174,6 +184,14 @@ beforeEach(() => {
   });
   mockStopLifecycleWorker.mockReset();
   mockStopLifecycleWorker.mockResolvedValue(true);
+  mockCheckPort.mockReset();
+  mockCheckPort.mockResolvedValue(undefined);
+  mockCheckBuilt.mockReset();
+  mockCheckBuilt.mockResolvedValue(undefined);
+  mockCheckTmux.mockReset();
+  mockCheckTmux.mockResolvedValue(undefined);
+  mockCheckDocker.mockReset();
+  mockCheckDocker.mockResolvedValue(undefined);
   mockSpawn.mockClear();
 });
 
@@ -616,6 +634,34 @@ describe("start command — browser open waits for port", () => {
       expect.objectContaining({ configPath: expect.any(String) }),
       "my-app",
     );
+  });
+});
+
+describe("start command — runtime override", () => {
+  it("passes --runtime to orchestrator spawn and uses matching preflight", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockSessionManager.spawnOrchestrator.mockResolvedValue({
+      id: "app-orchestrator",
+      runtimeHandle: { id: "docker-app-orchestrator", runtimeName: "docker", data: {} },
+      metadata: {},
+    });
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard", "--runtime", "docker"]);
+
+    expect(mockCheckDocker).toHaveBeenCalledTimes(1);
+    expect(mockCheckTmux).not.toHaveBeenCalled();
+    expect(mockSessionManager.spawnOrchestrator).toHaveBeenCalledWith({
+      projectId: "my-app",
+      systemPrompt: expect.any(String),
+      runtime: "docker",
+    });
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("docker (--runtime)");
+    expect(output).toContain("docker attach docker-app-orchestrator");
   });
 });
 

@@ -1,8 +1,9 @@
 import chalk from "chalk";
 import type { Command } from "commander";
 import { loadConfig } from "@composio/ao-core";
-import { exec, getTmuxSessions } from "../lib/shell.js";
-import { matchesPrefix } from "../lib/session-utils.js";
+import { exec } from "../lib/shell.js";
+import { getSessionManager } from "../lib/create-session-manager.js";
+import { getAttachCommand } from "../lib/runtime.js";
 
 async function openInTerminal(sessionName: string, newWindow?: boolean): Promise<boolean> {
   try {
@@ -10,7 +11,7 @@ async function openInTerminal(sessionName: string, newWindow?: boolean): Promise
     await exec("open-iterm-tab", args);
     return true;
   } catch {
-    // Fall back to tmux attach hint
+    // Fall back to attach hint
     return false;
   }
 }
@@ -23,25 +24,16 @@ export function registerOpen(program: Command): void {
     .option("-w, --new-window", "Open in a new terminal window")
     .action(async (target: string | undefined, opts: { newWindow?: boolean }) => {
       const config = loadConfig();
-      const allTmux = await getTmuxSessions();
+      const sm = await getSessionManager(config);
+      const sessions = await sm.list();
 
-      let sessionsToOpen: string[] = [];
+      let sessionsToOpen = sessions;
 
       if (!target || target === "all") {
-        // Open all sessions across all projects
-        for (const [projectId, project] of Object.entries(config.projects)) {
-          const prefix = project.sessionPrefix || projectId;
-          const matching = allTmux.filter((s) => matchesPrefix(s, prefix));
-          sessionsToOpen.push(...matching);
-        }
       } else if (config.projects[target]) {
-        // Open all sessions for a specific project
-        const project = config.projects[target];
-        const prefix = project.sessionPrefix || target;
-        sessionsToOpen = allTmux.filter((s) => matchesPrefix(s, prefix));
-      } else if (allTmux.includes(target)) {
-        // Open a specific session
-        sessionsToOpen = [target];
+        sessionsToOpen = sessions.filter((session) => session.projectId === target);
+      } else if (sessions.some((session) => session.id === target)) {
+        sessionsToOpen = sessions.filter((session) => session.id === target);
       } else {
         console.error(
           chalk.red(`Unknown target: ${target}\nSpecify a session name, project ID, or "all".`),
@@ -60,13 +52,27 @@ export function registerOpen(program: Command): void {
         ),
       );
 
-      for (const session of sessionsToOpen.sort()) {
-        const opened = await openInTerminal(session, opts.newWindow);
-        if (opened) {
-          console.log(chalk.green(`  Opened: ${session}`));
+      for (const session of sessionsToOpen.sort((a, b) => a.id.localeCompare(b.id))) {
+        const runtimeName = session.runtimeHandle?.runtimeName ?? "tmux";
+        if (runtimeName === "tmux") {
+          const opened = await openInTerminal(
+            session.runtimeHandle?.id ?? session.id,
+            opts.newWindow,
+          );
+          if (opened) {
+            console.log(chalk.green(`  Opened: ${session.id}`));
+            continue;
+          }
+        }
+
+        console.log(
+          `  ${chalk.yellow(session.id)} — attach with: ${chalk.dim(getAttachCommand(session.runtimeHandle, session.id))}`,
+        );
+        if (runtimeName !== "tmux") {
+          console.log(chalk.dim(`    iTerm auto-open is only supported for tmux sessions.`));
         } else {
           console.log(
-            `  ${chalk.yellow(session)} — attach with: ${chalk.dim(`tmux attach -t ${session}`)}`,
+            chalk.dim(`    open-iterm-tab is unavailable; use the attach command above.`),
           );
         }
       }

@@ -312,6 +312,40 @@ describe("spawn command", () => {
     });
   });
 
+  it("passes --runtime flag to sessionManager.spawn()", async () => {
+    const fakeSession: Session = {
+      id: "app-1",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: null,
+      issueId: null,
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "docker-app-1", runtimeName: "docker", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+    mockExec
+      .mockResolvedValueOnce({ stdout: "Docker version 27.0", stderr: "" })
+      .mockResolvedValueOnce({ stdout: "Server: Docker Engine", stderr: "" });
+
+    await program.parseAsync(["node", "test", "spawn", "my-app", "--runtime", "docker"]);
+
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith({
+      projectId: "my-app",
+      issueId: undefined,
+      agent: undefined,
+      runtime: "docker",
+    });
+    expect(mockExec).toHaveBeenCalledWith("docker", ["--version"]);
+    expect(mockExec).toHaveBeenCalledWith("docker", ["info"]);
+  });
+
   it("rejects unknown project ID", async () => {
     await expect(program.parseAsync(["node", "test", "spawn", "nonexistent"])).rejects.toThrow(
       "process.exit(1)",
@@ -526,6 +560,34 @@ describe("spawn pre-flight checks", () => {
     await program.parseAsync(["node", "test", "spawn", "my-app"]);
 
     expect(mockSessionManager.spawn).toHaveBeenCalled();
+  });
+
+  it("uses runtime override for preflight even when project defaults to tmux", async () => {
+    const fakeSession: Session = {
+      id: "app-1",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: null,
+      issueId: null,
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "docker-app-1", runtimeName: "docker", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+    mockExec
+      .mockResolvedValueOnce({ stdout: "Docker version 27.0", stderr: "" })
+      .mockResolvedValueOnce({ stdout: "Server: Docker Engine", stderr: "" });
+
+    await program.parseAsync(["node", "test", "spawn", "my-app", "--runtime", "docker"]);
+
+    expect(mockExec).not.toHaveBeenCalledWith("tmux", ["-V"]);
+    expect(mockExec).toHaveBeenCalledWith("docker", ["--version"]);
+    expect(mockExec).toHaveBeenCalledWith("docker", ["info"]);
   });
 
   it("checks gh auth when tracker is github", async () => {

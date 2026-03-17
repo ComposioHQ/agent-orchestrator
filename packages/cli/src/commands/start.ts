@@ -42,6 +42,8 @@ import {
 } from "../lib/web-dir.js";
 import { cleanNextCache } from "../lib/dashboard-rebuild.js";
 import { preflight } from "../lib/preflight.js";
+import { getAttachCommand } from "../lib/runtime.js";
+import { formatRuntimeSelection, getRuntimeSelection } from "../lib/runtime-selection.js";
 
 const DEFAULT_PORT = 3000;
 
@@ -257,7 +259,13 @@ async function runStartup(
   config: OrchestratorConfig,
   projectId: string,
   project: ProjectConfig,
-  opts?: { dashboard?: boolean; orchestrator?: boolean; rebuild?: boolean; autoPort?: boolean },
+  opts?: {
+    dashboard?: boolean;
+    orchestrator?: boolean;
+    rebuild?: boolean;
+    autoPort?: boolean;
+    runtime?: string;
+  },
 ): Promise<void> {
   const sessionId = `${project.sessionPrefix}-orchestrator`;
   const shouldStartLifecycle = opts?.dashboard !== false || opts?.orchestrator !== false;
@@ -266,12 +274,24 @@ async function runStartup(
   const orchestratorSessionStrategy = normalizeOrchestratorSessionStrategy(
     project.orchestratorSessionStrategy,
   );
+  const runtimeSelection = getRuntimeSelection(config, projectId, opts?.runtime);
+  const runtimeName = runtimeSelection.name;
 
   console.log(chalk.bold(`\nStarting orchestrator for ${chalk.cyan(project.name)}\n`));
+  console.log(chalk.dim(`Runtime: ${formatRuntimeSelection(runtimeSelection)}\n`));
+  if (runtimeSelection.source === "flag") {
+    console.log(chalk.dim(`Persist: ao runtime set ${projectId} ${runtimeSelection.name}\n`));
+  }
 
   const spinner = ora();
   let dashboardProcess: ChildProcess | null = null;
   let reused = false;
+
+  if (runtimeName === "tmux") {
+    await preflight.checkTmux();
+  } else if (runtimeName === "docker") {
+    await preflight.checkDocker();
+  }
 
   // Start dashboard (unless --no-dashboard)
   if (opts?.dashboard !== false) {
@@ -334,17 +354,19 @@ async function runStartup(
   }
 
   // Create orchestrator session (unless --no-orchestrator or already exists)
-  let tmuxTarget = sessionId;
+  let attachCommand = getAttachCommand(null, sessionId);
   if (opts?.orchestrator !== false) {
     const sm = await getSessionManager(config);
 
     try {
       spinner.start("Creating orchestrator session");
       const systemPrompt = generateOrchestratorPrompt({ config, projectId, project });
-      const session = await sm.spawnOrchestrator({ projectId, systemPrompt });
-      if (session.runtimeHandle?.id) {
-        tmuxTarget = session.runtimeHandle.id;
-      }
+      const session = await sm.spawnOrchestrator({
+        projectId,
+        systemPrompt,
+        runtime: opts?.runtime,
+      });
+      attachCommand = getAttachCommand(session.runtimeHandle, sessionId);
       reused =
         orchestratorSessionStrategy === "reuse" &&
         session.metadata?.["orchestratorSessionReused"] === "true";
@@ -377,7 +399,7 @@ async function runStartup(
   }
 
   if (opts?.orchestrator !== false && !reused) {
-    console.log(chalk.cyan("Orchestrator:"), `tmux attach -t ${tmuxTarget}`);
+    console.log(chalk.cyan("Orchestrator:"), attachCommand);
   } else if (reused) {
     console.log(chalk.cyan("Orchestrator:"), `reused existing session (${sessionId})`);
   }
@@ -445,6 +467,7 @@ export function registerStart(program: Command): void {
     .option("--no-dashboard", "Skip starting the dashboard server")
     .option("--no-orchestrator", "Skip starting the orchestrator agent")
     .option("--rebuild", "Clean and rebuild dashboard before starting")
+    .option("--runtime <name>", "Temporarily override the runtime plugin (e.g. tmux, docker)")
     .action(
       async (
         projectArg?: string,
@@ -452,6 +475,7 @@ export function registerStart(program: Command): void {
           dashboard?: boolean;
           orchestrator?: boolean;
           rebuild?: boolean;
+          runtime?: string;
         },
       ) => {
         try {

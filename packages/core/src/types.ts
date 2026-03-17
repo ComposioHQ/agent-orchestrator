@@ -185,6 +185,8 @@ export interface SessionSpawnConfig {
   issueId?: string;
   branch?: string;
   prompt?: string;
+  /** Temporarily override the runtime plugin for this session (e.g. "docker", "tmux") */
+  runtime?: string;
   /** Override the agent plugin for this session (e.g. "codex", "claude-code") */
   agent?: string;
   /** Override the OpenCode subagent for this session (e.g. "sisyphus", "oracle") */
@@ -199,6 +201,8 @@ export interface SessionSpawnConfig {
 export interface OrchestratorSpawnConfig {
   projectId: string;
   systemPrompt?: string;
+  /** Temporarily override the runtime plugin for this orchestrator session */
+  runtime?: string;
 }
 
 // =============================================================================
@@ -239,6 +243,7 @@ export interface RuntimeCreateConfig {
   workspacePath: string;
   launchCommand: string;
   environment: Record<string, string>;
+  runtimeConfig?: Record<string, unknown>;
 }
 
 /** Opaque handle returned by runtime.create() */
@@ -950,6 +955,9 @@ export interface ProjectConfig {
 
   /** Override default runtime */
   runtime?: string;
+
+  /** Runtime-specific configuration passed to the selected runtime plugin */
+  runtimeConfig?: Record<string, unknown>;
 
   /** Override default agent */
   agent?: string;
