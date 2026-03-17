@@ -302,6 +302,8 @@ async function runStartup(
   }
 
   // Start dashboard (unless --no-dashboard)
+  // Wrapped to clean up orchestrator on failure (prevents leaked tmux sessions)
+  try {
   if (opts?.dashboard !== false) {
     if (opts?.autoPort) {
       // Port was auto-selected during config generation — if it's now busy
@@ -359,6 +361,16 @@ async function runStartup(
         { cause: err },
       );
     }
+  }
+  } catch (err) {
+    // Clean up orchestrator tmux session on failure to prevent resource leak
+    if (opts?.orchestrator !== false) {
+      try {
+        const sm = await getSessionManager(config);
+        await sm.kill(sessionId).catch(() => {});
+      } catch { /* best-effort cleanup */ }
+    }
+    throw err;
   }
 
   // Print summary
