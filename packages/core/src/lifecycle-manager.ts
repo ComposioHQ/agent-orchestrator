@@ -33,7 +33,7 @@ import {
   type EventPriority,
   type ProjectConfig as _ProjectConfig,
 } from "./types.js";
-import { updateMetadata } from "./metadata.js";
+import { updateMetadata, deleteMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
 import { createCorrelationId, createProjectObserver } from "./observability.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
@@ -783,12 +783,28 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           await notifyHuman(event, priority);
         }
       }
+
     } else {
       // No transition but track current state
       states.set(session.id, newStatus);
     }
 
+    // Dispatch review backlog BEFORE archiving metadata so any metadata
+    // updates land before the file is deleted (prevents recreation).
     await maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction);
+
+    // Auto-archive sessions that reach terminal states (killed/merged).
+    // Without this, organically-exited sessions (agent crashed, auth failed)
+    // leave active metadata files and appear as zombies in `ao status`.
+    // Must run AFTER maybeDispatchReviewBacklog to avoid the backlog
+    // function recreating the just-deleted metadata file.
+    if (newStatus === "killed" || newStatus === "merged") {
+      const project = config.projects[session.projectId];
+      if (project) {
+        const sessionsDir = getSessionsDir(config.configPath, project.path);
+        deleteMetadata(sessionsDir, session.id, true);
+      }
+    }
   }
 
   /** Run one polling cycle across all sessions. */
