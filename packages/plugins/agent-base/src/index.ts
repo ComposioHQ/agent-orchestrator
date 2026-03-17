@@ -604,9 +604,17 @@ async function setupHookInWorkspace(
     // Directory might already exist
   }
 
-  // Write the metadata updater script
-  await writeFile(hookScriptPath, METADATA_UPDATER_SCRIPT, "utf-8");
-  await chmod(hookScriptPath, 0o755); // Make executable
+  // Write the metadata updater script only if content has changed
+  let existingScript: string | null = null;
+  try {
+    existingScript = await readFile(hookScriptPath, "utf-8");
+  } catch {
+    // File doesn't exist yet
+  }
+  if (existingScript !== METADATA_UPDATER_SCRIPT) {
+    await writeFile(hookScriptPath, METADATA_UPDATER_SCRIPT, "utf-8");
+    await chmod(hookScriptPath, 0o755); // Make executable
+  }
 
   // Read existing settings if present
   let existingSettings: Record<string, unknown> = {};
@@ -683,8 +691,17 @@ async function setupHookInWorkspace(
   hooks["PostToolUse"] = postToolUse;
   existingSettings["hooks"] = hooks;
 
-  // Write updated settings
-  await writeFile(settingsPath, JSON.stringify(existingSettings, null, 2) + "\n", "utf-8");
+  // Write updated settings only if content has changed
+  const newContent = JSON.stringify(existingSettings, null, 2) + "\n";
+  let currentContent: string | null = null;
+  try {
+    currentContent = await readFile(settingsPath, "utf-8");
+  } catch {
+    // File doesn't exist yet
+  }
+  if (currentContent !== newContent) {
+    await writeFile(settingsPath, newContent, "utf-8");
+  }
 }
 
 /**
@@ -750,8 +767,17 @@ async function setupMcpMailInWorkspace(
   mcpServers["mcp-agent-mail"] = serverConfig;
   existingSettings["mcpServers"] = mcpServers;
 
-  // Write updated settings
-  await writeFile(settingsPath, JSON.stringify(existingSettings, null, 2) + "\n", "utf-8");
+  // Write updated settings only if content has changed
+  const newContent = JSON.stringify(existingSettings, null, 2) + "\n";
+  let currentContent: string | null = null;
+  try {
+    currentContent = await readFile(settingsPath, "utf-8");
+  } catch {
+    // File doesn't exist yet
+  }
+  if (currentContent !== newContent) {
+    await writeFile(settingsPath, newContent, "utf-8");
+  }
 }
 
 // =============================================================================
