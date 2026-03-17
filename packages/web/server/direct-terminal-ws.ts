@@ -27,7 +27,7 @@ let ptySpawn: unknown = null;
 
 // Interface for PTY instance returned by node-pty.spawn
 interface IPty {
-  onData(data: string): void;
+  onData(callback: (data: string) => void): void;
   onExit(callback: (event: { exitCode: number; signal?: number }) => void): void;
   write(data: string): void;
   resize(cols: number, rows: number): void;
@@ -284,14 +284,14 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
     };
 
     // PTY -> WebSocket
-    pty.onData((data) => {
+    pty.onData((data: string) => {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(data);
       }
     });
 
     // PTY exit
-    pty.onExit(({ exitCode }) => {
+    pty.onExit(({ exitCode }: { exitCode: number }) => {
       console.log(`[DirectTerminal] PTY exited for ${sessionId} with code ${exitCode}`);
       // Guard against stale exits: only delete if this pty is still the active one.
       // A new connection may have already replaced this session entry.
