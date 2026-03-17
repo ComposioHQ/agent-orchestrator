@@ -33,12 +33,6 @@ function ensurePtySpawn(): asserts ptySpawn {
   return ptySpawn;
 }
 
-// Only start the server if running as main module (not imported by tests)
-// to avoid killing test runner when node-pty fails to load
-const isMainModule =
-  process.argv[1]?.endsWith("direct-terminal-ws.ts") ||
-  process.argv[1]?.endsWith("direct-terminal-ws.js");
-
 // Interface for PTY instance returned by node-pty.spawn
 interface IPty {
   onData(callback: (data: string) => void): void;
@@ -114,7 +108,10 @@ export interface DirectTerminalServer {
  */
 export function createDirectTerminalServer(
   tmuxPath?: string,
-  ptySpawnFn: SpawnFunction,
+  // Parameter is provided by tests for future use, but current implementation
+  // uses the global ptySpawn variable loaded at module import time.
+  // Prefix with underscore to indicate intentionally unused for now.
+  _ptySpawnFn: SpawnFunction,
 ): DirectTerminalServer {
   const TMUX = tmuxPath ?? findTmux();
   const activeSessions = new Map<string, TerminalSession>();

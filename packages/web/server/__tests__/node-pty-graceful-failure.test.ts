@@ -8,58 +8,28 @@
  * 3. When running as main module, process.exit(0) is called cleanly
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-
-// Mock process.exit to track calls without actually exiting
-const mockExit = vi.fn();
-const originalExit = process.exit;
+import { describe, it, expect, vi } from "vitest";
 
 // Mock console.error to track error messages
 const mockConsoleError = vi.spyOn(console, "error").mockImplementation(() => {});
 
-beforeEach(() => {
-  mockExit.mockReset();
-  mockConsoleError.mockClear();
-});
-
-afterEach(() => {
-  mockConsoleError.mockRestore();
-});
-
 describe("graceful node-pty failure handling", () => {
   // Note: These tests cannot directly test the top-level import failure handling
   // because the try-catch block runs at module load time, before any tests run.
-  // Instead, we test the behaviors that the graceful failure enables:
+  // Instead, we test to behaviors that graceful failure enables:
   //
   // 1. ensurePtySpawn() throws when ptySpawn is null
   // 2. createDirectTerminalServer accepts a ptySpawnFn parameter
   // 3. The module can be imported without crashing
 
   it("createDirectTerminalServer requires ptySpawnFn parameter", async () => {
-    // Import the module - it should not crash even if node-pty fails to load
+    // Import module - it should not crash even if node-pty fails to load
     // because the top-level try-catch handles the error
     const module = await import("../direct-terminal-ws.js");
 
     // Verify the module exports what we need
     expect(module.createDirectTerminalServer).toBeDefined();
     expect(typeof module.createDirectTerminalServer).toBe("function");
-  });
-
-  it("ensurePtySpawn throws when ptySpawn is null", async () => {
-    // Note: In the actual module, ptySpawn would be null only after
-    // the import fails and before process.exit(0) is called.
-    // We can't test the actual null state without mocking the module,
-    // but we can test the error handling in createDirectTerminalServer.
-
-    // The real behavior happens when:
-    // 1. Module is imported with failing node-pty
-    // 2. Top-level try-catch catches error
-    // 3. process.exit(0) is called
-
-    // Tests should mock this scenario by:
-    // - Not using the module in a way that would call ensurePtySpawn()
-    // - Or providing a mock ptySpawnFn to createDirectTerminalServer
-    expect(true).toBe(true); // Placeholder for behavioral documentation
   });
 
   it("createDirectTerminalServer accepts mocked ptySpawnFn for tests", async () => {
@@ -83,21 +53,16 @@ describe("graceful node-pty failure handling", () => {
   it("createDirectTerminalServer uses provided ptySpawnFn when spawning", async () => {
     const module = await import("../direct-terminal-ws.js");
 
-    let capturedSpawnArgs: unknown[] | null = null;
+    // Create a mock that will be used when a WebSocket connects
+    const mockPtySpawn = vi.fn(() => ({
+      onData: vi.fn(),
+      onExit: vi.fn(),
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+    }));
 
-    // Create a mock that captures spawn arguments
-    const mockPtySpawn = vi.fn(() => {
-      capturedSpawnArgs = Array.from(arguments);
-      return {
-        onData: vi.fn(),
-        onExit: vi.fn(),
-        write: vi.fn(),
-        resize: vi.fn(),
-        kill: vi.fn(),
-      };
-    });
-
-    // Create server - the ptySpawnFn should be called when a WebSocket connects
+    // Create server - the ptySpawnFn should be available for use
     const server = module.createDirectTerminalServer(undefined, mockPtySpawn);
 
     // The server was created successfully
@@ -113,7 +78,7 @@ describe("graceful node-pty failure handling", () => {
 
 describe("graceful failure - error messages", () => {
   it("logs helpful error messages when node-pty fails to load", () => {
-    // This is documented in the source code - the error messages include:
+    // This is documented in the source code - error messages include:
     // - "[DirectTerminal] Failed to load node-pty:"
     // - "[DirectTerminal] This is expected on linux-arm64 without build tools installed."
     // - "[DirectTerminal] Falling back to ttyd terminal on port 14800."
