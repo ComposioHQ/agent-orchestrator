@@ -121,6 +121,18 @@ update_metadata_key() {
 }
 
 # ============================================================================
+# Command Normalization
+# ============================================================================
+
+# Strip leading cd/pushd prefixes so anchored regexes still match.
+# Agents frequently run: "cd /some/path && gh pr create ..."
+# Without this, the ^-anchored patterns below fail to detect the command.
+# Handles chained prefixes: "cd /a && cd /b && git checkout -b feat"
+while [[ "$command" =~ ^[[:space:]]*(cd|pushd)[[:space:]]+[^&]*&&[[:space:]]*(.*) ]]; do
+  command="\${BASH_REMATCH[2]}"
+done
+
+# ============================================================================
 # Command Detection and Parsing
 # ============================================================================
 
