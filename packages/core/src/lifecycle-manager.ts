@@ -33,7 +33,7 @@ import {
   type EventPriority,
   type ProjectConfig as _ProjectConfig,
 } from "./types.js";
-import { updateMetadata } from "./metadata.js";
+import { updateMetadata, deleteMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
 import { createCorrelationId, createProjectObserver } from "./observability.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
@@ -781,6 +781,17 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             data: { oldStatus, newStatus },
           });
           await notifyHuman(event, priority);
+        }
+      }
+
+      // Auto-archive sessions that reach terminal states (killed/merged).
+      // Without this, organically-exited sessions (agent crashed, auth failed)
+      // leave active metadata files and appear as zombies in `ao status`.
+      if (newStatus === "killed" || newStatus === "merged") {
+        const project = config.projects[session.projectId];
+        if (project) {
+          const sessionsDir = getSessionsDir(config.configPath, project.path);
+          deleteMetadata(sessionsDir, session.id, true);
         }
       }
     } else {
