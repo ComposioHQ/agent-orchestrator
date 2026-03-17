@@ -46,6 +46,17 @@ export {
 // Session manager — session CRUD
 export { createSessionManager } from "./session-manager.js";
 export type { SessionManagerDeps } from "./session-manager.js";
+export { createImprovementService } from "./improvement.js";
+export type {
+  ImprovementServiceDeps,
+  ImprovementSpawnResult,
+  ImprovementSpawnGuardrails,
+  FeedbackReportAdapter,
+  NormalizedFeedbackReport,
+  ImprovementLinkage,
+  ForkModePolicyAdapter,
+  ForkModeTarget,
+} from "./improvement.js";
 
 // Lifecycle manager — state machine + reaction engine
 export { createLifecycleManager } from "./lifecycle-manager.js";
