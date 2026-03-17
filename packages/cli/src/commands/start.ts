@@ -275,21 +275,27 @@ async function runStartup(
 
   // Start dashboard (unless --no-dashboard)
   if (opts?.dashboard !== false) {
-    if (opts?.autoPort) {
-      // Port was auto-selected during config generation — if it's now busy
-      // (race condition), find another free port instead of erroring.
-      if (!(await isPortAvailable(port))) {
-        const newPort = await findFreePort(DEFAULT_PORT);
-        if (newPort === null) {
-          throw new Error(
-            `No free port found in range ${DEFAULT_PORT}–${DEFAULT_PORT + MAX_PORT_SCAN - 1}.`,
-          );
-        }
+    // Auto-scan for a free port when configured port is busy.
+    // Multi-project setups commonly conflict on the default port (3000).
+    let skipDashboard = false;
+    if (!(await isPortAvailable(port))) {
+      const newPort = await findFreePort(port + 1);
+      if (newPort === null) {
+        console.warn(
+          chalk.yellow(
+            `⚠ Dashboard unavailable (port ${port}–${port + MAX_PORT_SCAN - 1} all in use). Sessions will still work.`,
+          ),
+        );
+        skipDashboard = true;
+      } else {
+        console.warn(
+          chalk.yellow(`⚠ Port ${port} in use, dashboard starting on port ${newPort} instead`),
+        );
         port = newPort;
       }
-    } else {
-      await preflight.checkPort(port);
     }
+
+    if (!skipDashboard) {
     const webDir = findWebDir();
     if (!existsSync(resolve(webDir, "package.json"))) {
       throw new Error("Could not find @composio/ao-web package. Run: pnpm install");
@@ -310,6 +316,7 @@ async function runStartup(
     );
     spinner.succeed(`Dashboard starting on http://localhost:${port}`);
     console.log(chalk.dim("  (Dashboard will be ready in a few seconds)\n"));
+    }
   }
 
   if (shouldStartLifecycle) {
