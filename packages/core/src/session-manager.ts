@@ -1294,8 +1294,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           ?.destroy(existingOrchestrator.runtimeHandle)
           .catch(() => undefined);
         deleteMetadata(sessionsDir, sessionId, false);
-      }
-      if (existingAlive) {
+      } else if (existingAlive) {
         await existingRuntimePlugin
           ?.destroy(existingOrchestrator.runtimeHandle)
           .catch(() => undefined);
@@ -1337,7 +1336,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           concurrentSession.metadata["orchestratorSessionReused"] = "true";
           return concurrentSession;
         }
-        if (!concurrentAlive) {
+        if (concurrentAlive) {
+          await concurrentRuntimePlugin
+            ?.destroy(concurrentSession.runtimeHandle)
+            .catch(() => undefined);
+          deleteMetadata(sessionsDir, sessionId, false);
+          reserved = reserveSessionId(sessionsDir, sessionId);
+        } else {
           deleteMetadata(sessionsDir, sessionId, orchestratorSessionStrategy === "reuse");
           reserved = reserveSessionId(sessionsDir, sessionId);
         }

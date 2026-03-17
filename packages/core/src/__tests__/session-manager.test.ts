@@ -21,6 +21,7 @@ import {
   reserveSessionId,
   updateMetadata,
 } from "../metadata.js";
+import * as metadataModule from "../metadata.js";
 import { getSessionsDir, getProjectBaseDir, getWorktreesDir } from "../paths.js";
 import {
   SessionNotRestorableError,
@@ -3210,6 +3211,7 @@ describe("spawnOrchestrator", () => {
     const session = await sm.spawnOrchestrator({ projectId: "my-app" });
 
     expect(session.id).toBe("app-orchestrator");
+    expect(mockRuntime.destroy).toHaveBeenCalledTimes(1);
     expect(mockRuntime.destroy).toHaveBeenCalledWith(orphanedHandle);
     expect(mockRuntime.create).toHaveBeenCalled();
   });
@@ -3880,6 +3882,65 @@ describe("spawnOrchestrator", () => {
 
     expect(session.metadata["orchestratorSessionReused"]).toBe("true");
     expect(mockRuntime.create).not.toHaveBeenCalled();
+  });
+
+  it("replaces a concurrent orchestrator when reservation conflict finds a different runtime", async () => {
+    const dockerRuntimeHandle: RuntimeHandle = {
+      id: "rt-docker",
+      runtimeName: "docker",
+      data: {},
+    };
+    const dockerRuntime: Runtime = {
+      ...mockRuntime,
+      name: "docker",
+      destroy: vi.fn().mockResolvedValue(undefined),
+      isAlive: vi.fn().mockResolvedValue(true),
+    };
+    const registryWithDocker: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime" && name === "docker") return dockerRuntime;
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+
+    const concurrentRaw = {
+      worktree: join(tmpDir, "my-app"),
+      branch: "main",
+      status: "working",
+      role: "orchestrator",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(dockerRuntimeHandle),
+      createdAt: new Date().toISOString(),
+    };
+
+    expect(reserveSessionId(sessionsDir, "app-orchestrator")).toBe(true);
+
+    const actualReadMetadataRaw = metadataModule.readMetadataRaw;
+    let readCount = 0;
+    const readMetadataRawSpy = vi
+      .spyOn(metadataModule, "readMetadataRaw")
+      .mockImplementation((...args) => {
+        readCount += 1;
+        if (readCount === 1) return {};
+        if (readCount === 2) return concurrentRaw;
+        return actualReadMetadataRaw(...args);
+      });
+
+    try {
+      const sm = createSessionManager({ config, registry: registryWithDocker });
+      const session = await sm.spawnOrchestrator({ projectId: "my-app" });
+
+      expect(session.runtimeHandle).toEqual(makeHandle("rt-1"));
+      expect(dockerRuntime.destroy).toHaveBeenCalledTimes(1);
+      expect(dockerRuntime.destroy).toHaveBeenCalledWith(dockerRuntimeHandle);
+      expect(mockRuntime.create).toHaveBeenCalledTimes(1);
+    } finally {
+      readMetadataRawSpy.mockRestore();
+    }
   });
 
   it("recovers reservation conflict when existing session is not usable", async () => {
