@@ -71,7 +71,11 @@ export function createPollerManager(deps: PollerManagerDeps): PollerManagerImpl 
   }
 
   /** Check if we've exceeded the respawn cap for a work item */
-  function isRespawnCapExceeded(projectId: string, workItemId: string, pollerConfig: PollerConfig): boolean {
+  function isRespawnCapExceeded(
+    projectId: string,
+    workItemId: string,
+    pollerConfig: PollerConfig,
+  ): boolean {
     const trackerKey = `${projectId}:${workItemId}`;
     const respawnCap = pollerConfig.respawnCap;
     if (!respawnCap) return false;
@@ -129,7 +133,11 @@ export function createPollerManager(deps: PollerManagerDeps): PollerManagerImpl 
   }
 
   /** Poll a single poller and spawn sessions for new work */
-  async function pollOne(projectId: string, pollerConfig: PollerConfig, poller: Poller): Promise<void> {
+  async function pollOne(
+    projectId: string,
+    pollerConfig: PollerConfig,
+    poller: Poller,
+  ): Promise<void> {
     const correlationId = randomUUID();
     const startedAt = Date.now();
 
@@ -188,7 +196,7 @@ export function createPollerManager(deps: PollerManagerDeps): PollerManagerImpl 
 
         try {
           const spawnConfig = await buildSpawnConfig(projectId, workItem, pollerConfig);
-          const session = await poller.spawnSession(workItem, projectId);
+          const session = await poller.spawnSession(workItem, projectId, spawnConfig);
 
           if (session) {
             incrementSpawnCount(projectId, workItem.id);

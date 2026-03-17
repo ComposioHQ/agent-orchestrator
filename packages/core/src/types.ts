@@ -601,7 +601,10 @@ export interface SCM {
    * Validate commits for session exit reconciliation.
    * Returns proof of work: local commits, remote commits, and push status.
    */
-  validateCommits?(session: Session, project: ProjectConfig): Promise<{
+  validateCommits?(
+    session: Session,
+    project: ProjectConfig,
+  ): Promise<{
     /** Commits that exist locally but may not be on remote */
     localCommits: string[];
     /** Commits that are on remote beyond the base branch */
@@ -797,7 +800,11 @@ export interface Poller {
    * Spawn a session for a work item.
    * Returns the session ID or null if spawning failed.
    */
-  spawnSession(workItem: PollerWorkItem, projectId: string): Promise<Session | null>;
+  spawnSession(
+    workItem: PollerWorkItem,
+    projectId: string,
+    config: SessionSpawnConfig,
+  ): Promise<Session | null>;
 }
 
 /** A work item discovered by a poller */
