@@ -80,3 +80,19 @@ When cherry-picking work to a `feat/*-upstream` branch for a ComposioHQ PR, **do
 - `roadmap/` — fork roadmap docs
 - `.beads/` — local issue tracker
 - Any commit that references fork infrastructure (openclaw, jleechanorg-specific tooling)
+
+## Mirror Fork for Clean Upstream PRs
+
+There is a separate mirror fork at `jleechan2015/agent-orchestrator-mirror` that mirrors `ComposioHQ/agent-orchestrator` exactly. Use this for submitting PRs that should go upstream without custom fork logic:
+
+- **Location**: `~/projects_reference/agent-orchestrator-mirror`
+- **Purpose**: Submit Cursor/Gemini CLI support to upstream without MCP mail or other custom changes
+- **Workflow**:
+  1. Sync mirror to `ComposioHQ/agent-orchestrator` main
+  2. Copy desired plugins (agent-cursor, agent-gemini, agent-base) from this fork
+  3. Remove any custom logic (MCP mail, etc.)
+  4. Push and create PR against the mirror, not upstream
+
+**Current mirror PR**: https://github.com/jleechan2015/agent-orchestrator-mirror/pull/1
+
+This fork's work will be proposed to ComposioHQ separately from this repo's custom development.

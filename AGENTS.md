@@ -89,3 +89,13 @@ When preparing a PR against `ComposioHQ/agent-orchestrator`, cherry-pick only th
 - `roadmap/` — internal roadmap docs
 - `.beads/` — local issue tracker artifacts
 - Commits referencing fork-only infrastructure (openclaw, jleechanorg remotes, etc.)
+
+## Mirror Fork for Clean Upstream PRs
+
+For submitting Cursor/Gemini CLI support to upstream without custom fork logic, use the mirror fork:
+
+- **Mirror repo**: `jleechan2015/agent-orchestrator-mirror`
+- **Location**: `~/projects_reference/agent-orchestrator-mirror`
+- **Workflow**: Sync to upstream main → copy clean plugins → remove custom logic (MCP mail) → PR
+
+**Current mirror PR**: https://github.com/jleechan2015/agent-orchestrator-mirror/pull/1
