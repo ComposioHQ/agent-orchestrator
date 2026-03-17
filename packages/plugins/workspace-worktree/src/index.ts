@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync, lstatSync, symlinkSync, rmSync, mkdirSync, readdirSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
 import { join, resolve, basename, dirname } from "node:path";
 import { homedir } from "node:os";
 import type {
@@ -15,6 +16,57 @@ import type {
 const GIT_TIMEOUT = 30_000;
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * bd-uxs.7: AO-managed exclude patterns
+ * These files are written by AO but should not cause worktree to show as dirty.
+ */
+const AO_MANAGED_EXCLUDE_PATTERNS = `# AO-managed files - do not track in worktree
+# Agent configuration (written by agent-base plugin)
+.settings.json
+.claude.json
+# MCP configuration
+mcp.json
+# Hook scripts
+*.sh
+# Agent runtime state
+.agent-*.running
+.agent-*.lock
+`;
+
+/**
+ * Set up .git/info/exclude to ignore AO-managed files in a worktree.
+ * This prevents the worktree from appearing dirty due to runtime files AO writes.
+ */
+async function setupAoManagedExclude(worktreePath: string): Promise<void> {
+  const excludeDir = join(worktreePath, ".git", "info");
+  const excludeFile = join(excludeDir, "exclude");
+
+  // Ensure .git/info directory exists
+  if (!existsSync(excludeDir)) {
+    mkdirSync(excludeDir, { recursive: true });
+  }
+
+  // Read existing exclude file if it exists
+  let existingContent = "";
+  try {
+    existingContent = await readFile(excludeFile, "utf-8");
+  } catch {
+    // File doesn't exist yet
+  }
+
+  // Check if AO-managed section already exists
+  if (existingContent.includes("# AO-managed files")) {
+    return; // Already set up
+  }
+
+  // Append AO-managed patterns
+  const newContent = existingContent
+    ? existingContent.trimEnd() + "\n\n" + AO_MANAGED_EXCLUDE_PATTERNS
+    : AO_MANAGED_EXCLUDE_PATTERNS;
+
+  await writeFile(excludeFile, newContent, "utf-8");
+}
 
 export const manifest = {
   name: "worktree",
@@ -102,6 +154,10 @@ export function create(config?: Record<string, unknown>): Workspace {
           });
         }
       }
+
+      // bd-uxs.7: Set up .git/info/exclude to ignore AO-managed files
+      // This prevents worktree from showing as dirty due to runtime files
+      await setupAoManagedExclude(worktreePath);
 
       return {
         path: worktreePath,

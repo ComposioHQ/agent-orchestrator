@@ -1215,6 +1215,46 @@ export interface ProjectConfig {
     /** Require human approval before executing decomposed plans (default: true) */
     requireApproval: boolean;
   };
+
+  // =============================================================================
+  // MERGE GATE — bd-uxs.8
+  // =============================================================================
+
+  /**
+   * Configurable merge-gate: custom conditions for auto-merge beyond approved+CI-green.
+   * Enables projects to define custom auto-merge conditions.
+   */
+  mergeGate?: MergeGateConfig;
+}
+
+/** Merge gate configuration (bd-uxs.8) */
+export interface MergeGateConfig {
+  /** Enable merge gate checks */
+  enabled: boolean;
+
+  /** Required labels that must be present on the PR */
+  requiredLabels?: string[];
+
+  /** Labels that must NOT be present on the PR */
+  blockedLabels?: string[];
+
+  /** Required checks that must pass (beyond CI green) */
+  requiredChecks?: string[];
+
+  /** Minimum number of approved reviews */
+  minApprovals?: number;
+
+  /** File patterns that must have no changes (e.g., ["*.sql", "schema/"]) */
+  unchangedFiles?: string[];
+
+  /** File patterns that must have changes (e.g., ["tests/", "*.test.ts"]) */
+  requiredFiles?: string[];
+
+  /** Custom webhook URL to call before merge */
+  preMergeWebhook?: string;
+
+  /** Timeout for webhook response (default: 30s) */
+  webhookTimeout?: number;
 }
 
 export interface TrackerConfig {
