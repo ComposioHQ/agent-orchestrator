@@ -280,7 +280,31 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
     }
 
-    // 3. Auto-detect PR by branch if metadata.pr is missing.
+    // 3. Re-detect actual branch from git worktree.
+    //    Agents (especially Codex) frequently rename the branch after spawn.
+    //    If session.branch is stale, detectPR will silently fail to find PRs.
+    if (session.workspacePath && session.branch) {
+      try {
+        const { execFile: execFileCb } = await import("node:child_process");
+        const { promisify } = await import("node:util");
+        const execFileAsync = promisify(execFileCb);
+        const { stdout } = await execFileAsync(
+          "git",
+          ["-C", session.workspacePath, "branch", "--show-current"],
+          { timeout: 5000 },
+        );
+        const actualBranch = stdout.trim();
+        if (actualBranch && actualBranch !== session.branch) {
+          session.branch = actualBranch;
+          const sessionsDir = getSessionsDir(config.configPath, project.path);
+          updateMetadata(sessionsDir, session.id, { branch: actualBranch });
+        }
+      } catch {
+        // git check failed — use existing branch, will retry next poll
+      }
+    }
+
+    // 4. Auto-detect PR by branch if metadata.pr is missing.
     //    This is critical for agents without auto-hook systems (Codex, Aider,
     //    OpenCode) that can't reliably write pr=<url> to metadata on their own.
     //    Skip orchestrator sessions — they sit on the base branch (e.g. master)
@@ -298,7 +322,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         if (detectedPR) {
           session.pr = detectedPR;
           // Persist PR URL so subsequent polls don't need to re-query.
-          // Don't write status here — step 4 below will determine the
+          // Don't write status here — step 5 below will determine the
           // correct status (merged, ci_failed, etc.) on this same cycle.
           const sessionsDir = getSessionsDir(config.configPath, project.path);
           updateMetadata(sessionsDir, session.id, { pr: detectedPR.url });
@@ -308,7 +332,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
     }
 
-    // 4. Check PR state if PR exists
+    // 5. Check PR state if PR exists
     if (session.pr && scm) {
       try {
         const prState = await scm.getPRState(session.pr);
@@ -347,13 +371,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
     }
 
-    // 5. Post-all stuck detection: if we detected idle in step 2 but had no PR,
+    // 6. Post-all stuck detection: if we detected idle in step 2 but had no PR,
     // still check stuck threshold. This handles agents that finish without creating a PR.
     if (detectedIdleTimestamp && isIdleBeyondThreshold(session, detectedIdleTimestamp)) {
       return "stuck";
     }
 
-    // 6. Default: if agent is active, it's working
+    // 7. Default: if agent is active, it's working
     if (
       session.status === "spawning" ||
       session.status === SESSION_STATUS.STUCK ||
