@@ -22,7 +22,8 @@ import {
   validateConfig,
   sanitizeProjectId,
 } from "@composio/ao-core";
-import { exec, execSilent } from "../lib/shell.js";
+import { exec } from "../lib/shell.js";
+import { cloneRepo } from "../lib/session-utils.js";
 import { banner } from "../lib/format.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 import { ensureLifecycleWorker } from "../lib/lifecycle-service.js";
@@ -60,33 +61,7 @@ async function resolveAdHocRepo(
     spinner.succeed(`Using existing clone at ${targetDir}`);
   } else {
     spinner.text = `Cloning ${parsed.ownerRepo}`;
-    // Try gh clone → SSH → HTTPS (same strategy as `ao start <url>`)
-    let cloned = false;
-    if (parsed.host === "github.com") {
-      const ghAvailable = (await execSilent("gh", ["auth", "status"])) !== null;
-      if (ghAvailable) {
-        try {
-          await exec("gh", ["repo", "clone", parsed.ownerRepo, targetDir, "--", "--depth", "1"], {
-            cwd,
-          });
-          cloned = true;
-        } catch {
-          // Fall through
-        }
-      }
-    }
-    if (!cloned) {
-      const sshUrl = `git@${parsed.host}:${parsed.ownerRepo}.git`;
-      try {
-        await exec("git", ["clone", "--depth", "1", sshUrl, targetDir], { cwd });
-        cloned = true;
-      } catch {
-        // Fall through to HTTPS
-      }
-    }
-    if (!cloned) {
-      await exec("git", ["clone", "--depth", "1", parsed.cloneUrl, targetDir], { cwd });
-    }
+    await cloneRepo(parsed, targetDir, cwd);
     spinner.succeed(`Cloned ${parsed.ownerRepo} to ${targetDir}`);
   }
 
