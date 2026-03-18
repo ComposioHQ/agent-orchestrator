@@ -30,9 +30,18 @@ export function isPortAvailable(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const s = new Socket();
     s.setTimeout(300);
-    s.once("connect", () => { s.destroy(); resolve(false); }); // something listening → in use
-    s.once("error", () => { s.destroy(); resolve(true); });    // ECONNREFUSED → free
-    s.once("timeout", () => { s.destroy(); resolve(true); });  // no response → free
+    s.once("connect", () => {
+      s.destroy();
+      resolve(false);
+    }); // something listening → in use
+    s.once("error", () => {
+      s.destroy();
+      resolve(true);
+    }); // ECONNREFUSED → free
+    s.once("timeout", () => {
+      s.destroy();
+      resolve(true);
+    }); // no response → free
     s.connect(port, "127.0.0.1");
   });
 }
@@ -116,6 +125,12 @@ export async function buildDashboardEnv(
 ): Promise<Record<string, string>> {
   const env: Record<string, string> = { ...process.env } as Record<string, string>;
 
+  // Force NODE_ENV=development for the dashboard dev server.
+  // If NODE_ENV=production is inherited from the parent process, npm/pnpm
+  // skips devDependencies, which breaks Tailwind v4 CSS compilation since
+  // @tailwindcss/postcss is a devDependency. See issue #460.
+  env["NODE_ENV"] = "development";
+
   // Pass config path so dashboard uses the same config as the CLI
   if (configPath) {
     env["AO_CONFIG_PATH"] = configPath;
@@ -125,8 +140,11 @@ export async function buildDashboardEnv(
 
   // If explicit ports provided (config or env var), use them directly.
   // Otherwise, auto-detect an available pair starting from the default.
-  const explicitTerminal = terminalPort ?? (env["TERMINAL_PORT"] ? parseInt(env["TERMINAL_PORT"], 10) : undefined);
-  const explicitDirect = directTerminalPort ?? (env["DIRECT_TERMINAL_PORT"] ? parseInt(env["DIRECT_TERMINAL_PORT"], 10) : undefined);
+  const explicitTerminal =
+    terminalPort ?? (env["TERMINAL_PORT"] ? parseInt(env["TERMINAL_PORT"], 10) : undefined);
+  const explicitDirect =
+    directTerminalPort ??
+    (env["DIRECT_TERMINAL_PORT"] ? parseInt(env["DIRECT_TERMINAL_PORT"], 10) : undefined);
 
   let resolvedTerminal: number;
   let resolvedDirect: number;
