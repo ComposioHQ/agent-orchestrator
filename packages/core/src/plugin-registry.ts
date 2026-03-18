@@ -69,8 +69,12 @@ function extractPluginConfig(
       const matches = hasExplicitPlugin ? configuredPlugin === name : notifierName === name;
       if (matches) {
         const { plugin: _plugin, ...rest } = notifierConfig as Record<string, unknown>;
-        return rest;
+        return { port: config.port, ...rest };
       }
+    }
+    // Notifier listed as a plain string (no config object) — still pass port
+    if (Array.isArray(config.notifiers) && config.notifiers.includes(name)) {
+      return { port: config.port };
     }
   }
 

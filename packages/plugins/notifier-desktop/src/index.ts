@@ -48,27 +48,42 @@ function formatActionsMessage(event: OrchestratorEvent, actions: NotifyAction[])
  * Send a desktop notification using osascript (macOS) or notify-send (Linux).
  * Falls back gracefully if neither is available.
  *
- * Note: Desktop notifications do not support click-through URLs natively.
- * On macOS, osascript's `display notification` lacks URL support.
- * Consider `terminal-notifier` for click-to-open if needed in the future.
+ * On macOS, prefers terminal-notifier (click-to-open dashboard URL) over osascript.
+ * Falls back to osascript's `display notification` if terminal-notifier is not installed.
  */
 function sendNotification(
   title: string,
   message: string,
-  options: { sound: boolean; isUrgent: boolean },
+  options: { sound: boolean; isUrgent: boolean; openUrl?: string },
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const os = platform();
 
     if (os === "darwin") {
-      const safeTitle = escapeAppleScript(title);
-      const safeMessage = escapeAppleScript(message);
-      const soundClause = options.sound ? ' sound name "default"' : "";
-      const script = `display notification "${safeMessage}" with title "${safeTitle}"${soundClause}`;
-      execFile("osascript", ["-e", script], (err) => {
-        if (err) reject(err);
-        else resolve();
-      });
+      // Prefer terminal-notifier: supports click-to-open URL and shows under Terminal
+      // Falls back to osascript if terminal-notifier is not available
+      const tryTerminalNotifier = () => {
+        const args = ["-title", title, "-message", message, "-group", "ao-orchestrator"];
+        if (options.openUrl) args.push("-open", options.openUrl);
+        if (options.sound) args.push("-sound", "default");
+        execFile("terminal-notifier", args, (err) => {
+          if (err) fallbackOsascript();
+          else resolve();
+        });
+      };
+
+      const fallbackOsascript = () => {
+        const safeTitle = escapeAppleScript(title);
+        const safeMessage = escapeAppleScript(message);
+        const soundClause = options.sound ? ' sound name "default"' : "";
+        const script = `display notification "${safeMessage}" with title "${safeTitle}"${soundClause}`;
+        execFile("osascript", ["-e", script], (err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      };
+
+      tryTerminalNotifier();
     } else if (os === "linux") {
       // Linux urgency is driven by event priority, not the macOS sound config
       const args: string[] = [];
@@ -89,6 +104,8 @@ function sendNotification(
 
 export function create(config?: Record<string, unknown>): Notifier {
   const soundEnabled = typeof config?.sound === "boolean" ? config.sound : true;
+  const port = typeof config?.port === "number" ? config.port : 3000;
+  const dashboardUrl = `http://localhost:${port}`;
 
   return {
     name: "desktop",
@@ -98,7 +115,7 @@ export function create(config?: Record<string, unknown>): Notifier {
       const message = formatMessage(event);
       const sound = shouldPlaySound(event.priority, soundEnabled);
       const isUrgent = event.priority === "urgent";
-      await sendNotification(title, message, { sound, isUrgent });
+      await sendNotification(title, message, { sound, isUrgent, openUrl: dashboardUrl });
     },
 
     async notifyWithActions(event: OrchestratorEvent, actions: NotifyAction[]): Promise<void> {
@@ -108,7 +125,7 @@ export function create(config?: Record<string, unknown>): Notifier {
       const message = formatActionsMessage(event, actions);
       const sound = shouldPlaySound(event.priority, soundEnabled);
       const isUrgent = event.priority === "urgent";
-      await sendNotification(title, message, { sound, isUrgent });
+      await sendNotification(title, message, { sound, isUrgent, openUrl: dashboardUrl });
     },
   };
 }
