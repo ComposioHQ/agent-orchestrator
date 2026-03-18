@@ -1,7 +1,6 @@
 "use client";
 
-import type { Fork } from "@/lib/governance-types";
-import { formatAddress } from "@/lib/governance-types";
+import { formatAddress, type Fork } from "@/lib/governance-types";
 
 interface ForkRegistryProps {
   forks: Fork[];

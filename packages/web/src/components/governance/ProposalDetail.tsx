@@ -1,17 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type {
-  Proposal,
-  Vote,
-  VoteChoice,
-  Attestation,
-} from "@/lib/governance-types";
 import {
   getProposalStatusColor,
   formatAddress,
   getVotePercentage,
   isVotingOpen,
+  type Proposal,
+  type Vote,
+  type VoteChoice,
+  type Attestation,
 } from "@/lib/governance-types";
 
 interface ProposalDetailProps {

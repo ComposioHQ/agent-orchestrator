@@ -1,10 +1,10 @@
 "use client";
 
-import type { GovernanceTimelineEvent } from "@/lib/governance-types";
 import {
   getEventTypeLabel,
   getEventTypeColor,
   formatAddress,
+  type GovernanceTimelineEvent,
 } from "@/lib/governance-types";
 
 interface GovernanceTimelineProps {
@@ -120,9 +120,9 @@ export function GovernanceTimeline({ events, onSelectProposal }: GovernanceTimel
                     tx:{event.txHash.slice(0, 10)}...
                   </span>
                 )}
-                {hasProposalLink && (
+                {hasProposalLink && event.ref.proposalId && (
                   <button
-                    onClick={() => onSelectProposal(event.ref.proposalId!)}
+                    onClick={() => onSelectProposal(event.ref.proposalId as string)}
                     className="text-[var(--color-accent)] hover:underline"
                   >
                     View Proposal

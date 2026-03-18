@@ -8,8 +8,7 @@ import { ProposalDetail } from "./ProposalDetail";
 import { ForkRegistry } from "./ForkRegistry";
 import { PolicyView } from "./PolicyView";
 import { WalletButton } from "./WalletButton";
-import { sortProposalsByStatus, getProposalStatusColor } from "@/lib/governance-types";
-import type { VoteChoice, Proposal } from "@/lib/governance-types";
+import { sortProposalsByStatus, getProposalStatusColor, type VoteChoice, type Proposal } from "@/lib/governance-types";
 import { cn } from "@/lib/cn";
 
 type GovernanceTab = "timeline" | "proposals" | "forks" | "policy";

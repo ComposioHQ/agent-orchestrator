@@ -11,7 +11,6 @@ import type {
   GovernanceTimelineEvent,
   GovernancePolicy,
   Vote,
-  Attestation,
   GovernanceSSESnapshot,
 } from "./governance-types";
 

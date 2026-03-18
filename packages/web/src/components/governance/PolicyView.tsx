@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { GovernancePolicy } from "@/lib/governance-types";
-import { formatAddress } from "@/lib/governance-types";
+import { type GovernancePolicy } from "@/lib/governance-types";
 
 interface PolicyViewProps {
   forkId: string;
