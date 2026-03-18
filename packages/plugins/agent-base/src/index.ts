@@ -85,6 +85,12 @@ export interface AgentPluginConfig {
    * (e.g. Gemini uses "run_shell_command").
    */
   hookToolMatcher?: string;
+  /**
+   * Hook event type to register. Defaults to "PostToolUse".
+   * Override for agents that use different hook events
+   * (e.g. Gemini uses "AfterTool").
+   */
+  hookEvent?: "PostToolUse" | "AfterTool";
 }
 
 // =============================================================================
@@ -609,6 +615,7 @@ async function setupHookInWorkspace(
   configDir: string,
   hookCommand: string,
   hookMatcher = "Bash",
+  hookEvent: "PostToolUse" | "AfterTool" = "PostToolUse",
 ): Promise<void> {
   const agentDir = join(workspacePath, configDir);
   const settingsPath = join(agentDir, "settings.json");
@@ -706,7 +713,7 @@ async function setupHookInWorkspace(
     }
   }
 
-  hooks["PostToolUse"] = postToolUse;
+  hooks[hookEvent] = postToolUse;
   existingSettings["hooks"] = hooks;
 
   // Write updated settings
@@ -943,7 +950,7 @@ export function createAgentPlugin(config: AgentPluginConfig, overrides?: Partial
       // Prefix AO_DATA_DIR so the hook writes to the configured data directory
       // rather than the default $HOME/.ao-sessions.
       const hookCommand = `AO_DATA_DIR=${shellEscape(hookConfig.dataDir)} ${shellEscape(hookScriptPath)}`;
-      await setupHookInWorkspace(workspacePath, config.configDir, hookCommand, config.hookToolMatcher ?? "Bash");
+      await setupHookInWorkspace(workspacePath, config.configDir, hookCommand, config.hookToolMatcher ?? "Bash", config.hookEvent ?? "PostToolUse");
     },
 
     async postLaunchSetup(session: Session): Promise<void> {
@@ -954,7 +961,7 @@ export function createAgentPlugin(config: AgentPluginConfig, overrides?: Partial
         "metadata-updater.sh",
       );
       // postLaunchSetup does not receive hookConfig — use the env-var default
-      await setupHookInWorkspace(session.workspacePath, config.configDir, shellEscape(hookScriptPath), config.hookToolMatcher ?? "Bash");
+      await setupHookInWorkspace(session.workspacePath, config.configDir, shellEscape(hookScriptPath), config.hookToolMatcher ?? "Bash", config.hookEvent ?? "PostToolUse");
     },
 
     ...overrides,

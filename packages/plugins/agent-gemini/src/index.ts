@@ -62,6 +62,8 @@ const geminiConfig: AgentPluginConfig = {
   sessionFileExtension: ".json",
   // Gemini CLI uses "run_shell_command" for shell execution, not "Bash"
   hookToolMatcher: "run_shell_command",
+  // Gemini CLI uses AfterTool hook events, not PostToolUse
+  hookEvent: "AfterTool",
 };
 
 // =============================================================================
