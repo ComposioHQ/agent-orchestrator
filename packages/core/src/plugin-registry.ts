@@ -77,6 +77,28 @@ function extractPluginConfig(
   return undefined;
 }
 
+function shouldLoadBuiltinPlugin(
+  builtin: { slot: PluginSlot; name: string },
+  config?: OrchestratorConfig,
+): boolean {
+  if (!config || builtin.slot !== "notifier") {
+    return true;
+  }
+
+  if (extractPluginConfig("notifier", builtin.name, config)) {
+    return true;
+  }
+
+  const referencedNotifiers = new Set<string>(config.defaults?.notifiers ?? []);
+  for (const names of Object.values(config.notificationRouting ?? {})) {
+    for (const notifierName of names) {
+      referencedNotifiers.add(notifierName);
+    }
+  }
+
+  return referencedNotifiers.has(builtin.name);
+}
+
 export function createPluginRegistry(): PluginRegistry {
   const plugins: PluginMap = new Map();
 
@@ -109,6 +131,10 @@ export function createPluginRegistry(): PluginRegistry {
     ): Promise<void> {
       const doImport = importFn ?? ((pkg: string) => import(pkg));
       for (const builtin of BUILTIN_PLUGINS) {
+        if (!shouldLoadBuiltinPlugin(builtin, orchestratorConfig)) {
+          continue;
+        }
+
         try {
           const mod = (await doImport(builtin.pkg)) as PluginModule;
           if (mod.manifest && typeof mod.create === "function") {
