@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { generateOrchestratorPrompt } from "@composio/ao-core";
+import { generateOrchestratorBootstrapPrompt, generateOrchestratorPrompt } from "@composio/ao-core";
 import { getServices } from "@/lib/services";
 import { validateIdentifier } from "@/lib/validation";
 
@@ -24,7 +24,8 @@ export async function POST(request: NextRequest) {
     }
 
     const systemPrompt = generateOrchestratorPrompt({ config, projectId, project });
-    const session = await sessionManager.spawnOrchestrator({ projectId, systemPrompt });
+    const prompt = generateOrchestratorBootstrapPrompt({ config, projectId, project });
+    const session = await sessionManager.spawnOrchestrator({ projectId, systemPrompt, prompt });
 
     return NextResponse.json(
       {

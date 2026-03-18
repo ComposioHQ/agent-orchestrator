@@ -5,8 +5,8 @@
  *   1. `ao start [project]` — start from existing config
  *   2. `ao start <url>` — clone repo, auto-generate config, then start
  *
- * The orchestrator prompt is passed to the agent via --append-system-prompt
- * (or equivalent flag) at launch time — no file writing required.
+ * The orchestrator starts with both a system prompt and a bootstrap turn so
+ * the session immediately surveys project state instead of sitting idle.
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
@@ -17,6 +17,7 @@ import ora from "ora";
 import type { Command } from "commander";
 import {
   loadConfig,
+  generateOrchestratorBootstrapPrompt,
   generateOrchestratorPrompt,
   isRepoUrl,
   parseRepoUrl,
@@ -341,7 +342,8 @@ async function runStartup(
     try {
       spinner.start("Creating orchestrator session");
       const systemPrompt = generateOrchestratorPrompt({ config, projectId, project });
-      const session = await sm.spawnOrchestrator({ projectId, systemPrompt });
+      const prompt = generateOrchestratorBootstrapPrompt({ config, projectId, project });
+      const session = await sm.spawnOrchestrator({ projectId, systemPrompt, prompt });
       if (session.runtimeHandle?.id) {
         tmuxTarget = session.runtimeHandle.id;
       }

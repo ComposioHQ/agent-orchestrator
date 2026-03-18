@@ -57,6 +57,14 @@ ao start https://github.com/your-org/your-repo
 
 Auto-detects language, package manager, SCM platform, and default branch. Generates `agent-orchestrator.yaml` and starts the dashboard + orchestrator.
 
+The orchestrator session is itself an AI agent. After `ao start`, you can talk to that session to triage work, create issues, and spawn workers for you:
+
+```text
+fix the config loading bug and start whoever should own it
+how is ao-3 doing?
+spawn issue 18 only after PR 14 is merged
+```
+
 **Option B — From an existing local repo:**
 
 ```bash

@@ -199,6 +199,7 @@ export interface SessionSpawnConfig {
 export interface OrchestratorSpawnConfig {
   projectId: string;
   systemPrompt?: string;
+  prompt?: string;
 }
 
 // =============================================================================

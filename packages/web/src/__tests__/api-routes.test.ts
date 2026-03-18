@@ -466,6 +466,7 @@ describe("API Routes", () => {
       expect(mockSessionManager.spawnOrchestrator).toHaveBeenCalledWith({
         projectId: "my-app",
         systemPrompt: expect.stringContaining("# My App Orchestrator"),
+        prompt: expect.stringContaining("Run these commands now:"),
       });
 
       const data = await res.json();

@@ -3806,6 +3806,52 @@ describe("spawnOrchestrator", () => {
     expect(readFileSync(promptFile, "utf-8")).toBe("You are the orchestrator.");
   });
 
+  it("passes orchestrator bootstrap prompt through launch config", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    await sm.spawnOrchestrator({
+      projectId: "my-app",
+      prompt: "Survey the repo and summarize the current state.",
+    });
+
+    expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: "Survey the repo and summarize the current state.",
+      }),
+    );
+  });
+
+  it("sends orchestrator bootstrap prompt post-launch when the agent requires it", async () => {
+    vi.useFakeTimers();
+    const postLaunchAgent = {
+      ...mockAgent,
+      promptDelivery: "post-launch" as const,
+    };
+    const registryWithPostLaunch: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return postLaunchAgent;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+
+    const sm = createSessionManager({ config, registry: registryWithPostLaunch });
+    const spawnPromise = sm.spawnOrchestrator({
+      projectId: "my-app",
+      prompt: "Survey the repo and summarize the current state.",
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await spawnPromise;
+
+    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: expect.any(String) }),
+      "Survey the repo and summarize the current state.",
+    );
+    vi.useRealTimers();
+  });
+
   it("throws for unknown project", async () => {
     const sm = createSessionManager({ config, registry: mockRegistry });
 

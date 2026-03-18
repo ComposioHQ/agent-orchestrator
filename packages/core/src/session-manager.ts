@@ -228,6 +228,25 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function deliverPostLaunchPrompt(
+  runtime: Runtime,
+  agent: Agent,
+  handle: RuntimeHandle,
+  prompt?: string,
+): Promise<void> {
+  if (agent.promptDelivery !== "post-launch" || !prompt) {
+    return;
+  }
+
+  try {
+    await sleep(5_000);
+    await runtime.sendMessage(handle, prompt);
+  } catch {
+    // Non-fatal: the agent is already running and the prompt can be retried
+    // manually with `ao send`.
+  }
+}
+
 async function getTmuxForegroundCommand(sessionName: string): Promise<string | null> {
   try {
     const { stdout } = await execFileAsync(
@@ -1175,16 +1194,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     // exits after -p, so we send the prompt after it starts in interactive mode).
     // This is intentionally outside the try/catch above — a prompt delivery failure
     // should NOT destroy the session. The agent is running; user can retry with `ao send`.
-    if (plugins.agent.promptDelivery === "post-launch" && agentLaunchConfig.prompt) {
-      try {
-        // Wait for agent to start and be ready for input
-        await new Promise((resolve) => setTimeout(resolve, 5_000));
-        await plugins.runtime.sendMessage(handle, agentLaunchConfig.prompt);
-      } catch {
-        // Non-fatal: agent is running but didn't receive the initial prompt.
-        // User can retry with `ao send`.
-      }
-    }
+    await deliverPostLaunchPrompt(plugins.runtime, plugins.agent, handle, agentLaunchConfig.prompt);
 
     return session;
   }
@@ -1348,6 +1358,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       },
       permissions: "permissionless" as const,
       model: selection.model,
+      prompt: orchestratorConfig.prompt,
       systemPromptFile,
       subagent: selection.subagent,
     };
@@ -1436,6 +1447,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
       throw err;
     }
+
+    await deliverPostLaunchPrompt(plugins.runtime, plugins.agent, handle, agentLaunchConfig.prompt);
 
     return session;
   }
