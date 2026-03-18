@@ -439,6 +439,12 @@ describe("generateGnapTaskId", () => {
       "https-github-com-org-repo-issues-42",
     );
   });
+
+  it("falls back to session ID when issue sanitizes to empty string", () => {
+    expect(generateGnapTaskId("int-1", "#")).toBe("int-1");
+    expect(generateGnapTaskId("int-1", "///")).toBe("int-1");
+    expect(generateGnapTaskId("int-1", "@")).toBe("int-1");
+  });
 });
 
 describe("syncSessionToGnap", () => {
@@ -615,16 +621,17 @@ describe("syncDecompositionToGnap", () => {
   it("creates parent and child tasks", () => {
     syncDecompositionToGnap({
       projectPath,
+      planId: "plan-1",
       rootTaskDescription: "Build full-stack app",
       tasks: [
         { id: "task-1", description: "Implement backend API" },
-        { id: "task-2", description: "Build frontend UI", parentId: "plan-root" },
+        { id: "task-2", description: "Build frontend UI", parentId: "plan-1" },
         { id: "task-3", description: "Write integration tests" },
       ],
     });
 
     // Parent task
-    const parent = readGnapTask(projectPath, "plan-root");
+    const parent = readGnapTask(projectPath, "plan-1");
     expect(parent).not.toBeNull();
     expect(parent!.title).toBe("Build full-stack app");
     expect(parent!.state).toBe("in_progress");
@@ -634,19 +641,45 @@ describe("syncDecompositionToGnap", () => {
     const task1 = readGnapTask(projectPath, "task-1");
     expect(task1).not.toBeNull();
     expect(task1!.title).toBe("Implement backend API");
-    expect(task1!.parent).toBe("plan-root");
+    expect(task1!.parent).toBe("plan-1");
     expect(task1!.state).toBe("ready"); // No session assigned
 
     const task2 = readGnapTask(projectPath, "task-2");
-    expect(task2!.parent).toBe("plan-root");
+    expect(task2!.parent).toBe("plan-1");
 
     const task3 = readGnapTask(projectPath, "task-3");
-    expect(task3!.parent).toBe("plan-root");
+    expect(task3!.parent).toBe("plan-1");
+  });
+
+  it("multiple decompositions do not collide", () => {
+    syncDecompositionToGnap({
+      projectPath,
+      planId: "plan-a",
+      rootTaskDescription: "First plan",
+      tasks: [{ id: "a-1", description: "Task A" }],
+    });
+    syncDecompositionToGnap({
+      projectPath,
+      planId: "plan-b",
+      rootTaskDescription: "Second plan",
+      tasks: [{ id: "b-1", description: "Task B" }],
+    });
+
+    const planA = readGnapTask(projectPath, "plan-a");
+    const planB = readGnapTask(projectPath, "plan-b");
+    expect(planA!.title).toBe("First plan");
+    expect(planB!.title).toBe("Second plan");
+
+    const taskA = readGnapTask(projectPath, "a-1");
+    expect(taskA!.parent).toBe("plan-a");
+    const taskB = readGnapTask(projectPath, "b-1");
+    expect(taskB!.parent).toBe("plan-b");
   });
 
   it("marks tasks with sessions as in_progress", () => {
     syncDecompositionToGnap({
       projectPath,
+      planId: "plan-2",
       rootTaskDescription: "Build app",
       tasks: [
         { id: "task-1", description: "Backend", sessionId: "int-1" },

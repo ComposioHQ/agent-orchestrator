@@ -469,14 +469,18 @@ export interface GnapSyncOptions {
 /**
  * Generate a deterministic GNAP task ID from a session's issue or session ID.
  * Uses the issue ID if available, otherwise falls back to session ID.
+ * Always returns a non-empty string safe for use as a filename.
  */
 export function generateGnapTaskId(sessionId: string, issueId?: string): string {
   if (issueId) {
     // Sanitize issue ID for use as filename: replace slashes, spaces, special chars
-    return issueId
+    const sanitized = issueId
       .replace(/[^a-zA-Z0-9_-]/g, "-")
       .replace(/-+/g, "-")
       .replace(/^-|-$/g, "");
+    // Fall back to sessionId if sanitization produced an empty string
+    // (e.g. issueId was "#" or "///")
+    if (sanitized) return sanitized;
   }
   return sessionId;
 }
@@ -600,6 +604,8 @@ export function syncSessionToGnap(opts: GnapSyncOptions): void {
 export interface GnapDecompositionSyncOptions {
   projectPath: string;
   gnapDir?: string;
+  /** Unique ID for this decomposition plan (default: auto-generated from timestamp) */
+  planId?: string;
   rootTaskDescription: string;
   /** Leaf tasks from the decomposition — each will get a GNAP task file. */
   tasks: Array<{
@@ -623,8 +629,9 @@ export function syncDecompositionToGnap(opts: GnapDecompositionSyncOptions): voi
 
   const now = new Date().toISOString();
 
-  // Create parent task
-  const parentTaskId = "plan-root";
+  // Use provided planId or generate a unique one to avoid collisions
+  // across multiple decomposition invocations
+  const parentTaskId = opts.planId ?? `plan-${Date.now()}`;
   writeGnapTask(
     opts.projectPath,
     {
