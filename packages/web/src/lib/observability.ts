@@ -2,11 +2,11 @@ import {
   createCorrelationId,
   createProjectObserver,
   readObservabilitySummary,
+  resolveProjectIdForSessionId,
   type OrchestratorConfig,
   type ObservabilitySummary,
 } from "@composio/ao-core";
 import { NextResponse } from "next/server";
-import { resolveProjectIdForSessionId } from "@/lib/session-project";
 
 let webApiObserver: ReturnType<typeof createProjectObserver> | null | undefined;
 

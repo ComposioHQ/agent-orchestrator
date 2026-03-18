@@ -10,9 +10,23 @@
 import { createServer, type Server } from "node:http";
 import { spawn } from "node:child_process";
 import { WebSocketServer, WebSocket } from "ws";
-import { spawn as ptySpawn, type IPty } from "node-pty";
 import { homedir, userInfo } from "node:os";
 import { createCorrelationId } from "@composio/ao-core";
+
+// node-pty is an optionalDependency — it requires native compilation and may
+// not be available on all platforms. Load it dynamically so the rest of the
+// server can still start even if node-pty is missing.
+/* eslint-disable @typescript-eslint/consistent-type-imports -- node-pty is optional; static import would crash if missing */
+type IPty = import("node-pty").IPty;
+let ptySpawn: typeof import("node-pty").spawn | undefined;
+/* eslint-enable @typescript-eslint/consistent-type-imports */
+try {
+  const nodePty = await import("node-pty");
+  ptySpawn = nodePty.spawn;
+} catch {
+  console.warn("[DirectTerminal] node-pty not available — direct terminal will be disabled.");
+  console.warn("[DirectTerminal] Install it with: npm install node-pty");
+}
 import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
 import { createObserverContext, inferProjectId } from "./terminal-observability.js";
 
@@ -108,6 +122,11 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
   };
 
   wss.on("connection", (ws, req) => {
+    if (!ptySpawn) {
+      ws.close(1011, "Direct terminal unavailable — node-pty not installed");
+      return;
+    }
+
     const url = new URL(req.url ?? "/", "ws://localhost");
     const sessionId = url.searchParams.get("session");
 
