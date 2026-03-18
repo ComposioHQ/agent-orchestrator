@@ -22,16 +22,14 @@ const execFileAsync = promisify(execFile);
  * These files are written by AO but should not cause worktree to show as dirty.
  */
 const AO_MANAGED_EXCLUDE_PATTERNS = `# AO-managed files - do not track in worktree
-# Agent configuration (written by agent-base plugin)
-settings.json
-.claude.json
-# MCP configuration
-mcp.json
-# Hook scripts (specific patterns, not broad *.sh)
-metadata-updater.sh
-# Agent runtime state
-.agent-*.running
-.agent-*.lock
+# Agent configuration and hook scripts (written by agent-base plugin)
+# Paths are relative to the worktree root to avoid matching nested files.
+.claude/settings.json
+.claude/metadata-updater.sh
+.cursor/settings.json
+.cursor/metadata-updater.sh
+.gemini/settings.json
+.gemini/metadata-updater.sh
 `;
 
 /**
