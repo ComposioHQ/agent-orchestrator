@@ -1,42 +1,141 @@
 @import "tailwindcss";
 
-@theme {
-  /* ── Base surfaces ────────────────────────────────────────────────── */
-  --color-bg-base:      #0d1117;
-  --color-bg-surface:   rgba(22, 27, 34, 0.8);
-  --color-bg-elevated:  rgba(28, 33, 40, 0.9);
-  --color-bg-subtle:    rgba(33, 38, 45, 0.7);
+/* ── Light mode (default) ─────────────────────────────────────────── */
+:root {
+  /* Base surfaces */
+  --color-bg-base:      #f8f9fb;
+  --color-bg-surface:   rgba(255, 255, 255, 0.85);
+  --color-bg-elevated:  rgba(255, 255, 255, 0.95);
+  --color-bg-subtle:    rgba(0, 0, 0, 0.03);
 
   /* Backward-compat aliases */
   --color-bg-primary:   var(--color-bg-base);
   --color-bg-secondary: var(--color-bg-surface);
   --color-bg-tertiary:  var(--color-bg-elevated);
 
-  /* ── Borders ─────────────────────────────────────────────────────── */
+  /* Borders */
+  --color-border-subtle:   rgba(0, 0, 0, 0.06);
+  --color-border-default:  rgba(0, 0, 0, 0.12);
+  --color-border-strong:   rgba(0, 0, 0, 0.20);
+
+  /* Backward-compat aliases */
+  --color-border-muted:    var(--color-border-subtle);
+  --color-border-emphasis:  var(--color-border-strong);
+
+  /* Text */
+  --color-text-primary:   #1c2128;
+  --color-text-secondary: #57606a;
+  --color-text-tertiary:  #8b949e;
+  --color-text-muted:     #8b949e;
+  --color-text-inverse:   #ffffff;
+
+  /* Interactive accent */
+  --color-accent:         #0969da;
+  --color-accent-hover:   #0550ae;
+  --color-accent-subtle:  rgba(9, 105, 218, 0.08);
+
+  /* Status / semantic colors */
+  --color-status-working:   #0969da;
+  --color-status-ready:     #1a7f37;
+  --color-status-attention:  #9a6700;
+  --color-status-idle:      #8b949e;
+  --color-status-done:      #d0d7de;
+  --color-status-error:     #cf222e;
+
+  /* Semantic aliases */
+  --color-accent-blue:    #0969da;
+  --color-accent-green:   #1a7f37;
+  --color-accent-yellow:  #9a6700;
+  --color-accent-orange:  #bc4c00;
+  --color-accent-red:     #cf222e;
+  --color-accent-violet:  #8250df;
+  --color-accent-purple:  #8250df;
+
+  /* Theme-adaptive tints (bg tints behind status pills) */
+  --color-tint-blue:      rgba(9, 105, 218, 0.08);
+  --color-tint-green:     rgba(26, 127, 55, 0.08);
+  --color-tint-yellow:    rgba(154, 103, 0, 0.08);
+  --color-tint-red:       rgba(207, 34, 46, 0.08);
+  --color-tint-violet:    rgba(130, 80, 223, 0.08);
+  --color-tint-orange:    rgba(188, 76, 0, 0.08);
+  --color-tint-neutral:   rgba(0, 0, 0, 0.04);
+
+  /* Chip/badge background */
+  --color-chip-bg:        rgba(0, 0, 0, 0.04);
+
+  /* Hover overlay */
+  --color-hover-overlay:  rgba(0, 0, 0, 0.03);
+
+  /* Scrollbar */
+  --color-scrollbar:        rgba(0, 0, 0, 0.08);
+  --color-scrollbar-hover:  rgba(0, 0, 0, 0.15);
+  --color-scrollbar-active: rgba(0, 0, 0, 0.25);
+
+  /* Body radial gradient tints */
+  --color-body-gradient-blue:   rgba(9, 105, 218, 0.02);
+  --color-body-gradient-violet: rgba(130, 80, 223, 0.015);
+
+  /* Nav glass */
+  --color-nav-bg: rgba(255, 255, 255, 0.92);
+
+  /* Card surfaces */
+  --card-bg:              linear-gradient(175deg, #ffffff 0%, #f6f8fa 100%);
+  --card-merge-bg:        linear-gradient(175deg, #f0fff4 0%, #e6ffed 100%);
+  --card-expanded-bg:     linear-gradient(175deg, #f6f8fa 0%, #f0f3f6 100%);
+  --card-shadow:          0 1px 3px rgba(0,0,0,0.08), 0 3px 8px rgba(0,0,0,0.04);
+  --card-shadow-hover:    0 4px 12px rgba(0,0,0,0.1), 0 8px 24px rgba(0,0,0,0.06);
+  --card-inset:           inset 0 1px 0 rgba(255,255,255,0.8);
+
+  /* Detail card */
+  --detail-card-bg:       linear-gradient(175deg, #ffffff 0%, #f6f8fa 100%);
+  --detail-card-shadow:   0 1px 3px rgba(0,0,0,0.08), inset 0 1px 0 rgba(255,255,255,0.8);
+
+  /* Orchestrator button */
+  --btn-shadow:           0 1px 2px rgba(0,0,0,0.08), 0 3px 8px rgba(0,0,0,0.04);
+  --btn-shadow-hover:     0 2px 6px rgba(0,0,0,0.12), 0 8px 20px rgba(0,0,0,0.08);
+  --btn-inset:            none;
+
+  /* Alert colors */
+  --color-alert-ci:           #6366f1;
+  --color-alert-ci-unknown:   #9a6700;
+  --color-alert-review:       #1a7f37;
+  --color-alert-review-bg:    #1a7f37;
+  --color-alert-changes:      #cf222e;
+  --color-alert-conflict:     #cf222e;
+  --color-alert-conflict-bg:  rgba(207, 34, 46, 0.15);
+  --color-alert-comment:      #bc4c00;
+  --color-alert-comment-bg:   rgba(188, 76, 0, 0.15);
+}
+
+/* ── Dark mode ────────────────────────────────────────────────────── */
+.dark {
+  /* Base surfaces */
+  --color-bg-base:      #0d1117;
+  --color-bg-surface:   rgba(22, 27, 34, 0.8);
+  --color-bg-elevated:  rgba(28, 33, 40, 0.9);
+  --color-bg-subtle:    rgba(33, 38, 45, 0.7);
+
+  /* Borders */
   --color-border-subtle:   rgba(48, 54, 61, 0.6);
   --color-border-default:  rgba(48, 54, 61, 1);
   --color-border-strong:   rgba(72, 79, 88, 1);
 
-  /* Backward-compat aliases */
-  --color-border-muted:    var(--color-border-subtle);
-  --color-border-emphasis: var(--color-border-strong);
-
-  /* ── Text ─────────────────────────────────────────────────────────── */
+  /* Text */
   --color-text-primary:   #e6edf3;
   --color-text-secondary: #7d8590;
   --color-text-tertiary:  #484f58;
   --color-text-muted:     #484f58;
   --color-text-inverse:   #0d1117;
 
-  /* ── Interactive accent ──────────────────────────────────────────── */
+  /* Interactive accent */
   --color-accent:         #58a6ff;
   --color-accent-hover:   #79b8ff;
   --color-accent-subtle:  rgba(88, 166, 255, 0.12);
 
-  /* ── Status / semantic colors ────────────────────────────────────── */
+  /* Status / semantic colors */
   --color-status-working:   #58a6ff;
   --color-status-ready:     #3fb950;
-  --color-status-attention: #d29922;
+  --color-status-attention:  #d29922;
   --color-status-idle:      #484f58;
   --color-status-done:      #30363d;
   --color-status-error:     #f85149;
@@ -50,17 +149,74 @@
   --color-accent-violet:  #a371f7;
   --color-accent-purple:  #bc8cff;
 
+  /* Theme-adaptive tints */
+  --color-tint-blue:      rgba(88, 166, 255, 0.1);
+  --color-tint-green:     rgba(63, 185, 80, 0.1);
+  --color-tint-yellow:    rgba(210, 153, 34, 0.12);
+  --color-tint-red:       rgba(248, 81, 73, 0.1);
+  --color-tint-violet:    rgba(163, 113, 247, 0.1);
+  --color-tint-orange:    rgba(209, 134, 22, 0.1);
+  --color-tint-neutral:   rgba(72, 79, 88, 0.25);
+
+  /* Chip/badge background */
+  --color-chip-bg:        rgba(125, 133, 144, 0.08);
+
+  /* Hover overlay */
+  --color-hover-overlay:  rgba(255, 255, 255, 0.03);
+
+  /* Scrollbar */
+  --color-scrollbar:        rgba(255, 255, 255, 0.08);
+  --color-scrollbar-hover:  rgba(255, 255, 255, 0.15);
+  --color-scrollbar-active: rgba(255, 255, 255, 0.25);
+
+  /* Body radial gradient tints */
+  --color-body-gradient-blue:   rgba(88, 166, 255, 0.05);
+  --color-body-gradient-violet: rgba(163, 113, 247, 0.04);
+
+  /* Nav glass */
+  --color-nav-bg: rgba(13, 17, 23, 0.88);
+
+  /* Card surfaces */
+  --card-bg:              linear-gradient(175deg, rgba(28,36,47,1) 0%, rgba(18,23,31,1) 100%);
+  --card-merge-bg:        linear-gradient(175deg, rgba(16,40,24,1) 0%, rgba(10,26,15,1) 100%);
+  --card-expanded-bg:     linear-gradient(175deg, rgba(32,41,53,1) 0%, rgba(22,28,37,1) 100%);
+  --card-shadow:          0 1px 2px rgba(0,0,0,0.9), 0 3px 10px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.07);
+  --card-shadow-hover:    0 4px 8px rgba(0,0,0,0.85), 0 14px 36px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.1);
+  --card-inset:           inset 0 1px 0 rgba(255,255,255,0.07);
+
+  /* Detail card */
+  --detail-card-bg:       linear-gradient(175deg, rgba(24,31,40,1) 0%, rgba(17,22,29,1) 100%);
+  --detail-card-shadow:   0 1px 3px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05);
+
+  /* Orchestrator button */
+  --btn-shadow:           0 1px 2px rgba(0,0,0,0.6), 0 3px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.08);
+  --btn-shadow-hover:     0 2px 6px rgba(0,0,0,0.7), 0 8px 20px rgba(0,0,0,0.35), 0 0 20px rgba(88,166,255,0.12), inset 0 1px 0 rgba(255,255,255,0.12);
+  --btn-inset:            inset 0 1px 0 rgba(255,255,255,0.08);
+
+  /* Alert colors */
+  --color-alert-ci:           #8F9EFF;
+  --color-alert-ci-unknown:   #d29922;
+  --color-alert-review:       #88FF9E;
+  --color-alert-review-bg:    #537D4A;
+  --color-alert-changes:      #f85149;
+  --color-alert-conflict:     #f85149;
+  --color-alert-conflict-bg:  #6E2B2B;
+  --color-alert-comment:      #E6A05E;
+  --color-alert-comment-bg:   #653A1E;
+}
+
+@theme {
   /* ── Typography ──────────────────────────────────────────────────── */
   --font-sans: var(--font-ibm-plex-sans), "SF Pro Text", -apple-system, system-ui, sans-serif;
   --font-mono: var(--font-ibm-plex-mono), "SF Mono", "Menlo", "Consolas", monospace;
 
-  /* ── Border radius ────────────────────────────────────────────────── */
+  /* ── Border radius ───────────────────────────────────────────────── */
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 8px;
   --radius-xl: 12px;
 
-  /* ── Transitions ──────────────────────────────────────────────────── */
+  /* ── Transitions ─────────────────────────────────────────────────── */
   --transition-quick:   0.1s;
   --transition-regular: 0.25s;
 }
@@ -70,8 +226,8 @@
 body {
   font-family: var(--font-sans);
   background:
-    radial-gradient(ellipse 70% 40% at 15% 0%, rgba(88, 166, 255, 0.05) 0%, transparent 60%),
-    radial-gradient(ellipse 50% 30% at 85% 90%, rgba(163, 113, 247, 0.04) 0%, transparent 60%),
+    radial-gradient(ellipse 70% 40% at 15% 0%, var(--color-body-gradient-blue) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 30% at 85% 90%, var(--color-body-gradient-violet) 0%, transparent 60%),
     var(--color-bg-base);
   color: var(--color-text-primary);
   min-height: 100vh;
@@ -90,9 +246,9 @@ a:hover {
 
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
-::-webkit-scrollbar-thumb:active { background: rgba(255,255,255,0.25); }
+::-webkit-scrollbar-thumb { background: var(--color-scrollbar); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-scrollbar-hover); }
+::-webkit-scrollbar-thumb:active { background: var(--color-scrollbar-active); }
 
 /* ── Animations ──────────────────────────────────────────────────────── */
 
@@ -120,30 +276,23 @@ a:hover {
 
 .orchestrator-btn {
   color: var(--color-accent);
-  background: linear-gradient(175deg, rgba(88,166,255,0.12) 0%, rgba(88,166,255,0.06) 100%);
-  border: 1px solid rgba(88,166,255,0.25);
-  box-shadow:
-    0 1px 2px rgba(0,0,0,0.6),
-    0 3px 8px rgba(0,0,0,0.3),
-    inset 0 1px 0 rgba(255,255,255,0.08);
+  background: linear-gradient(175deg, color-mix(in srgb, var(--color-accent) 12%, transparent) 0%, color-mix(in srgb, var(--color-accent) 6%, transparent) 100%);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 25%, transparent);
+  box-shadow: var(--btn-shadow);
   transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease, border-color 0.12s ease;
 }
 
 .orchestrator-btn:hover {
   transform: translateY(-1px);
-  background: linear-gradient(175deg, rgba(88,166,255,0.18) 0%, rgba(88,166,255,0.1) 100%);
-  border-color: rgba(88,166,255,0.45);
-  box-shadow:
-    0 2px 6px rgba(0,0,0,0.7),
-    0 8px 20px rgba(0,0,0,0.35),
-    0 0 20px rgba(88,166,255,0.12),
-    inset 0 1px 0 rgba(255,255,255,0.12);
+  background: linear-gradient(175deg, color-mix(in srgb, var(--color-accent) 18%, transparent) 0%, color-mix(in srgb, var(--color-accent) 10%, transparent) 100%);
+  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
+  box-shadow: var(--btn-shadow-hover);
 }
 
 /* ── Glass nav ────────────────────────────────────────────────────────── */
 
 .nav-glass {
-  background: rgba(13, 17, 23, 0.88);
+  background: var(--color-nav-bg);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
 }
@@ -151,10 +300,11 @@ a:hover {
 /* ── Detail page cards — subtle depth, no hover lift ─────────────────── */
 
 .detail-card {
-  background: linear-gradient(175deg, rgba(24,31,40,1) 0%, rgba(17,22,29,1) 100%);
-  box-shadow:
-    0 1px 3px rgba(0,0,0,0.6),
-    inset 0 1px 0 rgba(255,255,255,0.05);
+  background: var(--detail-card-bg);
+  box-shadow: var(--detail-card-shadow);
+}
+
+.dark .detail-card {
   --color-text-secondary: #8b949e;
   --color-text-muted:     #656d76;
   --color-text-tertiary:  #656d76;
@@ -163,13 +313,12 @@ a:hover {
 /* ── Session cards ────────────────────────────────────────────────────── */
 
 .session-card {
-  background: linear-gradient(175deg, rgba(28,36,47,1) 0%, rgba(18,23,31,1) 100%);
-  box-shadow:
-    0 1px 2px rgba(0,0,0,0.9),
-    0 3px 10px rgba(0,0,0,0.55),
-    inset 0 1px 0 rgba(255,255,255,0.07);
+  background: var(--card-bg);
+  box-shadow: var(--card-shadow);
   transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+}
 
+.dark .session-card {
   /* Bump dim text colors inside the card — the elevated surface is darker
      than the transparent bg these values were calibrated for */
   --color-text-secondary: #8b949e;
@@ -179,28 +328,21 @@ a:hover {
 
 .session-card:hover {
   transform: translateY(-2px);
-  box-shadow:
-    0 4px 8px rgba(0,0,0,0.85),
-    0 14px 36px rgba(0,0,0,0.55),
-    inset 0 1px 0 rgba(255,255,255,0.1);
+  box-shadow: var(--card-shadow-hover);
 }
 
 .session-card.card-merge-ready {
-  background: linear-gradient(175deg, rgba(16,40,24,1) 0%, rgba(10,26,15,1) 100%);
+  background: var(--card-merge-bg);
   box-shadow:
-    0 0 0 1px rgba(63,185,80,0.22),
-    0 1px 2px rgba(0,0,0,0.9),
-    0 3px 10px rgba(0,0,0,0.55),
-    0 0 40px rgba(63,185,80,0.13),
-    inset 0 1px 0 rgba(255,255,255,0.07);
+    0 0 0 1px color-mix(in srgb, var(--color-status-ready) 22%, transparent),
+    var(--card-shadow),
+    0 0 40px color-mix(in srgb, var(--color-status-ready) 13%, transparent);
 }
 
 .session-card.card-merge-ready:hover {
   transform: translateY(-2px);
   box-shadow:
-    0 0 0 1px rgba(63,185,80,0.35),
-    0 4px 8px rgba(0,0,0,0.85),
-    0 14px 36px rgba(0,0,0,0.55),
-    0 0 60px rgba(63,185,80,0.2),
-    inset 0 1px 0 rgba(255,255,255,0.1);
+    0 0 0 1px color-mix(in srgb, var(--color-status-ready) 35%, transparent),
+    var(--card-shadow-hover),
+    0 0 60px color-mix(in srgb, var(--color-status-ready) 20%, transparent);
 }

@@ -39,7 +39,7 @@ export function ProjectSidebar({ projects, activeProjectId }: ProjectSidebarProp
             "w-full px-3 py-2 text-left text-[13px] transition-colors",
             activeProjectId === undefined || activeProjectId === "all"
               ? "bg-[var(--color-accent-subtle)] text-[var(--color-accent)]"
-              : "text-[var(--color-text-secondary)] hover:bg-[rgba(255,255,255,0.03)] hover:text-[var(--color-text-primary)]",
+              : "text-[var(--color-text-secondary)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text-primary)]",
           )}
         >
           All Projects
@@ -52,7 +52,7 @@ export function ProjectSidebar({ projects, activeProjectId }: ProjectSidebarProp
               "w-full px-3 py-2 text-left text-[13px] transition-colors",
               activeProjectId === project.id
                 ? "bg-[var(--color-accent-subtle)] text-[var(--color-accent)]"
-                : "text-[var(--color-text-secondary)] hover:bg-[rgba(255,255,255,0.03)] hover:text-[var(--color-text-primary)]",
+                : "text-[var(--color-text-secondary)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text-primary)]",
             )}
           >
             {project.name}

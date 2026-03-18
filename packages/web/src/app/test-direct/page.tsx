@@ -1,6 +1,7 @@
 "use client";
 
 import { DirectTerminal } from "@/components/DirectTerminal";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 
@@ -27,9 +28,12 @@ function TestDirectPageContent() {
     <div className="min-h-screen bg-[var(--color-bg-primary)] p-8">
       <div className="mx-auto max-w-7xl">
         <div className="mb-6">
-          <h1 className="text-2xl font-bold text-[var(--color-text-primary)]">
-            DirectTerminal Test - XDA Clipboard Support
-          </h1>
+          <div className="flex items-center justify-between">
+            <h1 className="text-2xl font-bold text-[var(--color-text-primary)]">
+              DirectTerminal Test - XDA Clipboard Support
+            </h1>
+            <ThemeToggle />
+          </div>
           <p className="mt-2 text-sm text-[var(--color-text-muted)]">
             This terminal has XDA (Extended Device Attributes) handler registered.
             <br />

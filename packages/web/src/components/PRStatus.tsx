@@ -31,21 +31,21 @@ export function PRStatus({ pr }: PRStatusProps) {
 
       {/* Size — hide when rate limited (would show +0 -0 XS) */}
       {!rateLimited && (
-        <span className="inline-flex items-center rounded-full bg-[rgba(125,133,144,0.08)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-text-muted)]">
+        <span className="inline-flex items-center rounded-full bg-[var(--color-chip-bg)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-text-muted)]">
           +{pr.additions} -{pr.deletions} {sizeLabel}
         </span>
       )}
 
       {/* Merged badge */}
       {pr.state === "merged" && (
-        <span className="inline-flex items-center rounded-full bg-[rgba(163,113,247,0.1)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-accent-violet)]">
+        <span className="inline-flex items-center rounded-full bg-[var(--color-tint-violet)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-accent-violet)]">
           merged
         </span>
       )}
 
       {/* Draft badge */}
       {pr.isDraft && pr.state === "open" && (
-        <span className="inline-flex items-center rounded-full bg-[rgba(125,133,144,0.08)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-text-muted)]">
+        <span className="inline-flex items-center rounded-full bg-[var(--color-chip-bg)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-text-muted)]">
           draft
         </span>
       )}
@@ -57,7 +57,7 @@ export function PRStatus({ pr }: PRStatusProps) {
 
       {/* Review decision (only for open PRs with real data) */}
       {pr.state === "open" && pr.reviewDecision === "approved" && !rateLimited && (
-        <span className="inline-flex items-center rounded-full bg-[rgba(63,185,80,0.1)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-accent-green)]">
+        <span className="inline-flex items-center rounded-full bg-[var(--color-tint-green)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-accent-green)]">
           approved
         </span>
       )}
@@ -94,7 +94,7 @@ export function PRTableRow({ pr }: PRTableRowProps) {
           : "text-[var(--color-accent-yellow)]";
 
   return (
-    <tr className="border-b border-[var(--color-border-muted)] hover:bg-[rgba(88,166,255,0.03)]">
+    <tr className="border-b border-[var(--color-border-muted)] hover:bg-[var(--color-hover-overlay)]">
       <td className="px-3 py-2.5 text-sm">
         <a href={pr.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
           #{pr.number}

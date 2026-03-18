@@ -12,7 +12,6 @@ import {
 import { CI_STATUS } from "@composio/ao-core/types";
 import { cn } from "@/lib/cn";
 import { getSessionTitle } from "@/lib/format";
-import { PRStatus } from "./PRStatus";
 import { CICheckList } from "./CIBadge";
 import { ActivityDot } from "./ActivityDot";
 
@@ -70,7 +69,7 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
         "hover:border-[var(--color-border-strong)]",
         borderColorByLevel[level],
         isReadyToMerge
-          ? "card-merge-ready border-[rgba(63,185,80,0.3)]"
+          ? "card-merge-ready border-[color-mix(in_srgb,var(--color-status-ready)_30%,transparent)]"
           : "border-[var(--color-border-default)]",
         expanded && "border-[var(--color-border-strong)]",
         pr?.state === "merged" && "opacity-55",
@@ -79,7 +78,7 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
         borderRadius: 7,
         background:
           expanded && !isReadyToMerge
-            ? "linear-gradient(175deg, rgba(32,41,53,1) 0%, rgba(22,28,37,1) 100%)"
+            ? "var(--card-expanded-bg)"
             : undefined,
       }}
       onClick={(e) => {
@@ -100,7 +99,7 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
               e.stopPropagation();
               onRestore?.(session.id);
             }}
-            className="rounded border border-[rgba(88,166,255,0.35)] px-2 py-0.5 text-[11px] text-[var(--color-accent)] transition-colors hover:bg-[rgba(88,166,255,0.1)]"
+            className="rounded border border-[color-mix(in_srgb,var(--color-accent)_35%,transparent)] px-2 py-0.5 text-[11px] text-[var(--color-accent)] transition-colors hover:bg-[var(--color-tint-blue)]"
           >
             restore
           </button>
@@ -109,8 +108,19 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
           <a
             href={`/sessions/${encodeURIComponent(session.id)}`}
             onClick={(e) => e.stopPropagation()}
-            className="rounded border border-[var(--color-border-default)] bg-[var(--color-bg-subtle)] px-2.5 py-0.5 text-[11px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] hover:no-underline"
+            className="inline-flex items-center gap-1 rounded border border-[var(--color-border-default)] bg-[var(--color-bg-subtle)] px-2.5 py-0.5 text-[11px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] hover:no-underline"
           >
+            <svg
+              className="h-3 w-3"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              viewBox="0 0 24 24"
+            >
+              <rect x="2" y="4" width="20" height="16" rx="2" />
+              <path d="M6 10l4 2-4 2" />
+              <path d="M14 14h4" />
+            </svg>
             terminal
           </a>
         )}
@@ -130,17 +140,30 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
         </p>
       </div>
 
-      {/* Meta row: branch + PR pills */}
+      {/* Meta row: branch + PR# + diff size */}
       <div className="flex flex-wrap items-center gap-1.5 px-4 pb-2.5">
         {session.branch && (
           <span className="font-[var(--font-mono)] text-[10px] text-[var(--color-text-muted)]">
             {session.branch}
           </span>
         )}
-        {session.branch && pr && (
-          <span className="text-[9px] text-[var(--color-border-strong)]">&middot;</span>
+        {pr && (
+          <a
+            href={pr.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="font-[var(--font-mono)] text-[11px] font-bold text-[var(--color-text-primary)] underline-offset-2 hover:underline"
+          >
+            #{pr.number}
+          </a>
         )}
-        {pr && <PRStatus pr={pr} />}
+        {pr && !rateLimited && (
+          <span className="inline-flex items-center rounded-full bg-[var(--color-chip-bg)] px-2 py-0.5 font-[var(--font-mono)] text-[10px] font-semibold text-[var(--color-text-muted)]">
+            +{pr.additions} -{pr.deletions}
+            {diffSizeLabel(pr.additions, pr.deletions)}
+          </span>
+        )}
       </div>
 
       {/* Rate limited indicator */}
@@ -185,18 +208,23 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
               Merge PR #{pr.number}
             </button>
           ) : (
-            <div className="flex flex-wrap gap-1">
+            <div className="flex flex-wrap gap-1.5">
               {alerts.map((alert) => (
-                <span key={alert.key} className="inline-flex items-center gap-1">
+                <span
+                  key={alert.key}
+                  className="inline-flex items-stretch overflow-hidden border"
+                  style={{ borderColor: alert.borderColor ?? alert.color ?? "var(--color-border-default)" }}
+                >
                   <a
                     href={alert.url}
                     target="_blank"
                     rel="noopener noreferrer"
                     onClick={(e) => e.stopPropagation()}
                     className={cn(
-                      "inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] font-medium hover:brightness-125 hover:no-underline",
+                      "inline-flex items-center gap-1 px-2 py-0.5 font-[var(--font-mono)] text-[11px] font-medium hover:brightness-125 hover:no-underline",
                       alert.className,
                     )}
+                    style={alert.color ? { color: alert.color } : undefined}
                   >
                     {alert.count !== undefined && <span className="font-bold">{alert.count}</span>}
                     {alert.label}
@@ -208,7 +236,11 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
                         handleAction(alert.key, alert.actionMessage ?? "");
                       }}
                       disabled={sendingAction === alert.key}
-                      className="rounded border border-[rgba(88,166,255,0.25)] px-2 py-0.5 text-[11px] text-[var(--color-accent)] transition-colors hover:bg-[rgba(88,166,255,0.1)] disabled:opacity-50"
+                      className={cn(
+                        "border-l px-2 py-0.5 font-[var(--font-mono)] text-[11px] font-medium transition-colors disabled:opacity-50",
+                        alert.actionClassName,
+                      )}
+                      style={{ borderColor: alert.borderColor ?? alert.color ?? "var(--color-border-default)" }}
                     >
                       {sendingAction === alert.key ? "sent!" : alert.actionLabel}
                     </button>
@@ -309,7 +341,7 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
                   e.stopPropagation();
                   onRestore?.(session.id);
                 }}
-                className="rounded border border-[rgba(88,166,255,0.35)] px-2.5 py-1 text-[11px] text-[var(--color-accent)] transition-colors hover:bg-[rgba(88,166,255,0.1)]"
+                className="rounded border border-[color-mix(in_srgb,var(--color-accent)_35%,transparent)] px-2.5 py-1 text-[11px] text-[var(--color-accent)] transition-colors hover:bg-[var(--color-tint-blue)]"
               >
                 restore session
               </button>
@@ -320,7 +352,7 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
                   e.stopPropagation();
                   onKill?.(session.id);
                 }}
-                className="rounded border border-[rgba(239,68,68,0.35)] px-2.5 py-1 text-[11px] text-[var(--color-status-error)] transition-colors hover:bg-[rgba(239,68,68,0.1)]"
+                className="rounded border border-[color-mix(in_srgb,var(--color-status-error)_35%,transparent)] px-2.5 py-1 text-[11px] text-[var(--color-status-error)] transition-colors hover:bg-[var(--color-tint-red)]"
               >
                 terminate
               </button>
@@ -355,14 +387,22 @@ function DetailSection({ label, children }: { label: string; children: React.Rea
   );
 }
 
+function diffSizeLabel(additions: number, deletions: number): string {
+  const size = additions + deletions;
+  return size > 1000 ? " XL" : size > 500 ? " L" : size > 200 ? " M" : size > 50 ? " S" : " XS";
+}
+
 interface Alert {
   key: string;
   label: string;
   className: string;
+  color?: string;
+  borderColor?: string;
   url: string;
   count?: number;
   actionLabel?: string;
   actionMessage?: string;
+  actionClassName?: string;
 }
 
 function getAlerts(session: DashboardSession): Alert[] {
@@ -379,19 +419,22 @@ function getAlerts(session: DashboardSession): Alert[] {
       alerts.push({
         key: "ci-unknown",
         label: "CI unknown",
-        className:
-          "border-[rgba(245,158,11,0.3)] bg-[rgba(245,158,11,0.08)] text-[var(--color-status-attention)]",
+        className: "",
+        color: "var(--color-alert-ci-unknown)",
         url: pr.url + "/checks",
       });
     } else {
       alerts.push({
         key: "ci-fail",
         label: `${failCount} CI check${failCount > 1 ? "s" : ""} failing`,
-        className:
-          "border-[rgba(239,68,68,0.3)] bg-[rgba(239,68,68,0.08)] text-[var(--color-status-error)]",
+        className: "",
+        color: "var(--color-alert-ci)",
+        borderColor: "var(--color-alert-ci)",
         url: failedCheck?.url ?? pr.url + "/checks",
         actionLabel: "ask to fix",
         actionMessage: `Please fix the failing CI checks on ${pr.url}`,
+        actionClassName:
+          "bg-[var(--color-alert-ci)] text-white hover:brightness-110",
       });
     }
   }
@@ -400,19 +443,21 @@ function getAlerts(session: DashboardSession): Alert[] {
     alerts.push({
       key: "changes",
       label: "changes requested",
-      className:
-        "border-[rgba(239,68,68,0.3)] bg-[rgba(239,68,68,0.08)] text-[var(--color-status-error)]",
+      className: "",
+      color: "var(--color-alert-changes)",
       url: pr.url,
     });
   } else if (!pr.isDraft && (pr.reviewDecision === "pending" || pr.reviewDecision === "none")) {
     alerts.push({
       key: "review",
       label: "needs review",
-      className:
-        "border-[rgba(245,158,11,0.3)] bg-[rgba(245,158,11,0.08)] text-[var(--color-status-attention)]",
+      className: "underline",
+      color: "var(--color-alert-review)",
       url: pr.url,
       actionLabel: "ask to post",
       actionMessage: `Post ${pr.url} on slack asking for a review.`,
+      actionClassName:
+        "bg-[var(--color-alert-review-bg)] text-white hover:brightness-110",
     });
   }
 
@@ -420,11 +465,13 @@ function getAlerts(session: DashboardSession): Alert[] {
     alerts.push({
       key: "conflict",
       label: "merge conflict",
-      className:
-        "border-[rgba(239,68,68,0.3)] bg-[rgba(239,68,68,0.08)] text-[var(--color-status-error)]",
+      className: "",
+      color: "var(--color-alert-conflict)",
       url: pr.url,
       actionLabel: "ask to fix",
       actionMessage: `Please resolve the merge conflicts on ${pr.url} by rebasing on the base branch`,
+      actionClassName:
+        "border-[var(--color-alert-conflict)] bg-[var(--color-alert-conflict-bg)] text-[var(--color-alert-conflict)] hover:brightness-110",
     });
   }
 
@@ -434,11 +481,14 @@ function getAlerts(session: DashboardSession): Alert[] {
       key: "comments",
       label: "unresolved comments",
       count: pr.unresolvedThreads,
-      className:
-        "border-[rgba(239,68,68,0.3)] bg-[rgba(239,68,68,0.08)] text-[var(--color-status-error)]",
+      className: "",
+      color: "var(--color-alert-comment)",
+      borderColor: "var(--color-alert-comment)",
       url: firstUrl,
       actionLabel: "ask to resolve",
       actionMessage: `Please address all unresolved review comments on ${pr.url}`,
+      actionClassName:
+        "border-[var(--color-alert-comment)] bg-[var(--color-alert-comment-bg)] text-[var(--color-alert-comment)] hover:brightness-110",
     });
   }
 

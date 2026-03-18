@@ -2,6 +2,7 @@
 
 import { DirectTerminal } from "@/components/DirectTerminal";
 import { Terminal } from "@/components/Terminal";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { useSearchParams } from "next/navigation";
 import { useState, useEffect, Suspense } from "react";
 
@@ -61,9 +62,12 @@ function TerminalTestPageContent() {
       <div className="mx-auto max-w-7xl">
         {/* Header */}
         <div className="mb-8">
-          <h1 className="mb-2 text-3xl font-bold text-[var(--color-text-primary)]">
-            Terminal Implementation Test & Documentation
-          </h1>
+          <div className="flex items-center justify-between">
+            <h1 className="mb-2 text-3xl font-bold text-[var(--color-text-primary)]">
+              Terminal Implementation Test & Documentation
+            </h1>
+            <ThemeToggle />
+          </div>
           <p className="text-sm text-[var(--color-text-muted)]">
             Comparing sessions:
             <span className="ml-2 font-mono text-[var(--color-accent-red)]">
@@ -110,7 +114,7 @@ function TerminalTestPageContent() {
                 <li>tmux uses OSC 52 escape sequences to synchronize clipboard with terminals</li>
                 <li>
                   Format:{" "}
-                  <code className="rounded bg-black px-1 py-0.5">\x1b]52;c;&lt;base64&gt;\x07</code>
+                  <code className="rounded bg-[var(--color-bg-subtle)] px-1 py-0.5">\x1b]52;c;&lt;base64&gt;\x07</code>
                 </li>
                 <li>Terminal must support OSC 52 and have proper capabilities declared</li>
               </ul>
@@ -123,7 +127,7 @@ function TerminalTestPageContent() {
               <ul className="ml-6 list-disc space-y-1 text-[var(--color-text-secondary)]">
                 <li>tmux queries terminal capabilities using Device Attributes (DA/XDA)</li>
                 <li>
-                  XDA query: <code className="rounded bg-black px-1 py-0.5">CSI &gt; q</code> (also
+                  XDA query: <code className="rounded bg-[var(--color-bg-subtle)] px-1 py-0.5">CSI &gt; q</code> (also
                   called XTVERSION)
                 </li>
                 <li>
@@ -145,7 +149,7 @@ function TerminalTestPageContent() {
                 <ul className="ml-6 mt-2 list-disc space-y-1 text-[var(--color-text-secondary)]">
                   <li>
                     XDA is marked as TODO in xterm.js codebase:{" "}
-                    <code className="rounded bg-black px-1 py-0.5">
+                    <code className="rounded bg-[var(--color-bg-subtle)] px-1 py-0.5">
                       test.skip('CSI &gt; Ps q - Report xterm name and version (XTVERSION)')
                     </code>
                   </li>
@@ -164,7 +168,7 @@ function TerminalTestPageContent() {
               <ul className="ml-6 list-disc space-y-1 text-[var(--color-text-secondary)]">
                 <li>
                   iTerm2 sends proper XDA response identifying itself as{" "}
-                  <code className="rounded bg-black px-1 py-0.5">"iTerm2 "</code>
+                  <code className="rounded bg-[var(--color-bg-subtle)] px-1 py-0.5">"iTerm2 "</code>
                 </li>
                 <li>tmux detects this and enables clipboard for the entire session</li>
                 <li>
@@ -190,7 +194,7 @@ function TerminalTestPageContent() {
                 Created custom terminal component that registers an XDA handler using xterm.js
                 parser API:
               </p>
-              <pre className="overflow-x-auto rounded-lg bg-black p-4 text-xs">
+              <pre className="overflow-x-auto rounded-lg bg-[var(--color-bg-elevated)] p-4 text-xs">
                 <code className="text-[var(--color-accent-green)]">
                   {`terminal.parser.registerCsiHandler(
   { prefix: ">", final: "q" }, // CSI > q is XDA query
@@ -211,7 +215,7 @@ function TerminalTestPageContent() {
               <ol className="ml-6 list-decimal space-y-1 text-[var(--color-text-secondary)]">
                 <li>Intercepts XDA queries from tmux</li>
                 <li>
-                  Responds with <code className="rounded bg-black px-1 py-0.5">XTerm(370)</code>{" "}
+                  Responds with <code className="rounded bg-[var(--color-bg-subtle)] px-1 py-0.5">XTerm(370)</code>{" "}
                   identification
                 </li>
                 <li>tmux detects "XTerm(" in response and enables TTYC_MS capability</li>
@@ -264,7 +268,7 @@ function TerminalTestPageContent() {
                 </li>
                 <li>
                   Error on Node 25.6.1:{" "}
-                  <code className="rounded bg-black px-1 py-0.5">posix_spawnp failed</code>
+                  <code className="rounded bg-[var(--color-bg-subtle)] px-1 py-0.5">posix_spawnp failed</code>
                 </li>
                 <li>
                   Root cause: node-pty's native module (darwin-arm64 prebuild) fails to spawn
@@ -304,13 +308,13 @@ function TerminalTestPageContent() {
               <ol className="ml-6 list-decimal space-y-1 text-xs text-[var(--color-text-secondary)]">
                 <li>
                   Test node-pty directly:{" "}
-                  <code className="rounded bg-black px-1 py-0.5">
+                  <code className="rounded bg-[var(--color-bg-subtle)] px-1 py-0.5">
                     node -e "const pty = require('node-pty'); pty.spawn('/bin/bash', [],
                     &#123;&#125;)"
                   </code>
                 </li>
                 <li>
-                  If no <code className="rounded bg-black px-1 py-0.5">posix_spawnp failed</code>{" "}
+                  If no <code className="rounded bg-[var(--color-bg-subtle)] px-1 py-0.5">posix_spawnp failed</code>{" "}
                   error, proceed
                 </li>
                 <li>Start dev servers and open this page</li>
@@ -339,7 +343,7 @@ function TerminalTestPageContent() {
             <div className="mt-2 rounded border border-[var(--color-accent-orange)] bg-[var(--color-bg-tertiary)] p-2 text-xs text-[var(--color-text-secondary)]">
               ⚠️ Using same session for both terminals. To avoid port conflicts, use different
               sessions:
-              <code className="ml-1 rounded bg-black px-1">
+              <code className="ml-1 rounded bg-[var(--color-bg-subtle)] px-1">
                 ?old_session=ao-orchestrator&new_session=ao-20
               </code>
             </div>
@@ -446,7 +450,7 @@ function TerminalTestPageContent() {
                 </li>
                 <li>
                   <strong>Tried force-enabling tmux clipboard</strong> - Used{" "}
-                  <code className="rounded bg-black px-1 py-0.5">
+                  <code className="rounded bg-[var(--color-bg-subtle)] px-1 py-0.5">
                     set-option -s set-clipboard on
                   </code>{" "}
                   in tmux.conf. Didn't help - tmux needs the terminal to declare support.
@@ -462,11 +466,11 @@ function TerminalTestPageContent() {
                 <p>
                   <strong>What finally worked:</strong> Registering an XDA (Extended Device
                   Attributes) handler in xterm.js using{" "}
-                  <code className="rounded bg-black px-1 py-0.5">
+                  <code className="rounded bg-[var(--color-bg-subtle)] px-1 py-0.5">
                     terminal.parser.registerCsiHandler()
                   </code>
                 </p>
-                <pre className="mt-2 overflow-x-auto rounded-lg bg-black p-3 text-xs">
+                <pre className="mt-2 overflow-x-auto rounded-lg bg-[var(--color-bg-elevated)] p-3 text-xs">
                   <code className="text-[var(--color-accent-green)]">
                     {`terminal.parser.registerCsiHandler(
   { prefix: ">", final: "q" },
@@ -492,12 +496,12 @@ function TerminalTestPageContent() {
                 <li>
                   <strong>Deep-dive into tmux source code</strong> - Used DeepWiki.com to analyze
                   tmux's terminal capability detection logic in{" "}
-                  <code className="rounded bg-black px-1 py-0.5">tty-keys.c</code> and{" "}
-                  <code className="rounded bg-black px-1 py-0.5">tty.c</code>
+                  <code className="rounded bg-[var(--color-bg-subtle)] px-1 py-0.5">tty-keys.c</code> and{" "}
+                  <code className="rounded bg-[var(--color-bg-subtle)] px-1 py-0.5">tty.c</code>
                 </li>
                 <li>
                   <strong>Discovered XDA queries</strong> - Found that tmux sends{" "}
-                  <code className="rounded bg-black px-1 py-0.5">CSI &gt; q</code> (XTVERSION) to
+                  <code className="rounded bg-[var(--color-bg-subtle)] px-1 py-0.5">CSI &gt; q</code> (XTVERSION) to
                   detect terminal type
                 </li>
                 <li>
@@ -508,7 +512,7 @@ function TerminalTestPageContent() {
                 <li>
                   <strong>Checked xterm.js implementation</strong> - Found that XDA is marked as
                   TODO in xterm.js tests:{" "}
-                  <code className="rounded bg-black px-1 py-0.5">
+                  <code className="rounded bg-[var(--color-bg-subtle)] px-1 py-0.5">
                     test.skip('CSI &gt; Ps q - Report xterm name and version (XTVERSION)')
                   </code>
                 </li>
@@ -531,7 +535,7 @@ function TerminalTestPageContent() {
                 </li>
                 <li>
                   <strong>Monitor escape sequences</strong> - Running{" "}
-                  <code className="rounded bg-black px-1 py-0.5">tmux -vvv</code> or using a
+                  <code className="rounded bg-[var(--color-bg-subtle)] px-1 py-0.5">tmux -vvv</code> or using a
                   terminal protocol analyzer would have revealed the XDA queries being sent
                 </li>
                 <li>
@@ -560,7 +564,7 @@ function TerminalTestPageContent() {
                 <li>xterm.js parser API documentation</li>
                 <li>XTerm Control Sequences: XTVERSION / Device Attributes</li>
                 <li>
-                  tmux <code className="rounded bg-black px-1 py-0.5">tty-keys.c</code>: Terminal
+                  tmux <code className="rounded bg-[var(--color-bg-subtle)] px-1 py-0.5">tty-keys.c</code>: Terminal
                   type detection logic
                 </li>
               </ul>
@@ -575,19 +579,19 @@ function TerminalTestPageContent() {
           </h2>
           <ul className="ml-6 list-disc space-y-1 text-sm text-[var(--color-text-secondary)]">
             <li>
-              <code className="rounded bg-black px-1 py-0.5">
+              <code className="rounded bg-[var(--color-bg-subtle)] px-1 py-0.5">
                 packages/web/src/components/DirectTerminal.tsx
               </code>{" "}
               - Main component with XDA handler
             </li>
             <li>
-              <code className="rounded bg-black px-1 py-0.5">
+              <code className="rounded bg-[var(--color-bg-subtle)] px-1 py-0.5">
                 packages/web/server/direct-terminal-ws.ts
               </code>{" "}
               - WebSocket server using node-pty
             </li>
             <li>
-              <code className="rounded bg-black px-1 py-0.5">
+              <code className="rounded bg-[var(--color-bg-subtle)] px-1 py-0.5">
                 packages/web/src/app/dev/terminal-test/page.tsx
               </code>{" "}
               - This test page

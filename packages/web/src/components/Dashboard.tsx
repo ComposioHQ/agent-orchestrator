@@ -17,6 +17,7 @@ import { PRTableRow } from "./PRStatus";
 import { DynamicFavicon } from "./DynamicFavicon";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
 import { ProjectSidebar } from "./ProjectSidebar";
+import { ThemeToggle } from "./ThemeToggle";
 import type { ProjectInfo } from "@/lib/project-name";
 
 interface DashboardProps {
@@ -256,11 +257,14 @@ export function Dashboard({
             </h1>
             <StatusLine stats={liveStats} />
           </div>
-          {!allProjectsView && <OrchestratorControl orchestrators={activeOrchestrators} />}
+          <div className="flex items-center gap-3">
+            {!allProjectsView && <OrchestratorControl orchestrators={activeOrchestrators} />}
+            <ThemeToggle />
+          </div>
         </div>
 
         {globalPause && !globalPauseDismissed && (
-          <div className="mb-6 flex items-center gap-2.5 rounded border border-[rgba(239,68,68,0.25)] bg-[rgba(239,68,68,0.05)] px-3.5 py-2.5 text-[11px] text-[var(--color-status-error)]">
+          <div className="mb-6 flex items-center gap-2.5 rounded border border-[color-mix(in_srgb,var(--color-status-error)_25%,transparent)] bg-[var(--color-tint-red)] px-3.5 py-2.5 text-[11px] text-[var(--color-status-error)]">
             <svg
               className="h-3.5 w-3.5 shrink-0"
               fill="none"
@@ -299,7 +303,7 @@ export function Dashboard({
         )}
 
         {anyRateLimited && !rateLimitDismissed && (
-          <div className="mb-6 flex items-center gap-2.5 rounded border border-[rgba(245,158,11,0.25)] bg-[rgba(245,158,11,0.05)] px-3.5 py-2.5 text-[11px] text-[var(--color-status-attention)]">
+          <div className="mb-6 flex items-center gap-2.5 rounded border border-[color-mix(in_srgb,var(--color-status-attention)_25%,transparent)] bg-[var(--color-tint-yellow)] px-3.5 py-2.5 text-[11px] text-[var(--color-status-attention)]">
             <svg
               className="h-3.5 w-3.5 shrink-0"
               fill="none"

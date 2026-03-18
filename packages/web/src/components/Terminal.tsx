@@ -48,7 +48,7 @@ export function Terminal({ sessionId }: TerminalProps) {
         <div
           className={cn(
             "h-2 w-2 rounded-full",
-            terminalUrl ? "bg-[#3fb950]" : error ? "bg-[#f85149]" : "bg-[#d29922] animate-pulse",
+            terminalUrl ? "bg-[var(--color-status-ready)]" : error ? "bg-[var(--color-status-error)]" : "bg-[var(--color-status-attention)] animate-pulse",
           )}
         />
         <span className="font-[var(--font-mono)] text-xs text-[var(--color-text-muted)]">

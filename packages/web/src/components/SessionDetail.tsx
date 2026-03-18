@@ -8,6 +8,7 @@ import { cn } from "@/lib/cn";
 import { CICheckList } from "./CIBadge";
 import { DirectTerminal } from "./DirectTerminal";
 import { ActivityDot } from "./ActivityDot";
+import { ThemeToggle } from "./ThemeToggle";
 
 interface OrchestratorZones {
   merge: number;
@@ -125,12 +126,12 @@ function OrchestratorStatusStrip({
   }, [createdAt]);
 
   const stats: Array<{ value: number; label: string; color: string; bg: string }> = [
-    { value: zones.merge, label: "merge-ready", color: "#3fb950", bg: "rgba(63,185,80,0.1)" },
-    { value: zones.respond, label: "responding", color: "#f85149", bg: "rgba(248,81,73,0.1)" },
-    { value: zones.review, label: "review", color: "#d18616", bg: "rgba(209,134,22,0.1)" },
-    { value: zones.working, label: "working", color: "#58a6ff", bg: "rgba(88,166,255,0.1)" },
-    { value: zones.pending, label: "pending", color: "#d29922", bg: "rgba(210,153,34,0.1)" },
-    { value: zones.done, label: "done", color: "#484f58", bg: "rgba(72,79,88,0.15)" },
+    { value: zones.merge, label: "merge-ready", color: "var(--color-status-ready)", bg: "var(--color-tint-green)" },
+    { value: zones.respond, label: "responding", color: "var(--color-status-error)", bg: "var(--color-tint-red)" },
+    { value: zones.review, label: "review", color: "var(--color-accent-orange)", bg: "var(--color-tint-orange)" },
+    { value: zones.working, label: "working", color: "var(--color-status-working)", bg: "var(--color-tint-blue)" },
+    { value: zones.pending, label: "pending", color: "var(--color-status-attention)", bg: "var(--color-tint-yellow)" },
+    { value: zones.done, label: "done", color: "var(--color-status-idle)", bg: "var(--color-tint-neutral)" },
   ].filter((s) => s.value > 0);
 
   const total =
@@ -140,7 +141,7 @@ function OrchestratorStatusStrip({
     <div
       className="border-b border-[var(--color-border-subtle)] px-8 py-4"
       style={{
-        background: "linear-gradient(to bottom, rgba(88,166,255,0.04) 0%, transparent 100%)",
+        background: "linear-gradient(to bottom, var(--color-body-gradient-blue) 0%, transparent 100%)",
       }}
     >
       <div className="mx-auto flex max-w-[900px] items-center gap-3 flex-wrap">
@@ -252,6 +253,8 @@ export function SessionDetail({
               orchestrator
             </span>
           )}
+          <div className="flex-1" />
+          <ThemeToggle />
         </div>
       </nav>
 
@@ -304,12 +307,12 @@ export function SessionDetail({
                         href={buildGitHubRepoUrl(pr)}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.04)] px-2 py-0.5 text-[11px] text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-primary)] hover:no-underline"
+                        className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[var(--color-chip-bg)] px-2 py-0.5 text-[11px] text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-primary)] hover:no-underline"
                       >
                         {session.projectId}
                       </a>
                     ) : (
-                      <span className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.04)] px-2 py-0.5 text-[11px] text-[var(--color-text-secondary)]">
+                      <span className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[var(--color-chip-bg)] px-2 py-0.5 text-[11px] text-[var(--color-text-secondary)]">
                         {session.projectId}
                       </span>
                     )}
@@ -323,7 +326,7 @@ export function SessionDetail({
                       href={pr.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.04)] px-2 py-0.5 text-[11px] text-[var(--color-accent)] transition-colors hover:border-[var(--color-accent)] hover:no-underline"
+                      className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[var(--color-chip-bg)] px-2 py-0.5 text-[11px] text-[var(--color-accent)] transition-colors hover:border-[var(--color-accent)] hover:no-underline"
                     >
                       PR #{pr.number}
                     </a>
@@ -340,12 +343,12 @@ export function SessionDetail({
                         href={buildGitHubBranchUrl(pr)}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.04)] px-2 py-0.5 font-[var(--font-mono)] text-[10px] text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-primary)] hover:no-underline"
+                        className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[var(--color-chip-bg)] px-2 py-0.5 font-[var(--font-mono)] text-[10px] text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-primary)] hover:no-underline"
                       >
                         {session.branch}
                       </a>
                     ) : (
-                      <span className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.04)] px-2 py-0.5 font-[var(--font-mono)] text-[10px] text-[var(--color-text-secondary)]">
+                      <span className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[var(--color-chip-bg)] px-2 py-0.5 font-[var(--font-mono)] text-[10px] text-[var(--color-text-secondary)]">
                         {session.branch}
                       </span>
                     )}
@@ -360,7 +363,7 @@ export function SessionDetail({
                     href={session.issueUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.04)] px-2 py-0.5 text-[11px] text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-primary)] hover:no-underline"
+                    className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[var(--color-chip-bg)] px-2 py-0.5 text-[11px] text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-primary)] hover:no-underline"
                   >
                     {session.issueLabel || session.issueUrl}
                   </a>
@@ -425,7 +428,7 @@ function ClientTimestamps({
 
   return (
     <div className="mt-2.5 flex flex-wrap items-center gap-x-1.5 text-[11px] text-[var(--color-text-tertiary)]">
-      <span className="rounded-[3px] bg-[rgba(255,255,255,0.05)] px-1.5 py-0.5 text-[10px] font-medium">
+      <span className="rounded-[3px] bg-[var(--color-chip-bg)] px-1.5 py-0.5 text-[10px] font-medium">
         {humanizeStatus(status)}
       </span>
       {created && (
@@ -521,9 +524,9 @@ function PRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
   const failedChecks = pr.ciChecks.filter((c) => c.status === "failed");
 
   const borderColor = allGreen
-    ? "rgba(63,185,80,0.4)"
+    ? "var(--color-tint-green)"
     : pr.state === "merged"
-      ? "rgba(163,113,247,0.3)"
+      ? "var(--color-tint-violet)"
       : "var(--color-border-default)";
 
   return (
@@ -554,7 +557,7 @@ function PRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
               <span className="text-[var(--color-text-tertiary)]">&middot;</span>
               <span
                 className="rounded-full px-2 py-0.5 text-[10px] font-semibold"
-                style={{ color: "#a371f7", background: "rgba(163,113,247,0.12)" }}
+                style={{ color: "var(--color-accent-violet)", background: "var(--color-tint-violet)" }}
               >
                 Merged
               </span>
@@ -567,7 +570,7 @@ function PRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
       <div className="px-5 py-4">
         {/* Ready-to-merge banner */}
         {allGreen ? (
-          <div className="flex items-center gap-2 rounded-[5px] border border-[rgba(63,185,80,0.25)] bg-[rgba(63,185,80,0.07)] px-3.5 py-2.5">
+          <div className="flex items-center gap-2 rounded-[5px] border border-[var(--color-tint-green)] bg-[var(--color-tint-green)] px-3.5 py-2.5">
             <svg
               className="h-4 w-4 shrink-0 text-[var(--color-status-ready)]"
               fill="none"
@@ -602,7 +605,7 @@ function PRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
               Unresolved Comments
               <span
                 className="rounded-full px-1.5 py-0.5 text-[10px] font-bold normal-case tracking-normal"
-                style={{ color: "#f85149", background: "rgba(248,81,73,0.12)" }}
+                style={{ color: "var(--color-status-error)", background: "var(--color-tint-red)" }}
               >
                 {pr.unresolvedThreads}
               </span>
@@ -612,7 +615,7 @@ function PRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
                 const { title, description } = cleanBugbotComment(c.body);
                 return (
                   <details key={c.url} className="group">
-                    <summary className="flex cursor-pointer list-none items-center gap-2 rounded-[5px] px-2 py-1.5 text-[12px] transition-colors hover:bg-[rgba(255,255,255,0.04)]">
+                    <summary className="flex cursor-pointer list-none items-center gap-2 rounded-[5px] px-2 py-1.5 text-[12px] transition-colors hover:bg-[var(--color-hover-overlay)]">
                       <svg
                         className="h-3 w-3 shrink-0 text-[var(--color-text-tertiary)] transition-transform group-open:rotate-90"
                         fill="none"

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
+import { useTheme } from "next-themes";
 import { cn } from "@/lib/cn";
 
 // Import xterm CSS (must be imported in client component)
@@ -78,6 +79,7 @@ export function DirectTerminal({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const { resolvedTheme } = useTheme();
 
   const terminalRef = useRef<HTMLDivElement>(null);
   const terminalInstance = useRef<TerminalType | null>(null);
@@ -174,35 +176,63 @@ export function DirectTerminal({
         const selectionColor =
           variant === "orchestrator" ? "rgba(163, 113, 247, 0.25)" : "rgba(91, 126, 248, 0.3)";
 
+        const darkTheme = {
+          background: "#0a0a0f",
+          foreground: "#d4d4d8",
+          cursor: cursorColor,
+          cursorAccent: "#0a0a0f",
+          selectionBackground: selectionColor,
+          black: "#1a1a24",
+          red: "#ef4444",
+          green: "#22c55e",
+          yellow: "#f59e0b",
+          blue: "#5b7ef8",
+          magenta: "#a371f7",
+          cyan: "#22d3ee",
+          white: "#d4d4d8",
+          brightBlack: "#50506a",
+          brightRed: "#f87171",
+          brightGreen: "#4ade80",
+          brightYellow: "#fbbf24",
+          brightBlue: "#7b9cfb",
+          brightMagenta: "#c084fc",
+          brightCyan: "#67e8f9",
+          brightWhite: "#eeeef5",
+        };
+
+        // VS Code default light theme terminal colors
+        const lightTheme = {
+          background: "#ffffff",
+          foreground: "#333333",
+          cursor: "#333333",
+          cursorAccent: "#ffffff",
+          selectionBackground: "rgba(173, 214, 255, 0.3)",
+          black: "#000000",
+          red: "#cd3131",
+          green: "#00bc00",
+          yellow: "#949800",
+          blue: "#0451a5",
+          magenta: "#bc05bc",
+          cyan: "#0598bc",
+          white: "#555555",
+          brightBlack: "#666666",
+          brightRed: "#cd3131",
+          brightGreen: "#14ce14",
+          brightYellow: "#b5ba00",
+          brightBlue: "#0451a5",
+          brightMagenta: "#bc05bc",
+          brightCyan: "#0598bc",
+          brightWhite: "#a5a5a5",
+        };
+
+        const currentTheme = resolvedTheme === "light" ? lightTheme : darkTheme;
+
         // Initialize xterm.js Terminal
         const terminal = new Terminal({
           cursorBlink: true,
           fontSize: 13,
           fontFamily: '"IBM Plex Mono", "SF Mono", Menlo, Monaco, "Courier New", monospace',
-          theme: {
-            background: "#0a0a0f",
-            foreground: "#d4d4d8",
-            cursor: cursorColor,
-            cursorAccent: "#0a0a0f",
-            selectionBackground: selectionColor,
-            // ANSI colors — slightly warmer than pure defaults
-            black: "#1a1a24",
-            red: "#ef4444",
-            green: "#22c55e",
-            yellow: "#f59e0b",
-            blue: "#5b7ef8",
-            magenta: "#a371f7",
-            cyan: "#22d3ee",
-            white: "#d4d4d8",
-            brightBlack: "#50506a",
-            brightRed: "#f87171",
-            brightGreen: "#4ade80",
-            brightYellow: "#fbbf24",
-            brightBlue: "#7b9cfb",
-            brightMagenta: "#c084fc",
-            brightCyan: "#67e8f9",
-            brightWhite: "#eeeef5",
-          },
+          theme: currentTheme,
           scrollback: 10000,
           allowProposedApi: true,
           fastScrollModifier: "alt",
@@ -548,6 +578,66 @@ export function DirectTerminal({
     };
   }, [fullscreen]);
 
+  // Update terminal theme when app theme changes (without rebuilding the terminal)
+  useEffect(() => {
+    const terminal = terminalInstance.current;
+    if (!terminal) return;
+
+    const cursorColor = variant === "orchestrator" ? "#a371f7" : "#5b7ef8";
+    const selectionColor =
+      variant === "orchestrator" ? "rgba(163, 113, 247, 0.25)" : "rgba(91, 126, 248, 0.3)";
+
+    if (resolvedTheme === "light") {
+      terminal.options.theme = {
+        background: "#ffffff",
+        foreground: "#333333",
+        cursor: "#333333",
+        cursorAccent: "#ffffff",
+        selectionBackground: "rgba(173, 214, 255, 0.3)",
+        black: "#000000",
+        red: "#cd3131",
+        green: "#00bc00",
+        yellow: "#949800",
+        blue: "#0451a5",
+        magenta: "#bc05bc",
+        cyan: "#0598bc",
+        white: "#555555",
+        brightBlack: "#666666",
+        brightRed: "#cd3131",
+        brightGreen: "#14ce14",
+        brightYellow: "#b5ba00",
+        brightBlue: "#0451a5",
+        brightMagenta: "#bc05bc",
+        brightCyan: "#0598bc",
+        brightWhite: "#a5a5a5",
+      };
+    } else {
+      terminal.options.theme = {
+        background: "#0a0a0f",
+        foreground: "#d4d4d8",
+        cursor: cursorColor,
+        cursorAccent: "#0a0a0f",
+        selectionBackground: selectionColor,
+        black: "#1a1a24",
+        red: "#ef4444",
+        green: "#22c55e",
+        yellow: "#f59e0b",
+        blue: "#5b7ef8",
+        magenta: "#a371f7",
+        cyan: "#22d3ee",
+        white: "#d4d4d8",
+        brightBlack: "#50506a",
+        brightRed: "#f87171",
+        brightGreen: "#4ade80",
+        brightYellow: "#fbbf24",
+        brightBlue: "#7b9cfb",
+        brightMagenta: "#c084fc",
+        brightCyan: "#67e8f9",
+        brightWhite: "#eeeef5",
+      };
+    }
+  }, [resolvedTheme, variant]);
+
   const accentColor =
     variant === "orchestrator" ? "var(--color-accent-violet)" : "var(--color-accent)";
 
@@ -572,7 +662,7 @@ export function DirectTerminal({
     <div
       className={cn(
         "overflow-hidden rounded-[6px] border border-[var(--color-border-default)]",
-        "bg-[#0a0a0f]",
+        resolvedTheme === "light" ? "bg-white" : "bg-[#0a0a0f]",
         fullscreen && "fixed inset-0 z-50 rounded-none border-0",
       )}
     >
