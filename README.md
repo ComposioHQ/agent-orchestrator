@@ -203,6 +203,39 @@ See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for code conventions and architec
 | [Contributing](CONTRIBUTING.md)          | How to contribute, build plugins, PR process                 |
 | [Troubleshooting](TROUBLESHOOTING.md)    | Common issues and fixes                                      |
 
+## On-Chain Governance (Base)
+
+Agent Orchestrator dogfoods its own on-chain governance system deployed on [Base](https://base.org) (chain ID 8453). Four contracts form the governance layer:
+
+| Contract | Purpose |
+| -------- | ------- |
+| **GovernanceRegistry** | Proposal lifecycle — create, track, and transition governance proposals scoped to a fork |
+| **VotingPolicy** | Maintainer voting with per-fork quorum, threshold types (Majority / Supermajority / Unanimous), and delegation |
+| **ExecutionPolicy** | Binds approved proposals to mutation scopes and enforces consumption boundaries |
+| **AttestationLog** | Append-only evidence log for CI outcomes, review verdicts, and convergence patterns |
+
+The AO main repo (`ComposioHQ/agent-orchestrator`) is registered as the first governance participant with a 1-of-1 maintainer threshold and CI attestation enabled for merged PRs.
+
+Contract addresses are recorded in [`governance.config.json`](governance.config.json).
+
+### Deploying
+
+```bash
+# Install Foundry: https://getfoundry.sh
+# Set required environment variables:
+export DEPLOYER_PRIVATE_KEY="0x..."
+export BASE_RPC_URL="https://mainnet.base.org"
+export BASESCAN_API_KEY="..."  # optional, for verification
+
+# Dry run (simulate without broadcasting)
+./scripts/deploy-governance.sh --dry-run
+
+# Deploy to Base mainnet
+./scripts/deploy-governance.sh
+```
+
+See [`contracts/script/Deploy.s.sol`](contracts/script/Deploy.s.sol) for the full deployment script and [`contracts/script/RegisterAO.s.sol`](contracts/script/RegisterAO.s.sol) for post-deployment maintainer management.
+
 ## Contributing
 
 Contributions welcome. The plugin system makes it straightforward to add support for new agents, runtimes, trackers, and notification channels. Every plugin is an implementation of a TypeScript interface — see [CONTRIBUTING.md](CONTRIBUTING.md) and the [Development Guide](docs/DEVELOPMENT.md) for the pattern.

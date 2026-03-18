@@ -1,0 +1,33 @@
+{
+  "$schema": "./governance.schema.json",
+  "chain": {
+    "id": 8453,
+    "name": "Base",
+    "rpcUrl": "https://mainnet.base.org"
+  },
+  "forkId": "ComposioHQ/agent-orchestrator",
+  "contracts": {
+    "GovernanceRegistry": {
+      "address": "",
+      "deployTx": ""
+    },
+    "VotingPolicy": {
+      "address": "",
+      "deployTx": ""
+    },
+    "ExecutionPolicy": {
+      "address": "",
+      "deployTx": ""
+    },
+    "AttestationLog": {
+      "address": "",
+      "deployTx": ""
+    }
+  },
+  "config": {
+    "quorumBps": 5000,
+    "threshold": "Majority",
+    "maintainers": [],
+    "ciAttesters": []
+  }
+}

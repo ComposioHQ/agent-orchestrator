@@ -64,3 +64,7 @@ CLAUDE.md
 AGENTS.md
 .claude/
 .opencode/
+
+# Foundry artifacts
+contracts/out/
+contracts/cache/

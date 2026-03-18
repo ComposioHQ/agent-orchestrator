@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AO Governance Config",
+  "description": "Records deployed governance contract addresses and configuration for the Agent Orchestrator on-chain governance system.",
+  "type": "object",
+  "required": ["chain", "forkId", "contracts", "config"],
+  "properties": {
+    "chain": {
+      "type": "object",
+      "required": ["id", "name", "rpcUrl"],
+      "properties": {
+        "id": { "type": "integer", "description": "EVM chain ID" },
+        "name": { "type": "string" },
+        "rpcUrl": { "type": "string", "format": "uri" }
+      }
+    },
+    "forkId": {
+      "type": "string",
+      "description": "Repository identifier used as the fork scope (hashed to bytes32 on-chain)"
+    },
+    "contracts": {
+      "type": "object",
+      "required": ["GovernanceRegistry", "VotingPolicy", "ExecutionPolicy", "AttestationLog"],
+      "additionalProperties": {
+        "type": "object",
+        "required": ["address"],
+        "properties": {
+          "address": { "type": "string", "pattern": "^(0x[a-fA-F0-9]{40})?$" },
+          "deployTx": { "type": "string", "pattern": "^(0x[a-fA-F0-9]{64})?$" }
+        }
+      }
+    },
+    "config": {
+      "type": "object",
+      "properties": {
+        "quorumBps": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "threshold": { "type": "string", "enum": ["Majority", "Supermajority", "Unanimous"] },
+        "maintainers": { "type": "array", "items": { "type": "string" } },
+        "ciAttesters": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}
