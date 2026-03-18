@@ -221,6 +221,31 @@ async function handleUrlStart(
 }
 
 /**
+ * Cleanup orchestrator session on failure.
+ * Called when dashboard or lifecycle worker fails to start.
+ * Only cleans up if we created a NEW session (not reused).
+ */
+async function cleanupOrchestratorOnFailure(
+  config: OrchestratorConfig,
+  sessionId: string,
+  orchestratorNewlyCreated: boolean,
+): Promise<void> {
+  // Only clean up if we created a new session (not reused)
+  if (!orchestratorNewlyCreated) {
+    return;
+  }
+  try {
+    const sm = await getSessionManager(config);
+    await sm.kill(sessionId, { purgeOpenCode: true }).catch((err) => {
+      console.warn(chalk.yellow("Failed to kill orchestrator session:"), err instanceof Error ? err.message : String(err));
+    });
+  } catch (err) {
+    /* best effort cleanup */
+    console.warn(chalk.yellow("Session cleanup failed:"), err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
  * Start dashboard server in the background.
  * Returns the child process handle for cleanup.
  */
@@ -240,18 +265,25 @@ async function startDashboard(
     env,
   });
 
-  child.on("error", (err) => {
+  child.on("error", async (err) => {
     console.error(chalk.red("Dashboard failed to start:"), err.message);
-    // Emit synthetic exit so callers listening on "exit" can clean up
+    // Emit synthetic exit so callers can detect the failure
     child.emit("exit", 1, null);
   });
 
-  return child;
+  // Explicit return to help TypeScript inference
+  return child as ChildProcess;
 }
 
 /**
  * Shared startup logic: launch dashboard + orchestrator session, print summary.
  * Used by both normal and URL-based start flows.
+ *
+ * IMPORTANT: Startup order matters to prevent race condition where dashboard
+ * polls /api/sessions before orchestrator session exists, showing "Exited".
+ * Order: 1. Create orchestrator, 2. Start lifecycle, 3. Start dashboard
+ *
+ * See: https://github.com/ComposioHQ/agent-orchestrator/issues/456
  */
 async function runStartup(
   config: OrchestratorConfig,
@@ -272,68 +304,10 @@ async function runStartup(
   const spinner = ora();
   let dashboardProcess: ChildProcess | null = null;
   let reused = false;
+  let orchestratorNewlyCreated = false;
 
-  // Start dashboard (unless --no-dashboard)
-  if (opts?.dashboard !== false) {
-    if (opts?.autoPort) {
-      // Port was auto-selected during config generation — if it's now busy
-      // (race condition), find another free port instead of erroring.
-      if (!(await isPortAvailable(port))) {
-        const newPort = await findFreePort(DEFAULT_PORT);
-        if (newPort === null) {
-          throw new Error(
-            `No free port found in range ${DEFAULT_PORT}–${DEFAULT_PORT + MAX_PORT_SCAN - 1}.`,
-          );
-        }
-        port = newPort;
-      }
-    } else {
-      await preflight.checkPort(port);
-    }
-    const webDir = findWebDir();
-    if (!existsSync(resolve(webDir, "package.json"))) {
-      throw new Error("Could not find @composio/ao-web package. Run: pnpm install");
-    }
-    await preflight.checkBuilt(webDir);
-
-    if (opts?.rebuild) {
-      await cleanNextCache(webDir);
-    }
-
-    spinner.start("Starting dashboard");
-    dashboardProcess = await startDashboard(
-      port,
-      webDir,
-      config.configPath,
-      config.terminalPort,
-      config.directTerminalPort,
-    );
-    spinner.succeed(`Dashboard starting on http://localhost:${port}`);
-    console.log(chalk.dim("  (Dashboard will be ready in a few seconds)\n"));
-  }
-
-  if (shouldStartLifecycle) {
-    try {
-      spinner.start("Starting lifecycle worker");
-      lifecycleStatus = await ensureLifecycleWorker(config, projectId);
-      spinner.succeed(
-        lifecycleStatus.started
-          ? `Lifecycle worker started${lifecycleStatus.pid ? ` (PID ${lifecycleStatus.pid})` : ""}`
-          : `Lifecycle worker already running${lifecycleStatus.pid ? ` (PID ${lifecycleStatus.pid})` : ""}`,
-      );
-    } catch (err) {
-      spinner.fail("Lifecycle worker failed to start");
-      if (dashboardProcess) {
-        dashboardProcess.kill();
-      }
-      throw new Error(
-        `Failed to start lifecycle worker: ${err instanceof Error ? err.message : String(err)}`,
-        { cause: err },
-      );
-    }
-  }
-
-  // Create orchestrator session (unless --no-orchestrator or already exists)
+  // Create orchestrator session FIRST (unless --no-orchestrator)
+  // This ensures dashboard will find a live session when it polls /api/sessions
   let tmuxTarget = sessionId;
   if (opts?.orchestrator !== false) {
     const sm = await getSessionManager(config);
@@ -348,14 +322,94 @@ async function runStartup(
       reused =
         orchestratorSessionStrategy === "reuse" &&
         session.metadata?.["orchestratorSessionReused"] === "true";
+      orchestratorNewlyCreated = !reused;  // Track if we created a NEW session
       spinner.succeed(reused ? "Orchestrator session reused" : "Orchestrator session created");
     } catch (err) {
       spinner.fail("Orchestrator setup failed");
-      if (dashboardProcess) {
-        dashboardProcess.kill();
-      }
+      // No need to cleanup here - if we couldn't create the session, nothing to clean up
       throw new Error(
         `Failed to setup orchestrator: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err },
+      );
+    }
+  }
+
+  // Start lifecycle worker (if needed)
+  if (shouldStartLifecycle) {
+    try {
+      spinner.start("Starting lifecycle worker");
+      lifecycleStatus = await ensureLifecycleWorker(config, projectId);
+      spinner.succeed(
+        lifecycleStatus.started
+          ? `Lifecycle worker started${lifecycleStatus.pid ? ` (PID ${lifecycleStatus.pid})` : ""}`
+          : `Lifecycle worker already running${lifecycleStatus.pid ? ` (PID ${lifecycleStatus.pid})` : ""}`,
+      );
+    } catch (err) {
+      spinner.fail("Lifecycle worker failed to start");
+      await cleanupOrchestratorOnFailure(config, sessionId, orchestratorNewlyCreated);
+      throw new Error(
+        `Failed to start lifecycle worker: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err },
+      );
+    }
+  }
+
+  // Start dashboard LAST (unless --no-dashboard)
+  // By this point, orchestrator session exists and is ready for dashboard to poll
+  if (opts?.dashboard !== false) {
+    // Wrap entire dashboard startup block in try/catch to handle pre-flight failures
+    // (port checks, web dir lookup, build preflight) which happen before
+    // startDashboard() is called. This ensures orchestrator is cleaned up if we
+    // created it, regardless of where in the dashboard startup sequence the failure occurs.
+    try {
+      if (opts?.autoPort) {
+        // Port was auto-selected during config generation — if it's now busy
+        // (race condition), find another free port instead of erroring.
+        if (!(await isPortAvailable(port))) {
+          const newPort = await findFreePort(DEFAULT_PORT);
+          if (newPort === null) {
+            throw new Error(
+              `No free port found in range ${DEFAULT_PORT}–${DEFAULT_PORT + MAX_PORT_SCAN - 1}.`,
+            );
+          }
+          port = newPort;
+        }
+      } else {
+        await preflight.checkPort(port);
+      }
+      const webDir = findWebDir();
+      if (!existsSync(resolve(webDir, "package.json"))) {
+        throw new Error("Could not find @composio/ao-web package. Run: pnpm install");
+      }
+      await preflight.checkBuilt(webDir);
+
+      if (opts?.rebuild) {
+        await cleanNextCache(webDir);
+      }
+
+      spinner.start("Starting dashboard");
+      dashboardProcess = await startDashboard(
+        port,
+        webDir,
+        config.configPath,
+        config.terminalPort,
+        config.directTerminalPort,
+      );
+      spinner.succeed(`Dashboard starting on http://localhost:${port}`);
+      console.log(chalk.dim("  (Dashboard will be ready in a few seconds)\n"));
+    } catch (err) {
+      spinner.fail("Dashboard failed to start");
+      // Stop lifecycle worker if we started it before dashboard failure
+      if (lifecycleStatus?.started) {
+        try {
+          await stopLifecycleWorker(config, projectId);
+        } catch (err) {
+          console.warn(chalk.yellow("Failed to stop lifecycle worker:"), err instanceof Error ? err.message : String(err));
+        }
+      }
+      await cleanupOrchestratorOnFailure(config, sessionId, orchestratorNewlyCreated);
+      throw new Error(
+        `Failed to start dashboard: ${err instanceof Error ? err.message : String(err)}`,
         { cause: err },
       );
     }

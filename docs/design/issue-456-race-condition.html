@@ -1,0 +1,868 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Issue #456: Dashboard Race Condition - Design Document</title>
+    <style>
+        :root {
+            --bg-base: #0C0C11;
+            --bg-surface: #141419;
+            --bg-elevated: #1C1C25;
+            --bg-subtle: #23232F;
+            --border-default: #2E2E3E;
+            --border-strong: #3E3E52;
+            --text-primary: #EEEEF5;
+            --text-secondary: #8888A6;
+            --accent: #5B7EF8;
+            --success: #22C55E;
+            --warning: #F59E0B;
+            --error: #EF4444;
+            --info: #4EA7FC;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
+            background: var(--bg-base);
+            color: var(--text-primary);
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        header {
+            border-bottom: 1px solid var(--border-default);
+            padding-bottom: 24px;
+            margin-bottom: 32px;
+        }
+
+        h1 {
+            font-size: 24px;
+            font-weight: 600;
+            margin: 0 0 8px 0;
+        }
+
+        .issue-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(245, 158, 11, 0.15);
+            color: var(--warning);
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+            margin-bottom: 16px;
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        section {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-default);
+            border-radius: 8px;
+            padding: 24px;
+            margin-bottom: 24px;
+        }
+
+        h2 {
+            font-size: 18px;
+            font-weight: 600;
+            margin: 0 0 16px 0;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border-default);
+        }
+
+        h3 {
+            font-size: 15px;
+            font-weight: 500;
+            margin: 24px 0 12px 0;
+            color: var(--text-primary);
+        }
+
+        p {
+            color: var(--text-secondary);
+            margin: 0 0 12px 0;
+        }
+
+        code {
+            font-family: "SF Mono", Menlo, Consolas, monospace;
+            background: var(--bg-elevated);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 13px;
+            color: #D4D4D8;
+        }
+
+        .code-block {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-default);
+            border-radius: 6px;
+            padding: 16px;
+            overflow-x: auto;
+            margin: 12px 0;
+        }
+
+        .code-block code {
+            background: none;
+            padding: 0;
+            color: #D4D4D8;
+        }
+
+        .approach-card {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-default);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            transition: border-color 0.2s;
+        }
+
+        .approach-card:hover {
+            border-color: var(--border-strong);
+        }
+
+        .approach-card.recommended {
+            border-color: var(--success);
+            background: rgba(34, 197, 94, 0.05);
+        }
+
+        .approach-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        .approach-badge {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            padding: 4px 10px;
+            border-radius: 6px;
+            letter-spacing: 0.5px;
+        }
+
+        .approach-badge.recommended {
+            background: var(--success);
+            color: var(--bg-base);
+        }
+
+        .approach-badge.alternative {
+            background: var(--bg-subtle);
+            color: var(--text-secondary);
+            border: 1px solid var(--border-default);
+        }
+
+        .approach-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+            flex: 1;
+        }
+
+        .pros-cons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-top: 16px;
+        }
+
+        @media (max-width: 700px) {
+            .pros-cons {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .pros, .cons {
+            padding: 12px;
+            border-radius: 6px;
+        }
+
+        .pros {
+            background: rgba(34, 197, 94, 0.08);
+            border: 1px solid rgba(34, 197, 94, 0.2);
+        }
+
+        .cons {
+            background: rgba(239, 68, 68, 0.08);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+
+        .pros-title {
+            color: var(--success);
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .cons-title {
+            color: var(--error);
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .pros ul, .cons ul {
+            margin: 0;
+            padding-left: 20px;
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        .pros li, .cons li {
+            margin-bottom: 6px;
+        }
+
+        .timeline {
+            position: relative;
+            padding-left: 40px;
+            margin: 20px 0;
+        }
+
+        .timeline::before {
+            content: '';
+            position: absolute;
+            left: 12px;
+            top: 8px;
+            bottom: 8px;
+            width: 2px;
+            background: var(--border-default);
+        }
+
+        .timeline-item {
+            position: relative;
+            margin-bottom: 20px;
+        }
+
+        .timeline-item::before {
+            content: '';
+            position: absolute;
+            left: -28px;
+            top: 6px;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--border-default);
+            border: 2px solid var(--bg-surface);
+        }
+
+        .timeline-item.error::before {
+            background: var(--error);
+        }
+
+        .timeline-item.fix::before {
+            background: var(--success);
+        }
+
+        .timeline-number {
+            font-size: 12px;
+            color: var(--text-secondary);
+            font-weight: 500;
+            margin-bottom: 4px;
+        }
+
+        .timeline-content {
+            background: var(--bg-elevated);
+            padding: 12px 16px;
+            border-radius: 6px;
+            font-size: 14px;
+            color: var(--text-primary);
+        }
+
+        .comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+
+        .comparison-table th,
+        .comparison-table td {
+            padding: 12px 16px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-default);
+        }
+
+        .comparison-table th {
+            color: var(--text-secondary);
+            font-weight: 500;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .comparison-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .comparison-table .recommended {
+            background: rgba(34, 197, 94, 0.05);
+        }
+
+        .check { color: var(--success); }
+        .cross { color: var(--error); }
+
+        .implementation-steps {
+            counter-reset: step;
+        }
+
+        .step {
+            position: relative;
+            padding-left: 40px;
+            margin-bottom: 16px;
+        }
+
+        .step::before {
+            counter-increment: step;
+            content: counter(step);
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 28px;
+            height: 28px;
+            background: var(--accent);
+            color: var(--bg-base);
+            border-radius: 50%;
+            font-size: 12px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .step-title {
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 4px;
+        }
+
+        .step-desc {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        footer {
+            text-align: center;
+            padding-top: 24px;
+            border-top: 1px solid var(--border-default);
+            color: var(--text-secondary);
+            font-size: 13px;
+        }
+
+        .tag {
+            display: inline-block;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-default);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin-right: 6px;
+            margin-bottom: 6px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <span class="issue-badge">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                    <path d="M8 9.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z"/>
+                    <path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0ZM1.5 8a6.5 6.5 0 1 1 13 0 6.5 6.5 0 0 1-13 0Z"/>
+                </svg>
+                Issue #456
+            </span>
+            <h1>Dashboard Race Condition: Orchestrator Shows "Exited"</h1>
+            <p class="subtitle">When <code>ao start</code> runs, the dashboard starts before the orchestrator session is created, causing a false "Exited" status.</p>
+        </header>
+
+        <section>
+            <h2>Problem Statement</h2>
+            <p>The dashboard incorrectly displays the orchestrator as "Exited" immediately after <code>ao start</code>, even though the orchestrator tmux session is actually running fine.</p>
+
+            <h3>Root Cause Analysis</h3>
+            <p>There is a startup ordering issue in <code>packages/cli/src/commands/start.ts</code>:</p>
+
+            <div class="timeline">
+                <div class="timeline-item">
+                    <div class="timeline-number">Step 1</div>
+                    <div class="timeline-content">
+                        <code>ao start</code> starts the dashboard (port 3000)
+                    </div>
+                </div>
+                <div class="timeline-item">
+                    <div class="timeline-number">Step 2</div>
+                    <div class="timeline-content">
+                        Dashboard immediately polls <code>/api/sessions</code>
+                    </div>
+                </div>
+                <div class="timeline-item error">
+                    <div class="timeline-number">Step 3 (PROBLEM)</div>
+                    <div class="timeline-content">
+                        Orchestrator tmux session <strong>hasn't been created yet</strong>
+                    </div>
+                </div>
+                <div class="timeline-item error">
+                    <div class="timeline-number">Step 4 (PROBLEM)</div>
+                    <div class="timeline-content">
+                        Dashboard finds <strong>stale orchestrator metadata</strong> from a previous run
+                    </div>
+                </div>
+                <div class="timeline-item error">
+                    <div class="timeline-number">Step 5 (PROBLEM)</div>
+                    <div class="timeline-content">
+                        <code>enrichSessionWithRuntimeState()</code> calls <code>isAlive()</code> on the old tmux handle → returns <strong>false</strong>
+                    </div>
+                </div>
+                <div class="timeline-item error">
+                    <div class="timeline-number">Step 6 (PROBLEM)</div>
+                    <div class="timeline-content">
+                        Status is set to <code>killed</code>, activity to <code>exited</code>
+                    </div>
+                </div>
+                <div class="timeline-item">
+                    <div class="timeline-number">Step 7</div>
+                    <div class="timeline-content">
+                        Orchestrator session is created moments later, but dashboard already cached "Exited" state
+                    </div>
+                </div>
+            </div>
+
+            <h3>Relevant Code Locations</h3>
+            <div class="code-block"><code>packages/cli/src/commands/start.ts</code> lines 256-407 — <code>runStartup()</code> function, startup order</div>
+            <div class="code-block"><code>packages/core/src/session-manager.ts</code> lines 835-857 — <code>enrichSessionWithRuntimeState()</code>, marks killed sessions as exited</div>
+            <div class="code-block"><code>packages/core/src/session-manager.ts</code> lines 1192-1410 — <code>spawnOrchestrator()</code>, creates the session</div>
+
+            <h3>Tags</h3>
+            <div>
+                <span class="tag">dashboard</span>
+                <span class="tag">race-condition</span>
+                <span class="tag">startup</span>
+                <span class="tag">tmux</span>
+            </div>
+        </section>
+
+        <section>
+            <h2>Approaches to Fix</h2>
+
+            <!-- Approach A: Recommended -->
+            <div class="approach-card recommended">
+                <div class="approach-header">
+                    <span class="approach-badge recommended">Recommended</span>
+                    <span class="approach-title">Approach A: Reorder Startup Sequence</span>
+                </div>
+                <p>Change the startup order to create the orchestrator session <strong>before</strong> starting the dashboard. The dashboard would then find a live tmux session on its first poll.</p>
+
+                <h3>Implementation</h3>
+                <div class="code-block"><pre><code>// Current order (problematic):
+1. Start dashboard
+2. Start lifecycle worker
+3. Create orchestrator session
+
+// New order (fixed):
+1. Create orchestrator session
+2. Start lifecycle worker
+3. Start dashboard</code></pre></div>
+
+                <div class="pros-cons">
+                    <div class="pros">
+                        <div class="pros-title">Advantages</div>
+                        <ul>
+                            <li><strong class="check">✓</strong> Fixes root cause with minimal code change</li>
+                            <li><strong class="check">✓</strong> No added complexity or timeouts</li>
+                            <li><strong class="check">✓</strong> Works reliably every time</li>
+                            <li><strong class="check">✓</strong> No retry logic or polling overhead</li>
+                            <li><strong class="check">✓</strong> Maintains clean separation of concerns</li>
+                            <li><strong class="check">✓</strong> Easy to understand and test</li>
+                        </ul>
+                    </div>
+                    <div class="cons">
+                        <div class="cons-title">Disadvantages</div>
+                        <ul>
+                            <li><strong class="cross">✗</strong> Slightly slower dashboard startup (waits for orchestrator)</li>
+                            <li><strong class="cross">✗</strong> If orchestrator fails to start, dashboard won't open</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Approach B -->
+            <div class="approach-card">
+                <div class="approach-header">
+                    <span class="approach-badge alternative">Alternative</span>
+                    <span class="approach-title">Approach B: Grace Period for Startup</span>
+                </div>
+                <p>Add a brief startup grace period where <code>enrichSessionWithRuntimeState()</code> skips the <code>isAlive</code> check for orchestrator sessions that were created within the last N seconds.</p>
+
+                <h3>Implementation</h3>
+                <div class="code-block"><pre><code>// Add a grace period window (e.g., 30 seconds)
+const GRACE_PERIOD_MS = 30_000;
+
+function enrichSessionWithRuntimeState(session: Session): void {
+  const age = Date.now() - session.createdAt;
+  const isInGracePeriod = age < GRACE_PERIOD_MS;
+
+  if (session.type === "orchestrator" && isInGracePeriod) {
+    // Skip isAlive() check during grace period
+    // Assume session is starting up
+    return;
+  }
+
+  // Normal isAlive() check...
+}</code></pre></div>
+
+                <div class="pros-cons">
+                    <div class="pros">
+                        <div class="pros-title">Advantages</div>
+                        <ul>
+                            <li><strong class="check">✓</strong> Allows parallel startup (dashboard and orchestrator)</li>
+                            <li><strong class="check">✓</strong> Dashboard opens faster</li>
+                            <li><strong class="check">✓</strong> No risk of blocking on orchestrator failure</li>
+                        </ul>
+                    </div>
+                    <div class="cons">
+                        <div class="cons-title">Disadvantages</div>
+                        <ul>
+                            <li><strong class="cross">✗</strong> Adds magic timeout constant</li>
+                            <li><strong class="cross">✗</strong> Masks real failures during grace period</li>
+                            <li><strong class="cross">✗</strong> Grace period may be too short or too long</li>
+                            <li><strong class="cross">✗</strong> More complex state logic</li>
+                            <li><strong class="cross">✗</strong> Could hide bugs in orchestrator startup</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Approach C -->
+            <div class="approach-card">
+                <div class="approach-header">
+                    <span class="approach-badge alternative">Alternative</span>
+                    <span class="approach-title">Approach C: Dashboard Retry Logic</span>
+                </div>
+                <p>If the dashboard sees an orchestrator session as exited, re-check after a short delay before caching the state.</p>
+
+                <h3>Implementation</h3>
+                <div class="code-block"><pre><code>// In dashboard /api/sessions endpoint
+async function getSessions() {
+  const sessions = await sessionManager.list();
+
+  // If orchestrator looks exited, verify again
+  for (const session of sessions) {
+    if (session.type === "orchestrator" && session.activity === "exited") {
+      await sleep(1000); // Wait 1 second
+      const freshState = await sessionManager.getRuntimeState(session.id);
+      if (freshState?.isAlive) {
+        // Override the cached exited state
+        session.activity = "working";
+      }
+    }
+  }
+
+  return sessions;
+}</code></pre></div>
+
+                <div class="pros-cons">
+                    <div class="pros">
+                        <div class="pros-title">Advantages</div>
+                        <ul>
+                            <li><strong class="check">✓</strong> Self-correcting without requiring perfect ordering</li>
+                            <li><strong class="check">✓</strong> No impact on CLI startup code</li>
+                            <li><strong class="check">✓</strong> Handles edge cases gracefully</li>
+                        </ul>
+                    </div>
+                    <div class="cons">
+                        <div class="cons-title">Disadvantages</div>
+                        <ul>
+                            <li><strong class="cross">✗</strong> Slower API response (adds sleep delay)</li>
+                            <li><strong class="cross">✗</strong> Adds latency to every /api/sessions call</li>
+                            <li><strong class="cross">✗</strong> Still may show "Exited" momentarily before retry</li>
+                            <li><strong class="cross">✗</strong> Hard to test reliably</li>
+                            <li><strong class="cross">✗</strong> Band-aid fix, not root cause</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Approach D -->
+            <div class="approach-card">
+                <div class="approach-header">
+                    <span class="approach-badge alternative">Alternative</span>
+                    <span class="approach-title">Approach D: Stale Metadata Cleanup</span>
+                </div>
+                <p>Clean up stale orchestrator metadata before creating a new session, preventing the dashboard from finding old data.</p>
+
+                <h3>Implementation</h3>
+                <div class="code-block"><pre><code>// Before creating orchestrator, clean up old metadata
+async function spawnOrchestrator(...) {
+  // Remove any stale orchestrator metadata from previous runs
+  await metadataStore.delete("orchestrator");
+
+  // Now create the fresh session
+  const session = await createSession(...);
+  await metadataStore.set("orchestrator", session);
+  return session;
+}</code></pre></div>
+
+                <div class="pros-cons">
+                    <div class="pros">
+                        <div class="pros-title">Advantages</div>
+                        <ul>
+                            <li><strong class="check">✓</strong> Prevents stale data from being used</li>
+                            <li><strong class="check">✓</strong> Good hygiene practice anyway</li>
+                            <li><strong class="check">✓</strong> Addresses metadata corruption issues</li>
+                        </ul>
+                    </div>
+                    <div class="cons">
+                        <div class="cons-title">Disadvantages</div>
+                        <ul>
+                            <li><strong class="cross">✗</strong> Still has timing window between cleanup and creation</li>
+                            <li><strong class="cross">✗</strong> Dashboard could query during that window</li>
+                            <li><strong class="cross">✗</strong> Doesn't fix the race condition root cause</li>
+                            <li><strong class="cross">✗</strong> Only helps if metadata is truly stale</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Approach E -->
+            <div class="approach-card">
+                <div class="approach-header">
+                    <span class="approach-badge alternative">Alternative</span>
+                    <span class="approach-title">Approach E: Session Initialization Flag</span>
+                </div>
+                <p>Add an "initializing" state to sessions that the dashboard treats as "pending" rather than "exited".</p>
+
+                <h3>Implementation</h3>
+                <div class="code-block"><pre><code>// Add new ActivityState: "initializing"
+enum ActivityState {
+  initializing = "initializing",  // NEW
+  working = "working",
+  idle = "idle",
+  exited = "exited",
+  // ...
+}
+
+// When creating orchestrator, set to initializing
+async function spawnOrchestrator(...) {
+  const session = {
+    ...,
+    activity: "initializing" as ActivityState
+  };
+  await metadataStore.set("orchestrator", session);
+
+  // Start the process...
+  const tmuxHandle = await startTmux(...);
+
+  // Update to working once started
+  session.activity = "working";
+  await metadataStore.set("orchestrator", session);
+}
+
+// Dashboard treats initializing as pending, not exited
+function getAttentionLevel(session: Session): AttentionLevel {
+  if (session.activity === "initializing") {
+    return "pending";  // Don't show as exited
+  }
+  // ...
+}</code></pre></div>
+
+                <div class="pros-cons">
+                    <div class="pros">
+                        <div class="pros-title">Advantages</div>
+                        <ul>
+                            <li><strong class="check">✓</strong> Accurate state representation</li>
+                            <li><strong class="check">✓</strong> Clear semantic meaning</li>
+                            <li><strong class="check">✓</strong> Dashboard shows appropriate "starting up" state</li>
+                            <li><strong class="check">✓</strong> Useful for debugging startup issues</li>
+                        </ul>
+                    </div>
+                    <div class="cons">
+                        <div class="cons-title">Disadvantages</div>
+                        <ul>
+                            <li><strong class="cross">✗</strong> Requires changes to type system</li>
+                            <li><strong class="cross">✗</strong> Requires dashboard UI updates</li>
+                            <li><strong class="cross">✗</strong> More complex state transitions</li>
+                            <li><strong class="cross">✗</strong> If process fails during initialization, state unclear</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section>
+            <h2>Approach Comparison</h2>
+            <table class="comparison-table">
+                <thead>
+                    <tr>
+                        <th>Approach</th>
+                        <th>Complexity</th>
+                        <th>Simplicity</th>
+                        <th>Reliability</th>
+                        <th>Side Effects</th>
+                        <th>Time to Implement</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr class="recommended">
+                        <td><strong>Approach A: Reorder Startup</strong> <span class="tag">recommended</span></td>
+                        <td><span class="check">Low</span></td>
+                        <td><span class="check">High</span></td>
+                        <td><span class="check">High</span></td>
+                        <td><span class="check">None</span></td>
+                        <td>~30 min</td>
+                    </tr>
+                    <tr>
+                        <td>Approach B: Grace Period</td>
+                        <td><span class="cross">Medium</span></td>
+                        <td><span class="cross">Medium</span></td>
+                        <td><span class="cross">Medium</span></td>
+                        <td><span class="cross">Hides failures</span></td>
+                        <td>~1 hour</td>
+                    </tr>
+                    <tr>
+                        <td>Approach C: Dashboard Retry</td>
+                        <td><span class="cross">Medium</span></td>
+                        <td><span class="cross">Low</span></td>
+                        <td><span class="cross">Medium</span></td>
+                        <td><span class="cross">Adds latency</span></td>
+                        <td>~1 hour</td>
+                    </tr>
+                    <tr>
+                        <td>Approach D: Cleanup Metadata</td>
+                        <td><span class="check">Low</span></td>
+                        <td><span class="check">High</span></td>
+                        <td><span class="cross">Low</span></td>
+                        <td><span class="check">Positive</span></td>
+                        <td>~20 min</td>
+                    </tr>
+                    <tr>
+                        <td>Approach E: Init Flag</td>
+                        <td><span class="cross">High</span></td>
+                        <td><span class="cross">Low</span></td>
+                        <td><span class="check">High</span></td>
+                        <td><span class="cross">UI changes</span></td>
+                        <td>~3 hours</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section>
+            <h2>Recommended Solution: Approach A (Reorder Startup)</h2>
+            <p><strong>Why this is the best approach:</strong></p>
+            <ul>
+                <li>Addresses the <strong>root cause</strong> directly (timing issue)</li>
+                <li><strong>Simplest implementation</strong> — just move function call order</li>
+                <li>No new complexity, timeouts, or magic constants</li>
+                <li>Works reliably 100% of the time</li>
+                <li>Easy to test and verify</li>
+                <li>Maintains clean architecture without bandaids</li>
+            </ul>
+
+            <h3>Implementation Plan</h3>
+            <div class="implementation-steps">
+                <div class="step">
+                    <div class="step-title">Modify packages/cli/src/commands/start.ts</div>
+                    <div class="step-desc">Move the orchestrator spawn logic before the dashboard start in the <code>runStartup()</code> function.</div>
+                </div>
+                <div class="step">
+                    <div class="step-title">Update startup order comments</div>
+                    <div class="step-desc">Document the new startup order to prevent future regressions.</div>
+                </div>
+                <div class="step">
+                    <div class="step-title">Add error handling for orchestrator startup</div>
+                    <div class="step-desc">If orchestrator fails to start, show a clear error message before starting dashboard.</div>
+                </div>
+                <div class="step">
+                    <div class="step-title">Test locally</div>
+                    <div class="step-desc">Kill all tmux sessions, run <code>ao start</code>, verify orchestrator shows as working.</div>
+                </div>
+                <div class="step">
+                    <div class="step-title">Write integration test</div>
+                    <div class="step-desc">Add a test that verifies orchestrator is alive when dashboard first polls.</div>
+                </div>
+            </div>
+
+            <h3>Code Changes Preview</h3>
+            <div class="code-block"><pre><code>// In packages/cli/src/commands/start.ts, runStartup() function
+
+async function runStartup(options: StartOptions): Promise<void> {
+  // ... validation code ...
+
+  // OLD ORDER (problematic):
+  // await startDashboard(...)
+  // await startLifecycleWorker(...)
+  // await spawnOrchestrator(...)
+
+  // NEW ORDER (fixed):
+  // 1. First, create the orchestrator session
+  logger.info("Creating orchestrator session...");
+  await spawnOrchestrator(options);
+
+  // 2. Then start the lifecycle worker
+  logger.info("Starting lifecycle worker...");
+  await startLifecycleWorker(options);
+
+  // 3. Finally, start the dashboard
+  logger.info("Starting dashboard...");
+  await startDashboard(options);
+
+  // ... rest of startup ...
+}</code></pre></div>
+        </section>
+
+        <section>
+            <h2>Alternative: Combined Approach (A + D)</h2>
+            <p>For maximum robustness, combine Approach A with Approach D (cleanup stale metadata):</p>
+            <ul>
+                <li>Reorder startup (A) — fixes the timing race condition</li>
+                <li>Cleanup stale metadata (D) — adds hygiene, prevents any residual issues</li>
+            </ul>
+            <p>This combined approach adds negligible complexity while providing defense-in-depth against related issues.</p>
+        </section>
+
+        <section>
+            <h2>Test Plan</h2>
+            <div class="implementation-steps">
+                <div class="step">
+                    <div class="step-title">Fresh Start Test</div>
+                    <div class="step-desc">Kill all tmux sessions with <code>tmux kill-server</code>, then run <code>ao start</code>. Verify orchestrator shows "Working" on first dashboard load.</div>
+                </div>
+                <div class="step">
+                    <div class="step-title">Restart Test</div>
+                    <div class="step-desc">Stop AO with Ctrl+C, then run <code>ao start</code> again. Verify clean state without "Exited" showing.</div>
+                </div>
+                <div class="step">
+                    <div class="step-title">No-Orchestrator Flag Test</div>
+                    <div class="step-desc">Run <code>ao start --no-orchestrator</code>. Verify dashboard still works and no error occurs.</div>
+                </div>
+                <div class="step">
+                    <div class="step-title">Integration Test</div>
+                    <div class="step-desc">Add automated test in <code>packages/integration-tests/</code> that simulates fresh start and verifies orchestrator state.</div>
+                </div>
+            </div>
+        </section>
+
+        <footer>
+            <p>Design Document for Issue #456 · Agent Orchestrator · March 2026</p>
+            <p style="margin-top: 8px;">
+                <a href="https://github.com/ComposioHQ/agent-orchestrator/issues/456" style="color: var(--accent); text-decoration: none;">View Issue on GitHub</a>
+            </p>
+        </footer>
+    </div>
+</body>
+</html>
