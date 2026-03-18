@@ -51,6 +51,7 @@ contract VotingPolicy is Ownable {
     error VoteAlreadyFinalized();
     error SelfDelegation();
     error InvalidQuorum();
+    error ForkNotConfigured();
 
     modifier onlyMaintainer() {
         if (!maintainers[msg.sender]) revert NotMaintainer();
@@ -97,13 +98,19 @@ contract VotingPolicy is Ownable {
         VoteState storage vs = votes[proposalId];
         if (vs.finalized) revert VoteAlreadyFinalized();
 
-        // Resolve effective voter (delegation)
+        // Each msg.sender can only vote once, regardless of delegation changes
+        if (hasVoted[proposalId][msg.sender]) revert AlreadyVoted();
+        hasVoted[proposalId][msg.sender] = true;
+
+        // Resolve effective voter for delegation — also mark delegate as voted
+        // to prevent both delegator and delegate from casting separate votes
         address effectiveVoter = delegation[msg.sender] != address(0)
             ? delegation[msg.sender]
             : msg.sender;
-
-        if (hasVoted[proposalId][effectiveVoter]) revert AlreadyVoted();
-        hasVoted[proposalId][effectiveVoter] = true;
+        if (effectiveVoter != msg.sender) {
+            if (hasVoted[proposalId][effectiveVoter]) revert AlreadyVoted();
+            hasVoted[proposalId][effectiveVoter] = true;
+        }
 
         if (support) {
             vs.yesVotes++;
@@ -121,6 +128,7 @@ contract VotingPolicy is Ownable {
         if (vs.finalized) revert VoteAlreadyFinalized();
 
         ForkConfig memory cfg = forkConfigs[forkId];
+        if (cfg.quorum == 0) revert ForkNotConfigured();
         uint256 totalVotes = vs.yesVotes + vs.noVotes;
 
         passed = _meetsThreshold(vs.yesVotes, totalVotes, cfg.quorum, cfg.thresholdType);

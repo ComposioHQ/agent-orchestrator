@@ -221,6 +221,36 @@ contract VotingPolicyTest is Test {
         assertFalse(vs.finalized);
     }
 
+    function test_RevertDelegationChangeVoteAbuse() public {
+        uint256 proposalId = 1;
+        address dave = address(0x4);
+        voting.setMaintainer(dave, true);
+
+        // Alice delegates to dave and votes (counts as dave's vote)
+        vm.prank(alice);
+        voting.setDelegation(dave);
+        vm.prank(alice);
+        voting.vote(proposalId, true);
+
+        // Alice tries to change delegation and vote again — should revert
+        vm.prank(alice);
+        voting.setDelegation(address(0));
+        vm.prank(alice);
+        vm.expectRevert(VotingPolicy.AlreadyVoted.selector);
+        voting.vote(proposalId, true);
+    }
+
+    function test_RevertFinalizeUnconfiguredFork() public {
+        uint256 proposalId = 1;
+        bytes32 unknownFork = keccak256("unknown-fork");
+
+        vm.prank(alice);
+        voting.vote(proposalId, true);
+
+        vm.expectRevert(VotingPolicy.ForkNotConfigured.selector);
+        voting.finalize(proposalId, unknownFork);
+    }
+
     function test_RemoveMaintainerClearsDelegation() public {
         vm.prank(alice);
         voting.setDelegation(bob);

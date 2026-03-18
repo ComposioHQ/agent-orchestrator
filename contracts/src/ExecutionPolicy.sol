@@ -18,6 +18,9 @@ contract ExecutionPolicy is Ownable {
     /// @notice Consent gates — scope hashes that require supermajority to modify.
     mapping(bytes32 => bool) public consentGates;
 
+    /// @notice Tracks whether a proposal has been executed.
+    mapping(uint256 => bool) public executed;
+
     /// @notice Addresses trusted to execute approved proposals.
     mapping(address => bool) public executors;
 
@@ -30,6 +33,7 @@ contract ExecutionPolicy is Ownable {
     error NotExecutor();
     error ScopeNotActive();
     error ConsentGateViolation(bytes32 scopeHash);
+    error AlreadyExecuted();
     error NoScopes();
     error IndexOutOfBounds();
 
@@ -69,13 +73,19 @@ contract ExecutionPolicy is Ownable {
 
     /// @notice Execute a proposal — verifies all scopes are active and no consent gate violations.
     function execute(uint256 proposalId) external onlyExecutor {
+        if (executed[proposalId]) revert AlreadyExecuted();
+
         MutationScope[] storage scopes = proposalScopes[proposalId];
         if (scopes.length == 0) revert NoScopes();
 
         for (uint256 i = 0; i < scopes.length; i++) {
             if (!scopes[i].active) revert ScopeNotActive();
+            if (consentGates[scopes[i].scopeHash]) {
+                revert ConsentGateViolation(scopes[i].scopeHash);
+            }
         }
 
+        executed[proposalId] = true;
         emit ProposalExecuted(proposalId, msg.sender);
     }
 

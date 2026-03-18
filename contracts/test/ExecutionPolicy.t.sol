@@ -106,6 +106,37 @@ contract ExecutionPolicyTest is Test {
         policy.getScope(1, 0);
     }
 
+    function test_RevertDoubleExecution() public {
+        policy.assignScope(1, scope1);
+
+        vm.prank(executor);
+        policy.execute(1);
+
+        vm.prank(executor);
+        vm.expectRevert(ExecutionPolicy.AlreadyExecuted.selector);
+        policy.execute(1);
+    }
+
+    function test_RevertConsentGateViolation() public {
+        policy.assignScope(1, scope1);
+        policy.setConsentGate(scope1, true);
+
+        vm.prank(executor);
+        vm.expectRevert(
+            abi.encodeWithSelector(ExecutionPolicy.ConsentGateViolation.selector, scope1)
+        );
+        policy.execute(1);
+    }
+
+    function test_ExecuteAfterConsentGateCleared() public {
+        policy.assignScope(1, scope1);
+        policy.setConsentGate(scope1, true);
+        policy.setConsentGate(scope1, false);
+
+        vm.prank(executor);
+        policy.execute(1);
+    }
+
     function test_SetExecutorEmitsEvent() public {
         vm.expectEmit(true, false, false, true);
         emit ExecutorUpdated(address(0x5), true);
