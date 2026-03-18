@@ -5,8 +5,9 @@
   /* Base surfaces */
   --color-bg-base:      #f8f9fb;
   --color-bg-surface:   rgba(255, 255, 255, 0.85);
-  --color-bg-elevated:  rgba(255, 255, 255, 0.95);
-  --color-bg-subtle:    rgba(0, 0, 0, 0.03);
+  --color-bg-elevated:       rgba(255, 255, 255, 0.95);
+  --color-bg-elevated-hover: rgba(247, 247, 247, 0.95);
+  --color-bg-subtle:         rgba(0, 0, 0, 0.03);
 
   /* Backward-compat aliases */
   --color-bg-primary:   var(--color-bg-base);
@@ -116,8 +117,9 @@
   /* Base surfaces */
   --color-bg-base:      #0d1117;
   --color-bg-surface:   rgba(22, 27, 34, 0.8);
-  --color-bg-elevated:  rgba(28, 33, 40, 0.9);
-  --color-bg-subtle:    rgba(33, 38, 45, 0.7);
+  --color-bg-elevated:       rgba(28, 33, 40, 0.9);
+  --color-bg-elevated-hover: rgba(36, 41, 48, 0.9);
+  --color-bg-subtle:         rgba(33, 38, 45, 0.7);
 
   /* Borders */
   --color-border-subtle:   rgba(48, 54, 61, 0.6);

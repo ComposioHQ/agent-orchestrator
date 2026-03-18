@@ -14,6 +14,7 @@ import { cn } from "@/lib/cn";
 import { getSessionTitle } from "@/lib/format";
 import { CICheckList } from "./CIBadge";
 import { ActivityDot } from "./ActivityDot";
+import { getSizeLabel } from "./PRStatus";
 
 interface SessionCardProps {
   session: DashboardSession;
@@ -161,7 +162,7 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
         {pr && !rateLimited && (
           <span className="inline-flex items-center rounded-full bg-[var(--color-chip-bg)] px-2 py-0.5 font-[var(--font-mono)] text-[10px] font-semibold text-[var(--color-text-muted)]">
             +{pr.additions} -{pr.deletions}
-            {diffSizeLabel(pr.additions, pr.deletions)}
+            {" "}{getSizeLabel(pr.additions, pr.deletions)}
           </span>
         )}
       </div>
@@ -387,10 +388,6 @@ function DetailSection({ label, children }: { label: string; children: React.Rea
   );
 }
 
-function diffSizeLabel(additions: number, deletions: number): string {
-  const size = additions + deletions;
-  return size > 1000 ? " XL" : size > 500 ? " L" : size > 200 ? " M" : size > 50 ? " S" : " XS";
-}
 
 interface Alert {
   key: string;
