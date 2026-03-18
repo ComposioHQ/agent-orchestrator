@@ -617,6 +617,20 @@ describe("start command — browser open waits for port", () => {
       "my-app",
     );
   });
+
+  it("passes both system and bootstrap prompts to the orchestrator session", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockSessionManager.get.mockResolvedValue(null);
+    mockSessionManager.spawnOrchestrator.mockResolvedValue({ id: "app-orchestrator" });
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
+
+    expect(mockSessionManager.spawnOrchestrator).toHaveBeenCalledWith({
+      projectId: "my-app",
+      systemPrompt: expect.stringContaining("# My App Orchestrator"),
+      prompt: expect.stringContaining("Run these commands now:"),
+    });
+  });
 });
 
 describe("start command — orchestrator session strategy display", () => {
