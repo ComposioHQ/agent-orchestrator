@@ -112,12 +112,19 @@ describe("setupWorkspaceHooks idempotency", () => {
 });
 
 describe("setupWorkspaceHooks with MCP mail idempotency", () => {
+  let originalMcpUrl: string | undefined;
+
   beforeEach(() => {
+    originalMcpUrl = process.env.MCP_AGENT_MAIL_URL;
     process.env.MCP_AGENT_MAIL_URL = "http://127.0.0.1:8765/mcp/";
   });
 
   afterEach(() => {
-    delete process.env.MCP_AGENT_MAIL_URL;
+    if (originalMcpUrl === undefined) {
+      delete process.env.MCP_AGENT_MAIL_URL;
+    } else {
+      process.env.MCP_AGENT_MAIL_URL = originalMcpUrl;
+    }
   });
 
   it("does NOT re-write settings.json on second call when MCP mail config is unchanged", async () => {
