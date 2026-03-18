@@ -15,15 +15,25 @@ export function PolicyView({ forkId, onBack }: PolicyViewProps) {
   const [showDiff, setShowDiff] = useState(false);
 
   useEffect(() => {
+    const controller = new AbortController();
     setLoading(true);
-    fetch(`/api/governance/forks/${encodeURIComponent(forkId)}/policy`)
+    fetch(`/api/governance/forks/${encodeURIComponent(forkId)}/policy`, {
+      signal: controller.signal,
+    })
       .then((res) => {
         if (!res.ok) throw new Error("Failed to load policy");
         return res.json() as Promise<{ policy: GovernancePolicy }>;
       })
-      .then((data) => setPolicy(data.policy))
-      .catch(() => setPolicy(null))
-      .finally(() => setLoading(false));
+      .then((data) => {
+        if (!controller.signal.aborted) setPolicy(data.policy);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setPolicy(null);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
   }, [forkId]);
 
   if (loading) {

@@ -35,27 +35,43 @@ export function ProposalDetail({
   const [data, setData] = useState<ProposalData | null>(null);
   const [loading, setLoading] = useState(true);
   const [voting, setVoting] = useState(false);
+  const [voteError, setVoteError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    const controller = new AbortController();
     setLoading(true);
     setError(null);
-    fetch(`/api/governance/proposals/${encodeURIComponent(proposalId)}`)
+    fetch(`/api/governance/proposals/${encodeURIComponent(proposalId)}`, {
+      signal: controller.signal,
+    })
       .then((res) => {
         if (!res.ok) throw new Error("Failed to load proposal");
         return res.json() as Promise<ProposalData>;
       })
-      .then(setData)
-      .catch((err) => setError(err instanceof Error ? err.message : "Unknown error"))
-      .finally(() => setLoading(false));
+      .then((result) => {
+        if (!controller.signal.aborted) setData(result);
+      })
+      .catch((err) => {
+        if (!controller.signal.aborted) {
+          setError(err instanceof Error ? err.message : "Unknown error");
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
   }, [proposalId]);
 
   const handleVote = useCallback(
     async (choice: VoteChoice) => {
       if (!onVote || voting) return;
       setVoting(true);
+      setVoteError(null);
       try {
         await onVote(proposalId, choice);
+      } catch (err) {
+        setVoteError(err instanceof Error ? err.message : "Vote failed");
       } finally {
         setVoting(false);
       }
@@ -185,6 +201,13 @@ export function ProposalDetail({
             <span>Threshold: {proposal.votes.threshold}</span>
           </div>
         </div>
+
+        {/* Vote error */}
+        {voteError && (
+          <div className="mb-3 rounded-[6px] border border-[rgba(248,81,73,0.25)] bg-[rgba(248,81,73,0.05)] px-3 py-2 text-[11px] text-[var(--color-status-error)]">
+            {voteError}
+          </div>
+        )}
 
         {/* Vote buttons */}
         {canVote && (

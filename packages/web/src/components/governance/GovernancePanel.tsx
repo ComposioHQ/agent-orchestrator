@@ -43,21 +43,32 @@ export function GovernancePanel() {
     async (proposalId: string, choice: VoteChoice) => {
       if (!wallet.connected || !wallet.address) return;
 
-      const txHash = await signTransaction({
-        type: "vote",
-        proposalId,
-        choice,
-      });
-
-      await fetch(`/api/governance/proposals/${encodeURIComponent(proposalId)}/vote`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      try {
+        const txHash = await signTransaction({
+          type: "vote",
+          proposalId,
           choice,
-          voter: wallet.address,
-          txHash,
-        }),
-      });
+        });
+
+        const res = await fetch(`/api/governance/proposals/${encodeURIComponent(proposalId)}/vote`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            choice,
+            voter: wallet.address,
+            txHash,
+          }),
+        });
+
+        if (!res.ok) {
+          const data = (await res.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(data?.error ?? "Vote submission failed");
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Vote failed";
+        console.error(`[governance] Vote failed for ${proposalId}:`, message);
+        throw err;
+      }
     },
     [wallet.connected, wallet.address, signTransaction],
   );

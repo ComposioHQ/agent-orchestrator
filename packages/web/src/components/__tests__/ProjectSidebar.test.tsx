@@ -21,16 +21,18 @@ describe("ProjectSidebar", () => {
     mockPush.mockClear();
   });
 
-  it("renders nothing when there is only one project", () => {
-    const { container } = render(
+  it("renders only governance link when there is only one project", () => {
+    render(
       <ProjectSidebar projects={[projects[0]]} activeProjectId="project-1" />,
     );
-    expect(container.firstChild).toBeNull();
+    expect(screen.queryByText("Projects")).not.toBeInTheDocument();
+    expect(screen.getByText("Governance")).toBeInTheDocument();
   });
 
-  it("renders nothing when there are no projects", () => {
-    const { container } = render(<ProjectSidebar projects={[]} activeProjectId={undefined} />);
-    expect(container.firstChild).toBeNull();
+  it("renders only governance link when there are no projects", () => {
+    render(<ProjectSidebar projects={[]} activeProjectId={undefined} />);
+    expect(screen.queryByText("Projects")).not.toBeInTheDocument();
+    expect(screen.getByText("Governance")).toBeInTheDocument();
   });
 
   it("renders sidebar with all projects when there are multiple", () => {
