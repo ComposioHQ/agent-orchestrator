@@ -52,6 +52,9 @@ contract VotingPolicy is Ownable {
     error SelfDelegation();
     error InvalidQuorum();
     error ForkNotConfigured();
+    error InvalidDelegate();
+    error NotDelegate();
+    error HasActiveDelegation();
 
     modifier onlyMaintainer() {
         if (!maintainers[msg.sender]) revert NotMaintainer();
@@ -89,28 +92,32 @@ contract VotingPolicy is Ownable {
     /// @notice Delegate vote to another maintainer. Pass address(0) to revoke.
     function setDelegation(address delegate) external onlyMaintainer {
         if (delegate == msg.sender) revert SelfDelegation();
+        if (delegate != address(0) && !maintainers[delegate]) revert InvalidDelegate();
         delegation[msg.sender] = delegate;
         emit DelegationSet(msg.sender, delegate);
     }
 
-    /// @notice Cast a vote on a proposal. Delegated votes are counted for the delegate.
+    /// @notice Cast a vote on a proposal. Reverts if caller has an active delegation.
     function vote(uint256 proposalId, bool support) external onlyMaintainer {
+        if (delegation[msg.sender] != address(0)) revert HasActiveDelegation();
+        _castVote(proposalId, msg.sender, support);
+    }
+
+    /// @notice Cast a vote on behalf of a delegator. Only the delegator's delegate can call.
+    function voteAsDelegate(uint256 proposalId, address delegator, bool support)
+        external
+        onlyMaintainer
+    {
+        if (delegation[delegator] != msg.sender) revert NotDelegate();
+        _castVote(proposalId, delegator, support);
+    }
+
+    /// @dev Internal vote logic — records vote for `voter`.
+    function _castVote(uint256 proposalId, address voter, bool support) internal {
         VoteState storage vs = votes[proposalId];
         if (vs.finalized) revert VoteAlreadyFinalized();
-
-        // Each msg.sender can only vote once, regardless of delegation changes
-        if (hasVoted[proposalId][msg.sender]) revert AlreadyVoted();
-        hasVoted[proposalId][msg.sender] = true;
-
-        // Resolve effective voter for delegation — also mark delegate as voted
-        // to prevent both delegator and delegate from casting separate votes
-        address effectiveVoter = delegation[msg.sender] != address(0)
-            ? delegation[msg.sender]
-            : msg.sender;
-        if (effectiveVoter != msg.sender) {
-            if (hasVoted[proposalId][effectiveVoter]) revert AlreadyVoted();
-            hasVoted[proposalId][effectiveVoter] = true;
-        }
+        if (hasVoted[proposalId][voter]) revert AlreadyVoted();
+        hasVoted[proposalId][voter] = true;
 
         if (support) {
             vs.yesVotes++;
@@ -118,7 +125,7 @@ contract VotingPolicy is Ownable {
             vs.noVotes++;
         }
 
-        emit Voted(proposalId, effectiveVoter, support);
+        emit Voted(proposalId, voter, support);
     }
 
     /// @notice Finalize a vote for a proposal under a given fork's configuration.

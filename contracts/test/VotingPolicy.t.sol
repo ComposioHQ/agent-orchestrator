@@ -150,14 +150,95 @@ contract VotingPolicyTest is Test {
         vm.prank(alice);
         voting.setDelegation(bob);
 
-        // Alice votes, but it counts as bob's vote
-        vm.prank(alice);
+        // Bob votes for alice's slot via voteAsDelegate
+        vm.prank(bob);
+        voting.voteAsDelegate(proposalId, alice, true);
+
+        // Bob can still cast his own vote
+        vm.prank(bob);
         voting.vote(proposalId, true);
 
-        // Bob tries to vote — should revert since alice already voted as bob
+        VotingPolicy.VoteState memory vs = voting.getVoteState(proposalId);
+        assertEq(vs.yesVotes, 2);
+    }
+
+    function test_DelegatorCannotVoteDirectly() public {
+        uint256 proposalId = 1;
+
+        vm.prank(alice);
+        voting.setDelegation(bob);
+
+        // Alice cannot vote directly while delegated
+        vm.prank(alice);
+        vm.expectRevert(VotingPolicy.HasActiveDelegation.selector);
+        voting.vote(proposalId, true);
+    }
+
+    function test_RevertVoteAsDelegateNotDelegate() public {
+        uint256 proposalId = 1;
+
+        // Alice delegates to bob, but charlie tries to vote for alice
+        vm.prank(alice);
+        voting.setDelegation(bob);
+
+        vm.prank(charlie);
+        vm.expectRevert(VotingPolicy.NotDelegate.selector);
+        voting.voteAsDelegate(proposalId, alice, true);
+    }
+
+    function test_DelegateCannotDoubleVoteForDelegator() public {
+        uint256 proposalId = 1;
+
+        vm.prank(alice);
+        voting.setDelegation(bob);
+
+        vm.prank(bob);
+        voting.voteAsDelegate(proposalId, alice, true);
+
+        // Can't vote for alice again
         vm.prank(bob);
         vm.expectRevert(VotingPolicy.AlreadyVoted.selector);
+        voting.voteAsDelegate(proposalId, alice, true);
+    }
+
+    function test_RevertDelegateToNonMaintainer() public {
+        vm.prank(alice);
+        vm.expectRevert(VotingPolicy.InvalidDelegate.selector);
+        voting.setDelegation(address(0x99));
+    }
+
+    function test_RevokeDelegationAllowsDirectVote() public {
+        uint256 proposalId = 1;
+
+        vm.prank(alice);
+        voting.setDelegation(bob);
+
+        // Revoke delegation
+        vm.prank(alice);
+        voting.setDelegation(address(0));
+
+        // Alice can now vote directly
+        vm.prank(alice);
         voting.vote(proposalId, true);
+    }
+
+    function test_NoDelegationGriefing() public {
+        uint256 proposalId = 1;
+
+        // Alice delegates to bob
+        vm.prank(alice);
+        voting.setDelegation(bob);
+
+        // Bob votes for alice's slot
+        vm.prank(bob);
+        voting.voteAsDelegate(proposalId, alice, true);
+
+        // Bob can still vote for himself — delegation does NOT lock out the delegate
+        vm.prank(bob);
+        voting.vote(proposalId, true);
+
+        VotingPolicy.VoteState memory vs = voting.getVoteState(proposalId);
+        assertEq(vs.yesVotes, 2);
     }
 
     function test_RevertSelfDelegation() public {
@@ -219,25 +300,6 @@ contract VotingPolicyTest is Test {
         assertEq(vs.yesVotes, 1);
         assertEq(vs.noVotes, 0);
         assertFalse(vs.finalized);
-    }
-
-    function test_RevertDelegationChangeVoteAbuse() public {
-        uint256 proposalId = 1;
-        address dave = address(0x4);
-        voting.setMaintainer(dave, true);
-
-        // Alice delegates to dave and votes (counts as dave's vote)
-        vm.prank(alice);
-        voting.setDelegation(dave);
-        vm.prank(alice);
-        voting.vote(proposalId, true);
-
-        // Alice tries to change delegation and vote again — should revert
-        vm.prank(alice);
-        voting.setDelegation(address(0));
-        vm.prank(alice);
-        vm.expectRevert(VotingPolicy.AlreadyVoted.selector);
-        voting.vote(proposalId, true);
     }
 
     function test_RevertFinalizeUnconfiguredFork() public {
