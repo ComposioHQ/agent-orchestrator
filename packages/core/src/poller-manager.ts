@@ -18,7 +18,6 @@ import type {
   PollerWorkItem,
   PluginRegistry,
   SessionManager,
-  Session,
   SessionSpawnConfig,
 } from "./types.js";
 import { parseDuration } from "./lifecycle-manager.js";
@@ -57,7 +56,7 @@ export function createPollerManager(deps: PollerManagerDeps): PollerManagerImpl 
 
     for (const [projectId, project] of Object.entries(config.projects)) {
       const projectPollers = project.pollers ?? config.pollers ?? {};
-      for (const [pollerName, pollerConfig] of Object.entries(projectPollers)) {
+      for (const [_pollerName, pollerConfig] of Object.entries(projectPollers)) {
         if (!pollerConfig.enabled) continue;
 
         const poller = registry.get<Poller>("poller", pollerConfig.type);
@@ -271,8 +270,13 @@ export function createPollerManager(deps: PollerManagerDeps): PollerManagerImpl 
       pollTimers.set(interval, timer);
     }
 
-    // Run immediately on start
-    void pollAll();
+    // Run immediately on start - only pollers without explicit intervals
+    // Pollers with specific intervals will run on their timers
+    for (const { projectId, config: pollerConfig, poller } of getEnabledPollers()) {
+      if (!pollerConfig.interval) {
+        void pollOne(projectId, pollerConfig, poller);
+      }
+    }
   }
 
   /** Stop all pollers */
