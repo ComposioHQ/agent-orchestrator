@@ -156,8 +156,8 @@ const MergeGateConfigSchema = z
     preMergeWebhook: z.string().url().optional(),
     webhookTimeout: z.number().positive().max(120).default(30),
   })
-  .optional()
-  .default({});
+  .default({})
+  .optional();
 
 const ProjectConfigSchema = z.object({
   name: z.string().optional(),

@@ -48,6 +48,7 @@ export function createPollerManager(deps: PollerManagerDeps): PollerManagerImpl 
   const observer = createProjectObserver(config, "poller-manager");
 
   const pollTimers = new Map<string, ReturnType<typeof setInterval>>();
+  const intervalPollsInFlight = new Set<string>();
   const spawnTrackers = new Map<string, SpawnTracker>(); // "projectId:workItemId"
 
   /** Get all enabled pollers across all projects */
@@ -237,15 +238,22 @@ export function createPollerManager(deps: PollerManagerDeps): PollerManagerImpl 
 
   /** Run one polling cycle for pollers matching a specific interval */
   async function pollByInterval(interval: string): Promise<void> {
-    const enabledPollers = getEnabledPollers().filter(
-      ({ config: pollerConfig }) => pollerConfig.interval === interval,
-    );
+    // In-flight guard: prevent overlapping executions
+    if (intervalPollsInFlight.has(interval)) return;
+    intervalPollsInFlight.add(interval);
+    try {
+      const enabledPollers = getEnabledPollers().filter(
+        ({ config: pollerConfig }) => pollerConfig.interval === interval,
+      );
 
-    await Promise.allSettled(
-      enabledPollers.map(({ projectId, config: pollerConfig, poller }) =>
-        pollOne(projectId, pollerConfig, poller),
-      ),
-    );
+      await Promise.allSettled(
+        enabledPollers.map(({ projectId, config: pollerConfig, poller }) =>
+          pollOne(projectId, pollerConfig, poller),
+        ),
+      );
+    } finally {
+      intervalPollsInFlight.delete(interval);
+    }
   }
 
   /** Start all pollers */
