@@ -175,6 +175,10 @@ export function readEvents(
     try {
       const parsed = JSON.parse(line) as SessionEvent;
       if (parsed.ts && parsed.event) {
+        // Ensure data is always a valid object to prevent downstream TypeError
+        if (!parsed.data || typeof parsed.data !== "object") {
+          parsed.data = {};
+        }
         events.push(parsed);
       }
     } catch {
@@ -247,8 +251,8 @@ export function logStatusChanged(
   sessionsDir: string,
   sessionId: SessionId,
   data: {
-    from: SessionStatus | string;
-    to: SessionStatus | string;
+    from: SessionStatus;
+    to: SessionStatus;
   },
 ): void {
   appendEvent(sessionsDir, sessionId, "session.status_changed", data);

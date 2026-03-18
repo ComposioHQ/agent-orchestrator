@@ -733,6 +733,9 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         level: transitionLogLevel(newStatus),
       });
 
+      // Compute event type once for both event logging and reaction handling
+      const eventType = statusToEventType(oldStatus, newStatus);
+
       // Persist status change to session event log
       try {
         const project = config.projects[session.projectId];
@@ -741,7 +744,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           logStatusChanged(sessionsDir, session.id, { from: oldStatus, to: newStatus });
 
           // Log PR/CI/review-specific events based on the transition
-          const eventType = statusToEventType(oldStatus, newStatus);
           if (eventType) {
             if (eventType === "pr.created" && session.pr) {
               appendEvent(sessionsDir, session.id, "pr.created", {
@@ -780,7 +782,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
 
       // Handle transition: notify humans and/or trigger reactions
-      const eventType = statusToEventType(oldStatus, newStatus);
       if (eventType) {
         let reactionHandledNotify = false;
         const reactionKey = eventToReactionKey(eventType);
