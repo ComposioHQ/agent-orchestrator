@@ -38,6 +38,7 @@ import {
 import pluginRuntimeTmux from "@composio/ao-plugin-runtime-tmux";
 import pluginAgentClaudeCode from "@composio/ao-plugin-agent-claude-code";
 import pluginAgentOpencode from "@composio/ao-plugin-agent-opencode";
+import pluginAgentAuggie from "@composio/ao-plugin-agent-auggie";
 import pluginWorkspaceWorktree from "@composio/ao-plugin-workspace-worktree";
 import pluginScmGithub from "@composio/ao-plugin-scm-github";
 import pluginTrackerGithub from "@composio/ao-plugin-tracker-github";
@@ -80,6 +81,7 @@ async function initServices(): Promise<Services> {
   registry.register(pluginRuntimeTmux);
   registry.register(pluginAgentClaudeCode);
   registry.register(pluginAgentOpencode);
+  registry.register(pluginAgentAuggie);
   registry.register(pluginWorkspaceWorktree);
   registry.register(pluginScmGithub);
   registry.register(pluginTrackerGithub);
