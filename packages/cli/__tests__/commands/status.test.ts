@@ -385,10 +385,44 @@ describe("status command", () => {
 
     const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
     expect(output).toContain("Session");
+    expect(output).toContain("Issue");
     expect(output).toContain("Branch");
     expect(output).toContain("PR");
     expect(output).toContain("CI");
     expect(output).toContain("Activity");
+  });
+
+  it("displays issue ID from session metadata in table and JSON output", async () => {
+    writeFileSync(
+      join(sessionsDir, "app-1"),
+      "worktree=/tmp/wt/app-1\nbranch=feat/INT-100\nstatus=working\nissue=INT-100\n",
+    );
+    writeFileSync(
+      join(sessionsDir, "app-2"),
+      "worktree=/tmp/wt/app-2\nbranch=feat/no-issue\nstatus=working\n",
+    );
+
+    mockTmux.mockImplementation(async (...args: string[]) => {
+      if (args[0] === "list-sessions") return "app-1\napp-2";
+      if (args[0] === "display-message") return String(Math.floor(Date.now() / 1000) - 60);
+      return null;
+    });
+    mockGit.mockResolvedValue(null);
+
+    // Verify table output contains the issue
+    await program.parseAsync(["node", "test", "status"]);
+    const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(output).toContain("INT-100");
+
+    // Verify JSON output includes the issue field
+    consoleSpy.mockClear();
+    await program.parseAsync(["node", "test", "status", "--json"]);
+    const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
+    const parsed = JSON.parse(jsonCalls);
+    const withIssue = parsed.find((e: { name: string }) => e.name === "app-1");
+    const withoutIssue = parsed.find((e: { name: string }) => e.name === "app-2");
+    expect(withIssue.issue).toBe("INT-100");
+    expect(withoutIssue.issue).toBeNull();
   });
 
   it("shows PR number, CI status, review decision, and threads", async () => {
