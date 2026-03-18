@@ -140,6 +140,7 @@ async function gatherSessionInfo(
 // Column widths for the table
 const COL = {
   session: 14,
+  issue: 12,
   branch: 24,
   pr: 6,
   ci: 6,
@@ -152,6 +153,7 @@ const COL = {
 function printTableHeader(): void {
   const hdr =
     padCol("Session", COL.session) +
+    padCol("Issue", COL.issue) +
     padCol("Branch", COL.branch) +
     padCol("PR", COL.pr) +
     padCol("CI", COL.ci) +
@@ -161,15 +163,25 @@ function printTableHeader(): void {
     "Age";
   console.log(chalk.dim(`  ${hdr}`));
   const totalWidth =
-    COL.session + COL.branch + COL.pr + COL.ci + COL.review + COL.threads + COL.activity + 3;
+    COL.session +
+    COL.issue +
+    COL.branch +
+    COL.pr +
+    COL.ci +
+    COL.review +
+    COL.threads +
+    COL.activity +
+    3;
   console.log(chalk.dim(`  ${"─".repeat(totalWidth)}`));
 }
 
 function printSessionRow(info: SessionInfo): void {
   const prStr = info.prNumber ? `#${info.prNumber}` : "-";
+  const issueStr = info.issue ?? "-";
 
   const row =
     padCol(chalk.green(info.name), COL.session) +
+    padCol(info.issue ? chalk.yellow(issueStr) : chalk.dim(issueStr), COL.issue) +
     padCol(info.branch ? chalk.cyan(info.branch) : chalk.dim("-"), COL.branch) +
     padCol(info.prNumber ? chalk.blue(prStr) : chalk.dim(prStr), COL.pr) +
     padCol(ciStatusIcon(info.ciStatus), COL.ci) +
