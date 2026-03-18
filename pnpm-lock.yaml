@@ -33,7 +33,7 @@ importers:
         specifier: ^8.55.0
         version: 8.55.0(eslint@10.0.0(jiti@2.6.1))(typescript@5.9.3)
 
-  packages/agent-orchestrator:
+  packages/ao:
     dependencies:
       '@composio/ao-cli':
         specifier: workspace:*
