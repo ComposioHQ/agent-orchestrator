@@ -181,7 +181,7 @@ export function findWebDir(): string {
     }
     throw new Error(
       "Could not find @composio/ao-web package.\n" +
-      "  If installed via npm:    npm install -g @composio/agent-orchestrator\n" +
+      "  If installed via npm:    npm install -g @composio/ao\n" +
       "  If cloned from source:   pnpm install && pnpm build",
     );
   }
