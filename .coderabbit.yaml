@@ -1,4 +1,5 @@
 # CodeRabbit configuration
+# Enables APPROVE/REQUEST_CHANGES review states
 reviews:
   review_status: true
   request_changes_workflow: true
