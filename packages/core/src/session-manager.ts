@@ -54,6 +54,12 @@ import {
   listMetadata,
   reserveSessionId,
 } from "./metadata.js";
+import {
+  logSessionCreated,
+  logSessionStarted,
+  logSessionKilled,
+  logSessionRestored,
+} from "./event-log.js";
 import { buildPrompt } from "./prompt-builder.js";
 import {
   getSessionsDir,
@@ -1171,6 +1177,23 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       throw err;
     }
 
+    // Log session creation and agent start events
+    try {
+      logSessionCreated(sessionsDir, sessionId, {
+        projectId: spawnConfig.projectId,
+        branch,
+        workspacePath,
+        agent: selection.agentName,
+        issueId: spawnConfig.issueId,
+      });
+      logSessionStarted(sessionsDir, sessionId, {
+        runtimeId: handle.id,
+        runtimeName: handle.runtimeName,
+      });
+    } catch {
+      // Non-fatal: event logging failure should never block session creation
+    }
+
     // Send initial prompt post-launch for agents that need it (e.g. Claude Code
     // exits after -p, so we send the prompt after it starts in interactive mode).
     // This is intentionally outside the try/catch above — a prompt delivery failure
@@ -1605,6 +1628,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           void 0;
         }
       }
+    }
+
+    // Log kill event before archiving metadata
+    try {
+      logSessionKilled(sessionsDir, sessionId, { reason: "user_requested" });
+    } catch {
+      // Non-fatal
     }
 
     // Archive metadata
@@ -2410,6 +2440,16 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       } catch {
         // Non-fatal — session is already running
       }
+    }
+
+    // Log restore event
+    try {
+      logSessionRestored(sessionsDir, sessionId, {
+        previousStatus: raw["status"],
+        runtimeId: handle.id,
+      });
+    } catch {
+      // Non-fatal
     }
 
     return restoredSession;

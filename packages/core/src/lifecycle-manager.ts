@@ -37,6 +37,11 @@ import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
 import { createCorrelationId, createProjectObserver } from "./observability.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
+import {
+  logStatusChanged,
+  appendEvent,
+  appendTerminalCapture,
+} from "./event-log.js";
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
@@ -727,6 +732,37 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         level: transitionLogLevel(newStatus),
       });
 
+      // Persist status change to session event log
+      try {
+        const project = config.projects[session.projectId];
+        if (project) {
+          const sessionsDir = getSessionsDir(config.configPath, project.path);
+          logStatusChanged(sessionsDir, session.id, { from: oldStatus, to: newStatus });
+
+          // Log PR/CI/review-specific events based on the transition
+          const eventType = statusToEventType(oldStatus, newStatus);
+          if (eventType) {
+            if (eventType === "pr.created" && session.pr) {
+              appendEvent(sessionsDir, session.id, "pr.created", {
+                url: session.pr.url,
+                number: session.pr.number,
+                branch: session.pr.branch,
+              });
+            } else if (eventType === "ci.failing") {
+              appendEvent(sessionsDir, session.id, "ci.status_changed", {
+                status: "failing",
+              });
+            } else if (eventType === "merge.completed") {
+              appendEvent(sessionsDir, session.id, "pr.merged", {
+                url: session.pr?.url,
+              });
+            }
+          }
+        }
+      } catch {
+        // Non-fatal: event logging should never break lifecycle management
+      }
+
       // Reset allCompleteEmitted when any session becomes active again
       if (newStatus !== "merged" && newStatus !== "killed") {
         allCompleteEmitted = false;
@@ -813,6 +849,36 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
       // Poll all sessions concurrently
       await Promise.allSettled(sessionsToCheck.map((s) => checkSession(s)));
+
+      // Periodic terminal capture for active sessions (appends to terminal.log)
+      await Promise.allSettled(
+        sessionsToCheck
+          .filter(
+            (s) =>
+              s.runtimeHandle &&
+              s.status !== "merged" &&
+              s.status !== "killed" &&
+              s.status !== "terminated",
+          )
+          .map(async (s) => {
+            try {
+              const project = config.projects[s.projectId];
+              if (!project || !s.runtimeHandle) return;
+              const runtime = registry.get<Runtime>(
+                "runtime",
+                project.runtime ?? config.defaults.runtime,
+              );
+              if (!runtime) return;
+              const output = await runtime.getOutput(s.runtimeHandle, 50);
+              if (output?.trim()) {
+                const sessionsDir = getSessionsDir(config.configPath, project.path);
+                appendTerminalCapture(sessionsDir, s.id, output);
+              }
+            } catch {
+              // Non-fatal: terminal capture failure should never break lifecycle
+            }
+          }),
+      );
 
       // Prune stale entries from states and reactionTrackers for sessions
       // that no longer appear in the session list (e.g., after kill/cleanup)

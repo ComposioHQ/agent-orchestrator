@@ -136,6 +136,24 @@ export type {
   PersistedFeedbackReport,
 } from "./feedback-tools.js";
 
+// Event log — append-only JSONL session event persistence
+export {
+  appendEvent,
+  appendTerminalCapture,
+  readEvents,
+  readTerminalLog,
+  getSessionEventDir,
+  terminalLogPath,
+  logSessionCreated,
+  logSessionStarted,
+  logStatusChanged,
+  logActivityChanged,
+  logSessionKilled,
+  logSessionRestored,
+  logSessionError,
+} from "./event-log.js";
+export type { SessionEvent, SessionEventType } from "./event-log.js";
+
 // Path utilities — hash-based directory structure
 export {
   generateConfigHash,
