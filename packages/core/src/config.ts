@@ -345,7 +345,7 @@ function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
     "agent-idle": {
       auto: true,
       action: "notify",
-      priority: "warning",
+      priority: "action",
       message:
         "Agent session appears idle. If the task is not complete, check on the session.",
       escalateAfter: "15m",
