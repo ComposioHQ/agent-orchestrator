@@ -851,10 +851,9 @@ function EventTimeline({ sessionId }: { sessionId: string }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const fetchedRef = useRef(false);
 
   const fetchEvents = async () => {
-    if (fetchedRef.current) return;
+    if (loading) return;
     setLoading(true);
     setError(null);
     try {
@@ -881,7 +880,6 @@ function EventTimeline({ sessionId }: { sessionId: string }) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = (await res.json()) as { events?: EventEntry[] };
       setEvents(json.events ?? []);
-      fetchedRef.current = true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load events");
     } finally {
@@ -892,7 +890,7 @@ function EventTimeline({ sessionId }: { sessionId: string }) {
   const handleToggle = () => {
     const next = !open;
     setOpen(next);
-    if (next && !fetchedRef.current) {
+    if (next) {
       void fetchEvents();
     }
   };

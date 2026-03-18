@@ -140,6 +140,7 @@ export type {
 export {
   appendEvent,
   appendTerminalCapture,
+  hasEvents,
   readEvents,
   readTerminalLog,
   getSessionEventDir,

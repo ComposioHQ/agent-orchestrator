@@ -147,10 +147,21 @@ export function appendTerminalCapture(
 // =============================================================================
 
 /**
- * Read all events from a session's event log.
+ * Check if a session has any events without parsing the entire file.
+ * Useful for cheap existence checks (e.g., API fallback project search).
+ */
+export function hasEvents(sessionsDir: string, sessionId: SessionId): boolean {
+  return existsSync(eventsFilePath(sessionsDir, sessionId));
+}
+
+/**
+ * Read events from a session's event log.
  *
  * Returns an array of parsed events, skipping any malformed lines.
  * Supports optional filtering by event type and pagination via limit/offset.
+ *
+ * Applies type filtering and limit during parsing to avoid reading
+ * the entire file into memory when only a small subset is needed.
  */
 export function readEvents(
   sessionsDir: string,
@@ -170,35 +181,39 @@ export function readEvents(
   const content = readFileSync(filePath, "utf-8");
   const lines = content.split("\n").filter((line) => line.trim());
 
-  let events: SessionEvent[] = [];
+  const typeSet =
+    options?.types && options.types.length > 0 ? new Set(options.types) : null;
+  const offset = options?.offset ?? 0;
+  const limit = options?.limit;
+
+  const events: SessionEvent[] = [];
+  let matched = 0; // count of events that pass the type filter (for offset tracking)
   for (const line of lines) {
+    // Early exit: collected enough events
+    if (limit !== undefined && limit > 0 && events.length >= limit) break;
+
     try {
       const parsed = JSON.parse(line) as SessionEvent;
-      if (parsed.ts && parsed.event) {
-        // Ensure data is always a valid object to prevent downstream TypeError
-        if (!parsed.data || typeof parsed.data !== "object") {
-          parsed.data = {};
-        }
-        events.push(parsed);
+      if (!parsed.ts || !parsed.event) continue;
+
+      // Apply type filter during parsing
+      if (typeSet && !typeSet.has(parsed.event)) continue;
+
+      // Apply offset
+      if (matched < offset) {
+        matched++;
+        continue;
       }
+      matched++;
+
+      // Ensure data is always a valid object to prevent downstream TypeError
+      if (!parsed.data || typeof parsed.data !== "object") {
+        parsed.data = {};
+      }
+      events.push(parsed);
     } catch {
       // Skip malformed lines — append-only logs may have a truncated trailing line
     }
-  }
-
-  // Apply type filter
-  if (options?.types && options.types.length > 0) {
-    const typeSet = new Set(options.types);
-    events = events.filter((e) => typeSet.has(e.event));
-  }
-
-  // Apply pagination
-  const offset = options?.offset ?? 0;
-  if (offset > 0) {
-    events = events.slice(offset);
-  }
-  if (options?.limit !== undefined && options.limit > 0) {
-    events = events.slice(0, options.limit);
   }
 
   return events;

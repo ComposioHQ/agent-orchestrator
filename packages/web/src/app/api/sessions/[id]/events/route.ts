@@ -1,7 +1,7 @@
 import { type NextRequest } from "next/server";
 import { validateIdentifier } from "@/lib/validation";
 import { getServices } from "@/lib/services";
-import { getSessionsDir, readEvents, type SessionEventType } from "@composio/ao-core";
+import { getSessionsDir, readEvents, hasEvents, type SessionEventType } from "@composio/ao-core";
 import {
   getCorrelationId,
   jsonWithCorrelation,
@@ -32,12 +32,11 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       }
     }
 
-    // Fallback: search all projects for this session
+    // Fallback: search all projects for this session (cheap file existence check)
     if (!sessionsDir) {
       for (const [, project] of Object.entries(config.projects)) {
         const dir = getSessionsDir(config.configPath, project.path);
-        const events = readEvents(dir, id, { limit: 1 });
-        if (events.length > 0) {
+        if (hasEvents(dir, id)) {
           sessionsDir = dir;
           break;
         }
