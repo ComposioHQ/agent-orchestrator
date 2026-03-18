@@ -7,7 +7,7 @@
     [
       "@composio/ao-core",
       "@composio/ao-cli",
-      "@composio/agent-orchestrator",
+      "@composio/ao",
       "@composio/ao-plugin-runtime-tmux",
       "@composio/ao-plugin-runtime-process",
       "@composio/ao-plugin-agent-claude-code",
