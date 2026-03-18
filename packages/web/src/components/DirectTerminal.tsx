@@ -10,6 +10,7 @@ import "xterm/css/xterm.css";
 // Dynamically import xterm types for TypeScript
 import type { Terminal as TerminalType } from "xterm";
 import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
+import { Terminal } from "./Terminal";
 
 interface DirectTerminalProps {
   sessionId: string;
@@ -91,6 +92,7 @@ export function DirectTerminal({
   const [error, setError] = useState<string | null>(null);
   const [reloading, setReloading] = useState(false);
   const [reloadError, setReloadError] = useState<string | null>(null);
+  const [useTtydFallback, setUseTtydFallback] = useState(false);
 
   // Update URL when fullscreen changes
   useEffect(() => {
@@ -402,6 +404,15 @@ export function DirectTerminal({
 
             if (!mounted) return;
 
+            // node-pty unavailable — fall back to ttyd terminal
+            if (event.code === 4002) {
+              console.log(
+                "[DirectTerminal] node-pty unavailable, falling back to ttyd terminal",
+              );
+              setUseTtydFallback(true);
+              return;
+            }
+
             // Permanent errors — don't retry
             if (PERMANENT_CLOSE_CODES.has(event.code)) {
               permanentErrorRef.current = true;
@@ -567,6 +578,24 @@ export function DirectTerminal({
       : status === "error"
         ? "text-[var(--color-status-error)]"
         : "text-[var(--color-text-tertiary)]";
+
+  // Fall back to ttyd-based terminal when node-pty is unavailable (e.g. linux-arm64)
+  if (useTtydFallback) {
+    return (
+      <div>
+        <div className="mb-2 flex items-center gap-2 rounded-[6px] border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] px-3 py-2">
+          <span className="text-[11px] font-semibold text-[var(--color-status-attention)]">
+            Degraded mode
+          </span>
+          <span className="text-[11px] text-[var(--color-text-secondary)]">
+            node-pty unavailable on this platform. Using iframe terminal (clipboard support
+            limited).
+          </span>
+        </div>
+        <Terminal sessionId={sessionId} />
+      </div>
+    );
+  }
 
   return (
     <div

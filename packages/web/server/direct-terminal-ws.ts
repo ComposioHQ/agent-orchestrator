@@ -10,15 +10,54 @@
 import { createServer, type Server } from "node:http";
 import { spawn } from "node:child_process";
 import { WebSocketServer, WebSocket } from "ws";
-import { spawn as ptySpawn, type IPty } from "node-pty";
 import { homedir, userInfo } from "node:os";
 import { createCorrelationId } from "@composio/ao-core";
 import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
 import { createObserverContext, inferProjectId } from "./terminal-observability.js";
 
+/**
+ * Minimal PTY interface — the subset of node-pty's IPty we actually use.
+ * Defined inline so the module loads even when node-pty is absent.
+ */
+interface PtyProcess {
+  onData(callback: (data: string) => void): void;
+  onExit(callback: (e: { exitCode: number; signal?: number }) => void): void;
+  resize(columns: number, rows: number): void;
+  write(data: string): void;
+  kill(signal?: string): void;
+}
+
+type PtySpawnFn = (
+  file: string,
+  args: string[],
+  options: { name?: string; cols?: number; rows?: number; cwd?: string; env?: Record<string, string> },
+) => PtyProcess;
+
+// ── Graceful node-pty loading ─────────────────────────────────────────
+// node-pty ships prebuilt binaries for darwin and win32 but NOT linux-arm64.
+// On unsupported platforms without build tools (make, g++), the import fails.
+// Instead of crashing the process (which kills the entire dashboard via
+// concurrently), we degrade gracefully: the server stays up, health checks
+// report the status, and WebSocket clients receive close code 4002 so the
+// frontend can fall back to the ttyd-based terminal.
+
+let ptySpawnFn: PtySpawnFn | null = null;
+let nodePtyLoadError: string | null = null;
+
+try {
+  const nodePty = await import("node-pty");
+  ptySpawnFn = nodePty.spawn as PtySpawnFn;
+} catch (err) {
+  nodePtyLoadError = err instanceof Error ? err.message : String(err);
+  console.warn(`[DirectTerminal] node-pty unavailable: ${nodePtyLoadError}`);
+  console.warn(
+    "[DirectTerminal] Direct terminal disabled — dashboard will use ttyd fallback.",
+  );
+}
+
 interface TerminalSession {
   sessionId: string;
-  pty: IPty;
+  pty: PtyProcess;
   ws: WebSocket;
 }
 
@@ -68,6 +107,8 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
         JSON.stringify({
           active: activeSessions.size,
           sessions: Array.from(activeSessions.keys()),
+          nodePtyAvailable: ptySpawnFn !== null,
+          ...(nodePtyLoadError && { nodePtyError: nodePtyLoadError }),
           metrics,
         }),
       );
@@ -150,6 +191,22 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
       return;
     }
 
+    // Reject connection if node-pty is not available (e.g. linux-arm64 without prebuilds)
+    if (!ptySpawnFn) {
+      console.error(
+        "[DirectTerminal] node-pty unavailable, rejecting connection for:",
+        sessionId,
+      );
+      recordWebsocketMetric({
+        metric: "websocket_error",
+        outcome: "failure",
+        sessionId,
+        reason: "node-pty unavailable",
+      });
+      ws.close(4002, "node-pty unavailable");
+      return;
+    }
+
     console.log(`[DirectTerminal] New connection for session: ${tmuxSessionId}`);
 
     // Enable mouse mode for scrollback support
@@ -180,11 +237,11 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
       TMPDIR: process.env.TMPDIR || "/tmp",
     };
 
-    let pty: IPty;
+    let pty: PtyProcess;
     try {
       console.log(`[DirectTerminal] Spawning PTY: tmux attach-session -t ${tmuxSessionId}`);
 
-      pty = ptySpawn(TMUX, ["attach-session", "-t", tmuxSessionId], {
+      pty = ptySpawnFn(TMUX, ["attach-session", "-t", tmuxSessionId], {
         name: "xterm-256color",
         cols: 80,
         rows: 24,
