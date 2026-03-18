@@ -23,12 +23,12 @@ const execFileAsync = promisify(execFile);
  */
 const AO_MANAGED_EXCLUDE_PATTERNS = `# AO-managed files - do not track in worktree
 # Agent configuration (written by agent-base plugin)
-.settings.json
+settings.json
 .claude.json
 # MCP configuration
 mcp.json
 # Hook scripts (specific patterns, not broad *.sh)
-.metadata-updater.sh
+metadata-updater.sh
 # Agent runtime state
 .agent-*.running
 .agent-*.lock
