@@ -56,6 +56,7 @@ contract ExecutionPolicy is Ownable {
     error ScopeNotAllowed(uint256 proposalId, bytes32 scope);
     error ScopeAlreadyConsumed(uint256 proposalId, bytes32 scope);
     error UnauthorizedExecutor(address caller);
+    error ProposalNoLongerApproved(uint256 proposalId);
 
     event MutationExecutorUpdated(address indexed executor);
     event ProposalScopesDefined(uint256 indexed proposalId, bytes32 indexed forkId, bytes32[] scopes);
@@ -145,6 +146,13 @@ contract ExecutionPolicy is Ownable {
 
         ProposalExecutionState memory state = _proposalState[proposalId];
         if (!state.approved) revert ProposalNotExecutionApproved(proposalId);
+
+        // Live-check registry status — a proposal can be cancelled after execution approval
+        IGovernanceRegistry.ProposalStatus liveStatus = governanceRegistry.proposalStatus(proposalId);
+        if (liveStatus != IGovernanceRegistry.ProposalStatus.Approved && liveStatus != IGovernanceRegistry.ProposalStatus.Executed) {
+            revert ProposalNoLongerApproved(proposalId);
+        }
+
         if (!_allowedScope[proposalId][scope]) revert ScopeNotAllowed(proposalId, scope);
         if (_consumedScope[proposalId][scope]) revert ScopeAlreadyConsumed(proposalId, scope);
 

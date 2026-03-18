@@ -122,4 +122,35 @@ contract VotingPolicyTest is TestBase {
         vm.expectRevert(abi.encodeWithSelector(VotingPolicy.NotMaintainer.selector, outsider));
         voting.castVote(5, VotingPolicy.VoteChoice.For);
     }
+
+    function testDelegateCannotVoteTwiceOnSameProposal() public {
+        uint256 proposalId = 6;
+
+        // m1 delegates to m2
+        vm.prank(m1);
+        voting.setDelegation(m2);
+
+        // m2 votes with delegated power (2 votes)
+        vm.prank(m2);
+        voting.castVote(proposalId, VotingPolicy.VoteChoice.For);
+
+        // Even if m2 receives new delegations, they cannot vote again
+        vm.prank(m2);
+        vm.expectRevert(
+            abi.encodeWithSelector(VotingPolicy.AlreadyVoted.selector, m2, DEFAULT_FORK, proposalId)
+        );
+        voting.castVote(proposalId, VotingPolicy.VoteChoice.Against);
+    }
+
+    function testHasVoterVotedReturnsCorrectState() public {
+        uint256 proposalId = 7;
+
+        assertFalse(voting.hasVoterVoted(DEFAULT_FORK, proposalId, m1));
+
+        vm.prank(m1);
+        voting.castVote(proposalId, VotingPolicy.VoteChoice.For);
+
+        assertTrue(voting.hasVoterVoted(DEFAULT_FORK, proposalId, m1));
+        assertFalse(voting.hasVoterVoted(DEFAULT_FORK, proposalId, m2));
+    }
 }

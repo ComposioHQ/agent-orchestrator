@@ -118,6 +118,27 @@ contract ExecutionPolicyTest is TestBase {
         executionPolicy.consumeScope(proposalId, SCOPE_METADATA);
     }
 
+    function testCancelledProposalCannotConsumeScope() public {
+        uint256 proposalId = _createProposalAndMarkApprovedInRegistry();
+        _voteAllFor(proposalId);
+
+        bytes32[] memory scopes = new bytes32[](1);
+        scopes[0] = SCOPE_METADATA;
+        vm.prank(owner);
+        executionPolicy.defineProposalScopes(proposalId, DEFAULT_FORK, scopes);
+
+        executionPolicy.approveProposalForExecution(proposalId);
+
+        // Cancel the proposal in the registry after execution approval
+        vm.prank(owner);
+        registry.updateProposalStatus(proposalId, GovernanceRegistry.ProposalStatus.Cancelled);
+
+        // Attempt to consume scope should revert with live status check
+        vm.prank(executor);
+        vm.expectRevert(abi.encodeWithSelector(ExecutionPolicy.ProposalNoLongerApproved.selector, proposalId));
+        executionPolicy.consumeScope(proposalId, SCOPE_METADATA);
+    }
+
     function _createProposalAndMarkApprovedInRegistry() private returns (uint256 proposalId) {
         vm.prank(proposer);
         proposalId = registry.createProposal(CONTENT_HASH);

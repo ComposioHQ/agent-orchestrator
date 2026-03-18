@@ -40,6 +40,7 @@ contract VotingPolicy is Ownable {
     error DelegationCycle();
     error NoVotingPower(address voter);
     error InvalidProposal(uint256 proposalId);
+    error AlreadyVoted(address voter, bytes32 forkId, uint256 proposalId);
 
     event MaintainerUpdated(address indexed maintainer, bool isActive);
     event ForkPolicyUpdated(bytes32 indexed forkId, uint16 quorumBps, ThresholdType thresholdType);
@@ -59,6 +60,7 @@ contract VotingPolicy is Ownable {
     mapping(bytes32 => ForkConfig) private _forkConfigs;
     mapping(bytes32 => mapping(uint256 => VoteTally)) private _voteTallies;
     mapping(bytes32 => mapping(uint256 => mapping(address => bool))) private _hasVotedByMaintainer;
+    mapping(bytes32 => mapping(uint256 => mapping(address => bool))) private _hasVoterVoted;
 
     constructor(address initialOwner, bytes32 defaultForkId_, uint16 defaultQuorumBps, ThresholdType defaultThreshold)
         Ownable(initialOwner)
@@ -132,7 +134,10 @@ contract VotingPolicy is Ownable {
     {
         if (proposalId == 0) revert InvalidProposal(proposalId);
         if (!_maintainers.contains(msg.sender)) revert NotMaintainer(msg.sender);
+        if (_hasVoterVoted[forkId][proposalId][msg.sender]) revert AlreadyVoted(msg.sender, forkId, proposalId);
         _forkConfig(forkId);
+
+        _hasVoterVoted[forkId][proposalId][msg.sender] = true;
 
         uint256 count = _maintainers.length();
         for (uint256 i = 0; i < count; ++i) {
@@ -184,6 +189,10 @@ contract VotingPolicy is Ownable {
 
     function hasMaintainerVoted(bytes32 forkId, uint256 proposalId, address maintainer) external view returns (bool) {
         return _hasVotedByMaintainer[forkId][proposalId][maintainer];
+    }
+
+    function hasVoterVoted(bytes32 forkId, uint256 proposalId, address voter) external view returns (bool) {
+        return _hasVoterVoted[forkId][proposalId][voter];
     }
 
     function effectiveDelegateOf(address maintainer) external view returns (address) {
