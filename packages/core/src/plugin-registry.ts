@@ -51,6 +51,8 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
   // Terminals
   { slot: "terminal", name: "iterm2", pkg: "@composio/ao-plugin-terminal-iterm2" },
   { slot: "terminal", name: "web", pkg: "@composio/ao-plugin-terminal-web" },
+  // Governance
+  { slot: "governance", name: "base", pkg: "@composio/ao-plugin-governance-chain" },
 ];
 
 /** Extract plugin-specific config from orchestrator config */

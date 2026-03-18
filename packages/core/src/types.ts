@@ -4,7 +4,7 @@
  * This file defines ALL interfaces and types that the system uses.
  * Every plugin, CLI command, and web API route builds against these.
  *
- * Architecture: 8 plugin slots + core services
+ * Architecture: 9 plugin slots + core services
  *   1. Runtime    — where sessions execute (tmux, docker, k8s, process)
  *   2. Agent      — AI coding tool (claude-code, codex, aider)
  *   3. Workspace  — code isolation (worktree, clone)
@@ -13,6 +13,7 @@
  *   6. Notifier   — push notifications (desktop, slack, webhook)
  *   7. Terminal   — human interaction UI (iterm2, web, none)
  *   8. Lifecycle Manager (core, not pluggable)
+ *   9. Governance — on-chain governance bridge (base)
  */
 
 // =============================================================================
@@ -776,6 +777,184 @@ export interface Terminal {
 }
 
 // =============================================================================
+// GOVERNANCE — Plugin Slot 9
+// =============================================================================
+
+/**
+ * GovernanceChain bridges off-chain orchestration with on-chain governance.
+ * Submits proposals, casts votes, enforces execution policies, and attests outcomes.
+ */
+export interface GovernanceChain {
+  readonly name: string;
+
+  // --- Proposal Management ---
+
+  /** Submit a new governance proposal on-chain */
+  submitProposal(params: SubmitProposalParams): Promise<GovernanceProposalResult>;
+
+  /** Get a proposal by its on-chain ID */
+  getProposal(proposalId: number): Promise<GovernanceProposal>;
+
+  /** List proposals, optionally filtered by fork */
+  listProposals(forkId?: string): Promise<GovernanceProposal[]>;
+
+  // --- Voting ---
+
+  /** Cast a vote on a proposal */
+  castVote(params: CastVoteParams): Promise<CastVoteResult>;
+
+  /** Get the vote tally for a proposal */
+  getVoteRecord(forkId: string, proposalId: number): Promise<GovernanceVoteRecord>;
+
+  // --- Execution Policy ---
+
+  /** Check if an action is authorized by on-chain execution policy */
+  checkAuthorization(params: CheckAuthorizationParams): Promise<AuthorizationResult>;
+
+  // --- Attestation ---
+
+  /** Attest an outcome (CI result, review verdict, etc.) on-chain */
+  attest(params: AttestParams): Promise<AttestResult>;
+
+  /** Verify an existing attestation by its on-chain ID */
+  verifyAttestation(attestationId: number): Promise<GovernanceAttestation>;
+
+  // --- Chain Info ---
+
+  /** Get the chain ID this adapter is connected to */
+  getChainId(): Promise<number>;
+
+  /** Get the current block number */
+  getBlockNumber(): Promise<number>;
+}
+
+// --- Governance Types ---
+
+export type GovernanceProposalStatus =
+  | "draft"
+  | "active"
+  | "approved"
+  | "rejected"
+  | "executed"
+  | "cancelled";
+
+export const GOVERNANCE_PROPOSAL_STATUS = {
+  DRAFT: "draft" as const,
+  ACTIVE: "active" as const,
+  APPROVED: "approved" as const,
+  REJECTED: "rejected" as const,
+  EXECUTED: "executed" as const,
+  CANCELLED: "cancelled" as const,
+} satisfies Record<string, GovernanceProposalStatus>;
+
+export type GovernanceVoteChoice = "against" | "for" | "abstain";
+
+export const GOVERNANCE_VOTE_CHOICE = {
+  AGAINST: "against" as const,
+  FOR: "for" as const,
+  ABSTAIN: "abstain" as const,
+} satisfies Record<string, GovernanceVoteChoice>;
+
+export type GovernanceAttestationKind =
+  | "ci"
+  | "review_verdict"
+  | "convergence_pattern"
+  | "custom";
+
+export const GOVERNANCE_ATTESTATION_KIND = {
+  CI: "ci" as const,
+  REVIEW_VERDICT: "review_verdict" as const,
+  CONVERGENCE_PATTERN: "convergence_pattern" as const,
+  CUSTOM: "custom" as const,
+} satisfies Record<string, GovernanceAttestationKind>;
+
+export interface SubmitProposalParams {
+  /** Keccak256 hash of the proposal content */
+  contentHash: string;
+  /** Fork ID (hex-encoded bytes32). If omitted, uses the contract's default fork. */
+  forkId?: string;
+}
+
+export interface GovernanceProposalResult {
+  proposalId: number;
+  transactionHash: string;
+}
+
+export interface GovernanceProposal {
+  id: number;
+  contentHash: string;
+  forkId: string;
+  proposer: string;
+  createdAt: Date;
+  status: GovernanceProposalStatus;
+}
+
+export interface CastVoteParams {
+  proposalId: number;
+  choice: GovernanceVoteChoice;
+  /** Fork ID (hex-encoded bytes32). If omitted, uses the contract's default fork. */
+  forkId?: string;
+}
+
+export interface CastVoteResult {
+  votingPower: number;
+  transactionHash: string;
+}
+
+export interface GovernanceVoteRecord {
+  forVotes: number;
+  againstVotes: number;
+  abstainVotes: number;
+  quorumMet: boolean;
+  thresholdMet: boolean;
+  approved: boolean;
+}
+
+export interface CheckAuthorizationParams {
+  /** On-chain proposal ID */
+  proposalId: number;
+  /** Scope identifier (hex-encoded bytes32) for the action to authorize */
+  scope: string;
+}
+
+export interface AuthorizationResult {
+  authorized: boolean;
+  /** If not authorized, the reason why */
+  reason?: string;
+}
+
+export interface AttestParams {
+  forkId: string;
+  proposalId: number;
+  kind: GovernanceAttestationKind;
+  /** Keccak256 hash of the evidence data */
+  evidenceHash: string;
+}
+
+export interface AttestResult {
+  attestationId: number;
+  transactionHash: string;
+}
+
+export interface GovernanceAttestation {
+  id: number;
+  forkId: string;
+  proposalId: number;
+  evidenceHash: string;
+  kind: GovernanceAttestationKind;
+  attester: string;
+  timestamp: Date;
+}
+
+/** Contract addresses for a governance chain deployment */
+export interface GovernanceContractAddresses {
+  governanceRegistry: string;
+  votingPolicy: string;
+  executionPolicy: string;
+  attestationLog: string;
+}
+
+// =============================================================================
 // EVENTS
 // =============================================================================
 
@@ -1098,7 +1277,8 @@ export type PluginSlot =
   | "tracker"
   | "scm"
   | "notifier"
-  | "terminal";
+  | "terminal"
+  | "governance";
 
 /** Plugin manifest — what every plugin exports */
 export interface PluginManifest {
