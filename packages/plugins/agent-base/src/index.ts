@@ -637,8 +637,9 @@ async function setupHookInWorkspace(
     try {
       const content = await readFile(settingsPath, "utf-8");
       existingSettings = JSON.parse(content) as Record<string, unknown>;
-    } catch {
-      // Invalid JSON or read error — start fresh
+    } catch (err) {
+      if (!(err instanceof SyntaxError)) throw err;
+      // Invalid JSON — start fresh
     }
   }
 
@@ -768,8 +769,9 @@ async function setupMcpMailInWorkspace(
     try {
       const content = await readFile(settingsPath, "utf-8");
       existingSettings = JSON.parse(content) as Record<string, unknown>;
-    } catch {
-      // Invalid JSON or read error — start fresh
+    } catch (err) {
+      if (!(err instanceof SyntaxError)) throw err;
+      // Invalid JSON — start fresh
     }
   }
 

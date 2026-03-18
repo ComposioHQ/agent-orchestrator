@@ -1040,7 +1040,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
     if (!scm) {
-      // No SCM configured - emit proof with unknown push status
+      // No SCM configured - validation not performed, emit as failed
       const proof: SessionExitProof = {
         sessionId: session.id,
         projectId: session.projectId,
@@ -1052,7 +1052,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         prMerged: exitStatus === "merged",
         validatedAt: new Date().toISOString(),
       };
-      emitExitProofEvent(proof, false);
+      emitExitProofEvent(proof, true);
       return;
     }
 
@@ -1073,7 +1073,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         };
         emitExitProofEvent(proof, !validation.pushed);
       } else {
-        // SCM doesn't support validateCommits - emit proof with unknown status
+        // SCM doesn't support validateCommits - validation not performed, emit as failed
         const proof: SessionExitProof = {
           sessionId: session.id,
           projectId: session.projectId,
@@ -1085,7 +1085,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           prMerged: exitStatus === "merged",
           validatedAt: new Date().toISOString(),
         };
-        emitExitProofEvent(proof, false);
+        emitExitProofEvent(proof, true);
       }
     } catch {
       // Validation failed - emit proof with failed status
@@ -1112,7 +1112,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const event = createEvent(eventType, {
       sessionId: proof.sessionId,
       projectId: proof.projectId,
-      message: `Session ${proof.sessionId} exit validated: commits_pushed=${proof.commitsPushed}, status=${proof.exitStatus}`,
+      message: `Session ${proof.sessionId} exit ${validationFailed ? "failed" : "validated"}: commits_pushed=${proof.commitsPushed}, status=${proof.exitStatus}`,
       priority,
       data: { proof },
     });
