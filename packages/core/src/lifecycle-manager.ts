@@ -199,6 +199,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
   const states = new Map<SessionId, SessionStatus>();
   const reactionTrackers = new Map<string, ReactionTracker>(); // "sessionId:reactionKey"
+  const lastTerminalCapture = new Map<SessionId, string>(); // dedup terminal snapshots
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
@@ -852,6 +853,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       await Promise.allSettled(sessionsToCheck.map((s) => checkSession(s)));
 
       // Periodic terminal capture for active sessions (appends to terminal.log)
+      // Deduplicates by comparing against the last captured output per session
+      // to avoid appending identical content every poll cycle (~30s).
       await Promise.allSettled(
         sessionsToCheck
           .filter(
@@ -872,6 +875,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
               if (!runtime) return;
               const output = await runtime.getOutput(s.runtimeHandle, 50);
               if (output?.trim()) {
+                // Skip if output is identical to last capture (idle session dedup)
+                const previous = lastTerminalCapture.get(s.id);
+                if (previous === output) return;
+                lastTerminalCapture.set(s.id, output);
+
                 const sessionsDir = getSessionsDir(config.configPath, project.path);
                 appendTerminalCapture(sessionsDir, s.id, output);
               }
@@ -881,12 +889,17 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           }),
       );
 
-      // Prune stale entries from states and reactionTrackers for sessions
-      // that no longer appear in the session list (e.g., after kill/cleanup)
+      // Prune stale entries from states, reactionTrackers, and lastTerminalCapture
+      // for sessions that no longer appear in the session list (e.g., after kill/cleanup)
       const currentSessionIds = new Set(sessions.map((s) => s.id));
       for (const trackedId of states.keys()) {
         if (!currentSessionIds.has(trackedId)) {
           states.delete(trackedId);
+        }
+      }
+      for (const trackedId of lastTerminalCapture.keys()) {
+        if (!currentSessionIds.has(trackedId)) {
+          lastTerminalCapture.delete(trackedId);
         }
       }
       for (const trackerKey of reactionTrackers.keys()) {
