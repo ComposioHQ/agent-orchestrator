@@ -755,6 +755,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             } else if (eventType === "merge.completed") {
               appendEvent(sessionsDir, session.id, "pr.merged", {
                 url: session.pr?.url,
+                number: session.pr?.number,
               });
             }
           }

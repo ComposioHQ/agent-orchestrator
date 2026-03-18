@@ -14,7 +14,7 @@
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { SessionId, SessionStatus, ActivityState } from "./types.js";
+import type { SessionId, SessionStatus } from "./types.js";
 
 // =============================================================================
 // EVENT TYPES
@@ -252,18 +252,6 @@ export function logStatusChanged(
   },
 ): void {
   appendEvent(sessionsDir, sessionId, "session.status_changed", data);
-}
-
-/** Log an activity state change */
-export function logActivityChanged(
-  sessionsDir: string,
-  sessionId: SessionId,
-  data: {
-    from: ActivityState | string | null;
-    to: ActivityState | string;
-  },
-): void {
-  appendEvent(sessionsDir, sessionId, "session.activity_changed", data);
 }
 
 /** Log session killed/terminated */

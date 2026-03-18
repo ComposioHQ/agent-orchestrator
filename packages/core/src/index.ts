@@ -147,7 +147,6 @@ export {
   logSessionCreated,
   logSessionStarted,
   logStatusChanged,
-  logActivityChanged,
   logSessionKilled,
   logSessionRestored,
   logSessionError,
