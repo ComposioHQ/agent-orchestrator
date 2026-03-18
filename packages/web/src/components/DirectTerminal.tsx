@@ -58,6 +58,62 @@ export function buildDirectTerminalWsUrl({
   return `${protocol}//${location.hostname}:${port}/ws?session=${encodeURIComponent(sessionId)}`;
 }
 
+function getTerminalThemes(variant: string) {
+  const cursorColor = variant === "orchestrator" ? "#a371f7" : "#5b7ef8";
+  const selectionColor =
+    variant === "orchestrator" ? "rgba(163, 113, 247, 0.25)" : "rgba(91, 126, 248, 0.3)";
+
+  const dark = {
+    background: "#0a0a0f",
+    foreground: "#d4d4d8",
+    cursor: cursorColor,
+    cursorAccent: "#0a0a0f",
+    selectionBackground: selectionColor,
+    black: "#1a1a24",
+    red: "#ef4444",
+    green: "#22c55e",
+    yellow: "#f59e0b",
+    blue: "#5b7ef8",
+    magenta: "#a371f7",
+    cyan: "#22d3ee",
+    white: "#d4d4d8",
+    brightBlack: "#50506a",
+    brightRed: "#f87171",
+    brightGreen: "#4ade80",
+    brightYellow: "#fbbf24",
+    brightBlue: "#7b9cfb",
+    brightMagenta: "#c084fc",
+    brightCyan: "#67e8f9",
+    brightWhite: "#eeeef5",
+  };
+
+  const light = {
+    background: "#ffffff",
+    foreground: "#333333",
+    cursor: "#333333",
+    cursorAccent: "#ffffff",
+    selectionBackground: "rgba(173, 214, 255, 0.3)",
+    black: "#000000",
+    red: "#cd3131",
+    green: "#00bc00",
+    yellow: "#949800",
+    blue: "#0451a5",
+    magenta: "#bc05bc",
+    cyan: "#0598bc",
+    white: "#555555",
+    brightBlack: "#666666",
+    brightRed: "#cd3131",
+    brightGreen: "#14ce14",
+    brightYellow: "#b5ba00",
+    brightBlue: "#0451a5",
+    brightMagenta: "#bc05bc",
+    brightCyan: "#0598bc",
+    brightWhite: "#a5a5a5",
+  };
+
+  return { dark, light };
+}
+
 /**
  * Direct xterm.js terminal with native WebSocket connection.
  * Implements Extended Device Attributes (XDA) handler to enable
@@ -170,61 +226,7 @@ export function DirectTerminal({
       .then(([Terminal, FitAddon, WebLinksAddon]) => {
         if (!mounted || !terminalRef.current) return;
 
-        // Cursor and selection color differ by variant:
-        // agent = blue (#5b7ef8), orchestrator = violet (#a371f7)
-        const cursorColor = variant === "orchestrator" ? "#a371f7" : "#5b7ef8";
-        const selectionColor =
-          variant === "orchestrator" ? "rgba(163, 113, 247, 0.25)" : "rgba(91, 126, 248, 0.3)";
-
-        const darkTheme = {
-          background: "#0a0a0f",
-          foreground: "#d4d4d8",
-          cursor: cursorColor,
-          cursorAccent: "#0a0a0f",
-          selectionBackground: selectionColor,
-          black: "#1a1a24",
-          red: "#ef4444",
-          green: "#22c55e",
-          yellow: "#f59e0b",
-          blue: "#5b7ef8",
-          magenta: "#a371f7",
-          cyan: "#22d3ee",
-          white: "#d4d4d8",
-          brightBlack: "#50506a",
-          brightRed: "#f87171",
-          brightGreen: "#4ade80",
-          brightYellow: "#fbbf24",
-          brightBlue: "#7b9cfb",
-          brightMagenta: "#c084fc",
-          brightCyan: "#67e8f9",
-          brightWhite: "#eeeef5",
-        };
-
-        // VS Code default light theme terminal colors
-        const lightTheme = {
-          background: "#ffffff",
-          foreground: "#333333",
-          cursor: "#333333",
-          cursorAccent: "#ffffff",
-          selectionBackground: "rgba(173, 214, 255, 0.3)",
-          black: "#000000",
-          red: "#cd3131",
-          green: "#00bc00",
-          yellow: "#949800",
-          blue: "#0451a5",
-          magenta: "#bc05bc",
-          cyan: "#0598bc",
-          white: "#555555",
-          brightBlack: "#666666",
-          brightRed: "#cd3131",
-          brightGreen: "#14ce14",
-          brightYellow: "#b5ba00",
-          brightBlue: "#0451a5",
-          brightMagenta: "#bc05bc",
-          brightCyan: "#0598bc",
-          brightWhite: "#a5a5a5",
-        };
-
+        const { dark: darkTheme, light: lightTheme } = getTerminalThemes(variant);
         const currentTheme = resolvedTheme === "light" ? lightTheme : darkTheme;
 
         // Initialize xterm.js Terminal
@@ -583,59 +585,8 @@ export function DirectTerminal({
     const terminal = terminalInstance.current;
     if (!terminal) return;
 
-    const cursorColor = variant === "orchestrator" ? "#a371f7" : "#5b7ef8";
-    const selectionColor =
-      variant === "orchestrator" ? "rgba(163, 113, 247, 0.25)" : "rgba(91, 126, 248, 0.3)";
-
-    if (resolvedTheme === "light") {
-      terminal.options.theme = {
-        background: "#ffffff",
-        foreground: "#333333",
-        cursor: "#333333",
-        cursorAccent: "#ffffff",
-        selectionBackground: "rgba(173, 214, 255, 0.3)",
-        black: "#000000",
-        red: "#cd3131",
-        green: "#00bc00",
-        yellow: "#949800",
-        blue: "#0451a5",
-        magenta: "#bc05bc",
-        cyan: "#0598bc",
-        white: "#555555",
-        brightBlack: "#666666",
-        brightRed: "#cd3131",
-        brightGreen: "#14ce14",
-        brightYellow: "#b5ba00",
-        brightBlue: "#0451a5",
-        brightMagenta: "#bc05bc",
-        brightCyan: "#0598bc",
-        brightWhite: "#a5a5a5",
-      };
-    } else {
-      terminal.options.theme = {
-        background: "#0a0a0f",
-        foreground: "#d4d4d8",
-        cursor: cursorColor,
-        cursorAccent: "#0a0a0f",
-        selectionBackground: selectionColor,
-        black: "#1a1a24",
-        red: "#ef4444",
-        green: "#22c55e",
-        yellow: "#f59e0b",
-        blue: "#5b7ef8",
-        magenta: "#a371f7",
-        cyan: "#22d3ee",
-        white: "#d4d4d8",
-        brightBlack: "#50506a",
-        brightRed: "#f87171",
-        brightGreen: "#4ade80",
-        brightYellow: "#fbbf24",
-        brightBlue: "#7b9cfb",
-        brightMagenta: "#c084fc",
-        brightCyan: "#67e8f9",
-        brightWhite: "#eeeef5",
-      };
-    }
+    const { dark: darkTheme, light: lightTheme } = getTerminalThemes(variant);
+    terminal.options.theme = resolvedTheme === "light" ? lightTheme : darkTheme;
   }, [resolvedTheme, variant]);
 
   const accentColor =

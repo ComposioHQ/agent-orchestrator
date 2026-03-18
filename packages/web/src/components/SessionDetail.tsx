@@ -524,9 +524,9 @@ function PRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
   const failedChecks = pr.ciChecks.filter((c) => c.status === "failed");
 
   const borderColor = allGreen
-    ? "var(--color-tint-green)"
+    ? "color-mix(in srgb, var(--color-status-ready) 35%, transparent)"
     : pr.state === "merged"
-      ? "var(--color-tint-violet)"
+      ? "color-mix(in srgb, var(--color-accent-violet) 30%, transparent)"
       : "var(--color-border-default)";
 
   return (
@@ -570,7 +570,7 @@ function PRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
       <div className="px-5 py-4">
         {/* Ready-to-merge banner */}
         {allGreen ? (
-          <div className="flex items-center gap-2 rounded-[5px] border border-[var(--color-tint-green)] bg-[var(--color-tint-green)] px-3.5 py-2.5">
+          <div className="flex items-center gap-2 rounded-[5px] border bg-[var(--color-tint-green)] px-3.5 py-2.5" style={{ borderColor: "color-mix(in srgb, var(--color-status-ready) 25%, transparent)" }}>
             <svg
               className="h-4 w-4 shrink-0 text-[var(--color-status-ready)]"
               fill="none"
