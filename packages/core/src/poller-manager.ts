@@ -83,8 +83,8 @@ export function createPollerManager(deps: PollerManagerDeps): PollerManagerImpl 
     let tracker = spawnTrackers.get(trackerKey);
     const windowMs = parseDuration(respawnCap.window);
 
-    // Reset window if expired
-    if (!tracker || Date.now() - tracker.windowStart.getTime() > windowMs) {
+    // Reset window if expired (only if windowMs > 0 to avoid disabling cap)
+    if (!tracker || (windowMs > 0 && Date.now() - tracker.windowStart.getTime() > windowMs)) {
       tracker = { count: 0, windowStart: new Date() };
       spawnTrackers.set(trackerKey, tracker);
     }
