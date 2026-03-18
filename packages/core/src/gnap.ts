@@ -19,8 +19,12 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
+  openSync,
+  closeSync,
+  unlinkSync,
+  constants,
 } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { atomicWriteFileSync } from "./atomic-write.js";
 import type { SessionStatus } from "./types.js";
 
@@ -134,6 +138,41 @@ export const DEFAULT_GNAP_CONFIG: GnapConfig = {
 const GNAP_PROTOCOL_VERSION = "4";
 
 // =============================================================================
+// VALIDATION
+// =============================================================================
+
+/**
+ * Validate that an ID is safe for use as a filename component.
+ * Rejects path traversal attempts (e.g. "../../etc/evil") and empty IDs.
+ * Throws on invalid IDs to prevent writing outside the `.gnap/` directory.
+ */
+function validateGnapId(id: string, entity: string): void {
+  if (!id) {
+    throw new Error(`${entity} ID must not be empty`);
+  }
+  // Reject path separators and traversal sequences
+  if (id.includes("/") || id.includes("\\") || id.includes("..")) {
+    throw new Error(`${entity} ID contains invalid path characters: ${id}`);
+  }
+}
+
+/**
+ * Safely build a file path within a base directory, preventing path traversal.
+ * Validates that the resolved path stays within the expected base directory.
+ */
+function safeFilePath(baseDir: string, id: string, entity: string): string {
+  validateGnapId(id, entity);
+  const filePath = join(baseDir, `${id}.json`);
+  // Double-check: resolved path must stay within baseDir
+  const resolvedBase = resolve(baseDir);
+  const resolvedFile = resolve(filePath);
+  if (!resolvedFile.startsWith(resolvedBase + "/") && resolvedFile !== resolvedBase) {
+    throw new Error(`${entity} ID resolves outside target directory: ${id}`);
+  }
+  return filePath;
+}
+
+// =============================================================================
 // DIRECTORY OPERATIONS
 // =============================================================================
 
@@ -204,7 +243,7 @@ export function writeGnapTask(projectPath: string, task: GnapTask, gnapDir = ".g
   const tasksDir = getTasksDir(root);
   mkdirSync(tasksDir, { recursive: true });
 
-  const taskPath = join(tasksDir, `${task.id}.json`);
+  const taskPath = safeFilePath(tasksDir, task.id, "Task");
   atomicWriteFileSync(taskPath, JSON.stringify(task, null, 2) + "\n");
 }
 
@@ -216,7 +255,7 @@ export function readGnapTask(
   taskId: string,
   gnapDir = ".gnap",
 ): GnapTask | null {
-  const taskPath = join(getTasksDir(getGnapDir(projectPath, gnapDir)), `${taskId}.json`);
+  const taskPath = safeFilePath(getTasksDir(getGnapDir(projectPath, gnapDir)), taskId, "Task");
   if (!existsSync(taskPath)) return null;
 
   try {
@@ -289,20 +328,55 @@ export function readGnapAgents(projectPath: string, gnapDir = ".gnap"): GnapAgen
 
 /**
  * Write or update an agent in agents.json.
+ *
+ * Uses a lockfile to make the read-modify-write cycle safe against
+ * concurrent processes (e.g. parallel agent spawns).
  */
 export function writeGnapAgent(
   projectPath: string,
   agent: GnapAgent,
   gnapDir = ".gnap",
 ): void {
+  validateGnapId(agent.id, "Agent");
   const root = getGnapDir(projectPath, gnapDir);
   mkdirSync(root, { recursive: true });
 
   const agentsPath = join(root, "agents.json");
-  const agents = readGnapAgents(projectPath, gnapDir);
-  agents[agent.id] = agent;
+  const lockPath = `${agentsPath}.lock`;
 
-  atomicWriteFileSync(agentsPath, JSON.stringify(agents, null, 2) + "\n");
+  // Acquire lockfile (O_EXCL ensures only one process wins)
+  const maxRetries = 5;
+  let lockFd: number | null = null;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      lockFd = openSync(lockPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL);
+      break;
+    } catch {
+      // Lock held by another process — brief busy-wait and retry
+      const waitMs = 10 + Math.random() * 20;
+      const end = Date.now() + waitMs;
+      while (Date.now() < end) {
+        // spin
+      }
+    }
+  }
+
+  try {
+    // Read current agents (inside lock)
+    const agents = readGnapAgents(projectPath, gnapDir);
+    agents[agent.id] = agent;
+    atomicWriteFileSync(agentsPath, JSON.stringify(agents, null, 2) + "\n");
+  } finally {
+    // Release lock
+    if (lockFd !== null) {
+      closeSync(lockFd);
+    }
+    try {
+      unlinkSync(lockPath);
+    } catch {
+      // Lock file already removed — harmless
+    }
+  }
 }
 
 // =============================================================================
@@ -317,7 +391,7 @@ export function writeGnapRun(projectPath: string, run: GnapRun, gnapDir = ".gnap
   const runsDir = getRunsDir(root);
   mkdirSync(runsDir, { recursive: true });
 
-  const runPath = join(runsDir, `${run.id}.json`);
+  const runPath = safeFilePath(runsDir, run.id, "Run");
   atomicWriteFileSync(runPath, JSON.stringify(run, null, 2) + "\n");
 }
 
@@ -329,7 +403,7 @@ export function readGnapRun(
   runId: string,
   gnapDir = ".gnap",
 ): GnapRun | null {
-  const runPath = join(getRunsDir(getGnapDir(projectPath, gnapDir)), `${runId}.json`);
+  const runPath = safeFilePath(getRunsDir(getGnapDir(projectPath, gnapDir)), runId, "Run");
   if (!existsSync(runPath)) return null;
 
   try {
@@ -372,7 +446,7 @@ export function writeGnapMessage(
   const messagesDir = getMessagesDir(root);
   mkdirSync(messagesDir, { recursive: true });
 
-  const messagePath = join(messagesDir, `${message.id}.json`);
+  const messagePath = safeFilePath(messagesDir, message.id, "Message");
   atomicWriteFileSync(messagePath, JSON.stringify(message, null, 2) + "\n");
 }
 

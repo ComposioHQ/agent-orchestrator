@@ -176,6 +176,24 @@ describe("task operations", () => {
     expect(listGnapTasks(projectPath)).toEqual([]);
   });
 
+  it("rejects task IDs with path traversal", () => {
+    expect(() =>
+      writeGnapTask(projectPath, { ...sampleTask, id: "../../etc/evil" }),
+    ).toThrow("invalid path characters");
+  });
+
+  it("rejects task IDs with forward slashes", () => {
+    expect(() =>
+      writeGnapTask(projectPath, { ...sampleTask, id: "foo/bar" }),
+    ).toThrow("invalid path characters");
+  });
+
+  it("rejects empty task IDs", () => {
+    expect(() =>
+      writeGnapTask(projectPath, { ...sampleTask, id: "" }),
+    ).toThrow("must not be empty");
+  });
+
   it("handles task with parent field", () => {
     writeGnapTask(projectPath, {
       ...sampleTask,
