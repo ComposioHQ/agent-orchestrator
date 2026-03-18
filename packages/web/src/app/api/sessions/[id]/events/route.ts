@@ -64,8 +64,25 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       parsedOffset !== undefined && Number.isFinite(parsedOffset) && parsedOffset >= 0
         ? parsedOffset
         : undefined;
+    const VALID_EVENT_TYPES: ReadonlySet<string> = new Set<SessionEventType>([
+      "session.created",
+      "session.started",
+      "session.status_changed",
+      "session.activity_changed",
+      "session.killed",
+      "session.terminated",
+      "session.restored",
+      "session.error",
+      "pr.created",
+      "pr.updated",
+      "pr.merged",
+      "pr.closed",
+      "ci.status_changed",
+      "review.decision_changed",
+      "terminal.captured",
+    ]);
     const types = typesParam
-      ? (typesParam.split(",") as SessionEventType[])
+      ? (typesParam.split(",").filter((t) => VALID_EVENT_TYPES.has(t)) as SessionEventType[])
       : undefined;
 
     const events = readEvents(sessionsDir, id, { types, limit, offset });
