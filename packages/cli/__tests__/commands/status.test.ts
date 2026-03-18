@@ -77,6 +77,10 @@ vi.mock("@composio/ao-core", async (importOriginal) => {
   return {
     ...actual,
     loadConfig: () => mockConfigRef.current,
+    loadConfigWithPath: () => ({
+      config: mockConfigRef.current,
+      path: (mockConfigRef.current as Record<string, unknown> | null)?.configPath ?? "/tmp/agent-orchestrator.yaml",
+    }),
   };
 });
 

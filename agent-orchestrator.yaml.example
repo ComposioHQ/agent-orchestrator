@@ -1,5 +1,11 @@
 # Agent Orchestrator Configuration
 # Copy to agent-orchestrator.yaml and customize.
+#
+# Config search order:
+#   1. AO_CONFIG_PATH env var
+#   2. agent-orchestrator.yaml in current directory (searched upward)
+#   3. ~/.agent-orchestrator.yaml
+#   4. $XDG_CONFIG_HOME/agent-orchestrator/config.yaml (default: ~/.config/agent-orchestrator/config.yaml)
 
 # Where to store session metadata
 dataDir: ~/.agent-orchestrator
