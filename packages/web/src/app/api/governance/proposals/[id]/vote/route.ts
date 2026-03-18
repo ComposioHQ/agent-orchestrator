@@ -28,7 +28,11 @@ export async function POST(
 
   let body: { choice?: VoteChoice; voter?: string; txHash?: string };
   try {
-    body = (await request.json()) as typeof body;
+    const parsed: unknown = await request.json();
+    if (!parsed || typeof parsed !== "object") {
+      return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+    }
+    body = parsed as typeof body;
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }

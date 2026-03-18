@@ -17,16 +17,22 @@ export async function GET(request: Request): Promise<Response> {
 
   const stream = new ReadableStream({
     start(controller) {
-      // Send initial snapshot
+      // Send initial snapshot — if enqueue fails the stream is dead,
+      // so skip starting intervals to avoid leaking resources.
       try {
         const snapshot = getGovernanceSnapshot(forkFilter);
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(snapshot)}\n\n`));
       } catch {
-        controller.enqueue(
-          encoder.encode(
-            `data: ${JSON.stringify({ type: "governance_snapshot", emittedAt: new Date().toISOString(), proposals: [], forks: [], timeline: [] })}\n\n`,
-          ),
-        );
+        try {
+          controller.enqueue(
+            encoder.encode(
+              `data: ${JSON.stringify({ type: "governance_snapshot", emittedAt: new Date().toISOString(), proposals: [], forks: [], timeline: [] })}\n\n`,
+            ),
+          );
+        } catch {
+          // Stream is dead — don't start intervals
+          return;
+        }
       }
 
       // Heartbeat every 15s
