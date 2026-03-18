@@ -435,11 +435,13 @@ export function findConfigFile(startDir?: string): string | null {
     }
   }
 
-  // 4. Check home directory locations
+  // 4. Check home directory locations (respect XDG_CONFIG_HOME)
+  const xdgConfigHome = process.env["XDG_CONFIG_HOME"] || resolve(homedir(), ".config");
   const homePaths = [
     resolve(homedir(), ".agent-orchestrator.yaml"),
     resolve(homedir(), ".agent-orchestrator.yml"),
-    resolve(homedir(), ".config", "agent-orchestrator", "config.yaml"),
+    resolve(xdgConfigHome, "agent-orchestrator", "config.yaml"),
+    resolve(xdgConfigHome, "agent-orchestrator", "config.yml"),
   ];
 
   for (const path of homePaths) {

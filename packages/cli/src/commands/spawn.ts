@@ -1,3 +1,5 @@
+import { existsSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import chalk from "chalk";
 import ora from "ora";
 import type { Command } from "commander";
@@ -11,8 +13,17 @@ import {
   type OrchestratorConfig,
   type DecomposerConfig,
   DEFAULT_DECOMPOSER_CONFIG,
+  isRepoUrl,
+  parseRepoUrl,
+  resolveCloneTarget,
+  isRepoAlreadyCloned,
+  generateConfigFromUrl,
+  configToYaml,
+  validateConfig,
+  sanitizeProjectId,
 } from "@composio/ao-core";
 import { exec } from "../lib/shell.js";
+import { cloneRepo } from "../lib/session-utils.js";
 import { banner } from "../lib/format.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 import { ensureLifecycleWorker } from "../lib/lifecycle-service.js";
@@ -21,6 +32,80 @@ import { preflight } from "../lib/preflight.js";
 interface SpawnClaimOptions {
   claimPr?: string;
   assignOnGithub?: boolean;
+}
+
+/**
+ * Resolve an ad-hoc repo (owner/repo or URL) into a loaded config with a project entry.
+ *
+ * This enables `ao spawn --repo ComposioHQ/integrator #42` without pre-existing config.
+ * Clones the repo if needed, generates a temporary in-memory config, and returns it
+ * alongside the derived project ID.
+ */
+async function resolveAdHocRepo(
+  repoArg: string,
+): Promise<{ config: OrchestratorConfig; projectId: string }> {
+  const spinner = ora();
+
+  // Normalize owner/repo shorthand to a full URL
+  const url = isRepoUrl(repoArg) ? repoArg : `https://github.com/${repoArg}`;
+  const parsed = parseRepoUrl(url);
+
+  spinner.start(`Resolving ${parsed.ownerRepo}`);
+
+  // Determine target directory and clone if needed
+  const cwd = process.cwd();
+  const targetDir = resolveCloneTarget(parsed, cwd);
+  const alreadyCloned = isRepoAlreadyCloned(targetDir, parsed.cloneUrl);
+
+  if (alreadyCloned) {
+    spinner.succeed(`Using existing clone at ${targetDir}`);
+  } else {
+    spinner.text = `Cloning ${parsed.ownerRepo}`;
+    await cloneRepo(parsed, targetDir, cwd);
+    spinner.succeed(`Cloned ${parsed.ownerRepo} to ${targetDir}`);
+  }
+
+  // Check for existing config in the cloned repo
+  const configPath = resolve(targetDir, "agent-orchestrator.yaml");
+  const configPathAlt = resolve(targetDir, "agent-orchestrator.yml");
+
+  if (existsSync(configPath)) {
+    const config = loadConfig(configPath);
+    // Find project matching this repo
+    const projectId = findProjectByRepo(config, parsed.ownerRepo);
+    return { config, projectId };
+  }
+
+  if (existsSync(configPathAlt)) {
+    const config = loadConfig(configPathAlt);
+    const projectId = findProjectByRepo(config, parsed.ownerRepo);
+    return { config, projectId };
+  }
+
+  // Generate config in-memory (don't write to repo — spawn is lightweight)
+  const rawConfig = generateConfigFromUrl({ parsed, repoPath: targetDir });
+  const config = validateConfig(rawConfig);
+  config.configPath = configPath;
+
+  const projectId = sanitizeProjectId(parsed.repo);
+  // Write the config so session manager can reference it
+  writeFileSync(configPath, configToYaml(rawConfig));
+  spinner.succeed(`Generated config: ${configPath}`);
+
+  return { config, projectId };
+}
+
+/** Find a project ID in config that matches a given owner/repo string. */
+function findProjectByRepo(config: OrchestratorConfig, ownerRepo: string): string {
+  for (const [id, project] of Object.entries(config.projects)) {
+    if (project.repo === ownerRepo) return id;
+  }
+  // Fallback: if only one project, use it
+  const ids = Object.keys(config.projects);
+  if (ids.length === 1) return ids[0];
+  throw new Error(
+    `Could not determine project for ${ownerRepo}. Available: ${ids.join(", ")}`,
+  );
 }
 
 /**
@@ -122,8 +207,9 @@ export function registerSpawn(program: Command): void {
   program
     .command("spawn")
     .description("Spawn a single agent session")
-    .argument("<project>", "Project ID from config")
+    .argument("[project]", "Project ID from config (not needed with --repo)")
     .argument("[issue]", "Issue identifier (e.g. INT-1234, #42) - must exist in tracker")
+    .option("--repo <repo>", "Ad-hoc repo (owner/repo or URL) — clones, configures, and spawns")
     .option("--open", "Open session in terminal tab")
     .option("--agent <name>", "Override the agent plugin (e.g. codex, claude-code)")
     .option("--claim-pr <pr>", "Immediately claim an existing PR for the spawned session")
@@ -132,9 +218,10 @@ export function registerSpawn(program: Command): void {
     .option("--max-depth <n>", "Max decomposition depth (default: 3)")
     .action(
       async (
-        projectId: string,
+        projectArg: string | undefined,
         issueId: string | undefined,
         opts: {
+          repo?: string;
           open?: boolean;
           agent?: string;
           claimPr?: string;
@@ -143,14 +230,65 @@ export function registerSpawn(program: Command): void {
           maxDepth?: string;
         },
       ) => {
-        const config = loadConfig();
-        if (!config.projects[projectId]) {
-          console.error(
-            chalk.red(
-              `Unknown project: ${projectId}\nAvailable: ${Object.keys(config.projects).join(", ")}`,
-            ),
-          );
-          process.exit(1);
+        let config: OrchestratorConfig;
+        let projectId: string;
+
+        if (opts.repo) {
+          // Ad-hoc repo mode: --repo owner/repo [issue]
+          // When --repo is used, the first positional arg is the issue, not the project
+          if (projectArg && !issueId) {
+            issueId = projectArg;
+          }
+          try {
+            const result = await resolveAdHocRepo(opts.repo);
+            config = result.config;
+            projectId = result.projectId;
+          } catch (err) {
+            console.error(
+              chalk.red(`✗ Failed to resolve repo: ${err instanceof Error ? err.message : String(err)}`),
+            );
+            process.exit(1);
+          }
+        } else {
+          // Standard mode: project from config
+          if (!projectArg) {
+            console.error(
+              chalk.red(
+                "Missing project argument.\n" +
+                  "Usage: ao spawn <project> [issue]\n" +
+                  "       ao spawn --repo <owner/repo> [issue]",
+              ),
+            );
+            process.exit(1);
+          }
+          projectId = projectArg;
+
+          try {
+            config = loadConfig();
+          } catch {
+            console.error(
+              chalk.red(
+                `No config found. Either:\n` +
+                  `  1. Run ${chalk.cyan("ao init")} to create a config, then ${chalk.cyan(`ao start ${projectId}`)}\n` +
+                  `  2. Use ${chalk.cyan(`ao spawn --repo owner/repo [issue]`)} for ad-hoc repos`,
+              ),
+            );
+            process.exit(1);
+          }
+
+          if (!config.projects[projectId]) {
+            const available = Object.keys(config.projects);
+            const suggestions = available.length > 0
+              ? `Available projects: ${available.join(", ")}\n`
+              : "No projects configured.\n";
+            console.error(
+              chalk.red(
+                `Unknown project: ${projectId}\n${suggestions}` +
+                  `Tip: Use ${chalk.cyan(`ao spawn --repo owner/repo [issue]`)} to spawn for an ad-hoc repo.`,
+              ),
+            );
+            process.exit(1);
+          }
         }
 
         if (!opts.claimPr && opts.assignOnGithub) {

@@ -12,6 +12,7 @@ import {
   type ProjectConfig,
   isOrchestratorSession,
   loadConfig,
+  loadConfigWithPath,
 } from "@composio/ao-core";
 import { git, getTmuxSessions, getTmuxActivity } from "../lib/shell.js";
 import {
@@ -212,8 +213,11 @@ export function registerStatus(program: Command): void {
     .option("--json", "Output as JSON")
     .action(async (opts: { project?: string; json?: boolean }) => {
       let config: ReturnType<typeof loadConfig>;
+      let configPath: string | undefined;
       try {
-        config = loadConfig();
+        const result = loadConfigWithPath();
+        config = result.config;
+        configPath = result.path;
       } catch {
         console.log(chalk.yellow("No config found. Run `ao init` first."));
         console.log(chalk.dim("Falling back to session discovery...\n"));
@@ -359,6 +363,9 @@ export function registerStatus(program: Command): void {
           // Plugin registry or tracker unavailable — skip silently
         }
 
+        if (configPath) {
+          console.log(chalk.dim(`  Config: ${configPath}`));
+        }
         console.log();
       }
     });
