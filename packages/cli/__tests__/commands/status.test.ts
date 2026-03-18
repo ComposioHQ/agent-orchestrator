@@ -71,12 +71,40 @@ vi.mock("../../src/lib/shell.js", () => ({
   },
 }));
 
+const mockSCM = {
+  name: "github",
+  detectPR: mockDetectPR,
+  getCISummary: mockGetCISummary,
+  getReviewDecision: mockGetReviewDecision,
+  getPendingComments: mockGetPendingComments,
+  getAutomatedComments: vi.fn().mockResolvedValue([]),
+  getCIChecks: vi.fn().mockResolvedValue([]),
+  getReviews: vi.fn().mockResolvedValue([]),
+  getMergeability: vi.fn().mockResolvedValue({
+    mergeable: true,
+    ciPassing: true,
+    approved: false,
+    noConflicts: true,
+    blockers: [],
+  }),
+  getPRState: vi.fn().mockResolvedValue("open"),
+  mergePR: vi.fn(),
+  closePR: vi.fn(),
+};
+
 vi.mock("@composio/ao-core", async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const actual = await importOriginal<typeof import("@composio/ao-core")>();
   return {
     ...actual,
     loadConfig: () => mockConfigRef.current,
+    createPluginRegistry: () => ({
+      loadFromConfig: vi.fn().mockResolvedValue(undefined),
+      loadBuiltins: vi.fn().mockResolvedValue(undefined),
+      register: vi.fn(),
+      get: (_slot: string, _name: string) => mockSCM,
+      list: vi.fn().mockReturnValue([]),
+    }),
   };
 });
 
@@ -94,26 +122,6 @@ vi.mock("../../src/lib/plugins.js", () => ({
     detectActivity: () => "idle",
     getSessionInfo: mockIntrospect,
     getActivityState: mockGetActivityState,
-  }),
-  getSCM: () => ({
-    name: "github",
-    detectPR: mockDetectPR,
-    getCISummary: mockGetCISummary,
-    getReviewDecision: mockGetReviewDecision,
-    getPendingComments: mockGetPendingComments,
-    getAutomatedComments: vi.fn().mockResolvedValue([]),
-    getCIChecks: vi.fn().mockResolvedValue([]),
-    getReviews: vi.fn().mockResolvedValue([]),
-    getMergeability: vi.fn().mockResolvedValue({
-      mergeable: true,
-      ciPassing: true,
-      approved: false,
-      noConflicts: true,
-      blockers: [],
-    }),
-    getPRState: vi.fn().mockResolvedValue("open"),
-    mergePR: vi.fn(),
-    closePR: vi.fn(),
   }),
 }));
 
@@ -560,6 +568,28 @@ describe("status command", () => {
 
     const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
     expect(output).toContain("#99");
+  });
+
+  it("falls back to MR number from GitLab metadata URL when SCM fails", async () => {
+    writeFileSync(
+      join(sessionsDir, "app-1"),
+      "worktree=/tmp/wt\nbranch=feat/mr-meta\nstatus=working\npr=https://gitlab.com/org/repo/-/merge_requests/55\n",
+    );
+
+    mockTmux.mockImplementation(async (...args: string[]) => {
+      if (args[0] === "list-sessions") return "app-1";
+      if (args[0] === "display-message") return null;
+      return null;
+    });
+    mockGit.mockResolvedValue("feat/mr-meta");
+
+    // SCM detectPR fails
+    mockDetectPR.mockRejectedValue(new Error("glab failed"));
+
+    await program.parseAsync(["node", "test", "status"]);
+
+    const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(output).toContain("#55");
   });
 
   it("shows null pendingThreads when getPendingComments fails", async () => {
