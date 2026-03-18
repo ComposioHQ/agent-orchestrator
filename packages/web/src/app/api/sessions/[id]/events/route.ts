@@ -53,8 +53,17 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const offsetParam = url.searchParams.get("offset");
     const typesParam = url.searchParams.get("types");
 
-    const limit = limitParam ? parseInt(limitParam, 10) : undefined;
-    const offset = offsetParam ? parseInt(offsetParam, 10) : undefined;
+    const parsedLimit = limitParam ? parseInt(limitParam, 10) : undefined;
+    const parsedOffset = offsetParam ? parseInt(offsetParam, 10) : undefined;
+    // Sanitize: NaN/negative → undefined (ignored), 0 → 0 (empty result)
+    const limit =
+      parsedLimit !== undefined && Number.isFinite(parsedLimit) && parsedLimit >= 0
+        ? parsedLimit
+        : undefined;
+    const offset =
+      parsedOffset !== undefined && Number.isFinite(parsedOffset) && parsedOffset >= 0
+        ? parsedOffset
+        : undefined;
     const types = typesParam
       ? (typesParam.split(",") as SessionEventType[])
       : undefined;

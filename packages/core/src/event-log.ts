@@ -178,6 +178,9 @@ export function readEvents(
   const filePath = eventsFilePath(sessionsDir, sessionId);
   if (!existsSync(filePath)) return [];
 
+  // limit=0 explicitly means "return no events"
+  if (options?.limit === 0) return [];
+
   const content = readFileSync(filePath, "utf-8");
   const lines = content.split("\n").filter((line) => line.trim());
 
