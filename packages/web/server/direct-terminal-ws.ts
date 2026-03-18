@@ -107,7 +107,7 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
         JSON.stringify({
           active: activeSessions.size,
           sessions: Array.from(activeSessions.keys()),
-          nodePtyAvailable: ptySpawnFn !== null,
+          nodePtyAvailable: !!ptySpawnFn,
           ...(nodePtyLoadError && { nodePtyError: nodePtyLoadError }),
           metrics,
         }),
