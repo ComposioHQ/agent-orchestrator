@@ -35,6 +35,7 @@ import {
 } from "./types.js";
 import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
+import { syncSessionToGnap } from "./gnap.js";
 import { createCorrelationId, createProjectObserver } from "./observability.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
 
@@ -726,6 +727,24 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         data: { oldStatus, newStatus },
         level: transitionLogLevel(newStatus),
       });
+
+      // Sync status transition to GNAP persistent state (non-fatal)
+      const project = config.projects[session.projectId];
+      if (project?.gnap?.enabled) {
+        try {
+          syncSessionToGnap({
+            projectPath: project.path,
+            gnapDir: project.gnap.dir,
+            sessionId: session.id,
+            agentName: session.metadata["agent"] ?? "unknown",
+            issueId: session.issueId ?? undefined,
+            status: newStatus,
+            branch: session.branch ?? undefined,
+          });
+        } catch {
+          // GNAP sync is best-effort — never block lifecycle polling
+        }
+      }
 
       // Reset allCompleteEmitted when any session becomes active again
       if (newStatus !== "merged" && newStatus !== "killed") {

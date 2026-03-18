@@ -1009,6 +1009,14 @@ export interface ProjectConfig {
     /** Require human approval before executing decomposed plans (default: true) */
     requireApproval: boolean;
   };
+
+  /** GNAP (Git-Native Agent Protocol) persistent state layer */
+  gnap?: {
+    /** Enable GNAP state persistence (default: false) */
+    enabled: boolean;
+    /** Directory for GNAP files relative to project root (default: ".gnap") */
+    dir?: string;
+  };
 }
 
 export interface TrackerConfig {

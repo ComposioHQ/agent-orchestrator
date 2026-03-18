@@ -55,6 +55,7 @@ import {
   reserveSessionId,
 } from "./metadata.js";
 import { buildPrompt } from "./prompt-builder.js";
+import { syncSessionToGnap } from "./gnap.js";
 import {
   getSessionsDir,
   getWorktreesDir,
@@ -1183,6 +1184,25 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       } catch {
         // Non-fatal: agent is running but didn't receive the initial prompt.
         // User can retry with `ao send`.
+      }
+    }
+
+    // Sync to GNAP persistent state layer (non-fatal — never block spawn)
+    if (project.gnap?.enabled) {
+      try {
+        syncSessionToGnap({
+          projectPath: project.path,
+          gnapDir: project.gnap.dir,
+          sessionId,
+          agentName: selection.agentName,
+          issueId: spawnConfig.issueId,
+          issueTitle: resolvedIssue?.title,
+          issueDescription: resolvedIssue?.description,
+          status: "spawning",
+          branch,
+        });
+      } catch {
+        // GNAP sync is best-effort — never block spawn
       }
     }
 
