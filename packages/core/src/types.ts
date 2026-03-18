@@ -1091,6 +1091,9 @@ export interface OrchestratorConfig {
 
   /** Default reaction configs */
   reactions: Record<string, ReactionConfig>;
+
+  /** Governance plugin config (contract addresses, RPC URL, etc.) */
+  governance?: Record<string, unknown>;
 }
 
 export interface DefaultPlugins {

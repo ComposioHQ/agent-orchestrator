@@ -76,6 +76,11 @@ function extractPluginConfig(
     }
   }
 
+  // Governance is configured under config.governance (contract addresses, RPC, etc.)
+  if (slot === "governance" && config.governance) {
+    return config.governance;
+  }
+
   return undefined;
 }
 
