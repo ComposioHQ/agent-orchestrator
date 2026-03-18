@@ -44,42 +44,43 @@ Agent Orchestrator manages fleets of AI coding agents working in parallel on you
 
 ## Quick Start
 
-**Option A — Install via npm (recommended):**
+> **Prerequisites:** [Node.js 20+](https://nodejs.org), [Git 2.25+](https://git-scm.com), [tmux](https://github.com/tmux/tmux/wiki/Installing), [`gh` CLI](https://cli.github.com). Install tmux via `brew install tmux` (macOS) or `sudo apt install tmux` (Linux).
+
+### Option A — Install via npm (recommended)
 
 ```bash
 npm install -g @composio/agent-orchestrator
 
 # Permission denied? Use one of these:
 sudo npm install -g @composio/agent-orchestrator   # quick fix
-npx @composio/agent-orchestrator                    # no install needed
+npx @composio/agent-orchestrator start             # no install needed
 ```
 
-> **Prerequisites:** [Node.js 20+](https://nodejs.org), [Git 2.25+](https://git-scm.com), [tmux](https://github.com/tmux/tmux/wiki/Installing), [`gh` CLI](https://cli.github.com). Install tmux via `brew install tmux` (macOS) or `sudo apt install tmux` (Linux).
+This gives you the `ao` command globally. Then:
 
-**Option B — Install from source (for contributors):**
+```bash
+ao start https://github.com/your-org/your-repo   # clones, configures, launches — one command
+ao spawn 123                                       # spawn an agent on issue #123
+```
+
+### Option B — Install from source (for contributors)
 
 ```bash
 git clone https://github.com/ComposioHQ/agent-orchestrator.git
 cd agent-orchestrator && bash scripts/setup.sh
 ```
 
-Then set up your project:
+This builds everything and links the `ao` command globally. Then:
 
 ```bash
-# From a repo URL (fastest — clones, configures, and launches in one command)
-ao start https://github.com/your-org/your-repo
-
-# Or from an existing local repo
-cd ~/your-project && ao start   # auto-detects everything, zero prompts
-
-# Add more projects to an existing setup
-ao start ~/path/to/another-repo
+cd ~/your-project && ao start    # auto-detects everything, zero prompts
+ao spawn 123                      # spawn an agent on issue #123
 ```
 
-Spawn agents:
+### Adding more projects
 
 ```bash
-ao spawn my-project 123    # GitHub issue, Linear ticket, or ad-hoc
+ao start ~/path/to/another-repo   # adds the project and starts
 ```
 
 Dashboard opens at `http://localhost:3000`. Run `ao status` for the CLI view.
@@ -87,7 +88,7 @@ Dashboard opens at `http://localhost:3000`. Run `ao status` for the CLI view.
 ## How It Works
 
 ```
-ao spawn my-project 123
+ao spawn 123
 ```
 
 1. **Workspace** creates an isolated git worktree with a feature branch
@@ -115,6 +116,8 @@ Eight slots. Every abstraction is swappable.
 All interfaces defined in [`packages/core/src/types.ts`](packages/core/src/types.ts). A plugin implements one interface and exports a `PluginModule`. That's it.
 
 ## Configuration
+
+`ao start` auto-generates `agent-orchestrator.yaml` with sensible defaults. You can edit it afterwards or write one manually:
 
 ```yaml
 # agent-orchestrator.yaml
@@ -154,16 +157,20 @@ See [`agent-orchestrator.yaml.example`](agent-orchestrator.yaml.example) for the
 ## CLI
 
 ```bash
-ao start                               # Auto-detect project, generate config, and start
+ao start                               # Auto-detect, generate config, start dashboard + orchestrator
+ao start <url>                         # Clone repo, auto-configure, and start
 ao start ~/other-repo                  # Add a new project and start
-ao config-help                         # Show full config schema reference
+ao stop                                # Stop dashboard, orchestrator, and lifecycle worker
+ao spawn [issue]                       # Spawn an agent (project auto-detected from cwd)
+ao spawn 123 --agent codex             # Override agent for this session
+ao batch-spawn 101 102 103             # Spawn agents for multiple issues at once
+ao send <session> "Fix the tests"      # Send instructions to a running agent
 ao status                              # Overview of all sessions
-ao spawn [issue]                       # Spawn an agent (project auto-detected)
-ao send <session> "Fix the tests"      # Send instructions
 ao session ls                          # List sessions
 ao session kill <session>              # Kill a session
 ao session restore <session>           # Revive a crashed agent
-ao dashboard                           # Open web dashboard
+ao dashboard                           # Open web dashboard in browser
+ao config-help                         # Show full config schema reference
 ao doctor [--fix]                      # Check install, runtime, and stale temp issues
 ao update                              # Update local AO install and run smoke tests
 ```
