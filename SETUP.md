@@ -60,7 +60,7 @@ Comprehensive guide to installing, configuring, and troubleshooting Agent Orches
 ### Install via npm (recommended)
 
 ```bash
-npm install -g @composio/agent-orchestrator
+npm install -g @composio/ao
 
 # Verify
 ao --version
@@ -72,17 +72,17 @@ This installs the `ao` CLI globally along with all default plugins and the web d
 
 ```bash
 # Option 1: Use sudo
-sudo npm install -g @composio/agent-orchestrator
+sudo npm install -g @composio/ao
 
 # Option 2: Use npx (no global install needed)
-npx @composio/agent-orchestrator start
+npx @composio/ao start
 
 # Option 3: Fix npm permissions permanently (recommended)
 mkdir -p ~/.npm-global
 npm config set prefix '~/.npm-global'
 echo 'export PATH=~/.npm-global/bin:$PATH' >> ~/.zshrc
 source ~/.zshrc
-npm install -g @composio/agent-orchestrator
+npm install -g @composio/ao
 ```
 
 ### Build from Source (for contributors)

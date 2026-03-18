@@ -49,11 +49,11 @@ Agent Orchestrator manages fleets of AI coding agents working in parallel on you
 ### Option A — Install via npm (recommended)
 
 ```bash
-npm install -g @composio/agent-orchestrator
+npm install -g @composio/ao
 
 # Permission denied? Use one of these:
-sudo npm install -g @composio/agent-orchestrator   # quick fix
-npx @composio/agent-orchestrator start             # no install needed
+sudo npm install -g @composio/ao   # quick fix
+npx @composio/ao start             # no install needed
 ```
 
 This gives you the `ao` command globally. Then:
