@@ -7,7 +7,7 @@
  * identical to what was already on disk.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, statSync, utimesSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, statSync, utimesSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { create } from "../index.js";
@@ -135,5 +135,21 @@ describe("setupWorkspaceHooks with MCP mail idempotency", () => {
 
     const mtimeAfter = getMtime(settingsPath);
     expect(mtimeAfter).toBe(oldDate.getTime());
+  });
+});
+
+describe("setupWorkspaceHooks symlink rejection", () => {
+  it("throws when .claude dir is a symlink", async () => {
+    // Create a target directory outside the workspace that an attacker controls
+    const attackerDir = join(tmpDir, "attacker");
+    mkdirSync(attackerDir, { recursive: true });
+
+    // Replace .claude with a symlink pointing to the attacker directory
+    symlinkSync(attackerDir, claudeDir);
+
+    const agent = create();
+    await expect(agent.setupWorkspaceHooks!(workspacePath, makeHookConfig())).rejects.toThrow(
+      /symlink/i,
+    );
   });
 });

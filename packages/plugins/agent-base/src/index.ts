@@ -14,7 +14,7 @@ import {
   type WorkspaceHooksConfig,
 } from "@composio/ao-core";
 import { execFile } from "node:child_process";
-import { readdir, readFile, stat, open, writeFile, mkdir, chmod } from "node:fs/promises";
+import { readdir, readFile, stat, lstat, open, writeFile, mkdir, chmod } from "node:fs/promises";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
@@ -597,6 +597,18 @@ async function setupHookInWorkspace(
   const settingsPath = join(agentDir, "settings.json");
   const hookScriptPath = join(agentDir, "metadata-updater.sh");
 
+  // Reject symlinks — Node.js fs/promises follows symlinks, so an attacker-controlled
+  // symlink (.claude → /etc/) would allow arbitrary file writes outside the workspace.
+  try {
+    const s = await lstat(agentDir);
+    if (s.isSymbolicLink()) {
+      throw new Error(`symlink detected at config dir ${agentDir} — aborting to prevent symlink traversal`);
+    }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    // Directory doesn't exist yet — that's fine, mkdir will create it below
+  }
+
   // Create config directory if it doesn't exist
   try {
     await mkdir(agentDir, { recursive: true });
@@ -721,6 +733,16 @@ async function setupMcpMailInWorkspace(
 ): Promise<void> {
   const agentDir = join(workspacePath, configDir);
   const settingsPath = join(agentDir, "settings.json");
+
+  // Reject symlinks — same guard as setupHookInWorkspace
+  try {
+    const s = await lstat(agentDir);
+    if (s.isSymbolicLink()) {
+      throw new Error(`symlink detected at config dir ${agentDir} — aborting to prevent symlink traversal`);
+    }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
 
   // Get MCP mail config - only configure if explicitly enabled via env var
   // This makes MCP mail opt-in rather than opt-out
