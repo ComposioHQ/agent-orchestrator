@@ -1,0 +1,53 @@
+packages/web/src/components/ThemeProvider.tsx
+  56459169db525289 1-16
+packages/web/src/app/globals.css
+  56459169db525289 3-9,16-19,24-116,118-121,123,130,135,152-206,208,213,219,229-230,249-251,279-281,287-289,295,303-307,316-317,319,321,331,335,337-339,345-347
+packages/web/src/app/test-direct/page.tsx
+  56459169db525289 4,31-32,34-36
+packages/web/package.json
+  56459169db525289 33
+packages/web/src/components/ProjectSidebar.tsx
+  56459169db525289 42,55
+packages/web/src/components/Terminal.tsx
+  56459169db525289 51
+packages/web/src/app/dev/terminal-test/page.tsx
+  56459169db525289 5,65-66,68-70,117,130,152,171,197,218,271,311,317,346,453,469,473,499-500,504,515,538,567,582,588,594
+packages/web/src/components/PRStatus.tsx
+  56459169db525289 34,41,48,60,97
+packages/web/src/components/ThemeToggle.tsx
+  56459169db525289 1-35
+packages/web/src/components/DirectTerminal.tsx
+  56459169db525289 5,82,179,201-229,235,581-615,637-639,665
+packages/web/src/components/CIBadge.tsx
+  56459169db525289 14,19,24
+packages/web/src/components/SessionCard.tsx
+  56459169db525289 72,81,102,111,113-123,143,150-159,161-164,211,215-216,224,227,239-243,344,355,390-392,399-400,405,422-423,430-432,436-437,446-447,454-455,459-460,468-469,473-474,484-486,490-491
+packages/web/src/components/ActivityDot.tsx
+  56459169db525289 9-14,19
+packages/web/src/app/layout.tsx
+  56459169db525289 4,34,36,38
+packages/web/src/components/SessionDetail.tsx
+  56459169db525289 11,129-134,144,256-257,310,315,329,346,351,366,431,527,529,560,573,608,618
+packages/web/src/components/Dashboard.tsx
+  56459169db525289 20,260,262-263,267,306
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.15",
+  "base_commit_sha": "d204dee9b1199cd0f2c684021f4c1604aa165278",
+  "prompts": {
+    "56459169db525289": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d019e-ef77-70f0-962a-f75e56b821c2",
+        "model": "unknown"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 535,
+      "total_deletions": 183,
+      "accepted_lines": 483,
+      "overriden_lines": 0
+    }
+  }
+}
