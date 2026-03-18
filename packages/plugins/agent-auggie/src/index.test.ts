@@ -134,8 +134,6 @@ function makeAuggieSessionJson(overrides: Record<string, unknown> = {}): string 
     agentState: { modelId: "claude-opus-4-6", userEmail: "test@test.com" },
     customTitle: "Fix auth bug",
     terminalId: "/dev/ttys001",
-    subAgentCreditsUsed: 0,
-    creditUsage: null,
     rootTaskUuid: "task-uuid",
     ...overrides,
   };
@@ -582,15 +580,12 @@ describe("getSessionInfo", () => {
     expect(result?.summary?.endsWith("...")).toBe(true);
   });
 
-  it("returns undefined cost when creditUsage is null", async () => {
+  it("always returns undefined cost (Auggie uses credits, not tokens)", async () => {
     mockExecFileAsync.mockImplementation((cmd: string) => {
       if (cmd === "tmux") return Promise.resolve({ stdout: "/dev/ttys001\n", stderr: "" });
       return Promise.reject(new Error("unexpected"));
     });
-    const sessionContent = makeAuggieSessionJson({
-      creditUsage: null,
-      subAgentCreditsUsed: 0,
-    });
+    const sessionContent = makeAuggieSessionJson();
     mockSessionFiles([{ filename: "abc-123-def.json", content: sessionContent }]);
 
     const session = makeSession({ runtimeHandle: makeTmuxHandle() });

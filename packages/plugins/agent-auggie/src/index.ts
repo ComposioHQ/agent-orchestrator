@@ -61,8 +61,6 @@ interface AuggieSessionFile {
   };
   customTitle?: string;
   terminalId?: string;
-  subAgentCreditsUsed?: number;
-  creditUsage?: unknown;
   rootTaskUuid?: string;
 }
 
@@ -627,18 +625,17 @@ function createAuggieAgent(): Agent {
         }
       }
 
-      // Defensive cost extraction — read if non-null, otherwise undefined
-      const creditUsage = auggieSession.creditUsage;
-      const subAgentCredits = auggieSession.subAgentCreditsUsed;
-      const hasCostData =
-        (creditUsage !== null && creditUsage !== undefined) ||
-        (typeof subAgentCredits === "number" && subAgentCredits > 0);
+      // Cost tracking: Auggie uses credit-based pricing, not token-based.
+      // --show-credits only works in non-interactive (--print) mode, and the
+      // session file fields (creditUsage, subAgentCreditsUsed) are undocumented
+      // and unreliably populated. Return undefined until a per-session cost API
+      // is available.
 
       return {
         summary,
         summaryIsFallback,
         agentSessionId,
-        cost: hasCostData ? { inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0 } : undefined,
+        cost: undefined,
       };
     },
 
