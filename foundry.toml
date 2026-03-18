@@ -1,0 +1,18 @@
+[profile.default]
+src = "contracts"
+test = "contracts/test"
+script = "contracts/script"
+out = "contracts/out"
+cache_path = "contracts/cache"
+libs = ["node_modules"]
+solc_version = "0.8.28"
+optimizer = true
+optimizer_runs = 200
+auto_detect_remappings = false
+remappings = [
+  "@openzeppelin/=node_modules/@openzeppelin/",
+  "forge-std/=node_modules/forge-std/",
+]
+
+[etherscan]
+base = { key = "${BASESCAN_API_KEY}", chain = 8453 }
