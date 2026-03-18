@@ -3,12 +3,9 @@ import type {
   GovernanceChain,
   GovernanceContractAddresses,
   GovernanceProposal,
-  GovernanceProposalStatus,
   GovernanceProposalResult,
   GovernanceVoteRecord,
-  GovernanceVoteChoice,
   GovernanceAttestation,
-  GovernanceAttestationKind,
   SubmitProposalParams,
   CastVoteParams,
   CastVoteResult,
@@ -16,6 +13,11 @@ import type {
   AuthorizationResult,
   AttestParams,
   AttestResult,
+} from "@composio/ao-core";
+import {
+  GOVERNANCE_PROPOSAL_STATUS,
+  GOVERNANCE_VOTE_CHOICE,
+  GOVERNANCE_ATTESTATION_KIND,
 } from "@composio/ao-core";
 import {
   createPublicClient,
@@ -42,38 +44,38 @@ export const manifest = {
   version: "0.1.0",
 };
 
-/** Maps Solidity ProposalStatus enum (uint8) to our string literal */
-const PROPOSAL_STATUS_MAP: GovernanceProposalStatus[] = [
-  "draft",
-  "active",
-  "approved",
-  "rejected",
-  "executed",
-  "cancelled",
-];
+/** Maps Solidity ProposalStatus enum (uint8) to our string literal (uses core constants) */
+const PROPOSAL_STATUS_MAP = [
+  GOVERNANCE_PROPOSAL_STATUS.DRAFT,
+  GOVERNANCE_PROPOSAL_STATUS.ACTIVE,
+  GOVERNANCE_PROPOSAL_STATUS.APPROVED,
+  GOVERNANCE_PROPOSAL_STATUS.REJECTED,
+  GOVERNANCE_PROPOSAL_STATUS.EXECUTED,
+  GOVERNANCE_PROPOSAL_STATUS.CANCELLED,
+] as const;
 
 /** Maps our vote choice string to Solidity VoteChoice enum (uint8) */
-const VOTE_CHOICE_TO_UINT: Record<GovernanceVoteChoice, number> = {
-  against: 0,
-  for: 1,
-  abstain: 2,
-};
+const VOTE_CHOICE_TO_UINT = {
+  [GOVERNANCE_VOTE_CHOICE.AGAINST]: 0,
+  [GOVERNANCE_VOTE_CHOICE.FOR]: 1,
+  [GOVERNANCE_VOTE_CHOICE.ABSTAIN]: 2,
+} as const;
 
-/** Maps Solidity AttestationKind enum (uint8) to our string literal */
-const ATTESTATION_KIND_MAP: GovernanceAttestationKind[] = [
-  "ci",
-  "review_verdict",
-  "convergence_pattern",
-  "custom",
-];
+/** Maps Solidity AttestationKind enum (uint8) to our string literal (uses core constants) */
+const ATTESTATION_KIND_MAP = [
+  GOVERNANCE_ATTESTATION_KIND.CI,
+  GOVERNANCE_ATTESTATION_KIND.REVIEW_VERDICT,
+  GOVERNANCE_ATTESTATION_KIND.CONVERGENCE_PATTERN,
+  GOVERNANCE_ATTESTATION_KIND.CUSTOM,
+] as const;
 
 /** Maps our attestation kind string to Solidity enum (uint8) */
-const ATTESTATION_KIND_TO_UINT: Record<GovernanceAttestationKind, number> = {
-  ci: 0,
-  review_verdict: 1,
-  convergence_pattern: 2,
-  custom: 3,
-};
+const ATTESTATION_KIND_TO_UINT = {
+  [GOVERNANCE_ATTESTATION_KIND.CI]: 0,
+  [GOVERNANCE_ATTESTATION_KIND.REVIEW_VERDICT]: 1,
+  [GOVERNANCE_ATTESTATION_KIND.CONVERGENCE_PATTERN]: 2,
+  [GOVERNANCE_ATTESTATION_KIND.CUSTOM]: 3,
+} as const;
 
 export interface BaseAdapterConfig {
   /** JSON-RPC URL for Base (defaults to public Base RPC) */
@@ -86,19 +88,46 @@ export interface BaseAdapterConfig {
   chain?: Chain;
 }
 
+function isHexAddress(value: unknown): value is string {
+  return typeof value === "string" && /^0x[0-9a-fA-F]{40}$/.test(value);
+}
+
+function validateContractAddresses(
+  contracts: unknown,
+): GovernanceContractAddresses {
+  if (!contracts || typeof contracts !== "object") {
+    throw new Error(
+      "governance-chain plugin requires config.contracts as an object with contract addresses",
+    );
+  }
+  const c = contracts as Record<string, unknown>;
+  const required = [
+    "governanceRegistry",
+    "votingPolicy",
+    "executionPolicy",
+    "attestationLog",
+  ] as const;
+  for (const field of required) {
+    if (!isHexAddress(c[field])) {
+      throw new Error(
+        `governance-chain plugin: config.contracts.${field} must be a valid 0x-prefixed Ethereum address`,
+      );
+    }
+  }
+  return c as unknown as GovernanceContractAddresses;
+}
+
 export function create(config?: Record<string, unknown>): GovernanceChain {
   if (!config) {
     throw new Error("governance-chain plugin requires config with contract addresses");
   }
 
-  const adapterConfig = config as unknown as BaseAdapterConfig;
-  if (!adapterConfig.contracts) {
-    throw new Error("governance-chain plugin requires config.contracts with contract addresses");
-  }
+  const contracts = validateContractAddresses(config["contracts"]);
 
-  const chain = adapterConfig.chain ?? base;
-  const rpcUrl = adapterConfig.rpcUrl ?? process.env["BASE_RPC_URL"];
-  const privateKey = adapterConfig.privateKey ?? process.env["GOVERNANCE_PRIVATE_KEY"];
+  const chain = (config["chain"] as Chain | undefined) ?? base;
+  const rpcUrl = (config["rpcUrl"] as string | undefined) ?? process.env["BASE_RPC_URL"];
+  const privateKey =
+    (config["privateKey"] as string | undefined) ?? process.env["GOVERNANCE_PRIVATE_KEY"];
 
   const transport = http(rpcUrl);
 
@@ -127,28 +156,26 @@ export function create(config?: Record<string, unknown>): GovernanceChain {
     return { wallet: walletClient, account };
   }
 
-  const addresses = adapterConfig.contracts;
-
   const registry = getContract({
-    address: addresses.governanceRegistry as Hex,
+    address: contracts.governanceRegistry as Hex,
     abi: governanceRegistryAbi,
     client: publicClient,
   });
 
   const voting = getContract({
-    address: addresses.votingPolicy as Hex,
+    address: contracts.votingPolicy as Hex,
     abi: votingPolicyAbi,
     client: publicClient,
   });
 
   const execution = getContract({
-    address: addresses.executionPolicy as Hex,
+    address: contracts.executionPolicy as Hex,
     abi: executionPolicyAbi,
     client: publicClient,
   });
 
   const attestationContract = getContract({
-    address: addresses.attestationLog as Hex,
+    address: contracts.attestationLog as Hex,
     abi: attestationLogAbi,
     client: publicClient,
   });
@@ -202,7 +229,7 @@ export function create(config?: Record<string, unknown>): GovernanceChain {
 
       if (params.forkId) {
         txHash = await wallet.writeContract({
-          address: addresses.governanceRegistry as Hex,
+          address: contracts.governanceRegistry as Hex,
           abi: governanceRegistryAbi,
           functionName: "createProposalForFork",
           args: [params.forkId as Hex, contentHash],
@@ -210,7 +237,7 @@ export function create(config?: Record<string, unknown>): GovernanceChain {
         });
       } else {
         txHash = await wallet.writeContract({
-          address: addresses.governanceRegistry as Hex,
+          address: contracts.governanceRegistry as Hex,
           abi: governanceRegistryAbi,
           functionName: "createProposal",
           args: [contentHash],
@@ -220,7 +247,6 @@ export function create(config?: Record<string, unknown>): GovernanceChain {
 
       const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
 
-      let proposalId = 0;
       for (const log of receipt.logs) {
         try {
           const decoded = decodeEventLog({
@@ -229,17 +255,21 @@ export function create(config?: Record<string, unknown>): GovernanceChain {
             topics: log.topics,
           });
           if (decoded.eventName === "ProposalCreated") {
-            proposalId = Number(
-              (decoded.args as { proposalId: bigint }).proposalId,
-            );
-            break;
+            return {
+              proposalId: Number(
+                (decoded.args as { proposalId: bigint }).proposalId,
+              ),
+              transactionHash: txHash,
+            };
           }
         } catch {
           // Not a matching event, skip
         }
       }
 
-      return { proposalId, transactionHash: txHash };
+      throw new Error(
+        `Transaction ${txHash} succeeded but ProposalCreated event not found in receipt logs`,
+      );
     },
 
     async getProposal(proposalId: number): Promise<GovernanceProposal> {
@@ -273,7 +303,7 @@ export function create(config?: Record<string, unknown>): GovernanceChain {
       let txHash: Hex;
       if (params.forkId) {
         txHash = await wallet.writeContract({
-          address: addresses.votingPolicy as Hex,
+          address: contracts.votingPolicy as Hex,
           abi: votingPolicyAbi,
           functionName: "castVoteForFork",
           args: [params.forkId as Hex, BigInt(params.proposalId), choiceUint],
@@ -281,7 +311,7 @@ export function create(config?: Record<string, unknown>): GovernanceChain {
         });
       } else {
         txHash = await wallet.writeContract({
-          address: addresses.votingPolicy as Hex,
+          address: contracts.votingPolicy as Hex,
           abi: votingPolicyAbi,
           functionName: "castVote",
           args: [BigInt(params.proposalId), choiceUint],
@@ -291,7 +321,6 @@ export function create(config?: Record<string, unknown>): GovernanceChain {
 
       const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
 
-      let votingPower = 0;
       for (const log of receipt.logs) {
         try {
           const decoded = decodeEventLog({
@@ -300,17 +329,21 @@ export function create(config?: Record<string, unknown>): GovernanceChain {
             topics: log.topics,
           });
           if (decoded.eventName === "VoteCast") {
-            votingPower = Number(
-              (decoded.args as { votingPower: bigint }).votingPower,
-            );
-            break;
+            return {
+              votingPower: Number(
+                (decoded.args as { votingPower: bigint }).votingPower,
+              ),
+              transactionHash: txHash,
+            };
           }
         } catch {
           // Not a matching event, skip
         }
       }
 
-      return { votingPower, transactionHash: txHash };
+      throw new Error(
+        `Transaction ${txHash} succeeded but VoteCast event not found in receipt logs`,
+      );
     },
 
     async getVoteRecord(forkId: string, proposalId: number): Promise<GovernanceVoteRecord> {
@@ -374,7 +407,7 @@ export function create(config?: Record<string, unknown>): GovernanceChain {
       const kindUint = ATTESTATION_KIND_TO_UINT[params.kind];
 
       const txHash = await wallet.writeContract({
-        address: addresses.attestationLog as Hex,
+        address: contracts.attestationLog as Hex,
         abi: attestationLogAbi,
         functionName: "appendAttestation",
         args: [
@@ -388,7 +421,6 @@ export function create(config?: Record<string, unknown>): GovernanceChain {
 
       const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
 
-      let attestationId = 0;
       for (const log of receipt.logs) {
         try {
           const decoded = decodeEventLog({
@@ -397,17 +429,21 @@ export function create(config?: Record<string, unknown>): GovernanceChain {
             topics: log.topics,
           });
           if (decoded.eventName === "AttestationAppended") {
-            attestationId = Number(
-              (decoded.args as { attestationId: bigint }).attestationId,
-            );
-            break;
+            return {
+              attestationId: Number(
+                (decoded.args as { attestationId: bigint }).attestationId,
+              ),
+              transactionHash: txHash,
+            };
           }
         } catch {
           // Not a matching event, skip
         }
       }
 
-      return { attestationId, transactionHash: txHash };
+      throw new Error(
+        `Transaction ${txHash} succeeded but AttestationAppended event not found in receipt logs`,
+      );
     },
 
     async verifyAttestation(attestationId: number): Promise<GovernanceAttestation> {

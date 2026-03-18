@@ -166,7 +166,28 @@ describe("governance-chain plugin", () => {
     });
 
     it("throws without contract addresses", () => {
-      expect(() => create({})).toThrow("requires config.contracts");
+      expect(() => create({})).toThrow("config.contracts");
+    });
+
+    it("throws with empty contracts object", () => {
+      expect(() => create({ contracts: {} })).toThrow("governanceRegistry must be a valid");
+    });
+
+    it("throws with invalid address format", () => {
+      expect(() =>
+        create({
+          contracts: {
+            governanceRegistry: "not-an-address",
+            votingPolicy: "0x2222222222222222222222222222222222222222",
+            executionPolicy: "0x3333333333333333333333333333333333333333",
+            attestationLog: "0x4444444444444444444444444444444444444444",
+          },
+        }),
+      ).toThrow("governanceRegistry must be a valid");
+    });
+
+    it("throws with string contracts value", () => {
+      expect(() => create({ contracts: "bad" })).toThrow("config.contracts as an object");
     });
 
     it("creates adapter with valid config and private key", () => {
@@ -402,7 +423,29 @@ describe("governance-chain plugin", () => {
   });
 
   describe("write operations with wallet", () => {
-    it("submitProposal calls writeContract and returns result", async () => {
+    it("submitProposal throws when ProposalCreated event missing from receipt", async () => {
+      // Default mock returns empty logs → event not found → should throw
+      const adapter = create({
+        contracts: TEST_CONTRACTS,
+        privateKey: "0x" + "ab".repeat(32),
+        rpcUrl: "https://base-rpc.example.com",
+      });
+      await expect(
+        adapter.submitProposal({ contentHash: "0x" + "aa".repeat(32) }),
+      ).rejects.toThrow("ProposalCreated event not found");
+      expect(mockWriteContract).toHaveBeenCalled();
+    });
+
+    it("submitProposal returns proposalId from receipt event", async () => {
+      const { decodeEventLog } = vi.mocked(await import("viem"));
+      mockWaitForTransactionReceipt.mockResolvedValueOnce({
+        logs: [{ data: "0x", topics: ["0x"] }],
+      });
+      decodeEventLog.mockReturnValueOnce({
+        eventName: "ProposalCreated",
+        args: { proposalId: 42n, forkId: TEST_FORK_ID, proposer: "0x" + "11".repeat(20), contentHash: "0x" + "aa".repeat(32) },
+      } as never);
+
       const adapter = create({
         contracts: TEST_CONTRACTS,
         privateKey: "0x" + "ab".repeat(32),
@@ -411,22 +454,69 @@ describe("governance-chain plugin", () => {
       const result = await adapter.submitProposal({
         contentHash: "0x" + "aa".repeat(32),
       });
+      expect(result.proposalId).toBe(42);
       expect(result.transactionHash).toBe("0xdeadbeef");
+    });
+
+    it("castVote throws when VoteCast event missing from receipt", async () => {
+      const adapter = create({
+        contracts: TEST_CONTRACTS,
+        privateKey: "0x" + "ab".repeat(32),
+        rpcUrl: "https://base-rpc.example.com",
+      });
+      await expect(
+        adapter.castVote({ proposalId: 1, choice: "for" }),
+      ).rejects.toThrow("VoteCast event not found");
       expect(mockWriteContract).toHaveBeenCalled();
     });
 
-    it("castVote calls writeContract and returns result", async () => {
+    it("castVote returns votingPower from receipt event", async () => {
+      const { decodeEventLog } = vi.mocked(await import("viem"));
+      mockWaitForTransactionReceipt.mockResolvedValueOnce({
+        logs: [{ data: "0x", topics: ["0x"] }],
+      });
+      decodeEventLog.mockReturnValueOnce({
+        eventName: "VoteCast",
+        args: { votingPower: 3n, forkId: TEST_FORK_ID, proposalId: 1n, voter: "0x" + "11".repeat(20), choice: 1 },
+      } as never);
+
       const adapter = create({
         contracts: TEST_CONTRACTS,
         privateKey: "0x" + "ab".repeat(32),
         rpcUrl: "https://base-rpc.example.com",
       });
       const result = await adapter.castVote({ proposalId: 1, choice: "for" });
+      expect(result.votingPower).toBe(3);
       expect(result.transactionHash).toBe("0xdeadbeef");
+    });
+
+    it("attest throws when AttestationAppended event missing from receipt", async () => {
+      const adapter = create({
+        contracts: TEST_CONTRACTS,
+        privateKey: "0x" + "ab".repeat(32),
+        rpcUrl: "https://base-rpc.example.com",
+      });
+      await expect(
+        adapter.attest({
+          forkId: TEST_FORK_ID,
+          proposalId: 1,
+          kind: "ci",
+          evidenceHash: "0x" + "bb".repeat(32),
+        }),
+      ).rejects.toThrow("AttestationAppended event not found");
       expect(mockWriteContract).toHaveBeenCalled();
     });
 
-    it("attest calls writeContract and returns result", async () => {
+    it("attest returns attestationId from receipt event", async () => {
+      const { decodeEventLog } = vi.mocked(await import("viem"));
+      mockWaitForTransactionReceipt.mockResolvedValueOnce({
+        logs: [{ data: "0x", topics: ["0x"] }],
+      });
+      decodeEventLog.mockReturnValueOnce({
+        eventName: "AttestationAppended",
+        args: { attestationId: 7n, forkId: TEST_FORK_ID, proposalId: 1n, kind: 0, evidenceHash: "0x" + "bb".repeat(32), attester: "0x" + "11".repeat(20) },
+      } as never);
+
       const adapter = create({
         contracts: TEST_CONTRACTS,
         privateKey: "0x" + "ab".repeat(32),
@@ -438,8 +528,8 @@ describe("governance-chain plugin", () => {
         kind: "ci",
         evidenceHash: "0x" + "bb".repeat(32),
       });
+      expect(result.attestationId).toBe(7);
       expect(result.transactionHash).toBe("0xdeadbeef");
-      expect(mockWriteContract).toHaveBeenCalled();
     });
   });
 
