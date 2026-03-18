@@ -72,6 +72,23 @@ ao spawn my-project 123    # GitHub issue, Linear ticket, or ad-hoc
 
 Dashboard opens at `http://localhost:3000`. Run `ao status` for the CLI view.
 
+**Option C — Containerized deployment:**
+
+```bash
+git clone https://github.com/ComposioHQ/agent-orchestrator.git
+cd agent-orchestrator
+mkdir -p projects
+
+# first-time setup: choose one
+podman compose run --rm agent-orchestrator init
+podman compose run --rm agent-orchestrator start https://github.com/your-org/your-repo
+
+# then use the long-running service
+podman compose up
+```
+
+Dashboard opens at `http://localhost:3000`. For onboarding with `ao init`, `ao start <repo>`, Podman examples, mounts, and image options, see [CONTAINER.md](CONTAINER.md).
+
 ## How It Works
 
 ```
@@ -139,6 +156,17 @@ CI fails → agent gets the logs and fixes it. Reviewer requests changes → age
 
 See [`agent-orchestrator.yaml.example`](agent-orchestrator.yaml.example) for the full reference.
 
+## Container Deployment
+
+Container usage is documented in [CONTAINER.md](CONTAINER.md).
+
+That guide covers:
+
+- `docker compose` and `podman compose`
+- onboarding with `ao init` and `ao start <repo>`
+- direct `docker run` and `podman run` examples
+- config paths, mounts, and image build options
+
 ## CLI
 
 ```bash
@@ -180,8 +208,14 @@ Running one AI agent in a terminal is easy. Running 30 across different issues, 
 
 - Node.js 20+
 - Git 2.25+
-- tmux (for default runtime)
+- tmux (for the default runtime)
 - `gh` CLI (for GitHub integration)
+
+Or, if running Containerized:
+
+- Docker or Podman
+- Compose support (`docker compose` or `podman compose`)
+- A checked-out project available under `./projects`
 
 ## Development
 
