@@ -11,6 +11,7 @@ import {
   type Tracker,
   type ProjectConfig,
   isOrchestratorSession,
+  isTerminalSession,
   loadConfig,
 } from "@composio/ao-core";
 import { git, getTmuxSessions, getTmuxActivity } from "../lib/shell.js";
@@ -207,10 +208,11 @@ function printOrchestratorRow(info: SessionInfo): void {
 export function registerStatus(program: Command): void {
   program
     .command("status")
-    .description("Show all sessions with branch, activity, PR, and CI status")
+    .description("Show sessions with branch, activity, PR, and CI status")
     .option("-p, --project <id>", "Filter by project ID")
     .option("--json", "Output as JSON")
-    .action(async (opts: { project?: string; json?: boolean }) => {
+    .option("--all", "Include terminal sessions")
+    .action(async (opts: { project?: string; json?: boolean; all?: boolean }) => {
       let config: ReturnType<typeof loadConfig>;
       try {
         config = loadConfig();
@@ -229,6 +231,7 @@ export function registerStatus(program: Command): void {
       // Use session manager to list sessions (metadata-based, not tmux-based)
       const sm = await getSessionManager(config);
       const sessions = await sm.list(opts.project);
+      const visibleSessions = opts.all || opts.json ? sessions : sessions.filter((s) => !isTerminalSession(s));
 
       if (!opts.json) {
         console.log(banner("AGENT ORCHESTRATOR STATUS"));
@@ -237,7 +240,7 @@ export function registerStatus(program: Command): void {
 
       // Group sessions by project
       const byProject = new Map<string, Session[]>();
-      for (const s of sessions) {
+      for (const s of visibleSessions) {
         const list = byProject.get(s.projectId) ?? [];
         list.push(s);
         byProject.set(s.projectId, list);
