@@ -858,7 +858,26 @@ function EventTimeline({ sessionId }: { sessionId: string }) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/events`);
+      // Exclude terminal.captured server-side to avoid fetching ~2880 noise entries/day
+      const types = [
+        "session.created",
+        "session.started",
+        "session.status_changed",
+        "session.activity_changed",
+        "session.killed",
+        "session.terminated",
+        "session.restored",
+        "session.error",
+        "pr.created",
+        "pr.updated",
+        "pr.merged",
+        "pr.closed",
+        "ci.status_changed",
+        "review.decision_changed",
+      ].join(",");
+      const res = await fetch(
+        `/api/sessions/${encodeURIComponent(sessionId)}/events?types=${types}`,
+      );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = (await res.json()) as { events?: EventEntry[] };
       setEvents(json.events ?? []);
@@ -877,9 +896,6 @@ function EventTimeline({ sessionId }: { sessionId: string }) {
       void fetchEvents();
     }
   };
-
-  // Filter out terminal.captured events from the visible list (noise reduction)
-  const visibleEvents = events.filter((e) => e.event !== "terminal.captured");
 
   return (
     <div className="mb-6">
@@ -905,7 +921,7 @@ function EventTimeline({ sessionId }: { sessionId: string }) {
         </span>
         {events.length > 0 && (
           <span className="rounded-full bg-[rgba(255,255,255,0.06)] px-1.5 py-0.5 text-[10px] tabular-nums text-[var(--color-text-tertiary)]">
-            {visibleEvents.length}
+            {events.length}
           </span>
         )}
       </button>
@@ -920,14 +936,14 @@ function EventTimeline({ sessionId }: { sessionId: string }) {
           {error && (
             <div className="px-4 py-3 text-[12px] text-[var(--color-status-error)]">{error}</div>
           )}
-          {!loading && !error && visibleEvents.length === 0 && (
+          {!loading && !error && events.length === 0 && (
             <div className="px-4 py-3 text-[12px] text-[var(--color-text-tertiary)]">
               No events recorded yet
             </div>
           )}
-          {!loading && visibleEvents.length > 0 && (
+          {!loading && events.length > 0 && (
             <div className="max-h-[320px] overflow-y-auto">
-              {visibleEvents.map((entry, i) => {
+              {events.map((entry, i) => {
                 const meta = eventMeta[entry.event] ?? {
                   label: entry.event,
                   icon: "·",
@@ -935,7 +951,7 @@ function EventTimeline({ sessionId }: { sessionId: string }) {
                 };
                 const desc = describeEvent(entry);
                 const prevDate =
-                  i > 0 ? formatEventDate(visibleEvents[i - 1].ts) : null;
+                  i > 0 ? formatEventDate(events[i - 1].ts) : null;
                 const currentDate = formatEventDate(entry.ts);
                 const showDateSeparator = currentDate !== prevDate;
 

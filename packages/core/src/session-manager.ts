@@ -59,6 +59,7 @@ import {
   logSessionStarted,
   logSessionKilled,
   logSessionRestored,
+  logSessionError,
 } from "./event-log.js";
 import { buildPrompt } from "./prompt-builder.js";
 import {
@@ -1079,6 +1080,15 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         },
       });
     } catch (err) {
+      // Log error event before cleanup
+      try {
+        logSessionError(sessionsDir, sessionId, {
+          error: err instanceof Error ? err.message : String(err),
+          context: "runtime_creation",
+        });
+      } catch {
+        /* non-fatal */
+      }
       // Clean up workspace and reserved ID if agent config or runtime creation failed
       if (
         plugins.workspace &&
@@ -1153,6 +1163,15 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         updateMetadata(sessionsDir, sessionId, session.metadata);
       }
     } catch (err) {
+      // Log error event before cleanup
+      try {
+        logSessionError(sessionsDir, sessionId, {
+          error: err instanceof Error ? err.message : String(err),
+          context: "post_launch_setup",
+        });
+      } catch {
+        /* non-fatal */
+      }
       // Clean up runtime and workspace on post-launch failure
       try {
         await plugins.runtime.destroy(handle);
