@@ -105,6 +105,10 @@
   --color-alert-conflict-bg:  rgba(207, 34, 46, 0.15);
   --color-alert-comment:      #bc4c00;
   --color-alert-comment-bg:   rgba(188, 76, 0, 0.15);
+
+  /* Activity pulse glow */
+  --color-activity-pulse:     rgba(9, 105, 218, 0.45);
+  --color-activity-pulse-end: rgba(9, 105, 218, 0);
 }
 
 /* ── Dark mode ────────────────────────────────────────────────────── */
@@ -203,6 +207,10 @@
   --color-alert-conflict-bg:  #6E2B2B;
   --color-alert-comment:      #E6A05E;
   --color-alert-comment-bg:   #653A1E;
+
+  /* Activity pulse glow */
+  --color-activity-pulse:     rgba(88, 166, 255, 0.45);
+  --color-activity-pulse-end: rgba(88, 166, 255, 0);
 }
 
 @theme {
@@ -253,8 +261,8 @@ a:hover {
 /* ── Animations ──────────────────────────────────────────────────────── */
 
 @keyframes activity-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(88, 166, 255, 0.45); }
-  50%       { box-shadow: 0 0 0 4px rgba(88, 166, 255, 0); }
+  0%, 100% { box-shadow: 0 0 0 0 var(--color-activity-pulse); }
+  50%       { box-shadow: 0 0 0 4px var(--color-activity-pulse-end); }
 }
 
 @keyframes spin {

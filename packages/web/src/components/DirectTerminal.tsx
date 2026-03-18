@@ -136,6 +136,8 @@ export function DirectTerminal({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { resolvedTheme } = useTheme();
+  const resolvedThemeRef = useRef(resolvedTheme);
+  resolvedThemeRef.current = resolvedTheme;
 
   const terminalRef = useRef<HTMLDivElement>(null);
   const terminalInstance = useRef<TerminalType | null>(null);
@@ -227,7 +229,7 @@ export function DirectTerminal({
         if (!mounted || !terminalRef.current) return;
 
         const { dark: darkTheme, light: lightTheme } = getTerminalThemes(variant);
-        const currentTheme = resolvedTheme === "light" ? lightTheme : darkTheme;
+        const currentTheme = resolvedThemeRef.current === "light" ? lightTheme : darkTheme;
 
         // Initialize xterm.js Terminal
         const terminal = new Terminal({
