@@ -318,6 +318,19 @@ a:hover {
 ::-webkit-scrollbar-thumb:hover { background: var(--color-scrollbar-hover); }
 ::-webkit-scrollbar-thumb:active { background: var(--color-scrollbar-active); }
 
+/* ── xterm.js terminal viewport scrollbar ────────────────────────────── */
+
+.xterm .xterm-viewport::-webkit-scrollbar { width: 6px; }
+.xterm .xterm-viewport::-webkit-scrollbar-track { background: transparent; }
+.xterm .xterm-viewport::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
+.xterm .xterm-viewport::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
+.xterm .xterm-viewport::-webkit-scrollbar-thumb:active { background: rgba(255,255,255,0.25); }
+
+/* Light-theme variant: darker thumb on light background */
+html.light .xterm .xterm-viewport::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); }
+html.light .xterm .xterm-viewport::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.22); }
+html.light .xterm .xterm-viewport::-webkit-scrollbar-thumb:active { background: rgba(0,0,0,0.35); }
+
 /* ── Animations ──────────────────────────────────────────────────────── */
 
 @keyframes activity-pulse {
