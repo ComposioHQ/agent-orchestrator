@@ -262,7 +262,7 @@ export function SessionDetail({
         <OrchestratorStatusStrip zones={orchestratorZones} createdAt={session.createdAt} />
       )}
 
-      <div className="mx-auto max-w-[900px] px-8 py-6">
+      <div className="page-enter mx-auto max-w-[900px] px-8 py-6">
         {/* ── Header card ─────────────────────────────────────────── */}
         <div
           className="detail-card mb-6 rounded-[8px] border border-[var(--color-border-default)] p-5"
