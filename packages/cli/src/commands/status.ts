@@ -63,6 +63,12 @@ async function gatherSessionInfo(
     if (liveBranch) branch = liveBranch;
   }
 
+  // Keep downstream lookups aligned with the live branch shown in the table.
+  // Without this, status could display the current worktree branch while SCM
+  // detection still queried against stale session metadata, causing PR/CI/review
+  // columns to show "-" for sessions that actually had an open PR.
+  const scmSession = branch && branch !== session.branch ? { ...session, branch } : session;
+
   // Get last activity time from tmux
   const tmuxTarget = session.runtimeHandle?.id ?? session.id;
   const activityTs = await getTmuxActivity(tmuxTarget);
@@ -77,8 +83,11 @@ async function gatherSessionInfo(
     // Summary extraction failed — not critical
   }
 
-  // Use activity from session (already enriched by sessionManager.list())
-  const activity = session.activity;
+  // Use activity from session (already enriched by sessionManager.list()).
+  // If enrichment revived status to working but did not infer a more specific
+  // activity state, fall back so the status table doesn't misleadingly show
+  // "unknown" for a live worker.
+  const activity = session.activity ?? (status === "working" ? "active" : null);
 
   // Fetch PR, CI, and review data from SCM
   let prNumber: number | null = null;
@@ -98,7 +107,7 @@ async function gatherSessionInfo(
     try {
       const project = projectConfig.projects[session.projectId];
       if (project) {
-        const prInfo: PRInfo | null = await scm.detectPR(session, project);
+        const prInfo: PRInfo | null = await scm.detectPR(scmSession, project);
         if (prInfo) {
           prNumber = prInfo.number;
 

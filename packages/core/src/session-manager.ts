@@ -897,10 +897,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     // "killed" is terminal only when process/runtime checks still support that.
     // If we can confirm the session is alive again, surface it as working.
+    // However, if the agent process has exited (activity === "exited") we
+    // should NOT revive — the tmux shell may linger after the agent exits.
     if (
       reviveKilledStatus &&
       wasKilled &&
-      (runtimeConfirmedAlive || (detectedActivityState !== null && detectedActivityState !== "exited"))
+      detectedActivityState !== "exited" &&
+      (runtimeConfirmedAlive || (detectedActivityState !== null))
     ) {
       session.status = "working";
     }
