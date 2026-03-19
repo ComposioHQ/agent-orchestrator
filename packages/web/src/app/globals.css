@@ -10,13 +10,15 @@
  *   --color-text-*      Text colors
  *   --color-accent-*    Interactive and semantic accent colors
  *   --color-status-*    Status indicator colors
- *   --font-*            Font family stacks
- *   --font-size-*       Font-size scale (xs → xl); prefixed to avoid Tailwind --text-* collision
- *   --radius-*          Border-radius scale
- *   --box-shadow-*      Box-shadow levels (sm → xl); prefixed to avoid Tailwind --shadow-* collision
- *   --space-*           Spacing reference tokens (1 → 16)
- *   --z-*               Z-index scale (base → toast)
- *   --transition-*      Easing / duration tokens
+ *   --font-*            Font family stacks (in @theme — generates font-family utilities)
+ *   --radius-*          Border-radius scale (in @theme — generates rounded-* utilities)
+ *   --space-*           Spacing reference tokens (in @theme)
+ *   --z-*               Z-index scale (in @theme — generates z-* utilities)
+ *   --transition-*      Easing / duration tokens (in @theme)
+ *
+ * Tokens in :root (not @theme, to avoid Tailwind utility namespace collisions):
+ *   --font-size-*       Font-size scale (xs → xl); kept in :root to avoid --font-* collision
+ *   --box-shadow-*      Box-shadow levels (sm → xl); kept in :root to avoid --shadow-* collision
  *   --gradient-*        Named gradient surfaces for cards and buttons
  */
 
@@ -291,26 +293,11 @@
   --font-sans: var(--font-ibm-plex-sans), "SF Pro Text", -apple-system, system-ui, sans-serif;
   --font-mono: var(--font-ibm-plex-mono), "SF Mono", "Menlo", "Consolas", monospace;
 
-  /* ── Font-size scale ─────────────────────────────────────────────── */
-  /* Note: --font-size-* prefix avoids overriding Tailwind v4's --text-* utilities */
-  --font-size-xs:   10px;
-  --font-size-sm:   11px;
-  --font-size-base: 13px;
-  --font-size-lg:   15px;
-  --font-size-xl:   17px;
-
   /* ── Border radius ───────────────────────────────────────────────── */
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 8px;
   --radius-xl: 12px;
-
-  /* ── Shadow levels ───────────────────────────────────────────────── */
-  /* Note: --box-shadow-* prefix avoids overriding Tailwind v4's --shadow-* utilities */
-  --box-shadow-sm: 0 1px 2px rgba(0,0,0,0.6);
-  --box-shadow-md: 0 1px 3px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05);
-  --box-shadow-lg: 0 1px 2px rgba(0,0,0,0.9), 0 3px 10px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.07);
-  --box-shadow-xl: 0 4px 8px rgba(0,0,0,0.85), 0 14px 36px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.1);
 
   /* ── Spacing reference tokens ────────────────────────────────────── */
   --space-1:   4px;
@@ -335,6 +322,32 @@
   /* ── Transitions ─────────────────────────────────────────────────── */
   --transition-quick:   0.1s;
   --transition-regular: 0.25s;
+}
+
+/* ── Reference tokens (outside @theme to avoid Tailwind namespace collisions) ── */
+
+:root {
+  /* Font-size scale — in :root to avoid --font-* font-family namespace in @theme */
+  --font-size-xs:   10px;
+  --font-size-sm:   11px;
+  --font-size-base: 13px;
+  --font-size-lg:   15px;
+  --font-size-xl:   17px;
+
+  /* Shadow levels — in :root to avoid --shadow-* utility namespace in @theme */
+  --box-shadow-sm: 0 1px 2px rgba(0,0,0,0.6);
+  --box-shadow-md: 0 1px 3px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05);
+  --box-shadow-lg: 0 1px 2px rgba(0,0,0,0.9), 0 3px 10px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.07);
+  --box-shadow-xl: 0 4px 8px rgba(0,0,0,0.85), 0 14px 36px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.1);
+
+  /* Gradient surfaces */
+  --gradient-session-card:           linear-gradient(175deg, rgba(28,36,47,1) 0%, rgba(18,23,31,1) 100%);
+  --gradient-session-card-expanded:  linear-gradient(175deg, rgba(32,41,53,1) 0%, rgba(22,28,37,1) 100%);
+  --gradient-session-card-merge:     linear-gradient(175deg, rgba(16,40,24,1) 0%, rgba(10,26,15,1) 100%);
+  --gradient-detail-card:            linear-gradient(175deg, rgba(24,31,40,1) 0%, rgba(17,22,29,1) 100%);
+  --gradient-orchestrator-btn:       linear-gradient(175deg, rgba(88,166,255,0.12) 0%, rgba(88,166,255,0.06) 100%);
+  --gradient-orchestrator-btn-hover: linear-gradient(175deg, rgba(88,166,255,0.18) 0%, rgba(88,166,255,0.1) 100%);
+  --gradient-status-strip:           linear-gradient(to bottom, rgba(88,166,255,0.04) 0%, transparent 100%);
 }
 
 /* ── Base styles ─────────────────────────────────────────────────────── */
