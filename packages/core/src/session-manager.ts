@@ -1350,6 +1350,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           ...(reusableOpenCodeSessionId ? { opencodeSessionId: reusableOpenCodeSessionId } : {}),
         },
       },
+      prompt: orchestratorConfig.prompt,
       permissions: "permissionless" as const,
       model: selection.model,
       systemPromptFile,

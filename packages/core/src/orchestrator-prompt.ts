@@ -13,18 +13,6 @@ export interface OrchestratorPromptConfig {
   project: ProjectConfig;
 }
 
-export function generateOrchestratorStartupPrompt(opts: OrchestratorPromptConfig): string {
-  const { projectId, project } = opts;
-
-  return `Do an initial orchestration pass for ${project.name} (${projectId}).
-
-Start by:
-1. Running \`ao status\` to inspect the current session/PR state.
-2. Checking whether any worker session needs help, takeover, or a follow-up message.
-3. Spawning or directing worker sessions if open work is not currently owned.
-4. Staying in read-only coordination mode yourself — delegate implementation to workers.`;
-}
-
 function formatTrackerIssueFilters(project: ProjectConfig): string | null {
   const rawFilters = project.tracker?.["issueFilters"];
   if (!rawFilters || typeof rawFilters !== "object" || Array.isArray(rawFilters)) {
@@ -284,4 +272,41 @@ ${project.orchestratorRules}`);
   }
 
   return sections.join("\n\n");
+}
+
+/**
+ * Generate the initial user prompt that kicks off orchestration work after
+ * `ao start`. Without this, interactive agents like Codex just open a REPL and
+ * sit idle even though the orchestrator session appears healthy.
+ */
+export function generateOrchestratorStartupPrompt(opts: OrchestratorPromptConfig): string {
+  const { projectId, project } = opts;
+  const trackerPlugin = typeof project.tracker?.plugin === "string" ? project.tracker.plugin : null;
+  const trackerFilters = formatTrackerIssueFilters(project);
+
+  if (!trackerPlugin) {
+    return [
+      `Do an initial orchestration pass for ${project.name} now.`,
+      `1. Inspect the current AO state with \`ao status\` and \`ao session ls -p ${projectId}\`.`,
+      "2. There is no tracker configured for this project, so do not invent new work.",
+      "3. If workers already exist, monitor them for CI failures, review comments, blocked states, and merge-ready PRs.",
+      "4. If nothing needs action, report that the project is idle and remain available.",
+      "Do not implement code yourself from the orchestrator session.",
+    ].join("\n");
+  }
+
+  const filterClause = trackerFilters
+    ? ` matching these configured tracker filters: ${trackerFilters}.`
+    : ".";
+
+  return [
+    `Do an initial orchestration pass for ${project.name} now.`,
+    `1. Inspect the current AO state with \`ao status\` and \`ao session ls -p ${projectId}\`.`,
+    `2. Query the configured ${trackerPlugin} tracker for open issues${filterClause}`,
+    "3. Identify issues that are ready to work and do not already have an active AO worker session.",
+    `4. Spawn missing workers for those issues. Prefer \`ao batch-spawn ${projectId} ...\` when multiple issues qualify.`,
+    "5. After spawning, switch back to monitoring mode: watch worker progress, CI failures, review comments, blocked sessions, and merge-ready PRs.",
+    "6. If no issue needs action, say so briefly and remain available.",
+    "Do not implement code yourself from the orchestrator session.",
+  ].join("\n");
 }
