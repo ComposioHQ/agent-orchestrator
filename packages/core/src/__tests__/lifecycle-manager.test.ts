@@ -2219,6 +2219,79 @@ describe("session exit proof reconciliation (bd-uxs.6)", () => {
     expect((call[0] as { type: string }).type).toBe("session.exit_validated");
   });
 
+  it("emits session.exit_failed when validateCommits returns pushed=false", async () => {
+    // SCM mock with validateCommits that returns pushed=false (local commits not pushed)
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn(),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn(),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn(),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+      validateCommits: vi.fn().mockResolvedValue({
+        pushed: false,
+        localCommits: ["abc123", "def456"],
+        remoteCommits: [],
+      }),
+    };
+
+    const testRegistry: PluginRegistry = {
+      register: vi.fn(),
+      get: vi.fn().mockImplementation((slot: string, name?: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "notifier" && name === "desktop") return mockNotifier;
+        return null;
+      }),
+      list: vi.fn().mockReturnValue([]),
+      loadBuiltins: vi.fn(),
+      loadFromConfig: vi.fn(),
+    };
+
+    // Mock runtime as dead to trigger killed (terminal) status
+    vi.mocked(mockRuntime.isAlive).mockResolvedValue(false);
+
+    // Session starts as "working" so transition to "killed" triggers terminal event
+    const session = makeSession({ status: "working", pr: null });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      sessionId: "app-1",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: testRegistry,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    // Verify notifier was called with exit_failed event (not exit_validated)
+    const call = mockNotifier.notify.mock.calls.find(
+      (c: unknown) => (c[0] as { type: string })?.type === "session.exit_failed",
+    );
+    expect(call).toBeDefined();
+    expect((call[0] as { type: string }).type).toBe("session.exit_failed");
+
+    // Verify the proof contains pushed=false
+    const eventData = (call[0] as { data?: { proof?: SessionExitProof } }).data;
+    expect(eventData?.proof?.commitsPushed).toBe(false);
+    expect(eventData?.proof?.localCommits).toEqual(["abc123", "def456"]);
+    expect(eventData?.proof?.remoteCommits).toEqual([]);
+  });
+
   it("emits session.exit_failed when validateCommits throws an error", async () => {
     // SCM mock with validateCommits that throws
     const mockSCM: SCM = {
