@@ -54,6 +54,13 @@ import {
   listMetadata,
   reserveSessionId,
 } from "./metadata.js";
+import {
+  logSessionCreated,
+  logSessionStarted,
+  logSessionKilled,
+  logSessionRestored,
+  logSessionError,
+} from "./event-log.js";
 import { buildPrompt } from "./prompt-builder.js";
 import {
   getSessionsDir,
@@ -1077,6 +1084,15 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         },
       });
     } catch (err) {
+      // Log error event before cleanup
+      try {
+        logSessionError(sessionsDir, sessionId, {
+          error: err instanceof Error ? err.message : String(err),
+          context: "runtime_creation",
+        });
+      } catch {
+        /* non-fatal */
+      }
       // Clean up workspace and reserved ID if agent config or runtime creation failed
       if (
         plugins.workspace &&
@@ -1151,6 +1167,15 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         updateMetadata(sessionsDir, sessionId, session.metadata);
       }
     } catch (err) {
+      // Log error event before cleanup
+      try {
+        logSessionError(sessionsDir, sessionId, {
+          error: err instanceof Error ? err.message : String(err),
+          context: "post_launch_setup",
+        });
+      } catch {
+        /* non-fatal */
+      }
       // Clean up runtime and workspace on post-launch failure
       try {
         await plugins.runtime.destroy(handle);
@@ -1173,6 +1198,23 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         /* best effort */
       }
       throw err;
+    }
+
+    // Log session creation and agent start events
+    try {
+      logSessionCreated(sessionsDir, sessionId, {
+        projectId: spawnConfig.projectId,
+        branch,
+        workspacePath,
+        agent: selection.agentName,
+        issueId: spawnConfig.issueId,
+      });
+      logSessionStarted(sessionsDir, sessionId, {
+        runtimeId: handle.id,
+        runtimeName: handle.runtimeName,
+      });
+    } catch {
+      // Non-fatal: event logging failure should never block session creation
     }
 
     // Send initial prompt post-launch for agents that need it (e.g. Claude Code
@@ -1613,6 +1655,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           void 0;
         }
       }
+    }
+
+    // Log kill event before archiving metadata
+    try {
+      logSessionKilled(sessionsDir, sessionId, { reason: "user_requested" });
+    } catch {
+      // Non-fatal
     }
 
     // Archive metadata
@@ -2422,6 +2471,16 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       } catch {
         // Non-fatal — session is already running
       }
+    }
+
+    // Log restore event
+    try {
+      logSessionRestored(sessionsDir, sessionId, {
+        previousStatus: raw["status"],
+        runtimeId: handle.id,
+      });
+    } catch {
+      // Non-fatal
     }
 
     return restoredSession;

@@ -379,6 +379,9 @@ export function SessionDetail({
         {/* ── PR Card ─────────────────────────────────────────────── */}
         {pr && <PRCard pr={pr} sessionId={session.id} />}
 
+        {/* ── Event Timeline ──────────────────────────────────────── */}
+        <EventTimeline sessionId={session.id} />
+
         {/* ── Terminal ─────────────────────────────────────────────── */}
         <div className={pr ? "mt-6" : ""}>
           <div className="mb-3 flex items-center gap-2">
@@ -739,6 +742,256 @@ function IssuesList({ pr }: { pr: DashboardPR }) {
           <span className="text-[var(--color-text-secondary)]">{issue.text}</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+// ── Event Timeline ────────────────────────────────────────────────────
+
+interface EventEntry {
+  ts: string;
+  event: string;
+  data: Record<string, unknown>;
+}
+
+const eventMeta: Record<string, { label: string; icon: string; color: string }> = {
+  "session.created": { label: "Session created", icon: "+", color: "var(--color-status-ready)" },
+  "session.started": { label: "Agent started", icon: "▸", color: "var(--color-status-working)" },
+  "session.status_changed": {
+    label: "Status changed",
+    icon: "→",
+    color: "var(--color-text-secondary)",
+  },
+  "session.activity_changed": {
+    label: "Activity changed",
+    icon: "◆",
+    color: "var(--color-text-tertiary)",
+  },
+  "session.killed": { label: "Session killed", icon: "✗", color: "var(--color-status-error)" },
+  "session.terminated": {
+    label: "Session terminated",
+    icon: "✗",
+    color: "var(--color-status-error)",
+  },
+  "session.restored": {
+    label: "Session restored",
+    icon: "↻",
+    color: "var(--color-status-attention)",
+  },
+  "session.error": { label: "Error", icon: "!", color: "var(--color-status-error)" },
+  "pr.created": { label: "PR created", icon: "⊕", color: "var(--color-accent)" },
+  "pr.updated": { label: "PR updated", icon: "↑", color: "var(--color-accent)" },
+  "pr.merged": { label: "PR merged", icon: "⊛", color: "#a371f7" },
+  "pr.closed": { label: "PR closed", icon: "⊖", color: "var(--color-text-tertiary)" },
+  "ci.status_changed": {
+    label: "CI status changed",
+    icon: "●",
+    color: "var(--color-status-attention)",
+  },
+  "review.decision_changed": {
+    label: "Review updated",
+    icon: "◎",
+    color: "var(--color-status-attention)",
+  },
+  "terminal.captured": {
+    label: "Terminal captured",
+    icon: "▪",
+    color: "var(--color-text-tertiary)",
+  },
+};
+
+function formatEventTime(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  } catch {
+    return iso;
+  }
+}
+
+function formatEventDate(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  } catch {
+    return "";
+  }
+}
+
+function describeEvent(entry: EventEntry): string {
+  const d = entry.data;
+  switch (entry.event) {
+    case "session.created":
+      return [d["agent"], d["branch"]].filter(Boolean).join(" on ");
+    case "session.started":
+      return d["runtimeName"] ? `via ${d["runtimeName"]}` : "";
+    case "session.status_changed":
+      return d["from"] && d["to"] ? `${d["from"]} → ${d["to"]}` : "";
+    case "session.activity_changed":
+      return d["from"] && d["to"] ? `${d["from"]} → ${d["to"]}` : "";
+    case "session.killed":
+      return typeof d["reason"] === "string" ? d["reason"] : "";
+    case "session.restored":
+      return d["previousStatus"] ? `from ${d["previousStatus"]}` : "";
+    case "session.error":
+      return typeof d["error"] === "string" ? d["error"] : "";
+    case "pr.created":
+      return d["url"] ? `#${d["number"]}` : "";
+    case "pr.merged":
+      return d["url"] ? `#${d["number"] ?? ""}` : "";
+    case "ci.status_changed":
+      return typeof d["status"] === "string" ? d["status"] : "";
+    default:
+      return "";
+  }
+}
+
+function EventTimeline({ sessionId }: { sessionId: string }) {
+  const [events, setEvents] = useState<EventEntry[]>([]);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchEvents = async () => {
+    if (loading) return;
+    setLoading(true);
+    setError(null);
+    try {
+      // Exclude terminal.captured server-side to avoid fetching ~2880 noise entries/day
+      const types = [
+        "session.created",
+        "session.started",
+        "session.status_changed",
+        "session.activity_changed",
+        "session.killed",
+        "session.terminated",
+        "session.restored",
+        "session.error",
+        "pr.created",
+        "pr.updated",
+        "pr.merged",
+        "pr.closed",
+        "ci.status_changed",
+        "review.decision_changed",
+      ].join(",");
+      const res = await fetch(
+        `/api/sessions/${encodeURIComponent(sessionId)}/events?types=${types}`,
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = (await res.json()) as { events?: EventEntry[] };
+      setEvents(json.events ?? []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load events");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleToggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (next) {
+      void fetchEvents();
+    }
+  };
+
+  return (
+    <div className="mb-6">
+      <button
+        onClick={handleToggle}
+        className="flex w-full items-center gap-2 rounded-[6px] px-1 py-1.5 text-left transition-colors hover:bg-[rgba(255,255,255,0.03)]"
+      >
+        <svg
+          className={cn(
+            "h-3 w-3 shrink-0 text-[var(--color-text-tertiary)] transition-transform",
+            open && "rotate-90",
+          )}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          viewBox="0 0 24 24"
+        >
+          <path d="M9 5l7 7-7 7" />
+        </svg>
+        <div className="h-3 w-0.5 rounded-full bg-[var(--color-text-tertiary)] opacity-50" />
+        <span className="text-[10px] font-bold uppercase tracking-[0.10em] text-[var(--color-text-tertiary)]">
+          Event Log
+        </span>
+        {events.length > 0 && (
+          <span className="rounded-full bg-[rgba(255,255,255,0.06)] px-1.5 py-0.5 text-[10px] tabular-nums text-[var(--color-text-tertiary)]">
+            {events.length}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <div className="mt-2 rounded-[8px] border border-[var(--color-border-default)] overflow-hidden">
+          {loading && (
+            <div className="px-4 py-3 text-[12px] text-[var(--color-text-tertiary)]">
+              Loading events...
+            </div>
+          )}
+          {error && (
+            <div className="px-4 py-3 text-[12px] text-[var(--color-status-error)]">{error}</div>
+          )}
+          {!loading && !error && events.length === 0 && (
+            <div className="px-4 py-3 text-[12px] text-[var(--color-text-tertiary)]">
+              No events recorded yet
+            </div>
+          )}
+          {!loading && events.length > 0 && (
+            <div className="max-h-[320px] overflow-y-auto">
+              {events.map((entry, i) => {
+                const meta = eventMeta[entry.event] ?? {
+                  label: entry.event,
+                  icon: "·",
+                  color: "var(--color-text-tertiary)",
+                };
+                const desc = describeEvent(entry);
+                const prevDate =
+                  i > 0 ? formatEventDate(events[i - 1].ts) : null;
+                const currentDate = formatEventDate(entry.ts);
+                const showDateSeparator = currentDate !== prevDate;
+
+                return (
+                  <div key={`${entry.ts}-${i}`}>
+                    {showDateSeparator && (
+                      <div className="sticky top-0 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-base)] px-4 py-1">
+                        <span className="text-[10px] font-semibold text-[var(--color-text-tertiary)]">
+                          {currentDate}
+                        </span>
+                      </div>
+                    )}
+                    <div className="flex items-start gap-3 border-b border-[var(--color-border-subtle)] px-4 py-2 last:border-b-0">
+                      <span
+                        className="mt-0.5 w-3 shrink-0 text-center text-[11px] font-bold"
+                        style={{ color: meta.color }}
+                      >
+                        {meta.icon}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-[12px] font-medium text-[var(--color-text-primary)]">
+                            {meta.label}
+                          </span>
+                          {desc && (
+                            <span className="truncate text-[11px] text-[var(--color-text-tertiary)]">
+                              {desc}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <span className="shrink-0 font-[var(--font-mono)] text-[10px] tabular-nums text-[var(--color-text-tertiary)]">
+                        {formatEventTime(entry.ts)}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

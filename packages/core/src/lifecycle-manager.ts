@@ -37,6 +37,11 @@ import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
 import { createCorrelationId, createProjectObserver } from "./observability.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
+import {
+  logStatusChanged,
+  appendEvent,
+  appendTerminalCapture,
+} from "./event-log.js";
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
@@ -194,6 +199,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
   const states = new Map<SessionId, SessionStatus>();
   const reactionTrackers = new Map<string, ReactionTracker>(); // "sessionId:reactionKey"
+  const lastTerminalCapture = new Map<SessionId, string>(); // dedup terminal snapshots
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
@@ -727,6 +733,40 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         level: transitionLogLevel(newStatus),
       });
 
+      // Compute event type once for both event logging and reaction handling
+      const eventType = statusToEventType(oldStatus, newStatus);
+
+      // Persist status change to session event log
+      try {
+        const project = config.projects[session.projectId];
+        if (project) {
+          const sessionsDir = getSessionsDir(config.configPath, project.path);
+          logStatusChanged(sessionsDir, session.id, { from: oldStatus, to: newStatus });
+
+          // Log PR/CI/review-specific events based on the transition
+          if (eventType) {
+            if (eventType === "pr.created" && session.pr) {
+              appendEvent(sessionsDir, session.id, "pr.created", {
+                url: session.pr.url,
+                number: session.pr.number,
+                branch: session.pr.branch,
+              });
+            } else if (eventType === "ci.failing") {
+              appendEvent(sessionsDir, session.id, "ci.status_changed", {
+                status: "failing",
+              });
+            } else if (eventType === "merge.completed") {
+              appendEvent(sessionsDir, session.id, "pr.merged", {
+                url: session.pr?.url,
+                number: session.pr?.number,
+              });
+            }
+          }
+        }
+      } catch {
+        // Non-fatal: event logging should never break lifecycle management
+      }
+
       // Reset allCompleteEmitted when any session becomes active again
       if (newStatus !== "merged" && newStatus !== "killed") {
         allCompleteEmitted = false;
@@ -742,7 +782,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
 
       // Handle transition: notify humans and/or trigger reactions
-      const eventType = statusToEventType(oldStatus, newStatus);
       if (eventType) {
         let reactionHandledNotify = false;
         const reactionKey = eventToReactionKey(eventType);
@@ -814,12 +853,54 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       // Poll all sessions concurrently
       await Promise.allSettled(sessionsToCheck.map((s) => checkSession(s)));
 
-      // Prune stale entries from states and reactionTrackers for sessions
-      // that no longer appear in the session list (e.g., after kill/cleanup)
+      // Periodic terminal capture for active sessions (appends to terminal.log)
+      // Deduplicates by comparing against the last captured output per session
+      // to avoid appending identical content every poll cycle (~30s).
+      await Promise.allSettled(
+        sessionsToCheck
+          .filter(
+            (s) =>
+              s.runtimeHandle &&
+              s.status !== "merged" &&
+              s.status !== "killed" &&
+              s.status !== "terminated",
+          )
+          .map(async (s) => {
+            try {
+              const project = config.projects[s.projectId];
+              if (!project || !s.runtimeHandle) return;
+              const runtime = registry.get<Runtime>(
+                "runtime",
+                project.runtime ?? config.defaults.runtime,
+              );
+              if (!runtime) return;
+              const output = await runtime.getOutput(s.runtimeHandle, 50);
+              if (output?.trim()) {
+                // Skip if output is identical to last capture (idle session dedup)
+                const previous = lastTerminalCapture.get(s.id);
+                if (previous === output) return;
+                lastTerminalCapture.set(s.id, output);
+
+                const sessionsDir = getSessionsDir(config.configPath, project.path);
+                appendTerminalCapture(sessionsDir, s.id, output);
+              }
+            } catch {
+              // Non-fatal: terminal capture failure should never break lifecycle
+            }
+          }),
+      );
+
+      // Prune stale entries from states, reactionTrackers, and lastTerminalCapture
+      // for sessions that no longer appear in the session list (e.g., after kill/cleanup)
       const currentSessionIds = new Set(sessions.map((s) => s.id));
       for (const trackedId of states.keys()) {
         if (!currentSessionIds.has(trackedId)) {
           states.delete(trackedId);
+        }
+      }
+      for (const trackedId of lastTerminalCapture.keys()) {
+        if (!currentSessionIds.has(trackedId)) {
+          lastTerminalCapture.delete(trackedId);
         }
       }
       for (const trackerKey of reactionTrackers.keys()) {
