@@ -88,7 +88,7 @@ function sendNotification(
 }
 
 export function create(config?: Record<string, unknown>): Notifier {
-  const soundEnabled = typeof config?.sound === "boolean" ? config.sound : true;
+  const soundEnabled = typeof config?.sound === "boolean" ? config.sound : false;
 
   return {
     name: "desktop",

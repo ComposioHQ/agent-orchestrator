@@ -1075,6 +1075,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         },
       },
       issueId: spawnConfig.issueId,
+      issueTitle: resolvedIssue?.title,
       prompt: composedPrompt,
       permissions: selection.permissions,
       model: selection.model,
@@ -1143,7 +1144,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         branch,
         status: "spawning",
         tmuxName, // Store tmux name for mapping
-        issue: spawnConfig.issueId,
+        issue: spawnConfig.issueId ? (plugins.tracker?.issueUrl(spawnConfig.issueId, project) ?? spawnConfig.issueId) : undefined,
         project: spawnConfig.projectId,
         agent: selection.agentName, // Persist agent name for lifecycle manager
         createdAt: new Date().toISOString(),

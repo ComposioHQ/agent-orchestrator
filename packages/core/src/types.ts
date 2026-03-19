@@ -343,6 +343,7 @@ export interface AgentLaunchConfig {
   sessionId: SessionId;
   projectConfig: ProjectConfig;
   issueId?: string;
+  issueTitle?: string;
   prompt?: string;
   permissions?: AgentPermissionInput;
   model?: string;

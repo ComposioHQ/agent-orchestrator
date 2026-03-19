@@ -81,7 +81,7 @@ fi
 
 # Validate AO_SESSION is set
 if [[ -z "\${AO_SESSION:-}" ]]; then
-  echo '{"systemMessage": "AO_SESSION environment variable not set, skipping metadata update"}'
+  echo '{}'
   exit 0
 fi
 
@@ -91,7 +91,7 @@ metadata_file="$AO_DATA_DIR/$AO_SESSION"
 
 # Ensure metadata file exists
 if [[ ! -f "$metadata_file" ]]; then
-  echo '{"systemMessage": "Metadata file not found: '"$metadata_file"'"}'
+  echo '{}'
   exit 0
 fi
 
@@ -322,6 +322,8 @@ function extractSummary(
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
     if (line?.type === "summary" && line.summary) {
+      const trimmed = line.summary.trim();
+      if (trimmed.startsWith("[") || trimmed.startsWith("{")) continue;
       return { summary: line.summary, isFallback: false };
     }
   }
@@ -337,7 +339,7 @@ function extractSummary(
       const msg = line.message.content
         .replace(/<[a-zA-Z_-]+>[\s\S]*?<\/[a-zA-Z_-]+>/g, "")
         .trim();
-      if (msg.length > 0) {
+      if (msg.length > 0 && !msg.startsWith("[") && !msg.startsWith("{")) {
         return {
           summary: msg.length > 120 ? msg.substring(0, 120) + "..." : msg,
           isFallback: true,
@@ -647,6 +649,14 @@ function createClaudeCodeAgent(): Agent {
       // Note: CLAUDECODE is unset via getEnvironment() (set to ""), not here.
       // This command must be safe for both shell and execFile contexts.
       const parts: string[] = ["claude"];
+
+      // Set RC session title via --name
+      if (config.issueId && config.issueTitle) {
+        const name = `${config.issueId}: ${config.issueTitle}`.substring(0, 80);
+        parts.push("--name", shellEscape(name));
+      } else {
+        parts.push("--name", shellEscape(config.sessionId));
+      }
 
       const permissionMode = normalizePermissionMode(config.permissions);
       if (permissionMode === "permissionless" || permissionMode === "auto-edit") {

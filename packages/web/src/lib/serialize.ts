@@ -48,7 +48,15 @@ export function resolveProject(
 /** Convert a core Session to a DashboardSession (without PR/issue enrichment). */
 export function sessionToDashboard(session: Session): DashboardSession {
   const agentSummary = session.agentInfo?.summary;
-  const summary = agentSummary ?? session.metadata["summary"] ?? null;
+  let summary: string | null = agentSummary ?? session.metadata["summary"] ?? null;
+
+  // Filter out JSON-like summaries (e.g. VS Code diagnostics injected as user messages)
+  if (typeof summary === "string") {
+    const trimmed = summary.trim();
+    if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+      summary = null;
+    }
+  }
 
   return {
     id: session.id,
