@@ -63,6 +63,8 @@ This repo is `jleechanorg/agent-orchestrator`. It started as a fork of `Composio
 - `roadmap/` docs are tracked and welcomed — they are the design record for this fork
 - `.beads/issues.jsonl` is the issue tracker — commit it when beads are opened or closed
 
+**Upstream-strip rule**: When preparing PRs to `ComposioHQ/agent-orchestrator`, remove all fork-only artifacts. Explicitly exclude: `CLAUDE.md`, `AGENTS.md`, `roadmap/`, `.beads/`, `docs/design/*.md`, and any commits referencing fork-specific infra (openclaw, jleechanorg-specific tooling).
+
 ## PR Target — CRITICAL SAFETY RULE
 
 **NEVER open a PR against `ComposioHQ/agent-orchestrator` without explicit in-thread approval from jleechan.**

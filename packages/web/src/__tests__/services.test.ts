@@ -7,6 +7,7 @@ const {
   mockRegistry,
   tmuxPlugin,
   claudePlugin,
+  cursorPlugin,
   opencodePlugin,
   worktreePlugin,
   scmPlugin,
@@ -31,6 +32,7 @@ const {
     mockRegistry,
     tmuxPlugin: { manifest: { name: "tmux" } },
     claudePlugin: { manifest: { name: "claude-code" } },
+    cursorPlugin: { manifest: { name: "cursor" } },
     opencodePlugin: { manifest: { name: "opencode" } },
     worktreePlugin: { manifest: { name: "worktree" } },
     scmPlugin: { manifest: { name: "github" } },
@@ -59,6 +61,7 @@ vi.mock("@composio/ao-core", () => ({
 
 vi.mock("@composio/ao-plugin-runtime-tmux", () => ({ default: tmuxPlugin }));
 vi.mock("@composio/ao-plugin-agent-claude-code", () => ({ default: claudePlugin }));
+vi.mock("@composio/ao-plugin-agent-cursor", () => ({ default: cursorPlugin }));
 vi.mock("@composio/ao-plugin-agent-opencode", () => ({ default: opencodePlugin }));
 vi.mock("@composio/ao-plugin-workspace-worktree", () => ({ default: worktreePlugin }));
 vi.mock("@composio/ao-plugin-scm-github", () => ({ default: scmPlugin }));
