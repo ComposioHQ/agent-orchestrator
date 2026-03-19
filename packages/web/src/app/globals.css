@@ -422,6 +422,14 @@ a:hover {
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
 
+/* ── Kanban drag-and-drop feedback ───────────────────────────────────── */
+
+.session-card.session-card--dragging {
+  opacity: 0.45;
+  transform: scale(0.97);
+  box-shadow: none;
+}
+
 .dark .session-card-done:hover {
   box-shadow: none;
 }
