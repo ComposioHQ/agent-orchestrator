@@ -18,6 +18,7 @@ import type { Command } from "commander";
 import {
   loadConfig,
   generateOrchestratorPrompt,
+  generateOrchestratorStartupPrompt,
   isRepoUrl,
   parseRepoUrl,
   resolveCloneTarget,
@@ -341,7 +342,8 @@ async function runStartup(
     try {
       spinner.start("Creating orchestrator session");
       const systemPrompt = generateOrchestratorPrompt({ config, projectId, project });
-      const session = await sm.spawnOrchestrator({ projectId, systemPrompt });
+      const prompt = generateOrchestratorStartupPrompt({ config, projectId, project });
+      const session = await sm.spawnOrchestrator({ projectId, systemPrompt, prompt });
       if (session.runtimeHandle?.id) {
         tmuxTarget = session.runtimeHandle.id;
       }

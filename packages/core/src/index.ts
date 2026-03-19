@@ -75,7 +75,10 @@ export type {
 } from "./decomposer.js";
 
 // Orchestrator prompt — generates orchestrator context for `ao start`
-export { generateOrchestratorPrompt } from "./orchestrator-prompt.js";
+export {
+  generateOrchestratorPrompt,
+  generateOrchestratorStartupPrompt,
+} from "./orchestrator-prompt.js";
 export type { OrchestratorPromptConfig } from "./orchestrator-prompt.js";
 
 // Global pause constants and utilities
