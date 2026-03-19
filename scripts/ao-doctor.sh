@@ -174,7 +174,14 @@ check_launcher() {
       fixed "ao launcher refreshed with npm link"
       return
     fi
-    warn "ao launcher refresh failed. Fix: cd $REPO_ROOT/packages/cli && npm link"
+    if [ -t 0 ]; then
+      printf '  Permission denied. Retrying with sudo...\n'
+      if (cd "$REPO_ROOT/packages/cli" && sudo npm link >/dev/null 2>&1) && command -v ao >/dev/null 2>&1; then
+        fixed "ao launcher refreshed with sudo npm link"
+        return
+      fi
+    fi
+    warn "ao launcher refresh failed. Fix: cd $REPO_ROOT/packages/cli && sudo npm link"
     return
   fi
 

@@ -2,19 +2,27 @@
   "name": "@composio/ao-web",
   "version": "0.1.0",
   "description": "Web dashboard for agent-orchestrator",
-  "private": true,
   "type": "module",
+  "files": [
+    ".next/server",
+    ".next/static",
+    ".next/*.json",
+    ".next/BUILD_ID",
+    "dist-server",
+    "next.config.js"
+  ],
   "scripts": {
     "dev": "concurrently \"npm:dev:next\" \"npm:dev:terminal\" \"npm:dev:direct-terminal\"",
     "dev:next": "next dev -p ${PORT:-3000}",
     "dev:terminal": "tsx watch server/terminal-websocket.ts",
     "dev:direct-terminal": "tsx watch server/direct-terminal-ws.ts",
-    "build": "next build",
+    "build": "next build && tsc -p tsconfig.server.json",
     "start": "next start",
+    "start:all": "node dist-server/start-all.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "clean": "rm -rf .next",
+    "clean": "rm -rf .next dist-server",
     "screenshot": "tsx e2e/screenshot.ts",
     "screenshot:install": "npx playwright install chromium"
   },
@@ -30,11 +38,13 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",
     "next": "^15.1.0",
-    "node-pty": "^1.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "ws": "^8.19.0",
     "xterm": "^5.3.0"
+  },
+  "optionalDependencies": {
+    "node-pty": "^1.1.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.0.0",

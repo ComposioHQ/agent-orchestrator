@@ -1,10 +1,10 @@
 import {
   createProjectObserver,
   loadConfig,
+  resolveProjectIdForSessionId,
   type OrchestratorConfig,
   type ProjectObserver,
 } from "@composio/ao-core";
-import { resolveProjectIdForSessionId } from "../src/lib/session-project.js";
 
 export function createObserverContext(surface: string): {
   config: OrchestratorConfig | undefined;

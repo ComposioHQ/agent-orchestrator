@@ -33,7 +33,7 @@ importers:
         specifier: ^8.55.0
         version: 8.55.0(eslint@10.0.0(jiti@2.6.1))(typescript@5.9.3)
 
-  packages/agent-orchestrator:
+  packages/ao:
     dependencies:
       '@composio/ao-cli':
         specifier: workspace:*
@@ -98,6 +98,9 @@ importers:
       '@composio/ao-plugin-workspace-worktree':
         specifier: workspace:*
         version: link:../plugins/workspace-worktree
+      '@composio/ao-web':
+        specifier: workspace:*
+        version: link:../web
       chalk:
         specifier: ^5.4.0
         version: 5.6.2
@@ -640,9 +643,6 @@ importers:
       next:
         specifier: ^15.1.0
         version: 15.5.12(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
-      node-pty:
-        specifier: ^1.1.0
-        version: 1.1.0
       react:
         specifier: ^19.0.0
         version: 19.2.4
@@ -655,6 +655,10 @@ importers:
       xterm:
         specifier: ^5.3.0
         version: 5.3.0
+    optionalDependencies:
+      node-pty:
+        specifier: ^1.1.0
+        version: 1.1.0
     devDependencies:
       '@tailwindcss/postcss':
         specifier: ^4.0.0
@@ -6639,7 +6643,8 @@ snapshots:
       - '@babel/core'
       - babel-plugin-macros
 
-  node-addon-api@7.1.1: {}
+  node-addon-api@7.1.1:
+    optional: true
 
   node-gyp@12.2.0:
     dependencies:
@@ -6659,6 +6664,7 @@ snapshots:
   node-pty@1.1.0:
     dependencies:
       node-addon-api: 7.1.1
+    optional: true
 
   node-releases@2.0.27: {}
 

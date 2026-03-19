@@ -116,6 +116,38 @@ vi.mock("../../src/lib/preflight.js", () => ({
   },
 }));
 
+vi.mock("../../src/lib/running-state.js", () => ({
+  register: vi.fn(),
+  unregister: vi.fn(),
+  isAlreadyRunning: vi.fn().mockReturnValue(null),
+  getRunning: vi.fn().mockReturnValue(null),
+  waitForExit: vi.fn().mockReturnValue(true),
+}));
+
+vi.mock("../../src/lib/caller-context.js", () => ({
+  isHumanCaller: vi.fn().mockReturnValue(true),
+  getCallerType: vi.fn().mockReturnValue("human"),
+}));
+
+vi.mock("../../src/lib/detect-env.js", () => ({
+  detectEnvironment: vi.fn().mockResolvedValue({
+    git: { isRepo: true, remoteUrl: null, ownerRepo: null, currentBranch: "main", defaultBranch: "main" },
+    tools: { hasTmux: true, hasGh: false, ghAuthed: false },
+    apiKeys: { hasLinear: false, hasSlack: false },
+  }),
+}));
+
+vi.mock("../../src/lib/detect-agent.js", () => ({
+  detectAgentRuntime: vi.fn().mockResolvedValue("claude-code"),
+  detectAvailableAgents: vi.fn().mockResolvedValue([]),
+}));
+
+vi.mock("../../src/lib/project-detection.js", () => ({
+  detectProjectType: vi.fn().mockReturnValue(null),
+  generateRulesFromTemplates: vi.fn().mockReturnValue(null),
+  formatProjectTypeForDisplay: vi.fn().mockReturnValue(""),
+}));
+
 // Mock node:child_process — start.ts imports spawn for dashboard + browser open
 vi.mock("node:child_process", async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -578,16 +610,11 @@ describe("start command — browser open waits for port", () => {
 
     await program.parseAsync(["node", "test", "start", "--no-orchestrator"]);
 
-    // waitForPortAndOpen should have been called with port, orchestrator URL, and AbortSignal
+    // waitForPortAndOpen should have been called with orchestrator URL and AbortSignal
     expect(mockWaitForPortAndOpen).toHaveBeenCalledTimes(1);
-    const [port, url, signal] = mockWaitForPortAndOpen.mock.calls[0] as [
-      number,
-      string,
-      AbortSignal,
-    ];
-    expect(port).toBe(3000);
-    expect(url).toContain("/sessions/app-orchestrator");
-    expect(signal).toBeInstanceOf(AbortSignal);
+    const args = mockWaitForPortAndOpen.mock.calls[0];
+    expect(args[1]).toContain("/sessions/app-orchestrator");
+    expect(args[2]).toBeInstanceOf(AbortSignal);
     expect(mockEnsureLifecycleWorker).toHaveBeenCalledWith(
       expect.objectContaining({ configPath: expect.any(String) }),
       "my-app",

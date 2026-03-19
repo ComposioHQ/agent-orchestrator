@@ -1,6 +1,7 @@
 import chalk from "chalk";
 import ora from "ora";
 import type { Command } from "commander";
+import { resolve } from "node:path";
 import {
   loadConfig,
   decompose,
@@ -8,6 +9,7 @@ import {
   getSiblings,
   formatPlanTree,
   TERMINAL_STATUSES,
+  expandHome,
   type OrchestratorConfig,
   type DecomposerConfig,
   DEFAULT_DECOMPOSER_CONFIG,
@@ -17,6 +19,41 @@ import { banner } from "../lib/format.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 import { ensureLifecycleWorker } from "../lib/lifecycle-service.js";
 import { preflight } from "../lib/preflight.js";
+
+/**
+ * Auto-detect the project ID from the config.
+ * - If only one project exists, use it.
+ * - If multiple projects exist, match cwd against project paths.
+ * - Falls back to AO_PROJECT_ID env var (set when called from an agent session).
+ */
+function autoDetectProject(config: OrchestratorConfig): string {
+  const projectIds = Object.keys(config.projects);
+  if (projectIds.length === 0) {
+    throw new Error("No projects configured. Run 'ao start' first.");
+  }
+  if (projectIds.length === 1) {
+    return projectIds[0];
+  }
+
+  // Try AO_PROJECT_ID env var (set by AO when spawning agent sessions)
+  const envProject = process.env.AO_PROJECT_ID;
+  if (envProject && config.projects[envProject]) {
+    return envProject;
+  }
+
+  // Try matching cwd to a project path
+  const cwd = resolve(process.cwd());
+  for (const [id, project] of Object.entries(config.projects)) {
+    if (project.path && resolve(expandHome(project.path)) === cwd) {
+      return id;
+    }
+  }
+
+  throw new Error(
+    `Multiple projects configured. Specify one: ${projectIds.join(", ")}\n` +
+      `Or run from within a project directory.`,
+  );
+}
 
 interface SpawnClaimOptions {
   claimPr?: string;
@@ -123,8 +160,8 @@ export function registerSpawn(program: Command): void {
   program
     .command("spawn")
     .description("Spawn a single agent session")
-    .argument("<project>", "Project ID from config")
-    .argument("[issue]", "Issue identifier (e.g. INT-1234, #42) - must exist in tracker")
+    .argument("[first]", "Issue identifier (project is auto-detected)")
+    .argument("[second]", "", /* hidden second arg to catch old two-arg usage */)
     .option("--open", "Open session in terminal tab")
     .option("--agent <name>", "Override the agent plugin (e.g. codex, claude-code)")
     .option("--claim-pr <pr>", "Immediately claim an existing PR for the spawned session")
@@ -133,8 +170,8 @@ export function registerSpawn(program: Command): void {
     .option("--max-depth <n>", "Max decomposition depth (default: 3)")
     .action(
       async (
-        projectId: string,
-        issueId: string | undefined,
+        first: string | undefined,
+        second: string | undefined,
         opts: {
           open?: boolean;
           agent?: string;
@@ -144,14 +181,39 @@ export function registerSpawn(program: Command): void {
           maxDepth?: string;
         },
       ) => {
-        const config = loadConfig();
-        if (!config.projects[projectId]) {
-          console.error(
-            chalk.red(
-              `Unknown project: ${projectId}\nAvailable: ${Object.keys(config.projects).join(", ")}`,
+        // Catch old two-arg usage: ao spawn <project> <issue>
+        if (first && second) {
+          console.warn(
+            chalk.yellow(
+              `⚠ 'ao spawn <project> <issue>' is no longer supported.\n` +
+                `  The project is now auto-detected. Use:\n\n` +
+                `    ao spawn ${second}    # spawn with issue ${second}\n` +
+                `    ao spawn              # spawn without an issue\n`,
             ),
           );
           process.exit(1);
+        }
+
+        const config = loadConfig();
+        let projectId: string;
+        let issueId: string | undefined;
+
+        if (first) {
+          issueId = first;
+          try {
+            projectId = autoDetectProject(config);
+          } catch (err) {
+            console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+            process.exit(1);
+          }
+        } else {
+          // No args: auto-detect project, no issue
+          try {
+            projectId = autoDetectProject(config);
+          } catch (err) {
+            console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+            process.exit(1);
+          }
         }
 
         if (!opts.claimPr && opts.assignOnGithub) {
@@ -233,11 +295,19 @@ export function registerBatchSpawn(program: Command): void {
   program
     .command("batch-spawn")
     .description("Spawn sessions for multiple issues with duplicate detection")
-    .argument("<project>", "Project ID from config")
-    .argument("<issues...>", "Issue identifiers")
+    .argument("<issues...>", "Issue identifiers (project is auto-detected)")
     .option("--open", "Open sessions in terminal tabs")
-    .action(async (projectId: string, issues: string[], opts: { open?: boolean }) => {
+    .action(async (issues: string[], opts: { open?: boolean }) => {
       const config = loadConfig();
+      let projectId: string;
+
+      try {
+        projectId = autoDetectProject(config);
+      } catch (err) {
+        console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+        process.exit(1);
+      }
+
       if (!config.projects[projectId]) {
         console.error(
           chalk.red(

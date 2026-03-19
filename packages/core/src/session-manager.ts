@@ -1094,6 +1094,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           AO_DATA_DIR: sessionsDir, // Pass sessions directory (not root dataDir)
           AO_SESSION_NAME: sessionId, // User-facing session name
           ...(tmuxName && { AO_TMUX_NAME: tmuxName }), // Tmux session name if using new arch
+          AO_CALLER_TYPE: "agent",
+          AO_PROJECT_ID: spawnConfig.projectId,
+          AO_CONFIG_PATH: config.configPath,
+          ...(config.port !== undefined && config.port !== null && { AO_PORT: String(config.port) }),
         },
       });
     } catch (err) {
@@ -1389,6 +1393,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         AO_DATA_DIR: sessionsDir,
         AO_SESSION_NAME: sessionId,
         ...(tmuxName && { AO_TMUX_NAME: tmuxName }),
+        AO_CALLER_TYPE: "orchestrator",
+        AO_PROJECT_ID: orchestratorConfig.projectId,
+        AO_CONFIG_PATH: config.configPath,
+        ...(config.port !== undefined && config.port !== null && { AO_PORT: String(config.port) }),
       },
     });
 
@@ -2403,6 +2411,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         AO_DATA_DIR: sessionsDir,
         AO_SESSION_NAME: sessionId,
         ...(tmuxName && { AO_TMUX_NAME: tmuxName }),
+        AO_CALLER_TYPE: "agent",
+        ...(projectId && { AO_PROJECT_ID: projectId }),
+        AO_CONFIG_PATH: config.configPath,
+        ...(config.port !== undefined && config.port !== null && { AO_PORT: String(config.port) }),
       },
     });
 
