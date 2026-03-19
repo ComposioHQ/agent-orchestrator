@@ -925,6 +925,9 @@ export interface DefaultPlugins {
   worker?: {
     agent?: string;
   };
+
+  /** Environment variables passed to all sessions */
+  env?: Record<string, string>;
 }
 
 export interface RoleAgentConfig {
@@ -968,6 +971,9 @@ export interface ProjectConfig {
 
   /** Commands to run after workspace creation */
   postCreate?: string[];
+
+  /** Environment variables for this project's sessions */
+  env?: Record<string, string>;
 
   /** Agent-specific configuration */
   agentConfig?: AgentSpecificConfig;
