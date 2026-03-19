@@ -24,9 +24,9 @@ function computeHealth(sessions: DashboardSession[]): "green" | "yellow" | "red"
 }
 
 const HEALTH_COLORS: Record<"green" | "yellow" | "red", string> = {
-  green: "#22c55e",
-  yellow: "#eab308",
-  red: "#ef4444",
+  green: "#3fb950",   /* --color-status-ready */
+  yellow: "#d29922",  /* --color-status-attention */
+  red: "#f85149",     /* --color-status-error */
 };
 
 /** Generate an SVG favicon as a data URL with the given initial and color. */
