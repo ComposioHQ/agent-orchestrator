@@ -1,5 +1,6 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
+import Script from "next/script";
 import { getProjectName } from "@/lib/project-name";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import "./globals.css";
@@ -29,10 +30,16 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
+export const viewport: Viewport = {
+  colorScheme: "dark light",
+};
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${ibmPlexSans.variable} ${ibmPlexMono.variable}`} suppressHydrationWarning>
       <body className="bg-[var(--color-bg-base)] text-[var(--color-text-primary)] antialiased">
+        {/* Prevent flash of wrong theme — reads preference before first paint */}
+        <Script src="/theme-init.js" strategy="beforeInteractive" />
         <ThemeProvider>
           {children}
         </ThemeProvider>

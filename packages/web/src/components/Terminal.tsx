@@ -40,7 +40,7 @@ export function Terminal({ sessionId }: TerminalProps) {
   return (
     <div
       className={cn(
-        "overflow-hidden rounded-lg border border-[var(--color-border-default)] bg-black",
+        "overflow-hidden rounded-lg border border-[var(--color-border-default)] bg-[var(--color-bg-base)]",
         fullscreen && "fixed inset-0 z-50 rounded-none border-0",
       )}
     >
