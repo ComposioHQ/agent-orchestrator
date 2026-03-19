@@ -12,13 +12,13 @@
  *   --color-status-*    Status indicator colors
  *   --font-*            Font family stacks (in @theme — generates font-family utilities)
  *   --radius-*          Border-radius scale (in @theme — generates rounded-* utilities)
- *   --space-*           Spacing reference tokens (in @theme)
- *   --z-*               Z-index scale (in @theme — generates z-* utilities)
  *   --transition-*      Easing / duration tokens (in @theme)
  *
  * Tokens in :root (not @theme, to avoid Tailwind utility namespace collisions):
- *   --font-size-*       Font-size scale (xs → xl); kept in :root to avoid --font-* collision
- *   --box-shadow-*      Box-shadow levels (sm → xl); kept in :root to avoid --shadow-* collision
+ *   --font-size-*       Font-size scale (xs → xl); avoids --font-* font-family collision
+ *   --box-shadow-*      Box-shadow levels (sm → xl); avoids --shadow-* utility collision
+ *   --space-*           Spacing reference tokens; avoids potential --space-* utility collision
+ *   --z-*               Z-index scale; Tailwind v4 z-index namespace is --z-index-*, not --z-*
  *   --gradient-*        Named gradient surfaces for cards and buttons
  */
 
@@ -299,7 +299,15 @@
   --radius-lg: 8px;
   --radius-xl: 12px;
 
-  /* ── Spacing reference tokens ────────────────────────────────────── */
+  /* ── Transitions ──────────────────────────────────────────────────── */
+  --transition-quick:   0.1s;
+  --transition-regular: 0.25s;
+}
+
+/* ── Reference tokens (outside @theme to avoid Tailwind namespace collisions) ── */
+
+:root {
+  /* Spacing reference tokens — in :root to avoid potential Tailwind utility conflicts */
   --space-1:   4px;
   --space-2:   8px;
   --space-3:   12px;
@@ -311,7 +319,7 @@
   --space-12:  48px;
   --space-16:  64px;
 
-  /* ── Z-index scale ───────────────────────────────────────────────── */
+  /* Z-index scale — in :root; Tailwind v4 z-index namespace is --z-index-*, not --z-* */
   --z-base:    0;
   --z-raised:  10;
   --z-nav:     100;
@@ -319,14 +327,6 @@
   --z-overlay: 300;
   --z-toast:   400;
 
-  /* ── Transitions ─────────────────────────────────────────────────── */
-  --transition-quick:   0.1s;
-  --transition-regular: 0.25s;
-}
-
-/* ── Reference tokens (outside @theme to avoid Tailwind namespace collisions) ── */
-
-:root {
   /* Font-size scale — in :root to avoid --font-* font-family namespace in @theme */
   --font-size-xs:   10px;
   --font-size-sm:   11px;
