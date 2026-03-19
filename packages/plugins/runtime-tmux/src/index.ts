@@ -115,9 +115,11 @@ export function create(): Runtime {
       // Clear any partial input
       await tmux("send-keys", "-t", handle.id, "C-u");
 
+      const isLongMessage = message.includes("\n") || message.length > 200;
+
       // For long or multiline messages, use load-buffer + paste-buffer
       // Use randomUUID to avoid temp file collisions on concurrent sends
-      if (message.includes("\n") || message.length > 200) {
+      if (isLongMessage) {
         const bufferName = `ao-${randomUUID()}`;
         const tmpPath = join(tmpdir(), `ao-send-${randomUUID()}.txt`);
         writeFileSync(tmpPath, message, { encoding: "utf-8", mode: 0o600 });
@@ -146,8 +148,8 @@ export function create(): Runtime {
 
       // Adaptive delay based on message length to ensure paste is fully processed
       // before sending Enter. Large messages (4KB+) need more time.
-      // Base delay: 300ms + additional time proportional to message length
-      const baseDelay = 300;
+      // Base delay: 1000ms for paste-buffer, 100ms for direct send-keys
+      const baseDelay = isLongMessage ? 1000 : 100;
       const lengthFactor = Math.floor(message.length / 1000) * 200; // +200ms per KB
       const adaptiveDelay = Math.min(baseDelay + lengthFactor, 2000); // Cap at 2s
       
