@@ -389,6 +389,12 @@ describe("detectActivity", () => {
     expect(agent.detectActivity("Processing files...\n")).toBe("active");
     expect(agent.detectActivity("Reading codebase\nAnalyzing...\n")).toBe("active");
   });
+
+  it("returns active when stale prompt exists above active output", () => {
+    // A stale › prompt from before processing should NOT cause idle
+    const output = "›\nProcessing files...\nReading src/auth.ts\nAnalyzing...\n";
+    expect(agent.detectActivity(output)).toBe("active");
+  });
 });
 
 // =========================================================================

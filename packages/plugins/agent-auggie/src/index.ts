@@ -304,6 +304,10 @@ async function findAuggieSession(session: Session): Promise<AuggieSessionFile | 
 // Process Detection
 // =============================================================================
 
+// TODO: getCachedProcessList / findProcess logic is duplicated from
+// agent-claude-code. Extract to @composio/ao-core as a shared utility
+// so both plugins share a single ps cache in the same process.
+
 /** TTL cache for `ps` output — avoids spawning N `ps` processes for N sessions */
 let psCache: { output: string; timestamp: number; promise?: Promise<string> } | null = null;
 const PS_CACHE_TTL_MS = 5_000;
@@ -407,24 +411,31 @@ function classifyTerminalOutput(terminalOutput: string): ActivityState {
 
   const lines = terminalOutput.trim().split("\n");
 
-  // Check the bottom of the buffer (last ~10 lines) for various patterns.
-  // Auggie's terminal has status bar lines below the prompt, so we can't
-  // just check the very last line.
+  // Check the tail for status bar and permission patterns.
   const tail = lines.slice(-10).join("\n");
 
-  // Check for Auggie's prompt character: › (U+203A) or ❯ (U+276F) or > $ #
-  // The prompt line may appear above status bar lines, so search the tail.
-  if (/^[›❯>$#]\s*$/m.test(tail)) return "idle";
-
-  // Check for "? to show shortcuts" — Auggie's idle status bar indicator
-  if (/\? to show shortcuts/i.test(tail)) return "idle";
-
-  // Check for permission/input prompts
+  // Check for permission/input prompts first — these take priority
   if (/Do you want to proceed\?/i.test(tail)) return "waiting_input";
   if (/\(Y\)es.*\(N\)o/i.test(tail)) return "waiting_input";
   if (/\[y\/n\]/i.test(tail)) return "waiting_input";
   if (/\[[1-4]\]|Press 1\/2\/3\/4/i.test(tail)) return "waiting_input";
   if (/\[Enter\] Confirm/i.test(tail)) return "waiting_input";
+
+  // Check for "? to show shortcuts" — Auggie's idle status bar indicator.
+  // This only appears when Auggie is at the prompt, never during processing.
+  if (/\? to show shortcuts/i.test(tail)) return "idle";
+
+  // Check the last non-empty line for a prompt character.
+  // Only check the LAST non-empty line to avoid matching a stale prompt
+  // that remains in the buffer while the agent is actively processing below it.
+  let lastNonEmpty = "";
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines[i]!.trim().length > 0) {
+      lastNonEmpty = lines[i]!.trim();
+      break;
+    }
+  }
+  if (/^[›❯>$#]\s*$/.test(lastNonEmpty)) return "idle";
 
   return "active";
 }
@@ -437,8 +448,11 @@ function classifyTerminalOutput(terminalOutput: string): ActivityState {
 /**
  * Set up PostToolUse hooks in Auggie's workspace-level settings.
  * Writes to <workspace>/.augment/settings.local.json (gitignored, non-intrusive).
+ * The hook script is always written to <workspace>/.augment/metadata-updater.sh
+ * and the settings reference that same path — no separate hookCommand parameter
+ * to avoid path mismatches.
  */
-async function setupHookInWorkspace(workspacePath: string, hookCommand: string): Promise<void> {
+async function setupHookInWorkspace(workspacePath: string): Promise<void> {
   const augmentDir = join(workspacePath, ".augment");
   const settingsPath = join(augmentDir, "settings.local.json");
   const hookScriptPath = join(augmentDir, "metadata-updater.sh");
@@ -498,7 +512,7 @@ async function setupHookInWorkspace(workspacePath: string, hookCommand: string):
       hooks: [
         {
           type: "command",
-          command: hookCommand,
+          command: hookScriptPath,
           timeout: 5000,
         },
       ],
@@ -506,7 +520,7 @@ async function setupHookInWorkspace(workspacePath: string, hookCommand: string):
   } else {
     const hook = postToolUse[hookIndex] as Record<string, unknown>;
     const hooksList = hook["hooks"] as Array<Record<string, unknown>>;
-    hooksList[hookDefIndex]["command"] = hookCommand;
+    hooksList[hookDefIndex]["command"] = hookScriptPath;
   }
 
   hooks["PostToolUse"] = postToolUse;
@@ -683,16 +697,14 @@ function createAuggieAgent(): Agent {
     },
 
     async setupWorkspaceHooks(workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
-      const hookScriptPath = join(workspacePath, ".augment", "metadata-updater.sh");
-      await setupHookInWorkspace(workspacePath, hookScriptPath);
+      await setupHookInWorkspace(workspacePath);
     },
 
     async postLaunchSetup(session: Session): Promise<void> {
       if (!session.workspacePath) return;
 
       // Set up hooks for automatic metadata updates (PR URLs, branch names, etc.)
-      const hookScriptPath = join(session.workspacePath, ".augment", "metadata-updater.sh");
-      await setupHookInWorkspace(session.workspacePath, hookScriptPath);
+      await setupHookInWorkspace(session.workspacePath);
     },
   };
 }
