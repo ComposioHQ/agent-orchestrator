@@ -151,6 +151,15 @@ export function DirectTerminal({
   const [error, setError] = useState<string | null>(null);
   const [reloading, setReloading] = useState(false);
   const [reloadError, setReloadError] = useState<string | null>(null);
+  // Tracks whether light theme is active for container bg/shadow (SSR-safe: false until mount)
+  const [isLightTheme, setIsLightTheme] = useState(false);
+
+  useEffect(() => {
+    setIsLightTheme(
+      document.documentElement.classList.contains("light") &&
+        !document.documentElement.classList.contains("dark"),
+    );
+  }, []);
 
   // Update URL when fullscreen changes
   useEffect(() => {
@@ -615,7 +624,11 @@ export function DirectTerminal({
     <div
       className={cn(
         "overflow-hidden rounded-[6px] border border-[var(--color-border-default)]",
-        resolvedTheme === "light" ? "bg-white" : "bg-[#0a0a0f]",
+        isLightTheme ? "bg-white" : "bg-[#0d1117]",
+        !fullscreen &&
+          (isLightTheme
+            ? "shadow-[0_2px_8px_rgba(0,0,0,0.12),inset_0_1px_0_rgba(0,0,0,0.04)]"
+            : "shadow-[0_2px_8px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(255,255,255,0.04)]"),
         fullscreen && "fixed inset-0 z-50 rounded-none border-0",
       )}
     >
