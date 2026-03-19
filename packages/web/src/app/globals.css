@@ -1,3 +1,26 @@
+/**
+ * Design System Tokens — Agent Orchestrator Dashboard
+ * =====================================================
+ * All tokens are defined in @theme using Tailwind v4 CSS custom properties.
+ * Reference tokens in components via: bg-[var(--color-bg-surface)], etc.
+ *
+ * Token categories:
+ *   --color-bg-*        Surface / background colors
+ *   --color-border-*    Border colors
+ *   --color-text-*      Text colors
+ *   --color-accent-*    Interactive and semantic accent colors
+ *   --color-status-*    Status indicator colors
+ *   --font-*            Font family stacks
+ *   --font-size-*       Font-size scale (xs → xl); prefixed to avoid Tailwind --text-* collision
+ *   --radius-*          Border-radius scale
+ *   --box-shadow-*      Box-shadow levels (sm → xl); prefixed to avoid Tailwind --shadow-* collision
+ *   --space-*           Spacing reference tokens (1 → 16)
+ *   --z-*               Z-index scale (base → toast)
+ *   --transition-*      Easing / duration tokens
+ *   --gradient-*        Named gradient surfaces for cards and buttons
+ */
+
+
 @import "tailwindcss";
 
 /* ── Light mode (default) ─────────────────────────────────────────── */
@@ -269,11 +292,12 @@
   --font-mono: var(--font-ibm-plex-mono), "SF Mono", "Menlo", "Consolas", monospace;
 
   /* ── Font-size scale ─────────────────────────────────────────────── */
-  --text-xs:   10px;
-  --text-sm:   11px;
-  --text-base: 13px;
-  --text-lg:   15px;
-  --text-xl:   17px;
+  /* Note: --font-size-* prefix avoids overriding Tailwind v4's --text-* utilities */
+  --font-size-xs:   10px;
+  --font-size-sm:   11px;
+  --font-size-base: 13px;
+  --font-size-lg:   15px;
+  --font-size-xl:   17px;
 
   /* ── Border radius ───────────────────────────────────────────────── */
   --radius-sm: 4px;
@@ -282,10 +306,11 @@
   --radius-xl: 12px;
 
   /* ── Shadow levels ───────────────────────────────────────────────── */
-  --shadow-sm: 0 1px 2px rgba(0,0,0,0.6);
-  --shadow-md: 0 1px 3px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05);
-  --shadow-lg: 0 1px 2px rgba(0,0,0,0.9), 0 3px 10px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.07);
-  --shadow-xl: 0 4px 8px rgba(0,0,0,0.85), 0 14px 36px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.1);
+  /* Note: --box-shadow-* prefix avoids overriding Tailwind v4's --shadow-* utilities */
+  --box-shadow-sm: 0 1px 2px rgba(0,0,0,0.6);
+  --box-shadow-md: 0 1px 3px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05);
+  --box-shadow-lg: 0 1px 2px rgba(0,0,0,0.9), 0 3px 10px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.07);
+  --box-shadow-xl: 0 4px 8px rgba(0,0,0,0.85), 0 14px 36px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.1);
 
   /* ── Spacing reference tokens ────────────────────────────────────── */
   --space-1:   4px;
