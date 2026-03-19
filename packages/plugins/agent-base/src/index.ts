@@ -203,10 +203,12 @@ update_metadata_key() {
 # Strip leading "cd /path && " prefix because agents often run:
 #   cd ~/.worktrees/project && gh pr create ...
 # Without this, the command matching below fails silently.
+# Uses greedy .* to handle paths with spaces (e.g., cd "/path with spaces" && ...)
 clean_command="$command"
-if [[ "$command" =~ ^cd[[:space:]]+[^[:space:]]+[[:space:]]&&\ *(.+) ]]; then
-  clean_command="${BASH_REMATCH[1]}"
-fi
+cd_prefix_pattern='^[[:space:]]*cd[[:space:]]+.*[[:space:]]+(&&|;)[[:space:]]+(.*)'
+while [[ "$clean_command" =~ $cd_prefix_pattern ]]; do
+  clean_command="${BASH_REMATCH[2]}"
+done
 
 # Detect: gh pr create
 if [[ "$clean_command" =~ ^gh[[:space:]]+pr[[:space:]]+create ]]; then
