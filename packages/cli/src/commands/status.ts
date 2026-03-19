@@ -94,11 +94,29 @@ async function gatherSessionInfo(
     }
   }
 
-  if (branch && !suppressPROwnership) {
+  if (!suppressPROwnership) {
     try {
       const project = projectConfig.projects[session.projectId];
       if (project) {
-        const prInfo: PRInfo | null = await scm.detectPR(session, project);
+        // Try branch-based PR detection first, using the live branch
+        // (which may differ from session.branch stored in metadata)
+        let prInfo: PRInfo | null = null;
+        if (branch) {
+          const sessionWithLiveBranch = { ...session, branch };
+          prInfo = await scm.detectPR(sessionWithLiveBranch, project);
+        }
+
+        // Fallback: if branch-based detection failed but we have a PR number
+        // from metadata (e.g. branch name mismatch between session metadata
+        // and actual git branch), resolve the PR directly by number.
+        if (!prInfo && prNumber && scm.resolvePR) {
+          try {
+            prInfo = await scm.resolvePR(String(prNumber), project);
+          } catch {
+            // PR resolution failed — not critical
+          }
+        }
+
         if (prInfo) {
           prNumber = prInfo.number;
 
