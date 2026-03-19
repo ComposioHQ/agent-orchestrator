@@ -107,7 +107,7 @@ function getTerminalThemes(variant: string) {
     brightYellow: "#b5ba00",
     brightBlue: "#0451a5",
     brightMagenta: "#bc05bc",
-    brightCyan: "#0598bc",
+    brightCyan: "#3192aa",
     brightWhite: "#a5a5a5",
   };
 
