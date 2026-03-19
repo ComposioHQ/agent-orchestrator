@@ -200,8 +200,16 @@ update_metadata_key() {
 # Command Detection and Parsing
 # ============================================================================
 
+# Strip leading "cd /path && " prefix because agents often run:
+#   cd ~/.worktrees/project && gh pr create ...
+# Without this, the command matching below fails silently.
+clean_command="$command"
+if [[ "$command" =~ ^cd[[:space:]]+[^[:space:]]+[[:space:]]&&\ *(.+) ]]; then
+  clean_command="${BASH_REMATCH[1]}"
+fi
+
 # Detect: gh pr create
-if [[ "$command" =~ ^gh[[:space:]]+pr[[:space:]]+create ]]; then
+if [[ "$clean_command" =~ ^gh[[:space:]]+pr[[:space:]]+create ]]; then
   # Extract PR URL from output
   pr_url=$(echo "$output" | grep -Eo 'https://github[.]com/[^/]+/[^/]+/pull/[0-9]+' | head -1)
 
@@ -214,8 +222,8 @@ if [[ "$command" =~ ^gh[[:space:]]+pr[[:space:]]+create ]]; then
 fi
 
 # Detect: git checkout -b <branch> or git switch -c <branch>
-if [[ "$command" =~ ^git[[:space:]]+checkout[[:space:]]+-b[[:space:]]+([^[:space:]]+) ]] || \\
-   [[ "$command" =~ ^git[[:space:]]+switch[[:space:]]+-c[[:space:]]+([^[:space:]]+) ]]; then
+if [[ "$clean_command" =~ ^git[[:space:]]+checkout[[:space:]]+-b[[:space:]]+([^[:space:]]+) ]] || \\
+   [[ "$clean_command" =~ ^git[[:space:]]+switch[[:space:]]+-c[[:space:]]+([^[:space:]]+) ]]; then
   branch="\${BASH_REMATCH[1]}"
 
   if [[ -n "$branch" ]]; then
@@ -227,8 +235,8 @@ fi
 
 # Detect: git checkout <branch> (without -b) or git switch <branch> (without -c)
 # Only update if the branch name looks like a feature branch (contains / or -)
-if [[ "$command" =~ ^git[[:space:]]+checkout[[:space:]]+([^[:space:]-]+[/-][^[:space:]]+) ]] || \\
-   [[ "$command" =~ ^git[[:space:]]+switch[[:space:]]+([^[:space:]-]+[/-][^[:space:]]+) ]]; then
+if [[ "$clean_command" =~ ^git[[:space:]]+checkout[[:space:]]+([^[:space:]-]+[/-][^[:space:]]+) ]] || \\
+   [[ "$clean_command" =~ ^git[[:space:]]+switch[[:space:]]+([^[:space:]-]+[/-][^[:space:]]+) ]]; then
   branch="\${BASH_REMATCH[1]}"
 
   # Avoid updating for checkout of commits/tags
@@ -240,7 +248,7 @@ if [[ "$command" =~ ^git[[:space:]]+checkout[[:space:]]+([^[:space:]-]+[/-][^[:s
 fi
 
 # Detect: gh pr merge
-if [[ "$command" =~ ^gh[[:space:]]+pr[[:space:]]+merge ]]; then
+if [[ "$clean_command" =~ ^gh[[:space:]]+pr[[:space:]]+merge ]]; then
   update_metadata_key "status" "merged"
   echo '{"systemMessage": "Updated metadata: status = merged"}'
   exit 0
