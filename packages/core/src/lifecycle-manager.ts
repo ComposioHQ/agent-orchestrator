@@ -731,6 +731,23 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         };
       }
 
+      case "parallel-retry": {
+        // parallel-retry not yet implemented - emit event and return failure
+        const event = createEvent("reaction.triggered", {
+          sessionId,
+          projectId,
+          message: `Reaction '${reactionKey}' requested parallel-retry, but this action is not implemented yet`,
+          data: { reactionKey, action },
+        });
+        await notifyHuman(event, "warning");
+        return {
+          reactionType: reactionKey,
+          success: false,
+          action,
+          escalated: false,
+        };
+      }
+
       default: {
         // Log warning for unknown reaction action types
         console.warn(`Unknown reaction action type: ${action}`);

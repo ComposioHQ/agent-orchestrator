@@ -110,12 +110,12 @@ export function createPollerManager(deps: PollerManagerDeps): PollerManagerImpl 
     pollerConfig: PollerConfig,
   ): Promise<SessionSpawnConfig> {
     const project = config.projects[projectId];
-    const agentName = resolveAgentSelection({
+    const { agentName, subagent } = resolveAgentSelection({
       role: "worker",
       project,
       defaults: config.defaults,
       persistedAgent: pollerConfig.agent,
-    }).agentName;
+    });
 
     // Build prompt from template if provided
     let prompt = pollerConfig.promptTemplate ?? "Fix the CI failure for PR: {{url}}";
@@ -147,6 +147,7 @@ export function createPollerManager(deps: PollerManagerDeps): PollerManagerImpl 
       branch: `fix/${slug || fallbackSlug || "work-item"}`,
       prompt,
       agent: agentName,
+      subagent,
     };
   }
 
@@ -216,7 +217,10 @@ export function createPollerManager(deps: PollerManagerDeps): PollerManagerImpl 
               correlationId,
               projectId,
               sessionId: session.id,
-              data: { workItem },
+              data: {
+                workItemId: workItem.id,
+                workItemType: workItem.type,
+              },
               level: "info",
             });
           } else {
