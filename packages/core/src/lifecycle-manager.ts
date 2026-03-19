@@ -11,6 +11,8 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import {
   SESSION_STATUS,
   PR_STATE,
@@ -37,6 +39,8 @@ import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
 import { createCorrelationId, createProjectObserver } from "./observability.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
+
+const execFileAsync = promisify(execFile);
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
@@ -98,6 +102,20 @@ function createEvent(
     message: opts.message,
     data: opts.data ?? {},
   };
+}
+
+async function resolveLiveBranch(session: Session): Promise<string | null | undefined> {
+  if (!session.workspacePath) return session.branch;
+  try {
+    const { stdout } = await execFileAsync("git", ["branch", "--show-current"], {
+      cwd: session.workspacePath,
+      timeout: 5_000,
+    });
+    const branch = stdout.trim();
+    return branch || session.branch;
+  } catch {
+    return session.branch;
+  }
 }
 
 /** Determine which event type corresponds to a status transition. */
@@ -285,23 +303,30 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     //    OpenCode) that can't reliably write pr=<url> to metadata on their own.
     //    Skip orchestrator sessions — they sit on the base branch (e.g. master)
     //    and should never own a PR.
+    const liveBranch = await resolveLiveBranch(session);
+    const scmSession =
+      liveBranch && liveBranch !== session.branch ? { ...session, branch: liveBranch } : session;
+
     if (
       !session.pr &&
       scm &&
-      session.branch &&
+      liveBranch &&
       session.metadata["prAutoDetect"] !== "off" &&
       session.metadata["role"] !== "orchestrator" &&
       !session.id.endsWith("-orchestrator")
     ) {
       try {
-        const detectedPR = await scm.detectPR(session, project);
+        const detectedPR = await scm.detectPR(scmSession, project);
         if (detectedPR) {
           session.pr = detectedPR;
           // Persist PR URL so subsequent polls don't need to re-query.
-          // Don't write status here — step 4 below will determine the
-          // correct status (merged, ci_failed, etc.) on this same cycle.
+          // Also repair stale branch metadata so future lifecycle polls keep
+          // tracking the real PR/CI state even after branch drift.
           const sessionsDir = getSessionsDir(config.configPath, project.path);
-          updateMetadata(sessionsDir, session.id, { pr: detectedPR.url });
+          updateMetadata(sessionsDir, session.id, {
+            pr: detectedPR.url,
+            ...(liveBranch !== session.branch ? { branch: liveBranch } : {}),
+          });
         }
       } catch {
         // SCM detection failed — will retry next poll
