@@ -63,6 +63,12 @@ async function gatherSessionInfo(
     if (liveBranch) branch = liveBranch;
   }
 
+  // Keep downstream lookups aligned with the live branch shown in the table.
+  // Without this, status could display the current worktree branch while SCM
+  // detection still queried against stale session metadata, causing PR/CI/review
+  // columns to show "-" for sessions that actually had an open PR.
+  const scmSession = branch && branch !== session.branch ? { ...session, branch } : session;
+
   // Get last activity time from tmux
   const tmuxTarget = session.runtimeHandle?.id ?? session.id;
   const activityTs = await getTmuxActivity(tmuxTarget);
