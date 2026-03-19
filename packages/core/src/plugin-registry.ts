@@ -72,8 +72,8 @@ function extractPluginConfig(
         return { ...rest, port: config.port };
       }
     }
-    // Notifier listed as a plain string (no config object) — still pass port
-    if (Array.isArray(config.notifiers) && config.notifiers.includes(name)) {
+    // Notifier listed in defaults.notifiers without explicit config — still pass port
+    if (config.defaults?.notifiers?.includes(name)) {
       return { port: config.port };
     }
   }
