@@ -4,6 +4,7 @@ import {
   type AgentPluginConfig,
 } from "@composio/ao-plugin-agent-base";
 import type { Agent, PluginModule, Session } from "@composio/ao-core";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -90,4 +91,13 @@ export function create(): Agent {
 /** Reset the ps process cache. Exported for testing only. */
 export const resetPsCache = _resetPsCache;
 
-export default { manifest, create } satisfies PluginModule<Agent>;
+export function detect(): boolean {
+  try {
+    execFileSync("gemini", ["--version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export default { manifest, create, detect } satisfies PluginModule<Agent>;

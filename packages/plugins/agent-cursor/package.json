@@ -1,7 +1,7 @@
 {
   "name": "@composio/ao-plugin-agent-cursor",
   "version": "0.1.0",
-  "description": "Agent plugin: Cursor Agent",
+  "description": "Agent plugin: Cursor Agent CLI",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",

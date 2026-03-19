@@ -106,7 +106,7 @@ export interface AgentPluginConfig {
 export const METADATA_UPDATER_SCRIPT = `#!/usr/bin/env bash
 # Metadata Updater Hook for Agent Orchestrator
 #
-# This PostToolUse hook automatically updates session metadata when:
+# This hook (PostToolUse or AfterTool) automatically updates session metadata when:
 # - gh pr create: extracts PR URL and writes to metadata
 # - git checkout -b / git switch -c: extracts branch name and writes to metadata
 # - gh pr merge: updates status to "merged"
@@ -817,8 +817,10 @@ export function createAgentPlugin(config: AgentPluginConfig, overrides?: Partial
           env[config.systemPromptEnvVar] = launchConfig.systemPromptFile;
         } else if (launchConfig.systemPrompt) {
           // Write the inline prompt to a temp file — env vars can't inline multi-KB prompts.
+          // Sanitize sessionId to prevent path traversal (replace non-alphanum with underscore).
+          const safeSessionId = launchConfig.sessionId.replace(/[^a-zA-Z0-9]/g, "_");
           const tmpDir = join(homedir(), ".ao-sessions", "tmp");
-          const tmpFile = join(tmpDir, `system-${launchConfig.sessionId}.md`);
+          const tmpFile = join(tmpDir, `system-${safeSessionId}.md`);
           try {
             mkdirSync(tmpDir, { recursive: true, mode: 0o700 });
             writeFileSync(tmpFile, launchConfig.systemPrompt, { encoding: "utf-8", mode: 0o600 });
