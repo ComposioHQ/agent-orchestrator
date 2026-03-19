@@ -33,12 +33,25 @@ Use an existing plugin package as a template. Publish as `@composio/ao-plugin-<s
 If none of the existing slots fit, propose and implement a new plugin slot in `plugin-registry.ts`.
 This requires a small core change but keeps the business logic in a plugin.
 
-Open an issue first to discuss the new slot design before implementing.
+Open an issue (bead) first to discuss the new slot design before implementing.
 
 ### 4. Change Core Code (last resort)
 Only modify `packages/core/src/` if the capability genuinely cannot be expressed via config or any plugin slot.
 
-Justify in your PR why options 1–3 were insufficient.
+Justify in your PR why options 1–3 were insufficient. Core changes need stronger scrutiny than plugin changes.
+
+---
+
+## Repo Structure
+
+```
+packages/core/         # Stable infrastructure — minimize changes
+packages/plugins/      # Plugin implementations — preferred home for new work
+roadmap/               # Design docs and decision records — first-class, commit freely
+.beads/issues.jsonl    # Issue tracker — commit when beads are opened or closed
+```
+
+`roadmap/` docs are welcomed and tracked. They are the design record for this fork.
 
 ---
 
@@ -80,22 +93,3 @@ Before opening a PR, verify:
 - [ ] No secrets or tokens committed
 - [ ] Conventional commit messages
 
-## Upstreaming to ComposioHQ — Strip List
-
-When preparing a PR against `ComposioHQ/agent-orchestrator`, cherry-pick only the functional commits and **exclude**:
-
-- `docs/design/*.md` — fork-only markdown design docs (HTML versions are fine to include)
-- `CLAUDE.md` / `AGENTS.md` — fork-specific tooling instructions
-- `roadmap/` — internal roadmap docs
-- `.beads/` — local issue tracker artifacts
-- Commits referencing fork-only infrastructure (openclaw, jleechanorg remotes, etc.)
-
-## Mirror Fork for Clean Upstream PRs
-
-For submitting Cursor/Gemini CLI support to upstream without custom fork logic, use the mirror fork:
-
-- **Mirror repo**: `jleechan2015/agent-orchestrator-mirror`
-- **Location**: `~/projects_reference/agent-orchestrator-mirror`
-- **Workflow**: Sync to upstream main → copy clean plugins → remove custom logic (MCP mail) → PR
-
-**Current mirror PR**: https://github.com/jleechan2015/agent-orchestrator-mirror/pull/1

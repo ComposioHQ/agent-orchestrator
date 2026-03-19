@@ -1,7 +1,5 @@
 <h1 align="center">Agent Orchestrator — The Orchestration Layer for Parallel AI Agents (forked)</h1>
 
-> Forked from [ComposioHQ/agent-orchestrator](https://github.com/ComposioHQ/agent-orchestrator)
-
 <div align="center">
 
 Spawn parallel AI coding agents, each in its own git worktree. Agents autonomously fix CI failures, address review comments, and open PRs — you supervise from one dashboard.
