@@ -340,6 +340,12 @@ a:hover {
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* ── Kanban card entrance ─────────────────────────────────────────────── */
+
+.kanban-card-enter {
+  animation: slide-up 0.18s ease forwards;
+}
+
 /* ── Orchestrator button ──────────────────────────────────────────────── */
 
 .orchestrator-btn {
