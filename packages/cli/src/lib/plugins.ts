@@ -1,6 +1,7 @@
 import type { Agent, OrchestratorConfig, SCM } from "@composio/ao-core";
 import claudeCodePlugin from "@composio/ao-plugin-agent-claude-code";
 import codexPlugin from "@composio/ao-plugin-agent-codex";
+import cursorPlugin from "@composio/ao-plugin-agent-cursor";
 import aiderPlugin from "@composio/ao-plugin-agent-aider";
 import opencodePlugin from "@composio/ao-plugin-agent-opencode";
 import githubSCMPlugin from "@composio/ao-plugin-scm-github";
@@ -8,6 +9,7 @@ import githubSCMPlugin from "@composio/ao-plugin-scm-github";
 const agentPlugins: Record<string, { create(): Agent }> = {
   "claude-code": claudeCodePlugin,
   codex: codexPlugin,
+  cursor: cursorPlugin,
   aider: aiderPlugin,
   opencode: opencodePlugin,
 };

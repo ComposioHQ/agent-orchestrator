@@ -2,8 +2,8 @@
 
 **Date:** 2026-03-17
 **Beads:** bd-uxs (epic), bd-uxs.1–8
-**Status:** In Progress (bd-uxs.1 done, PR #18)
-**Branch:** fix/workspace-dirty-idempotent-writes (bd-uxs.1)
+**Status:** Done — all bd-uxs.1–8 tasks closed (PRs #19, #21)
+**Branch:** feat/merge-gate-and-ignore-list (primary), chore/decouple-fork-docs
 
 ---
 
