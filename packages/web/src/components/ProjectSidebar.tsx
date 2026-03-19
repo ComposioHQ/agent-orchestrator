@@ -21,8 +21,35 @@ export function ProjectSidebar({ projects, activeProjectId }: ProjectSidebarProp
     }
   };
 
+  const governanceLink = (
+    <div className={cn(
+      "border-t border-[var(--color-border-subtle)] px-3 py-3",
+      projects.length <= 1 && "border-t-0",
+    )}>
+      <a
+        href="/governance"
+        className={cn(
+          "flex items-center gap-2 rounded-[6px] px-2 py-1.5 text-[12px] transition-colors hover:no-underline",
+          pathname === "/governance"
+            ? "bg-[var(--color-accent-subtle)] text-[var(--color-accent)]"
+            : "text-[var(--color-text-secondary)] hover:bg-[rgba(255,255,255,0.03)] hover:text-[var(--color-text-primary)]",
+        )}
+      >
+        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+          <path d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+        </svg>
+        Governance
+      </a>
+    </div>
+  );
+
   if (projects.length <= 1) {
-    return null;
+    return (
+      <aside className="flex h-full w-[180px] flex-col border-r border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)]">
+        <div className="flex-1" />
+        {governanceLink}
+      </aside>
+    );
   }
 
   return (
@@ -59,6 +86,7 @@ export function ProjectSidebar({ projects, activeProjectId }: ProjectSidebarProp
           </button>
         ))}
       </nav>
+      {governanceLink}
     </aside>
   );
 }

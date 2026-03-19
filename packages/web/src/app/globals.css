@@ -204,3 +204,24 @@ a:hover {
     0 0 60px rgba(63,185,80,0.2),
     inset 0 1px 0 rgba(255,255,255,0.1);
 }
+
+/* ── Governance panel ──────────────────────────────────────────────────── */
+
+.gov-timeline-item {
+  animation: slide-up 0.2s ease;
+}
+
+.gov-diff-added {
+  background: rgba(63, 185, 80, 0.06);
+  border-left: 2px solid rgba(63, 185, 80, 0.4);
+}
+
+.gov-diff-removed {
+  background: rgba(248, 81, 73, 0.06);
+  border-left: 2px solid rgba(248, 81, 73, 0.4);
+}
+
+.gov-diff-changed {
+  background: rgba(210, 153, 34, 0.06);
+  border-color: rgba(210, 153, 34, 0.25);
+}
