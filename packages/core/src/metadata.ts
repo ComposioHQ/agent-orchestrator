@@ -276,6 +276,27 @@ export function updateArchivedMetadata(
 }
 
 /**
+ * List unique session IDs that have archived metadata files.
+ * Archive files are named `<sessionId>_<ISO-timestamp>`.
+ */
+export function listArchivedSessionIds(dataDir: string): SessionId[] {
+  const archiveDir = join(dataDir, "archive");
+  if (!existsSync(archiveDir)) return [];
+
+  const ids = new Set<string>();
+  for (const file of readdirSync(archiveDir)) {
+    // Extract session ID from `<sessionId>_<ISO-timestamp>` format
+    const lastUnderscore = file.lastIndexOf("_");
+    if (lastUnderscore === -1) continue;
+    const id = file.slice(0, lastUnderscore);
+    if (VALID_SESSION_ID.test(id)) {
+      ids.add(id);
+    }
+  }
+  return [...ids];
+}
+
+/**
  * List all session IDs that have metadata files.
  */
 export function listMetadata(dataDir: string): SessionId[] {
