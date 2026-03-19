@@ -46,6 +46,8 @@ const geminiConfig: AgentPluginConfig = {
   processName: "gemini",
   command: "gemini",
   configDir: ".gemini",
+  // Use AO's sessions directory for metadata hooks so SessionManager can read them
+  defaultDataDir: ".ao-sessions",
   // Gemini CLI uses --yolo (equivalent of --dangerously-skip-permissions)
   permissionlessFlag: "--yolo",
   // Gemini CLI does not support a system prompt CLI flag; prompts are delivered

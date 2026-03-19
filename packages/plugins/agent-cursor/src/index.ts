@@ -38,6 +38,8 @@ const cursorConfig: AgentPluginConfig = {
   processName: "cursor-agent",
   command: "cursor-agent",
   configDir: ".cursor",
+  // Use AO's sessions directory for metadata hooks so SessionManager can read them
+  defaultDataDir: ".ao-sessions",
   // Cursor Agent CLI uses --force (equivalent of --yolo / --dangerously-skip-permissions)
   permissionlessFlag: "--force",
   // Cursor Agent CLI does not support a system prompt flag;
