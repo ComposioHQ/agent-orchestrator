@@ -493,8 +493,15 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
         </div>
       )}
 
-      {/* Expandable detail panel */}
-      {expanded && (
+      {/* Expandable detail panel — animated via CSS grid-template-rows */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateRows: expanded ? "1fr" : "0fr",
+          transition: "grid-template-rows 200ms ease",
+        }}
+      >
+        <div inert={!expanded} style={{ overflow: "hidden" }}>
         <div className="border-t border-[var(--color-border-subtle)] px-4 py-3.5">
           {session.summary && pr?.title && session.summary !== pr.title && (
             <DetailSection label="Summary">
@@ -600,7 +607,8 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
             )}
           </div>
         </div>
-      )}
+        </div>
+      </div>
     </div>
   );
 }
