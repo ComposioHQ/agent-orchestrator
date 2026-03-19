@@ -19,6 +19,7 @@ import { useSessionEvents } from "@/hooks/useSessionEvents";
 import { ProjectSidebar } from "./ProjectSidebar";
 import { ThemeToggle } from "./ThemeToggle";
 import type { ProjectInfo } from "@/lib/project-name";
+import { EmptyState } from "./Skeleton";
 
 interface DashboardProps {
   initialSessions: DashboardSession[];
@@ -429,9 +430,7 @@ export function Dashboard({
         )}
 
         {!allProjectsView && !hasAnySessions && (
-          <div className="flex h-60 items-center justify-center">
-            <span className="text-[13px] text-[var(--color-text-muted)]">No sessions</span>
-          </div>
+          <EmptyState />
         )}
 
         {openPRs.length > 0 && (
