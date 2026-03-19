@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync, lstatSync, symlinkSync, rmSync, mkdirSync, readdirSync } from "node:fs";
+import { existsSync, lstatSync, symlinkSync, rmSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
 import { join, resolve, basename, dirname } from "node:path";
 import { homedir } from "node:os";
 import type {
@@ -15,6 +16,104 @@ import type {
 const GIT_TIMEOUT = 30_000;
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * bd-uxs.7: AO-managed exclude patterns
+ * These files are written by AO but should not cause worktree to show as dirty.
+ */
+const AO_MANAGED_EXCLUDE_PATTERNS = `# AO-managed files - do not track in worktree
+# Agent configuration and hook scripts (written by agent-base plugin)
+# Paths are relative to the worktree root to avoid matching nested files.
+.claude/settings.json
+.claude/metadata-updater.sh
+.cursor/settings.json
+.cursor/metadata-updater.sh
+.gemini/settings.json
+.gemini/metadata-updater.sh
+`;
+
+/**
+ * Set up .git/info/exclude to ignore AO-managed files in a worktree.
+ * This prevents the worktree from appearing dirty due to runtime files AO writes.
+ *
+ * Note: In a git worktree, .git is a file pointing to the common git directory,
+ * so we use git rev-parse to resolve the correct path.
+ *
+ * Why --git-common-dir?
+ * ====================
+ * --git-common-dir returns the path to the main repo's .git directory, which is
+ * shared across all worktrees. This is the correct choice because:
+ * 1. The exclude file (.git/info/exclude) is shared across all worktrees - patterns
+ *    defined there apply to the entire repository, not just one worktree.
+ * 2. AO-managed exclude patterns (runtime files, temp files, etc.) should apply to
+ *    ALL worktrees, not just the one being set up.
+ * 3. Using --git-common-dir ensures consistency: all worktrees read from the same
+ *    exclude file, so AO-managed patterns are applied uniformly everywhere.
+ *
+ * Alternative considered: --git-dir would return the worktree's specific .git path
+ * (which is actually a file in worktrees, not a directory), making it unsuitable
+ * for accessing the shared exclude file.
+ */
+async function setupAoManagedExclude(worktreePath: string): Promise<void> {
+  // Use git rev-parse to get the correct .git path for worktree
+  // In worktrees, .git is a file, not a directory
+  let gitCommonDir: string;
+  try {
+    gitCommonDir = await git(
+      worktreePath,
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-common-dir",
+    );
+  } catch {
+    // Fallback when git rev-parse is unavailable (e.g. older git).
+    // In a linked worktree, .git is a FILE containing "gitdir: /main/.git/worktrees/<name>".
+    // Parse it to derive the common dir (/main/.git). For regular checkouts, .git is a
+    // directory and we use it directly.
+    const dotGit = join(worktreePath, ".git");
+    try {
+      const s = lstatSync(dotGit);
+      if (s.isFile()) {
+        const content = readFileSync(dotGit, "utf-8");
+        const match = content.match(/^gitdir:\s+(.+)$/m);
+        // gitdir points to /main/.git/worktrees/<name> — common dir is two levels up
+        gitCommonDir = match ? resolve(match[1].trim(), "..", "..") : dotGit;
+      } else {
+        gitCommonDir = dotGit;
+      }
+    } catch {
+      gitCommonDir = dotGit;
+    }
+  }
+
+  const excludeDir = join(gitCommonDir, "info");
+  const excludeFile = join(excludeDir, "exclude");
+
+  // Ensure .git/info directory exists
+  if (!existsSync(excludeDir)) {
+    mkdirSync(excludeDir, { recursive: true });
+  }
+
+  // Read existing exclude file if it exists
+  let existingContent = "";
+  try {
+    existingContent = await readFile(excludeFile, "utf-8");
+  } catch {
+    // File doesn't exist yet
+  }
+
+  // Check if AO-managed section already exists
+  if (existingContent.includes("# AO-managed files")) {
+    return; // Already set up
+  }
+
+  // Append AO-managed patterns
+  const newContent = existingContent
+    ? existingContent.trimEnd() + "\n\n" + AO_MANAGED_EXCLUDE_PATTERNS
+    : AO_MANAGED_EXCLUDE_PATTERNS;
+
+  await writeFile(excludeFile, newContent, "utf-8");
+}
 
 export const manifest = {
   name: "worktree",
@@ -101,6 +200,16 @@ export function create(config?: Record<string, unknown>): Workspace {
             cause: checkoutErr,
           });
         }
+      }
+
+      // bd-uxs.7: Set up .git/info/exclude to ignore AO-managed files
+      // This prevents worktree from showing as dirty due to runtime files.
+      // Wrap in try/catch so a failure here doesn't orphan the already-created
+      // worktree — the worktree is usable even without the exclude setup.
+      try {
+        await setupAoManagedExclude(worktreePath);
+      } catch {
+        // Non-fatal: exclude setup failure doesn't prevent workspace use
       }
 
       return {
@@ -236,6 +345,16 @@ export function create(config?: Record<string, unknown>): Workspace {
           const baseRef = `origin/${cfg.project.defaultBranch}`;
           await git(repoPath, "worktree", "add", "-b", cfg.branch, workspacePath, baseRef);
         }
+      }
+
+      // bd-uxs.7: Set up .git/info/exclude to ignore AO-managed files
+      // This prevents worktree from showing as dirty due to runtime files.
+      // Wrap in try/catch so a failure here doesn't fail the restore —
+      // the worktree is usable even without the exclude setup.
+      try {
+        await setupAoManagedExclude(workspacePath);
+      } catch {
+        // Non-fatal: exclude setup failure doesn't prevent workspace use
       }
 
       return {

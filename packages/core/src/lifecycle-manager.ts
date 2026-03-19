@@ -712,6 +712,59 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           };
         }
       }
+
+      case "parallel-retry": {
+        const freshSession = await sessionManager.get(sessionId);
+        if (!freshSession) {
+          return { reactionType: reactionKey, success: false, action, escalated: false };
+        }
+
+        const parallelCfg = reactionConfig.parallelRetry;
+        const strategies = parallelCfg?.strategies ?? [];
+        const maxParallel = parallelCfg?.maxParallel ?? 1;
+        const count = Math.min(strategies.length || 1, maxParallel);
+
+        const spawnedIds: string[] = [];
+        const errors: string[] = [];
+
+        for (let i = 0; i < count; i++) {
+          const agent = strategies[i] ?? undefined;
+          try {
+            const spawned = await sessionManager.spawn({
+              projectId: freshSession.projectId,
+              issueId: freshSession.issueId ?? undefined,
+              // Do NOT pass branch — let session-manager generate a unique branch name
+              // per spawned session. Reusing the original branch causes git checkout to
+              // fail in worktree workspaces where the branch is already checked out.
+              agent,
+            });
+            spawnedIds.push(spawned.id);
+          } catch (err) {
+            errors.push(err instanceof Error ? err.message : String(err));
+          }
+        }
+
+        const success = spawnedIds.length > 0;
+        const event = createEvent("reaction.triggered", {
+          sessionId,
+          projectId,
+          message: `Reaction '${reactionKey}' spawned ${spawnedIds.length} parallel retry session(s)${errors.length > 0 ? ` (${errors.length} failed to spawn)` : ""}`,
+          data: { reactionKey, action, spawnedIds, errors },
+        });
+        await notifyHuman(event, success ? "action" : "warning");
+        return { reactionType: reactionKey, success, action, escalated: false };
+      }
+
+      default: {
+        // Log warning for unknown reaction action types
+        console.warn(`Unknown reaction action type: ${action}`);
+        return {
+          reactionType: reactionKey,
+          success: false,
+          action,
+          escalated: false,
+        };
+      }
     }
 
     return {
@@ -1052,6 +1105,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         prMerged: exitStatus === "merged",
         validatedAt: new Date().toISOString(),
       };
+      // No SCM configured - validation not performed, emit as failed
       emitExitProofEvent(proof, true);
       return;
     }
@@ -1085,6 +1139,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           prMerged: exitStatus === "merged",
           validatedAt: new Date().toISOString(),
         };
+        // SCM doesn't support validateCommits - validation not performed, emit as failed
         emitExitProofEvent(proof, true);
       }
     } catch {

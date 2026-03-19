@@ -62,8 +62,8 @@ This repo is `jleechanorg/agent-orchestrator`. It started as a fork of `Composio
 - All PRs target `jleechanorg/agent-orchestrator`
 - `roadmap/` docs are tracked and welcomed — they are the design record for this fork
 - `.beads/issues.jsonl` is the issue tracker — commit it when beads are opened or closed
-
-**Upstream-strip rule**: When preparing PRs to `ComposioHQ/agent-orchestrator`, remove all fork-only artifacts. Explicitly exclude: `CLAUDE.md`, `AGENTS.md`, `roadmap/`, `.beads/`, `docs/design/*.md`, and any commits referencing fork-specific infra (openclaw, jleechanorg-specific tooling).
+- Remote `jleechanorg` points to the fork; `origin` points to upstream (read-only)
+- **Upstream-strip rule**: When preparing PRs to `ComposioHQ/agent-orchestrator`, remove all fork-only artifacts. Explicitly exclude: `CLAUDE.md`, `AGENTS.md`, `roadmap/`, `.beads/`, `docs/design/*.md`, and any commits referencing fork-specific infra (openclaw, jleechanorg-specific tooling).
 
 ## PR Target — CRITICAL SAFETY RULE
 
@@ -72,4 +72,31 @@ This repo is `jleechanorg/agent-orchestrator`. It started as a fork of `Composio
 Before creating any PR, confirm the target repo. If the target is `ComposioHQ/agent-orchestrator`, stop and ask:
 > "This would open a PR against the ComposioHQ upstream. Do you approve?"
 
-Default target is always `jleechanorg/agent-orchestrator`.
+Default target is always `jleechanorg/agent-orchestrator`. When approved, strip fork-only artifacts: `CLAUDE.md`, `AGENTS.md`, `roadmap/`, `.beads/`, `docs/design/*.md`, and commits referencing fork infrastructure.
+
+## Upstreaming to ComposioHQ — What to Strip
+
+When cherry-picking work to a `feat/*-upstream` branch for a ComposioHQ PR, **do not include**:
+
+- `docs/design/*.md` — fork-only markdown design docs (HTML equivalents are fine)
+- `CLAUDE.md` — fork-specific Claude Code instructions
+- `AGENTS.md` — fork-specific agent/contributor guidelines
+- `roadmap/` — fork roadmap docs
+- `.beads/` — local issue tracker
+- Any commit that references fork infrastructure (openclaw, jleechanorg-specific tooling)
+
+## Mirror Fork for Clean Upstream PRs
+
+There is a separate mirror fork at `jleechan2015/agent-orchestrator-mirror` that mirrors `ComposioHQ/agent-orchestrator` exactly. Use this for submitting PRs that should go upstream without custom fork logic:
+
+- **Location**: `~/projects_reference/agent-orchestrator-mirror`
+- **Purpose**: Submit Cursor/Gemini CLI support to upstream without MCP mail or other custom changes
+- **Workflow**:
+  1. Sync mirror to `ComposioHQ/agent-orchestrator` main
+  2. Copy desired plugins (agent-cursor, agent-gemini, agent-base) from this fork
+  3. Remove any custom logic (MCP mail, etc.)
+  4. Push and create PR against the mirror, not upstream
+
+**Current mirror PR**: https://github.com/jleechan2015/agent-orchestrator-mirror/pull/1
+
+This fork's work will be proposed to ComposioHQ separately from this repo's custom development.

@@ -14,8 +14,8 @@ import {
   type WorkspaceHooksConfig,
 } from "@composio/ao-core";
 import { execFile } from "node:child_process";
-import { readdir, readFile, stat, lstat, open, writeFile, mkdir, chmod } from "node:fs/promises";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { readdir, readFile, stat, open, writeFile, mkdir, chmod, lstat } from "node:fs/promises";
+import { existsSync, lstatSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
@@ -629,7 +629,15 @@ async function setupHookInWorkspace(
   }
   // Always ensure executable permissions are set — content may match but permissions
   // could have been lost (e.g., after manual chmod, copy/restore, or filesystem quirks)
-  await chmod(hookScriptPath, 0o755);
+  // Skip chmod for symlinks to avoid modifying target file permissions unexpectedly
+  try {
+    const statResult = await lstat(hookScriptPath);
+    if (!statResult.isSymbolicLink()) {
+      await chmod(hookScriptPath, 0o755);
+    }
+  } catch {
+    // File might not exist yet — skip chmod
+  }
 
   // Read existing settings if present
   let existingSettings: Record<string, unknown> = {};

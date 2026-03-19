@@ -48,6 +48,7 @@ export function createPollerManager(deps: PollerManagerDeps): PollerManagerImpl 
   const observer = createProjectObserver(config, "poller-manager");
 
   const pollTimers = new Map<string, ReturnType<typeof setInterval>>();
+  const intervalPollsInFlight = new Set<string>();
   const spawnTrackers = new Map<string, SpawnTracker>(); // "projectId:workItemId"
 
   /** Get all enabled pollers across all projects */
@@ -109,12 +110,12 @@ export function createPollerManager(deps: PollerManagerDeps): PollerManagerImpl 
     pollerConfig: PollerConfig,
   ): Promise<SessionSpawnConfig> {
     const project = config.projects[projectId];
-    const agentName = resolveAgentSelection({
+    const { agentName, subagent } = resolveAgentSelection({
       role: "worker",
       project,
       defaults: config.defaults,
       persistedAgent: pollerConfig.agent,
-    }).agentName;
+    });
 
     // Build prompt from template if provided
     let prompt = pollerConfig.promptTemplate ?? "Fix the CI failure for PR: {{url}}";
@@ -122,12 +123,31 @@ export function createPollerManager(deps: PollerManagerDeps): PollerManagerImpl 
     prompt = prompt.replace(/\{\{title\}\}/g, workItem.title);
     prompt = prompt.replace(/\{\{id\}\}/g, workItem.id);
 
+    // Sanitize workItem.id to prevent invalid git branch characters
+    // Matches session-manager.ts sanitization logic
+    const isBranchSafe = /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(workItem.id) && !workItem.id.includes("..");
+    const slug = isBranchSafe
+      ? workItem.id
+      : workItem.id
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .slice(0, 60)
+          .replace(/^-+|-+$/g, "");
+
+    // Apply same sanitization to fallback
+    const fallbackSlug = workItem.id
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .slice(0, 20)
+      .replace(/^-+|-+$/g, "");
+
     return {
       projectId,
       issueId: workItem.id,
-      branch: `fix/${workItem.id}`,
+      branch: `fix/${slug || fallbackSlug || "work-item"}`,
       prompt,
       agent: agentName,
+      subagent,
     };
   }
 
@@ -181,6 +201,9 @@ export function createPollerManager(deps: PollerManagerDeps): PollerManagerImpl 
           continue;
         }
 
+        // Reserve work item ID before spawning to prevent duplicate sessions
+        // if poll() returns the same workItem.id more than once in a batch.
+        existingWorkItemIds.add(workItem.id);
         try {
           const spawnConfig = await buildSpawnConfig(projectId, workItem, pollerConfig);
           const session = await poller.spawnSession(workItem, projectId, spawnConfig);
@@ -194,11 +217,17 @@ export function createPollerManager(deps: PollerManagerDeps): PollerManagerImpl 
               correlationId,
               projectId,
               sessionId: session.id,
-              data: { workItem },
+              data: {
+                workItemId: workItem.id,
+                workItemType: workItem.type,
+              },
               level: "info",
             });
+          } else {
+            existingWorkItemIds.delete(workItem.id);
           }
         } catch (error) {
+          existingWorkItemIds.delete(workItem.id);
           observer.recordOperation({
             metric: "spawn",
             operation: "poller.spawn",
@@ -237,15 +266,22 @@ export function createPollerManager(deps: PollerManagerDeps): PollerManagerImpl 
 
   /** Run one polling cycle for pollers matching a specific interval */
   async function pollByInterval(interval: string): Promise<void> {
-    const enabledPollers = getEnabledPollers().filter(
-      ({ config: pollerConfig }) => pollerConfig.interval === interval,
-    );
+    // In-flight guard: prevent overlapping executions
+    if (intervalPollsInFlight.has(interval)) return;
+    intervalPollsInFlight.add(interval);
+    try {
+      const enabledPollers = getEnabledPollers().filter(
+        ({ config: pollerConfig }) => pollerConfig.interval === interval,
+      );
 
-    await Promise.allSettled(
-      enabledPollers.map(({ projectId, config: pollerConfig, poller }) =>
-        pollOne(projectId, pollerConfig, poller),
-      ),
-    );
+      await Promise.allSettled(
+        enabledPollers.map(({ projectId, config: pollerConfig, poller }) =>
+          pollOne(projectId, pollerConfig, poller),
+        ),
+      );
+    } finally {
+      intervalPollsInFlight.delete(interval);
+    }
   }
 
   /** Start all pollers */

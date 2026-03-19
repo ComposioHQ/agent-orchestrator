@@ -19,10 +19,16 @@ vi.mock("node:fs", () => ({
   rmSync: vi.fn(),
   mkdirSync: vi.fn(),
   readdirSync: vi.fn(),
+  readFileSync: vi.fn(),
 }));
 
 vi.mock("node:os", () => ({
   homedir: () => "/mock-home",
+}));
+
+vi.mock("node:fs/promises", () => ({
+  readFile: vi.fn(),
+  writeFile: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------
@@ -30,7 +36,8 @@ vi.mock("node:os", () => ({
 // ---------------------------------------------------------------------------
 
 import * as childProcess from "node:child_process";
-import { existsSync, lstatSync, symlinkSync, rmSync, mkdirSync, readdirSync } from "node:fs";
+import { existsSync, lstatSync, symlinkSync, rmSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import * as fsPromises from "node:fs/promises";
 import { create, manifest } from "../index.js";
 
 // ---------------------------------------------------------------------------
@@ -43,10 +50,13 @@ const mockExecFileAsync = (childProcess.execFile as any)[
 
 const mockExistsSync = existsSync as ReturnType<typeof vi.fn>;
 const mockLstatSync = lstatSync as ReturnType<typeof vi.fn>;
+const mockReadFileSync = readFileSync as ReturnType<typeof vi.fn>;
 const mockSymlinkSync = symlinkSync as ReturnType<typeof vi.fn>;
 const mockRmSync = rmSync as ReturnType<typeof vi.fn>;
 const mockMkdirSync = mkdirSync as ReturnType<typeof vi.fn>;
 const mockReaddirSync = readdirSync as ReturnType<typeof vi.fn>;
+const mockReadFile = fsPromises.readFile as ReturnType<typeof vi.fn>;
+const mockWriteFile = fsPromises.writeFile as ReturnType<typeof vi.fn>;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -87,6 +97,10 @@ function makeCreateConfig(overrides?: Partial<WorkspaceCreateConfig>): Workspace
 
 beforeEach(() => {
   vi.clearAllMocks();
+
+  // Default: no existing exclude file, writes succeed
+  mockReadFile.mockRejectedValue(Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
+  mockWriteFile.mockResolvedValue(undefined);
 });
 
 // ===========================================================================
@@ -737,5 +751,108 @@ describe("workspace.postCreate()", () => {
       "/mock-home/my-repo/data",
       "/mock-home/.worktrees/myproject/session-1/data",
     );
+  });
+});
+
+// ===========================================================================
+// TDD: setupAoManagedExclude — bd-uxs.7
+//
+// setupAoManagedExclude is called by both create() and restore(). It writes
+// AO-managed patterns into .git/info/exclude so runtime files written by
+// agent-base don't cause the worktree to show as dirty.
+// ===========================================================================
+
+describe("setupAoManagedExclude (via workspace.create())", () => {
+  it("writes AO-managed patterns to .git/info/exclude on first create", async () => {
+    const ws = create();
+    mockGitSuccess(""); // fetch
+    mockGitSuccess(""); // worktree add
+    // git rev-parse --git-common-dir falls back to "<worktreePath>/.git" via catch
+
+    await ws.create(makeCreateConfig());
+
+    expect(mockWriteFile).toHaveBeenCalledOnce();
+    const [writtenPath, writtenContent] = mockWriteFile.mock.calls[0] as [string, string, string];
+    expect(writtenPath).toContain(".git/info/exclude");
+    expect(writtenContent).toContain("# AO-managed files");
+  });
+
+  it("does NOT re-write exclude file when AO section already present (idempotency)", async () => {
+    const ws = create();
+    // Simulate exclude file already containing AO patterns
+    mockReadFile.mockResolvedValueOnce("# AO-managed files - do not track in worktree\n.metadata-updater.sh\n");
+
+    mockGitSuccess(""); // fetch
+    mockGitSuccess(""); // worktree add
+
+    await ws.create(makeCreateConfig());
+
+    expect(mockWriteFile).not.toHaveBeenCalled();
+  });
+
+  it("preserves existing exclude content when bootstrapping", async () => {
+    const ws = create();
+    const existingExclude = "# Custom rules\n*.log\n";
+    mockReadFile.mockResolvedValueOnce(existingExclude);
+
+    mockGitSuccess(""); // fetch
+    mockGitSuccess(""); // worktree add
+
+    await ws.create(makeCreateConfig());
+
+    expect(mockWriteFile).toHaveBeenCalledOnce();
+    const [, writtenContent] = mockWriteFile.mock.calls[0] as [string, string, string];
+    expect(writtenContent).toContain("*.log");
+    expect(writtenContent).toContain("# AO-managed files");
+  });
+
+  it("fallback: reads .git FILE to resolve common-dir when git rev-parse fails (linked worktree)", async () => {
+    // Regression test for bd-uxs.1:
+    // In a linked worktree, .git is a FILE (not a dir) containing
+    // "gitdir: /main/.git/worktrees/session". When git rev-parse --git-common-dir
+    // fails (e.g. older git), the fallback must parse this file instead of
+    // blindly using join(worktreePath, ".git") which produces an ENOTDIR error.
+    const ws = create();
+    const worktreePath = "/mock-home/.worktrees/myproject/ao-1";
+    const mainGitDir = "/main-repo/.git";
+
+    mockGitSuccess(""); // fetch
+    mockGitSuccess(""); // worktree add
+    // No third mock → git rev-parse --git-common-dir throws → fallback fires
+
+    // Simulate .git being a FILE (linked worktree)
+    mockLstatSync.mockReturnValue({ isFile: () => true, isDirectory: () => false, isSymbolicLink: () => false });
+    mockReadFileSync.mockReturnValue(`gitdir: ${mainGitDir}/worktrees/ao-1\n`);
+
+    await ws.create(makeCreateConfig({ sessionId: "ao-1" }));
+
+    expect(mockWriteFile).toHaveBeenCalledOnce();
+    const [writtenPath] = mockWriteFile.mock.calls[0] as [string, string, string];
+    // Must write to the MAIN repo's .git/info/exclude, not the worktree's .git/info/exclude
+    expect(writtenPath).toBe(`${mainGitDir}/info/exclude`);
+  });
+});
+
+describe("setupAoManagedExclude (via workspace.restore())", () => {
+  it("writes AO-managed patterns to .git/info/exclude on restore", async () => {
+    const ws = create();
+    const worktreePath = "/mock-home/.worktrees/myproject/session-1";
+
+    // restore() git call sequence:
+    // 1. git worktree prune (caught if fails — ok to leave unmocked)
+    // 2. git fetch origin --quiet (caught if fails — ok to leave unmocked)
+    // 3. git worktree add <worktreePath> <branch> (first attempt)
+    // setupAoManagedExclude: git rev-parse --git-common-dir (caught, falls back)
+    mockGitSuccess(""); // prune
+    mockGitSuccess(""); // fetch
+    mockGitSuccess(""); // worktree add
+
+    const cfg = makeCreateConfig();
+    await ws.restore!(cfg, worktreePath);
+
+    expect(mockWriteFile).toHaveBeenCalledOnce();
+    const [writtenPath, writtenContent] = mockWriteFile.mock.calls[0] as [string, string, string];
+    expect(writtenPath).toContain(".git/info/exclude");
+    expect(writtenContent).toContain("# AO-managed files");
   });
 });
