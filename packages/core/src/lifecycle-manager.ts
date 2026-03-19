@@ -783,6 +783,21 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           await notifyHuman(event, priority);
         }
       }
+
+      // Clean up runtime and workspace for terminal sessions.
+      // When lifecycle detects a "merged" or "killed" transition, the metadata
+      // is updated but the runtime (tmux) and workspace (worktree) are left
+      // running.  This causes zombie sessions that consume resources and confuse
+      // status output.  Calling sessionManager.kill() tears down runtime +
+      // workspace and archives the metadata — the same thing `ao session kill`
+      // does manually.
+      if (newStatus === "merged" || newStatus === "killed") {
+        try {
+          await sessionManager.kill(session.id);
+        } catch {
+          // Session may already be partially cleaned up — not critical
+        }
+      }
     } else {
       // No transition but track current state
       states.set(session.id, newStatus);
