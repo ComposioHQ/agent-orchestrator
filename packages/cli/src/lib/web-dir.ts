@@ -116,6 +116,13 @@ export async function buildDashboardEnv(
 ): Promise<Record<string, string>> {
   const env: Record<string, string> = { ...process.env } as Record<string, string>;
 
+  // Force development mode — the dashboard always runs via `next dev`.
+  // If the parent process sets NODE_ENV=production (common in CI or when
+  // ao itself is globally installed), devDependencies like @tailwindcss/postcss
+  // won't be resolved, causing Tailwind v4 CSS compilation to fail with:
+  //   "Cannot find module '@tailwindcss/postcss'"
+  env["NODE_ENV"] = "development";
+
   // Pass config path so dashboard uses the same config as the CLI
   if (configPath) {
     env["AO_CONFIG_PATH"] = configPath;
