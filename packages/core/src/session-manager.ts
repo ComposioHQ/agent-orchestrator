@@ -830,13 +830,18 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
    * Enrich session with live runtime state (alive/exited) and activity detection.
    * Mutates the session object in place.
    */
-  const TERMINAL_SESSION_STATUSES = new Set(["killed", "done", "merged", "terminated", "cleanup"]);
+  const TERMINAL_SESSION_STATUSES = new Set(["done", "merged", "terminated", "cleanup"]);
 
   async function enrichSessionWithRuntimeState(
     session: Session,
     plugins: ReturnType<typeof resolvePlugins>,
     handleFromMetadata: boolean,
+    reviveKilledStatus = true,
   ): Promise<void> {
+    const wasKilled = session.status === "killed";
+    let runtimeConfirmedAlive = false;
+    let detectedActivityState: Session["activity"] | null = null;
+
     // Skip all subprocess/IO work for sessions already known to be terminal.
     if (TERMINAL_SESSION_STATUSES.has(session.status)) {
       session.activity = "exited";
@@ -855,6 +860,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           session.activity = "exited";
           return;
         }
+        runtimeConfirmedAlive = true;
       } catch {
         // Can't check liveness — continue to activity detection
       }
@@ -868,6 +874,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       try {
         const detected = await plugins.agent.getActivityState(session, config.readyThresholdMs);
         if (detected !== null) {
+          detectedActivityState = detected.state;
           session.activity = detected.state;
           if (detected.timestamp && detected.timestamp > session.lastActivityAt) {
             session.lastActivityAt = detected.timestamp;
@@ -886,6 +893,16 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       } catch {
         // Can't get session info — keep existing values
       }
+    }
+
+    // "killed" is terminal only when process/runtime checks still support that.
+    // If we can confirm the session is alive again, surface it as working.
+    if (
+      reviveKilledStatus &&
+      wasKilled &&
+      (runtimeConfirmedAlive || (detectedActivityState !== null && detectedActivityState !== "exited"))
+    ) {
+      session.status = "working";
     }
   }
 
@@ -2254,7 +2271,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     //    and isRestorable would reject it.
     const session = metadataToSession(sessionId, raw, projectId);
     const plugins = resolvePlugins(project, selection.agentName);
-    await enrichSessionWithRuntimeState(session, plugins, true);
+    await enrichSessionWithRuntimeState(session, plugins, true, false);
 
     // 3. Validate restorability
     if (!isRestorable(session)) {
