@@ -199,6 +199,8 @@ export interface SessionSpawnConfig {
 export interface OrchestratorSpawnConfig {
   projectId: string;
   systemPrompt?: string;
+  /** Initial user prompt that kicks off the first orchestration pass. */
+  prompt?: string;
 }
 
 // =============================================================================
