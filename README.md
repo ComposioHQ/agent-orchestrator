@@ -46,7 +46,7 @@ Agent Orchestrator manages fleets of AI coding agents working in parallel on you
 
 > **Prerequisites:** [Node.js 20+](https://nodejs.org), [Git 2.25+](https://git-scm.com), [tmux](https://github.com/tmux/tmux/wiki/Installing), [`gh` CLI](https://cli.github.com). Install tmux via `brew install tmux` (macOS) or `sudo apt install tmux` (Linux).
 
-### Option A — Install via npm (recommended)
+### Install
 
 ```bash
 npm install -g @composio/ao
@@ -56,68 +56,50 @@ sudo npm install -g @composio/ao   # quick fix
 npx @composio/ao start             # no install needed
 ```
 
-This gives you the `ao` command globally. Then:
-
-```bash
-ao start https://github.com/your-org/your-repo   # clones, configures, launches — one command
-ao spawn 123                                       # spawn an agent on issue #123
-```
-
-### Option B — Install from source (for contributors)
+<details>
+<summary>Install from source (for contributors)</summary>
 
 ```bash
 git clone https://github.com/ComposioHQ/agent-orchestrator.git
 cd agent-orchestrator && bash scripts/setup.sh
 ```
+</details>
 
-This builds everything and links the `ao` command globally. Then:
+### Start
 
-```bash
-cd ~/your-project && ao start    # auto-detects everything, zero prompts
-ao spawn 123                      # spawn an agent on issue #123
-```
-
-### Adding more projects
+Point it at any repo — it clones, configures, and launches the dashboard in one command:
 
 ```bash
-ao start ~/path/to/another-repo   # adds the project and starts
+ao start https://github.com/your-org/your-repo
 ```
 
-Dashboard opens at `http://localhost:3000`. Run `ao status` for the CLI view.
+Or from inside an existing local repo:
+
+```bash
+cd ~/your-project && ao start
+```
+
+That's it. The dashboard opens at `http://localhost:3000` and the orchestrator agent starts managing your project.
+
+### Add more projects
+
+```bash
+ao start ~/path/to/another-repo
+```
 
 ## How It Works
 
-```
-ao spawn 123
-```
+1. **You start** — `ao start` launches the dashboard and an orchestrator agent
+2. **Orchestrator spawns workers** — each issue gets its own agent in an isolated git worktree
+3. **Agents work autonomously** — they read code, write tests, create PRs
+4. **Reactions handle feedback** — CI failures and review comments are automatically routed back to the agent
+5. **You review and merge** — you only get pulled in when human judgment is needed
 
-1. **Workspace** creates an isolated git worktree with a feature branch
-2. **Runtime** starts a tmux session (or Docker container)
-3. **Agent** launches Claude Code (or Codex, or Aider) with issue context
-4. Agent works autonomously — reads code, writes tests, creates PR
-5. **Reactions** auto-handle CI failures and review comments
-6. **Notifier** pings you only when judgment is needed
-
-### Plugin Architecture
-
-Eight slots. Every abstraction is swappable.
-
-| Slot      | Default     | Alternatives             |
-| --------- | ----------- | ------------------------ |
-| Runtime   | tmux        | docker, k8s, process     |
-| Agent     | claude-code | codex, aider, opencode   |
-| Workspace | worktree    | clone                    |
-| Tracker   | github      | linear                   |
-| SCM       | github      | —                        |
-| Notifier  | desktop     | slack, composio, webhook |
-| Terminal  | iterm2      | web                      |
-| Lifecycle | core        | —                        |
-
-All interfaces defined in [`packages/core/src/types.ts`](packages/core/src/types.ts). A plugin implements one interface and exports a `PluginModule`. That's it.
+The orchestrator agent uses the [AO CLI](docs/CLI.md) internally to manage sessions. You don't need to learn or use the CLI — the dashboard and orchestrator handle everything.
 
 ## Configuration
 
-`ao start` auto-generates `agent-orchestrator.yaml` with sensible defaults. You can edit it afterwards or write one manually:
+`ao start` auto-generates `agent-orchestrator.yaml` with sensible defaults. You can edit it afterwards to customize behavior:
 
 ```yaml
 # agent-orchestrator.yaml
@@ -152,43 +134,24 @@ reactions:
 
 CI fails → agent gets the logs and fixes it. Reviewer requests changes → agent addresses them. PR approved with green CI → you get a notification to merge.
 
-See [`agent-orchestrator.yaml.example`](agent-orchestrator.yaml.example) for the full reference.
+See [`agent-orchestrator.yaml.example`](agent-orchestrator.yaml.example) for the full reference, or run `ao config-help` for the complete schema.
 
-## CLI
+## Plugin Architecture
 
-```bash
-ao start                               # Auto-detect, generate config, start dashboard + orchestrator
-ao start <url>                         # Clone repo, auto-configure, and start
-ao start ~/other-repo                  # Add a new project and start
-ao stop                                # Stop dashboard, orchestrator, and lifecycle worker
-ao spawn [issue]                       # Spawn an agent (project auto-detected from cwd)
-ao spawn 123 --agent codex             # Override agent for this session
-ao batch-spawn 101 102 103             # Spawn agents for multiple issues at once
-ao send <session> "Fix the tests"      # Send instructions to a running agent
-ao status                              # Overview of all sessions
-ao session ls                          # List sessions
-ao session kill <session>              # Kill a session
-ao session restore <session>           # Revive a crashed agent
-ao dashboard                           # Open web dashboard in browser
-ao config-help                         # Show full config schema reference
-ao doctor [--fix]                      # Check install, runtime, and stale temp issues
-ao update                              # Update local AO install and run smoke tests
-```
+Eight slots. Every abstraction is swappable.
 
-## Maintenance
+| Slot      | Default     | Alternatives             |
+| --------- | ----------- | ------------------------ |
+| Runtime   | tmux        | docker, k8s, process     |
+| Agent     | claude-code | codex, aider, opencode   |
+| Workspace | worktree    | clone                    |
+| Tracker   | github      | linear                   |
+| SCM       | github      | —                        |
+| Notifier  | desktop     | slack, composio, webhook |
+| Terminal  | iterm2      | web                      |
+| Lifecycle | core        | —                        |
 
-```bash
-# Run deterministic install and runtime checks
-ao doctor
-
-# Apply safe cleanup and launcher fixes
-ao doctor --fix
-
-# Update this local AO checkout, rebuild critical packages, and verify the launcher
-ao update
-```
-
-`ao doctor` checks PATH and launcher resolution, required binaries, tmux and GitHub CLI health, config support directories, stale AO temp files, and core build/runtime sanity. `ao update` fast-forwards the local install repo on `main`, runs `pnpm install`, clean-rebuilds `@composio/ao-core`, `@composio/ao-cli`, and `@composio/ao-web`, refreshes the global `ao` launcher with `npm link`, and finishes with CLI smoke tests.
+All interfaces defined in [`packages/core/src/types.ts`](packages/core/src/types.ts). A plugin implements one interface and exports a `PluginModule`. That's it.
 
 ## Why Agent Orchestrator?
 
@@ -196,14 +159,17 @@ Running one AI agent in a terminal is easy. Running 30 across different issues, 
 
 **Without orchestration**, you manually: create branches, start agents, check if they're stuck, read CI failures, forward review comments, track which PRs are ready to merge, clean up when done.
 
-**With Agent Orchestrator**, you: `ao spawn` and walk away. The system handles isolation, feedback routing, and status tracking. You review PRs and make decisions — the rest is automated.
+**With Agent Orchestrator**, you: `ao start` and walk away. The system handles isolation, feedback routing, and status tracking. You review PRs and make decisions — the rest is automated.
 
-## Prerequisites
+## Documentation
 
-- Node.js 20+
-- Git 2.25+
-- tmux (for default runtime)
-- `gh` CLI (for GitHub integration)
+| Doc                                      | What it covers                                               |
+| ---------------------------------------- | ------------------------------------------------------------ |
+| [Setup Guide](SETUP.md)                  | Detailed installation, configuration, and troubleshooting    |
+| [CLI Reference](docs/CLI.md)             | All `ao` commands (mostly used by the orchestrator agent)    |
+| [Examples](examples/)                    | Config templates (GitHub, Linear, multi-project, auto-merge) |
+| [Development Guide](docs/DEVELOPMENT.md) | Architecture, conventions, plugin pattern                    |
+| [Contributing](CONTRIBUTING.md)          | How to contribute, build plugins, PR process                 |
 
 ## Development
 
@@ -214,16 +180,6 @@ pnpm dev                       # Start web dashboard dev server
 ```
 
 See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for code conventions and architecture details.
-
-## Documentation
-
-| Doc                                      | What it covers                                               |
-| ---------------------------------------- | ------------------------------------------------------------ |
-| [Setup Guide](SETUP.md)                  | Detailed installation and configuration                      |
-| [Examples](examples/)                    | Config templates (GitHub, Linear, multi-project, auto-merge) |
-| [Development Guide](docs/DEVELOPMENT.md) | Architecture, conventions, plugin pattern                    |
-| [Contributing](CONTRIBUTING.md)          | How to contribute, build plugins, PR process                 |
-| [Troubleshooting](TROUBLESHOOTING.md)    | Common issues and fixes                                      |
 
 ## Contributing
 
