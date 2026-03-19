@@ -505,7 +505,37 @@ async function runStartup(
   let dashboardProcess: ChildProcess | null = null;
   let reused = false;
 
+  // Create orchestrator session FIRST (unless --no-orchestrator or already exists).
+  // This must happen before starting the dashboard to prevent a race condition
+  // where the dashboard polls /api/sessions, finds stale metadata from a previous
+  // run, and caches the orchestrator as "exited" before the new session exists.
+  let tmuxTarget = sessionId;
+  if (opts?.orchestrator !== false) {
+    const sm = await getSessionManager(config);
+
+    try {
+      spinner.start("Creating orchestrator session");
+      const systemPrompt = generateOrchestratorPrompt({ config, projectId, project });
+      const session = await sm.spawnOrchestrator({ projectId, systemPrompt });
+      if (session.runtimeHandle?.id) {
+        tmuxTarget = session.runtimeHandle.id;
+      }
+      reused =
+        orchestratorSessionStrategy === "reuse" &&
+        session.metadata?.["orchestratorSessionReused"] === "true";
+      spinner.succeed(reused ? "Orchestrator session reused" : "Orchestrator session created");
+    } catch (err) {
+      spinner.fail("Orchestrator setup failed");
+      throw new Error(
+        `Failed to setup orchestrator: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err },
+      );
+    }
+  }
+
   // Start dashboard (unless --no-dashboard)
+  // Wrapped to clean up orchestrator on failure (prevents leaked tmux sessions)
+  try {
   if (opts?.dashboard !== false) {
     if (!(await isPortAvailable(port))) {
       const newPort = await findFreePort(port + 1);
@@ -556,33 +586,15 @@ async function runStartup(
       );
     }
   }
-
-  // Create orchestrator session (unless --no-orchestrator or already exists)
-  let tmuxTarget = sessionId;
-  if (opts?.orchestrator !== false) {
-    const sm = await getSessionManager(config);
-
-    try {
-      spinner.start("Creating orchestrator session");
-      const systemPrompt = generateOrchestratorPrompt({ config, projectId, project });
-      const session = await sm.spawnOrchestrator({ projectId, systemPrompt });
-      if (session.runtimeHandle?.id) {
-        tmuxTarget = session.runtimeHandle.id;
-      }
-      reused =
-        orchestratorSessionStrategy === "reuse" &&
-        session.metadata?.["orchestratorSessionReused"] === "true";
-      spinner.succeed(reused ? "Orchestrator session reused" : "Orchestrator session created");
-    } catch (err) {
-      spinner.fail("Orchestrator setup failed");
-      if (dashboardProcess) {
-        dashboardProcess.kill();
-      }
-      throw new Error(
-        `Failed to setup orchestrator: ${err instanceof Error ? err.message : String(err)}`,
-        { cause: err },
-      );
+  } catch (err) {
+    // Clean up orchestrator tmux session on failure to prevent resource leak
+    if (opts?.orchestrator !== false) {
+      try {
+        const sm = await getSessionManager(config);
+        await sm.kill(sessionId).catch(() => {});
+      } catch { /* best-effort cleanup */ }
     }
+    throw err;
   }
 
   // Print summary
