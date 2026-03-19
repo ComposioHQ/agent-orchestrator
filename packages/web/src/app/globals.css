@@ -320,6 +320,11 @@ a:hover {
 
 /* ── Animations ──────────────────────────────────────────────────────── */
 
+@keyframes progress-shimmer {
+  0% { transform: translateX(-200%); }
+  100% { transform: translateX(500%); }
+}
+
 @keyframes activity-pulse {
   0%, 100% { box-shadow: 0 0 0 0 var(--color-activity-pulse); }
   50%       { box-shadow: 0 0 0 4px var(--color-activity-pulse-end); }
@@ -582,4 +587,41 @@ a:hover {
 
 .view-toggle button:hover:not(.active) {
   color: var(--color-text-secondary);
+}
+
+/* ── Session card zone glow (hover) ──────────────────────────────────── */
+
+.session-card.card-glow-respond:hover {
+  box-shadow:
+    0 0 0 1px rgba(248,81,73,0.22),
+    0 4px 8px rgba(0,0,0,0.85),
+    0 14px 36px rgba(0,0,0,0.55),
+    0 0 30px rgba(248,81,73,0.08),
+    inset 0 1px 0 rgba(255,255,255,0.1);
+}
+
+.session-card.card-glow-review:hover {
+  box-shadow:
+    0 0 0 1px rgba(209,134,22,0.22),
+    0 4px 8px rgba(0,0,0,0.85),
+    0 14px 36px rgba(0,0,0,0.55),
+    0 0 30px rgba(209,134,22,0.08),
+    inset 0 1px 0 rgba(255,255,255,0.1);
+}
+
+.session-card.card-glow-pending:hover {
+  box-shadow:
+    0 0 0 1px rgba(210,153,34,0.18),
+    0 4px 8px rgba(0,0,0,0.85),
+    0 14px 36px rgba(0,0,0,0.55),
+    inset 0 1px 0 rgba(255,255,255,0.1);
+}
+
+.session-card.card-glow-working:hover {
+  box-shadow:
+    0 0 0 1px rgba(88,166,255,0.2),
+    0 4px 8px rgba(0,0,0,0.85),
+    0 14px 36px rgba(0,0,0,0.55),
+    0 0 30px rgba(88,166,255,0.07),
+    inset 0 1px 0 rgba(255,255,255,0.1);
 }
