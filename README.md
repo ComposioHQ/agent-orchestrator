@@ -50,14 +50,14 @@ Agent Orchestrator manages fleets of AI coding agents working in parallel on you
 
 ```bash
 npm install -g @composio/ao
-
-# Permission denied? Use one of these:
-sudo npm install -g @composio/ao   # quick fix
-npx @composio/ao start             # no install needed
 ```
 
 <details>
-<summary>Install from source (for contributors)</summary>
+<summary>Permission denied? Install from source?</summary>
+
+If `npm install -g` fails with EACCES, prefix with `sudo` or [fix your npm permissions](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally).
+
+To install from source (for contributors):
 
 ```bash
 git clone https://github.com/ComposioHQ/agent-orchestrator.git
