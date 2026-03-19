@@ -14,6 +14,10 @@ import {
   type Session,
   type WorkspaceHooksConfig,
 } from "@composio/ao-core";
+import {
+  createAgentPlugin,
+  resetPsCache as _resetPsCache,
+} from "@composio/ao-plugin-agent-base";
 import { execFile, execFileSync } from "node:child_process";
 import { readdir, readFile, stat, open, writeFile, mkdir, chmod } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -421,8 +425,9 @@ function extractCost(lines: JsonlLine[]): CostEstimate | undefined {
 let psCache: { output: string; timestamp: number; promise?: Promise<string> } | null = null;
 const PS_CACHE_TTL_MS = 5_000;
 
-/** Reset the ps cache. Exported for testing only. */
+/** Reset both agent-base and local ps caches. Exported for testing only. */
 export function resetPsCache(): void {
+  _resetPsCache();
   psCache = null;
 }
 
