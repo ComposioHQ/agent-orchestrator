@@ -1,5 +1,7 @@
 "use client";
 
+export { SessionDetailSkeleton } from "./Skeleton";
+
 import { useState, useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { type DashboardSession, type DashboardPR, isPRMergeReady, CI_STATUS } from "@/lib/types";
