@@ -200,6 +200,9 @@ export function createPollerManager(deps: PollerManagerDeps): PollerManagerImpl 
           continue;
         }
 
+        // Reserve work item ID before spawning to prevent duplicate sessions
+        // if poll() returns the same workItem.id more than once in a batch.
+        existingWorkItemIds.add(workItem.id);
         try {
           const spawnConfig = await buildSpawnConfig(projectId, workItem, pollerConfig);
           const session = await poller.spawnSession(workItem, projectId, spawnConfig);
@@ -216,8 +219,11 @@ export function createPollerManager(deps: PollerManagerDeps): PollerManagerImpl 
               data: { workItem },
               level: "info",
             });
+          } else {
+            existingWorkItemIds.delete(workItem.id);
           }
         } catch (error) {
+          existingWorkItemIds.delete(workItem.id);
           observer.recordOperation({
             metric: "spawn",
             operation: "poller.spawn",

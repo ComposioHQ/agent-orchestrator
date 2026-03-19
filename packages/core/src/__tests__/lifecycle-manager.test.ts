@@ -2020,8 +2020,8 @@ describe("session exit proof reconciliation (bd-uxs.6)", () => {
 
   beforeEach(() => {
     mockNotifier = {
+      name: "mock-notifier",
       notify: vi.fn().mockResolvedValue(undefined),
-      notifyBatch: vi.fn().mockResolvedValue(undefined),
     };
 
     // Add notifier to config
