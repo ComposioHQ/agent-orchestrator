@@ -4,6 +4,7 @@ import {
   resetPsCache as _resetPsCache,
   type AgentPluginConfig,
 } from "@composio/ao-plugin-agent-base";
+import { execFileSync } from "node:child_process";
 import type { Agent, PluginModule, ProjectConfig, Session } from "@composio/ao-core";
 
 // =============================================================================
@@ -64,7 +65,17 @@ export function create(): Agent {
   return createAgentPlugin(cursorConfig, cursorOverrides);
 }
 
+/** Detect if Cursor agent CLI is installed. */
+export function detect(): boolean {
+  try {
+    execFileSync("cursor-agent", ["--version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Reset the ps process cache. Exported for testing only. */
 export const resetPsCache = _resetPsCache;
 
-export default { manifest, create } satisfies PluginModule<Agent>;
+export default { manifest, create, detect } as { manifest: typeof manifest; create: typeof create; detect: typeof detect };
