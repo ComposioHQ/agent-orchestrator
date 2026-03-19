@@ -144,10 +144,53 @@ export function create(): Runtime {
         await tmux("send-keys", "-t", handle.id, "-l", message);
       }
 
-      // Small delay to let tmux process the pasted text before pressing Enter.
-      // Without this, Enter can arrive before the text is fully rendered.
-      await sleep(300);
-      await tmux("send-keys", "-t", handle.id, "Enter");
+      // Adaptive delay based on message length to ensure paste is fully processed
+      // before sending Enter. Large messages (4KB+) need more time.
+      // Base delay: 300ms + additional time proportional to message length
+      const baseDelay = 300;
+      const lengthFactor = Math.floor(message.length / 1000) * 200; // +200ms per KB
+      const adaptiveDelay = Math.min(baseDelay + lengthFactor, 2000); // Cap at 2s
+      
+      await sleep(adaptiveDelay);
+      
+      // Send Enter with retry logic for large messages
+      // After sending Enter, verify the agent started processing by checking
+      // if the output changed. If not, retry Enter up to 3 times.
+      const maxRetries = message.length > 1000 ? 3 : 1;
+      
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        // For large messages, capture current output before Enter to detect if retry is needed
+        let beforeOutput = "";
+        if (message.length > 1000) {
+          try {
+            beforeOutput = await tmux("capture-pane", "-t", handle.id, "-p", "-S", "-50");
+          } catch {
+            // Ignore capture errors
+          }
+        }
+        
+        await tmux("send-keys", "-t", handle.id, "Enter");
+        
+        // For large messages, verify the agent started processing
+        if (message.length > 1000) {
+          // Wait a moment for the agent to process
+          await sleep(500);
+          
+          try {
+            const afterOutput = await tmux("capture-pane", "-t", handle.id, "-p", "-S", "-50");
+            if (afterOutput !== beforeOutput) {
+              // Output changed, agent is processing - done
+              break;
+            }
+            // Output didn't change, Enter might have been swallowed - retry
+            // Increase delay for next attempt
+            await sleep(300 * (attempt + 1));
+          } catch {
+            // Ignore capture errors, assume success
+            break;
+          }
+        }
+      }
     },
 
     async getOutput(handle: RuntimeHandle, lines = 50): Promise<string> {
