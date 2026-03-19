@@ -3,7 +3,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { isOrchestratorSession } from "@composio/ao-core/types";
-import { SessionDetail } from "@/components/SessionDetail";
+import { SessionDetail, SessionDetailSkeleton } from "@/components/SessionDetail";
+import { ErrorState } from "@/components/Skeleton";
 import { type DashboardSession, getAttentionLevel, type AttentionLevel } from "@/lib/types";
 import { activityIcon } from "@/lib/activity-icons";
 
@@ -126,22 +127,16 @@ export default function SessionPage() {
   }, [fetchSession, fetchZoneCounts]);
 
   if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-[var(--color-bg-base)]">
-        <div className="text-[13px] text-[var(--color-text-tertiary)]">Loading session…</div>
-      </div>
-    );
+    return <SessionDetailSkeleton />;
   }
 
   if (error || !session) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[var(--color-bg-base)]">
-        <div className="text-[13px] text-[var(--color-status-error)]">
-          {error ?? "Session not found"}
-        </div>
-        <a href="/" className="text-[12px] text-[var(--color-accent)] hover:underline">
-          ← Back to dashboard
-        </a>
+      <div className="flex min-h-screen items-center justify-center bg-[var(--color-bg-base)]">
+        <ErrorState
+          message={error ?? "Session not found"}
+          onRetry={error ? fetchSession : undefined}
+        />
       </div>
     );
   }
