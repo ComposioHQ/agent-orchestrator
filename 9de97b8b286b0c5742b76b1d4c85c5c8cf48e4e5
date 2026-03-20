@@ -1,0 +1,35 @@
+packages/web/src/components/Dashboard.tsx
+  125bd304b2229bc0 13,32-33,75,227-230,232,362-395,397,405,408-417,422-428,431-433
+packages/web/src/app/globals.css
+  125bd304b2229bc0 5-10,18-20,27-30,65,68,75-80,82-92,94-106,109-110,113-114,117-120,123,127-130,132,209-219,221-233,236-237,240-242,244-246,250,254-257,286-298,381,386,396,402,406-503,506-584
+packages/web/src/__tests__/components.test.tsx
+  125bd304b2229bc0 399,415,446-451,454,460,464,467
+packages/web/src/lib/types.ts
+  125bd304b2229bc0 39
+packages/web/src/components/AttentionZone.tsx
+  125bd304b2229bc0 3,24,49-52,64,66,68,71,74,76-77,79-81,94-98,108
+packages/web/src/components/SessionCard.tsx
+  125bd304b2229bc0 11,36-85,115-182,184-213,215-293,296-302,328,339,341-344,352,384,386,402,438,465,470,585,596,674,686-689,695,715,732
+packages/web/src/components/SessionDetail.tsx
+  125bd304b2229bc0 5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.15",
+  "base_commit_sha": "9de97b8b286b0c5742b76b1d4c85c5c8cf48e4e5",
+  "prompts": {
+    "125bd304b2229bc0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d0aba-284e-71a0-8168-3f893a1dc376",
+        "model": "unknown"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 707,
+      "total_deletions": 236,
+      "accepted_lines": 652,
+      "overriden_lines": 11
+    }
+  }
+}
