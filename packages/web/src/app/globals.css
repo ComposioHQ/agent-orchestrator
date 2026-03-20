@@ -2,12 +2,12 @@
 
 /* ── Light mode (default) ─────────────────────────────────────────── */
 :root {
-  /* Base surfaces */
-  --color-bg-base:      #f8f9fb;
-  --color-bg-surface:   rgba(255, 255, 255, 0.85);
-  --color-bg-elevated:       rgba(255, 255, 255, 0.95);
-  --color-bg-elevated-hover: rgba(247, 247, 247, 0.95);
-  --color-bg-subtle:         rgba(0, 0, 0, 0.03);
+  /* Base surfaces — Linear-standard light palette */
+  --color-bg-base:      #FFFFFF;
+  --color-bg-surface:   #FFFFFF;
+  --color-bg-elevated:       #FFFFFF;
+  --color-bg-elevated-hover: #F7F7F8;
+  --color-bg-subtle:         #F2F2F2;
 
   /* Backward-compat aliases */
   --color-bg-primary:   var(--color-bg-base);
@@ -15,19 +15,19 @@
   --color-bg-tertiary:  var(--color-bg-elevated);
 
   /* Borders */
-  --color-border-subtle:   rgba(0, 0, 0, 0.06);
-  --color-border-default:  rgba(0, 0, 0, 0.12);
-  --color-border-strong:   rgba(0, 0, 0, 0.20);
+  --color-border-subtle:   #E8E8EC;
+  --color-border-default:  #D9D9DE;
+  --color-border-strong:   #C1C1C6;
 
   /* Backward-compat aliases */
   --color-border-muted:    var(--color-border-subtle);
   --color-border-emphasis:  var(--color-border-strong);
 
   /* Text */
-  --color-text-primary:   #1c2128;
-  --color-text-secondary: #57606a;
-  --color-text-tertiary:  #8b949e;
-  --color-text-muted:     #8b949e;
+  --color-text-primary:   #1B1B1F;
+  --color-text-secondary: #5E5E66;
+  --color-text-tertiary:  #8B8B93;
+  --color-text-muted:     #8B8B93;
   --color-text-inverse:   #ffffff;
 
   /* Interactive accent */
@@ -62,50 +62,74 @@
   --color-tint-neutral:   rgba(0, 0, 0, 0.04);
 
   /* Chip/badge background */
-  --color-chip-bg:        rgba(0, 0, 0, 0.04);
+  --color-chip-bg:        #F2F2F2;
 
   /* Hover overlay */
-  --color-hover-overlay:  rgba(0, 0, 0, 0.03);
+  --color-hover-overlay:  #F7F7F8;
 
   /* Scrollbar */
   --color-scrollbar:        rgba(0, 0, 0, 0.08);
   --color-scrollbar-hover:  rgba(0, 0, 0, 0.15);
   --color-scrollbar-active: rgba(0, 0, 0, 0.25);
 
-  /* Body radial gradient tints */
-  --color-body-gradient-blue:   rgba(9, 105, 218, 0.02);
-  --color-body-gradient-violet: rgba(130, 80, 223, 0.015);
+  /* Body radial gradient tints — none in light mode */
+  --color-body-gradient-blue:   transparent;
+  --color-body-gradient-violet: transparent;
 
-  /* Nav glass */
-  --color-nav-bg: rgba(255, 255, 255, 0.92);
+  /* Nav */
+  --color-nav-bg: #FFFFFF;
 
-  /* Card surfaces */
-  --card-bg:              linear-gradient(175deg, #ffffff 0%, #f6f8fa 100%);
-  --card-merge-bg:        linear-gradient(175deg, #f0fff4 0%, #e6ffed 100%);
-  --card-expanded-bg:     linear-gradient(175deg, #f6f8fa 0%, #f0f3f6 100%);
-  --card-shadow:          0 1px 3px rgba(0,0,0,0.08), 0 3px 8px rgba(0,0,0,0.04);
-  --card-shadow-hover:    0 4px 12px rgba(0,0,0,0.1), 0 8px 24px rgba(0,0,0,0.06);
-  --card-inset:           inset 0 1px 0 rgba(255,255,255,0.8);
+  /* Card surfaces — clean white on light gray */
+  --card-bg:              #FFFFFF;
+  --card-merge-bg:        #f6fbf8;
+  --card-expanded-bg:     #F7F7F8;
+  --card-shadow:          0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --card-shadow-hover:    0 2px 6px rgba(0, 0, 0, 0.1), 0 1px 3px rgba(0, 0, 0, 0.06);
+  --card-inset:           none;
+
+  /* Done card surfaces */
+  --card-done-bg:            #FAFAFA;
+  --card-done-border:        #E8E8EC;
+  
+  --done-pill-exited-bg:     #F2F2F2;
+  --done-pill-exited-color:  #8B8B93;
+  --done-pill-merged-bg:     rgba(26, 127, 55, 0.08);
+  --done-pill-merged-color:  #1a7f37;
+  --done-pill-killed-bg:     rgba(207, 34, 46, 0.06);
+  --done-pill-killed-color:  #cf222e;
+  --done-meta-chip-bg:       #F2F2F2;
+  --done-meta-chip-border:   #E8E8EC;
+  --done-section-border:     #ECECF0;
+  --done-title-color:        #5E5E66;
+  --done-restore-bg:         rgba(9, 105, 218, 0.06);
+  --done-restore-border:     rgba(9, 105, 218, 0.20);
+  --done-restore-hover-bg:   rgba(9, 105, 218, 0.12);
 
   /* Detail card */
-  --detail-card-bg:       linear-gradient(175deg, #ffffff 0%, #f6f8fa 100%);
-  --detail-card-shadow:   0 1px 3px rgba(0,0,0,0.08), inset 0 1px 0 rgba(255,255,255,0.8);
+  --detail-card-bg:       #FFFFFF;
+  --detail-card-shadow:   0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
 
   /* Orchestrator button */
-  --btn-shadow:           0 1px 2px rgba(0,0,0,0.08), 0 3px 8px rgba(0,0,0,0.04);
-  --btn-shadow-hover:     0 2px 6px rgba(0,0,0,0.12), 0 8px 20px rgba(0,0,0,0.08);
+  --btn-shadow:           0 1px 2px rgba(0, 0, 0, 0.06);
+  --btn-shadow-hover:     0 2px 4px rgba(0, 0, 0, 0.1);
   --btn-inset:            none;
+
+  /* Kanban column */
+  --color-column-bg:      #F2F2F2;
+  --color-column-header:  transparent;
 
   /* Alert colors */
   --color-alert-ci:           #6366f1;
+  --color-alert-ci-bg:        #4f46e5;
   --color-alert-ci-unknown:   #9a6700;
   --color-alert-review:       #1a7f37;
   --color-alert-review-bg:    #1a7f37;
-  --color-alert-changes:      #cf222e;
-  --color-alert-conflict:     #cf222e;
-  --color-alert-conflict-bg:  rgba(207, 34, 46, 0.15);
+  --color-alert-changes:      #8250df;
+  --color-alert-changes-bg:   #7c3aed;
+  --color-alert-conflict:     #9a6700;
+  --color-alert-conflict-bg:  #92400e;
   --color-alert-comment:      #bc4c00;
-  --color-alert-comment-bg:   rgba(188, 76, 0, 0.15);
+  --color-alert-comment-bg:   #c2410c;
 
   /* Activity pulse glow */
   --color-activity-pulse:     rgba(9, 105, 218, 0.45);
@@ -182,31 +206,55 @@
   /* Nav glass */
   --color-nav-bg: rgba(13, 17, 23, 0.88);
 
-  /* Card surfaces */
-  --card-bg:              linear-gradient(175deg, rgba(28,36,47,1) 0%, rgba(18,23,31,1) 100%);
-  --card-merge-bg:        linear-gradient(175deg, rgba(16,40,24,1) 0%, rgba(10,26,15,1) 100%);
-  --card-expanded-bg:     linear-gradient(175deg, rgba(32,41,53,1) 0%, rgba(22,28,37,1) 100%);
-  --card-shadow:          0 1px 2px rgba(0,0,0,0.9), 0 3px 10px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.07);
-  --card-shadow-hover:    0 4px 8px rgba(0,0,0,0.85), 0 14px 36px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.1);
-  --card-inset:           inset 0 1px 0 rgba(255,255,255,0.07);
+  /* Card surfaces — flat, no gradients */
+  --card-bg:              #17202d;
+  --card-merge-bg:        #111c15;
+  --card-expanded-bg:     #1c2533;
+  --card-shadow:          none;
+  --card-shadow-hover:    none;
+  --card-inset:           none;
+
+  /* Done card surfaces */
+  --card-done-bg:            rgba(22, 27, 34, 0.5);
+  --card-done-border:        rgba(48, 54, 61, 0.4);
+  
+  --done-pill-exited-bg:     rgba(72, 79, 88, 0.25);
+  --done-pill-exited-color:  #656d76;
+  --done-pill-merged-bg:     rgba(63, 185, 80, 0.12);
+  --done-pill-merged-color:  #3fb950;
+  --done-pill-killed-bg:     rgba(248, 81, 73, 0.10);
+  --done-pill-killed-color:  #f85149;
+  --done-meta-chip-bg:       rgba(72, 79, 88, 0.2);
+  --done-meta-chip-border:   rgba(72, 79, 88, 0.3);
+  --done-section-border:     rgba(48, 54, 61, 0.5);
+  --done-title-color:        #8b949e;
+  --done-restore-bg:         rgba(88, 166, 255, 0.08);
+  --done-restore-border:     rgba(88, 166, 255, 0.20);
+  --done-restore-hover-bg:   rgba(88, 166, 255, 0.15);
 
   /* Detail card */
-  --detail-card-bg:       linear-gradient(175deg, rgba(24,31,40,1) 0%, rgba(17,22,29,1) 100%);
-  --detail-card-shadow:   0 1px 3px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05);
+  --detail-card-bg:       #181f28;
+  --detail-card-shadow:   none;
 
   /* Orchestrator button */
-  --btn-shadow:           0 1px 2px rgba(0,0,0,0.6), 0 3px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.08);
-  --btn-shadow-hover:     0 2px 6px rgba(0,0,0,0.7), 0 8px 20px rgba(0,0,0,0.35), 0 0 20px rgba(88,166,255,0.12), inset 0 1px 0 rgba(255,255,255,0.12);
-  --btn-inset:            inset 0 1px 0 rgba(255,255,255,0.08);
+  --btn-shadow:           none;
+  --btn-shadow-hover:     none;
+  --btn-inset:            none;
+
+  /* Kanban column */
+  --color-column-bg:      rgba(255, 255, 255, 0.02);
+  --color-column-header:  transparent;
 
   /* Alert colors */
   --color-alert-ci:           #8F9EFF;
+  --color-alert-ci-bg:        #414A8B;
   --color-alert-ci-unknown:   #d29922;
   --color-alert-review:       #88FF9E;
   --color-alert-review-bg:    #537D4A;
-  --color-alert-changes:      #f85149;
-  --color-alert-conflict:     #f85149;
-  --color-alert-conflict-bg:  #6E2B2B;
+  --color-alert-changes:      #b87fff;
+  --color-alert-changes-bg:   #6D3FA0;
+  --color-alert-conflict:     #d29922;
+  --color-alert-conflict-bg:  #5C4A1E;
   --color-alert-comment:      #E6A05E;
   --color-alert-comment-bg:   #653A1E;
 
@@ -235,13 +283,23 @@
 
 body {
   font-family: var(--font-sans);
+  background: var(--color-bg-base);
+  color: var(--color-text-primary);
+  min-height: 100vh;
+  letter-spacing: -0.011em;
+}
+
+/* Light mode: solid white, NO gradient */
+html:not(.dark) body {
+  background: #FFFFFF !important;
+}
+
+/* Radial gradient only for dark mode */
+.dark body {
   background:
     radial-gradient(ellipse 70% 40% at 15% 0%, var(--color-body-gradient-blue) 0%, transparent 60%),
     radial-gradient(ellipse 50% 30% at 85% 90%, var(--color-body-gradient-violet) 0%, transparent 60%),
     var(--color-bg-base);
-  color: var(--color-text-primary);
-  min-height: 100vh;
-  letter-spacing: -0.011em;
 }
 
 a {
@@ -320,39 +378,208 @@ a:hover {
   --color-text-tertiary:  #656d76;
 }
 
-/* ── Session cards ────────────────────────────────────────────────────── */
+/* ── Session cards — flat, Linear-style ──────────────────────────────── */
 
 .session-card {
   background: var(--card-bg);
   box-shadow: var(--card-shadow);
-  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+  transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
 }
 
 .dark .session-card {
-  /* Bump dim text colors inside the card — the elevated surface is darker
-     than the transparent bg these values were calibrated for */
   --color-text-secondary: #8b949e;
   --color-text-muted:     #656d76;
   --color-text-tertiary:  #656d76;
 }
 
 .session-card:hover {
-  transform: translateY(-2px);
+  border-color: var(--color-border-strong);
   box-shadow: var(--card-shadow-hover);
 }
 
 .session-card.card-merge-ready {
   background: var(--card-merge-bg);
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--color-status-ready) 22%, transparent),
-    var(--card-shadow),
-    0 0 40px color-mix(in srgb, var(--color-status-ready) 13%, transparent);
+  border-color: color-mix(in srgb, var(--color-status-ready) 20%, transparent);
 }
 
 .session-card.card-merge-ready:hover {
-  transform: translateY(-2px);
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--color-status-ready) 35%, transparent),
-    var(--card-shadow-hover),
-    0 0 60px color-mix(in srgb, var(--color-status-ready) 20%, transparent);
+  border-color: color-mix(in srgb, var(--color-status-ready) 35%, transparent);
+}
+
+/* ── Done cards — compact, de-emphasized ─────────────────────────────── */
+
+.session-card-done {
+  background: var(--card-done-bg);
+  border: 1px solid var(--card-done-border);
+  border-radius: 0;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.session-card-done:hover {
+  border-color: var(--color-border-strong);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+
+.dark .session-card-done:hover {
+  box-shadow: none;
+}
+
+.session-card-done.done-expanded {
+  border-color: var(--color-border-strong);
+}
+
+/* Status pill inside done cards */
+.done-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 99px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.4;
+}
+
+.done-status-pill--exited {
+  background: var(--done-pill-exited-bg);
+  color: var(--done-pill-exited-color);
+}
+
+.done-status-pill--merged {
+  background: var(--done-pill-merged-bg);
+  color: var(--done-pill-merged-color);
+}
+
+.done-status-pill--killed {
+  background: var(--done-pill-killed-bg);
+  color: var(--done-pill-killed-color);
+}
+
+
+/* Meta chip inside done cards */
+.done-meta-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border-radius: 0;
+  background: var(--done-meta-chip-bg);
+  border: 1px solid var(--done-meta-chip-border);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+}
+
+/* Restore button inside done cards */
+.done-restore-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 0;
+  border: 1px solid var(--done-restore-border);
+  background: var(--done-restore-bg);
+  color: var(--color-accent);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.done-restore-btn:hover {
+  background: var(--done-restore-hover-bg);
+  border-color: color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+
+/* Done card expand section */
+.done-expand-section {
+  border-top: 1px solid var(--done-section-border);
+  animation: done-slide-in 0.15s ease-out;
+}
+
+@keyframes done-slide-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Done detail section heading */
+.done-detail-heading {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-tertiary);
+  margin-bottom: 6px;
+}
+
+.done-detail-heading svg {
+  width: 11px;
+  height: 11px;
+  opacity: 0.6;
+}
+
+/* ── Kanban board ────────────────────────────────────────────────────── */
+
+.kanban-board {
+  display: flex;
+  gap: 12px;
+  height: calc(100vh - 120px);
+  overflow-x: auto;
+}
+
+.kanban-column {
+  flex: 1 0 280px;
+  min-width: 280px;
+  max-width: 380px;
+  display: flex;
+  flex-direction: column;
+}
+
+.kanban-column-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.kanban-column-body::-webkit-scrollbar { width: 4px; }
+.kanban-column-body::-webkit-scrollbar-track { background: transparent; }
+.kanban-column-body::-webkit-scrollbar-thumb { background: var(--color-scrollbar); border-radius: 2px; }
+
+/* ── Board / List view toggle ────────────────────────────────────────── */
+
+.view-toggle {
+  display: inline-flex;
+  border: 1px solid var(--color-border-default);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.view-toggle button {
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: color 0.1s, background 0.1s;
+}
+
+.view-toggle button:not(:last-child) {
+  border-right: 1px solid var(--color-border-default);
+}
+
+.view-toggle button.active {
+  color: var(--color-text-primary);
+  background: var(--color-bg-subtle);
+}
+
+.view-toggle button:hover:not(.active) {
+  color: var(--color-text-secondary);
 }

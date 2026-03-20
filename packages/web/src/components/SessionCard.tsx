@@ -8,8 +8,8 @@ import {
   isPRRateLimited,
   TERMINAL_STATUSES,
   TERMINAL_ACTIVITIES,
+  CI_STATUS,
 } from "@/lib/types";
-import { CI_STATUS } from "@composio/ao-core/types";
 import { cn } from "@/lib/cn";
 import { getSessionTitle } from "@/lib/format";
 import { CICheckList } from "./CIBadge";
@@ -32,6 +32,56 @@ const borderColorByLevel: Record<AttentionLevel, string> = {
   working: "border-l-[var(--color-status-working)]",
   done: "border-l-[var(--color-border-default)]",
 };
+
+/**
+ * Determine the status display info for done cards.
+ */
+function getDoneStatusInfo(session: DashboardSession): {
+  label: string;
+  pillClass: string;
+  icon: React.ReactNode;
+} {
+  const activity = session.activity;
+  const status = session.status;
+  const prState = session.pr?.state;
+
+  if (prState === "merged" || status === "merged") {
+    return {
+      label: "merged",
+      pillClass: "done-status-pill--merged",
+      icon: (
+        <svg fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" className="h-3 w-3">
+          <path d="M20 6 9 17l-5-5" />
+        </svg>
+      ),
+    };
+  }
+
+  if (status === "killed" || status === "terminated") {
+    return {
+      label: status,
+      pillClass: "done-status-pill--killed",
+      icon: (
+        <svg fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" className="h-3 w-3">
+          <path d="M18 6 6 18M6 6l12 12" />
+        </svg>
+      ),
+    };
+  }
+
+  // Default: exited / done / cleanup / closed PR
+  const label = activity === "exited" ? "exited" : status;
+  return {
+    label,
+    pillClass: "done-status-pill--exited",
+    icon: (
+      <svg fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" className="h-3 w-3">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M9 12h6" />
+      </svg>
+    ),
+  };
+}
 
 function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: SessionCardProps) {
   const [expanded, setExpanded] = useState(false);
@@ -62,21 +112,207 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
   const isRestorable = isTerminal && session.status !== "merged";
 
   const title = getSessionTitle(session);
+  const isDone = level === "done";
 
+  /* ── Done card variant ──────────────────────────────────────────── */
+  if (isDone) {
+    const statusInfo = getDoneStatusInfo(session);
+
+    return (
+      <div
+        className={cn("session-card-done", expanded && "done-expanded")}
+        onClick={(e) => {
+          if ((e.target as HTMLElement).closest("a, button, textarea")) return;
+          setExpanded(!expanded);
+        }}
+      >
+        {/* Row 1: Status pill + session id + restore */}
+        <div className="flex items-center gap-2 px-3.5 pt-3 pb-1.5">
+          <span className={cn("done-status-pill", statusInfo.pillClass)}>
+            {statusInfo.icon}
+            {statusInfo.label}
+          </span>
+          <span className="font-[var(--font-mono)] text-[10px] tracking-wide text-[var(--color-text-muted)]">
+            {session.id}
+          </span>
+          <div className="flex-1" />
+          {isRestorable && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onRestore?.(session.id);
+              }}
+              className="done-restore-btn"
+            >
+              <svg fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" className="h-3 w-3">
+                <polyline points="1 4 1 10 7 10" />
+                <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+              </svg>
+              restore
+            </button>
+          )}
+        </div>
+
+        {/* Row 2: Title */}
+        <div className="px-3.5 pb-2">
+          <p
+            className="text-[13px] font-semibold leading-snug [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden"
+            style={{ color: "var(--done-title-color)" }}
+          >
+            {title}
+          </p>
+        </div>
+
+        {/* Row 3: Meta chips */}
+        <div className="flex flex-wrap items-center gap-1.5 px-3.5 pb-3">
+          {session.branch && (
+            <span className="done-meta-chip font-[var(--font-mono)]">
+              <svg fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" className="h-2.5 w-2.5 opacity-50">
+                <path d="M6 3v12M18 9a3 3 0 0 1-3 3H9a3 3 0 0 0-3 3" />
+                <circle cx="18" cy="6" r="3" />
+              </svg>
+              {session.branch}
+            </span>
+          )}
+          {pr && (
+            <a
+              href={pr.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="done-meta-chip font-[var(--font-mono)] font-bold text-[var(--color-text-primary)] no-underline underline-offset-2 hover:underline"
+            >
+              #{pr.number}
+            </a>
+          )}
+          {pr && !rateLimited && (
+            <span className="done-meta-chip font-[var(--font-mono)]">
+              <span className="text-[var(--color-status-ready)]">+{pr.additions}</span>
+              {" "}
+              <span className="text-[var(--color-status-error)]">-{pr.deletions}</span>
+              {" "}{getSizeLabel(pr.additions, pr.deletions)}
+            </span>
+          )}
+        </div>
+
+        {/* Expandable detail panel */}
+        {expanded && (
+          <div className="done-expand-section px-3.5 py-3">
+            {session.summary && pr?.title && session.summary !== pr.title && (
+              <div className="mb-3">
+                <div className="done-detail-heading">
+                  <svg fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path d="M4 6h16M4 12h16M4 18h10" />
+                  </svg>
+                  Summary
+                </div>
+                <p className="text-[12px] leading-relaxed text-[var(--color-text-secondary)]">
+                  {session.summary}
+                </p>
+              </div>
+            )}
+
+            {session.issueUrl && (
+              <div className="mb-3">
+                <div className="done-detail-heading">
+                  <svg fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="10" />
+                    <path d="M12 8v4M12 16h.01" />
+                  </svg>
+                  Issue
+                </div>
+                <a
+                  href={session.issueUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-[12px] text-[var(--color-accent)] hover:underline"
+                >
+                  {session.issueLabel || session.issueUrl}
+                  {session.issueTitle && `: ${session.issueTitle}`}
+                </a>
+              </div>
+            )}
+
+            {pr && pr.ciChecks.length > 0 && (
+              <div className="mb-3">
+                <div className="done-detail-heading">
+                  <svg fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path d="M9 12l2 2 4-4" />
+                    <circle cx="12" cy="12" r="10" />
+                  </svg>
+                  CI Checks
+                </div>
+                <CICheckList checks={pr.ciChecks} />
+              </div>
+            )}
+
+            {pr && (
+              <div className="mb-3">
+                <div className="done-detail-heading">
+                  <svg fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65S8.93 17.38 9 18v4" />
+                    <path d="M9 18c-4.51 2-5-2-7-2" />
+                  </svg>
+                  PR
+                </div>
+                <p className="text-[12px] text-[var(--color-text-secondary)]">
+                  <a
+                    href={pr.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="hover:underline"
+                  >
+                    {pr.title}
+                  </a>
+                  <br />
+                  <span className="mt-1 inline-flex items-center gap-2">
+                    <span className="done-meta-chip font-[var(--font-mono)]">
+                      <span className="text-[var(--color-status-ready)]">+{pr.additions}</span>
+                      {" "}
+                      <span className="text-[var(--color-status-error)]">-{pr.deletions}</span>
+                    </span>
+                    <span className="text-[var(--color-text-muted)]">·</span>
+                    <span className="text-[10px] text-[var(--color-text-muted)]">
+                      mergeable: {pr.mergeability.mergeable ? "yes" : "no"}
+                    </span>
+                    <span className="text-[var(--color-text-muted)]">·</span>
+                    <span className="text-[10px] text-[var(--color-text-muted)]">
+                      review: {pr.reviewDecision}
+                    </span>
+                  </span>
+                </p>
+              </div>
+            )}
+
+            {!pr && (
+              <p className="text-[12px] text-[var(--color-text-tertiary)]">
+                No PR associated with this session.
+              </p>
+            )}
+
+            {/* Action buttons — restore already shown in header row */}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  /* ── Standard card (non-done) ────────────────────────────────────── */
   return (
     <div
       className={cn(
         "session-card cursor-pointer border border-l-[3px]",
         "hover:border-[var(--color-border-strong)]",
         borderColorByLevel[level],
+        "rounded-none",
         isReadyToMerge
           ? "card-merge-ready border-[color-mix(in_srgb,var(--color-status-ready)_30%,transparent)]"
           : "border-[var(--color-border-default)]",
         expanded && "border-[var(--color-border-strong)]",
-        pr?.state === "merged" && "opacity-55",
       )}
       style={{
-        borderRadius: 7,
         background:
           expanded && !isReadyToMerge
             ? "var(--card-expanded-bg)"
@@ -89,7 +325,7 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
     >
       {/* Header row: dot + session ID + terminal link */}
       <div className="flex items-center gap-2 px-4 pt-4 pb-2">
-        <ActivityDot activity={session.activity} />
+        {!isReadyToMerge && <ActivityDot activity={session.activity} />}
         <span className="font-[var(--font-mono)] text-[11px] tracking-wide text-[var(--color-text-muted)]">
           {session.id}
         </span>
@@ -100,8 +336,12 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
               e.stopPropagation();
               onRestore?.(session.id);
             }}
-            className="rounded border border-[color-mix(in_srgb,var(--color-accent)_35%,transparent)] px-2 py-0.5 text-[11px] text-[var(--color-accent)] transition-colors hover:bg-[var(--color-tint-blue)]"
+            className="inline-flex items-center gap-1 border border-[color-mix(in_srgb,var(--color-accent)_35%,transparent)] px-2 py-0.5 text-[11px] text-[var(--color-accent)] transition-colors hover:bg-[var(--color-tint-blue)]"
           >
+            <svg fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" className="h-3 w-3">
+              <polyline points="1 4 1 10 7 10" />
+              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+            </svg>
             restore
           </button>
         )}
@@ -109,7 +349,7 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
           <a
             href={`/sessions/${encodeURIComponent(session.id)}`}
             onClick={(e) => e.stopPropagation()}
-            className="inline-flex items-center gap-1 rounded border border-[var(--color-border-default)] bg-[var(--color-bg-subtle)] px-2.5 py-0.5 text-[11px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] hover:no-underline"
+            className="inline-flex items-center gap-1 border border-[var(--color-border-default)] bg-[var(--color-bg-subtle)] px-2 py-0.5 text-[11px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] hover:no-underline"
           >
             <svg
               className="h-3 w-3"
@@ -141,9 +381,9 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
         </p>
       </div>
 
-      {/* Meta row: branch + PR# + diff size */}
+      {/* Meta row: branch + PR# + diff size (simplified for merge-ready) */}
       <div className="flex flex-wrap items-center gap-1.5 px-4 pb-2.5">
-        {session.branch && (
+        {!isReadyToMerge && session.branch && (
           <span className="font-[var(--font-mono)] text-[10px] text-[var(--color-text-muted)]">
             {session.branch}
           </span>
@@ -159,7 +399,7 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
             #{pr.number}
           </a>
         )}
-        {pr && !rateLimited && (
+        {pr && !rateLimited && !isReadyToMerge && (
           <span className="inline-flex items-center rounded-full bg-[var(--color-chip-bg)] px-2 py-0.5 font-[var(--font-mono)] text-[10px] font-semibold text-[var(--color-text-muted)]">
             +{pr.additions} -{pr.deletions}
             {" "}{getSizeLabel(pr.additions, pr.deletions)}
@@ -195,7 +435,7 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
                 e.stopPropagation();
                 onMerge?.(pr.number);
               }}
-              className="inline-flex items-center gap-1.5 rounded-[5px] border-0 bg-[var(--color-status-ready)] px-3 py-1.5 text-[12px] font-semibold text-[var(--color-text-inverse)] transition-[filter,transform] duration-[100ms] hover:-translate-y-px hover:brightness-110"
+              className="inline-flex items-center gap-1.5 rounded-[5px] border border-[color-mix(in_srgb,var(--color-status-ready)_40%,transparent)] bg-[color-mix(in_srgb,var(--color-status-ready)_12%,transparent)] px-3 py-1 text-[12px] font-semibold text-[var(--color-status-ready)] transition-[filter,transform,background] duration-[100ms] hover:bg-[color-mix(in_srgb,var(--color-status-ready)_22%,transparent)] hover:border-[color-mix(in_srgb,var(--color-status-ready)_60%,transparent)]"
             >
               <svg
                 className="h-3.5 w-3.5"
@@ -222,15 +462,15 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
                     rel="noopener noreferrer"
                     onClick={(e) => e.stopPropagation()}
                     className={cn(
-                      "inline-flex items-center gap-1 px-2 py-0.5 font-[var(--font-mono)] text-[11px] font-medium hover:brightness-125 hover:no-underline",
+                      "whitespace-nowrap px-2 py-0.5 font-[var(--font-mono)] text-[11px] font-medium !underline [text-decoration-skip-ink:none] [text-underline-offset:2px] hover:brightness-125",
                       alert.className,
                     )}
                     style={alert.color ? { color: alert.color } : undefined}
                   >
-                    {alert.count !== undefined && <span className="font-bold">{alert.count}</span>}
+                    {alert.count !== undefined && <><span className="font-bold">{alert.count}</span>{" "}</>}
                     {alert.label}
                   </a>
-                  {alert.actionLabel && session.activity !== "active" && (
+                  {alert.actionLabel && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -342,7 +582,7 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
                   e.stopPropagation();
                   onRestore?.(session.id);
                 }}
-                className="rounded border border-[color-mix(in_srgb,var(--color-accent)_35%,transparent)] px-2.5 py-1 text-[11px] text-[var(--color-accent)] transition-colors hover:bg-[var(--color-tint-blue)]"
+                className="border border-[color-mix(in_srgb,var(--color-accent)_35%,transparent)] px-2.5 py-1 text-[11px] text-[var(--color-accent)] transition-colors hover:bg-[var(--color-tint-blue)]"
               >
                 restore session
               </button>
@@ -353,7 +593,7 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
                   e.stopPropagation();
                   onKill?.(session.id);
                 }}
-                className="rounded border border-[color-mix(in_srgb,var(--color-status-error)_35%,transparent)] px-2.5 py-1 text-[11px] text-[var(--color-status-error)] transition-colors hover:bg-[var(--color-tint-red)]"
+                className="border border-[color-mix(in_srgb,var(--color-status-error)_35%,transparent)] px-2.5 py-1 text-[11px] text-[var(--color-status-error)] transition-colors hover:bg-[var(--color-tint-red)]"
               >
                 terminate
               </button>
@@ -431,7 +671,7 @@ function getAlerts(session: DashboardSession): Alert[] {
         actionLabel: "ask to fix",
         actionMessage: `Please fix the failing CI checks on ${pr.url}`,
         actionClassName:
-          "bg-[var(--color-alert-ci)] text-white hover:brightness-110",
+          "bg-[var(--color-alert-ci-bg)] text-white hover:brightness-110",
       });
     }
   }
@@ -443,12 +683,16 @@ function getAlerts(session: DashboardSession): Alert[] {
       className: "",
       color: "var(--color-alert-changes)",
       url: pr.url,
+      actionLabel: "ask to address",
+      actionMessage: `Please address the requested changes on ${pr.url}`,
+      actionClassName:
+        "bg-[var(--color-alert-changes-bg)] text-white hover:brightness-110",
     });
   } else if (!pr.isDraft && (pr.reviewDecision === "pending" || pr.reviewDecision === "none")) {
     alerts.push({
       key: "review",
       label: "needs review",
-      className: "underline",
+      className: "",
       color: "var(--color-alert-review)",
       url: pr.url,
       actionLabel: "ask to post",
@@ -468,7 +712,7 @@ function getAlerts(session: DashboardSession): Alert[] {
       actionLabel: "ask to fix",
       actionMessage: `Please resolve the merge conflicts on ${pr.url} by rebasing on the base branch`,
       actionClassName:
-        "border-[var(--color-alert-conflict)] bg-[var(--color-alert-conflict-bg)] text-[var(--color-alert-conflict)] hover:brightness-110",
+        "bg-[var(--color-alert-conflict-bg)] text-white hover:brightness-110",
     });
   }
 
@@ -485,7 +729,7 @@ function getAlerts(session: DashboardSession): Alert[] {
       actionLabel: "ask to resolve",
       actionMessage: `Please address all unresolved review comments on ${pr.url}`,
       actionClassName:
-        "border-[var(--color-alert-comment)] bg-[var(--color-alert-comment-bg)] text-[var(--color-alert-comment)] hover:brightness-110",
+        "bg-[var(--color-alert-comment-bg)] text-white hover:brightness-110",
     });
   }
 

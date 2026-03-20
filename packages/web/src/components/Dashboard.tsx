@@ -10,8 +10,8 @@ import {
   type DashboardOrchestratorLink,
   getAttentionLevel,
   isPRRateLimited,
+  CI_STATUS,
 } from "@/lib/types";
-import { CI_STATUS } from "@composio/ao-core/types";
 import { AttentionZone } from "./AttentionZone";
 import { PRTableRow } from "./PRStatus";
 import { DynamicFavicon } from "./DynamicFavicon";
@@ -29,7 +29,8 @@ interface DashboardProps {
   orchestrators?: DashboardOrchestratorLink[];
 }
 
-const KANBAN_LEVELS = ["working", "pending", "review", "respond", "merge"] as const;
+const KANBAN_LEVELS = ["merge", "respond", "review", "pending", "working", "done"] as const;
+type ViewMode = "board" | "list";
 const EMPTY_ORCHESTRATORS: DashboardOrchestratorLink[] = [];
 
 function mergeOrchestrators(
@@ -65,6 +66,14 @@ export function Dashboard({
     useState<DashboardOrchestratorLink[]>(orchestratorLinks);
   const [spawningProjectIds, setSpawningProjectIds] = useState<string[]>([]);
   const [spawnErrors, setSpawnErrors] = useState<Record<string, string>>({});
+  const [viewMode, setViewMode] = useState<ViewMode>("board");
+
+  useEffect(() => {
+    const stored = localStorage.getItem("ao-view-mode") as ViewMode | null;
+    if (stored === "board" || stored === "list") {
+      setViewMode(stored);
+    }
+  }, []);
   const showSidebar = projects.length > 1;
   const allProjectsView = showSidebar && projectId === undefined;
 
@@ -215,7 +224,12 @@ export function Dashboard({
     }
   };
 
-  const hasKanbanSessions = KANBAN_LEVELS.some((level) => grouped[level].length > 0);
+  const hasAnySessions = sessions.length > 0;
+
+  const handleViewChange = useCallback((mode: ViewMode) => {
+    setViewMode(mode);
+    localStorage.setItem("ao-view-mode", mode);
+  }, []);
 
   const anyRateLimited = useMemo(
     () => sessions.some((session) => session.pr && isPRRateLimited(session.pr)),
@@ -345,37 +359,78 @@ export function Dashboard({
           />
         )}
 
-        {!allProjectsView && hasKanbanSessions && (
-          <div className="mb-8 flex gap-4 overflow-x-auto pb-2">
-            {KANBAN_LEVELS.map((level) =>
-              grouped[level].length > 0 ? (
-                <div key={level} className="min-w-[200px] flex-1">
+        {!allProjectsView && hasAnySessions && (
+          <>
+            {/* Board / List toggle */}
+            <div className="mb-4 flex items-center justify-between">
+              <div />
+              <div className="view-toggle">
+                <button
+                  className={viewMode === "board" ? "active" : ""}
+                  onClick={() => handleViewChange("board")}
+                >
+                  <svg className="mr-1 inline-block h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <rect x="3" y="3" width="7" height="7" rx="1" />
+                    <rect x="14" y="3" width="7" height="7" rx="1" />
+                    <rect x="3" y="14" width="7" height="7" rx="1" />
+                    <rect x="14" y="14" width="7" height="7" rx="1" />
+                  </svg>
+                  Board
+                </button>
+                <button
+                  className={viewMode === "list" ? "active" : ""}
+                  onClick={() => handleViewChange("list")}
+                >
+                  <svg className="mr-1 inline-block h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+                  </svg>
+                  List
+                </button>
+              </div>
+            </div>
+
+            {/* Kanban board view */}
+            {viewMode === "board" && (
+              <div className="kanban-board">
+                {KANBAN_LEVELS.map((level) => (
                   <AttentionZone
+                    key={level}
                     level={level}
                     sessions={grouped[level]}
-                    variant="column"
                     onSend={handleSend}
                     onKill={handleKill}
                     onMerge={handleMerge}
                     onRestore={handleRestore}
                   />
-                </div>
-              ) : null,
+                ))}
+              </div>
             )}
-          </div>
+
+            {/* List view — stacked zones */}
+            {viewMode === "list" && (
+              <div>
+                {KANBAN_LEVELS.map((level) =>
+                  grouped[level].length > 0 ? (
+                    <div key={level} className="mb-7">
+                      <AttentionZone
+                        level={level}
+                        sessions={grouped[level]}
+                        onSend={handleSend}
+                        onKill={handleKill}
+                        onMerge={handleMerge}
+                        onRestore={handleRestore}
+                      />
+                    </div>
+                  ) : null,
+                )}
+              </div>
+            )}
+          </>
         )}
 
-        {!allProjectsView && grouped.done.length > 0 && (
-          <div className="mb-8">
-            <AttentionZone
-              level="done"
-              sessions={grouped.done}
-              variant="grid"
-              onSend={handleSend}
-              onKill={handleKill}
-              onMerge={handleMerge}
-              onRestore={handleRestore}
-            />
+        {!allProjectsView && !hasAnySessions && (
+          <div className="flex h-60 items-center justify-center">
+            <span className="text-[13px] text-[var(--color-text-muted)]">No sessions</span>
           </div>
         )}
 

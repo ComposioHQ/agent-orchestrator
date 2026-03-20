@@ -1,13 +1,12 @@
 "use client";
 
-import { memo, useState } from "react";
+import { memo } from "react";
 import type { DashboardSession, AttentionLevel } from "@/lib/types";
 import { SessionCard } from "./SessionCard";
 
 interface AttentionZoneProps {
   level: AttentionLevel;
   sessions: DashboardSession[];
-  variant?: "column" | "grid";
   onSend?: (sessionId: string, message: string) => void;
   onKill?: (sessionId: string) => void;
   onMerge?: (prNumber: number) => void;
@@ -19,87 +18,67 @@ const zoneConfig: Record<
   {
     label: string;
     color: string;
-    defaultCollapsed: boolean;
   }
 > = {
   merge: {
-    label: "Merge",
+    label: "Merge Ready",
     color: "var(--color-status-ready)",
-    defaultCollapsed: false,
   },
   respond: {
     label: "Respond",
     color: "var(--color-status-error)",
-    defaultCollapsed: false,
   },
   review: {
     label: "Review",
     color: "var(--color-accent-orange)",
-    defaultCollapsed: false,
   },
   pending: {
     label: "Pending",
     color: "var(--color-status-attention)",
-    defaultCollapsed: false,
   },
   working: {
     label: "Working",
     color: "var(--color-status-working)",
-    defaultCollapsed: false,
   },
   done: {
     label: "Done",
     color: "var(--color-text-tertiary)",
-    defaultCollapsed: true,
   },
 };
 
+/**
+ * Kanban column — always renders (even when empty) to preserve
+ * the board shape. Cards scroll independently within each column.
+ */
 function AttentionZoneView({
   level,
   sessions,
-  variant = "grid",
   onSend,
   onKill,
   onMerge,
   onRestore,
 }: AttentionZoneProps) {
   const config = zoneConfig[level];
-  const [collapsed, setCollapsed] = useState(config.defaultCollapsed);
 
-  if (sessions.length === 0) return null;
+  return (
+    <div className="kanban-column">
+      {/* Column header */}
+      <div className="mb-2 flex items-center gap-2 px-1 py-1.5">
+        <div
+          className="h-2 w-2 shrink-0 rounded-full"
+          style={{ background: config.color }}
+        />
+        <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--color-text-secondary)]">
+          {config.label}
+        </span>
+        <span className="rounded-full bg-[var(--color-bg-subtle)] px-1.5 py-0 text-[11px] font-medium tabular-nums text-[var(--color-text-muted)]">
+          {sessions.length}
+        </span>
+      </div>
 
-  if (variant === "column") {
-    return (
-      <div className="flex flex-col">
-        {/* Column header */}
-        <button
-          className="mb-2.5 flex items-center gap-2 py-0.5 text-left"
-          onClick={() => setCollapsed(!collapsed)}
-        >
-          <div className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: config.color }} />
-          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-tertiary)]">
-            {config.label}
-          </span>
-          <span
-            className="rounded-full px-1.5 py-0 text-[10px] font-medium tabular-nums text-[var(--color-text-muted)]"
-            style={{ background: "var(--color-bg-subtle)" }}
-          >
-            {sessions.length}
-          </span>
-          <div className="flex-1" />
-          <svg
-            className="h-3 w-3 shrink-0 text-[var(--color-text-muted)] transition-transform duration-150"
-            style={{ transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)" }}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            viewBox="0 0 24 24"
-          >
-            <path d="M19 9l-7 7-7-7" />
-          </svg>
-        </button>
-
-        {!collapsed && (
+      {/* Column body — scrollable */}
+      <div className="kanban-column-body">
+        {sessions.length > 0 ? (
           <div className="flex flex-col gap-2">
             {sessions.map((session) => (
               <SessionCard
@@ -112,65 +91,24 @@ function AttentionZoneView({
               />
             ))}
           </div>
+        ) : (
+          <div className="flex h-20 items-center justify-center rounded-[6px] border border-dashed border-[var(--color-border-subtle)]">
+            <span className="text-[11px] text-[var(--color-text-muted)]">
+              No sessions
+            </span>
+          </div>
         )}
       </div>
-    );
-  }
-
-  return (
-    <div className="mb-7">
-      {/* Zone header: [●] LABEL ──────────────────────────────── count [▾] */}
-      <button
-        className="mb-3 flex w-full items-center gap-2.5 py-0.5 text-left"
-        onClick={() => setCollapsed(!collapsed)}
-      >
-        {/* Semantic dot — only zone-colored element */}
-        <div className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: config.color }} />
-        {/* Label — neutral, not zone-colored */}
-        <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--color-text-tertiary)]">
-          {config.label}
-        </span>
-        {/* Divider */}
-        <div className="h-px flex-1 bg-[var(--color-border-subtle)]" />
-        {/* Count — plain */}
-        <span className="tabular-nums text-[11px] text-[var(--color-text-muted)]">
-          {sessions.length}
-        </span>
-        {/* Collapse chevron */}
-        <svg
-          className="h-3 w-3 shrink-0 text-[var(--color-text-muted)] transition-transform duration-150"
-          style={{ transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)" }}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          viewBox="0 0 24 24"
-        >
-          <path d="M19 9l-7 7-7-7" />
-        </svg>
-      </button>
-
-      {!collapsed && (
-        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
-          {sessions.map((session) => (
-            <SessionCard
-              key={session.id}
-              session={session}
-              onSend={onSend}
-              onKill={onKill}
-              onMerge={onMerge}
-              onRestore={onRestore}
-            />
-          ))}
-        </div>
-      )}
     </div>
   );
 }
 
-function areAttentionZonePropsEqual(prev: AttentionZoneProps, next: AttentionZoneProps): boolean {
+function areAttentionZonePropsEqual(
+  prev: AttentionZoneProps,
+  next: AttentionZoneProps,
+): boolean {
   return (
     prev.level === next.level &&
-    prev.variant === next.variant &&
     prev.onSend === next.onSend &&
     prev.onKill === next.onKill &&
     prev.onMerge === next.onMerge &&

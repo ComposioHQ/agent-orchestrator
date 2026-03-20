@@ -36,7 +36,7 @@ import {
 } from "@composio/ao-core/types";
 
 // Re-export for use in client components
-export { TERMINAL_STATUSES, TERMINAL_ACTIVITIES, NON_RESTORABLE_STATUSES };
+export { ACTIVITY_STATE, SESSION_STATUS, CI_STATUS, TERMINAL_STATUSES, TERMINAL_ACTIVITIES, NON_RESTORABLE_STATUSES };
 
 /**
  * Attention zone priority level, ordered by human action urgency:
