@@ -1370,6 +1370,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           ...(reusableOpenCodeSessionId ? { opencodeSessionId: reusableOpenCodeSessionId } : {}),
         },
       },
+      prompt: orchestratorConfig.prompt,
       permissions: "permissionless" as const,
       model: selection.model,
       systemPromptFile,
@@ -1463,6 +1464,15 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         /* best effort */
       }
       throw err;
+    }
+
+    if (plugins.agent.promptDelivery === "post-launch" && agentLaunchConfig.prompt) {
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 5_000));
+        await plugins.runtime.sendMessage(handle, agentLaunchConfig.prompt);
+      } catch {
+        // Non-fatal: the orchestrator is running; user can retry with `ao send`.
+      }
     }
 
     return session;

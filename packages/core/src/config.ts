@@ -390,6 +390,19 @@ function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
  * 4. Home directory locations
  */
 export function findConfigFile(startDir?: string): string | null {
+  const configFiles = ["agent-orchestrator.yaml", "agent-orchestrator.yml"];
+
+  const findInDir = (dir: string): string | null => {
+    for (const filename of configFiles) {
+      const configPath = resolve(dir, filename);
+      if (existsSync(configPath)) {
+        return configPath;
+      }
+    }
+
+    return null;
+  };
+
   // 1. Check environment variable override
   if (process.env["AO_CONFIG_PATH"]) {
     const envPath = resolve(process.env["AO_CONFIG_PATH"]);
@@ -400,13 +413,9 @@ export function findConfigFile(startDir?: string): string | null {
 
   // 2. Search up directory tree from CWD (like git)
   const searchUpTree = (dir: string): string | null => {
-    const configFiles = ["agent-orchestrator.yaml", "agent-orchestrator.yml"];
-
-    for (const filename of configFiles) {
-      const configPath = resolve(dir, filename);
-      if (existsSync(configPath)) {
-        return configPath;
-      }
+    const found = findInDir(dir);
+    if (found) {
+      return found;
     }
 
     const parent = resolve(dir, "..");
@@ -426,16 +435,22 @@ export function findConfigFile(startDir?: string): string | null {
 
   // 3. Check explicit startDir if provided
   if (startDir) {
-    const files = ["agent-orchestrator.yaml", "agent-orchestrator.yml"];
-    for (const filename of files) {
-      const path = resolve(startDir, filename);
-      if (existsSync(path)) {
-        return path;
-      }
+    const found = findInDir(startDir);
+    if (found) {
+      return found;
     }
   }
 
-  // 4. Check home directory locations
+  // 4. Check AO repo root when CLI/runtime provides it
+  if (process.env["AO_REPO_ROOT"]) {
+    const repoRoot = resolve(process.env["AO_REPO_ROOT"]);
+    const found = findInDir(repoRoot);
+    if (found) {
+      return found;
+    }
+  }
+
+  // 5. Check home directory locations
   const homePaths = [
     resolve(homedir(), ".agent-orchestrator.yaml"),
     resolve(homedir(), ".agent-orchestrator.yml"),

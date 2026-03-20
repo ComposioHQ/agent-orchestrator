@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { registerInit } from "./commands/init.js";
 import { registerStatus } from "./commands/status.js";
@@ -15,6 +17,12 @@ import { registerVerify } from "./commands/verify.js";
 import { registerDoctor } from "./commands/doctor.js";
 import { registerUpdate } from "./commands/update.js";
 import { getConfigInstruction } from "./lib/config-instruction.js";
+
+const DEFAULT_AO_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../../");
+
+if (!process.env["AO_REPO_ROOT"]) {
+  process.env["AO_REPO_ROOT"] = DEFAULT_AO_REPO_ROOT;
+}
 
 const program = new Command();
 

@@ -116,6 +116,9 @@ function basicPRToDashboard(pr: PRInfo): DashboardPR {
   };
 }
 
+const GLOBAL_RATE_LIMIT_BACKOFF_MS = 5 * 60_000;
+let globalPRRateLimitBackoffUntil = 0;
+
 /**
  * Enrich a DashboardSession's PR with live data from the SCM plugin.
  * Uses cache to reduce API calls and handles rate limit errors gracefully.
@@ -149,6 +152,14 @@ export async function enrichSessionPR(
   // Cache miss — if cacheOnly, signal caller to refresh in background
   if (opts?.cacheOnly) return false;
 
+  // Global backoff after GitHub rate-limit bursts (avoid hammering all PRs repeatedly)
+  if (Date.now() < globalPRRateLimitBackoffUntil) {
+    if (!dashboard.pr.mergeability.blockers.includes("API rate limited or unavailable")) {
+      dashboard.pr.mergeability.blockers.push("API rate limited or unavailable");
+    }
+    return true;
+  }
+
   // Fetch from SCM
   const results = await Promise.allSettled([
     scm.getPRSummary
@@ -174,9 +185,16 @@ export async function enrichSessionPR(
       (r) => r.status === "rejected",
     ) as PromiseRejectedResult[];
     const firstError = rejectedResults[0]?.reason;
+    const firstErrorText = String(firstError ?? "");
+    const looksRateLimit = /rate\s*limit|secondary rate|retry-after/i.test(firstErrorText);
+
+    if (looksRateLimit) {
+      globalPRRateLimitBackoffUntil = Date.now() + GLOBAL_RATE_LIMIT_BACKOFF_MS;
+    }
+
     console.warn(
       `[enrichSessionPR] ${failedCount}/${results.length} API calls failed for PR #${pr.number} (rate limited or unavailable):`,
-      String(firstError),
+      firstErrorText,
     );
     // Don't return early — apply any successful results below
   }

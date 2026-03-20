@@ -1,7 +1,12 @@
 import { spawn } from "node:child_process";
 import chalk from "chalk";
 import type { Command } from "commander";
-import { loadConfig, SessionNotRestorableError, WorkspaceMissingError } from "@composio/ao-core";
+import {
+  isTerminalSession,
+  loadConfig,
+  SessionNotRestorableError,
+  WorkspaceMissingError,
+} from "@composio/ao-core";
 import { git, getTmuxActivity, tmux } from "../lib/shell.js";
 import { formatAge } from "../lib/format.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
@@ -14,9 +19,10 @@ export function registerSession(program: Command): void {
 
   session
     .command("ls")
-    .description("List all sessions")
+    .description("List sessions")
     .option("-p, --project <id>", "Filter by project ID")
-    .action(async (opts: { project?: string }) => {
+    .option("--all", "Include terminal sessions")
+    .action(async (opts: { project?: string; all?: boolean }) => {
       const config = loadConfig();
       if (opts.project && !config.projects[opts.project]) {
         console.error(chalk.red(`Unknown project: ${opts.project}`));
@@ -25,10 +31,11 @@ export function registerSession(program: Command): void {
 
       const sm = await getSessionManager(config);
       const sessions = await sm.list(opts.project);
+      const visibleSessions = opts.all ? sessions : sessions.filter((s) => !isTerminalSession(s));
 
       // Group sessions by project
       const byProject = new Map<string, typeof sessions>();
-      for (const s of sessions) {
+      for (const s of visibleSessions) {
         const list = byProject.get(s.projectId) ?? [];
         list.push(s);
         byProject.set(s.projectId, list);

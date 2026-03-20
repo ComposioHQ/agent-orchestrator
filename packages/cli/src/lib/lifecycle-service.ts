@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import {
   closeSync,
   existsSync,
@@ -72,6 +72,68 @@ function readPid(pidFile: string): number | null {
   }
 }
 
+function tokenizeCommandLine(commandLine: string): string[] {
+  return commandLine
+    .replace(/\0/g, " ")
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+}
+
+function matchesLifecycleWorkerTokens(tokens: string[], projectId: string): boolean {
+  const workerIndex = tokens.findIndex((token) => token === "lifecycle-worker");
+  if (workerIndex === -1) return false;
+  return tokens[workerIndex + 1] === projectId;
+}
+
+function inspectLifecycleWorkerOwnership(pid: number, projectId: string): boolean | null {
+  const procCmdlinePath = `/proc/${pid}/cmdline`;
+  if (existsSync(procCmdlinePath)) {
+    try {
+      const cmdline = readFileSync(procCmdlinePath, "utf-8");
+      return matchesLifecycleWorkerTokens(tokenizeCommandLine(cmdline), projectId);
+    } catch {
+      // Fall through to alternate inspection methods.
+    }
+  }
+
+  const procEnvironPath = `/proc/${pid}/environ`;
+  if (existsSync(procEnvironPath)) {
+    try {
+      const environ = readFileSync(procEnvironPath, "utf-8");
+      if (environ.includes(`AO_LIFECYCLE_PROJECT=${projectId}`)) {
+        return true;
+      }
+    } catch {
+      // Fall through to alternate inspection methods.
+    }
+  }
+
+  try {
+    const command = execFileSync("ps", ["-p", String(pid), "-o", "command="], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const trimmed = command.trim();
+    if (trimmed.length > 0) {
+      return matchesLifecycleWorkerTokens(tokenizeCommandLine(trimmed), projectId);
+    }
+  } catch {
+    // No portable inspection path available.
+  }
+
+  return null;
+}
+
+function isLifecycleWorkerProcess(pid: number, projectId: string): boolean {
+  if (!isProcessRunning(pid)) {
+    return false;
+  }
+
+  const ownership = inspectLifecycleWorkerOwnership(pid, projectId);
+  return ownership ?? true;
+}
+
 export function writeLifecycleWorkerPid(
   config: OrchestratorConfig,
   projectId: string,
@@ -112,7 +174,7 @@ export function getLifecycleWorkerStatus(
   const logFile = getLifecycleLogFile(config, projectId);
   const pid = readPid(pidFile);
 
-  if (pid !== null && isProcessRunning(pid)) {
+  if (pid !== null && isLifecycleWorkerProcess(pid, projectId)) {
     return { running: true, pid, pidFile, logFile };
   }
 

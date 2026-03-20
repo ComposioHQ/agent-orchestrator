@@ -3847,6 +3847,53 @@ describe("spawnOrchestrator", () => {
     expect(readFileSync(promptFile, "utf-8")).toBe("You are the orchestrator.");
   });
 
+  it("passes the initial orchestrator prompt to the agent launch config", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    await sm.spawnOrchestrator({
+      projectId: "my-app",
+      prompt: "Check ready issues and spawn workers.",
+    });
+
+    expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "app-orchestrator",
+        prompt: "Check ready issues and spawn workers.",
+      }),
+    );
+  });
+
+  it("sends the initial orchestrator prompt post-launch when the agent requires it", async () => {
+    vi.useFakeTimers();
+    const postLaunchAgent = {
+      ...mockAgent,
+      promptDelivery: "post-launch" as const,
+    };
+    const registryWithPostLaunch: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return postLaunchAgent;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+
+    const sm = createSessionManager({ config, registry: registryWithPostLaunch });
+    const spawnPromise = sm.spawnOrchestrator({
+      projectId: "my-app",
+      prompt: "Check ready issues and spawn workers.",
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await spawnPromise;
+
+    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: expect.any(String) }),
+      "Check ready issues and spawn workers.",
+    );
+    vi.useRealTimers();
+  });
+
   it("throws for unknown project", async () => {
     const sm = createSessionManager({ config, registry: mockRegistry });
 

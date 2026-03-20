@@ -64,6 +64,21 @@ describe("Config Loading", () => {
       expect(found).toBe(customConfig);
     });
 
+    it("should fall back to AO_REPO_ROOT when cwd tree has no config", () => {
+      const repoRoot = join(testDir, "repo-root");
+      mkdirSync(repoRoot);
+      const repoConfig = join(repoRoot, "agent-orchestrator.yaml");
+      writeFileSync(repoConfig, "projects: {}");
+
+      const otherDir = join(testDir, "elsewhere");
+      mkdirSync(otherDir);
+      process.chdir(otherDir);
+      process.env["AO_REPO_ROOT"] = repoRoot;
+
+      const found = findConfigFile();
+      expect(realpathSync(found!)).toBe(realpathSync(repoConfig));
+    });
+
     it("should return null if no config found", () => {
       const found = findConfigFile();
       expect(found).toBeNull();

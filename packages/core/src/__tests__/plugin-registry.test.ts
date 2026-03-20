@@ -279,11 +279,65 @@ describe("loadBuiltins", () => {
       throw new Error(`Not found: ${pkg}`);
     });
 
-    expect(fakeOpenClaw.create).toHaveBeenCalledWith(undefined);
+    expect(fakeOpenClaw.create).not.toHaveBeenCalled();
     expect(fakeWebhook.create).toHaveBeenCalledWith({
       url: "http://127.0.0.1:8787/hook",
       retries: 3,
     });
+  });
+
+  it("skips unused notifier builtins so unconfigured channels stay quiet", async () => {
+    const registry = createPluginRegistry();
+    const fakeOpenClaw = makePlugin("notifier", "openclaw");
+    const fakeSlack = makePlugin("notifier", "slack");
+    const fakeWebhook = makePlugin("notifier", "webhook");
+    const cfg = makeOrchestratorConfig({
+      defaults: { notifiers: ["openclaw"] } as OrchestratorConfig["defaults"],
+      notifiers: {
+        openclaw: {
+          plugin: "openclaw",
+          url: "http://127.0.0.1:18789/hooks/agent",
+        },
+      },
+      notificationRouting: {
+        urgent: ["openclaw"],
+        action: ["openclaw"],
+        warning: ["openclaw"],
+        info: ["openclaw"],
+      },
+    });
+
+    await registry.loadBuiltins(cfg, async (pkg: string) => {
+      if (pkg === "@composio/ao-plugin-notifier-openclaw") return fakeOpenClaw;
+      if (pkg === "@composio/ao-plugin-notifier-slack") return fakeSlack;
+      if (pkg === "@composio/ao-plugin-notifier-webhook") return fakeWebhook;
+      throw new Error(`Not found: ${pkg}`);
+    });
+
+    expect(fakeOpenClaw.create).toHaveBeenCalledTimes(1);
+    expect(fakeSlack.create).not.toHaveBeenCalled();
+    expect(fakeWebhook.create).not.toHaveBeenCalled();
+  });
+
+  it("still loads routed notifier even without explicit config", async () => {
+    const registry = createPluginRegistry();
+    const fakeSlack = makePlugin("notifier", "slack");
+    const cfg = makeOrchestratorConfig({
+      defaults: { notifiers: ["slack"] } as OrchestratorConfig["defaults"],
+      notificationRouting: {
+        urgent: ["slack"],
+        action: ["slack"],
+        warning: ["slack"],
+        info: ["slack"],
+      },
+    });
+
+    await registry.loadBuiltins(cfg, async (pkg: string) => {
+      if (pkg === "@composio/ao-plugin-notifier-slack") return fakeSlack;
+      throw new Error(`Not found: ${pkg}`);
+    });
+
+    expect(fakeSlack.create).toHaveBeenCalledWith(undefined);
   });
 });
 

@@ -49,6 +49,13 @@ describe("notifier-slack", () => {
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("No webhookUrl configured"));
     });
 
+    it("accepts legacy config.webhook alias without warning", () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const notifier = create({ webhook: "https://hooks.slack.com/test" });
+      expect(notifier.name).toBe("slack");
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
     it("throws on invalid URL scheme", () => {
       expect(() => create({ webhookUrl: "file:///etc/passwd" })).toThrow("must be http(s)");
     });
