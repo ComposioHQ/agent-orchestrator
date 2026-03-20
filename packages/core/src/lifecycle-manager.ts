@@ -802,6 +802,28 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
 
     await maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction);
+
+    // Check for merge conflicts on open PRs and trigger the merge-conflicts reaction.
+    // This runs independently of status transitions because "pr_open" doesn't change
+    // when conflicts appear — we need to actively detect them.
+    if (session.pr && newStatus === "pr_open") {
+      const project = config.projects[session.projectId];
+      const scm = project?.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+      if (scm) {
+        try {
+          const mergeReady = await scm.getMergeability(session.pr);
+          if (!mergeReady.noConflicts) {
+            const reactionKey = "merge-conflicts";
+            const reactionConfig = getReactionConfigForSession(session, reactionKey);
+            if (reactionConfig && reactionConfig.auto !== false) {
+              await executeReaction(session.id, session.projectId, reactionKey, reactionConfig);
+            }
+          }
+        } catch {
+          // Merge conflict detection is best-effort; don't block the poll cycle
+        }
+      }
+    }
   }
 
   /** Run one polling cycle across all sessions. */
