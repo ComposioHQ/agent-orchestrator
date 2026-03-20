@@ -24,6 +24,8 @@ const {
   mockSpawn,
   mockEnsureLifecycleWorker,
   mockStopLifecycleWorker,
+  mockIsAlreadyRunning,
+  mockIsHumanCaller,
 } = vi.hoisted(() => ({
   mockExec: vi.fn(),
   mockExecSilent: vi.fn(),
@@ -42,6 +44,8 @@ const {
   mockSpawn: vi.fn(),
   mockEnsureLifecycleWorker: vi.fn(),
   mockStopLifecycleWorker: vi.fn(),
+  mockIsAlreadyRunning: vi.fn().mockResolvedValue(null),
+  mockIsHumanCaller: vi.fn().mockReturnValue(true),
 }));
 
 vi.mock("../../src/lib/shell.js", () => ({
@@ -119,13 +123,13 @@ vi.mock("../../src/lib/preflight.js", () => ({
 vi.mock("../../src/lib/running-state.js", () => ({
   register: vi.fn(),
   unregister: vi.fn(),
-  isAlreadyRunning: vi.fn().mockReturnValue(null),
+  isAlreadyRunning: (...args: unknown[]) => mockIsAlreadyRunning(...args),
   getRunning: vi.fn().mockReturnValue(null),
   waitForExit: vi.fn().mockReturnValue(true),
 }));
 
 vi.mock("../../src/lib/caller-context.js", () => ({
-  isHumanCaller: vi.fn().mockReturnValue(true),
+  isHumanCaller: (...args: unknown[]) => mockIsHumanCaller(...args),
   getCallerType: vi.fn().mockReturnValue("human"),
 }));
 
@@ -206,6 +210,10 @@ beforeEach(() => {
   });
   mockStopLifecycleWorker.mockReset();
   mockStopLifecycleWorker.mockResolvedValue(true);
+  mockIsAlreadyRunning.mockReset();
+  mockIsAlreadyRunning.mockResolvedValue(null);
+  mockIsHumanCaller.mockReset();
+  mockIsHumanCaller.mockReturnValue(true);
   mockSpawn.mockClear();
 });
 
@@ -361,6 +369,41 @@ describe("start command — project resolution", () => {
 // ---------------------------------------------------------------------------
 // URL detection — `ao start <url>` triggers handleUrlStart
 // ---------------------------------------------------------------------------
+
+describe("start command — already running recovery", () => {
+  it("reuses the existing dashboard for non-human callers and still starts the requested project", async () => {
+    mockConfigRef.current = makeConfig({
+      frontend: makeProject({ name: "Frontend", sessionPrefix: "fe" }),
+      backend: makeProject({ name: "Backend", sessionPrefix: "api" }),
+    });
+    mockIsHumanCaller.mockReturnValue(false);
+    mockIsAlreadyRunning.mockResolvedValue({
+      pid: 4242,
+      port: 3000,
+      startedAt: "2026-03-20T20:00:00.000Z",
+      projects: ["frontend", "backend"],
+    });
+    mockSessionManager.spawnOrchestrator.mockResolvedValue({ id: "api-orchestrator" });
+
+    await program.parseAsync(["node", "test", "start", "backend"]);
+
+    expect(mockEnsureLifecycleWorker).toHaveBeenCalledWith(
+      expect.objectContaining({ configPath: expect.any(String) }),
+      "backend",
+    );
+    expect(mockSessionManager.spawnOrchestrator).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: "backend" }),
+    );
+    expect(mockSpawn).not.toHaveBeenCalled();
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("AO is already running.");
+    expect(output).toContain("Reused existing dashboard on port 3000.");
+  });
+});
 
 describe("start command — URL argument", () => {
   it("reuses existing clone and generates config", async () => {

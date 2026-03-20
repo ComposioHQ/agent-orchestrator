@@ -832,13 +832,20 @@ export function registerStart(program: Command): void {
                 process.exit(0);
               }
             } else {
-              // Agent/non-TTY caller — print info and exit
+              // Agent/non-TTY caller — reuse the existing dashboard and ensure
+              // the requested project's lifecycle/orchestrator are actually up.
               console.log(`AO is already running.`);
               console.log(`Dashboard: http://localhost:${running.port}`);
               console.log(`PID: ${running.pid}`);
               console.log(`Projects: ${running.projects.join(", ")}`);
-              console.log(`To restart: ao stop && ao start`);
-              process.exit(0);
+
+              await runStartup(config, projectId, project, {
+                ...opts,
+                dashboard: false,
+              });
+
+              console.log(`Reused existing dashboard on port ${running.port}.`);
+              return;
             }
           }
 
