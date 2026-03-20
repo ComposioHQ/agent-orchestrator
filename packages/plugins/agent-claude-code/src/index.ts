@@ -15,7 +15,6 @@ import {
   type WorkspaceHooksConfig,
 } from "@composio/ao-core";
 import {
-  createAgentPlugin,
   resetPsCache as _resetPsCache,
 } from "@composio/ao-plugin-agent-base";
 import { execFile, execFileSync } from "node:child_process";
@@ -108,17 +107,19 @@ update_metadata_key() {
   # Create temp file
   local temp_file="\${metadata_file}.tmp"
 
-  # Escape special sed characters in value (& | / \\)
-  local escaped_value=$(echo "$value" | sed 's/[&|\\/]/\\\\&/g')
+  # Sanitize: strip newlines to prevent metadata format corruption (key=value per line)
+  local safe_value=$(printf '%s' "$value" | tr -d $'\\n')
+  # Escape for sed replacement only (& | \\ — we use | as delimiter so / not needed)
+  local escaped_value=$(printf '%s' "$safe_value" | sed 's/[&|\\\\]/\\\\&/g')
 
   # Check if key already exists
   if grep -q "^$key=" "$metadata_file" 2>/dev/null; then
-    # Update existing key
+    # Update existing key (sed needs escaped value)
     sed "s|^$key=.*|$key=$escaped_value|" "$metadata_file" > "$temp_file"
   else
-    # Append new key
+    # Append new key (echo writes literally — use safe_value, not escaped)
     cp "$metadata_file" "$temp_file"
-    echo "$key=$value" >> "$temp_file"
+    echo "$key=$safe_value" >> "$temp_file"
   fi
 
   # Atomic replace

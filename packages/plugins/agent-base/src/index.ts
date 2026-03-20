@@ -174,26 +174,28 @@ update_metadata_key() {
   local value="$2"
 
   # Create temp file with PID for atomic updates under concurrency
-  local temp_file="\${metadata_file}.tmp.\$$"
+  local temp_file="\${metadata_file}.tmp.$$"
 
-  # Escape special sed characters in value (& | / \\)
-  local escaped_value=$(echo "$value" | sed 's/[&|\\/]/\\\\&/g')
+  # Strip newlines to prevent metadata format corruption (key=value per line)
+  local safe_value=$(printf '%s' "$value" | tr -d $'\\n')
+  # Escape for sed replacement only (& | \\ — we use | as delimiter so / not needed)
+  local sed_escaped=$(printf '%s' "$safe_value" | sed 's/[&|\\\\]/\\\\&/g')
 
   # Check if key already exists
   if grep -q "^$key=" "$metadata_file" 2>/dev/null; then
-    # Update existing key
-    sed "s|^$key=.*|$key=$escaped_value|" "$metadata_file" > "$temp_file"
+    # Update existing key (sed outputs unescaped result to file)
+    sed "s|^$key=.*|$key=$sed_escaped|" "$metadata_file" > "$temp_file"
   else
-    # Append new key
+    # Append new key (write raw value; safe_value has no newlines)
     cp "$metadata_file" "$temp_file"
-    echo "$key=$value" >> "$temp_file"
+    echo "$key=$safe_value" >> "$temp_file"
   fi
 
   # Atomic replace
   mv "$temp_file" "$metadata_file"
 
   # Clean up only our own temp file (PID-specific to avoid race with concurrent hooks)
-  rm -f "\${metadata_file}.tmp.\$$" 2>/dev/null || true
+  rm -f "\${metadata_file}.tmp.$$" 2>/dev/null || true
 }
 
 # ============================================================================
@@ -979,9 +981,10 @@ export function createAgentPlugin(config: AgentPluginConfig, overrides?: Partial
         config.configDir,
         "metadata-updater.sh",
       );
-      // postLaunchSetup does not receive hookConfig — use config.defaultDataDir or environment default
-      const dataDir = config.defaultDataDir ?? join(homedir(), ".ao-sessions");
-      const hookCommand = `AO_DATA_DIR=${shellEscape(dataDir)} ${shellEscape(hookScriptPath)}`;
+      // Do NOT set AO_DATA_DIR here — the agent was launched with AO_DATA_DIR=sessionsDir
+      // in its environment. The hook inherits that when the agent invokes it. Setting
+      // defaultDataDir (e.g. ".ao-sessions") would overwrite with a wrong/relative path.
+      const hookCommand = shellEscape(hookScriptPath);
       await setupHookInWorkspace(session.workspacePath, config.configDir, hookCommand, config.hookToolMatcher ?? "Bash", config.hookEvent ?? "PostToolUse");
     },
 

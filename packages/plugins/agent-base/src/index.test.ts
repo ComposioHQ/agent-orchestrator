@@ -18,7 +18,7 @@ const mockWriteFile = vi.fn();
 const mockChmod = vi.fn();
 const mockAccess = vi.fn();
 const mockOpen = vi.fn();
-const mockClose = vi.fn();
+const _mockClose = vi.fn();
 const mockExistsSync = vi.fn(() => false);
 
 vi.mock("node:fs/promises", () => ({
@@ -243,7 +243,7 @@ describe("createAgentPlugin factory", () => {
       getSessionDir: (_workspacePath: string) => customDir,
     };
 
-    const agent = createAgentPlugin(config);
+    const _agent = createAgentPlugin(config);
 
     // Verify the agent has getSessionDir by checking it returns customDir for any input
     const result = config.getSessionDir!("/workspace/test");
