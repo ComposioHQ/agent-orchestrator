@@ -8,44 +8,99 @@ import {
   type ActivityDetection,
   type ActivityState,
   type CostEstimate,
-  type PluginModule,
   type ProjectConfig,
   type RuntimeHandle,
   type Session,
   type WorkspaceHooksConfig,
 } from "@composio/ao-core";
-import {
-  resetPsCache as _resetPsCache,
-  getCachedProcessList,
-} from "@composio/ao-plugin-agent-base";
-import { execFile, execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { readdir, readFile, stat, open, writeFile, mkdir, chmod } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-function normalizePermissionMode(mode: string | undefined): "permissionless" | "default" | "auto-edit" | "suggest" | undefined {
-  if (!mode) return undefined;
-  if (mode === "skip") return "permissionless";
-  if (mode === "permissionless" || mode === "default" || mode === "auto-edit" || mode === "suggest") {
-    return mode;
-  }
-  return undefined;
+// =============================================================================
+// Plugin Config
+// =============================================================================
+
+/** Configuration that differentiates one JSONL-based agent plugin from another. */
+export interface AgentPluginConfig {
+  /** Plugin manifest name, e.g. "claude-code", "cursor", "gemini". */
+  name: string;
+  /** Human-readable description for the manifest. */
+  description: string;
+  /** Process name matched against `ps` output, e.g. "claude", "cursor-agent", "gemini". */
+  processName: string;
+  /** CLI binary to invoke, e.g. "claude", "cursor-agent", "gemini". */
+  command: string;
+  /**
+   * Agent config directory under $HOME and under each workspace root.
+   * e.g. ".claude" → sessions at ~/.claude/projects/, hooks at <workspace>/.claude/
+   */
+  configDir: string;
+  /**
+   * Flag appended for permissionless / auto-edit modes.
+   * e.g. "--dangerously-skip-permissions" or "--yolo".
+   */
+  permissionlessFlag: string;
+  /**
+   * Flag prefix for supplying a system prompt at launch time.
+   * Set to undefined if the CLI does not support system prompt flags
+   * (prompts must be delivered post-launch via sendMessage instead).
+   */
+  systemPromptFlag?: string;
+  /**
+   * Fallback cost rates used when JSONL contains token counts but no direct
+   * cost field. Units are USD per million tokens.
+   */
+  defaultCostRate?: {
+    inputPerMillion: number;
+    outputPerMillion: number;
+  };
+  /**
+   * Environment variable used to pass a system prompt file path to the agent.
+   * Set when the CLI uses an env var instead of a flag (e.g. "GEMINI_SYSTEM_MD").
+   * Mutually exclusive with systemPromptFlag — set only one.
+   */
+  systemPromptEnvVar?: string;
+  /**
+   * Override the session directory path for a given workspace.
+   * Defaults to `~/<configDir>/projects/<toAgentProjectPath(workspacePath)>`.
+   * Override when the agent uses a different directory structure
+   * (e.g. Gemini CLI uses `~/.gemini/tmp/<sha256>/chats/`).
+   */
+  getSessionDir?: (workspacePath: string) => string;
+  /**
+   * File extension for session files in the session directory.
+   * Defaults to ".jsonl". Override for agents that use a different extension
+   * (e.g. Gemini CLI uses ".json").
+   */
+  sessionFileExtension?: string;
+  /**
+   * Exact PostToolUse tool name to match against.
+   * Defaults to "Bash". Override for agents that use different shell tools
+   * (e.g. Gemini uses "run_shell_command").
+   */
+  hookToolMatcher?: string;
+  /**
+   * Hook event type to register. Defaults to "PostToolUse".
+   * Override for agents that use different hook events
+   * (e.g. Gemini uses "AfterTool").
+   */
+  hookEvent?: "PostToolUse" | "AfterTool";
 }
 
 // =============================================================================
-// Metadata Updater Hook Script
+// Metadata Updater Hook Script (shared across all JSONL-based agents)
 // =============================================================================
 
-/** Hook script content that updates session metadata on git/gh commands.
- *  Exported for integration testing. */
 export const METADATA_UPDATER_SCRIPT = `#!/usr/bin/env bash
 # Metadata Updater Hook for Agent Orchestrator
 #
-# This PostToolUse hook automatically updates session metadata when:
+# This hook (PostToolUse or AfterTool) automatically updates session metadata when:
 # - gh pr create: extracts PR URL and writes to metadata
 # - git checkout -b / git switch -c: extracts branch name and writes to metadata
 # - gh pr merge: updates status to "merged"
@@ -78,8 +133,9 @@ if [[ "$exit_code" -ne 0 ]]; then
   exit 0
 fi
 
-# Only process Bash tool calls
-if [[ "$tool_name" != "Bash" ]]; then
+# Only process shell tool calls from the configured matcher
+# (Claude uses "Bash"; Gemini CLI uses "run_shell_command")
+if [[ "$tool_name" != "__AO_HOOK_TOOL_MATCHER__" ]]; then
   echo '{}' # Empty JSON output
   exit 0
 fi
@@ -114,17 +170,17 @@ update_metadata_key() {
   # Create temp file with PID for atomic updates under concurrency
   local temp_file="\${metadata_file}.tmp.$$"
 
-  # Sanitize: strip newlines to prevent metadata format corruption (key=value per line)
+  # Strip newlines to prevent metadata format corruption (key=value per line)
   local safe_value=$(printf '%s' "$value" | tr -d $'\\n')
   # Escape for sed replacement only (& | \\ — we use | as delimiter so / not needed)
-  local escaped_value=$(printf '%s' "$safe_value" | sed 's/[&|\\\\]/\\\\&/g')
+  local sed_escaped=$(printf '%s' "$safe_value" | sed 's/[&|\\\\]/\\\\&/g')
 
   # Check if key already exists
   if grep -q "^$key=" "$metadata_file" 2>/dev/null; then
-    # Update existing key (sed needs escaped value)
-    sed "s|^$key=.*|$key=$escaped_value|" "$metadata_file" > "$temp_file"
+    # Update existing key (sed outputs unescaped result to file)
+    sed "s|^$key=.*|$key=$sed_escaped|" "$metadata_file" > "$temp_file"
   else
-    # Append new key (echo writes literally — use safe_value, not escaped)
+    # Append new key (write raw value; safe_value has no newlines)
     cp "$metadata_file" "$temp_file"
     echo "$key=$safe_value" >> "$temp_file"
   fi
@@ -137,19 +193,14 @@ update_metadata_key() {
 # Command Detection and Parsing
 # ============================================================================
 
-# Strip leading directory-change prefixes so that commands like
+# Strip leading "cd /path && " prefix because agents often run:
 #   cd ~/.worktrees/project && gh pr create ...
-# are correctly detected. Agents frequently cd into a worktree first.
-# Store the regex pattern in a variable for clarity (avoids shell quoting confusion).
-# Uses space-padded (&&|;) to avoid breaking on paths containing & or ; chars.
-cd_prefix_pattern='^[[:space:]]*cd[[:space:]]+.*[[:space:]]+(&&|;)[[:space:]]+(.*)'
+# Without this, the command matching below fails silently.
+# Uses greedy .* to handle paths with spaces (e.g., cd "/path with spaces" && ...)
 clean_command="$command"
-while [[ "$clean_command" =~ ^[[:space:]]*cd[[:space:]] ]]; do
-  if [[ "$clean_command" =~ $cd_prefix_pattern ]]; then
-    clean_command="\${BASH_REMATCH[2]}"
-  else
-    break
-  fi
+cd_prefix_pattern='^[[:space:]]*cd[[:space:]]+.*[[:space:]]+(&&|;)[[:space:]]+(.*)'
+while [[ "$clean_command" =~ $cd_prefix_pattern ]]; do
+  clean_command="\${BASH_REMATCH[2]}"
 done
 
 # Detect: gh pr create
@@ -203,45 +254,42 @@ echo '{}'
 exit 0
 `;
 
-// =============================================================================
-// Plugin Manifest
-// =============================================================================
-
-export const manifest = {
-  name: "claude-code",
-  slot: "agent" as const,
-  description: "Agent plugin: Claude Code CLI",
-  version: "0.1.0",
-  displayName: "Claude Code",
-};
+const HOOK_TOOL_MATCHER_PLACEHOLDER = "__AO_HOOK_TOOL_MATCHER__";
 
 // =============================================================================
-// JSONL Helpers
+// Project Path Encoding
 // =============================================================================
 
 /**
- * Convert a workspace path to Claude's project directory path.
- * Claude stores sessions at ~/.claude/projects/{encoded-path}/
+ * Convert a workspace path to an agent's project directory path.
  *
- * Verified against Claude Code's actual encoding (as of v1.x):
- * the path has its leading / stripped, then all / and . are replaced with -.
- * e.g. /Users/dev/.worktrees/ao → Users-dev--worktrees-ao
+ * Most JSONL-based agents (Claude Code and Cursor) use the same encoding:
+ * the path replaces / and . with -, including the leading slash.
+ * e.g. /Users/dev/.worktrees/ao → -Users-dev--worktrees-ao.
+ * Agents with custom layouts (for example Gemini) override getSessionDir.
  *
- * If Claude Code changes its encoding scheme this will silently break
+ * If an agent changes its encoding scheme this will silently break
  * introspection. The path can be validated at runtime by checking whether
  * the resulting directory exists.
  *
  * Exported for testing purposes.
  */
-export function toClaudeProjectPath(workspacePath: string): string {
+export function toAgentProjectPath(workspacePath: string): string {
   // Handle Windows drive letters (C:\Users\... → C-Users-...)
   const normalized = workspacePath.replace(/\\/g, "/");
-  // Claude Code replaces / and . with - (keeping the leading slash as a leading -)
+  // Replace / and . with - (including leading slash as a leading -)
   return normalized.replace(/:/g, "").replace(/[/.]/g, "-");
 }
 
-/** Find the most recently modified .jsonl session file in a directory */
-async function findLatestSessionFile(projectDir: string): Promise<string | null> {
+// =============================================================================
+// JSONL Helpers
+// =============================================================================
+
+/** Find the most recently modified session file in a directory */
+async function findLatestSessionFile(
+  projectDir: string,
+  ext = ".jsonl",
+): Promise<string | null> {
   let entries: string[];
   try {
     entries = await readdir(projectDir);
@@ -249,7 +297,7 @@ async function findLatestSessionFile(projectDir: string): Promise<string | null>
     return null;
   }
 
-  const jsonlFiles = entries.filter((f) => f.endsWith(".jsonl") && !f.startsWith("agent-"));
+  const jsonlFiles = entries.filter((f) => f.endsWith(ext) && !f.startsWith("agent-"));
   if (jsonlFiles.length === 0) return null;
 
   // Sort by mtime descending
@@ -286,13 +334,6 @@ interface JsonlLine {
 }
 
 /**
- * Read only the last chunk of a JSONL file to extract the last entry's type
- * and the file's modification time. This is optimized for polling — it avoids
- * reading the entire file (which `getSessionInfo()` does for full cost/summary).
- * Now uses the shared readLastJsonlEntry utility from @composio/ao-core.
- */
-
-/**
  * Parse only the last `maxBytes` of a JSONL file.
  * Summaries and recent activity are always near the end, so reading the whole
  * file (which can be 100MB+) is wasteful. For files smaller than maxBytes,
@@ -314,8 +355,8 @@ async function parseJsonlFileTail(filePath: string, maxBytes = 131_072): Promise
       try {
         const length = size - offset;
         const buffer = Buffer.allocUnsafe(length);
-        await handle.read(buffer, 0, length, offset);
-        content = buffer.toString("utf-8");
+        const { bytesRead } = await handle.read(buffer, 0, length, offset);
+        content = buffer.slice(0, bytesRead).toString("utf-8");
       } finally {
         await handle.close();
       }
@@ -342,6 +383,10 @@ async function parseJsonlFileTail(filePath: string, maxBytes = 131_072): Promise
     }
   }
   return lines;
+}
+
+function escapeHookMatcherForBash(matcher: string): string {
+  return matcher.replace(/\\/g, "\\\\").replace(/["$]/g, "\\$&");
 }
 
 /** Extract auto-generated summary from JSONL (last "summary" type entry) */
@@ -374,7 +419,10 @@ function extractSummary(
 }
 
 /** Aggregate cost estimate from JSONL usage events */
-function extractCost(lines: JsonlLine[]): CostEstimate | undefined {
+function extractCost(
+  lines: JsonlLine[],
+  defaultCostRate: AgentPluginConfig["defaultCostRate"],
+): CostEstimate | undefined {
   let inputTokens = 0;
   let outputTokens = 0;
   let totalCost = 0;
@@ -409,12 +457,11 @@ function extractCost(lines: JsonlLine[]): CostEstimate | undefined {
     return undefined;
   }
 
-  // Rough estimate when no direct cost data — uses Sonnet 4.5 pricing as a
-  // baseline. Will be inaccurate for other models (Opus, Haiku) but provides
-  // a useful order-of-magnitude signal. TODO: make pricing configurable or
-  // infer from model field in JSONL.
-  if (totalCost === 0 && (inputTokens > 0 || outputTokens > 0)) {
-    totalCost = (inputTokens / 1_000_000) * 3.0 + (outputTokens / 1_000_000) * 15.0;
+  // Rough estimate when no direct cost data — use the configured rate.
+  if (totalCost === 0 && defaultCostRate && (inputTokens > 0 || outputTokens > 0)) {
+    totalCost =
+      (inputTokens / 1_000_000) * defaultCostRate.inputPerMillion +
+      (outputTokens / 1_000_000) * defaultCostRate.outputPerMillion;
   }
 
   return { inputTokens, outputTokens, estimatedCostUsd: totalCost };
@@ -424,19 +471,65 @@ function extractCost(lines: JsonlLine[]): CostEstimate | undefined {
 // Process Detection
 // =============================================================================
 
-/** Reset the shared agent-base ps cache. Exported for testing only. */
+/**
+ * TTL cache for `ps -eo pid,tty,args` output. Without this, listing N sessions
+ * would spawn N concurrent `ps` processes, each taking 30+ seconds on machines
+ * with many processes. The cache ensures `ps` is called at most once per TTL
+ * window regardless of how many sessions are being enriched.
+ */
+let psCache: { output: string; timestamp: number; promise?: Promise<string> } | null = null;
+const PS_CACHE_TTL_MS = 5_000;
+
+/** Reset the ps cache. Exported for testing only. */
 export function resetPsCache(): void {
-  _resetPsCache();
+  psCache = null;
 }
-// getCachedProcessList is imported from agent-base so all plugins share one ps cache.
+
+export async function getCachedProcessList(): Promise<string> {
+  const now = Date.now();
+  if (psCache && now - psCache.timestamp < PS_CACHE_TTL_MS) {
+    // Cache hit — return resolved output or wait for in-flight request
+    if (psCache.promise) return psCache.promise;
+    return psCache.output;
+  }
+
+  // Cache miss or expired — start a single `ps` call and share the promise.
+  // Guard both callbacks so they only update psCache if it still belongs to
+  // this request — a newer request may have replaced it while we were waiting.
+  const promise = execFileAsync("ps", ["-eo", "pid,tty,args"], {
+    timeout: 30_000,
+  }).then(({ stdout }) => {
+    if (psCache?.promise === promise) {
+      psCache = { output: stdout, timestamp: Date.now() };
+    }
+    return stdout;
+  });
+
+  // Store the in-flight promise so concurrent callers share it
+  psCache = { output: "", timestamp: now, promise };
+
+  try {
+    return await promise;
+  } catch {
+    // On failure, clear cache so the next caller retries — but only if
+    // psCache still points to this request (avoid clobbering a newer entry)
+    if (psCache?.promise === promise) {
+      psCache = null;
+    }
+    return "";
+  }
+}
 
 /**
- * Check if a process named "claude" is running in the given runtime handle's context.
+ * Check if the configured agent process is running in the given runtime handle's context.
  * Uses ps to find processes by TTY (for tmux) or by PID.
  */
-async function findClaudeProcess(handle: RuntimeHandle): Promise<number | null> {
+async function findAgentProcess(
+  handle: RuntimeHandle,
+  processRe: RegExp,
+): Promise<number | null> {
   try {
-    // For tmux runtime, get the pane TTY and find claude on it
+    // For tmux runtime, get the pane TTY and find the process on it
     if (handle.runtimeName === "tmux" && handle.id) {
       const { stdout: ttyOut } = await execFileAsync(
         "tmux",
@@ -455,9 +548,6 @@ async function findClaudeProcess(handle: RuntimeHandle): Promise<number | null> 
       if (!psOut) return null;
 
       const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
-      // Match "claude" as a word boundary — prevents false positives on
-      // names like "claude-code" or paths that merely contain the substring.
-      const processRe = /(?:^|\/)claude(?:\s|$)/;
       for (const line of psOut.split("\n")) {
         const cols = line.trimStart().split(/\s+/);
         if (cols.length < 3 || !ttySet.has(cols[1] ?? "")) continue;
@@ -496,7 +586,7 @@ async function findClaudeProcess(handle: RuntimeHandle): Promise<number | null> 
 // Terminal Output Patterns for detectActivity
 // =============================================================================
 
-/** Classify Claude Code's activity state from terminal output (pure, sync). */
+/** Classify agent activity state from terminal output (pure, sync). */
 function classifyTerminalOutput(terminalOutput: string): ActivityState {
   // Empty output — can't determine state
   if (!terminalOutput.trim()) return "idle";
@@ -506,7 +596,6 @@ function classifyTerminalOutput(terminalOutput: string): ActivityState {
 
   // Check the last line FIRST — if the prompt is visible, the agent is idle
   // regardless of historical output (e.g. "Reading file..." from earlier).
-  // The ❯ is Claude Code's prompt character.
   if (/^[❯>$#]\s*$/.test(lastLine)) return "idle";
 
   // Check the bottom of the buffer for permission prompts BEFORE checking
@@ -518,9 +607,7 @@ function classifyTerminalOutput(terminalOutput: string): ActivityState {
   if (/bypass.*permissions/i.test(tail)) return "waiting_input";
 
   // Everything else is "active" — the agent is processing, waiting for
-  // output, or showing content. Specific patterns (e.g. "esc to interrupt",
-  // "Thinking", "Reading") all map to "active" so no need to check them
-  // individually.
+  // output, or showing content.
   return "active";
 }
 
@@ -531,24 +618,34 @@ function classifyTerminalOutput(terminalOutput: string): ActivityState {
 /**
  * Shared helper to setup PostToolUse hooks in a workspace.
  * Writes metadata-updater.sh script and updates settings.json.
- *
- * @param workspacePath - Path to the workspace directory
- * @param hookCommand - Command string for the hook (can use variables like $CLAUDE_PROJECT_DIR)
  */
-async function setupHookInWorkspace(workspacePath: string, hookCommand: string): Promise<void> {
-  const claudeDir = join(workspacePath, ".claude");
-  const settingsPath = join(claudeDir, "settings.json");
-  const hookScriptPath = join(claudeDir, "metadata-updater.sh");
+async function setupHookInWorkspace(
+  workspacePath: string,
+  configDir: string,
+  hookCommand: string,
+  hookMatcher = "Bash",
+  hookEvent: "PostToolUse" | "AfterTool" = "PostToolUse",
+): Promise<void> {
+  const agentDir = join(workspacePath, configDir);
+  const settingsPath = join(agentDir, "settings.json");
+  const hookScriptPath = join(agentDir, "metadata-updater.sh");
 
-  // Create .claude directory if it doesn't exist
+  // Create config directory if it doesn't exist
   try {
-    await mkdir(claudeDir, { recursive: true });
+    await mkdir(agentDir, { recursive: true });
   } catch {
     // Directory might already exist
   }
 
   // Write the metadata updater script
-  await writeFile(hookScriptPath, METADATA_UPDATER_SCRIPT, "utf-8");
+  await writeFile(
+    hookScriptPath,
+    METADATA_UPDATER_SCRIPT.replace(
+      HOOK_TOOL_MATCHER_PLACEHOLDER,
+      escapeHookMatcherForBash(hookMatcher),
+    ),
+    "utf-8",
+  );
   await chmod(hookScriptPath, 0o755); // Make executable
 
   // Read existing settings if present
@@ -562,15 +659,22 @@ async function setupHookInWorkspace(workspacePath: string, hookCommand: string):
     }
   }
 
-  // Merge hooks configuration
-  const hooks = (existingSettings["hooks"] as Record<string, unknown>) ?? {};
-  const postToolUse = (hooks["PostToolUse"] as Array<unknown>) ?? [];
+  // Merge hooks configuration — type-guard before casting to avoid runtime
+  // errors on malformed or older settings.json files
+  const rawHooks = existingSettings["hooks"];
+  const hooks: Record<string, unknown> =
+    typeof rawHooks === "object" && rawHooks !== null && !Array.isArray(rawHooks)
+      ? (rawHooks as Record<string, unknown>)
+      : {};
+  // Read from the correct hook event key (PostToolUse or AfterTool)
+  const rawHookArray = hooks[hookEvent];
+  const hookArray: Array<unknown> = Array.isArray(rawHookArray) ? rawHookArray : [];
 
   // Check if our hook is already configured
   let hookIndex = -1;
   let hookDefIndex = -1;
-  for (let i = 0; i < postToolUse.length; i++) {
-    const hook = postToolUse[i];
+  for (let i = 0; i < hookArray.length; i++) {
+    const hook = hookArray[i];
     if (typeof hook !== "object" || hook === null || Array.isArray(hook)) continue;
     const h = hook as Record<string, unknown>;
     const hooksList = h["hooks"];
@@ -591,8 +695,8 @@ async function setupHookInWorkspace(workspacePath: string, hookCommand: string):
   // Add or update our hook
   if (hookIndex === -1) {
     // No metadata hook exists, add it
-    postToolUse.push({
-      matcher: "Bash",
+    hookArray.push({
+      matcher: hookMatcher,
       hooks: [
         {
           type: "command",
@@ -602,13 +706,24 @@ async function setupHookInWorkspace(workspacePath: string, hookCommand: string):
       ],
     });
   } else {
-    // Hook exists, update the command
-    const hook = postToolUse[hookIndex] as Record<string, unknown>;
+    const hook = hookArray[hookIndex] as Record<string, unknown>;
+    hook["matcher"] = hookMatcher;
+
+    // Hook exists, update the command — but preserve an existing AO_DATA_DIR
+    // prefix if the new command doesn't include one (e.g. postLaunchSetup
+    // doesn't have access to hookConfig.dataDir and would silently drop it).
     const hooksList = hook["hooks"] as Array<Record<string, unknown>>;
-    hooksList[hookDefIndex]["command"] = hookCommand;
+    const existingCommand = hooksList[hookDefIndex]["command"] as string | undefined;
+    const newCommandDropsDataDir =
+      !hookCommand.includes("AO_DATA_DIR=") &&
+      typeof existingCommand === "string" &&
+      existingCommand.includes("AO_DATA_DIR=");
+    if (!newCommandDropsDataDir) {
+      hooksList[hookDefIndex]["command"] = hookCommand;
+    }
   }
 
-  hooks["PostToolUse"] = postToolUse;
+  hooks[hookEvent] = hookArray;
   existingSettings["hooks"] = hooks;
 
   // Write updated settings
@@ -616,63 +731,98 @@ async function setupHookInWorkspace(workspacePath: string, hookCommand: string):
 }
 
 // =============================================================================
-// Agent Implementation
+// Agent Factory
 // =============================================================================
 
-function createClaudeCodeAgent(): Agent {
+/**
+ * Create a JSONL-based agent plugin given a configuration object.
+ * All agent-specific constants (process name, CLI flags, config directory,
+ * pricing) are injected via `config`; the implementation logic is shared.
+ *
+ * Pass `overrides` to replace specific methods — useful for agents that use
+ * a different session format (e.g. Cursor's SQLite storage instead of JSONL).
+ */
+export function createAgentPlugin(config: AgentPluginConfig, overrides?: Partial<Agent>): Agent {
+  // Escape regex metacharacters in processName to prevent injection (e.g., "gemini+" would match "gemini" and "+").
+  const escapedProcessName = config.processName.replace(/[.+*?^${}()|[\]\\]/g, "\\$&");
+  // Build process regex once — matches the process name as a word boundary
+  // to prevent false positives (e.g. "gemini-pro" matching "gemini").
+  const processRe = new RegExp(`(?:^|/)${escapedProcessName}(?:\\s|$)`);
+
   return {
-    name: "claude-code",
-    processName: "claude",
+    name: config.name,
+    processName: config.processName,
     promptDelivery: "post-launch",
 
-    getLaunchCommand(config: AgentLaunchConfig): string {
-      // Note: CLAUDECODE is unset via getEnvironment() (set to ""), not here.
-      // This command must be safe for both shell and execFile contexts.
-      const parts: string[] = ["claude"];
+    getLaunchCommand(launchConfig: AgentLaunchConfig): string {
+      const parts: string[] = [config.command];
 
-      const permissionMode = normalizePermissionMode(config.permissions);
+      const permissionMode = normalizePermissionMode(launchConfig.permissions);
       if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
-        parts.push("--dangerously-skip-permissions");
+        parts.push(config.permissionlessFlag);
       }
 
-      if (config.model) {
-        parts.push("--model", shellEscape(config.model));
+      if (launchConfig.model) {
+        parts.push("--model", shellEscape(launchConfig.model));
       }
 
-      if (config.systemPromptFile) {
-        // Use shell command substitution to read from file at launch time.
-        // This avoids tmux truncation when inlining 2000+ char prompts.
-        // The double quotes allow $() expansion; inner path is single-quoted for safety.
-        parts.push("--append-system-prompt", `"$(cat ${shellEscape(config.systemPromptFile)})"`);
-      } else if (config.systemPrompt) {
-        parts.push("--append-system-prompt", shellEscape(config.systemPrompt));
+      if (config.systemPromptFlag) {
+        if (launchConfig.systemPromptFile) {
+          // Use shell command substitution to read from file at launch time.
+          // This avoids tmux truncation when inlining 2000+ char prompts.
+          parts.push(
+            config.systemPromptFlag,
+            `"$(cat ${shellEscape(launchConfig.systemPromptFile)})"`,
+          );
+        } else if (launchConfig.systemPrompt) {
+          parts.push(config.systemPromptFlag, shellEscape(launchConfig.systemPrompt));
+        }
       }
 
       // NOTE: prompt is NOT included here — it's delivered post-launch via
-      // runtime.sendMessage() to keep Claude in interactive mode.
-      // Using -p causes one-shot mode (Claude exits after responding).
+      // runtime.sendMessage() to keep the agent in interactive mode.
+      // Using -p / --prompt causes one-shot mode (agent exits after responding).
 
       return parts.join(" ");
     },
 
-    getEnvironment(config: AgentLaunchConfig): Record<string, string> {
+    getEnvironment(launchConfig: AgentLaunchConfig): Record<string, string> {
       const env: Record<string, string> = {};
 
       // Unset CLAUDECODE to avoid nested agent conflicts
       env["CLAUDECODE"] = "";
 
       // Set session info for introspection
-      env["AO_SESSION"] = config.sessionId;
-      env["AO_SESSION_ID"] = config.sessionId;
+      env["AO_SESSION"] = launchConfig.sessionId;
+      env["AO_SESSION_ID"] = launchConfig.sessionId;
 
       // NOTE: AO_PROJECT_ID is NOT set here - it's the caller's responsibility
-      // to set it based on their metadata path scheme:
-      // - spawn.ts sets it to projectId for project-specific directories
-      // - start.ts omits it for orchestrator (flat directories)
-      // - session manager omits it (flat directories)
+      // to set it based on their metadata path scheme.
 
-      if (config.issueId) {
-        env["AO_ISSUE_ID"] = config.issueId;
+      if (launchConfig.issueId) {
+        env["AO_ISSUE_ID"] = launchConfig.issueId;
+      }
+
+      // Handle system prompt via environment variable (e.g. GEMINI_SYSTEM_MD).
+      // Used for agents that don't support a system prompt CLI flag.
+      if (config.systemPromptEnvVar) {
+        if (launchConfig.systemPromptFile) {
+          env[config.systemPromptEnvVar] = launchConfig.systemPromptFile;
+        } else if (launchConfig.systemPrompt) {
+          // Write the inline prompt to a temp file — env vars can't inline multi-KB prompts.
+          // Sanitize sessionId to prevent path traversal (replace non-alphanum with underscore).
+          const safeSessionId = launchConfig.sessionId.replace(/[^a-zA-Z0-9]/g, "_");
+          const tmpDir = join(homedir(), ".ao-sessions", "tmp");
+          const tmpFile = join(tmpDir, `system-${safeSessionId}.md`);
+          try {
+            mkdirSync(tmpDir, { recursive: true, mode: 0o700 });
+            writeFileSync(tmpFile, launchConfig.systemPrompt, { encoding: "utf-8", mode: 0o600 });
+            env[config.systemPromptEnvVar] = tmpFile;
+          } catch {
+            // Could not write temp file — leave env var unset so the agent
+            // falls back to its built-in defaults.
+          }
+        }
       }
 
       return env;
@@ -683,7 +833,7 @@ function createClaudeCodeAgent(): Agent {
     },
 
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
-      const pid = await findClaudeProcess(handle);
+      const pid = await findAgentProcess(handle, processRe);
       return pid !== null;
     },
 
@@ -705,10 +855,11 @@ function createClaudeCodeAgent(): Agent {
         return null;
       }
 
-      const projectPath = toClaudeProjectPath(session.workspacePath);
-      const projectDir = join(homedir(), ".claude", "projects", projectPath);
+      const projectDir = config.getSessionDir
+        ? config.getSessionDir(session.workspacePath)
+        : join(homedir(), config.configDir, "projects", toAgentProjectPath(session.workspacePath));
 
-      const sessionFile = await findLatestSessionFile(projectDir);
+      const sessionFile = await findLatestSessionFile(projectDir, config.sessionFileExtension);
       if (!sessionFile) {
         // No session file found — cannot determine activity
         return null;
@@ -749,12 +900,12 @@ function createClaudeCodeAgent(): Agent {
     async getSessionInfo(session: Session): Promise<AgentSessionInfo | null> {
       if (!session.workspacePath) return null;
 
-      // Build the Claude project directory path
-      const projectPath = toClaudeProjectPath(session.workspacePath);
-      const projectDir = join(homedir(), ".claude", "projects", projectPath);
+      const projectDir = config.getSessionDir
+        ? config.getSessionDir(session.workspacePath)
+        : join(homedir(), config.configDir, "projects", toAgentProjectPath(session.workspacePath));
 
       // Find the latest session JSONL file
-      const sessionFile = await findLatestSessionFile(projectDir);
+      const sessionFile = await findLatestSessionFile(projectDir, config.sessionFileExtension);
       if (!sessionFile) return null;
 
       // Parse only the tail — summaries are always near the end, files can be 100MB+
@@ -762,38 +913,38 @@ function createClaudeCodeAgent(): Agent {
       if (lines.length === 0) return null;
 
       // Extract session ID from filename
-      const agentSessionId = basename(sessionFile, ".jsonl");
+      const agentSessionId = basename(sessionFile, config.sessionFileExtension ?? ".jsonl");
 
       const summaryResult = extractSummary(lines);
       return {
         summary: summaryResult?.summary ?? null,
         summaryIsFallback: summaryResult?.isFallback,
         agentSessionId,
-        cost: extractCost(lines),
+        cost: extractCost(lines, config.defaultCostRate),
       };
     },
 
     async getRestoreCommand(session: Session, project: ProjectConfig): Promise<string | null> {
       if (!session.workspacePath) return null;
 
-      // Find Claude's project directory for this workspace
-      const projectPath = toClaudeProjectPath(session.workspacePath);
-      const projectDir = join(homedir(), ".claude", "projects", projectPath);
+      const projectDir = config.getSessionDir
+        ? config.getSessionDir(session.workspacePath)
+        : join(homedir(), config.configDir, "projects", toAgentProjectPath(session.workspacePath));
 
       // Find the latest session JSONL file
-      const sessionFile = await findLatestSessionFile(projectDir);
+      const sessionFile = await findLatestSessionFile(projectDir, config.sessionFileExtension);
       if (!sessionFile) return null;
 
       // Extract session UUID from filename (e.g. "abc123-def456.jsonl" → "abc123-def456")
-      const sessionUuid = basename(sessionFile, ".jsonl");
+      const sessionUuid = basename(sessionFile, config.sessionFileExtension ?? ".jsonl");
       if (!sessionUuid) return null;
 
       // Build resume command
-      const parts: string[] = ["claude", "--resume", shellEscape(sessionUuid)];
+      const parts: string[] = [config.command, "--resume", shellEscape(sessionUuid)];
 
       const permissionMode = normalizePermissionMode(project.agentConfig?.permissions);
       if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
-        parts.push("--dangerously-skip-permissions");
+        parts.push(config.permissionlessFlag);
       }
 
       if (project.agentConfig?.model) {
@@ -803,36 +954,55 @@ function createClaudeCodeAgent(): Agent {
       return parts.join(" ");
     },
 
-    async setupWorkspaceHooks(workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
-      // Relative path so that symlinked .claude/ dirs across worktrees
-      // all produce the same settings.json (last writer doesn't clobber).
-      await setupHookInWorkspace(workspacePath, ".claude/metadata-updater.sh");
+    async setupWorkspaceHooks(
+      workspacePath: string,
+      hookConfig: WorkspaceHooksConfig,
+    ): Promise<void> {
+      const hookScriptPath = join(workspacePath, config.configDir, "metadata-updater.sh");
+      // Prefix AO_DATA_DIR so the hook writes to the configured data directory
+      // rather than the default $HOME/.ao-sessions.
+      const hookCommand = `AO_DATA_DIR=${shellEscape(hookConfig.dataDir)} ${shellEscape(hookScriptPath)}`;
+      await setupHookInWorkspace(workspacePath, config.configDir, hookCommand, config.hookToolMatcher ?? "Bash", config.hookEvent ?? "PostToolUse");
     },
 
     async postLaunchSetup(session: Session): Promise<void> {
       if (!session.workspacePath) return;
-
-      await setupHookInWorkspace(session.workspacePath, ".claude/metadata-updater.sh");
+      const hookScriptPath = join(
+        session.workspacePath,
+        config.configDir,
+        "metadata-updater.sh",
+      );
+      // Do NOT set AO_DATA_DIR here — the agent inherits it from its launch environment.
+      // Overwriting it here would clobber the correct sessions-dir set at spawn time.
+      const hookCommand = shellEscape(hookScriptPath);
+      await setupHookInWorkspace(session.workspacePath, config.configDir, hookCommand, config.hookToolMatcher ?? "Bash", config.hookEvent ?? "PostToolUse");
     },
+
+    ...overrides,
   };
 }
 
 // =============================================================================
-// Plugin Export
+// Internal helpers
 // =============================================================================
 
-export function create(): Agent {
-  return createClaudeCodeAgent();
-}
-
-export function detect(): boolean {
-  try {
-    // Use --version instead of `which` for cross-platform compatibility (Windows has no `which`)
-    execFileSync("claude", ["--version"], { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
+/**
+ * Normalize an agent permission mode string to a canonical value.
+ * Maps the legacy "skip" alias to "permissionless"; returns undefined for
+ * unrecognised or missing values.
+ */
+function normalizePermissionMode(
+  mode: string | undefined,
+): "permissionless" | "default" | "auto-edit" | "suggest" | undefined {
+  if (!mode) return undefined;
+  if (mode === "skip") return "permissionless";
+  if (
+    mode === "permissionless" ||
+    mode === "default" ||
+    mode === "auto-edit" ||
+    mode === "suggest"
+  ) {
+    return mode;
   }
+  return undefined;
 }
-
-export default { manifest, create, detect } satisfies PluginModule<Agent>;

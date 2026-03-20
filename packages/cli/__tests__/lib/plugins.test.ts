@@ -63,6 +63,10 @@ describe("getAgentByName", () => {
     expect(getAgentByName("codex").name).toBe("codex");
   });
 
+  it("returns agent for cursor", () => {
+    expect(getAgentByName("cursor").name).toBe("cursor");
+  });
+
   it("returns agent for aider", () => {
     expect(getAgentByName("aider").name).toBe("aider");
   });
