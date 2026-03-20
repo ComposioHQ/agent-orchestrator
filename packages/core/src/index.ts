@@ -193,3 +193,15 @@ export type { AgentMailMessage, AgentMailConfig } from "./mcp-mail.js";
 // Merge gate — 6-condition enforcement (bd-nrp)
 export { checkMergeGate } from "./merge-gate.js";
 export type { MergeGateCheck, MergeGateResult } from "./merge-gate.js";
+
+// Evidence bundle — structured evidence generation and review gate (bd-2gz)
+export {
+  generateEvidenceBundle,
+  reviewEvidenceBundle,
+  writeEvidenceBundle,
+} from "./evidence-bundle.js";
+export type {
+  EvidenceBundle,
+  CICheckEvidence,
+  EvidenceVerdict,
+} from "./evidence-bundle.js";
