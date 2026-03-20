@@ -34,6 +34,7 @@ vi.mock("node:child_process", () => {
   return { execFile: fn };
 });
 
+
 vi.mock("node:fs/promises", () => ({
   writeFile: mockWriteFile,
   mkdir: mockMkdir,
@@ -104,7 +105,6 @@ function mockTmuxWithProcess(processName = "gemini", tty = "/dev/ttys001", pid =
     }
     if (cmd === "ps") {
       const ttyShort = tty.replace(/^\/dev\//, "");
-      // Matches `ps -eo pid,tty,args` output format
       return Promise.resolve({
         stdout: `  PID TT       ARGS\n  ${pid} ${ttyShort}  ${processName}\n`,
         stderr: "",
