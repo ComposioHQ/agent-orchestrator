@@ -329,7 +329,17 @@ async function setupCodexWorkspace(workspacePath: string): Promise<void> {
 /** Codex session directory: ~/.codex/sessions/ */
 const CODEX_SESSIONS_DIR = join(homedir(), ".codex", "sessions");
 
-/** Typed representation of a line in a Codex JSONL session file */
+/** Typed representation of a line in a Codex JSONL session file.
+ *
+ * Codex CLI ≥ 0.115 uses an envelope format where most fields sit inside
+ * a `payload` object rather than at root level:
+ *
+ *   { "type": "session_meta", "payload": { "cwd": "/path", ... } }
+ *   { "type": "event_msg",    "payload": { "type": "token_count", ... } }
+ *
+ * Older versions wrote fields at root level. The helper `flattenCodexLine`
+ * normalises both layouts so the rest of the code can use a single shape.
+ */
 interface CodexJsonlLine {
   type?: string;
   cwd?: string;
@@ -347,6 +357,22 @@ interface CodexJsonlLine {
     cached_tokens?: number;
     reasoning_tokens?: number;
   };
+  // Envelope payload (Codex CLI ≥ 0.115)
+  payload?: Record<string, unknown>;
+}
+
+/**
+ * Flatten a parsed JSONL line so that fields stored under `payload` in the
+ * newer Codex CLI envelope format are accessible at root level.  Existing
+ * root-level fields take precedence so older files keep working.
+ */
+function flattenCodexLine(raw: Record<string, unknown>): CodexJsonlLine {
+  const payload = raw["payload"];
+  if (typeof payload === "object" && payload !== null && !Array.isArray(payload)) {
+    // Merge payload fields into root, root wins on conflict
+    return { ...(payload as Record<string, unknown>), ...raw } as unknown as CodexJsonlLine;
+  }
+  return raw as unknown as CodexJsonlLine;
 }
 
 /**
@@ -402,13 +428,14 @@ async function sessionFileMatchesCwd(
   workspacePath: string,
 ): Promise<boolean> {
   try {
-    // Read only the first 4 KB — session_meta is always in the first few lines.
-    // Avoids loading large rollout files (100 MB+) into memory.
+    // Read the first 32 KB — session_meta can be large when it includes the
+    // full system prompt / base_instructions (often 10-15 KB).  4 KB was too
+    // small and caused truncated JSON parsing failures.
     const handle = await open(filePath, "r");
     let content: string;
     try {
-      const buffer = Buffer.allocUnsafe(4096);
-      const { bytesRead } = await handle.read(buffer, 0, 4096, 0);
+      const buffer = Buffer.allocUnsafe(32_768);
+      const { bytesRead } = await handle.read(buffer, 0, 32_768, 0);
       content = buffer.subarray(0, bytesRead).toString("utf-8");
     } finally {
       await handle.close();
@@ -422,11 +449,12 @@ async function sessionFileMatchesCwd(
         if (
           typeof parsed === "object" &&
           parsed !== null &&
-          !Array.isArray(parsed) &&
-          (parsed as CodexJsonlLine).type === "session_meta" &&
-          (parsed as CodexJsonlLine).cwd === workspacePath
+          !Array.isArray(parsed)
         ) {
-          return true;
+          const entry = flattenCodexLine(parsed as Record<string, unknown>);
+          if (entry.type === "session_meta" && entry.cwd === workspacePath) {
+            return true;
+          }
         }
       } catch {
         // Skip malformed lines
@@ -493,7 +521,7 @@ async function streamCodexSessionData(filePath: string): Promise<CodexSessionDat
       try {
         const parsed: unknown = JSON.parse(trimmed);
         if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) continue;
-        const entry = parsed as CodexJsonlLine;
+        const entry = flattenCodexLine(parsed as Record<string, unknown>);
 
         if (entry.type === "session_meta" && typeof entry.model === "string") {
           data.model = entry.model;
