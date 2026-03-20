@@ -39,6 +39,7 @@ import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
 import { createCorrelationId, createProjectObserver } from "./observability.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
+import type { OutcomeRecorder } from "./outcome-recorder.js";
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 export function parseDuration(str: string): number {
@@ -183,6 +184,8 @@ export interface LifecycleManagerDeps {
   sessionManager: SessionManager;
   /** When set, only poll sessions belonging to this project. */
   projectId?: string;
+  /** Optional outcome recorder for tracking session results. */
+  outcomeRecorder?: OutcomeRecorder;
 }
 
 /** Track attempt counts for reactions per session. */
@@ -193,7 +196,7 @@ interface ReactionTracker {
 
 /** Create a LifecycleManager instance. */
 export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleManager {
-  const { config, registry, sessionManager, projectId: scopedProjectId } = deps;
+  const { config, registry, sessionManager, projectId: scopedProjectId, outcomeRecorder } = deps;
   const observer = createProjectObserver(config, "lifecycle-manager");
 
   const states = new Map<SessionId, SessionStatus>();
@@ -1080,6 +1083,32 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     // Session exit reconciliation (bd-uxs.6): validate commits and emit proof on terminal states
     if (TERMINAL_STATUSES.has(newStatus) && !TERMINAL_STATUSES.has(oldStatus)) {
       await validateAndEmitExitProof(session, newStatus);
+
+      // Record outcome for strategy learning (bd-nig)
+      // Guarded: disk errors must not break session lifecycle checks
+      if (outcomeRecorder) {
+        try {
+          const success = newStatus === "merged";
+          outcomeRecorder.record({
+            sessionId: session.id,
+            projectId: session.projectId,
+            trigger: session.metadata["trigger"] ?? "unknown",
+            action: session.metadata["action"] ?? "unknown",
+            strategy: session.metadata["strategy"],
+            errorClass: session.metadata["errorClass"],
+            success,
+            durationMs: Date.now() - new Date(session.createdAt).getTime(),
+            error: !success ? `Session ended with status: ${newStatus}` : undefined,
+            prNumber: session.pr?.number,
+            recordedAt: new Date().toISOString(),
+          });
+        } catch (recordErr) {
+          console.warn(
+            `Failed to record outcome for session ${session.id}:`,
+            recordErr instanceof Error ? recordErr.message : String(recordErr),
+          );
+        }
+      }
     }
   }
 

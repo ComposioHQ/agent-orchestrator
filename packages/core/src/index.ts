@@ -194,6 +194,10 @@ export type { WebhookIngressConfig } from "./webhook-ingress.js";
 export { AgentMailBridge, formatGuidancePrompt } from "./mcp-mail.js";
 export type { AgentMailMessage, AgentMailConfig } from "./mcp-mail.js";
 
+// Outcome recorder — persist and query fix strategy outcomes
+export { OutcomeRecorder } from "./outcome-recorder.js";
+export type { OutcomeRecorderDeps } from "./outcome-recorder.js";
+
 // Merge gate — 6-condition enforcement (bd-nrp)
 export { checkMergeGate } from "./merge-gate.js";
 export type { MergeGateCheck, MergeGateResult } from "./merge-gate.js";

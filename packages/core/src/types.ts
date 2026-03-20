@@ -1120,6 +1120,10 @@ export interface RecordedOutcome {
   trigger: string;
   /** What action was taken */
   action: string;
+  /** Strategy used (e.g., "retry-with-fix", "escalate-to-human") */
+  strategy?: string;
+  /** Error class for granular grouping (e.g., "lint-error", "test-failure", "build-error") */
+  errorClass?: string;
   /** Whether the action succeeded */
   success: boolean;
   /** Duration in ms */
@@ -1397,6 +1401,7 @@ export interface SessionMetadata {
   summary?: string;
   project?: string;
   agent?: string; // Agent plugin name (e.g. "codex", "claude-code") — persisted for lifecycle
+  action?: string; // What action is being taken (e.g. "fix-lint", "fix-test", "fix-build")
   createdAt?: string;
   runtimeHandle?: string;
   restoredAt?: string;
