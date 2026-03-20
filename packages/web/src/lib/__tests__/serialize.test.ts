@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import * as core from "@composio/ao-core";
 import type {
   Session,
   PRInfo,
@@ -431,6 +432,50 @@ describe("enrichSessionPR", () => {
     // Should fall back to getPRState
     expect(scm.getPRState).toHaveBeenCalled();
     expect(dashboard.pr?.state).toBe("open");
+  });
+
+  it("should not overwrite terminal status when disk metadata changed after request start", async () => {
+    const pr = createPRInfo();
+    const coreSession = createCoreSession({ status: "working", pr });
+    const dashboard = sessionToDashboard(coreSession);
+    const scm = createMockSCM();
+    const readMetadataSpy = vi.spyOn(core, "readMetadata").mockReturnValue({
+      worktree: "/tmp",
+      branch: "feat/test",
+      status: "killed",
+    } as core.SessionMetadata);
+    const updateMetadataSpy = vi.spyOn(core, "updateMetadata").mockImplementation(() => {});
+
+    await enrichSessionPR(dashboard, scm, pr, {
+      metadata: {
+        sessionsDir: "/tmp/sessions",
+        sessionId: "test-1",
+        currentStatus: "working",
+      },
+    });
+
+    expect(readMetadataSpy).toHaveBeenCalledWith("/tmp/sessions", "test-1");
+    expect(updateMetadataSpy).not.toHaveBeenCalled();
+    expect(dashboard.status).toBe("working");
+  });
+
+  it("should not downgrade mergeable status to approved during enrichment", async () => {
+    const pr = createPRInfo();
+    const coreSession = createCoreSession({ status: "mergeable", pr });
+    const dashboard = sessionToDashboard(coreSession);
+    const scm = createMockSCM();
+    const updateMetadataSpy = vi.spyOn(core, "updateMetadata").mockImplementation(() => {});
+
+    await enrichSessionPR(dashboard, scm, pr, {
+      metadata: {
+        sessionsDir: "/tmp/sessions",
+        sessionId: "test-1",
+        currentStatus: "mergeable",
+      },
+    });
+
+    expect(updateMetadataSpy).not.toHaveBeenCalled();
+    expect(dashboard.status).toBe("mergeable");
   });
 });
 
