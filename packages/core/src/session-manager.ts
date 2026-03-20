@@ -895,15 +895,15 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     }
 
-    // "killed" is terminal only when process/runtime checks still support that.
-    // If we can confirm the session is alive again, surface it as working.
-    // However, if the agent process has exited (activity === "exited") we
-    // should NOT revive — the tmux shell may linger after the agent exits.
+    // "killed" is terminal only when runtime liveness can be confirmed again.
+    // JSONL activity can be stale after kill, so do not revive based solely on
+    // activity detection. Also never revive if effective activity is exited.
+    const effectiveActivityState = detectedActivityState ?? session.activity;
     if (
       reviveKilledStatus &&
       wasKilled &&
-      detectedActivityState !== "exited" &&
-      (runtimeConfirmedAlive || (detectedActivityState !== null))
+      runtimeConfirmedAlive === true &&
+      effectiveActivityState !== "exited"
     ) {
       session.status = "working";
     }
