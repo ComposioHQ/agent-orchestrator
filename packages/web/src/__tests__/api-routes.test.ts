@@ -446,7 +446,7 @@ describe("API Routes", () => {
   });
 
   describe("POST /api/orchestrators", () => {
-    it("creates a per-project orchestrator with the generated prompt", async () => {
+    it("creates a per-project orchestrator with the generated prompts", async () => {
       (mockSessionManager.spawnOrchestrator as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
         makeSession({
           id: "my-app-orchestrator",
@@ -466,6 +466,7 @@ describe("API Routes", () => {
       expect(mockSessionManager.spawnOrchestrator).toHaveBeenCalledWith({
         projectId: "my-app",
         systemPrompt: expect.stringContaining("# My App Orchestrator"),
+        prompt: expect.stringContaining("Do an initial orchestration pass"),
       });
 
       const data = await res.json();
