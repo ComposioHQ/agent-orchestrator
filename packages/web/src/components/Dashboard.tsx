@@ -60,10 +60,14 @@ export function Dashboard({
   const isMobile = useIsMobile();
   const [sidebarCollapsed, setSidebarCollapsed] = useLocalStorage("ao-sidebar-collapsed", false);
   const [sidebarWidth, setSidebarWidth] = useLocalStorage("ao-sidebar-width", 180);
-  const prevIsMobile = useRef(isMobile);
+  const hasAutoCollapsed = useRef(false);
   useEffect(() => {
-    if (isMobile !== prevIsMobile.current) setSidebarCollapsed(isMobile);
-    prevIsMobile.current = isMobile;
+    if (isMobile && !hasAutoCollapsed.current) {
+      setSidebarCollapsed(true);
+      hasAutoCollapsed.current = true;
+    } else if (!isMobile) {
+      hasAutoCollapsed.current = false;
+    }
   }, [isMobile, setSidebarCollapsed]);
   const { sessions, globalPause } = useSessionEvents(
     initialSessions,
@@ -257,25 +261,63 @@ export function Dashboard({
 
   return (
     <div className="flex h-screen">
-      <ProjectSidebar
-          projects={projects}
-          activeProjectId={projectId}
-          orchestrators={activeOrchestrators}
-          onSpawnOrchestrator={handleSpawnOrchestrator}
-          spawningProjectIds={spawningProjectIds}
-          collapsed={sidebarCollapsed}
-          onCollapsedChange={setSidebarCollapsed}
-          width={sidebarWidth}
-          onWidthChange={setSidebarWidth}
-        />
-      <div className="flex-1 overflow-y-auto px-4 py-5 md:px-8 md:py-7">
+      {/* Desktop sidebar — hidden on mobile via CSS, hidden when collapsed via JS */}
+      {!sidebarCollapsed && (
+        <div className="hidden md:block">
+          <ProjectSidebar
+            projects={projects}
+            activeProjectId={projectId}
+            orchestrators={activeOrchestrators}
+            onSpawnOrchestrator={handleSpawnOrchestrator}
+            spawningProjectIds={spawningProjectIds}
+            collapsed={sidebarCollapsed}
+            onCollapsedChange={setSidebarCollapsed}
+            width={sidebarWidth}
+            onWidthChange={setSidebarWidth}
+          />
+        </div>
+      )}
+      {/* Mobile sidebar — overlay, only rendered client-side when isMobile && expanded */}
+      {isMobile && !sidebarCollapsed && (
+        <>
+          <div
+            className="fixed inset-0 z-30 bg-black/50"
+            onClick={() => setSidebarCollapsed(true)}
+          />
+          <div className="fixed inset-y-0 left-0 z-40">
+            <ProjectSidebar
+              projects={projects}
+              activeProjectId={projectId}
+              orchestrators={activeOrchestrators}
+              onSpawnOrchestrator={handleSpawnOrchestrator}
+              spawningProjectIds={spawningProjectIds}
+              collapsed={sidebarCollapsed}
+              onCollapsedChange={setSidebarCollapsed}
+              width={260}
+              onWidthChange={setSidebarWidth}
+            />
+          </div>
+        </>
+      )}
+      <div className="flex-1 overflow-y-auto">
         <DynamicFavicon sessions={sessions} projectName={projectName} />
-        <div className="mb-6 flex flex-col gap-3 border-b border-[var(--color-border-subtle)] pb-4 md:mb-8 md:flex-row md:items-center md:justify-between md:gap-6 md:pb-6">
+        <div className="flex items-center gap-3 border-b border-[var(--color-border-subtle)] px-4 py-3 md:justify-between md:gap-6 md:px-8">
           <div className="flex flex-wrap items-center gap-3 md:gap-6">
+            {sidebarCollapsed && (
+              <button
+                onClick={() => setSidebarCollapsed(false)}
+                aria-label="Expand sidebar"
+                className="flex h-7 w-7 items-center justify-center rounded border border-[var(--color-border-subtle)] text-[var(--color-text-tertiary)] transition-colors hover:bg-[rgba(255,255,255,0.06)] hover:text-[var(--color-text-primary)]"
+              >
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+            )}
             <h1 className="text-[15px] font-semibold tracking-[-0.02em] text-[var(--color-text-primary)] md:text-[17px]">
               {projectName ?? "Orchestrator"}
             </h1>
-            <StatusLine stats={liveStats} />
+            <span className="hidden md:inline-flex"><StatusLine stats={liveStats} /></span>
           </div>
           {!allProjectsView && selectedProject && (
             <ProjectOrchestratorControl
@@ -288,6 +330,7 @@ export function Dashboard({
           )}
         </div>
 
+        <div className="px-4 py-5 md:px-8 md:py-7">
         {globalPause && !globalPauseDismissed && (
           <GlobalPauseBanner
             globalPause={globalPause}
@@ -381,6 +424,7 @@ export function Dashboard({
             </div>
           </div>
         )}
+        </div>
       </div>
     </div>
   );

@@ -133,16 +133,10 @@ describe("ProjectSidebar", () => {
     expect(defaultProps.onCollapsedChange).toHaveBeenCalledWith(true);
   });
 
-  it("renders only expand button when collapsed", () => {
-    render(<ProjectSidebar {...defaultProps} collapsed={true} />);
+  it("renders nothing when collapsed (expand button is in Dashboard header)", () => {
+    const { container } = render(<ProjectSidebar {...defaultProps} collapsed={true} />);
     expect(screen.queryByText("Projects")).toBeNull();
-    expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeInTheDocument();
-  });
-
-  it("calls onCollapsedChange(false) when expand button is clicked", () => {
-    render(<ProjectSidebar {...defaultProps} collapsed={true} />);
-    fireEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
-    expect(defaultProps.onCollapsedChange).toHaveBeenCalledWith(false);
+    expect(container.innerHTML).toBe("");
   });
 
   // --- Width / resize tests ---

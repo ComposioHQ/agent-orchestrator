@@ -73,7 +73,7 @@ export function ProjectOverviewGrid({
             </a>
           </div>
 
-          <div className="mb-4 flex flex-wrap gap-2">
+          <div className="mb-4 grid grid-cols-5 gap-1">
             <ProjectMetric label="Merge" value={counts.merge} tone="var(--color-status-ready)" />
             <ProjectMetric
               label="Respond"

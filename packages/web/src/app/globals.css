@@ -3,7 +3,7 @@
 @theme {
   /* ── Base surfaces ────────────────────────────────────────────────── */
   --color-bg-base:      #0d1117;
-  --color-bg-surface:   rgba(22, 27, 34, 0.8);
+  --color-bg-surface:   rgb(22, 27, 34);
   --color-bg-elevated:  rgba(28, 33, 40, 0.9);
   --color-bg-subtle:    rgba(33, 38, 45, 0.7);
 
