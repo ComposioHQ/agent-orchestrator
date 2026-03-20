@@ -13,6 +13,7 @@
 import { randomUUID } from "node:crypto";
 import {
   SESSION_STATUS,
+  TERMINAL_STATUSES,
   PR_STATE,
   CI_STATUS,
   isOrchestratorSession,
@@ -854,12 +855,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       const idleTimeoutMs = config.orchestratorIdleTimeoutMs ?? 600_000; // default 10 min
       if (idleTimeoutMs > 0 && scopedProjectId) {
         const workerSessions = sessions.filter(
-          (s) =>
-            s.status !== "merged" &&
-            s.status !== "killed" &&
-            !isOrchestratorSession(s),
+          (s) => !TERMINAL_STATUSES.has(s.status) && !isOrchestratorSession(s),
         );
-        const orchestratorSession = sessions.find((s) => isOrchestratorSession(s));
+        const orchestratorSession = sessions.find(
+          (s) => isOrchestratorSession(s) && !TERMINAL_STATUSES.has(s.status),
+        );
 
         if (workerSessions.length === 0 && orchestratorSession) {
           // Track when idle started
@@ -879,6 +879,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             });
             try {
               await sessionManager.kill(orchestratorSession.id);
+              states.set(orchestratorSession.id, SESSION_STATUS.KILLED);
+              orchestratorIdleSince.delete(scopedProjectId);
               // Emit event so notifiers can inform the user
               const event = createEvent("session.orchestrator_idle_shutdown", {
                 sessionId: orchestratorSession.id,
@@ -889,7 +891,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             } catch {
               // Kill failed — will retry next poll
             }
-            orchestratorIdleSince.delete(scopedProjectId);
           }
         } else {
           // Workers are active — reset idle timer
