@@ -83,6 +83,16 @@ All tests must pass before pushing. CI failures are blockers — fix them, don't
 
 Before running `gh pr create`, verify the `--repo` target or the default remote. If it resolves to `ComposioHQ/agent-orchestrator`, stop and ask for approval before proceeding. The correct default target is always `jleechanorg/agent-orchestrator`.
 
+## Bulk PR Merging
+
+When merging multiple PRs, use the `/bulk-merge` workflow (`.claude/commands/bulk-merge.md`):
+
+1. Verify all PRs are green (CI + mergeable + no unresolved comments + CodeRabbit approved)
+2. Categorize: LOW (additive only), MEDIUM (modifies existing files), HIGH (core runtime/API changes)
+3. Merge order: low-risk smallest-first, then medium, then high
+4. Resolve `index.ts` / `.beads/issues.jsonl` conflicts between merges (keep all lines from both sides)
+5. Post-merge: `pnpm build && pnpm test && pnpm typecheck`
+
 ## PR Checklist
 
 Before opening a PR, verify:

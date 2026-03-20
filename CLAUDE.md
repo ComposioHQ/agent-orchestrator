@@ -85,6 +85,16 @@ When cherry-picking work to a `feat/*-upstream` branch for a ComposioHQ PR, **do
 - `.beads/` — local issue tracker
 - Any commit that references fork infrastructure (openclaw, jleechanorg-specific tooling)
 
+## Bulk PR Merging
+
+Use `/bulk-merge` to evaluate, risk-assess, and sequentially merge multiple PRs. See `.claude/commands/bulk-merge.md` for the full workflow. Key points:
+
+- Verify all 4 green checks before merging any PR
+- Merge low-risk (additive-only) PRs first, smallest to largest
+- Medium-risk (modifies existing files) PRs merge after low-risk
+- Resolve `index.ts` and `.beads/issues.jsonl` conflicts between each merge (keep both sides)
+- Run `pnpm build && pnpm test && pnpm typecheck` after all merges complete
+
 ## Mirror Fork for Clean Upstream PRs
 
 There is a separate mirror fork at `jleechan2015/agent-orchestrator-mirror` that mirrors `ComposioHQ/agent-orchestrator` exactly. Use this for submitting PRs that should go upstream without custom fork logic:
