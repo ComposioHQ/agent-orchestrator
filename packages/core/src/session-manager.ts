@@ -879,6 +879,21 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           if (detected.timestamp && detected.timestamp > session.lastActivityAt) {
             session.lastActivityAt = detected.timestamp;
           }
+        } else if (session.runtimeHandle && plugins.runtime) {
+          // Fallback: JSONL-based detection returned null (no session file, no
+          // workspace, etc.). Use terminal output parsing as a last resort so we
+          // don't show "unknown" for running agents.
+          try {
+            const output = await plugins.runtime.getOutput(session.runtimeHandle, 30);
+            if (output) {
+              const terminalState = plugins.agent.detectActivity(output);
+              if (terminalState) {
+                session.activity = terminalState;
+              }
+            }
+          } catch {
+            // Terminal output fallback failed — keep null (shows as "unknown")
+          }
         }
       } catch {
         // Can't detect activity — keep existing value

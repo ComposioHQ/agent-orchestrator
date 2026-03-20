@@ -212,6 +212,9 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
   const states = new Map<SessionId, SessionStatus>();
   const reactionTrackers = new Map<string, ReactionTracker>(); // "sessionId:reactionKey"
+  const mergeConflictReactionFired = new Map<SessionId, boolean>();
+  const killedPrDetectionAttempts = new Map<SessionId, number>();
+  const MAX_KILLED_PR_DETECTION_ATTEMPTS = 10;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
@@ -243,26 +246,35 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     // Track activity state across steps so stuck detection can run after PR checks
     let detectedIdleTimestamp: Date | null = null;
+    let runtimeDead = false;
 
     // 1. Check if runtime is alive
     if (session.runtimeHandle) {
       const runtime = registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime);
       if (runtime) {
         const alive = await runtime.isAlive(session.runtimeHandle).catch(() => true);
-        if (!alive) return "killed";
+        if (!alive) {
+          // Don't return "killed" immediately — the session may have an open PR
+          // that needs merge-readiness checks (steps 3-4). Mark as dead and let
+          // PR checks run first. If there's no PR, step 5b will return "killed".
+          runtimeDead = true;
+        }
       }
     }
 
     // 2. Check agent activity — prefer JSONL-based detection (runtime-agnostic)
-    if (agent && session.runtimeHandle) {
+    //    Skip if runtime is already known dead — no point probing a dead process.
+    //    We'll fall through to PR checks (steps 3-4) which matter even after death.
+    if (agent && session.runtimeHandle && !runtimeDead) {
       try {
         // Try JSONL-based activity detection first (reads agent's session files directly)
         const activityState = await agent.getActivityState(session, config.readyThresholdMs);
         if (activityState) {
           if (activityState.state === "waiting_input") return "needs_input";
-          if (activityState.state === "exited") return "killed";
-
-          if (
+          if (activityState.state === "exited") {
+            // Don't return killed — fall through to PR checks
+            runtimeDead = true;
+          } else if (
             (activityState.state === "idle" || activityState.state === "blocked") &&
             activityState.timestamp
           ) {
@@ -283,7 +295,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             if (activity === "waiting_input") return "needs_input";
 
             const processAlive = await agent.isProcessRunning(session.runtimeHandle);
-            if (!processAlive) return "killed";
+            if (!processAlive) runtimeDead = true; // fall through to PR checks
           }
         }
       } catch {
@@ -376,6 +388,14 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     // still check stuck threshold. This handles agents that finish without creating a PR.
     if (detectedIdleTimestamp && isIdleBeyondThreshold(session, detectedIdleTimestamp)) {
       return "stuck";
+    }
+
+    // 5b. If runtime is dead and we fell through PR checks without finding a
+    // mergeable/merged/ci_failed state: if the session has an open PR,
+    // report "pr_open" so the merge-conflict / idle-PR reactions can fire.
+    // Only report "killed" if there's no PR to manage.
+    if (runtimeDead) {
+      return session.pr ? "pr_open" : "killed";
     }
 
     // 6. Default: if agent is active, it's working
@@ -736,6 +756,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const newStatus = await determineStatus(session);
     let transitionReaction: { key: string; result: ReactionResult | null } | undefined;
 
+    if (newStatus === "killed" && session.branch && !session.pr) {
+      const attempts = (killedPrDetectionAttempts.get(session.id) ?? 0) + 1;
+      killedPrDetectionAttempts.set(session.id, attempts);
+    } else {
+      killedPrDetectionAttempts.delete(session.id);
+    }
+
     if (newStatus !== oldStatus) {
       const correlationId = createCorrelationId("lifecycle-transition");
       // State transition detected
@@ -814,6 +841,42 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
 
     await maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction);
+
+    // Check for merge conflicts on open PRs and trigger the merge-conflicts reaction.
+    // This runs independently of status transitions because "pr_open" doesn't change
+    // when conflicts appear — we need to actively detect them.
+    if (session.pr && newStatus === "pr_open") {
+      const project = config.projects[session.projectId];
+      const scm = project?.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+      if (scm) {
+        try {
+          const mergeReady = await scm.getMergeability(session.pr);
+          if (!mergeReady.noConflicts) {
+            const reactionKey = "merge-conflicts";
+            const reactionConfig = getReactionConfigForSession(session, reactionKey);
+            const alreadyFired = mergeConflictReactionFired.get(session.id) === true;
+            if (reactionConfig && reactionConfig.auto !== false && !alreadyFired) {
+              const result = await executeReaction(
+                session.id,
+                session.projectId,
+                reactionKey,
+                reactionConfig,
+              );
+              if (result.success) {
+                mergeConflictReactionFired.set(session.id, true);
+              }
+            }
+          } else {
+            mergeConflictReactionFired.delete(session.id);
+            clearReactionTracker(session.id, "merge-conflicts");
+          }
+        } catch {
+          // Merge conflict detection is best-effort; don't block the poll cycle
+        }
+      }
+    } else {
+      mergeConflictReactionFired.delete(session.id);
+    }
   }
 
   /** Run one polling cycle across all sessions. */
@@ -829,11 +892,26 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
       // Include sessions that are active OR whose status changed from what we last saw
       // (e.g., list() detected a dead runtime and marked it "killed" — we need to
-      // process that transition even though the new status is terminal)
+      // process that transition even though the new status is terminal).
+      //
+      // Also include killed sessions that have a branch but no PR detected yet,
+      // or that have an open PR — they may still need PR auto-detection or
+      // merge-readiness checks (e.g., auto-merge when CI passes).
       const sessionsToCheck = sessions.filter((s) => {
         if (s.status !== "merged" && s.status !== "killed") return true;
+        // Always process fresh transitions
         const tracked = states.get(s.id);
-        return tracked !== undefined && tracked !== s.status;
+        if (tracked !== undefined && tracked !== s.status) return true;
+        // Killed sessions with unresolved PR work: keep polling until
+        // the PR is merged/closed or auto-merge fires.
+        if (s.status === "killed") {
+          if (s.branch && !s.pr) {
+            const attempts = killedPrDetectionAttempts.get(s.id) ?? 0;
+            return attempts < MAX_KILLED_PR_DETECTION_ATTEMPTS;
+          }
+          if (s.pr) return true; // PR still open — check merge readiness
+        }
+        return false;
       });
 
       // Poll all sessions concurrently
@@ -851,6 +929,16 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const sessionId = trackerKey.split(":")[0];
         if (sessionId && !currentSessionIds.has(sessionId)) {
           reactionTrackers.delete(trackerKey);
+        }
+      }
+      for (const sessionId of mergeConflictReactionFired.keys()) {
+        if (!currentSessionIds.has(sessionId)) {
+          mergeConflictReactionFired.delete(sessionId);
+        }
+      }
+      for (const sessionId of killedPrDetectionAttempts.keys()) {
+        if (!currentSessionIds.has(sessionId)) {
+          killedPrDetectionAttempts.delete(sessionId);
         }
       }
 

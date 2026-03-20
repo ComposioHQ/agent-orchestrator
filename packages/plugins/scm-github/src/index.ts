@@ -118,7 +118,9 @@ function prInfoFromView(
 
 function isUnsupportedPrChecksJsonError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
-  return /pr checks/i.test(err.message) && /unknown json field/i.test(err.message);
+  // gh < 2.46 doesn't support `--json` for `pr checks` at all ("unknown flag: --json")
+  // gh >= 2.46 may reject specific field names ("unknown json field")
+  return /pr checks/i.test(err.message) && /unknown (json field|flag)/i.test(err.message);
 }
 
 function mapRawCheckStateToStatus(rawState: string | undefined): CICheck["status"] {
@@ -673,6 +675,10 @@ function createGitHubSCM(): SCM {
       } catch (err) {
         if (isUnsupportedPrChecksJsonError(err)) {
           return getCIChecksFromStatusRollup(pr);
+        }
+        // gh exits non-zero with "no checks reported" when the branch has no CI
+        if (err instanceof Error && /no checks reported/i.test(err.message)) {
+          return [];
         }
         throw new Error("Failed to fetch CI checks", { cause: err });
       }
