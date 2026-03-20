@@ -89,8 +89,8 @@ if [[ -z "\${AO_SESSION:-}" ]]; then
   exit 0
 fi
 
-# Validate AO_SESSION to prevent path traversal attacks
-if [[ "$AO_SESSION" == *"/"* ]] || [[ "$AO_SESSION" == *".."* ]]; then
+# Validate AO_SESSION: whitelist alphanumeric, hyphen, underscore only (prevents path traversal)
+if [[ ! "$AO_SESSION" =~ ^[a-zA-Z0-9_-]+$ ]]; then
   echo '{"systemMessage": "AO_SESSION contains invalid characters, skipping metadata update"}'
   exit 0
 fi
@@ -110,8 +110,8 @@ update_metadata_key() {
   local key="$1"
   local value="$2"
 
-  # Create temp file
-  local temp_file="\${metadata_file}.tmp"
+  # Create temp file with PID for atomic updates under concurrency
+  local temp_file="\${metadata_file}.tmp.$$"
 
   # Sanitize: strip newlines to prevent metadata format corruption (key=value per line)
   local safe_value=$(printf '%s' "$value" | tr -d $'\\n')

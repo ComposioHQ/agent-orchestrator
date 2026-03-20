@@ -91,12 +91,6 @@ export interface AgentPluginConfig {
    * (e.g. Gemini uses "AfterTool").
    */
   hookEvent?: "PostToolUse" | "AfterTool";
-  /**
-   * Default data directory for session metadata.
-   * Used by postLaunchSetup when hookConfig.dataDir is not available.
-   * Defaults to "$HOME/.ao-sessions" if not provided.
-   */
-  defaultDataDir?: string;
 }
 
 // =============================================================================
@@ -152,8 +146,8 @@ if [[ -z "\${AO_SESSION:-}" ]]; then
   exit 0
 fi
 
-# Validate AO_SESSION to prevent path traversal attacks
-if [[ "$AO_SESSION" == *"/"* ]] || [[ "$AO_SESSION" == *".."* ]]; then
+# Validate AO_SESSION: whitelist alphanumeric, hyphen, underscore only (prevents path traversal)
+if [[ ! "$AO_SESSION" =~ ^[a-zA-Z0-9_-]+$ ]]; then
   echo '{"systemMessage": "AO_SESSION contains invalid characters, skipping metadata update"}'
   exit 0
 fi
@@ -193,9 +187,6 @@ update_metadata_key() {
 
   # Atomic replace
   mv "$temp_file" "$metadata_file"
-
-  # Clean up only our own temp file (PID-specific to avoid race with concurrent hooks)
-  rm -f "\${metadata_file}.tmp.$$" 2>/dev/null || true
 }
 
 # ============================================================================
@@ -981,9 +972,8 @@ export function createAgentPlugin(config: AgentPluginConfig, overrides?: Partial
         config.configDir,
         "metadata-updater.sh",
       );
-      // Do NOT set AO_DATA_DIR here — the agent was launched with AO_DATA_DIR=sessionsDir
-      // in its environment. The hook inherits that when the agent invokes it. Setting
-      // defaultDataDir (e.g. ".ao-sessions") would overwrite with a wrong/relative path.
+      // Do NOT set AO_DATA_DIR here — the agent inherits it from its launch environment.
+      // Overwriting it here would clobber the correct sessions-dir set at spawn time.
       const hookCommand = shellEscape(hookScriptPath);
       await setupHookInWorkspace(session.workspacePath, config.configDir, hookCommand, config.hookToolMatcher ?? "Bash", config.hookEvent ?? "PostToolUse");
     },

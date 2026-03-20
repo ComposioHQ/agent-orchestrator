@@ -250,24 +250,6 @@ describe("createAgentPlugin factory", () => {
     expect(result).toBe(customDir);
   });
 
-  it("should support defaultDataDir config option", async () => {
-    const { createAgentPlugin } = await import("@composio/ao-plugin-agent-base");
-
-    const config = {
-      name: "test-agent",
-      description: "Test agent plugin",
-      processName: "test-process",
-      command: "test",
-      configDir: ".test",
-      permissionlessFlag: "--flag",
-      defaultDataDir: "/custom/data/dir",
-    };
-
-    const agent = createAgentPlugin(config);
-
-    // The agent should be created successfully with defaultDataDir
-    expect(agent.name).toBe("test-agent");
-  });
 });
 
 describe("hookEvent configuration", () => {
