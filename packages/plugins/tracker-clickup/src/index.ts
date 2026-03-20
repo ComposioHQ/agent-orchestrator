@@ -5,6 +5,7 @@
  * Authentication via CLICKUP_API_TOKEN environment variable.
  */
 
+import type { IncomingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
 import type {
   PluginModule,
@@ -67,7 +68,7 @@ function clickUpRequest<T>(
           ...(payload ? { "Content-Length": String(Buffer.byteLength(payload)) } : {}),
         },
       },
-      (res) => {
+      (res: IncomingMessage) => {
         const chunks: Buffer[] = [];
         res.on("error", (err: Error) => settle(() => reject(err)));
         res.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -107,7 +108,7 @@ function clickUpRequest<T>(
       });
     });
 
-    req.on("error", (err) => settle(() => reject(err)));
+    req.on("error", (err: Error) => settle(() => reject(err)));
 
     if (payload) {
       req.write(payload);
@@ -198,7 +199,7 @@ function getListId(project: ProjectConfig): string | undefined {
 
 function toIssue(task: ClickUpTask): Issue {
   return {
-    id: task.custom_id ?? task.id,
+    id: task.id,
     title: task.name,
     description: task.text_content ?? task.description ?? "",
     url: task.url,
@@ -297,7 +298,9 @@ function createClickUpTracker(): Tracker {
       const params = new URLSearchParams();
 
       if (filters.state === "closed") {
-        params.set("statuses[]", "closed");
+        // Don't filter by status name — ClickUp spaces use custom names
+        // like "Done", "Complete", "Resolved" for closed-type statuses.
+        // Fetch all (including closed) and filter client-side via mapClickUpState.
         params.set("include_closed", "true");
       } else if (filters.state !== "all") {
         // Default: open tasks only (exclude closed)
@@ -329,7 +332,13 @@ function createClickUpTracker(): Tracker {
         `/list/${listId}/task${queryStr ? `?${queryStr}` : ""}`,
       );
 
-      return data.tasks.slice(0, limit).map(toIssue);
+      let tasks = data.tasks;
+
+      if (filters.state === "closed") {
+        tasks = tasks.filter((t) => mapClickUpState(t.status) === "closed");
+      }
+
+      return tasks.slice(0, limit).map(toIssue);
     },
 
     async updateIssue(

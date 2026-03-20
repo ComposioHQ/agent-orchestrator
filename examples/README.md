@@ -38,6 +38,18 @@ Use this if:
 - You want agents to update Linear ticket status
 - You need custom agent rules per project
 
+### [clickup-team.yaml](./clickup-team.yaml)
+
+**ClickUp integration**
+
+Integrates with ClickUp for task management. Requires `CLICKUP_API_TOKEN` environment variable.
+
+Use this if:
+
+- Your team uses ClickUp for task management
+- You want agents to update ClickUp task status
+- You need custom agent rules per project
+
 ### [multi-project.yaml](./multi-project.yaml)
 
 **Multiple repos with different trackers**
@@ -47,7 +59,7 @@ Shows how to manage multiple projects with different trackers and notification r
 Use this if:
 
 - You're managing multiple repositories
-- Different projects use different trackers (GitHub Issues vs Linear)
+- Different projects use different trackers (GitHub Issues vs Linear vs ClickUp)
 - You want Slack notifications in addition to desktop
 - You need different rules per project
 

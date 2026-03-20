@@ -186,10 +186,12 @@ describe("tracker-clickup plugin", () => {
       });
     });
 
-    it("uses custom_id when present", async () => {
+    it("always uses native task ID, not custom_id", async () => {
       mockClickUpAPI({ ...sampleTask, custom_id: "PROJ-42" });
       const issue = await tracker.getIssue("abc123", project);
-      expect(issue.id).toBe("PROJ-42");
+      // Must use native task.id for round-trip API compatibility —
+      // custom IDs require custom_task_ids=true&team_id=... query params
+      expect(issue.id).toBe("abc123");
     });
 
     it("maps closed status type to closed", async () => {
@@ -504,6 +506,25 @@ describe("tracker-clickup plugin", () => {
 
       const callOpts = requestMock.mock.calls[0][0];
       expect(callOpts.path).toContain("include_closed=true");
+      // Must not filter by literal status name — ClickUp spaces use
+      // custom names like "Done", "Complete" for closed-type statuses
+      expect(callOpts.path).not.toContain("statuses");
+    });
+
+    it("filters closed tasks client-side including custom status names", async () => {
+      mockClickUpAPI({
+        tasks: [
+          { ...sampleTask, id: "t1", status: { status: "open", type: "open" } },
+          { ...sampleTask, id: "t2", status: { status: "done", type: "closed" } },
+          { ...sampleTask, id: "t3", status: { status: "Complete", type: "done" } },
+          { ...sampleTask, id: "t4", status: { status: "in progress", type: "custom" } },
+          { ...sampleTask, id: "t5", status: { status: "resolved", type: "custom" } },
+        ],
+      });
+      const issues = await tracker.listIssues!({ state: "closed" }, project);
+      const ids = issues.map((i: { id: string }) => i.id);
+      // "done/closed" type and custom "resolved" are closed; "open" and "in progress" are not
+      expect(ids).toEqual(["t2", "t3", "t5"]);
     });
 
     it("excludes closed tasks by default", async () => {

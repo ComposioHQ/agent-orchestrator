@@ -5018,10 +5018,18 @@ describe("isIssueNotFoundError", () => {
     expect(isIssueNotFoundError(new Error("Invalid issue format: fix login bug"))).toBe(true);
   });
 
+  it("matches ClickUp API task-not-found errors", () => {
+    expect(isIssueNotFoundError(new Error("ClickUp API error: Task not found"))).toBe(true);
+    expect(isIssueNotFoundError(new Error("ClickUp API error: Task does not exist"))).toBe(true);
+  });
+
   it("does not match unrelated errors", () => {
     expect(isIssueNotFoundError(new Error("Unauthorized"))).toBe(false);
     expect(isIssueNotFoundError(new Error("Network timeout"))).toBe(false);
     expect(isIssueNotFoundError(new Error("API key not found"))).toBe(false);
+    // Must not false-positive on infrastructure errors containing "task"
+    expect(isIssueNotFoundError(new Error("background task not found"))).toBe(false);
+    expect(isIssueNotFoundError(new Error("scheduled task does not exist"))).toBe(false);
   });
 
   it("returns false for non-error values", () => {

@@ -447,7 +447,7 @@ export interface WorkspaceInfo {
 // =============================================================================
 
 /**
- * Issue/task tracker integration — GitHub Issues, Linear, Jira, etc.
+ * Issue/task tracker integration — GitHub Issues, Linear, ClickUp, Jira, etc.
  */
 export interface Tracker {
   readonly name: string;
@@ -1278,8 +1278,8 @@ export function isIssueNotFoundError(err: unknown): boolean {
     message.includes("no issue with identifier") ||
     // GitHub: "invalid issue format" (ad-hoc free-text strings)
     message.includes("invalid issue format") ||
-    // ClickUp: "Task not found" or "Task does not exist"
-    (message.includes("task") &&
+    // ClickUp: errors surfaced as "ClickUp API error: Task not found"
+    (message.includes("clickup") &&
       (message.includes("not found") || message.includes("does not exist")))
   );
 }
