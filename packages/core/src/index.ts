@@ -235,3 +235,7 @@ export type {
   SkippedSession,
   ReaperError,
 } from "./session-reaper.js";
+
+// Slack outbox — outbox queue + dead letter handling (bd-sw3)
+export { SlackOutbox } from "./slack-outbox.js";
+export type { OutboxEntry, OutboxConfig } from "./slack-outbox.js";
