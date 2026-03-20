@@ -738,6 +738,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       tracked ?? ((session.metadata?.["status"] as SessionStatus | undefined) || session.status);
     const newStatus = await determineStatus(session);
     let transitionReaction: { key: string; result: ReactionResult | null } | undefined;
+    let killedThisCheck = false;
 
     if (newStatus !== oldStatus) {
       const correlationId = createCorrelationId("lifecycle-transition");
@@ -822,6 +823,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       if (newStatus === "merged" || newStatus === "killed") {
         try {
           await sessionManager.kill(session.id);
+          killedThisCheck = true;
         } catch {
           // Session may already be partially cleaned up — not critical
         }
@@ -830,6 +832,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       // No transition but track current state
       states.set(session.id, newStatus);
     }
+
+    if (killedThisCheck) return;
+
+    // Avoid recreating archived metadata if the session was removed between
+    // transition handling and review backlog processing.
+    const stillExists = await sessionManager.get(session.id);
+    if (!stillExists) return;
 
     await maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction);
   }
