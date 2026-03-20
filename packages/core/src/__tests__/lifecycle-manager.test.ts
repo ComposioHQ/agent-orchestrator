@@ -175,6 +175,72 @@ describe("start / stop", () => {
     // Should not throw on double stop
     lm.stop();
   });
+
+  it("respawns the orchestrator when open work exists but the orchestrator is dead", async () => {
+    vi.mocked(mockSessionManager.list).mockResolvedValue([
+      makeSession({ id: "app-1", status: "working" }),
+      makeSession({
+        id: "app-orchestrator",
+        status: "killed",
+        branch: "main",
+        metadata: { role: "orchestrator" },
+      }),
+    ]);
+    vi.mocked(mockSessionManager.spawnOrchestrator).mockResolvedValue(
+      makeSession({
+        id: "app-orchestrator",
+        status: "working",
+        branch: "main",
+        metadata: { role: "orchestrator" },
+      }),
+    );
+
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+      projectId: "my-app",
+    });
+
+    lm.start(60_000);
+
+    await vi.waitFor(() => {
+      expect(mockSessionManager.spawnOrchestrator).toHaveBeenCalledWith({
+        projectId: "my-app",
+        systemPrompt: expect.stringContaining("# My App Orchestrator"),
+        prompt: expect.stringContaining("Do an initial orchestration pass"),
+      });
+    });
+
+    lm.stop();
+  });
+
+  it("does not respawn the orchestrator when there is no open work", async () => {
+    vi.mocked(mockSessionManager.list).mockResolvedValue([
+      makeSession({
+        id: "app-orchestrator",
+        status: "killed",
+        branch: "main",
+        metadata: { role: "orchestrator" },
+      }),
+    ]);
+
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+      projectId: "my-app",
+    });
+
+    lm.start(60_000);
+
+    await vi.waitFor(() => {
+      expect(mockSessionManager.list).toHaveBeenCalledWith("my-app");
+    });
+    expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
+
+    lm.stop();
+  });
 });
 
 describe("check (single session)", () => {
