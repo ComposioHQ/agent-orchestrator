@@ -416,6 +416,7 @@ export function Dashboard({
                       <AttentionZone
                         level={level}
                         sessions={grouped[level]}
+                        variant="list"
                         onSend={handleSend}
                         onKill={handleKill}
                         onMerge={handleMerge}

@@ -76,7 +76,7 @@ export function ErrorState({ message, onRetry }: ErrorStateProps) {
       {onRetry && (
         <button
           onClick={onRetry}
-          className="rounded-[6px] border border-[var(--color-border-default)] px-4 py-1.5 text-[12px] font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text-primary)]"
+          className="rounded-[6px] border border-[var(--color-border-default)] px-4 py-1.5 text-[12px] font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-hover-overlay)] hover:text-[var(--color-text-primary)]"
         >
           Retry
         </button>

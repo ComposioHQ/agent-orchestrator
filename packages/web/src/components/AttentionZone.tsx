@@ -7,6 +7,7 @@ import { SessionCard } from "./SessionCard";
 interface AttentionZoneProps {
   level: AttentionLevel;
   sessions: DashboardSession[];
+  variant?: "board" | "list";
   onSend?: (sessionId: string, message: string) => void;
   onKill?: (sessionId: string) => void;
   onMerge?: (prNumber: number) => void;
@@ -53,6 +54,7 @@ const zoneConfig: Record<
 function AttentionZoneView({
   level,
   sessions,
+  variant = "board",
   onSend,
   onKill,
   onMerge,
@@ -61,7 +63,7 @@ function AttentionZoneView({
   const config = zoneConfig[level];
 
   return (
-    <div className="kanban-column">
+    <div className={variant === "board" ? "kanban-column" : "w-full"}>
       {/* Column header */}
       <div className="mb-2 flex items-center gap-2 px-1 py-1.5">
         <div
@@ -109,6 +111,7 @@ function areAttentionZonePropsEqual(
 ): boolean {
   return (
     prev.level === next.level &&
+    prev.variant === next.variant &&
     prev.onSend === next.onSend &&
     prev.onKill === next.onKill &&
     prev.onMerge === next.onMerge &&
