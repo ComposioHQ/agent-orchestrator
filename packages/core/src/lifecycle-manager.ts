@@ -225,26 +225,35 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     // Track activity state across steps so stuck detection can run after PR checks
     let detectedIdleTimestamp: Date | null = null;
+    let runtimeDead = false;
 
     // 1. Check if runtime is alive
     if (session.runtimeHandle) {
       const runtime = registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime);
       if (runtime) {
         const alive = await runtime.isAlive(session.runtimeHandle).catch(() => true);
-        if (!alive) return "killed";
+        if (!alive) {
+          // Don't return "killed" immediately — the session may have an open PR
+          // that needs merge-readiness checks (steps 3-4). Mark as dead and let
+          // PR checks run first. If there's no PR, step 5b will return "killed".
+          runtimeDead = true;
+        }
       }
     }
 
     // 2. Check agent activity — prefer JSONL-based detection (runtime-agnostic)
-    if (agent && session.runtimeHandle) {
+    //    Skip if runtime is already known dead — no point probing a dead process.
+    //    We'll fall through to PR checks (steps 3-4) which matter even after death.
+    if (agent && session.runtimeHandle && !runtimeDead) {
       try {
         // Try JSONL-based activity detection first (reads agent's session files directly)
         const activityState = await agent.getActivityState(session, config.readyThresholdMs);
         if (activityState) {
           if (activityState.state === "waiting_input") return "needs_input";
-          if (activityState.state === "exited") return "killed";
-
-          if (
+          if (activityState.state === "exited") {
+            // Don't return killed — fall through to PR checks
+            runtimeDead = true;
+          } else if (
             (activityState.state === "idle" || activityState.state === "blocked") &&
             activityState.timestamp
           ) {
@@ -265,7 +274,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             if (activity === "waiting_input") return "needs_input";
 
             const processAlive = await agent.isProcessRunning(session.runtimeHandle);
-            if (!processAlive) return "killed";
+            if (!processAlive) runtimeDead = true; // fall through to PR checks
           }
         }
       } catch {
@@ -352,6 +361,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     if (detectedIdleTimestamp && isIdleBeyondThreshold(session, detectedIdleTimestamp)) {
       return "stuck";
     }
+
+    // 5b. If runtime is dead and we fell through PR checks without finding a
+    // mergeable/merged/ci_failed state, the session is truly dead.
+    if (runtimeDead) return "killed";
 
     // 6. Default: if agent is active, it's working
     if (
@@ -804,11 +817,23 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
       // Include sessions that are active OR whose status changed from what we last saw
       // (e.g., list() detected a dead runtime and marked it "killed" — we need to
-      // process that transition even though the new status is terminal)
+      // process that transition even though the new status is terminal).
+      //
+      // Also include killed sessions that have a branch but no PR detected yet,
+      // or that have an open PR — they may still need PR auto-detection or
+      // merge-readiness checks (e.g., auto-merge when CI passes).
       const sessionsToCheck = sessions.filter((s) => {
         if (s.status !== "merged" && s.status !== "killed") return true;
+        // Always process fresh transitions
         const tracked = states.get(s.id);
-        return tracked !== undefined && tracked !== s.status;
+        if (tracked !== undefined && tracked !== s.status) return true;
+        // Killed sessions with unresolved PR work: keep polling until
+        // the PR is merged/closed or auto-merge fires.
+        if (s.status === "killed") {
+          if (s.branch && !s.pr) return true; // PR not yet detected
+          if (s.pr) return true; // PR still open — check merge readiness
+        }
+        return false;
       });
 
       // Poll all sessions concurrently
