@@ -11,6 +11,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import {
   SESSION_STATUS,
   PR_STATE,
@@ -299,7 +300,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         let scmSession: Session = session;
         if (session.workspacePath) {
           try {
-            const { execFileSync } = await import("node:child_process");
             const liveBranch = execFileSync("git", ["branch", "--show-current"], {
               cwd: session.workspacePath,
               encoding: "utf8",
