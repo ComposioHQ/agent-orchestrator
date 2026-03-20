@@ -1512,6 +1512,82 @@ describe("list", () => {
     expect(agentWithLiveState.getActivityState).toHaveBeenCalled();
   });
 
+  it("revives stale stuck sessions when runtime is alive and activity is active", async () => {
+    const expectedTmuxName = "hash-app-1";
+    const aliveRuntime: Runtime = {
+      ...mockRuntime,
+      isAlive: vi
+        .fn()
+        .mockImplementation(async (handle: RuntimeHandle) => handle.id === expectedTmuxName),
+    };
+    const agentWithLiveState: Agent = {
+      ...mockAgent,
+      getActivityState: vi.fn().mockResolvedValue({ state: "active" }),
+    };
+    const registryWithAliveRuntime: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return aliveRuntime;
+        if (slot === "agent") return agentWithLiveState;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "feat/issue-53",
+      status: "stuck",
+      project: "my-app",
+      tmuxName: expectedTmuxName,
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithAliveRuntime });
+    const sessions = await sm.list("my-app");
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].status).toBe("working");
+    expect(sessions[0].activity).toBe("active");
+  });
+
+  it("preserves live needs_input when runtime is alive and agent is waiting for input", async () => {
+    const expectedTmuxName = "hash-app-1";
+    const aliveRuntime: Runtime = {
+      ...mockRuntime,
+      isAlive: vi
+        .fn()
+        .mockImplementation(async (handle: RuntimeHandle) => handle.id === expectedTmuxName),
+    };
+    const agentWaitingInput: Agent = {
+      ...mockAgent,
+      getActivityState: vi.fn().mockResolvedValue({ state: "waiting_input" }),
+    };
+    const registryWithAliveRuntime: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return aliveRuntime;
+        if (slot === "agent") return agentWaitingInput;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "feat/issue-53",
+      status: "stuck",
+      project: "my-app",
+      tmuxName: expectedTmuxName,
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithAliveRuntime });
+    const sessions = await sm.list("my-app");
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].status).toBe("needs_input");
+    expect(sessions[0].activity).toBe("waiting_input");
+  });
+
   it("keeps existing activity when getActivityState throws", async () => {
     const agentWithError: Agent = {
       ...mockAgent,

@@ -8,7 +8,7 @@ import {
   getLeaves,
   getSiblings,
   formatPlanTree,
-  TERMINAL_STATUSES,
+  isTerminalSession,
   expandHome,
   type OrchestratorConfig,
   type DecomposerConfig,
@@ -338,12 +338,12 @@ export function registerBatchSpawn(program: Command): void {
       const spawnedIssues = new Set<string>();
 
       // Load existing sessions once before the loop to avoid repeated reads + enrichment.
-      // Exclude terminal sessions so completed/merged sessions don't block respawning
-      // (e.g. when an issue is reopened after its PR was merged).
+      // Exclude terminal/dead sessions so stale metadata does not block respawning
+      // (e.g. after merged PRs, dead tmux sessions, or cleaned-up runtimes).
       const existingSessions = await sm.list(projectId);
       const existingIssueMap = new Map(
         existingSessions
-          .filter((s) => s.issueId && !TERMINAL_STATUSES.has(s.status))
+          .filter((s) => s.issueId && !isTerminalSession(s))
           .map((s) => [s.issueId!.toLowerCase(), s.id]),
       );
 

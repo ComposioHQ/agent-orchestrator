@@ -68,7 +68,7 @@ let tmpDir: string;
 let configPath: string;
 
 import { Command } from "commander";
-import { registerSpawn } from "../../src/commands/spawn.js";
+import { registerSpawn, registerBatchSpawn } from "../../src/commands/spawn.js";
 
 let program: Command;
 let consoleSpy: ReturnType<typeof vi.spyOn>;
@@ -106,6 +106,7 @@ beforeEach(() => {
   program = new Command();
   program.exitOverride();
   registerSpawn(program);
+  registerBatchSpawn(program);
   consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(process, "exit").mockImplementation((code) => {
@@ -694,5 +695,54 @@ describe("spawn pre-flight checks", () => {
       .join("\n");
     expect(errors).toContain("not installed");
     expect(errors).not.toContain("not authenticated");
+  });
+
+  it("batch-spawn ignores dead terminal sessions when checking duplicate issues", async () => {
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-1",
+        projectId: "my-app",
+        status: "killed",
+        activity: "exited",
+        branch: "feat/INT-42",
+        issueId: "INT-42",
+        pr: null,
+        workspacePath: "/tmp/wt/app-1",
+        runtimeHandle: { id: "hash-app-1", runtimeName: "tmux", data: {} },
+        agentInfo: null,
+        createdAt: new Date(),
+        lastActivityAt: new Date(),
+        metadata: {},
+      },
+    ] satisfies Session[]);
+
+    const fakeSession: Session = {
+      id: "app-2",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: "feat/INT-42",
+      issueId: "INT-42",
+      pr: null,
+      workspacePath: "/tmp/wt/app-2",
+      runtimeHandle: { id: "hash-app-2", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+    mockExec.mockResolvedValue({ stdout: "tmux 3.3a", stderr: "" });
+
+    await program.parseAsync(["node", "test", "batch-spawn", "INT-42"]);
+
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith({
+      projectId: "my-app",
+      issueId: "INT-42",
+    });
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("Created app-2 for INT-42");
+    expect(output).not.toContain("already has session app-1");
   });
 });

@@ -335,6 +335,26 @@ describe("status command", () => {
     expect(output).toContain("1 active session");
   });
 
+  it("hides terminal sessions so status matches session ls active output", async () => {
+    mockSessionManager.list.mockResolvedValue([
+      makeSession({ id: "app-1", projectId: "my-app", status: "working" }),
+      makeSession({ id: "app-2", projectId: "my-app", status: "killed", activity: "exited" }),
+    ]);
+
+    mockTmux.mockImplementation(async (...args: string[]) => {
+      if (args[0] === "display-message") return null;
+      return null;
+    });
+    mockGit.mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "status"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("app-1");
+    expect(output).not.toContain("app-2");
+    expect(output).toContain("1 active session");
+  });
+
   it("shows plural for multiple sessions", async () => {
     writeFileSync(join(sessionsDir, "app-1"), "branch=a\nstatus=idle\n");
     writeFileSync(join(sessionsDir, "app-2"), "branch=b\nstatus=idle\n");
@@ -688,7 +708,7 @@ describe("status command", () => {
     expect(parsed[0].activity).toBeNull();
   });
 
-  it("shows exited activity from session manager", async () => {
+  it("omits exited sessions from status JSON", async () => {
     writeFileSync(
       join(sessionsDir, "app-1"),
       "worktree=/tmp/wt\nbranch=feat/dead\nstatus=working\n",
@@ -709,7 +729,7 @@ describe("status command", () => {
 
     const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
     const parsed = JSON.parse(jsonCalls);
-    expect(parsed[0].activity).toBe("exited");
+    expect(parsed).toEqual([]);
   });
 
   it("suppresses orchestrator PR ownership in status output", async () => {

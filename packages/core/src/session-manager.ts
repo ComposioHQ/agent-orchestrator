@@ -838,7 +838,11 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     handleFromMetadata: boolean,
     reviveKilledStatus = true,
   ): Promise<void> {
-    const wasKilled = session.status === "killed";
+    const statusBeforeEnrichment = session.status;
+    const hadStaleAttentionStatus =
+      statusBeforeEnrichment === "killed" ||
+      statusBeforeEnrichment === "stuck" ||
+      statusBeforeEnrichment === "needs_input";
     let runtimeConfirmedAlive = false;
     let detectedActivityState: Session["activity"] | null = null;
 
@@ -910,17 +914,18 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     }
 
-    // "killed" is terminal only when runtime liveness can be confirmed again.
-    // JSONL activity can be stale after kill, so do not revive based solely on
-    // activity detection. Also never revive if effective activity is exited.
+    // Live runtime/activity should beat stale metadata for dead-or-needs-attention
+    // statuses. This prevents healthy sessions from lingering as stuck/killed due
+    // to old metadata while still preserving richer statuses like pr_open.
     const effectiveActivityState = detectedActivityState ?? session.activity;
-    if (
-      reviveKilledStatus &&
-      wasKilled &&
-      runtimeConfirmedAlive === true &&
-      effectiveActivityState !== "exited"
-    ) {
-      session.status = "working";
+    if (reviveKilledStatus && hadStaleAttentionStatus && runtimeConfirmedAlive === true) {
+      if (effectiveActivityState === "waiting_input") {
+        session.status = "needs_input";
+      } else if (effectiveActivityState === "blocked") {
+        session.status = "stuck";
+      } else if (effectiveActivityState !== "exited") {
+        session.status = "working";
+      }
     }
   }
 

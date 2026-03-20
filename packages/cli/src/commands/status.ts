@@ -11,6 +11,7 @@ import {
   type Tracker,
   type ProjectConfig,
   isOrchestratorSession,
+  isTerminalSession,
   loadConfig,
 } from "@composio/ao-core";
 import { git, getTmuxSessions, getTmuxActivity } from "../lib/shell.js";
@@ -246,7 +247,7 @@ export function registerStatus(program: Command): void {
 
       // Use session manager to list sessions (metadata-based, not tmux-based)
       const sm = await getSessionManager(config);
-      const sessions = await sm.list(opts.project);
+      const sessions = (await sm.list(opts.project)).filter((session) => !isTerminalSession(session));
 
       if (!opts.json) {
         console.log(banner("AGENT ORCHESTRATOR STATUS"));
