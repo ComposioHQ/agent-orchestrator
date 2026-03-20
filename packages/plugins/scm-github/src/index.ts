@@ -676,6 +676,10 @@ function createGitHubSCM(): SCM {
         if (isUnsupportedPrChecksJsonError(err)) {
           return getCIChecksFromStatusRollup(pr);
         }
+        // gh exits non-zero with "no checks reported" when the branch has no CI
+        if (err instanceof Error && /no checks reported/i.test(err.message)) {
+          return [];
+        }
         throw new Error("Failed to fetch CI checks", { cause: err });
       }
     },
