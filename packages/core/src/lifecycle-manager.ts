@@ -196,8 +196,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   const reactionTrackers = new Map<string, ReactionTracker>(); // "sessionId:reactionKey"
   const mergeConflictReactionFired = new Map<SessionId, boolean>();
   const mergeReadyReactionFired = new Map<SessionId, boolean>();
-  const killedPrDetectionAttempts = new Map<SessionId, number>();
-  const MAX_KILLED_PR_DETECTION_ATTEMPTS = 10;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
@@ -748,6 +746,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       tracked ?? ((session.metadata?.["status"] as SessionStatus | undefined) || session.status);
     const newStatus = await determineStatus(session);
     let transitionReaction: { key: string; result: ReactionResult | null } | undefined;
+    let killedThisCheck = false;
 
     if (newStatus !== oldStatus) {
       const correlationId = createCorrelationId("lifecycle-transition");
@@ -821,10 +820,31 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           await notifyHuman(event, priority);
         }
       }
+
+      // Clean up runtime and workspace for terminal sessions.
+      // When lifecycle detects a "merged" or "killed" transition, the metadata
+      // is updated but the runtime (tmux) and workspace (worktree) are left
+      // running. Calling sessionManager.kill() tears down runtime + workspace
+      // and archives the metadata — the same thing `ao session kill` does manually.
+      if (newStatus === "merged" || newStatus === "killed") {
+        try {
+          await sessionManager.kill(session.id);
+          killedThisCheck = true;
+        } catch {
+          // Session may already be partially cleaned up — not critical
+        }
+      }
     } else {
       // No transition but track current state
       states.set(session.id, newStatus);
     }
+
+    if (killedThisCheck) return;
+
+    // Avoid recreating archived metadata if the session was removed between
+    // transition handling and review backlog processing.
+    const stillExists = await sessionManager.get(session.id);
+    if (!stillExists) return;
 
     await maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction);
 
@@ -894,61 +914,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       mergeConflictReactionFired.delete(session.id);
     }
 
-    // Clean up runtime for terminal sessions — kill the tmux session so workers
-    // don't sit idle on a Codex prompt after their PR is merged or the session
-    // is marked killed. Without this, merged sessions stay running forever.
-    if (
-      newStatus !== oldStatus &&
-      (newStatus === "merged" || newStatus === "killed") &&
-      session.runtimeHandle
-    ) {
-      try {
-        const project = config.projects[session.projectId];
-        const runtimeName =
-          session.runtimeHandle.runtimeName ??
-          (project ? (project.runtime ?? config.defaults.runtime) : config.defaults.runtime);
-        const runtimePlugin = registry.get<Runtime>("runtime", runtimeName);
-        if (runtimePlugin) {
-          await runtimePlugin.destroy(session.runtimeHandle);
-        }
-      } catch {
-        // Runtime cleanup is best-effort; don't fail the poll cycle
-      }
-    }
-  }
-
-  async function ensureOrchestratorsForOpenWork(sessions: Session[]): Promise<boolean> {
-    const projectIds = scopedProjectId ? [scopedProjectId] : Object.keys(config.projects);
-    let spawnedOrchestrator = false;
-
-    await Promise.allSettled(
-      projectIds.map(async (projectId) => {
-        const project = config.projects[projectId];
-        if (!project) return;
-
-        const projectSessions = sessions.filter((session) => session.projectId === projectId);
-        const hasOpenWork = projectSessions.some(
-          (session) =>
-            !isOrchestratorSession(session) &&
-            !TERMINAL_STATUSES.has(session.status),
-        );
-        if (!hasOpenWork) return;
-
-        const hasLiveOrchestrator = projectSessions.some(
-          (session) => isOrchestratorSession(session) && !TERMINAL_STATUSES.has(session.status),
-        );
-        if (hasLiveOrchestrator) return;
-
-        await sessionManager.spawnOrchestrator({
-          projectId,
-          systemPrompt: generateOrchestratorPrompt({ config, projectId, project }),
-          prompt: generateOrchestratorStartupPrompt({ config, projectId, project }),
-        });
-        spawnedOrchestrator = true;
-      }),
-    );
-
-    return spawnedOrchestrator;
   }
 
   /** Run one polling cycle across all sessions. */
@@ -996,11 +961,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       for (const sessionId of mergeReadyReactionFired.keys()) {
         if (!currentSessionIds.has(sessionId)) {
           mergeReadyReactionFired.delete(sessionId);
-        }
-      }
-      for (const sessionId of killedPrDetectionAttempts.keys()) {
-        if (!currentSessionIds.has(sessionId)) {
-          killedPrDetectionAttempts.delete(sessionId);
         }
       }
 
