@@ -181,3 +181,7 @@ export type {
   DetectedProjectInfo,
   GenerateConfigOptions,
 } from "./config-generator.js";
+
+// Webhook ingress — HMAC verification, dedup, and event queue (bd-c9h)
+export { WebhookIngress } from "./webhook-ingress.js";
+export type { WebhookIngressConfig } from "./webhook-ingress.js";
