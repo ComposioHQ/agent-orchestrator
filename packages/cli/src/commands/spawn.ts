@@ -55,6 +55,24 @@ function autoDetectProject(config: OrchestratorConfig): string {
   );
 }
 
+/**
+ * Resolve project for spawn/batch-spawn: explicit `-p` / `--project` wins, else auto-detect.
+ */
+function resolveSpawnProjectId(
+  config: OrchestratorConfig,
+  explicitProjectId?: string,
+): string {
+  if (explicitProjectId) {
+    if (!config.projects[explicitProjectId]) {
+      throw new Error(
+        `Unknown project: ${explicitProjectId}\nAvailable: ${Object.keys(config.projects).join(", ")}`,
+      );
+    }
+    return explicitProjectId;
+  }
+  return autoDetectProject(config);
+}
+
 interface SpawnClaimOptions {
   claimPr?: string;
   assignOnGithub?: boolean;
@@ -168,6 +186,10 @@ export function registerSpawn(program: Command): void {
     .option("--assign-on-github", "Assign the claimed PR to the authenticated GitHub user")
     .option("--decompose", "Decompose issue into subtasks before spawning")
     .option("--max-depth <n>", "Max decomposition depth (default: 3)")
+    .option(
+      "-p, --project <id>",
+      "Explicit project ID (use when multiple projects are configured and cwd does not match)",
+    )
     .action(
       async (
         first: string | undefined,
@@ -179,6 +201,7 @@ export function registerSpawn(program: Command): void {
           assignOnGithub?: boolean;
           decompose?: boolean;
           maxDepth?: string;
+          project?: string;
         },
       ) => {
         // Catch old two-arg usage: ao spawn <project> <issue>
@@ -186,9 +209,11 @@ export function registerSpawn(program: Command): void {
           console.warn(
             chalk.yellow(
               `⚠ 'ao spawn <project> <issue>' is no longer supported.\n` +
-                `  The project is now auto-detected. Use:\n\n` +
-                `    ao spawn ${second}    # spawn with issue ${second}\n` +
-                `    ao spawn              # spawn without an issue\n`,
+                `  Use an explicit project flag instead:\n\n` +
+                `    ao spawn -p ${first} ${second}\n` +
+                `  Or auto-detect project (cwd / single project / AO_PROJECT_ID) and pass only the issue:\n\n` +
+                `    ao spawn ${second}\n` +
+                `    ao spawn              # no issue id\n`,
             ),
           );
           process.exit(1);
@@ -196,24 +221,13 @@ export function registerSpawn(program: Command): void {
 
         const config = loadConfig();
         let projectId: string;
-        let issueId: string | undefined;
+        const issueId: string | undefined = first;
 
-        if (first) {
-          issueId = first;
-          try {
-            projectId = autoDetectProject(config);
-          } catch (err) {
-            console.error(chalk.red(err instanceof Error ? err.message : String(err)));
-            process.exit(1);
-          }
-        } else {
-          // No args: auto-detect project, no issue
-          try {
-            projectId = autoDetectProject(config);
-          } catch (err) {
-            console.error(chalk.red(err instanceof Error ? err.message : String(err)));
-            process.exit(1);
-          }
+        try {
+          projectId = resolveSpawnProjectId(config, opts.project);
+        } catch (err) {
+          console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+          process.exit(1);
         }
 
         if (!opts.claimPr && opts.assignOnGithub) {
@@ -297,12 +311,16 @@ export function registerBatchSpawn(program: Command): void {
     .description("Spawn sessions for multiple issues with duplicate detection")
     .argument("<issues...>", "Issue identifiers (project is auto-detected)")
     .option("--open", "Open sessions in terminal tabs")
-    .action(async (issues: string[], opts: { open?: boolean }) => {
+    .option(
+      "-p, --project <id>",
+      "Explicit project ID (use when multiple projects are configured and cwd does not match)",
+    )
+    .action(async (issues: string[], opts: { open?: boolean; project?: string }) => {
       const config = loadConfig();
       let projectId: string;
 
       try {
-        projectId = autoDetectProject(config);
+        projectId = resolveSpawnProjectId(config, opts.project);
       } catch (err) {
         console.error(chalk.red(err instanceof Error ? err.message : String(err)));
         process.exit(1);
