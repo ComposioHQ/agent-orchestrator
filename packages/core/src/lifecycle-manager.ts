@@ -11,13 +11,12 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import {
   SESSION_STATUS,
-  TERMINAL_STATUSES,
   PR_STATE,
   CI_STATUS,
-  isOrchestratorSession,
   type LifecycleManager,
   type SessionManager,
   type SessionId,
@@ -40,6 +39,8 @@ import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
 import { createCorrelationId, createProjectObserver } from "./observability.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
+
+const execFileAsync = promisify(execFile);
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
@@ -101,6 +102,20 @@ function createEvent(
     message: opts.message,
     data: opts.data ?? {},
   };
+}
+
+async function resolveLiveBranch(session: Session): Promise<string | null | undefined> {
+  if (!session.workspacePath) return session.branch;
+  try {
+    const { stdout } = await execFileAsync("git", ["branch", "--show-current"], {
+      cwd: session.workspacePath,
+      timeout: 5_000,
+    });
+    const branch = stdout.trim();
+    return branch || session.branch;
+  } catch {
+    return session.branch;
+  }
 }
 
 /** Determine which event type corresponds to a status transition. */
@@ -197,7 +212,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
   const states = new Map<SessionId, SessionStatus>();
   const reactionTrackers = new Map<string, ReactionTracker>(); // "sessionId:reactionKey"
-  const orchestratorIdleSince = new Map<string, number>(); // projectId → timestamp when idle started
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
@@ -289,44 +303,30 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     //    OpenCode) that can't reliably write pr=<url> to metadata on their own.
     //    Skip orchestrator sessions — they sit on the base branch (e.g. master)
     //    and should never own a PR.
+    const liveBranch = await resolveLiveBranch(session);
+    const scmSession =
+      liveBranch && liveBranch !== session.branch ? { ...session, branch: liveBranch } : session;
+
     if (
       !session.pr &&
       scm &&
-      session.branch &&
+      liveBranch &&
       session.metadata["prAutoDetect"] !== "off" &&
       session.metadata["role"] !== "orchestrator" &&
       !session.id.endsWith("-orchestrator")
     ) {
       try {
-        // Resolve the live worktree branch — the session metadata branch may
-        // be stale if the agent switched branches after spawn.
-        let scmSession: Session = session;
-        if (session.workspacePath) {
-          try {
-            const liveBranch = execFileSync("git", ["branch", "--show-current"], {
-              cwd: session.workspacePath,
-              encoding: "utf8",
-              timeout: 5000,
-            }).trim();
-            if (liveBranch && liveBranch !== session.branch) {
-              scmSession = { ...session, branch: liveBranch };
-              // Self-heal stale branch metadata
-              const sessionsDir = getSessionsDir(config.configPath, project.path);
-              updateMetadata(sessionsDir, session.id, { branch: liveBranch });
-              session.branch = liveBranch;
-            }
-          } catch {
-            // Worktree gone or git failed — use metadata branch
-          }
-        }
         const detectedPR = await scm.detectPR(scmSession, project);
         if (detectedPR) {
           session.pr = detectedPR;
           // Persist PR URL so subsequent polls don't need to re-query.
-          // Don't write status here — step 4 below will determine the
-          // correct status (merged, ci_failed, etc.) on this same cycle.
+          // Also repair stale branch metadata so future lifecycle polls keep
+          // tracking the real PR/CI state even after branch drift.
           const sessionsDir = getSessionsDir(config.configPath, project.path);
-          updateMetadata(sessionsDir, session.id, { pr: detectedPR.url });
+          updateMetadata(sessionsDir, session.id, {
+            pr: detectedPR.url,
+            ...(liveBranch !== session.branch ? { branch: liveBranch } : {}),
+          });
         }
       } catch {
         // SCM detection failed — will retry next poll
@@ -450,19 +450,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     switch (action) {
       case "send-to-agent": {
         if (reactionConfig.message) {
-          // On first trigger, also notify the human so they know a reaction
-          // was dispatched (e.g. "CI failed — agent notified").  Subsequent
-          // retries stay silent until escalation.
-          if (tracker.attempts === 1) {
-            const firstTriggerEvent = createEvent("reaction.triggered", {
-              sessionId,
-              projectId,
-              message: `${reactionKey}: dispatching to agent (${sessionId})`,
-              data: { reactionKey, action: "send-to-agent", attempt: 1 },
-            });
-            await notifyHuman(firstTriggerEvent, reactionConfig.priority ?? "info");
-          }
-
           try {
             await sessionManager.send(sessionId, reactionConfig.message);
 
@@ -731,23 +718,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       if (notifier) {
         try {
           await notifier.notify(eventWithPriority);
-        } catch (err) {
-          // Log notifier failures so they are visible in observability output
-          // instead of being silently swallowed.
-          observer.recordOperation({
-            metric: "lifecycle_poll",
-            operation: "notifyHuman",
-            outcome: "failure",
-            correlationId: createCorrelationId("notify-error"),
-            projectId: event.projectId ?? "unknown",
-            sessionId: event.sessionId ?? "unknown",
-            data: {
-              notifier: name,
-              eventType: event.type,
-              error: err instanceof Error ? err.message : String(err),
-            },
-            level: "error",
-          });
+        } catch {
+          // Notifier failed — not much we can do
         }
       }
     }
@@ -763,7 +735,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       tracked ?? ((session.metadata?.["status"] as SessionStatus | undefined) || session.status);
     const newStatus = await determineStatus(session);
     let transitionReaction: { key: string; result: ReactionResult | null } | undefined;
-    let killedThisCheck = false;
 
     if (newStatus !== oldStatus) {
       const correlationId = createCorrelationId("lifecycle-transition");
@@ -837,33 +808,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           await notifyHuman(event, priority);
         }
       }
-
-      // Clean up runtime and workspace for terminal sessions.
-      // When lifecycle detects a "merged" or "killed" transition, the metadata
-      // is updated but the runtime (tmux) and workspace (worktree) are left
-      // running.  This causes zombie sessions that consume resources and confuse
-      // status output.  Calling sessionManager.kill() tears down runtime +
-      // workspace and archives the metadata — the same thing `ao session kill`
-      // does manually.
-      if (newStatus === "merged" || newStatus === "killed") {
-        try {
-          await sessionManager.kill(session.id);
-          killedThisCheck = true;
-        } catch {
-          // Session may already be partially cleaned up — not critical
-        }
-      }
     } else {
       // No transition but track current state
       states.set(session.id, newStatus);
     }
-
-    if (killedThisCheck) return;
-
-    // Avoid recreating archived metadata if the session was removed between
-    // transition handling and review backlog processing.
-    const stillExists = await sessionManager.get(session.id);
-    if (!stillExists) return;
 
     await maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction);
   }
@@ -922,56 +870,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           }
         }
       }
-
-      // Idle orchestrator shutdown: if there are no active worker sessions
-      // and the orchestrator has been idle beyond the configured timeout,
-      // shut down the orchestrator session to free resources.
-      const idleTimeoutMs = config.orchestratorIdleTimeoutMs ?? 600_000; // default 10 min
-      if (idleTimeoutMs > 0 && scopedProjectId) {
-        const workerSessions = sessions.filter(
-          (s) => !TERMINAL_STATUSES.has(s.status) && !isOrchestratorSession(s),
-        );
-        const orchestratorSession = sessions.find(
-          (s) => isOrchestratorSession(s) && !TERMINAL_STATUSES.has(s.status),
-        );
-
-        if (workerSessions.length === 0 && orchestratorSession) {
-          // Track when idle started
-          if (!orchestratorIdleSince.has(scopedProjectId)) {
-            orchestratorIdleSince.set(scopedProjectId, Date.now());
-          }
-          const idleDuration = Date.now() - orchestratorIdleSince.get(scopedProjectId)!;
-          if (idleDuration >= idleTimeoutMs) {
-            observer.recordOperation({
-              metric: "lifecycle_poll",
-              operation: "lifecycle.orchestrator_idle_shutdown",
-              outcome: "success",
-              correlationId,
-              projectId: scopedProjectId,
-              data: { idleDurationMs: idleDuration, timeoutMs: idleTimeoutMs },
-              level: "info",
-            });
-            try {
-              await sessionManager.kill(orchestratorSession.id);
-              states.set(orchestratorSession.id, SESSION_STATUS.KILLED);
-              orchestratorIdleSince.delete(scopedProjectId);
-              // Emit event so notifiers can inform the user
-              const event = createEvent("session.orchestrator_idle_shutdown", {
-                sessionId: orchestratorSession.id,
-                projectId: scopedProjectId,
-                message: `Orchestrator ${orchestratorSession.id} shut down after ${Math.round(idleDuration / 60_000)}m idle (no active workers).`,
-              });
-              await notifyHuman(event, "info");
-            } catch {
-              // Kill failed — will retry next poll
-            }
-          }
-        } else {
-          // Workers are active — reset idle timer
-          orchestratorIdleSince.delete(scopedProjectId);
-        }
-      }
-
       if (scopedProjectId) {
         observer.recordOperation({
           metric: "lifecycle_poll",
