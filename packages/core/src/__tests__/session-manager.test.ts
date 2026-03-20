@@ -2225,7 +2225,7 @@ describe("cleanup", () => {
     expect(result.skipped).toContain("app-1");
   });
 
-  it("skips orchestrator sessions by role metadata", async () => {
+  it("cleans dead orchestrator sessions when no open work exists (role metadata)", async () => {
     const deadRuntime: Runtime = {
       ...mockRuntime,
       isAlive: vi.fn().mockResolvedValue(false),
@@ -2240,8 +2240,7 @@ describe("cleanup", () => {
       }),
     };
 
-    // Session with role=orchestrator but a name that does NOT end in "-orchestrator"
-    // so only the role metadata check can protect it (not the name fallback)
+    // Dead orchestrator with no sibling workers and no tracker → should be cleaned
     writeMetadata(sessionsDir, "app-99", {
       worktree: "/tmp",
       branch: "main",
@@ -2254,11 +2253,10 @@ describe("cleanup", () => {
     const sm = createSessionManager({ config, registry: registryWithDead });
     const result = await sm.cleanup();
 
-    expect(result.killed).toHaveLength(0);
-    expect(result.skipped).toContain("app-99");
+    expect(result.killed).toContain("app-99");
   });
 
-  it("skips orchestrator sessions by name fallback (no role metadata)", async () => {
+  it("cleans dead orchestrator sessions when no open work exists (name fallback)", async () => {
     const deadRuntime: Runtime = {
       ...mockRuntime,
       isAlive: vi.fn().mockResolvedValue(false),
@@ -2273,7 +2271,7 @@ describe("cleanup", () => {
       }),
     };
 
-    // Pre-existing orchestrator session without role field
+    // Dead orchestrator (by name convention) with no sibling workers → should be cleaned
     writeMetadata(sessionsDir, "app-orchestrator", {
       worktree: "/tmp",
       branch: "main",
@@ -2285,11 +2283,27 @@ describe("cleanup", () => {
     const sm = createSessionManager({ config, registry: registryWithDead });
     const result = await sm.cleanup();
 
+    expect(result.killed).toContain("app-orchestrator");
+  });
+
+  it("skips live orchestrator sessions even with no open work", async () => {
+    // Live orchestrator should never be killed
+    writeMetadata(sessionsDir, "app-orchestrator", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-orch")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const result = await sm.cleanup();
+
     expect(result.killed).toHaveLength(0);
     expect(result.skipped).toContain("app-orchestrator");
   });
 
-  it("never cleans the canonical orchestrator session even with stale worker-like metadata", async () => {
+  it("cleans dead orchestrator with stale metadata when tracker reports no open issues", async () => {
     const deleteLogPath = join(tmpDir, "opencode-delete-orchestrator.log");
     const mockBin = installMockOpencode("[]", deleteLogPath);
     process.env.PATH = `${mockBin}:${originalPath ?? ""}`;
@@ -2354,9 +2368,52 @@ describe("cleanup", () => {
     const sm = createSessionManager({ config, registry: registryWithSignals });
     const result = await sm.cleanup();
 
-    expect(result.killed).not.toContain("app-orchestrator");
+    // Dead orchestrator + no open issues (tracker has no listIssues, no sibling workers)
+    // → should be cleaned up
+    expect(result.killed).toContain("app-orchestrator");
+  });
+
+  it("skips dead orchestrator when tracker reports open issues", async () => {
+    const deadRuntime: Runtime = {
+      ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(false),
+    };
+    const trackerWithOpenIssues: Tracker = {
+      name: "mock-tracker",
+      getIssue: vi.fn(),
+      isCompleted: vi.fn().mockResolvedValue(false),
+      issueUrl: vi.fn().mockReturnValue("https://example.com/1"),
+      branchName: vi.fn().mockReturnValue("feat/1"),
+      generatePrompt: vi.fn().mockResolvedValue(""),
+      listIssues: vi.fn().mockResolvedValue([
+        { id: "1", title: "Open issue", description: "", url: "https://example.com/1", state: "open", labels: [] },
+      ]),
+    };
+    const registryWithTracker: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return deadRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        if (slot === "tracker") return trackerWithOpenIssues;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-orchestrator", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-orch")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithTracker });
+    const result = await sm.cleanup();
+
+    // Dead orchestrator BUT tracker reports open issues → keep it for watchdog to restart
+    expect(result.killed).toHaveLength(0);
     expect(result.skipped).toContain("app-orchestrator");
-    expect(existsSync(deleteLogPath)).toBe(false);
   });
 
   it("never cleans archived orchestrator mappings even when metadata looks stale", async () => {
