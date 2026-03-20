@@ -194,6 +194,9 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
   const states = new Map<SessionId, SessionStatus>();
   const reactionTrackers = new Map<string, ReactionTracker>(); // "sessionId:reactionKey"
+  const mergeConflictReactionFired = new Map<SessionId, boolean>();
+  const killedPrDetectionAttempts = new Map<SessionId, number>();
+  const MAX_KILLED_PR_DETECTION_ATTEMPTS = 10;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
@@ -728,6 +731,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const newStatus = await determineStatus(session);
     let transitionReaction: { key: string; result: ReactionResult | null } | undefined;
 
+    if (newStatus === "killed" && session.branch && !session.pr) {
+      const attempts = (killedPrDetectionAttempts.get(session.id) ?? 0) + 1;
+      killedPrDetectionAttempts.set(session.id, attempts);
+    } else {
+      killedPrDetectionAttempts.delete(session.id);
+    }
+
     if (newStatus !== oldStatus) {
       const correlationId = createCorrelationId("lifecycle-transition");
       // State transition detected
@@ -819,14 +829,28 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           if (!mergeReady.noConflicts) {
             const reactionKey = "merge-conflicts";
             const reactionConfig = getReactionConfigForSession(session, reactionKey);
-            if (reactionConfig && reactionConfig.auto !== false) {
-              await executeReaction(session.id, session.projectId, reactionKey, reactionConfig);
+            const alreadyFired = mergeConflictReactionFired.get(session.id) === true;
+            if (reactionConfig && reactionConfig.auto !== false && !alreadyFired) {
+              const result = await executeReaction(
+                session.id,
+                session.projectId,
+                reactionKey,
+                reactionConfig,
+              );
+              if (result.success) {
+                mergeConflictReactionFired.set(session.id, true);
+              }
             }
+          } else {
+            mergeConflictReactionFired.delete(session.id);
+            clearReactionTracker(session.id, "merge-conflicts");
           }
         } catch {
           // Merge conflict detection is best-effort; don't block the poll cycle
         }
       }
+    } else {
+      mergeConflictReactionFired.delete(session.id);
     }
   }
 
@@ -856,7 +880,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         // Killed sessions with unresolved PR work: keep polling until
         // the PR is merged/closed or auto-merge fires.
         if (s.status === "killed") {
-          if (s.branch && !s.pr) return true; // PR not yet detected
+          if (s.branch && !s.pr) {
+            const attempts = killedPrDetectionAttempts.get(s.id) ?? 0;
+            return attempts < MAX_KILLED_PR_DETECTION_ATTEMPTS;
+          }
           if (s.pr) return true; // PR still open — check merge readiness
         }
         return false;
@@ -877,6 +904,16 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const sessionId = trackerKey.split(":")[0];
         if (sessionId && !currentSessionIds.has(sessionId)) {
           reactionTrackers.delete(trackerKey);
+        }
+      }
+      for (const sessionId of mergeConflictReactionFired.keys()) {
+        if (!currentSessionIds.has(sessionId)) {
+          mergeConflictReactionFired.delete(sessionId);
+        }
+      }
+      for (const sessionId of killedPrDetectionAttempts.keys()) {
+        if (!currentSessionIds.has(sessionId)) {
+          killedPrDetectionAttempts.delete(sessionId);
         }
       }
 

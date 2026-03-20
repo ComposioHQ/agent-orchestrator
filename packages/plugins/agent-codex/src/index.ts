@@ -342,6 +342,8 @@ const CODEX_SESSIONS_DIR = join(homedir(), ".codex", "sessions");
  */
 interface CodexJsonlLine {
   type?: string;
+  // Preserved subtype from envelope payload.type when root type is event_msg
+  payloadType?: string;
   cwd?: string;
   model?: string;
   // Thread ID from thread_started notifications
@@ -357,6 +359,9 @@ interface CodexJsonlLine {
     cached_tokens?: number;
     reasoning_tokens?: number;
   };
+  // Flattened token fields in envelope payload lines
+  input_tokens?: number;
+  output_tokens?: number;
   // Envelope payload (Codex CLI ≥ 0.115)
   payload?: Record<string, unknown>;
 }
@@ -369,8 +374,14 @@ interface CodexJsonlLine {
 function flattenCodexLine(raw: Record<string, unknown>): CodexJsonlLine {
   const payload = raw["payload"];
   if (typeof payload === "object" && payload !== null && !Array.isArray(payload)) {
+    const payloadObj = payload as Record<string, unknown>;
+    const payloadType = typeof payloadObj["type"] === "string" ? payloadObj["type"] : undefined;
     // Merge payload fields into root, root wins on conflict
-    return { ...(payload as Record<string, unknown>), ...raw } as unknown as CodexJsonlLine;
+    return {
+      ...payloadObj,
+      ...raw,
+      ...(payloadType ? { payloadType } : {}),
+    } as unknown as CodexJsonlLine;
   }
   return raw as unknown as CodexJsonlLine;
 }
@@ -529,9 +540,17 @@ async function streamCodexSessionData(filePath: string): Promise<CodexSessionDat
         if (typeof entry.threadId === "string" && entry.threadId) {
           data.threadId = entry.threadId;
         }
-        if (entry.type === "event_msg" && entry.msg?.type === "token_count") {
-          data.inputTokens += entry.msg.input_tokens ?? 0;
-          data.outputTokens += entry.msg.output_tokens ?? 0;
+        const tokenCountViaMsg = entry.type === "event_msg" && entry.msg?.type === "token_count";
+        const tokenCountViaFlattened =
+          entry.payloadType === "token_count" || entry.type === "token_count";
+        if (tokenCountViaMsg || tokenCountViaFlattened) {
+          const inputTokens =
+            entry.msg?.input_tokens ?? (typeof entry.input_tokens === "number" ? entry.input_tokens : 0);
+          const outputTokens =
+            entry.msg?.output_tokens ??
+            (typeof entry.output_tokens === "number" ? entry.output_tokens : 0);
+          data.inputTokens += inputTokens;
+          data.outputTokens += outputTokens;
         }
       } catch {
         // Skip malformed lines
