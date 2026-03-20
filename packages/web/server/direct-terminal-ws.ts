@@ -165,7 +165,7 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
         sessionId,
         reason: "Session not found",
       });
-      ws.close(1008, "Session not found");
+      ws.close(4004, "Session not found");
       return;
     }
 
