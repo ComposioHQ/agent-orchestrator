@@ -213,3 +213,25 @@ export type {
 // Parallel retry monitor (bd-tzt)
 export { ParallelRetryMonitor } from "./parallel-retry.js";
 export type { RaceGroup, RaceEntry } from "./parallel-retry.js";
+
+// Auto-resolve threads — resolve stale review threads after fix push (bd-xj8)
+export { autoResolveThreads } from "./auto-resolve-threads.js";
+export type {
+  AutoResolveConfig,
+  AutoResolveResult,
+  ResolvedThread,
+  SkippedThread,
+  ThreadError,
+  GraphQLExecutor,
+} from "./auto-resolve-threads.js";
+
+// Session reaper — nightly cleanup of orphaned/stale sessions (bd-ls5)
+export { reapStaleSessions, DEFAULT_REAPER_CONFIG } from "./session-reaper.js";
+export type {
+  ReaperConfig,
+  ReaperDeps,
+  ReaperResult,
+  ReapedSession,
+  SkippedSession,
+  ReaperError,
+} from "./session-reaper.js";
