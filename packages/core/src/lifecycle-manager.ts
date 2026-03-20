@@ -363,8 +363,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
 
     // 5b. If runtime is dead and we fell through PR checks without finding a
-    // mergeable/merged/ci_failed state, the session is truly dead.
-    if (runtimeDead) return "killed";
+    // mergeable/merged/ci_failed state: if the session has an open PR,
+    // report "pr_open" so the merge-conflict / idle-PR reactions can fire.
+    // Only report "killed" if there's no PR to manage.
+    if (runtimeDead) {
+      return session.pr ? "pr_open" : "killed";
+    }
 
     // 6. Default: if agent is active, it's working
     if (
