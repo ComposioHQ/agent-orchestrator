@@ -11,6 +11,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import {
   SESSION_STATUS,
   TERMINAL_STATUSES,
@@ -297,7 +298,28 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       !session.id.endsWith("-orchestrator")
     ) {
       try {
-        const detectedPR = await scm.detectPR(session, project);
+        // Resolve the live worktree branch — the session metadata branch may
+        // be stale if the agent switched branches after spawn.
+        let scmSession: Session = session;
+        if (session.workspacePath) {
+          try {
+            const liveBranch = execFileSync("git", ["branch", "--show-current"], {
+              cwd: session.workspacePath,
+              encoding: "utf8",
+              timeout: 5000,
+            }).trim();
+            if (liveBranch && liveBranch !== session.branch) {
+              scmSession = { ...session, branch: liveBranch };
+              // Self-heal stale branch metadata
+              const sessionsDir = getSessionsDir(config.configPath, project.path);
+              updateMetadata(sessionsDir, session.id, { branch: liveBranch });
+              session.branch = liveBranch;
+            }
+          } catch {
+            // Worktree gone or git failed — use metadata branch
+          }
+        }
+        const detectedPR = await scm.detectPR(scmSession, project);
         if (detectedPR) {
           session.pr = detectedPR;
           // Persist PR URL so subsequent polls don't need to re-query.

@@ -77,8 +77,11 @@ async function gatherSessionInfo(
     // Summary extraction failed — not critical
   }
 
-  // Use activity from session (already enriched by sessionManager.list())
-  const activity = session.activity;
+  // Use activity from session (already enriched by sessionManager.list()).
+  // If enrichment revived status to working but did not infer a more specific
+  // activity state, fall back so the status table doesn't misleadingly show
+  // "unknown" for a live worker.
+  const activity = session.activity ?? (status === "working" ? "active" : null);
 
   // Fetch PR, CI, and review data from SCM
   let prNumber: number | null = null;
@@ -98,7 +101,12 @@ async function gatherSessionInfo(
     try {
       const project = projectConfig.projects[session.projectId];
       if (project) {
-        const prInfo: PRInfo | null = await scm.detectPR(session, project);
+        // Use a session copy with the live branch so detectPR queries
+        // GitHub for the actual worktree branch, not stale metadata.
+        const scmSession = branch !== session.branch
+          ? { ...session, branch }
+          : session;
+        const prInfo: PRInfo | null = await scm.detectPR(scmSession, project);
         if (prInfo) {
           prNumber = prInfo.number;
 
