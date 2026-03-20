@@ -1471,6 +1471,47 @@ describe("list", () => {
     expect(agentWithSpy.getActivityState).not.toHaveBeenCalled();
   });
 
+  it("revives stale killed sessions when tmux runtime and agent activity are alive", async () => {
+    const expectedTmuxName = "hash-app-1";
+    const aliveRuntime: Runtime = {
+      ...mockRuntime,
+      isAlive: vi
+        .fn()
+        .mockImplementation(async (handle: RuntimeHandle) => handle.id === expectedTmuxName),
+    };
+    const agentWithLiveState: Agent = {
+      ...mockAgent,
+      getActivityState: vi.fn().mockResolvedValue({ state: "active" }),
+    };
+    const registryWithAliveRuntime: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return aliveRuntime;
+        if (slot === "agent") return agentWithLiveState;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "feat/issue-53",
+      status: "killed",
+      project: "my-app",
+      tmuxName: expectedTmuxName,
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithAliveRuntime });
+    const sessions = await sm.list("my-app");
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].runtimeHandle?.id).toBe(expectedTmuxName);
+    expect(sessions[0].status).toBe("working");
+    expect(sessions[0].activity).toBe("active");
+    expect(aliveRuntime.isAlive).toHaveBeenCalled();
+    expect(agentWithLiveState.getActivityState).toHaveBeenCalled();
+  });
+
   it("keeps existing activity when getActivityState throws", async () => {
     const agentWithError: Agent = {
       ...mockAgent,
