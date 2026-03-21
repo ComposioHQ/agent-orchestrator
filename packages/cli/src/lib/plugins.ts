@@ -16,7 +16,7 @@ const agentPlugins: Record<string, { create(): Agent }> = {
   opencode: opencodePlugin,
 };
 
-const scmPlugins: Record<string, { create(config?: Record<string, unknown>): SCM }> = {
+const scmPlugins: Record<string, { create(): SCM }> = {
   github: githubSCMPlugin,
 };
 
@@ -52,7 +52,5 @@ export function getSCM(config: OrchestratorConfig, projectId: string): SCM {
   if (!plugin) {
     throw new Error(`Unknown SCM plugin: ${scmName}`);
   }
-  // Extract plugin config from config.plugins["scm-github"] if present
-  const pluginConfig = config.plugins?.[`scm-${scmName}`];
-  return plugin.create(pluginConfig);
+  return plugin.create();
 }
