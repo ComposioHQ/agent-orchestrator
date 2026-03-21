@@ -516,21 +516,55 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
 
       case "auto-merge": {
-        // Auto-merge is handled by the SCM plugin
-        // For now, just notify
-        const event = createEvent("reaction.triggered", {
-          sessionId,
-          projectId,
-          message: `Reaction '${reactionKey}' triggered auto-merge`,
-          data: { reactionKey },
-        });
-        await notifyHuman(event, "action");
-        return {
-          reactionType: reactionKey,
-          success: true,
-          action: "auto-merge",
-          escalated: false,
-        };
+        const project = config.projects[projectId];
+        const scmPlugin = project?.scm
+          ? registry.get<SCM>("scm", project.scm.plugin)
+          : null;
+        const targetSession = await sessionManager.get(sessionId);
+        if (!scmPlugin || !targetSession?.pr || targetSession.projectId !== projectId) {
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action: "auto-merge",
+            escalated: false,
+          };
+        }
+        try {
+          const mergeMethod =
+            (reactionConfig as ReactionConfig & { mergeMethod?: MergeMethod }).mergeMethod ??
+            "squash";
+          await scmPlugin.mergePR(targetSession.pr, mergeMethod);
+          const event = createEvent("merge.completed", {
+            sessionId,
+            projectId,
+            message: `Auto-merged PR via '${reactionKey}' reaction (${mergeMethod})`,
+            data: { reactionKey, mergeMethod },
+          });
+          await notifyHuman(event, "action");
+          return {
+            reactionType: reactionKey,
+            success: true,
+            action: "auto-merge",
+            escalated: false,
+          };
+        } catch (err) {
+          observer.recordOperation({
+            metric: "lifecycle_poll",
+            operation: "lifecycle.auto-merge",
+            outcome: "failure",
+            correlationId: createCorrelationId("auto-merge"),
+            projectId,
+            sessionId,
+            data: { error: err instanceof Error ? err.message : String(err) },
+            level: "warn",
+          });
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action: "auto-merge",
+            escalated: false,
+          };
+        }
       }
     }
 
@@ -882,6 +916,28 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
     } else {
       mergeConflictReactionFired.delete(session.id);
+    }
+
+    // Clean up runtime for terminal sessions — kill the tmux session so workers
+    // don't sit idle on a Codex prompt after their PR is merged or the session
+    // is marked killed. Without this, merged sessions stay running forever.
+    if (
+      newStatus !== oldStatus &&
+      (newStatus === "merged" || newStatus === "killed") &&
+      session.runtimeHandle
+    ) {
+      try {
+        const project = config.projects[session.projectId];
+        const runtimeName =
+          session.runtimeHandle.runtimeName ??
+          (project ? (project.runtime ?? config.defaults.runtime) : config.defaults.runtime);
+        const runtimePlugin = registry.get<Runtime>("runtime", runtimeName);
+        if (runtimePlugin) {
+          await runtimePlugin.destroy(session.runtimeHandle);
+        }
+      } catch {
+        // Runtime cleanup is best-effort; don't fail the poll cycle
+      }
     }
   }
 
