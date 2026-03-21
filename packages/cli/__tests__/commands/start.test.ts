@@ -644,6 +644,30 @@ describe("start command — browser open waits for port", () => {
       "my-app",
     );
   });
+
+  it("passes an initial orchestration prompt into spawnOrchestrator", async () => {
+    mockConfigRef.current = makeConfig({
+      "my-app": makeProject({
+        tracker: { plugin: "github", issueFilters: { labels: ["ready"] } },
+      }),
+    });
+
+    mockSessionManager.get.mockResolvedValue(null);
+    mockSessionManager.spawnOrchestrator.mockResolvedValue({ id: "app-orchestrator" });
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
+
+    expect(mockSessionManager.spawnOrchestrator).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "my-app",
+        systemPrompt: expect.stringContaining("You are the **orchestrator agent**"),
+        prompt: expect.stringContaining("initial orchestration pass"),
+      }),
+    );
+    expect(mockSessionManager.spawnOrchestrator).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: expect.stringContaining("labels=ready") }),
+    );
+  });
 });
 
 describe("start command — orchestrator session strategy display", () => {
