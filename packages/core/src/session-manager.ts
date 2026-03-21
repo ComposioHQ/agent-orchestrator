@@ -74,10 +74,54 @@ import {
 import { sessionFromMetadata } from "./utils/session-from-metadata.js";
 import { safeJsonParse } from "./utils/validation.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
+import Anthropic from "@anthropic-ai/sdk";
 
 const execFileAsync = promisify(execFile);
 const OPENCODE_DISCOVERY_TIMEOUT_MS = 2_000;
 const OPENCODE_INTERACTIVE_DISCOVERY_TIMEOUT_MS = 10_000;
+
+// =============================================================================
+// Task Complexity Classification
+// =============================================================================
+
+/**
+ * Classify a task as simple or complex using Claude Haiku.
+ *
+ * - Simple: single-file changes, typo fixes, config changes, small bug fixes, doc updates
+ * - Complex: multi-file changes, new features, architectural changes, debugging across systems
+ *
+ * Falls back to "complex" on any error to preserve existing behavior.
+ */
+export async function classifyTaskComplexity(
+  issueContext: string,
+): Promise<"simple" | "complex"> {
+  if (!issueContext.trim()) return "complex";
+
+  try {
+    const client = new Anthropic();
+    const res = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 10,
+      messages: [
+        {
+          role: "user",
+          content: `Classify this software task as either 'simple' or 'complex'.
+Simple: single-file changes, typo fixes, config changes, small bug fixes, doc updates.
+Complex: multi-file changes, new features, architectural changes, debugging across systems, PR review cycles.
+Respond with only: simple or complex
+Task: ${issueContext}`,
+        },
+      ],
+    });
+
+    const text =
+      res.content[0]?.type === "text" ? res.content[0].text.trim().toLowerCase() : "";
+    return text === "simple" ? "simple" : "complex";
+  } catch {
+    // Fall back to complex on any error to preserve existing behavior
+    return "complex";
+  }
+}
 
 function errorIncludesSessionNotFound(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
@@ -903,27 +947,18 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       );
     }
 
-    const selection = resolveAgentSelection({
-      role: "worker",
-      project,
-      defaults: config.defaults,
-      spawnAgentOverride: spawnConfig.agent,
-    });
-    const plugins = resolvePlugins(project, selection.agentName);
-    if (!plugins.runtime) {
-      throw new Error(`Runtime plugin '${project.runtime ?? config.defaults.runtime}' not found`);
-    }
-
-    if (!plugins.agent) {
-      throw new Error(`Agent plugin '${selection.agentName}' not found`);
-    }
+    // Resolve tracker plugin early — needed for issue validation before agent selection
+    // (tracker does not depend on agent choice)
+    const trackerPlugin = project.tracker
+      ? registry.get<Tracker>("tracker", project.tracker.plugin)
+      : null;
 
     // Validate issue exists BEFORE creating any resources
     let resolvedIssue: Issue | undefined;
-    if (spawnConfig.issueId && plugins.tracker) {
+    if (spawnConfig.issueId && trackerPlugin) {
       try {
         // Fetch and validate the issue exists
-        resolvedIssue = await plugins.tracker.getIssue(spawnConfig.issueId, project);
+        resolvedIssue = await trackerPlugin.getIssue(spawnConfig.issueId, project);
       } catch (err) {
         // Issue fetch failed - determine why
         if (isIssueNotFoundError(err)) {
@@ -934,6 +969,36 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           throw new Error(`Failed to fetch issue ${spawnConfig.issueId}: ${err}`, { cause: err });
         }
       }
+    }
+
+    // Classify task complexity for smart agent routing — only when no explicit agent
+    // override is set (CLI --agent, project.worker.agent, or project.agent), since those
+    // take priority over complexity-based routing and make the API call wasteful.
+    const hasExplicitAgent =
+      !!spawnConfig.agent || !!project.worker?.agent || !!project.agent;
+    const classificationInput = resolvedIssue
+      ? `${resolvedIssue.title}\n${resolvedIssue.description}`
+      : (spawnConfig.prompt ?? spawnConfig.issueId ?? "");
+    const complexity = hasExplicitAgent
+      ? undefined
+      : await classifyTaskComplexity(classificationInput);
+
+    const selection = resolveAgentSelection({
+      role: "worker",
+      project,
+      defaults: config.defaults,
+      spawnAgentOverride: spawnConfig.agent,
+      complexity,
+    });
+    // eslint-disable-next-line no-console
+    console.log(`[routing] Task classified as ${complexity ?? "n/a (explicit override)"} → using ${selection.agentName}`);
+    const plugins = resolvePlugins(project, selection.agentName);
+    if (!plugins.runtime) {
+      throw new Error(`Runtime plugin '${project.runtime ?? config.defaults.runtime}' not found`);
+    }
+
+    if (!plugins.agent) {
+      throw new Error(`Agent plugin '${selection.agentName}' not found`);
     }
 
     // Get the sessions directory for this project
