@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { resolve } from "node:path";
 import chalk from "chalk";
 import type { Command } from "commander";
 import { loadConfig } from "@composio/ao-core";
@@ -83,6 +84,34 @@ export function registerDashboard(program: Command): void {
         process.exit(1);
       });
 
+      // Spawn terminal WebSocket servers
+      const distServerDir = resolve(webDir, "dist-server");
+
+      function spawnTerminalServer(label: string, scriptName: string) {
+        const child = spawn("node", [resolve(distServerDir, scriptName)], {
+          cwd: webDir,
+          stdio: ["ignore", "pipe", "pipe"],
+          env,
+        });
+
+        child.stdout?.on("data", (data: Buffer) => {
+          for (const line of data.toString().split("\n").filter(Boolean)) {
+            process.stdout.write(`[${label}] ${line}\n`);
+          }
+        });
+
+        child.stderr?.on("data", (data: Buffer) => {
+          for (const line of data.toString().split("\n").filter(Boolean)) {
+            process.stderr.write(`[${label}] ${line}\n`);
+          }
+        });
+
+        return child;
+      }
+
+      const terminalServer = spawnTerminalServer("terminal", "terminal-websocket.js");
+      const directTerminalServer = spawnTerminalServer("direct-terminal", "direct-terminal-ws.js");
+
       let openAbort: AbortController | undefined;
 
       if (opts.open !== false) {
@@ -92,6 +121,10 @@ export function registerDashboard(program: Command): void {
 
       child.on("exit", (code) => {
         if (openAbort) openAbort.abort();
+
+        // Kill terminal servers when Next.js exits
+        terminalServer.kill("SIGTERM");
+        directTerminalServer.kill("SIGTERM");
 
         if (code !== 0 && code !== null && !opts.rebuild) {
           const stderr = stderrChunks.join("");
