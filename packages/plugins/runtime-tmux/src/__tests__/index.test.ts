@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as childProcess from "node:child_process";
-import * as fs from "node:fs";
 import type { RuntimeHandle } from "@composio/ao-core";
 
 // Mock node:child_process with custom promisify support
@@ -21,6 +20,13 @@ vi.mock("node:crypto", () => ({
 vi.mock("node:fs", () => ({
   writeFileSync: vi.fn(),
   unlinkSync: vi.fn(),
+}));
+
+// Mock @composio/ao-core to track tmuxSendKeys calls
+const mockTmuxSendKeys = vi.fn();
+vi.mock("@composio/ao-core", () => ({
+  ...vi.importActual("@composio/ao-core"),
+  tmuxSendKeys: (...args: unknown[]) => mockTmuxSendKeys(...args),
 }));
 
 // Get reference to the promisify-custom mock — this is what the plugin actually calls
@@ -56,6 +62,7 @@ import tmuxPlugin, { manifest, create } from "../index.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockTmuxSendKeys.mockResolvedValue(undefined);
 });
 
 describe("manifest", () => {
@@ -263,160 +270,44 @@ describe("runtime.destroy()", () => {
 });
 
 describe("runtime.sendMessage()", () => {
-  it("sends short text with send-keys -l (literal) + Enter", async () => {
+  it("delegates to tmuxSendKeys from @composio/ao-core", async () => {
     const runtime = create();
-    const handle = makeHandle("msg-short");
-
-    // 1: send-keys C-u (clear), 2: send-keys -l text, 3: send-keys Enter
-    mockTmuxSuccess();
-    mockTmuxSuccess();
-    mockTmuxSuccess();
+    const handle = makeHandle("msg-test");
 
     await runtime.sendMessage(handle, "hello world");
 
-    expect(mockExecFileCustom).toHaveBeenCalledTimes(3);
-
-    // Call 0: Clear partial input
-    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
-      1,
-      "tmux",
-      ["send-keys", "-t", "msg-short", "C-u"],
-      expectedTmuxOptions,
-    );
-
-    // Call 1: Literal text
-    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
-      2,
-      "tmux",
-      ["send-keys", "-t", "msg-short", "-l", "hello world"],
-      expectedTmuxOptions,
-    );
-
-    // Call 2: Enter
-    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
-      3,
-      "tmux",
-      ["send-keys", "-t", "msg-short", "Enter"],
-      expectedTmuxOptions,
-    );
+    // Should call tmuxSendKeys with session ID, message, and pressEnter=true
+    expect(mockTmuxSendKeys).toHaveBeenCalledWith("msg-test", "hello world", true);
+    expect(mockTmuxSendKeys).toHaveBeenCalledTimes(1);
   });
 
-  it("uses load-buffer + paste-buffer for long text (> 200 chars)", async () => {
+  it("passes long messages to tmuxSendKeys", async () => {
     const runtime = create();
     const handle = makeHandle("msg-long");
     const longText = "x".repeat(250);
 
-    // 1: C-u, 2: load-buffer, 3: paste-buffer, 4: unlinkSync (sync), 5: delete-buffer, 6: Enter
-    mockTmuxSuccess(); // C-u
-    mockTmuxSuccess(); // load-buffer
-    mockTmuxSuccess(); // paste-buffer
-    mockTmuxSuccess(); // delete-buffer (finally block)
-    mockTmuxSuccess(); // Enter
-
     await runtime.sendMessage(handle, longText);
 
-    expect(mockExecFileCustom).toHaveBeenCalledTimes(5);
-
-    // Call 0: clear
-    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
-      1,
-      "tmux",
-      ["send-keys", "-t", "msg-long", "C-u"],
-      expectedTmuxOptions,
-    );
-
-    // Call 1: load-buffer with named buffer
-    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
-      2,
-      "tmux",
-      [
-        "load-buffer",
-        "-b",
-        "ao-test-uuid-1234",
-        expect.stringContaining("ao-send-test-uuid-1234.txt"),
-      ],
-      expectedTmuxOptions,
-    );
-
-    // Call 2: paste-buffer
-    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
-      3,
-      "tmux",
-      ["paste-buffer", "-b", "ao-test-uuid-1234", "-t", "msg-long", "-d"],
-      expectedTmuxOptions,
-    );
-
-    // Verify writeFileSync was called with the message
-    expect(fs.writeFileSync).toHaveBeenCalledWith(
-      expect.stringContaining("ao-send-test-uuid-1234.txt"),
-      longText,
-      { encoding: "utf-8", mode: 0o600 },
-    );
-
-    // Verify unlinkSync was called for cleanup
-    expect(fs.unlinkSync).toHaveBeenCalledWith(
-      expect.stringContaining("ao-send-test-uuid-1234.txt"),
-    );
+    expect(mockTmuxSendKeys).toHaveBeenCalledWith("msg-long", longText, true);
   });
 
-  it("uses load-buffer for multiline text", async () => {
+  it("passes multiline messages to tmuxSendKeys", async () => {
     const runtime = create();
     const handle = makeHandle("msg-multi");
 
-    mockTmuxSuccess(); // C-u
-    mockTmuxSuccess(); // load-buffer
-    mockTmuxSuccess(); // paste-buffer
-    mockTmuxSuccess(); // delete-buffer (finally)
-    mockTmuxSuccess(); // Enter
-
     await runtime.sendMessage(handle, "line1\nline2\nline3");
 
-    // Should use buffer path, not send-keys -l
-    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
-      2,
-      "tmux",
-      [
-        "load-buffer",
-        "-b",
-        "ao-test-uuid-1234",
-        expect.stringContaining("ao-send-test-uuid-1234.txt"),
-      ],
-      expectedTmuxOptions,
-    );
-
-    expect(fs.writeFileSync).toHaveBeenCalledWith(
-      expect.stringContaining("ao-send-test-uuid-1234.txt"),
-      "line1\nline2\nline3",
-      { encoding: "utf-8", mode: 0o600 },
-    );
+    expect(mockTmuxSendKeys).toHaveBeenCalledWith("msg-multi", "line1\nline2\nline3", true);
   });
 
-  it("cleans up buffer and temp file on paste failure", async () => {
+  it("passes large (>1KB) messages to tmuxSendKeys for retry handling", async () => {
     const runtime = create();
-    const handle = makeHandle("msg-fail");
-    const longText = "y".repeat(250);
+    const handle = makeHandle("msg-large");
+    const largeText = "x".repeat(1500);
 
-    mockTmuxSuccess(); // C-u
-    mockTmuxSuccess(); // load-buffer succeeds
-    mockTmuxError("paste-buffer failed"); // paste-buffer fails
-    // finally block:
-    // unlinkSync is sync (mocked)
-    mockTmuxSuccess(); // delete-buffer in finally
-    // After finally, the error propagates — no Enter call
+    await runtime.sendMessage(handle, largeText);
 
-    await expect(runtime.sendMessage(handle, longText)).rejects.toThrow("paste-buffer failed");
-
-    // unlinkSync should still be called for temp file cleanup
-    expect(fs.unlinkSync).toHaveBeenCalledWith(
-      expect.stringContaining("ao-send-test-uuid-1234.txt"),
-    );
-
-    // delete-buffer should be called in finally block
-    expect(mockExecFileCustom).toHaveBeenCalledWith(
-      "tmux",
-      ["delete-buffer", "-b", "ao-test-uuid-1234"],
-      expectedTmuxOptions,
-    );
+    expect(mockTmuxSendKeys).toHaveBeenCalledWith("msg-large", largeText, true);
   });
 });
 

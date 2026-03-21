@@ -121,6 +121,10 @@ export async function newSession(opts: NewSessionOptions): Promise<void> {
  * For long/multiline messages, uses load-buffer + paste-buffer with
  * a named buffer to avoid racing on the global paste buffer.
  * Sends Escape first to clear any partial input in the agent.
+ *
+ * Implements adaptive delay and Enter retry logic for issue #373:
+ * - Scales delay with message length (base + 200ms per KB)
+ * - Retries Enter for large messages if output doesn't change
  */
 export async function sendKeys(
   sessionName: string,
@@ -132,7 +136,9 @@ export async function sendKeys(
   // Small delay to ensure Escape is processed before pasting
   await new Promise((resolve) => setTimeout(resolve, 100));
 
-  if (text.includes("\n") || text.length > 200) {
+  const isLongMessage = text.includes("\n") || text.length > 200;
+
+  if (isLongMessage) {
     // Use a named buffer to avoid global paste buffer race conditions
     const { writeFileSync, unlinkSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
@@ -160,13 +166,56 @@ export async function sendKeys(
   }
 
   if (pressEnter) {
-    // Delay for paste to complete before sending Enter
-    // Higher delay needed when using paste-buffer to ensure tmux processes the paste
-    // before receiving the Enter keystroke (especially with Claude permission prompts)
-    if (text.includes("\n") || text.length > 200) {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+    // Adaptive delay based on message length to ensure paste is fully processed
+    // before sending Enter. Large messages (4KB+) need more time.
+    // Base delay: 1000ms for paste-buffer, 100ms for direct send-keys
+    // Additional time: 200ms per KB of message content
+    // Cap at 2000ms max delay
+    const baseDelay = isLongMessage ? 1000 : 100;
+    const lengthFactor = Math.floor(text.length / 1000) * 200;
+    const adaptiveDelay = Math.min(baseDelay + lengthFactor, 2000);
+    
+    await new Promise((resolve) => setTimeout(resolve, adaptiveDelay));
+    
+    // Enter retry logic for large messages (issue #373)
+    // After sending Enter, verify the agent started processing by checking
+    // if the output changed. If not, retry Enter up to 3 times.
+    const needsRetry = text.length > 1000;
+    const maxRetries = needsRetry ? 3 : 1;
+    
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      // Capture current output before Enter (for retry detection)
+      let beforeOutput = "";
+      if (needsRetry) {
+        try {
+          beforeOutput = await tmux("capture-pane", "-t", sessionName, "-p", "-S", "-50");
+        } catch {
+          // Ignore capture errors
+        }
+      }
+      
+      await tmux("send-keys", "-t", sessionName, "Enter");
+      
+      // For large messages, verify the agent started processing
+      if (needsRetry) {
+        // Wait a moment for the agent to process
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        
+        try {
+          const afterOutput = await tmux("capture-pane", "-t", sessionName, "-p", "-S", "-50");
+          if (afterOutput !== beforeOutput) {
+            // Output changed, agent is processing - done
+            break;
+          }
+          // Output didn't change, Enter might have been swallowed - retry
+          // Increase delay for next attempt
+          await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)));
+        } catch {
+          // Ignore capture errors, assume success
+          break;
+        }
+      }
     }
-    await tmux("send-keys", "-t", sessionName, "Enter");
   }
 }
 
