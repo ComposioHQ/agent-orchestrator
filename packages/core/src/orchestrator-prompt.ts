@@ -13,18 +13,6 @@ export interface OrchestratorPromptConfig {
   project: ProjectConfig;
 }
 
-export function generateOrchestratorStartupPrompt(opts: OrchestratorPromptConfig): string {
-  const { projectId, project } = opts;
-
-  return `Do an initial orchestration pass for ${project.name} (${projectId}).
-
-Start by:
-1. Running \`ao status\` to inspect the current session/PR state.
-2. Checking whether any worker session needs help, takeover, or a follow-up message.
-3. Spawning or directing worker sessions if open work is not currently owned.
-4. Staying in read-only coordination mode yourself — delegate implementation to workers.`;
-}
-
 function formatTrackerIssueFilters(project: ProjectConfig): string | null {
   const rawFilters = project.tracker?.["issueFilters"];
   if (!rawFilters || typeof rawFilters !== "object" || Array.isArray(rawFilters)) {
