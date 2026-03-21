@@ -89,13 +89,20 @@ export default tseslint.config(
 
   // Scripts directory - Node.js environment
   {
-    files: ["scripts/**/*.js", "scripts/**/*.mjs"],
+    files: ["scripts/**/*.js", "scripts/**/*.mjs", "packages/*/scripts/**/*.js", "packages/*/scripts/**/*.mjs"],
     languageOptions: {
       globals: {
         console: "readonly",
         process: "readonly",
         __dirname: "readonly",
         __filename: "readonly",
+        setTimeout: "readonly",
+        clearTimeout: "readonly",
+        setInterval: "readonly",
+        clearInterval: "readonly",
+        Buffer: "readonly",
+        URL: "readonly",
+        URLSearchParams: "readonly",
       },
     },
     rules: {
@@ -114,6 +121,29 @@ export default tseslint.config(
     },
     rules: {
       "no-console": "off", // Bin scripts use console for install output
+    },
+  },
+
+  // Node.js plugins and core modules — these run in Node.js, not browser
+  {
+    files: ["packages/plugins/**/*.ts", "packages/core/**/*.ts", "packages/cli/**/*.ts"],
+    languageOptions: {
+      globals: {
+        process: "readonly",
+        console: "readonly",
+        setTimeout: "readonly",
+        clearTimeout: "readonly",
+        setInterval: "readonly",
+        clearInterval: "readonly",
+        Buffer: "readonly",
+        URL: "readonly",
+        URLSearchParams: "readonly",
+        __dirname: "readonly",
+        __filename: "readonly",
+      },
+    },
+    rules: {
+      "no-console": "off", // Node.js modules use console for logging
     },
   },
 );
