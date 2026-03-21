@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type DashboardSession,
   type DashboardStats,
@@ -66,6 +66,7 @@ export function Dashboard({
   const [spawningProjectIds, setSpawningProjectIds] = useState<string[]>([]);
   const [spawnErrors, setSpawnErrors] = useState<Record<string, string>>({});
   const [showRoutingPanel, setShowRoutingPanel] = useState(false);
+  const routingButtonRef = useRef<HTMLButtonElement>(null);
   const showSidebar = projects.length > 1;
   const allProjectsView = showSidebar && projectId === undefined;
 
@@ -262,6 +263,7 @@ export function Dashboard({
             {!allProjectsView && <OrchestratorControl orchestrators={activeOrchestrators} />}
             <div className="relative">
               <button
+                ref={routingButtonRef}
                 onClick={() => setShowRoutingPanel((v) => !v)}
                 className={`flex items-center gap-1.5 rounded border px-2.5 py-1 text-[11px] transition-colors ${
                   showRoutingPanel
@@ -284,7 +286,10 @@ export function Dashboard({
                 <span>Routing</span>
               </button>
               {showRoutingPanel && (
-                <RoutingPanel onClose={() => setShowRoutingPanel(false)} />
+                <RoutingPanel
+                  onClose={() => setShowRoutingPanel(false)}
+                  triggerRef={routingButtonRef}
+                />
               )}
             </div>
           </div>

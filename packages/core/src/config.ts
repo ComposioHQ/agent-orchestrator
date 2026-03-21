@@ -13,7 +13,7 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { resolve, join, basename } from "node:path";
 import { homedir } from "node:os";
-import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { parse as parseYaml, parseDocument } from "yaml";
 import { z } from "zod";
 import { ConfigNotFoundError, type OrchestratorConfig, type RoutingConfig } from "./types.js";
 import { generateSessionPrefix } from "./paths.js";
@@ -546,16 +546,19 @@ export function writeRoutingConfig(routing: RoutingConfig, configPath?: string):
   }
 
   const raw = readFileSync(path, "utf-8");
-  // Parse preserving structure — use plain object so stringify keeps order
-  const parsed = parseYaml(raw) as Record<string, unknown>;
 
-  parsed["routing"] = {
+  // Use parseDocument so comments and formatting are preserved on round-trip.
+  // parseDocument handles empty files (null contents) gracefully — setIn creates
+  // the root map if needed.
+  const doc = parseDocument(raw.trim() || "{}");
+
+  doc.setIn(["routing"], {
     mode: routing.mode,
     localLlm: {
       baseUrl: routing.localLlm.baseUrl,
       model: routing.localLlm.model,
     },
-  };
+  });
 
-  writeFileSync(path, stringifyYaml(parsed), "utf-8");
+  writeFileSync(path, doc.toString(), "utf-8");
 }

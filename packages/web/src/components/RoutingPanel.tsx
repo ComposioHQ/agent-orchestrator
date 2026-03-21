@@ -1,17 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { RoutingMode } from "@composio/ao-core";
-
-interface LocalLlmConfig {
-  baseUrl: string;
-  model: string;
-}
-
-interface RoutingConfig {
-  mode: RoutingMode;
-  localLlm: LocalLlmConfig;
-}
+import type { RoutingConfig, RoutingMode } from "@composio/ao-core";
 
 type ConnectionStatus = "idle" | "testing" | "ok" | "error";
 
@@ -35,9 +25,11 @@ const MODE_OPTIONS: { value: RoutingMode; label: string; description: string }[]
 
 interface RoutingPanelProps {
   onClose: () => void;
+  /** Ref to the button that opens/closes this panel — excluded from outside-click detection */
+  triggerRef?: React.RefObject<HTMLElement | null>;
 }
 
-export function RoutingPanel({ onClose }: RoutingPanelProps) {
+export function RoutingPanel({ onClose, triggerRef }: RoutingPanelProps) {
   const [mode, setMode] = useState<RoutingMode>("always-claude");
   const [baseUrl, setBaseUrl] = useState("http://localhost:11434/v1");
   const [model, setModel] = useState("");
@@ -67,16 +59,19 @@ export function RoutingPanel({ onClose }: RoutingPanelProps) {
       .finally(() => setLoading(false));
   }, []);
 
-  // Close on outside click
+  // Close on outside click — skip clicks on the trigger button so the button's
+  // own onClick handler can toggle the panel without reopening it immediately
   useEffect(() => {
     function handleClick(e: MouseEvent) {
-      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (triggerRef?.current?.contains(target)) return;
+      if (panelRef.current && !panelRef.current.contains(target)) {
         onClose();
       }
     }
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
-  }, [onClose]);
+  }, [onClose, triggerRef]);
 
   // Close on Escape
   useEffect(() => {
@@ -130,6 +125,9 @@ export function RoutingPanel({ onClose }: RoutingPanelProps) {
 
   useEffect(() => {
     if (!showLlmSettings) return;
+    // Clear stale models immediately so the dropdown doesn't show old endpoint's models
+    setAvailableModels([]);
+    setConnectionStatus("idle");
     void fetchModels(baseUrl).then((models) => {
       if (models.length > 0) {
         setAvailableModels(models);
