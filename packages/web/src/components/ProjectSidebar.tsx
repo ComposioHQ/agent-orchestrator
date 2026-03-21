@@ -119,10 +119,6 @@ export function ProjectSidebar({
     router.push(pathname + `?project=${encodeURIComponent(projectId)}`);
   };
 
-  if (projects.length <= 1) {
-    return null;
-  }
-
   const sessionsByProject = useMemo(() => {
     const map = new Map<string, { all: DashboardSession[]; workers: DashboardSession[] }>();
     let totalWorkers = 0;
@@ -147,6 +143,10 @@ export function ProjectSidebar({
 
     return { map, totalWorkers, needsInput, reviewLoad };
   }, [sessions]);
+
+  if (projects.length <= 1) {
+    return null;
+  }
 
   const { totalWorkers: totalWorkerSessions, needsInput: needsInputCount, reviewLoad: reviewLoadCount } = sessionsByProject;
 
