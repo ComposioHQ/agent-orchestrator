@@ -13,8 +13,10 @@
 import { randomUUID } from "node:crypto";
 import {
   SESSION_STATUS,
+  TERMINAL_STATUSES,
   PR_STATE,
   CI_STATUS,
+  isOrchestratorSession,
   type LifecycleManager,
   type SessionManager,
   type SessionId,
@@ -194,6 +196,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
   const states = new Map<SessionId, SessionStatus>();
   const reactionTrackers = new Map<string, ReactionTracker>(); // "sessionId:reactionKey"
+  const orchestratorIdleSince = new Map<string, number>(); // projectId → timestamp when idle started
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
@@ -845,6 +848,56 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           }
         }
       }
+
+      // Idle orchestrator shutdown: if there are no active worker sessions
+      // and the orchestrator has been idle beyond the configured timeout,
+      // shut down the orchestrator session to free resources.
+      const idleTimeoutMs = config.orchestratorIdleTimeoutMs ?? 600_000; // default 10 min
+      if (idleTimeoutMs > 0 && scopedProjectId) {
+        const workerSessions = sessions.filter(
+          (s) => !TERMINAL_STATUSES.has(s.status) && !isOrchestratorSession(s),
+        );
+        const orchestratorSession = sessions.find(
+          (s) => isOrchestratorSession(s) && !TERMINAL_STATUSES.has(s.status),
+        );
+
+        if (workerSessions.length === 0 && orchestratorSession) {
+          // Track when idle started
+          if (!orchestratorIdleSince.has(scopedProjectId)) {
+            orchestratorIdleSince.set(scopedProjectId, Date.now());
+          }
+          const idleDuration = Date.now() - orchestratorIdleSince.get(scopedProjectId)!;
+          if (idleDuration >= idleTimeoutMs) {
+            observer.recordOperation({
+              metric: "lifecycle_poll",
+              operation: "lifecycle.orchestrator_idle_shutdown",
+              outcome: "success",
+              correlationId,
+              projectId: scopedProjectId,
+              data: { idleDurationMs: idleDuration, timeoutMs: idleTimeoutMs },
+              level: "info",
+            });
+            try {
+              await sessionManager.kill(orchestratorSession.id);
+              states.set(orchestratorSession.id, SESSION_STATUS.KILLED);
+              orchestratorIdleSince.delete(scopedProjectId);
+              // Emit event so notifiers can inform the user
+              const event = createEvent("session.orchestrator_idle_shutdown", {
+                sessionId: orchestratorSession.id,
+                projectId: scopedProjectId,
+                message: `Orchestrator ${orchestratorSession.id} shut down after ${Math.round(idleDuration / 60_000)}m idle (no active workers).`,
+              });
+              await notifyHuman(event, "info");
+            } catch {
+              // Kill failed — will retry next poll
+            }
+          }
+        } else {
+          // Workers are active — reset idle timer
+          orchestratorIdleSince.delete(scopedProjectId);
+        }
+      }
+
       if (scopedProjectId) {
         observer.recordOperation({
           metric: "lifecycle_poll",

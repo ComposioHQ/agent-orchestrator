@@ -820,7 +820,9 @@ export type EventType =
   | "reaction.triggered"
   | "reaction.escalated"
   // Summary
-  | "summary.all_complete";
+  | "summary.all_complete"
+  // Orchestrator lifecycle
+  | "session.orchestrator_idle_shutdown";
 
 /** An event emitted by the orchestrator */
 export interface OrchestratorEvent {
@@ -897,6 +899,13 @@ export interface OrchestratorConfig {
 
   /** Milliseconds before a "ready" session becomes "idle" (default: 300000 = 5 min) */
   readyThresholdMs: number;
+
+  /**
+   * Milliseconds an orchestrator can remain idle (no active workers, no open
+   * issues) before being automatically shut down.  Set to 0 to disable.
+   * Default: 600000 (10 minutes).
+   */
+  orchestratorIdleTimeoutMs?: number;
 
   /** Default plugin selections */
   defaults: DefaultPlugins;

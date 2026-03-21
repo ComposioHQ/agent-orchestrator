@@ -209,8 +209,9 @@ export function registerStatus(program: Command): void {
     .command("status")
     .description("Show all sessions with branch, activity, PR, and CI status")
     .option("-p, --project <id>", "Filter by project ID")
+    .option("-a, --all", "Show all sessions including terminal/stale ones")
     .option("--json", "Output as JSON")
-    .action(async (opts: { project?: string; json?: boolean }) => {
+    .action(async (opts: { project?: string; all?: boolean; json?: boolean }) => {
       let config: ReturnType<typeof loadConfig>;
       try {
         config = loadConfig();
@@ -253,9 +254,20 @@ export function registerStatus(program: Command): void {
         const projectConfig = config.projects[projectId];
         if (!projectConfig) continue;
 
-        const projectSessions = (byProject.get(projectId) ?? []).sort((a, b) =>
-          a.id.localeCompare(b.id),
-        );
+        // Filter out terminal sessions with no live runtime — these are stale
+        // metadata files that haven't been archived yet.  Only show them when
+        // the user explicitly passes --all.
+        const TERMINAL_STATUSES = new Set(["killed", "done", "merged", "terminated", "cleanup"]);
+        const projectSessions = (byProject.get(projectId) ?? [])
+          .filter((s) => {
+            if (opts.all) return true;
+            if (!TERMINAL_STATUSES.has(s.status)) return true;
+            // Terminal status — keep only if runtime is still alive (enrichment
+            // would have revived it, so if status is still terminal the runtime
+            // is truly gone).
+            return false;
+          })
+          .sort((a, b) => a.id.localeCompare(b.id));
 
         // Resolve agent and SCM for this project
         const agentName = projectConfig.agent ?? config.defaults.agent;
