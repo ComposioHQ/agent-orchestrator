@@ -32,12 +32,12 @@ vi.mock("node:child_process", () => {
   const fn = Object.assign((..._args: unknown[]) => {}, {
     [Symbol.for("nodejs.util.promisify.custom")]: mockExecFileAsync,
   });
-  return { execFile: fn };
+  return { execFile: fn, execFileSync: vi.fn() };
 });
 
 vi.mock("@composio/ao-plugin-agent-base", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@composio/ao-plugin-agent-base")>();
-  return { ...actual, getCachedProcessList: mockGetCachedProcessList };
+  return { ...actual };
 });
 
 vi.mock("node:fs/promises", () => ({
@@ -109,12 +109,11 @@ function mockTmuxWithProcess(processName = "claude", tty = "/dev/ttys001", pid =
     if (cmd === "tmux" && args[0] === "list-panes") {
       return Promise.resolve({ stdout: `${tty}\n`, stderr: "" });
     }
+    if (cmd === "ps") {
+      return Promise.resolve({ stdout: `  PID TT       ARGS\n  ${pid} ${ttyShort}  ${processName}\n`, stderr: "" });
+    }
     return Promise.reject(new Error(`Unexpected: ${cmd} ${args.join(" ")}`));
   });
-  // getCachedProcessList is imported from agent-base (shared cache); mock it directly
-  mockGetCachedProcessList.mockResolvedValue(
-    `  PID TT       ARGS\n  ${pid} ${ttyShort}  ${processName}\n`,
-  );
 }
 
 function mockJsonlFiles(
@@ -282,11 +281,11 @@ describe("isProcessRunning", () => {
   });
 
   it("returns false when no claude on tmux pane TTY", async () => {
-    mockExecFileAsync.mockImplementation((cmd: string) => {
-      if (cmd === "tmux") return Promise.resolve({ stdout: "/dev/ttys002\n", stderr: "" });
+    mockExecFileAsync.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === "tmux" && args[0] === "list-panes") return Promise.resolve({ stdout: "/dev/ttys002\n", stderr: "" });
+      if (cmd === "ps") return Promise.resolve({ stdout: "  PID TT       ARGS\n  999 ttys002  bash\n", stderr: "" });
       return Promise.reject(new Error("unexpected"));
     });
-    mockGetCachedProcessList.mockResolvedValue("  PID TT       ARGS\n  999 ttys002  bash\n");
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
   });
 
@@ -336,11 +335,11 @@ describe("isProcessRunning", () => {
       if (cmd === "tmux" && args[0] === "list-panes") {
         return Promise.resolve({ stdout: "/dev/ttys001\n/dev/ttys002\n", stderr: "" });
       }
+      if (cmd === "ps") {
+        return Promise.resolve({ stdout: "  PID TT ARGS\n  100 ttys001  bash\n  200 ttys002  claude -p test\n", stderr: "" });
+      }
       return Promise.reject(new Error("unexpected"));
     });
-    mockGetCachedProcessList.mockResolvedValue(
-      "  PID TT ARGS\n  100 ttys001  bash\n  200 ttys002  claude -p test\n",
-    );
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(true);
   });
 
@@ -349,11 +348,11 @@ describe("isProcessRunning", () => {
       if (cmd === "tmux" && args[0] === "list-panes") {
         return Promise.resolve({ stdout: "/dev/ttys001\n", stderr: "" });
       }
+      if (cmd === "ps") {
+        return Promise.resolve({ stdout: "  PID TT ARGS\n  100 ttys001  /usr/bin/claude-code\n", stderr: "" });
+      }
       return Promise.reject(new Error("unexpected"));
     });
-    mockGetCachedProcessList.mockResolvedValue(
-      "  PID TT ARGS\n  100 ttys001  /usr/bin/claude-code\n",
-    );
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
   });
 });

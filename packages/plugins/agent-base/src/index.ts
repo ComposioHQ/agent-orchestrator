@@ -619,7 +619,7 @@ function classifyTerminalOutput(terminalOutput: string): ActivityState {
  * Shared helper to setup PostToolUse hooks in a workspace.
  * Writes metadata-updater.sh script and updates settings.json.
  */
-async function setupHookInWorkspace(
+export async function setupHookInWorkspace(
   workspacePath: string,
   configDir: string,
   hookCommand: string,
