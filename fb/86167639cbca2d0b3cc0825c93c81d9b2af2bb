@@ -1,0 +1,23 @@
+packages/web/src/components/Skeleton.tsx
+  bafd6df946c50d0e 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.17",
+  "base_commit_sha": "fb86167639cbca2d0b3cc0825c93c81d9b2af2bb",
+  "prompts": {
+    "bafd6df946c50d0e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ac64a32c-d59e-4499-aeb0-d791eaa547a8",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 148,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
