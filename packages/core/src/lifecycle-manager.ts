@@ -425,6 +425,19 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     switch (action) {
       case "send-to-agent": {
         if (reactionConfig.message) {
+          // On first trigger, also notify the human so they know a reaction
+          // was dispatched (e.g. "CI failed — agent notified").  Subsequent
+          // retries stay silent until escalation.
+          if (tracker.attempts === 1) {
+            const firstTriggerEvent = createEvent("reaction.triggered", {
+              sessionId,
+              projectId,
+              message: `${reactionKey}: dispatching to agent (${sessionId})`,
+              data: { reactionKey, action: "send-to-agent", attempt: 1 },
+            });
+            await notifyHuman(firstTriggerEvent, reactionConfig.priority ?? "info");
+          }
+
           try {
             await sessionManager.send(sessionId, reactionConfig.message);
 
@@ -693,8 +706,23 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       if (notifier) {
         try {
           await notifier.notify(eventWithPriority);
-        } catch {
-          // Notifier failed — not much we can do
+        } catch (err) {
+          // Log notifier failures so they are visible in observability output
+          // instead of being silently swallowed.
+          observer.recordOperation({
+            metric: "lifecycle_poll",
+            operation: "notifyHuman",
+            outcome: "failure",
+            correlationId: createCorrelationId("notify-error"),
+            projectId: event.projectId ?? "unknown",
+            sessionId: event.sessionId ?? "unknown",
+            data: {
+              notifier: name,
+              eventType: event.type,
+              error: err instanceof Error ? err.message : String(err),
+            },
+            level: "error",
+          });
         }
       }
     }
@@ -710,6 +738,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       tracked ?? ((session.metadata?.["status"] as SessionStatus | undefined) || session.status);
     const newStatus = await determineStatus(session);
     let transitionReaction: { key: string; result: ReactionResult | null } | undefined;
+    let killedThisCheck = false;
 
     if (newStatus !== oldStatus) {
       const correlationId = createCorrelationId("lifecycle-transition");
@@ -783,10 +812,33 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           await notifyHuman(event, priority);
         }
       }
+
+      // Clean up runtime and workspace for terminal sessions.
+      // When lifecycle detects a "merged" or "killed" transition, the metadata
+      // is updated but the runtime (tmux) and workspace (worktree) are left
+      // running.  This causes zombie sessions that consume resources and confuse
+      // status output.  Calling sessionManager.kill() tears down runtime +
+      // workspace and archives the metadata — the same thing `ao session kill`
+      // does manually.
+      if (newStatus === "merged" || newStatus === "killed") {
+        try {
+          await sessionManager.kill(session.id);
+          killedThisCheck = true;
+        } catch {
+          // Session may already be partially cleaned up — not critical
+        }
+      }
     } else {
       // No transition but track current state
       states.set(session.id, newStatus);
     }
+
+    if (killedThisCheck) return;
+
+    // Avoid recreating archived metadata if the session was removed between
+    // transition handling and review backlog processing.
+    const stillExists = await sessionManager.get(session.id);
+    if (!stillExists) return;
 
     await maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction);
   }
