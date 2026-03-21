@@ -877,6 +877,30 @@ export interface ReactionResult {
 // CONFIGURATION
 // =============================================================================
 
+/** Local LLM configuration for smart routing */
+export interface LocalLlmConfig {
+  /** OpenAI-compatible API base URL (e.g. http://localhost:11434/v1) */
+  baseUrl: string;
+  /** Model name to use (e.g. llama3, mistral) */
+  model: string;
+}
+
+/**
+ * Routing mode:
+ * - "always-claude": all sessions use Claude Code (default)
+ * - "smart": Haiku classifies task complexity; simple→local LLM, complex→Claude
+ * - "always-local": all sessions use the local LLM entirely
+ */
+export type RoutingMode = "always-claude" | "smart" | "always-local";
+
+/** Smart routing configuration — controls how tasks are routed to LLMs */
+export interface RoutingConfig {
+  /** Routing mode (default: "always-claude") */
+  mode: RoutingMode;
+  /** Local LLM endpoint settings (used when mode is "smart" or "always-local") */
+  localLlm: LocalLlmConfig;
+}
+
 /** Top-level orchestrator configuration (from agent-orchestrator.yaml) */
 export interface OrchestratorConfig {
   /**
@@ -912,6 +936,9 @@ export interface OrchestratorConfig {
 
   /** Default reaction configs */
   reactions: Record<string, ReactionConfig>;
+
+  /** Smart LLM routing configuration */
+  routing?: RoutingConfig;
 }
 
 export interface DefaultPlugins {

@@ -17,6 +17,7 @@ import { PRTableRow } from "./PRStatus";
 import { DynamicFavicon } from "./DynamicFavicon";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
 import { ProjectSidebar } from "./ProjectSidebar";
+import { RoutingPanel } from "./RoutingPanel";
 import type { ProjectInfo } from "@/lib/project-name";
 
 interface DashboardProps {
@@ -64,6 +65,7 @@ export function Dashboard({
     useState<DashboardOrchestratorLink[]>(orchestratorLinks);
   const [spawningProjectIds, setSpawningProjectIds] = useState<string[]>([]);
   const [spawnErrors, setSpawnErrors] = useState<Record<string, string>>({});
+  const [showRoutingPanel, setShowRoutingPanel] = useState(false);
   const showSidebar = projects.length > 1;
   const allProjectsView = showSidebar && projectId === undefined;
 
@@ -256,7 +258,36 @@ export function Dashboard({
             </h1>
             <StatusLine stats={liveStats} />
           </div>
-          {!allProjectsView && <OrchestratorControl orchestrators={activeOrchestrators} />}
+          <div className="flex items-center gap-2">
+            {!allProjectsView && <OrchestratorControl orchestrators={activeOrchestrators} />}
+            <div className="relative">
+              <button
+                onClick={() => setShowRoutingPanel((v) => !v)}
+                className={`flex items-center gap-1.5 rounded border px-2.5 py-1 text-[11px] transition-colors ${
+                  showRoutingPanel
+                    ? "border-[var(--color-accent)] text-[var(--color-accent)]"
+                    : "border-[var(--color-border-subtle)] text-[var(--color-text-tertiary)] hover:border-[var(--color-border-default)] hover:text-[var(--color-text-secondary)]"
+                }`}
+                aria-label="LLM Routing settings"
+                title="LLM Routing"
+              >
+                <svg
+                  className="h-3.5 w-3.5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  viewBox="0 0 24 24"
+                >
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83" />
+                </svg>
+                <span>Routing</span>
+              </button>
+              {showRoutingPanel && (
+                <RoutingPanel onClose={() => setShowRoutingPanel(false)} />
+              )}
+            </div>
+          </div>
         </div>
 
         {globalPause && !globalPauseDismissed && (

@@ -10,12 +10,12 @@
  * Everything else has sensible defaults.
  */
 
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { resolve, join, basename } from "node:path";
 import { homedir } from "node:os";
-import { parse as parseYaml } from "yaml";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
-import { ConfigNotFoundError, type OrchestratorConfig } from "./types.js";
+import { ConfigNotFoundError, type OrchestratorConfig, type RoutingConfig } from "./types.js";
 import { generateSessionPrefix } from "./paths.js";
 
 function inferScmPlugin(project: {
@@ -142,6 +142,16 @@ const DecomposerConfigSchema = z
     requireApproval: true,
   });
 
+const LocalLlmConfigSchema = z.object({
+  baseUrl: z.string().default("http://localhost:11434/v1"),
+  model: z.string().default(""),
+});
+
+const RoutingConfigSchema = z.object({
+  mode: z.enum(["always-claude", "smart", "always-local"]).default("always-claude"),
+  localLlm: LocalLlmConfigSchema.default({}),
+});
+
 const ProjectConfigSchema = z.object({
   name: z.string().optional(),
   repo: z.string(),
@@ -196,6 +206,7 @@ const OrchestratorConfigSchema = z.object({
     info: ["composio"],
   }),
   reactions: z.record(ReactionConfigSchema).default({}),
+  routing: RoutingConfigSchema.optional(),
 });
 
 // =============================================================================
@@ -521,4 +532,30 @@ export function getDefaultConfig(): OrchestratorConfig {
   return validateConfig({
     projects: {},
   });
+}
+
+/**
+ * Write routing config back to the YAML config file.
+ * Reads the existing YAML, merges the routing section, and writes it back.
+ */
+export function writeRoutingConfig(routing: RoutingConfig, configPath?: string): void {
+  const path = configPath ?? findConfigFile();
+
+  if (!path) {
+    throw new ConfigNotFoundError();
+  }
+
+  const raw = readFileSync(path, "utf-8");
+  // Parse preserving structure — use plain object so stringify keeps order
+  const parsed = parseYaml(raw) as Record<string, unknown>;
+
+  parsed["routing"] = {
+    mode: routing.mode,
+    localLlm: {
+      baseUrl: routing.localLlm.baseUrl,
+      model: routing.localLlm.model,
+    },
+  };
+
+  writeFileSync(path, stringifyYaml(parsed), "utf-8");
 }

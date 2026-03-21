@@ -16,6 +16,7 @@ export {
   getDefaultConfig,
   findConfig,
   findConfigFile,
+  writeRoutingConfig,
 } from "./config.js";
 
 // Plugin registry
