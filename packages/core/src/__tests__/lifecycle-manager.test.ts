@@ -242,6 +242,61 @@ describe("start / stop", () => {
     lm.stop();
   });
 
+  it("treats 'terminated' orchestrators as dead and respawns when open work exists", async () => {
+    vi.mocked(mockSessionManager.list).mockResolvedValue([
+      makeSession({
+        id: "app-orchestrator",
+        status: "terminated" as any,
+        branch: "main",
+        metadata: { role: "orchestrator" },
+      }),
+      makeSession({ id: "app-1", status: "working", runtimeHandle: undefined }),
+    ]);
+
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+      projectId: "my-app",
+    });
+
+    lm.start(60_000);
+
+    await vi.waitFor(() => {
+      expect(mockSessionManager.spawnOrchestrator).toHaveBeenCalled();
+    });
+
+    lm.stop();
+  });
+
+  it("does not treat 'done' sessions as open work", async () => {
+    vi.mocked(mockSessionManager.list).mockResolvedValue([
+      makeSession({
+        id: "app-orchestrator",
+        status: "killed",
+        branch: "main",
+        metadata: { role: "orchestrator" },
+      }),
+      makeSession({ id: "app-1", status: "done" as any }),
+    ]);
+
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+      projectId: "my-app",
+    });
+
+    lm.start(60_000);
+
+    await vi.waitFor(() => {
+      expect(mockSessionManager.list).toHaveBeenCalledWith("my-app");
+    });
+    expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
+
+    lm.stop();
+  });
+
   it("refreshes sessions after respawning the orchestrator so stale killed metadata is not re-applied", async () => {
     vi.useFakeTimers();
     vi.mocked(mockRuntime.isAlive).mockImplementation(async (handle) => handle.id !== "rt-dead");
