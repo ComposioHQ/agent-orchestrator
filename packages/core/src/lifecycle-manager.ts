@@ -15,6 +15,7 @@ import {
   SESSION_STATUS,
   PR_STATE,
   CI_STATUS,
+  TERMINAL_STATUSES,
   isOrchestratorSession,
   type LifecycleManager,
   type SessionManager,
@@ -897,13 +898,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const hasOpenWork = projectSessions.some(
           (session) =>
             !isOrchestratorSession(session) &&
-            session.status !== "merged" &&
-            !(session.status === "killed" && !session.pr),
+            !TERMINAL_STATUSES.has(session.status),
         );
         if (!hasOpenWork) return;
 
         const hasLiveOrchestrator = projectSessions.some(
-          (session) => isOrchestratorSession(session) && session.status !== "killed",
+          (session) => isOrchestratorSession(session) && !TERMINAL_STATUSES.has(session.status),
         );
         if (hasLiveOrchestrator) return;
 
