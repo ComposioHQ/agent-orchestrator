@@ -344,10 +344,10 @@ function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
     },
     "agent-idle": {
       auto: true,
-      action: "send-to-agent",
+      action: "notify",
+      priority: "action",
       message:
-        "You appear to be idle. If your task is not complete, continue working — write the code, commit, push, and create a PR. If you are blocked, explain what is blocking you.",
-      retries: 2,
+        "Agent session appears idle. If the task is not complete, check on the session.",
       escalateAfter: "15m",
     },
     "agent-stuck": {
