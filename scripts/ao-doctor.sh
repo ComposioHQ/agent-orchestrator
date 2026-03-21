@@ -228,6 +228,18 @@ check_tmux() {
   warn "tmux is installed but failed a basic server health check. Fix: restart tmux or reinstall it"
 }
 
+check_ttyd() {
+  if ! command -v ttyd >/dev/null 2>&1; then
+    if [ "$(uname)" = "Darwin" ]; then
+      warn "ttyd is not installed. Fix: brew install ttyd (required for the web dashboard terminal)"
+    else
+      warn "ttyd is not installed. Fix: see https://github.com/tsl0922/ttyd for install instructions (required for the web dashboard terminal)"
+    fi
+    return
+  fi
+  pass "ttyd resolves to $(command -v ttyd)"
+}
+
 check_gh() {
   if ! command -v gh >/dev/null 2>&1; then
     warn "GitHub CLI is not installed. Fix: install gh from https://cli.github.com/"
@@ -333,6 +345,7 @@ check_git
 check_pnpm
 check_launcher
 check_tmux
+check_ttyd
 check_gh
 check_config_dirs
 check_stale_temp_files

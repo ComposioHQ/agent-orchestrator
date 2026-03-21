@@ -71,6 +71,19 @@ else
   echo "[ok] tmux $(tmux -V | grep -oE '[0-9]+\.[0-9a-z]+')"
 fi
 
+# ttyd
+if ! command -v ttyd &> /dev/null; then
+  echo ""
+  echo "WARNING: ttyd is not installed (required for the web dashboard terminal feature)."
+  if [ "$(uname)" = "Darwin" ]; then
+    echo "  Install: brew install ttyd"
+  else
+    echo "  Install: https://github.com/tsl0922/ttyd"
+  fi
+else
+  echo "[ok] ttyd $(ttyd --version 2>&1 | head -n1)"
+fi
+
 # gh CLI authentication
 if ! command -v gh &> /dev/null; then
   echo ""
