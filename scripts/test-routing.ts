@@ -18,17 +18,23 @@
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
-// ---------------------------------------------------------------------------
-// Resolve classifyTaskComplexity from the local workspace build
-// ---------------------------------------------------------------------------
-
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Try workspace package first, fall back to local dist path
-let classifyTaskComplexity: (issueContext: string) => Promise<"simple" | "complex">;
-try {
-  // Resolves via pnpm workspace when built
-  const core = await import("../packages/core/dist/session-manager.js") as Record<string, unknown>;
+// ---------------------------------------------------------------------------
+// Lazy import — only loaded in live mode (skipped when --mock is passed)
+// ---------------------------------------------------------------------------
+
+async function loadClassifier(): Promise<(issueContext: string) => Promise<"simple" | "complex">> {
+  let core: Record<string, unknown>;
+  try {
+    core = await import("../packages/core/dist/session-manager.js") as Record<string, unknown>;
+  } catch (err) {
+    throw new Error(
+      "Could not import @composio/ao-core — run `pnpm build` in packages/core first.\n" +
+        `Looking in: ${resolve(__dirname, "../packages/core/dist/session-manager.js")}`,
+      { cause: err },
+    );
+  }
   if (typeof core["classifyTaskComplexity"] !== "function") {
     throw new Error(
       "classifyTaskComplexity is not exported from @composio/ao-core — " +
@@ -36,16 +42,7 @@ try {
         `Looking in: ${resolve(__dirname, "../packages/core/dist/session-manager.js")}`,
     );
   }
-  classifyTaskComplexity = core["classifyTaskComplexity"] as (issueContext: string) => Promise<"simple" | "complex">;
-} catch (err) {
-  if (err instanceof Error && err.message.includes("classifyTaskComplexity")) {
-    throw err;
-  }
-  throw new Error(
-    "Could not import @composio/ao-core — run `pnpm build` in packages/core first.\n" +
-      `Looking in: ${resolve(__dirname, "../packages/core/dist/session-manager.js")}`,
-    { cause: err },
-  );
+  return core["classifyTaskComplexity"] as (issueContext: string) => Promise<"simple" | "complex">;
 }
 
 // =============================================================================
@@ -263,6 +260,7 @@ async function main(): Promise<void> {
 
   console.log("\nRunning live classifier against Claude Haiku (claude-haiku-4-5-20251001)...");
 
+  const classifyTaskComplexity = await loadClassifier();
   const classify = (task: string) => classifyTaskComplexity(task);
   const simpleResults = await runTests(SIMPLE_TASKS, classify);
   const complexResults = await runTests(COMPLEX_TASKS, classify);
