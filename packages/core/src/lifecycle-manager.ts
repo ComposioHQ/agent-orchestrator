@@ -884,8 +884,9 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
   }
 
-  async function ensureOrchestratorsForOpenWork(sessions: Session[]): Promise<void> {
+  async function ensureOrchestratorsForOpenWork(sessions: Session[]): Promise<boolean> {
     const projectIds = scopedProjectId ? [scopedProjectId] : Object.keys(config.projects);
+    let spawnedOrchestrator = false;
 
     await Promise.allSettled(
       projectIds.map(async (projectId) => {
@@ -911,8 +912,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           systemPrompt: generateOrchestratorPrompt({ config, projectId, project }),
           prompt: generateOrchestratorStartupPrompt({ config, projectId, project }),
         });
+        spawnedOrchestrator = true;
       }),
     );
+
+    return spawnedOrchestrator;
   }
 
   /** Run one polling cycle across all sessions. */
@@ -924,8 +928,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     polling = true;
 
     try {
-      const sessions = await sessionManager.list(scopedProjectId);
-      await ensureOrchestratorsForOpenWork(sessions);
+      let sessions = await sessionManager.list(scopedProjectId);
+      const spawnedOrchestrator = await ensureOrchestratorsForOpenWork(sessions);
+      if (spawnedOrchestrator) {
+        sessions = await sessionManager.list(scopedProjectId);
+      }
 
       // Include sessions that are active OR whose status changed from what we last saw
       // (e.g., list() detected a dead runtime and marked it "killed" — we need to
