@@ -971,17 +971,28 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     }
 
-    // Classify task complexity for smart agent routing — only when no explicit agent
-    // override is set (CLI --agent, project.worker.agent, or project.agent), since those
-    // take priority over complexity-based routing and make the API call wasteful.
+    // Classify task complexity for smart agent routing.
+    // Explicit agent overrides (CLI --agent, project.worker.agent, project.agent) always
+    // take priority, skipping classification. Routing mode gates the rest:
+    //   always-claude  → skip classification; complexity stays undefined (routes to Claude)
+    //   smart          → call classifier to decide per-task
+    //   always-local   → skip classification; force "simple" so resolveAgentSelection
+    //                    picks local-llm unconditionally
     const hasExplicitAgent =
       !!spawnConfig.agent || !!project.worker?.agent || !!project.agent;
     const classificationInput = resolvedIssue
       ? `${resolvedIssue.title}\n${resolvedIssue.description}`
       : (spawnConfig.prompt ?? spawnConfig.issueId ?? "");
-    const complexity = hasExplicitAgent
-      ? undefined
-      : await classifyTaskComplexity(classificationInput);
+    const routingMode = config.routing?.mode ?? "always-claude";
+    let complexity: "simple" | "complex" | undefined;
+    if (hasExplicitAgent || routingMode === "always-claude") {
+      complexity = undefined;
+    } else if (routingMode === "always-local") {
+      complexity = "simple";
+    } else {
+      // smart mode — classify and route based on result
+      complexity = await classifyTaskComplexity(classificationInput);
+    }
 
     const selection = resolveAgentSelection({
       role: "worker",
@@ -991,7 +1002,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       complexity,
     });
     // eslint-disable-next-line no-console
-    console.log(`[routing] Task classified as ${complexity ?? "n/a (explicit override)"} → using ${selection.agentName}`);
+    console.log(`[routing] mode=${routingMode} complexity=${complexity ?? "n/a"} → using ${selection.agentName}`);
     const plugins = resolvePlugins(project, selection.agentName);
     if (!plugins.runtime) {
       throw new Error(`Runtime plugin '${project.runtime ?? config.defaults.runtime}' not found`);
