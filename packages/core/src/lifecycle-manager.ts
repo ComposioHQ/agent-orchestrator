@@ -465,21 +465,55 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
 
       case "auto-merge": {
-        // Auto-merge is handled by the SCM plugin
-        // For now, just notify
-        const event = createEvent("reaction.triggered", {
-          sessionId,
-          projectId,
-          message: `Reaction '${reactionKey}' triggered auto-merge`,
-          data: { reactionKey },
-        });
-        await notifyHuman(event, "action");
-        return {
-          reactionType: reactionKey,
-          success: true,
-          action: "auto-merge",
-          escalated: false,
-        };
+        const project = config.projects[projectId];
+        const scmPlugin = project?.scm
+          ? registry.get<SCM>("scm", project.scm.plugin)
+          : null;
+        const targetSession = await sessionManager.get(sessionId);
+        if (!scmPlugin || !targetSession?.pr || targetSession.projectId !== projectId) {
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action: "auto-merge",
+            escalated: false,
+          };
+        }
+        try {
+          const mergeMethod =
+            (reactionConfig as ReactionConfig & { mergeMethod?: MergeMethod }).mergeMethod ??
+            "squash";
+          await scmPlugin.mergePR(targetSession.pr, mergeMethod);
+          const event = createEvent("merge.completed", {
+            sessionId,
+            projectId,
+            message: `Auto-merged PR via '${reactionKey}' reaction (${mergeMethod})`,
+            data: { reactionKey, mergeMethod },
+          });
+          await notifyHuman(event, "action");
+          return {
+            reactionType: reactionKey,
+            success: true,
+            action: "auto-merge",
+            escalated: false,
+          };
+        } catch (err) {
+          observer.recordOperation({
+            metric: "lifecycle_poll",
+            operation: "lifecycle.auto-merge",
+            outcome: "failure",
+            correlationId: createCorrelationId("auto-merge"),
+            projectId,
+            sessionId,
+            data: { error: err instanceof Error ? err.message : String(err) },
+            level: "warn",
+          });
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action: "auto-merge",
+            escalated: false,
+          };
+        }
       }
     }
 
@@ -789,6 +823,98 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
 
     await maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction);
+
+    // Check for merge conflicts on open PRs and trigger the merge-conflicts reaction.
+    // This runs independently of status transitions because "pr_open" doesn't change
+    // when conflicts appear — we need to actively detect them.
+    if (session.pr && newStatus === "pr_open") {
+      const project = config.projects[session.projectId];
+      const scm = project?.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+      if (scm) {
+        try {
+          const mergeReady = await scm.getMergeability(session.pr);
+          if (!mergeReady.noConflicts) {
+            const reactionKey = "merge-conflicts";
+            const reactionConfig = getReactionConfigForSession(session, reactionKey);
+            const alreadyFired = mergeConflictReactionFired.get(session.id) === true;
+            if (reactionConfig && reactionConfig.auto !== false && !alreadyFired) {
+              const result = await executeReaction(
+                session.id,
+                session.projectId,
+                reactionKey,
+                reactionConfig,
+              );
+              if (result.success) {
+                mergeConflictReactionFired.set(session.id, true);
+              }
+            }
+          } else {
+            mergeConflictReactionFired.delete(session.id);
+            clearReactionTracker(session.id, "merge-conflicts");
+          }
+        } catch {
+          // Merge conflict detection is best-effort; don't block the poll cycle
+        }
+      }
+    } else {
+      mergeConflictReactionFired.delete(session.id);
+    }
+
+    // Clean up runtime for terminal sessions — kill the tmux session so workers
+    // don't sit idle on a Codex prompt after their PR is merged or the session
+    // is marked killed. Without this, merged sessions stay running forever.
+    if (
+      newStatus !== oldStatus &&
+      (newStatus === "merged" || newStatus === "killed") &&
+      session.runtimeHandle
+    ) {
+      try {
+        const project = config.projects[session.projectId];
+        const runtimeName =
+          session.runtimeHandle.runtimeName ??
+          (project ? (project.runtime ?? config.defaults.runtime) : config.defaults.runtime);
+        const runtimePlugin = registry.get<Runtime>("runtime", runtimeName);
+        if (runtimePlugin) {
+          await runtimePlugin.destroy(session.runtimeHandle);
+        }
+      } catch {
+        // Runtime cleanup is best-effort; don't fail the poll cycle
+      }
+    }
+  }
+
+  async function ensureOrchestratorsForOpenWork(sessions: Session[]): Promise<boolean> {
+    const projectIds = scopedProjectId ? [scopedProjectId] : Object.keys(config.projects);
+    let spawnedOrchestrator = false;
+
+    await Promise.allSettled(
+      projectIds.map(async (projectId) => {
+        const project = config.projects[projectId];
+        if (!project) return;
+
+        const projectSessions = sessions.filter((session) => session.projectId === projectId);
+        const hasOpenWork = projectSessions.some(
+          (session) =>
+            !isOrchestratorSession(session) &&
+            !TERMINAL_STATUSES.has(session.status),
+        );
+        if (!hasOpenWork) return;
+
+        const hasLiveOrchestrator = projectSessions.some(
+          (session) => isOrchestratorSession(session) && !TERMINAL_STATUSES.has(session.status),
+        );
+        if (hasLiveOrchestrator) return;
+
+        await sessionManager.spawnOrchestrator({
+          projectId,
+          systemPrompt: generateOrchestratorPrompt({ config, projectId, project }),
+          prompt: generateOrchestratorStartupPrompt({ config, projectId, project }),
+        });
+        spawnedOrchestrator = true;
+      }),
+    );
+
+    return spawnedOrchestrator;
   }
 
   /** Run one polling cycle across all sessions. */
