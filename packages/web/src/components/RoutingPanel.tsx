@@ -41,6 +41,9 @@ export function RoutingPanel({ onClose, triggerRef }: RoutingPanelProps) {
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [loading, setLoading] = useState(true);
   const panelRef = useRef<HTMLDivElement>(null);
+  // When true the next auto-fetch cycle should not reset the model field —
+  // used to protect the value loaded from saved config on initial mount.
+  const skipModelResetRef = useRef(false);
 
   // Load current config
   useEffect(() => {
@@ -51,6 +54,9 @@ export function RoutingPanel({ onClose, triggerRef }: RoutingPanelProps) {
           setMode(data.routing.mode);
           setBaseUrl(data.routing.localLlm.baseUrl);
           setModel(data.routing.localLlm.model);
+          // Guard the just-loaded model from being wiped by the auto-fetch
+          // effect that fires because showLlmSettings just became true.
+          skipModelResetRef.current = true;
         }
       })
       .catch(() => {
@@ -113,10 +119,16 @@ export function RoutingPanel({ onClose, triggerRef }: RoutingPanelProps) {
   useEffect(() => {
     if (!showLlmSettings) return;
 
-    // Clear stale state immediately
+    // Clear stale state immediately.
+    // Skip the model reset on the first run after config is loaded from the
+    // server so the saved model preference is preserved.
     setAvailableModels([]);
     setConnectionStatus("idle");
-    setModel("");
+    if (skipModelResetRef.current) {
+      skipModelResetRef.current = false;
+    } else {
+      setModel("");
+    }
 
     const controller = new AbortController();
 
@@ -133,7 +145,9 @@ export function RoutingPanel({ onClose, triggerRef }: RoutingPanelProps) {
           if (models.length > 0) {
             setAvailableModels(models);
             setConnectionStatus("ok");
-            setModel(models[0] ?? "");
+            // Only auto-select first model if nothing is set yet; if a saved
+            // model was loaded from config it's already in state and valid.
+            setModel((prev) => prev || (models[0] ?? ""));
           }
         } catch (err) {
           if (err instanceof Error && err.name === "AbortError") return;

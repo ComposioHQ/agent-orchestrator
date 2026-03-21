@@ -10,13 +10,14 @@
  * Everything else has sensible defaults.
  */
 
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { resolve, join, basename } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseYaml, parseDocument } from "yaml";
 import { z } from "zod";
 import { ConfigNotFoundError, type OrchestratorConfig, type RoutingConfig } from "./types.js";
 import { generateSessionPrefix } from "./paths.js";
+import { atomicWriteFileSync } from "./atomic-write.js";
 
 function inferScmPlugin(project: {
   repo: string;
@@ -560,5 +561,5 @@ export function writeRoutingConfig(routing: RoutingConfig, configPath?: string):
     },
   });
 
-  writeFileSync(path, doc.toString(), "utf-8");
+  atomicWriteFileSync(path, doc.toString());
 }
