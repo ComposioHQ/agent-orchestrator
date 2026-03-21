@@ -1,0 +1,22 @@
+# ClickUp integration for task management
+# Requires CLICKUP_API_TOKEN environment variable
+
+dataDir: ~/.agent-orchestrator
+worktreeDir: ~/.worktrees
+
+projects:
+  my-app:
+    repo: owner/my-app
+    path: ~/my-app
+    defaultBranch: main
+
+    # ClickUp tracker integration
+    tracker:
+      plugin: clickup
+      listId: "your-list-id"
+
+    # Custom rules for agents
+    agentRules: |
+      Always reference ClickUp task IDs in commit messages.
+      Run tests before pushing.
+      Use conventional commits (feat:, fix:, chore:).

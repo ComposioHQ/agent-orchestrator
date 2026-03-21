@@ -32,6 +32,7 @@
     "@composio/ao-plugin-agent-opencode": "workspace:*",
     "@composio/ao-plugin-runtime-tmux": "workspace:*",
     "@composio/ao-plugin-scm-github": "workspace:*",
+    "@composio/ao-plugin-tracker-clickup": "workspace:*",
     "@composio/ao-plugin-tracker-github": "workspace:*",
     "@composio/ao-plugin-tracker-linear": "workspace:*",
     "@composio/ao-plugin-workspace-worktree": "workspace:*",

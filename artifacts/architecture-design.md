@@ -50,7 +50,7 @@ Human only intervenes when notified. Everything else is handled.
 | **Runtime**      | Where/how the session executes             | tmux, docker, k8s, process       |
 | **Agent**        | The AI coding tool being used              | claude-code, codex, aider        |
 | **Workspace**    | Isolated code copy for a session           | git worktree, clone, volume      |
-| **Tracker**      | Issue/task tracking system                 | github, linear, jira             |
+| **Tracker**      | Issue/task tracking system                 | github, linear, clickup, jira    |
 | **SCM**          | Source code management platform            | github, gitlab, bitbucket        |
 | **Notifier**     | Communication/alert channel                | slack, discord, desktop, webhook |
 | **Terminal**     | Human interaction interface                | iterm2, web terminal, none       |
@@ -725,6 +725,7 @@ agent-orchestrator/
 │       ├── workspace-clone/
 │       ├── tracker-github/
 │       ├── tracker-linear/
+│       ├── tracker-clickup/
 │       ├── scm-github/
 │       ├── notifier-desktop/
 │       ├── notifier-slack/

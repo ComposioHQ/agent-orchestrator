@@ -82,7 +82,7 @@ All plugin interfaces are in [`packages/core/src/types.ts`](packages/core/src/ty
 | `runtime`   | `Runtime`   | Run agents in Docker, SSH, cloud VMs |
 | `agent`     | `Agent`     | Adapt a new AI coding tool           |
 | `workspace` | `Workspace` | Different code isolation strategies  |
-| `tracker`   | `Tracker`   | Jira, Asana, or custom issue systems |
+| `tracker`   | `Tracker`   | ClickUp, Jira, Asana, or custom      |
 | `scm`       | `SCM`       | GitLab, Bitbucket support            |
 | `notifier`  | `Notifier`  | Email, Discord, custom webhooks      |
 | `terminal`  | `Terminal`  | Different terminal UI integrations   |

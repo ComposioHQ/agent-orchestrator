@@ -39,6 +39,11 @@ projects:
     # tracker:
     #   plugin: linear
     #   teamId: "your-team-id"
+    #
+    # ClickUp tracker:
+    # tracker:
+    #   plugin: clickup
+    #   listId: "your-list-id"
 
     # SCM webhook acceleration (optional)
     # scm:
