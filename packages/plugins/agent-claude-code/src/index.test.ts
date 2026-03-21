@@ -6,7 +6,6 @@ import type { Session, RuntimeHandle, AgentLaunchConfig, WorkspaceHooksConfig } 
 // ---------------------------------------------------------------------------
 const {
   mockExecFileAsync,
-  mockGetCachedProcessList,
   mockReaddir,
   mockReadFile,
   mockStat,
@@ -17,7 +16,6 @@ const {
   mockExistsSync,
 } = vi.hoisted(() => ({
   mockExecFileAsync: vi.fn(),
-  mockGetCachedProcessList: vi.fn<() => Promise<string>>(),
   mockReaddir: vi.fn(),
   mockReadFile: vi.fn(),
   mockStat: vi.fn(),
@@ -35,8 +33,8 @@ vi.mock("node:child_process", () => {
   return { execFile: fn, execFileSync: vi.fn() };
 });
 
-vi.mock("@composio/ao-plugin-agent-base", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@composio/ao-plugin-agent-base")>();
+vi.mock("@composio/ao-plugin-agent-base", async () => {
+  const actual = await vi.importActual("@composio/ao-plugin-agent-base");
   return { ...actual };
 });
 
