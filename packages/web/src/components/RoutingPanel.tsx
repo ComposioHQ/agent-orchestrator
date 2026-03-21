@@ -84,17 +84,6 @@ export function RoutingPanel({ onClose, triggerRef }: RoutingPanelProps) {
 
   const showLlmSettings = mode === "smart" || mode === "always-local";
 
-  const fetchModels = useCallback(async (url: string) => {
-    try {
-      const res = await fetch(`${url.replace(/\/$/, "")}/models`);
-      if (!res.ok) return [];
-      const data = (await res.json()) as { data?: { id: string }[] };
-      return data.data?.map((m) => m.id) ?? [];
-    } catch {
-      return [];
-    }
-  }, []);
-
   const handleTestConnection = useCallback(async () => {
     setConnectionStatus("testing");
     setConnectionError("");
@@ -118,24 +107,46 @@ export function RoutingPanel({ onClose, triggerRef }: RoutingPanelProps) {
     }
   }, [baseUrl, model]);
 
-  // Auto-fetch models when baseUrl or mode changes (model intentionally excluded from deps
-  // to avoid infinite loop when we auto-set model from the fetched list)
-  const modelRef = useRef(model);
-  modelRef.current = model;
-
+  // Auto-fetch models when baseUrl changes, debounced 500 ms to avoid firing on
+  // every keystroke. AbortController cancels any in-flight request when the URL
+  // changes again. Model is always reset so the select reflects the new endpoint.
   useEffect(() => {
     if (!showLlmSettings) return;
-    // Clear stale models immediately so the dropdown doesn't show old endpoint's models
+
+    // Clear stale state immediately
     setAvailableModels([]);
     setConnectionStatus("idle");
-    void fetchModels(baseUrl).then((models) => {
-      if (models.length > 0) {
-        setAvailableModels(models);
-        setConnectionStatus("ok");
-        if (!modelRef.current) setModel(models[0] ?? "");
-      }
-    });
-  }, [baseUrl, showLlmSettings, fetchModels]);
+    setModel("");
+
+    const controller = new AbortController();
+
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const res = await fetch(
+            `${baseUrl.replace(/\/$/, "")}/models`,
+            { signal: controller.signal },
+          );
+          if (!res.ok) return;
+          const data = (await res.json()) as { data?: { id: string }[] };
+          const models = data.data?.map((m) => m.id) ?? [];
+          if (models.length > 0) {
+            setAvailableModels(models);
+            setConnectionStatus("ok");
+            setModel(models[0] ?? "");
+          }
+        } catch (err) {
+          if (err instanceof Error && err.name === "AbortError") return;
+          // silently ignore other errors — user can Test connection manually
+        }
+      })();
+    }, 500);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [baseUrl, showLlmSettings]);
 
   const handleSave = useCallback(async () => {
     setSaving(true);

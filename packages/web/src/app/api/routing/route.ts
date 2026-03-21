@@ -43,11 +43,29 @@ export async function PUT(request: NextRequest) {
       r["localLlm"] && typeof r["localLlm"] === "object"
         ? (r["localLlm"] as Record<string, unknown>)
         : {};
-    const baseUrl =
+    const rawBaseUrl =
       typeof localLlm["baseUrl"] === "string"
         ? localLlm["baseUrl"]
         : "http://localhost:11434/v1";
-    const model = typeof localLlm["model"] === "string" ? localLlm["model"] : "";
+
+    // Validate baseUrl: must be a parseable URL with http/https protocol only
+    // (prevents SSRF to non-HTTP internal services and rejects malformed strings)
+    let baseUrl: string;
+    try {
+      const parsed = new URL(rawBaseUrl);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        return NextResponse.json(
+          { error: "baseUrl must use http or https protocol" },
+          { status: 400 },
+        );
+      }
+      baseUrl = parsed.toString().replace(/\/$/, "");
+    } catch {
+      return NextResponse.json({ error: "baseUrl is not a valid URL" }, { status: 400 });
+    }
+
+    const rawModel = typeof localLlm["model"] === "string" ? localLlm["model"] : "";
+    const model = rawModel.slice(0, 256); // cap length
 
     const routingConfig: RoutingConfig = { mode, localLlm: { baseUrl, model } };
 
