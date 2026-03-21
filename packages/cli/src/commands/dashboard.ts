@@ -112,6 +112,15 @@ export function registerDashboard(program: Command): void {
       const terminalServer = spawnTerminalServer("terminal", "terminal-websocket.js");
       const directTerminalServer = spawnTerminalServer("direct-terminal", "direct-terminal-ws.js");
 
+      // Kill terminal servers whenever the parent process is asked to exit,
+      // so they don't become orphans keeping ports occupied.
+      function killTerminalServers(): void {
+        terminalServer.kill("SIGTERM");
+        directTerminalServer.kill("SIGTERM");
+      }
+      process.once("SIGINT", killTerminalServers);
+      process.once("SIGTERM", killTerminalServers);
+
       let openAbort: AbortController | undefined;
 
       if (opts.open !== false) {
@@ -122,9 +131,10 @@ export function registerDashboard(program: Command): void {
       child.on("exit", (code) => {
         if (openAbort) openAbort.abort();
 
-        // Kill terminal servers when Next.js exits
-        terminalServer.kill("SIGTERM");
-        directTerminalServer.kill("SIGTERM");
+        // Kill terminal servers when Next.js exits (normal exit path)
+        killTerminalServers();
+        process.off("SIGINT", killTerminalServers);
+        process.off("SIGTERM", killTerminalServers);
 
         if (code !== 0 && code !== null && !opts.rebuild) {
           const stderr = stderrChunks.join("");
