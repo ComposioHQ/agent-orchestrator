@@ -56,6 +56,12 @@ importers:
       '@composio/ao-plugin-agent-codex':
         specifier: workspace:*
         version: link:../plugins/agent-codex
+      '@composio/ao-plugin-agent-cursor':
+        specifier: workspace:*
+        version: link:../plugins/agent-cursor
+      '@composio/ao-plugin-agent-gemini':
+        specifier: workspace:*
+        version: link:../plugins/agent-gemini
       '@composio/ao-plugin-agent-opencode':
         specifier: workspace:*
         version: link:../plugins/agent-opencode
