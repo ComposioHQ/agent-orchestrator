@@ -53,6 +53,12 @@ importers:
       '@composio/ao-plugin-agent-codex':
         specifier: workspace:*
         version: link:../plugins/agent-codex
+      '@composio/ao-plugin-agent-cursor':
+        specifier: workspace:*
+        version: link:../plugins/agent-cursor
+      '@composio/ao-plugin-agent-gemini':
+        specifier: workspace:*
+        version: link:../plugins/agent-gemini
       '@composio/ao-plugin-agent-opencode':
         specifier: workspace:*
         version: link:../plugins/agent-opencode
@@ -169,6 +175,12 @@ importers:
       '@composio/ao-plugin-agent-codex':
         specifier: workspace:*
         version: link:../plugins/agent-codex
+      '@composio/ao-plugin-agent-cursor':
+        specifier: workspace:*
+        version: link:../plugins/agent-cursor
+      '@composio/ao-plugin-agent-gemini':
+        specifier: workspace:*
+        version: link:../plugins/agent-gemini
       '@composio/ao-plugin-agent-opencode':
         specifier: workspace:*
         version: link:../plugins/agent-opencode
@@ -238,11 +250,27 @@ importers:
         specifier: ^3.0.0
         version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
 
+  packages/plugins/agent-base:
+    dependencies:
+      '@composio/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.2.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/plugins/agent-claude-code:
     dependencies:
       '@composio/ao-core':
         specifier: workspace:*
         version: link:../../core
+      '@composio/ao-plugin-agent-base':
+        specifier: workspace:*
+        version: link:../agent-base
     devDependencies:
       '@types/node':
         specifier: ^25.2.3
@@ -259,6 +287,44 @@ importers:
       '@composio/ao-core':
         specifier: workspace:*
         version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.2.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+
+  packages/plugins/agent-cursor:
+    dependencies:
+      '@composio/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+      '@composio/ao-plugin-agent-base':
+        specifier: workspace:*
+        version: link:../agent-base
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.2.3
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.2.3)(jiti@2.6.1)(jsdom@25.0.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+
+  packages/plugins/agent-gemini:
+    dependencies:
+      '@composio/ao-core':
+        specifier: workspace:*
+        version: link:../../core
+      '@composio/ao-plugin-agent-base':
+        specifier: workspace:*
+        version: link:../agent-base
     devDependencies:
       '@types/node':
         specifier: ^25.2.3

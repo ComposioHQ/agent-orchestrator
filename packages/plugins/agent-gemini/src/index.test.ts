@@ -1,49 +1,46 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Session, RuntimeHandle, AgentLaunchConfig, WorkspaceHooksConfig } from "@composio/ao-core";
+import type { Session, RuntimeHandle, AgentLaunchConfig } from "@composio/ao-core";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks — available inside vi.mock factories
 // ---------------------------------------------------------------------------
 const {
   mockExecFileAsync,
-  mockReaddir,
-  mockReadFile,
-  mockStat,
-  mockHomedir,
   mockWriteFile,
   mockMkdir,
+  mockReadFile,
+  mockReaddir,
+  mockStat,
   mockChmod,
   mockExistsSync,
-} = vi.hoisted(() => ({
-  mockExecFileAsync: vi.fn(),
-  mockReaddir: vi.fn(),
-  mockReadFile: vi.fn(),
-  mockStat: vi.fn(),
-  mockHomedir: vi.fn(() => "/mock/home"),
-  mockWriteFile: vi.fn().mockResolvedValue(undefined),
-  mockMkdir: vi.fn().mockResolvedValue(undefined),
-  mockChmod: vi.fn().mockResolvedValue(undefined),
-  mockExistsSync: vi.fn().mockReturnValue(false),
-}));
+  mockHomedir,
+} =
+  vi.hoisted(() => ({
+    mockExecFileAsync: vi.fn(),
+    mockWriteFile: vi.fn().mockResolvedValue(undefined),
+    mockMkdir: vi.fn().mockResolvedValue(undefined),
+    mockReadFile: vi.fn(),
+    mockReaddir: vi.fn(),
+    mockStat: vi.fn(),
+    mockChmod: vi.fn().mockResolvedValue(undefined),
+    mockExistsSync: vi.fn(() => false),
+    mockHomedir: vi.fn(() => "/mock/home"),
+  }));
 
 vi.mock("node:child_process", () => {
   const fn = Object.assign((..._args: unknown[]) => {}, {
     [Symbol.for("nodejs.util.promisify.custom")]: mockExecFileAsync,
   });
-  return { execFile: fn, execFileSync: vi.fn() };
+  return { execFile: fn };
 });
 
-vi.mock("@composio/ao-plugin-agent-base", async () => {
-  const actual = await vi.importActual("@composio/ao-plugin-agent-base");
-  return { ...actual };
-});
 
 vi.mock("node:fs/promises", () => ({
+  writeFile: mockWriteFile,
+  mkdir: mockMkdir,
   readdir: mockReaddir,
   readFile: mockReadFile,
   stat: mockStat,
-  writeFile: mockWriteFile,
-  mkdir: mockMkdir,
   chmod: mockChmod,
 }));
 
@@ -55,7 +52,7 @@ vi.mock("node:os", () => ({
   homedir: mockHomedir,
 }));
 
-import { create, manifest, default as defaultExport, resetPsCache, METADATA_UPDATER_SCRIPT } from "./index.js";
+import { create, manifest, toGeminiProjectPath, default as defaultExport, resetPsCache } from "./index.js";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -101,27 +98,30 @@ function makeLaunchConfig(overrides: Partial<AgentLaunchConfig> = {}): AgentLaun
   };
 }
 
-function mockTmuxWithProcess(processName = "claude", tty = "/dev/ttys001", pid = 12345) {
-  const ttyShort = tty.replace(/^\/dev\//, "");
+function mockTmuxWithProcess(processName = "gemini", tty = "/dev/ttys001", pid = 12345) {
   mockExecFileAsync.mockImplementation((cmd: string, args: string[]) => {
     if (cmd === "tmux" && args[0] === "list-panes") {
       return Promise.resolve({ stdout: `${tty}\n`, stderr: "" });
     }
     if (cmd === "ps") {
-      return Promise.resolve({ stdout: `  PID TT       ARGS\n  ${pid} ${ttyShort}  ${processName}\n`, stderr: "" });
+      const ttyShort = tty.replace(/^\/dev\//, "");
+      return Promise.resolve({
+        stdout: `  PID TT       ARGS\n  ${pid} ${ttyShort}  ${processName}\n`,
+        stderr: "",
+      });
     }
     return Promise.reject(new Error(`Unexpected: ${cmd} ${args.join(" ")}`));
   });
 }
 
-function mockJsonlFiles(
-  jsonlContent: string,
-  files = ["session-abc123.jsonl"],
+function mockJsonFiles(
+  jsonContent: string,
+  files = ["session-abc123.json"],
   mtime = new Date(1700000000000),
 ) {
   mockReaddir.mockResolvedValue(files);
   mockStat.mockResolvedValue({ mtimeMs: mtime.getTime(), mtime });
-  mockReadFile.mockResolvedValue(jsonlContent);
+  mockReadFile.mockResolvedValue(jsonContent);
 }
 
 // ---------------------------------------------------------------------------
@@ -131,23 +131,23 @@ beforeEach(() => {
   vi.clearAllMocks();
   resetPsCache();
   mockHomedir.mockReturnValue("/mock/home");
+  mockExistsSync.mockReturnValue(false);
 });
 
 describe("plugin manifest & exports", () => {
   it("has correct manifest", () => {
     expect(manifest).toEqual({
-      name: "claude-code",
+      name: "gemini",
       slot: "agent",
-      description: "Agent plugin: Claude Code CLI",
+      description: "Agent plugin: Gemini CLI",
       version: "0.1.0",
-      displayName: "Claude Code",
     });
   });
 
   it("create() returns an agent with correct name and processName", () => {
     const agent = create();
-    expect(agent.name).toBe("claude-code");
-    expect(agent.processName).toBe("claude");
+    expect(agent.name).toBe("gemini");
+    expect(agent.processName).toBe("gemini");
     expect(agent.promptDelivery).toBe("post-launch");
   });
 
@@ -165,32 +165,32 @@ describe("getLaunchCommand", () => {
 
   it("generates base command without shell syntax", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "default" }));
-    expect(cmd).toBe("claude");
+    expect(cmd).toBe("gemini");
     // Must not contain shell operators (execFile-safe)
     expect(cmd).not.toContain("&&");
     expect(cmd).not.toContain("unset");
   });
 
-  it("includes --dangerously-skip-permissions when permissions=permissionless", () => {
+  it("includes --yolo when permissions=permissionless", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "permissionless" }));
-    expect(cmd).toContain("--dangerously-skip-permissions");
+    expect(cmd).toContain("--yolo");
   });
 
   it("treats legacy permissions=skip as permissionless", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ permissions: "skip" as unknown as AgentLaunchConfig["permissions"] }),
     );
-    expect(cmd).toContain("--dangerously-skip-permissions");
+    expect(cmd).toContain("--yolo");
   });
 
-  it("maps permissions=auto-edit to no-prompt mode on Claude", () => {
+  it("maps permissions=auto-edit to --yolo", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "auto-edit" }));
-    expect(cmd).toContain("--dangerously-skip-permissions");
+    expect(cmd).toContain("--yolo");
   });
 
   it("shell-escapes model argument", () => {
-    const cmd = agent.getLaunchCommand(makeLaunchConfig({ model: "claude-opus-4-6" }));
-    expect(cmd).toContain("--model 'claude-opus-4-6'");
+    const cmd = agent.getLaunchCommand(makeLaunchConfig({ model: "gemini-2.0-flash" }));
+    expect(cmd).toContain("--model 'gemini-2.0-flash'");
   });
 
   it("does not include -p flag (prompt delivered post-launch)", () => {
@@ -201,14 +201,14 @@ describe("getLaunchCommand", () => {
 
   it("combines all options without prompt", () => {
     const cmd = agent.getLaunchCommand(
-      makeLaunchConfig({ permissions: "permissionless", model: "opus", prompt: "Hello" }),
+      makeLaunchConfig({ permissions: "permissionless", model: "flash", prompt: "Hello" }),
     );
-    expect(cmd).toBe("claude --dangerously-skip-permissions --model 'opus'");
+    expect(cmd).toBe("gemini --yolo --model 'flash'");
   });
 
-  it("omits --dangerously-skip-permissions when permissions=default", () => {
+  it("omits --yolo when permissions=default", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "default" }));
-    expect(cmd).not.toContain("--dangerously-skip-permissions");
+    expect(cmd).not.toContain("--yolo");
   });
 
   it("omits optional flags when not provided", () => {
@@ -217,24 +217,13 @@ describe("getLaunchCommand", () => {
     expect(cmd).not.toContain("-p");
   });
 
-  it("includes --append-system-prompt alongside omitted -p", () => {
+  it("does not include system prompt in launch command (delivered via env var)", () => {
+    // Gemini uses GEMINI_SYSTEM_MD env var, not a CLI flag
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ systemPrompt: "You are a helper", prompt: "Do the task" }),
     );
-    expect(cmd).toContain("--append-system-prompt");
-    expect(cmd).toContain("You are a helper");
-    // -p as a standalone flag (not substring of --append-system-prompt)
-    expect(cmd).not.toMatch(/\s-p\s/);
-    expect(cmd).not.toContain("Do the task");
-  });
-
-  it("uses systemPromptFile via shell substitution alongside omitted -p", () => {
-    const cmd = agent.getLaunchCommand(
-      makeLaunchConfig({ systemPromptFile: "/tmp/prompt.md", prompt: "Do the task" }),
-    );
-    expect(cmd).toContain('--append-system-prompt "$(cat');
-    expect(cmd).toContain("/tmp/prompt.md");
-    expect(cmd).not.toMatch(/\s-p\s/);
+    expect(cmd).not.toContain("system");
+    expect(cmd).not.toContain("You are a helper");
     expect(cmd).not.toContain("Do the task");
   });
 });
@@ -265,6 +254,16 @@ describe("getEnvironment", () => {
     const env = agent.getEnvironment(makeLaunchConfig());
     expect(env["AO_ISSUE_ID"]).toBeUndefined();
   });
+
+  it("does not set GEMINI_SYSTEM_MD when no system prompt provided", () => {
+    const env = agent.getEnvironment(makeLaunchConfig());
+    expect(env["GEMINI_SYSTEM_MD"]).toBeUndefined();
+  });
+
+  it("sets GEMINI_SYSTEM_MD to file path when systemPromptFile provided", () => {
+    const env = agent.getEnvironment(makeLaunchConfig({ systemPromptFile: "/tmp/prompt.md" }));
+    expect(env["GEMINI_SYSTEM_MD"]).toBe("/tmp/prompt.md");
+  });
 });
 
 // =========================================================================
@@ -273,15 +272,19 @@ describe("getEnvironment", () => {
 describe("isProcessRunning", () => {
   const agent = create();
 
-  it("returns true when claude is found on tmux pane TTY", async () => {
-    mockTmuxWithProcess("claude");
+  it("returns true when gemini is found on tmux pane TTY", async () => {
+    mockTmuxWithProcess("gemini");
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(true);
   });
 
-  it("returns false when no claude on tmux pane TTY", async () => {
-    mockExecFileAsync.mockImplementation((cmd: string, args: string[]) => {
-      if (cmd === "tmux" && args[0] === "list-panes") return Promise.resolve({ stdout: "/dev/ttys002\n", stderr: "" });
-      if (cmd === "ps") return Promise.resolve({ stdout: "  PID TT       ARGS\n  999 ttys002  bash\n", stderr: "" });
+  it("returns false when no gemini on tmux pane TTY", async () => {
+    mockExecFileAsync.mockImplementation((cmd: string) => {
+      if (cmd === "tmux") return Promise.resolve({ stdout: "/dev/ttys002\n", stderr: "" });
+      if (cmd === "ps")
+        return Promise.resolve({
+          stdout: "  PID TT       ARGS\n  999 ttys002  bash\n",
+          stderr: "",
+        });
       return Promise.reject(new Error("unexpected"));
     });
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
@@ -328,26 +331,32 @@ describe("isProcessRunning", () => {
     killSpy.mockRestore();
   });
 
-  it("finds claude on any pane in multi-pane session", async () => {
+  it("finds gemini on any pane in multi-pane session", async () => {
     mockExecFileAsync.mockImplementation((cmd: string, args: string[]) => {
       if (cmd === "tmux" && args[0] === "list-panes") {
         return Promise.resolve({ stdout: "/dev/ttys001\n/dev/ttys002\n", stderr: "" });
       }
       if (cmd === "ps") {
-        return Promise.resolve({ stdout: "  PID TT ARGS\n  100 ttys001  bash\n  200 ttys002  claude -p test\n", stderr: "" });
+        return Promise.resolve({
+          stdout: "  PID TT ARGS\n  100 ttys001  bash\n  200 ttys002  gemini --yolo\n",
+          stderr: "",
+        });
       }
       return Promise.reject(new Error("unexpected"));
     });
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(true);
   });
 
-  it("does not match similar process names like claude-code", async () => {
+  it("does not match similar process names like gemini-cli-helper", async () => {
     mockExecFileAsync.mockImplementation((cmd: string, args: string[]) => {
       if (cmd === "tmux" && args[0] === "list-panes") {
         return Promise.resolve({ stdout: "/dev/ttys001\n", stderr: "" });
       }
       if (cmd === "ps") {
-        return Promise.resolve({ stdout: "  PID TT ARGS\n  100 ttys001  /usr/bin/claude-code\n", stderr: "" });
+        return Promise.resolve({
+          stdout: "  PID TT ARGS\n  100 ttys001  /usr/bin/gemini-cli-helper\n",
+          stderr: "",
+        });
       }
       return Promise.reject(new Error("unexpected"));
     });
@@ -369,8 +378,8 @@ describe("detectActivity", () => {
     expect(agent.detectActivity("   \n  \n  ")).toBe("idle");
   });
 
-  it("returns active when 'esc to interrupt' is visible", () => {
-    expect(agent.detectActivity("Working... esc to interrupt\n")).toBe("active");
+  it("returns active when processing indicator is visible", () => {
+    expect(agent.detectActivity("Working...\n")).toBe("active");
   });
 
   it("returns active when Thinking indicator is visible", () => {
@@ -383,10 +392,6 @@ describe("detectActivity", () => {
 
   it("returns active when Writing indicator is visible", () => {
     expect(agent.detectActivity("Writing to src/main.ts\n")).toBe("active");
-  });
-
-  it("returns active when Searching indicator is visible", () => {
-    expect(agent.detectActivity("Searching codebase...\n")).toBe("active");
   });
 
   it("returns waiting_input for permission prompt (Y/N)", () => {
@@ -403,32 +408,25 @@ describe("detectActivity", () => {
     );
   });
 
-  it("returns active when queued message indicator is visible", () => {
-    expect(agent.detectActivity("Press up to edit queued messages\n")).toBe("active");
+  it("returns idle when shell prompt (❯) is visible", () => {
+    expect(agent.detectActivity("some output\n❯ ")).toBe("idle");
   });
 
-  it("returns idle when shell prompt is visible", () => {
+  it("returns idle when shell prompt (>) is visible", () => {
     expect(agent.detectActivity("some output\n> ")).toBe("idle");
     expect(agent.detectActivity("some output\n$ ")).toBe("idle");
   });
 
   it("returns idle when prompt follows historical activity indicators", () => {
-    // Key regression test: historical "Reading file..." output in the buffer
-    // should NOT override an idle prompt on the last line.
     expect(agent.detectActivity("Reading file src/index.ts\nWriting to out.ts\n❯ ")).toBe("idle");
-    expect(agent.detectActivity("Thinking...\nSearching codebase...\n$ ")).toBe("idle");
+    expect(agent.detectActivity("Thinking...\n$ ")).toBe("idle");
   });
 
   it("returns waiting_input when permission prompt follows historical activity", () => {
-    // Permission prompt at the bottom should NOT be overridden by historical
-    // "Reading"/"Thinking" output higher in the buffer.
     expect(
       agent.detectActivity("Reading file src/index.ts\nThinking...\nDo you want to proceed?\n"),
     ).toBe("waiting_input");
     expect(agent.detectActivity("Searching codebase...\n(Y)es / (N)o\n")).toBe("waiting_input");
-    expect(
-      agent.detectActivity("Writing to out.ts\nbypass all future permissions for this session\n"),
-    ).toBe("waiting_input");
   });
 
   it("returns active for non-empty output with no special patterns", () => {
@@ -437,7 +435,7 @@ describe("detectActivity", () => {
 });
 
 // =========================================================================
-// getSessionInfo — JSONL parsing
+// getSessionInfo — JSON parsing
 // =========================================================================
 describe("getSessionInfo", () => {
   const agent = create();
@@ -451,32 +449,34 @@ describe("getSessionInfo", () => {
     expect(await agent.getSessionInfo(makeSession())).toBeNull();
   });
 
-  it("returns null when no JSONL files in project dir", async () => {
+  it("returns null when no JSON files in project dir", async () => {
     mockReaddir.mockResolvedValue(["readme.txt", "config.yaml"]);
     expect(await agent.getSessionInfo(makeSession())).toBeNull();
   });
 
-  it("filters out agent- prefixed JSONL files", async () => {
-    mockReaddir.mockResolvedValue(["agent-toolkit.jsonl"]);
+  it("filters out agent- prefixed JSON files", async () => {
+    mockReaddir.mockResolvedValue(["agent-toolkit.json"]);
     expect(await agent.getSessionInfo(makeSession())).toBeNull();
   });
 
-  it("returns null when JSONL file is empty", async () => {
-    mockJsonlFiles("");
+  it("returns null when JSON file is empty", async () => {
+    mockJsonFiles("");
     expect(await agent.getSessionInfo(makeSession())).toBeNull();
   });
 
-  it("returns null when JSONL has only malformed lines", async () => {
-    mockJsonlFiles("not json\nalso not json\n");
+  it("returns null when JSON has only malformed lines", async () => {
+    mockJsonFiles("not json\nalso not json\n");
     expect(await agent.getSessionInfo(makeSession())).toBeNull();
   });
 
   describe("path conversion", () => {
-    it("converts workspace path to Claude project dir path", async () => {
-      mockJsonlFiles('{"type":"user","message":{"content":"hello"}}');
-      await agent.getSessionInfo(makeSession({ workspacePath: "/Users/dev/.worktrees/ao/ao-3" }));
+    it("converts workspace path to Gemini SHA-256 project dir path", async () => {
+      mockJsonFiles('{"type":"user","message":{"content":"hello"}}');
+      const workspacePath = "/Users/dev/.worktrees/ao/ao-3";
+      await agent.getSessionInfo(makeSession({ workspacePath }));
+      const expectedHash = toGeminiProjectPath(workspacePath);
       expect(mockReaddir).toHaveBeenCalledWith(
-        "/mock/home/.claude/projects/-Users-dev--worktrees-ao-ao-3",
+        `/mock/home/.gemini/tmp/${expectedHash}/chats`,
       );
     });
   });
@@ -488,7 +488,7 @@ describe("getSessionInfo", () => {
         '{"type":"user","message":{"content":"do something"}}',
         '{"type":"summary","summary":"Latest summary"}',
       ].join("\n");
-      mockJsonlFiles(jsonl);
+      mockJsonFiles(jsonl);
       const result = await agent.getSessionInfo(makeSession());
       expect(result?.summary).toBe("Latest summary");
       expect(result?.summaryIsFallback).toBe(false);
@@ -499,7 +499,7 @@ describe("getSessionInfo", () => {
         '{"type":"user","message":{"content":"Implement the login feature"}}',
         '{"type":"assistant","message":{"content":"I will implement..."}}',
       ].join("\n");
-      mockJsonlFiles(jsonl);
+      mockJsonFiles(jsonl);
       const result = await agent.getSessionInfo(makeSession());
       expect(result?.summary).toBe("Implement the login feature");
       expect(result?.summaryIsFallback).toBe(true);
@@ -508,7 +508,7 @@ describe("getSessionInfo", () => {
     it("truncates long user message to 120 chars", async () => {
       const longMsg = "A".repeat(200);
       const jsonl = `{"type":"user","message":{"content":"${longMsg}"}}`;
-      mockJsonlFiles(jsonl);
+      mockJsonFiles(jsonl);
       const result = await agent.getSessionInfo(makeSession());
       expect(result?.summary).toBe("A".repeat(120) + "...");
       expect(result!.summary!.length).toBe(123);
@@ -517,7 +517,7 @@ describe("getSessionInfo", () => {
 
     it("returns null summary when no summary and no user messages", async () => {
       const jsonl = '{"type":"assistant","message":{"content":"Hello"}}';
-      mockJsonlFiles(jsonl);
+      mockJsonFiles(jsonl);
       const result = await agent.getSessionInfo(makeSession());
       expect(result?.summary).toBeNull();
       expect(result?.summaryIsFallback).toBeUndefined();
@@ -528,7 +528,7 @@ describe("getSessionInfo", () => {
         '{"type":"user","message":{"content":"   "}}',
         '{"type":"user","message":{"content":"Real content"}}',
       ].join("\n");
-      mockJsonlFiles(jsonl);
+      mockJsonFiles(jsonl);
       const result = await agent.getSessionInfo(makeSession());
       expect(result?.summary).toBe("Real content");
       expect(result?.summaryIsFallback).toBe(true);
@@ -536,25 +536,27 @@ describe("getSessionInfo", () => {
   });
 
   describe("session ID extraction", () => {
-    it("extracts session ID from filename", async () => {
-      mockJsonlFiles('{"type":"user","message":{"content":"hi"}}', ["abc-def-123.jsonl"]);
+    it("extracts session ID from filename (strips .json extension)", async () => {
+      mockJsonFiles('{"type":"user","message":{"content":"hi"}}', ["abc-def-123.json"]);
       const result = await agent.getSessionInfo(makeSession());
       expect(result?.agentSessionId).toBe("abc-def-123");
     });
   });
 
   describe("cost estimation", () => {
-    it("aggregates usage.input_tokens and usage.output_tokens", async () => {
+    it("aggregates usage.input_tokens and usage.output_tokens with Gemini pricing", async () => {
+      // Gemini CLI does not expose cost data — no defaultCostRate configured
       const jsonl = [
         '{"type":"user","message":{"content":"hi"}}',
         '{"type":"assistant","usage":{"input_tokens":1000,"output_tokens":500}}',
         '{"type":"assistant","usage":{"input_tokens":2000,"output_tokens":300}}',
       ].join("\n");
-      mockJsonlFiles(jsonl);
+      mockJsonFiles(jsonl);
       const result = await agent.getSessionInfo(makeSession());
       expect(result?.cost?.inputTokens).toBe(3000);
       expect(result?.cost?.outputTokens).toBe(800);
-      expect(result?.cost?.estimatedCostUsd).toBeCloseTo(0.009 + 0.012, 6);
+      // Without defaultCostRate, estimatedCostUsd is 0
+      expect(result?.cost?.estimatedCostUsd).toBe(0);
     });
 
     it("includes cache tokens in input count", async () => {
@@ -562,7 +564,7 @@ describe("getSessionInfo", () => {
         '{"type":"user","message":{"content":"hi"}}',
         '{"type":"assistant","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":500,"cache_creation_input_tokens":200}}',
       ].join("\n");
-      mockJsonlFiles(jsonl);
+      mockJsonFiles(jsonl);
       const result = await agent.getSessionInfo(makeSession());
       expect(result?.cost?.inputTokens).toBe(800);
       expect(result?.cost?.outputTokens).toBe(50);
@@ -574,7 +576,7 @@ describe("getSessionInfo", () => {
         '{"costUSD":0.05}',
         '{"costUSD":0.03}',
       ].join("\n");
-      mockJsonlFiles(jsonl);
+      mockJsonFiles(jsonl);
       const result = await agent.getSessionInfo(makeSession());
       expect(result?.cost?.estimatedCostUsd).toBeCloseTo(0.08);
     });
@@ -584,9 +586,8 @@ describe("getSessionInfo", () => {
         '{"type":"user","message":{"content":"hi"}}',
         '{"costUSD":0.10,"estimatedCostUsd":0.10}',
       ].join("\n");
-      mockJsonlFiles(jsonl);
+      mockJsonFiles(jsonl);
       const result = await agent.getSessionInfo(makeSession());
-      // Should use costUSD only, not sum both
       expect(result?.cost?.estimatedCostUsd).toBeCloseTo(0.1);
     });
 
@@ -595,7 +596,7 @@ describe("getSessionInfo", () => {
         '{"type":"user","message":{"content":"hi"}}',
         '{"estimatedCostUsd":0.12}',
       ].join("\n");
-      mockJsonlFiles(jsonl);
+      mockJsonFiles(jsonl);
       const result = await agent.getSessionInfo(makeSession());
       expect(result?.cost?.estimatedCostUsd).toBeCloseTo(0.12);
     });
@@ -605,7 +606,7 @@ describe("getSessionInfo", () => {
         '{"type":"user","message":{"content":"hi"}}',
         '{"inputTokens":5000,"outputTokens":1000}',
       ].join("\n");
-      mockJsonlFiles(jsonl);
+      mockJsonFiles(jsonl);
       const result = await agent.getSessionInfo(makeSession());
       expect(result?.cost?.inputTokens).toBe(5000);
       expect(result?.cost?.outputTokens).toBe(1000);
@@ -613,17 +614,17 @@ describe("getSessionInfo", () => {
 
     it("returns undefined cost when no usage data", async () => {
       const jsonl = '{"type":"user","message":{"content":"hi"}}';
-      mockJsonlFiles(jsonl);
+      mockJsonFiles(jsonl);
       const result = await agent.getSessionInfo(makeSession());
       expect(result?.cost).toBeUndefined();
     });
   });
 
   describe("file selection", () => {
-    it("picks the most recently modified JSONL file", async () => {
-      mockReaddir.mockResolvedValue(["old.jsonl", "new.jsonl"]);
+    it("picks the most recently modified JSON file", async () => {
+      mockReaddir.mockResolvedValue(["old.json", "new.json"]);
       mockStat.mockImplementation((path: string) => {
-        if (path.endsWith("old.jsonl")) {
+        if (path.endsWith("old.json")) {
           return Promise.resolve({ mtimeMs: 1000, mtime: new Date(1000) });
         }
         return Promise.resolve({ mtimeMs: 2000, mtime: new Date(2000) });
@@ -633,10 +634,10 @@ describe("getSessionInfo", () => {
       expect(result?.agentSessionId).toBe("new");
     });
 
-    it("skips JSONL files that fail stat", async () => {
-      mockReaddir.mockResolvedValue(["broken.jsonl", "good.jsonl"]);
+    it("skips JSON files that fail stat", async () => {
+      mockReaddir.mockResolvedValue(["broken.json", "good.json"]);
       mockStat.mockImplementation((path: string) => {
-        if (path.endsWith("broken.jsonl")) {
+        if (path.endsWith("broken.json")) {
           return Promise.reject(new Error("ENOENT"));
         }
         return Promise.resolve({ mtimeMs: 1000, mtime: new Date(1000) });
@@ -647,7 +648,7 @@ describe("getSessionInfo", () => {
     });
   });
 
-  describe("malformed JSONL handling", () => {
+  describe("malformed JSON handling", () => {
     it("skips malformed lines and parses valid ones", async () => {
       const jsonl = [
         "not valid json",
@@ -655,7 +656,7 @@ describe("getSessionInfo", () => {
         "{truncated",
         "",
       ].join("\n");
-      mockJsonlFiles(jsonl);
+      mockJsonFiles(jsonl);
       const result = await agent.getSessionInfo(makeSession());
       expect(result?.summary).toBe("Good summary");
     });
@@ -668,13 +669,13 @@ describe("getSessionInfo", () => {
         "[1,2,3]",
         '{"type":"summary","summary":"Valid object"}',
       ].join("\n");
-      mockJsonlFiles(jsonl);
+      mockJsonFiles(jsonl);
       const result = await agent.getSessionInfo(makeSession());
       expect(result?.summary).toBe("Valid object");
     });
 
     it("handles readFile failure gracefully", async () => {
-      mockReaddir.mockResolvedValue(["session.jsonl"]);
+      mockReaddir.mockResolvedValue(["session.json"]);
       mockStat.mockResolvedValue({ mtimeMs: 1000, mtime: new Date(1000) });
       mockReadFile.mockRejectedValue(new Error("EACCES"));
       const result = await agent.getSessionInfo(makeSession());
@@ -684,177 +685,79 @@ describe("getSessionInfo", () => {
 });
 
 // =========================================================================
-// METADATA_UPDATER_SCRIPT — content verification (unit tests)
+// setupWorkspaceHooks
 // =========================================================================
-describe("METADATA_UPDATER_SCRIPT content", () => {
-  it("contains clean_command stripping logic for cd prefixes", () => {
-    expect(METADATA_UPDATER_SCRIPT).toContain('clean_command="$command"');
-    expect(METADATA_UPDATER_SCRIPT).toMatch(/while.*clean_command.*cd/);
-  });
-
-  it("uses $clean_command (not $command) for all regex-based command detection", () => {
-    const lines = METADATA_UPDATER_SCRIPT.split("\n");
-    for (const line of lines) {
-      // Skip comment lines, the initial assignment, and the stripping logic itself
-      if (line.trim().startsWith("#")) continue;
-      if (line.includes('clean_command="$command"')) continue;
-      if (line.includes("while") && line.includes("clean_command")) continue;
-
-      // Any regex match line (=~) should use $clean_command, NOT $command
-      if (line.includes("=~") && line.includes("command")) {
-        expect(line).toContain("clean_command");
-        expect(line).not.toMatch(/"\$command"/);
-      }
-    }
-  });
-
-  it("does NOT use ^-anchored regexes directly on $command for gh/git detection", () => {
-    // The old buggy patterns matched $command with ^ anchor.
-    // After the fix, ^ is still used but on $clean_command (which has cd stripped).
-    expect(METADATA_UPDATER_SCRIPT).not.toMatch(
-      /"\$command"\s*=~\s*\^gh/,
-    );
-    expect(METADATA_UPDATER_SCRIPT).not.toMatch(
-      /"\$command"\s*=~\s*\^git/,
-    );
-  });
-
-  it("strips cd prefixes with both && and ; delimiters", () => {
-    expect(METADATA_UPDATER_SCRIPT).toMatch(/&&\|;/);
-  });
-
-  it("handles multiple chained cd commands via while loop", () => {
-    expect(METADATA_UPDATER_SCRIPT).toMatch(/while.*clean_command/);
-  });
-
-  it("detects gh pr create on clean_command", () => {
-    expect(METADATA_UPDATER_SCRIPT).toMatch(
-      /"\$clean_command"\s*=~\s*\^gh\[/,
-    );
-  });
-
-  it("detects git checkout -b on clean_command", () => {
-    expect(METADATA_UPDATER_SCRIPT).toMatch(
-      /"\$clean_command"\s*=~\s*\^git\[.*checkout/,
-    );
-  });
-
-  it("detects gh pr merge on clean_command", () => {
-    expect(METADATA_UPDATER_SCRIPT).toMatch(
-      /"\$clean_command"\s*=~\s*\^gh\[.*merge/,
-    );
-  });
-});
-
-// =========================================================================
-// setupWorkspaceHooks / postLaunchSetup — hook path (symlink safety)
-// =========================================================================
-describe("hook setup — relative path (symlink-safe)", () => {
+describe("setupWorkspaceHooks", () => {
   const agent = create();
 
-  /** Extract the hook command from the settings.json that was written */
-  function getWrittenHookCommand(): string {
-    const settingsWrite = mockWriteFile.mock.calls.find(
-      ([path]: unknown[]) => typeof path === "string" && path.endsWith("settings.json"),
+  function readMetadataUpdaterScript(): string {
+    const call = mockWriteFile.mock.calls.find((entry) =>
+      String(entry[0]).includes("metadata-updater.sh"),
     );
-    expect(settingsWrite).toBeDefined();
-    const parsed = JSON.parse(settingsWrite![1] as string);
-    return parsed.hooks.PostToolUse[0].hooks[0].command;
+    expect(call).toBeDefined();
+    return call![1] as string;
   }
 
-  it("setupWorkspaceHooks writes a relative hook command (not absolute)", async () => {
-    await agent.setupWorkspaceHooks!(
-      "/Users/equinox/.worktrees/integrator/integrator-5",
-      {} as WorkspaceHooksConfig,
-    );
+  it("bootstraps settings.json path when it does not exist", async () => {
+    mockReadFile.mockRejectedValue(new Error("ENOENT"));
 
-    const hookCommand = getWrittenHookCommand();
-    expect(hookCommand).toBe(".claude/metadata-updater.sh");
-    expect(hookCommand).not.toMatch(/^\//);
+    await agent.setupWorkspaceHooks!("/workspace/test", {
+      dataDir: "/data",
+      sessionId: "sess-1",
+    });
+
+    const metadataScript = readMetadataUpdaterScript();
+    expect(metadataScript).not.toContain("__AO_HOOK_TOOL_MATCHER__");
+    expect(metadataScript).toContain('if [[ "$tool_name" != "run_shell_command" ]]; then');
+
+    const settingsWriteCall = mockWriteFile.mock.calls.at(-1);
+    expect(settingsWriteCall).toBeDefined();
+    const writtenContent = settingsWriteCall![1] as string;
+    const updated = JSON.parse(writtenContent) as {
+      hooks?: { AfterTool?: Array<{ matcher: string; hooks: Array<{ command: string }> }>; };
+    };
+    expect(updated.hooks?.AfterTool?.[0]?.matcher).toBe("run_shell_command");
+    expect(mockExistsSync).toHaveBeenCalled();
   });
 
-  it("postLaunchSetup writes a relative hook command (not absolute)", async () => {
-    await agent.postLaunchSetup!(
-      makeSession({ workspacePath: "/Users/equinox/.worktrees/integrator/integrator-10" }),
-    );
-
-    const hookCommand = getWrittenHookCommand();
-    expect(hookCommand).toBe(".claude/metadata-updater.sh");
-    expect(hookCommand).not.toMatch(/^\//);
-  });
-
-  it("different worktree paths produce identical settings.json content", async () => {
-    await agent.setupWorkspaceHooks!(
-      "/Users/equinox/.worktrees/integrator/integrator-5",
-      {} as WorkspaceHooksConfig,
-    );
-    const settingsWrite1 = mockWriteFile.mock.calls.find(
-      ([path]: unknown[]) => typeof path === "string" && path.endsWith("settings.json"),
-    );
-    const content1 = settingsWrite1![1] as string;
-
-    mockWriteFile.mockClear();
-
-    await agent.setupWorkspaceHooks!(
-      "/Users/equinox/.worktrees/integrator/integrator-10",
-      {} as WorkspaceHooksConfig,
-    );
-    const settingsWrite2 = mockWriteFile.mock.calls.find(
-      ([path]: unknown[]) => typeof path === "string" && path.endsWith("settings.json"),
-    );
-    const content2 = settingsWrite2![1] as string;
-
-    expect(content1).toBe(content2);
-  });
-
-  it("updates an existing absolute hook path to relative", async () => {
+  it("migrates existing metadata hook matcher from Bash to run_shell_command", async () => {
     mockExistsSync.mockReturnValue(true);
-    mockReadFile.mockResolvedValue(
-      JSON.stringify({
-        hooks: {
-          PostToolUse: [
-            {
-              matcher: "Bash",
-              hooks: [
-                {
-                  type: "command",
-                  command:
-                    "/Users/equinox/.worktrees/integrator/integrator-5/.claude/metadata-updater.sh",
-                  timeout: 5000,
-                },
-              ],
-            },
-          ],
-        },
-      }),
-    );
+    const existingSettings = {
+      hooks: {
+        AfterTool: [
+          {
+            matcher: "Bash",
+            hooks: [
+              {
+                type: "command",
+                command: "AO_DATA_DIR=/data /workspace/test/.gemini/metadata-updater.sh",
+              },
+            ],
+          },
+        ],
+      },
+    };
 
-    await agent.setupWorkspaceHooks!(
-      "/Users/equinox/.worktrees/integrator/integrator-10",
-      {} as WorkspaceHooksConfig,
-    );
+    mockReadFile.mockResolvedValue(JSON.stringify(existingSettings));
 
-    const hookCommand = getWrittenHookCommand();
-    expect(hookCommand).toBe(".claude/metadata-updater.sh");
-  });
+    await agent.setupWorkspaceHooks!("/workspace/test", {
+      dataDir: "/data",
+      sessionId: "sess-1",
+    });
 
-  it("still writes the script file to the correct absolute filesystem path", async () => {
-    await agent.setupWorkspaceHooks!(
-      "/Users/equinox/.worktrees/integrator/integrator-5",
-      {} as WorkspaceHooksConfig,
-    );
+    const metadataScript = readMetadataUpdaterScript();
+    expect(metadataScript).not.toContain("__AO_HOOK_TOOL_MATCHER__");
+    expect(metadataScript).toContain('if [[ "$tool_name" != "run_shell_command" ]]; then');
 
-    const scriptWrite = mockWriteFile.mock.calls.find(
-      ([path]: unknown[]) => typeof path === "string" && path.endsWith("metadata-updater.sh"),
-    );
-    expect(scriptWrite).toBeDefined();
-    expect(scriptWrite![0]).toBe(
-      "/Users/equinox/.worktrees/integrator/integrator-5/.claude/metadata-updater.sh",
-    );
-  });
+    const settingsWriteCall = mockWriteFile.mock.calls.at(-1);
+    expect(settingsWriteCall).toBeDefined();
 
-  it("skips postLaunchSetup when workspacePath is null", async () => {
-    await agent.postLaunchSetup!(makeSession({ workspacePath: null }));
-    expect(mockWriteFile).not.toHaveBeenCalled();
+    const writtenContent = settingsWriteCall![1] as string;
+    const updated = JSON.parse(writtenContent) as {
+      hooks?: { AfterTool?: Array<{ matcher: string; hooks: Array<{ command: string }> }> };
+    };
+
+    expect(updated.hooks?.AfterTool?.[0]?.matcher).toBe("run_shell_command");
+    expect(updated.hooks?.AfterTool?.[0]?.hooks?.[0]?.command).toContain("metadata-updater.sh");
   });
 });

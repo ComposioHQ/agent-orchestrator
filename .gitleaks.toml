@@ -17,6 +17,8 @@ paths = [
   ".next/",
   "coverage/",
   "pnpm-lock.yaml",
+  "agent-orchestrator.yaml",
+  "SECURITY.md",
 ]
 
 regexes = [
@@ -27,4 +29,9 @@ regexes = [
   "your-api-key-here",
   "your-token-here",
   "example\\.com",
+
+  # Example tokens in docs (false positives)
+  "lin_api_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "m1af5c4fb9e07dc5e69a20de02bbea65",
 ]
