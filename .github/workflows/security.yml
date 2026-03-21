@@ -26,7 +26,6 @@ jobs:
 
       # OSS CLI avoids gitleaks-action org-license requirement (see gitleaks-action README).
       - name: Install Gitleaks
-        uses: gitleaks/gitleaks-action@v2
         env:
           GITLEAKS_VERSION: "8.21.1"
         run: |
