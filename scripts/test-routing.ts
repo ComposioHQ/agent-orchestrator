@@ -28,12 +28,23 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 let classifyTaskComplexity: (issueContext: string) => Promise<"simple" | "complex">;
 try {
   // Resolves via pnpm workspace when built
-  const core = await import("../packages/core/dist/session-manager.js");
-  classifyTaskComplexity = core.classifyTaskComplexity;
-} catch {
+  const core = await import("../packages/core/dist/session-manager.js") as Record<string, unknown>;
+  if (typeof core["classifyTaskComplexity"] !== "function") {
+    throw new Error(
+      "classifyTaskComplexity is not exported from @composio/ao-core — " +
+        "this function is added by PR #595. Make sure that PR is merged and run `pnpm build`.\n" +
+        `Looking in: ${resolve(__dirname, "../packages/core/dist/session-manager.js")}`,
+    );
+  }
+  classifyTaskComplexity = core["classifyTaskComplexity"] as (issueContext: string) => Promise<"simple" | "complex">;
+} catch (err) {
+  if (err instanceof Error && err.message.includes("classifyTaskComplexity")) {
+    throw err;
+  }
   throw new Error(
-    "Could not import classifyTaskComplexity — run `pnpm build` in packages/core first.\n" +
+    "Could not import @composio/ao-core — run `pnpm build` in packages/core first.\n" +
       `Looking in: ${resolve(__dirname, "../packages/core/dist/session-manager.js")}`,
+    { cause: err },
   );
 }
 
