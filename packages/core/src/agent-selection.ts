@@ -31,17 +31,25 @@ export function resolveAgentSelection(params: {
   defaults: DefaultPlugins;
   persistedAgent?: string;
   spawnAgentOverride?: string;
+  complexity?: "simple" | "complex";
 }): ResolvedAgentSelection {
-  const { role, project, defaults, persistedAgent, spawnAgentOverride } = params;
+  const { role, project, defaults, persistedAgent, spawnAgentOverride, complexity } = params;
   const roleProjectConfig = role === "orchestrator" ? project.orchestrator : project.worker;
   const roleDefaults = role === "orchestrator" ? defaults.orchestrator : defaults.worker;
   const sharedConfig = project.agentConfig ?? {};
   const roleAgentConfig = roleProjectConfig?.agentConfig ?? {};
 
+  // For simple worker tasks with no explicit override, route to local-llm agent
+  const complexityDefault =
+    role === "worker" && !persistedAgent && !spawnAgentOverride && complexity === "simple"
+      ? "local-llm"
+      : undefined;
+
   const agentName = persistedAgent
     ? persistedAgent
     : role === "worker"
       ? (spawnAgentOverride ??
+        complexityDefault ??
         roleProjectConfig?.agent ??
         project.agent ??
         roleDefaults?.agent ??
