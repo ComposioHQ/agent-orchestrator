@@ -154,14 +154,17 @@ function createLocalLlmAgent(pluginConfig: LocalLlmPluginConfig): Agent {
     },
 
     getEnvironment(config: AgentLaunchConfig): Record<string, string> {
-      // Per-session model override from agentConfig takes precedence over plugin default
+      // Per-session overrides from agentConfig (injected from routing.localLlm at spawn time)
+      // take precedence over the plugin-level defaults set at registration.
+      const baseURL = (config.projectConfig.agentConfig?.["baseURL"] as string | undefined)
+        ?? configuredBaseURL;
       const model = (config.projectConfig.agentConfig?.["model"] as string | undefined)
         ?? config.model
         ?? configuredModel;
 
       const env: Record<string, string> = {
         AO_SESSION_ID: config.sessionId,
-        AO_LOCAL_LLM_BASE_URL: configuredBaseURL,
+        AO_LOCAL_LLM_BASE_URL: baseURL,
         AO_LOCAL_LLM_MODEL: model,
       };
 

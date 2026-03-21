@@ -1001,8 +1001,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       spawnAgentOverride: spawnConfig.agent,
       complexity,
     });
-    // eslint-disable-next-line no-console
-    console.log(`[routing] mode=${routingMode} complexity=${complexity ?? "n/a"} → using ${selection.agentName}`);
     const plugins = resolvePlugins(project, selection.agentName);
     if (!plugins.runtime) {
       throw new Error(`Runtime plugin '${project.runtime ?? config.defaults.runtime}' not found`);
@@ -1115,12 +1113,22 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
             strategy: opencodeIssueSessionStrategy,
           })
         : undefined;
+    // When routing to local-llm, forward the saved baseURL/model from routing config
+    // into agentConfig so the plugin's getEnvironment() can pick them up per-session.
+    const localLlmOverrides =
+      selection.agentName === "local-llm" && config.routing?.localLlm
+        ? {
+            baseURL: config.routing.localLlm.baseUrl,
+            ...(config.routing.localLlm.model ? { model: config.routing.localLlm.model } : {}),
+          }
+        : {};
     const agentLaunchConfig = {
       sessionId,
       projectConfig: {
         ...project,
         agentConfig: {
           ...selection.agentConfig,
+          ...localLlmOverrides,
           ...(reusedOpenCodeSessionId ? { opencodeSessionId: reusedOpenCodeSessionId } : {}),
         },
       },
