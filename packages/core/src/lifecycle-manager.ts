@@ -194,6 +194,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
   const states = new Map<SessionId, SessionStatus>();
   const reactionTrackers = new Map<string, ReactionTracker>(); // "sessionId:reactionKey"
+  const mergeConflictReactionFired = new Map<SessionId, boolean>();
+  const mergeReadyReactionFired = new Map<SessionId, boolean>();
+  const killedPrDetectionAttempts = new Map<SessionId, number>();
+  const MAX_KILLED_PR_DETECTION_ATTEMPTS = 10;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
@@ -824,6 +828,36 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     await maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction);
 
+    // Retry merge-ready auto-merge even without a fresh status transition.
+    // This covers lifecycle restarts where metadata already says "mergeable",
+    // so the transition-based reaction would otherwise never fire again.
+    if (session.pr && newStatus === "mergeable") {
+      const reactionConfig =
+        getReactionConfigForSession(session, "approved-and-green") ??
+        getReactionConfigForSession(session, "mergeable");
+      const transitionHandledMergeReady =
+        transitionReaction?.key === "approved-and-green" && transitionReaction.result?.success;
+      if (transitionHandledMergeReady) {
+        mergeReadyReactionFired.set(session.id, true);
+      }
+      const alreadyFired = mergeReadyReactionFired.get(session.id) === true;
+      if (reactionConfig && reactionConfig.auto !== false && !alreadyFired) {
+        const result = await executeReaction(
+          session.id,
+          session.projectId,
+          "approved-and-green",
+          reactionConfig,
+        );
+        if (result.success) {
+          mergeReadyReactionFired.set(session.id, true);
+        }
+      }
+    } else {
+      mergeReadyReactionFired.delete(session.id);
+      clearReactionTracker(session.id, "approved-and-green");
+      clearReactionTracker(session.id, "mergeable");
+    }
+
     // Check for merge conflicts on open PRs and trigger the merge-conflicts reaction.
     // This runs independently of status transitions because "pr_open" doesn't change
     // when conflicts appear — we need to actively detect them.
@@ -952,6 +986,21 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const sessionId = trackerKey.split(":")[0];
         if (sessionId && !currentSessionIds.has(sessionId)) {
           reactionTrackers.delete(trackerKey);
+        }
+      }
+      for (const sessionId of mergeConflictReactionFired.keys()) {
+        if (!currentSessionIds.has(sessionId)) {
+          mergeConflictReactionFired.delete(sessionId);
+        }
+      }
+      for (const sessionId of mergeReadyReactionFired.keys()) {
+        if (!currentSessionIds.has(sessionId)) {
+          mergeReadyReactionFired.delete(sessionId);
+        }
+      }
+      for (const sessionId of killedPrDetectionAttempts.keys()) {
+        if (!currentSessionIds.has(sessionId)) {
+          killedPrDetectionAttempts.delete(sessionId);
         }
       }
 
