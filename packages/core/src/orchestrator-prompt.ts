@@ -13,6 +13,49 @@ export interface OrchestratorPromptConfig {
   project: ProjectConfig;
 }
 
+export function generateOrchestratorStartupPrompt(opts: OrchestratorPromptConfig): string {
+  const { projectId, project } = opts;
+
+  return `Do an initial orchestration pass for ${project.name} (${projectId}).
+
+Start by:
+1. Running \`ao status\` to inspect the current session/PR state.
+2. Checking whether any worker session needs help, takeover, or a follow-up message.
+3. Spawning or directing worker sessions if open work is not currently owned.
+4. Staying in read-only coordination mode yourself — delegate implementation to workers.`;
+}
+
+function formatTrackerIssueFilters(project: ProjectConfig): string | null {
+  const rawFilters = project.tracker?.["issueFilters"];
+  if (!rawFilters || typeof rawFilters !== "object" || Array.isArray(rawFilters)) {
+    return null;
+  }
+
+  const filters = rawFilters as Record<string, unknown>;
+  const parts: string[] = [];
+
+  if (typeof filters["state"] === "string" && filters["state"].trim().length > 0) {
+    parts.push(`state=${filters["state"]}`);
+  }
+
+  if (Array.isArray(filters["labels"])) {
+    const labels = filters["labels"].filter((label): label is string => typeof label === "string");
+    if (labels.length > 0) {
+      parts.push(`labels=${labels.join(", ")}`);
+    }
+  }
+
+  if (typeof filters["assignee"] === "string" && filters["assignee"].trim().length > 0) {
+    parts.push(`assignee=${filters["assignee"]}`);
+  }
+
+  if (typeof filters["limit"] === "number" && Number.isFinite(filters["limit"])) {
+    parts.push(`limit=${filters["limit"]}`);
+  }
+
+  return parts.length > 0 ? parts.join(", ") : null;
+}
+
 /**
  * Generate orchestrator prompt content.
  * Provides orchestrator agent with context about available commands,

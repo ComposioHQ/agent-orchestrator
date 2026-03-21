@@ -241,6 +241,72 @@ describe("start / stop", () => {
 
     lm.stop();
   });
+
+  it("refreshes sessions after respawning the orchestrator so stale killed metadata is not re-applied", async () => {
+    vi.useFakeTimers();
+    vi.mocked(mockRuntime.isAlive).mockImplementation(async (handle) => handle.id !== "rt-dead");
+
+    writeMetadata(sessionsDir, "app-orchestrator", {
+      worktree: join(tmpDir, "my-app"),
+      branch: "main",
+      status: "working",
+      role: "orchestrator",
+      project: "my-app",
+      runtimeHandle: JSON.stringify({ id: "rt-live", runtimeName: "mock", data: {} }),
+    });
+
+    const worker = makeSession({ id: "app-1", status: "working", runtimeHandle: undefined });
+    const liveOrchestrator = makeSession({
+      id: "app-orchestrator",
+      status: "working",
+      branch: "main",
+      runtimeHandle: { id: "rt-live", runtimeName: "mock", data: {} },
+      metadata: { role: "orchestrator" },
+    });
+    const deadOrchestrator = makeSession({
+      id: "app-orchestrator",
+      status: "killed",
+      branch: "main",
+      runtimeHandle: { id: "rt-dead", runtimeName: "mock", data: {} },
+      metadata: { role: "orchestrator" },
+    });
+    const respawnedOrchestrator = makeSession({
+      id: "app-orchestrator",
+      status: "working",
+      branch: "main",
+      runtimeHandle: { id: "rt-new", runtimeName: "mock", data: {} },
+      metadata: { role: "orchestrator" },
+    });
+
+    vi.mocked(mockSessionManager.list)
+      .mockResolvedValueOnce([worker, liveOrchestrator])
+      .mockResolvedValueOnce([worker, deadOrchestrator])
+      .mockResolvedValue([worker, respawnedOrchestrator]);
+    vi.mocked(mockSessionManager.spawnOrchestrator).mockResolvedValue(respawnedOrchestrator);
+
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+      projectId: "my-app",
+    });
+
+    lm.start(1_000);
+    await vi.waitFor(() => {
+      expect(lm.getStates().get("app-orchestrator")).toBe("working");
+    });
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => {
+      expect(mockSessionManager.spawnOrchestrator).toHaveBeenCalledTimes(1);
+    });
+
+    expect(readMetadataRaw(sessionsDir, "app-orchestrator")?.["status"]).toBe("working");
+    expect(lm.getStates().get("app-orchestrator")).toBe("working");
+
+    lm.stop();
+    vi.useRealTimers();
+  });
 });
 
 describe("check (single session)", () => {
