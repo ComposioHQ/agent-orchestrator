@@ -39,9 +39,15 @@ export function resolveAgentSelection(params: {
   const sharedConfig = project.agentConfig ?? {};
   const roleAgentConfig = roleProjectConfig?.agentConfig ?? {};
 
-  // For simple worker tasks with no explicit override, route to local-llm agent
+  // For simple worker tasks with no explicit override AND no project-level agent config,
+  // route to local-llm. Project-level config is an intentional user choice and takes priority.
   const complexityDefault =
-    role === "worker" && !persistedAgent && !spawnAgentOverride && complexity === "simple"
+    role === "worker" &&
+    !persistedAgent &&
+    !spawnAgentOverride &&
+    !roleProjectConfig?.agent &&
+    !project.agent &&
+    complexity === "simple"
       ? "local-llm"
       : undefined;
 
@@ -49,9 +55,9 @@ export function resolveAgentSelection(params: {
     ? persistedAgent
     : role === "worker"
       ? (spawnAgentOverride ??
-        complexityDefault ??
         roleProjectConfig?.agent ??
         project.agent ??
+        complexityDefault ??
         roleDefaults?.agent ??
         defaults.agent)
       : (roleProjectConfig?.agent ?? project.agent ?? roleDefaults?.agent ?? defaults.agent);

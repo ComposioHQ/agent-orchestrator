@@ -971,15 +971,17 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     }
 
-    // Classify task complexity for smart agent routing.
-    // Use issue title+description when available; fall back to prompt or issue ID.
+    // Classify task complexity for smart agent routing — only when no explicit agent
+    // override is set (CLI --agent, project.worker.agent, or project.agent), since those
+    // take priority over complexity-based routing and make the API call wasteful.
+    const hasExplicitAgent =
+      !!spawnConfig.agent || !!project.worker?.agent || !!project.agent;
     const classificationInput = resolvedIssue
       ? `${resolvedIssue.title}\n${resolvedIssue.description}`
       : (spawnConfig.prompt ?? spawnConfig.issueId ?? "");
-    const complexity = await classifyTaskComplexity(classificationInput);
-    const routedAgent = complexity === "simple" ? "local-llm" : "claude-code";
-    // eslint-disable-next-line no-console
-    console.log(`[routing] Task classified as ${complexity} → using ${routedAgent}`);
+    const complexity = hasExplicitAgent
+      ? undefined
+      : await classifyTaskComplexity(classificationInput);
 
     const selection = resolveAgentSelection({
       role: "worker",
@@ -988,6 +990,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       spawnAgentOverride: spawnConfig.agent,
       complexity,
     });
+    // eslint-disable-next-line no-console
+    console.log(`[routing] Task classified as ${complexity ?? "n/a (explicit override)"} → using ${selection.agentName}`);
     const plugins = resolvePlugins(project, selection.agentName);
     if (!plugins.runtime) {
       throw new Error(`Runtime plugin '${project.runtime ?? config.defaults.runtime}' not found`);
