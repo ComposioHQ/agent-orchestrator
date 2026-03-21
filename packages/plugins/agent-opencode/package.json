@@ -1,6 +1,6 @@
 {
   "name": "@composio/ao-plugin-agent-opencode",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Agent plugin: OpenCode",
   "license": "MIT",
   "type": "module",

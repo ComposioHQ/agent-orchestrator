@@ -1,6 +1,6 @@
 {
   "name": "@composio/ao-plugin-tracker-gitlab",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Tracker plugin: GitLab Issues",
   "license": "MIT",
   "type": "module",
