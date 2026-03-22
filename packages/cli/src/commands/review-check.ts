@@ -13,6 +13,31 @@ interface ReviewInfo {
   reviewDecision: string | null;
 }
 
+function extractReviewDecision(raw: string | null): string | null {
+  if (!raw) return null;
+  try {
+    const data = JSON.parse(raw);
+    return data.reviewDecision || null;
+  } catch {
+    return null;
+  }
+}
+
+function extractUnresolvedCount(raw: string | null): number {
+  if (!raw) return 0;
+  try {
+    const data = JSON.parse(raw);
+    const nodes = Array.isArray(data?.data?.repository?.pullRequest?.reviewThreads?.nodes)
+      ? data.data.repository.pullRequest.reviewThreads.nodes
+      : Array.isArray(data?.reviewThreads?.nodes)
+        ? data.reviewThreads.nodes
+        : [];
+    return nodes.filter((t: { isResolved: boolean }) => !t.isResolved).length;
+  } catch {
+    return 0;
+  }
+}
+
 async function checkPRReviews(
   repo: string,
   prNumber: string,
@@ -22,40 +47,26 @@ async function checkPRReviews(
     return { pendingComments: 0, reviewDecision: null };
   }
 
-  // Use GraphQL with variable passing (-F) to avoid injection via repo names
-  const query =
-    "query($owner:String!,$name:String!,$pr:Int!){repository(owner:$owner,name:$name){pullRequest(number:$pr){reviewDecision reviewThreads(first:100){nodes{isResolved}}}}}";
-  const result = await gh([
-    "api",
-    "graphql",
-    "-f",
-    `query=${query}`,
-    "-f",
-    `owner=${owner}`,
-    "-f",
-    `name=${name}`,
-    "-F",
-    `pr=${prNumber}`,
-    "--jq",
-    ".data.repository.pullRequest",
+  const [reviewDecisionRaw, unresolvedThreadsRaw] = await Promise.all([
+    gh(["pr", "view", prNumber, "--repo", repo, "--json", "reviewDecision"]),
+    gh([
+      "api",
+      "graphql",
+      "-f",
+      "query=query($owner:String!,$name:String!,$pr:Int!){repository(owner:$owner,name:$name){pullRequest(number:$pr){reviewThreads(first:100){nodes{isResolved}}}}}",
+      "-f",
+      `owner=${owner}`,
+      "-f",
+      `name=${name}`,
+      "-F",
+      `pr=${prNumber}`,
+    ]),
   ]);
 
-  if (!result) {
-    return { pendingComments: 0, reviewDecision: null };
-  }
-
-  try {
-    const data = JSON.parse(result);
-    const unresolvedCount = Array.isArray(data.reviewThreads?.nodes)
-      ? data.reviewThreads.nodes.filter((t: { isResolved: boolean }) => !t.isResolved).length
-      : 0;
-    return {
-      pendingComments: unresolvedCount,
-      reviewDecision: data.reviewDecision || null,
-    };
-  } catch {
-    return { pendingComments: 0, reviewDecision: null };
-  }
+  return {
+    pendingComments: extractUnresolvedCount(unresolvedThreadsRaw),
+    reviewDecision: extractReviewDecision(reviewDecisionRaw),
+  };
 }
 
 export function registerReviewCheck(program: Command): void {
