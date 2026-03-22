@@ -31,6 +31,7 @@ import {
   type Notifier,
   type Session,
   type EventPriority,
+  type MergeMethod,
   type ProjectConfig as _ProjectConfig,
 } from "./types.js";
 import { updateMetadata } from "./metadata.js";
