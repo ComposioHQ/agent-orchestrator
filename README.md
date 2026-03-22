@@ -143,7 +143,7 @@ Eight slots. Every abstraction is swappable.
 | Slot      | Default     | Alternatives             |
 | --------- | ----------- | ------------------------ |
 | Runtime   | tmux        | docker, k8s, process     |
-| Agent     | claude-code | codex, aider, opencode   |
+| Agent     | claude-code | codex, aider, acpx, opencode |
 | Workspace | worktree    | clone                    |
 | Tracker   | github      | linear                   |
 | SCM       | github      | —                        |

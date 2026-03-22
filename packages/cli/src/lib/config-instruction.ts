@@ -19,7 +19,7 @@ readyThresholdMs: 300000      # Ms before "ready" session becomes "idle" (defaul
 
 defaults:
   runtime: tmux               # tmux | process
-  agent: claude-code          # claude-code | aider | codex | opencode
+  agent: claude-code          # claude-code | aider | codex | acpx | opencode
   workspace: worktree         # worktree | clone
   notifiers:                  # List of active notifier plugins
     - desktop                 # desktop | slack | webhook | composio | openclaw
@@ -46,8 +46,9 @@ projects:
 
     # ── Agent configuration (optional) ────────────────────────────
     agentConfig:
-      permissions: auto       # auto | manual — agent permission mode
+      permissions: auto-edit  # permissionless | default | auto-edit | suggest
       model: claude-sonnet-4-20250514
+      # acpxAgent: pi         # Required when agent: acpx (currently only "pi" is supported)
 
     # ── Agent rules (optional) ────────────────────────────────────
     agentRules: |             # Inline rules passed to every agent prompt
@@ -117,7 +118,7 @@ notificationRouting:
 
 # ── Available plugins ───────────────────────────────────────────────
 #
-# Agent:     claude-code, aider, codex, opencode
+# Agent:     claude-code, aider, codex, acpx, opencode
 # Runtime:   tmux, process
 # Workspace: worktree, clone
 # SCM:       github, gitlab
