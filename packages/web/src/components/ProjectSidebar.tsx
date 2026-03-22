@@ -6,7 +6,6 @@ import { cn } from "@/lib/cn";
 import type { ProjectInfo } from "@/lib/project-name";
 import type { DashboardOrchestratorLink } from "@/lib/types";
 import { SpawnOrchestratorButton } from "./SpawnOrchestratorButton";
-import { useIsMobile } from "@/hooks/useMediaQuery";
 
 const SIDEBAR_MIN_WIDTH = 160;
 const SIDEBAR_MAX_WIDTH = 320;
@@ -35,20 +34,23 @@ export function ProjectSidebar({
   onWidthChange,
 }: ProjectSidebarProps) {
   const router = useRouter();
-  const isMobile = useIsMobile();
   const [showAddHint, setShowAddHint] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const dragStartX = useRef(0);
   const dragStartWidth = useRef(0);
 
+  /** Synchronous mobile check — avoids stale hook state from useEffect timing. */
+  const checkIsMobile = () =>
+    typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches;
+
   const handleProjectClick = (projectId: string) => {
     router.push(`/projects/${encodeURIComponent(projectId)}`);
-    if (isMobile) onCollapsedChange(true);
+    if (checkIsMobile()) onCollapsedChange(true);
   };
 
   const handleAllProjects = () => {
     router.push("/");
-    if (isMobile) onCollapsedChange(true);
+    if (checkIsMobile()) onCollapsedChange(true);
   };
 
   const getOrchestrator = (projectId: string) =>
