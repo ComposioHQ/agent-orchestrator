@@ -173,6 +173,10 @@ function transitionLogLevel(status: SessionStatus): "info" | "warn" | "error" {
   return "info";
 }
 
+function reactionDispatchMarkerKey(reactionKey: string): string {
+  return `reactionDispatch_${reactionKey}`;
+}
+
 export interface LifecycleManagerDeps {
   config: OrchestratorConfig;
   registry: PluginRegistry;
@@ -780,6 +784,9 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const oldReactionKey = eventToReactionKey(oldEventType);
         if (oldReactionKey) {
           clearReactionTracker(session.id, oldReactionKey);
+          updateSessionMetadata(session, {
+            [reactionDispatchMarkerKey(oldReactionKey)]: "",
+          });
         }
       }
 
@@ -801,6 +808,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
                 reactionKey,
                 reactionConfig,
               );
+              if (reactionResult.success) {
+                updateSessionMetadata(session, {
+                  [reactionDispatchMarkerKey(reactionKey)]: newStatus,
+                });
+              }
               transitionReaction = { key: reactionKey, result: reactionResult };
               // Reaction is handling this event — suppress immediate human notification.
               // "send-to-agent" retries + escalates on its own; "notify"/"auto-merge"
@@ -834,15 +846,31 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       const stableTracker = stableReactionKey
         ? reactionTrackers.get(`${session.id}:${stableReactionKey}`)
         : undefined;
+      const stableDispatchMarker = stableReactionKey
+        ? session.metadata[reactionDispatchMarkerKey(stableReactionKey)]
+        : undefined;
+      const needsStableReactionReplay =
+        !!stableReactionKey &&
+        ((stableTracker?.pendingRetry ?? false) || stableDispatchMarker !== newStatus);
 
-      if (stableReactionKey && stableTracker?.pendingRetry) {
+      if (stableReactionKey && needsStableReactionReplay) {
         const reactionConfig = getReactionConfigForSession(session, stableReactionKey);
         if (
           reactionConfig &&
           reactionConfig.action &&
           (reactionConfig.auto !== false || reactionConfig.action === "notify")
         ) {
-          await executeReaction(session.id, session.projectId, stableReactionKey, reactionConfig);
+          const reactionResult = await executeReaction(
+            session.id,
+            session.projectId,
+            stableReactionKey,
+            reactionConfig,
+          );
+          if (reactionResult.success) {
+            updateSessionMetadata(session, {
+              [reactionDispatchMarkerKey(stableReactionKey)]: newStatus,
+            });
+          }
         }
       }
     }
