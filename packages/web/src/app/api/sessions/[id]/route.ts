@@ -98,7 +98,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }
 
     const newAgent = body.llmOverride; // "claude-code" | "local-llm"
-    if (!newAgent) {
+    const ALLOWED_AGENTS = ["claude-code", "local-llm"] as const;
+    if (!newAgent || !(ALLOWED_AGENTS as readonly string[]).includes(newAgent)) {
       return jsonWithCorrelation({ error: "llmOverride must be claude-code or local-llm" }, { status: 400 }, "");
     }
 
@@ -176,13 +177,15 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (worktreePath) {
       try {
         const execFileAsync = promisify(execFile);
-        await execFileAsync("git", ["worktree", "remove", "--force", worktreePath]);
-        // Prune stale entries — run from the worktreePath's parent repo
+        // Resolve the repo root BEFORE removing the worktree directory, because
+        // `git -C <path>` fails once the directory is gone.
         const repoPath = (
           await execFileAsync("git", ["-C", worktreePath, "rev-parse", "--show-toplevel"]).catch(
             () => ({ stdout: "" }),
           )
         ).stdout.trim();
+        await execFileAsync("git", ["worktree", "remove", "--force", worktreePath]);
+        // Prune stale entries — run from the worktreePath's parent repo
         if (repoPath) {
           await execFileAsync("git", ["-C", repoPath, "worktree", "prune"]);
         }

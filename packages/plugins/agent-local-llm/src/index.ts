@@ -52,6 +52,10 @@ function buildModelFlag(baseURL: string, model: string): string {
 
 // =============================================================================
 // Aider Activity Detection Helpers (copied from agent-aider)
+// TODO: hasRecentCommits, getChatHistoryMtime, and getActivityState are
+// duplicated verbatim from packages/plugins/agent-aider. If a shared
+// agent-base (or similar) package is introduced in the future, these helpers
+// should be extracted there and imported by both plugins.
 // =============================================================================
 
 /**

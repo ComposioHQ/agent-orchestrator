@@ -981,6 +981,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     const hasExplicitAgent =
       !!spawnConfig.agent || !!project.worker?.agent || !!project.agent;
     // Per-session llmOverride maps directly to an agent name, bypassing routing mode.
+    // When hasExplicitAgent is true, use spawnConfig.agent as the override (may be
+    // undefined if the explicit agent comes from project config rather than spawn args —
+    // resolveAgentSelection will pick it up from the project anyway).
     const effectiveAgent = hasExplicitAgent
       ? spawnConfig.agent
       : spawnConfig.llmOverride ?? undefined;
@@ -989,7 +992,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       : (spawnConfig.prompt ?? spawnConfig.issueId ?? "");
     const routingMode = config.routing?.mode ?? "always-claude";
     let complexity: "simple" | "complex" | undefined;
-    if (effectiveAgent || routingMode === "always-claude") {
+    if (hasExplicitAgent || effectiveAgent || routingMode === "always-claude") {
+      // Skip classifier when any explicit agent is configured (spawn arg, project.worker.agent,
+      // or project.agent) — the result would be ignored by resolveAgentSelection anyway, so
+      // avoid the unnecessary Haiku API call.
       complexity = undefined;
     } else if (routingMode === "always-local") {
       complexity = "simple";
