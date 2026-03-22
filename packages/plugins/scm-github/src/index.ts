@@ -33,6 +33,7 @@ import {
   parseWebhookJsonObject,
   parseWebhookTimestamp,
 } from "@composio/ao-core/scm-webhook-utils";
+import { ghDeduplicator } from "./dedupe.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -73,6 +74,24 @@ async function execCli(bin: ExecCommand, args: string[], cwd?: string): Promise<
 
 async function gh(args: string[]): Promise<string> {
   return execCli("gh", args);
+}
+
+/**
+ * Wrapper that adds request deduplication to gh CLI calls.
+ *
+ * When multiple callers request the same command simultaneously,
+ * only the first caller executes the CLI call. Subsequent callers
+ * share the same Promise result.
+ *
+ * @param args - Arguments to pass to gh CLI
+ * @returns CLI output (trimmed)
+ */
+async function dedupeGh(args: string[]): Promise<string> {
+  const key = ghDeduplicator.key(args);
+
+  return ghDeduplicator.dedupe(key, async () => {
+    return gh(args);
+  });
 }
 
 async function ghInDir(args: string[], cwd: string): Promise<string> {
@@ -158,7 +177,7 @@ function mapRawCheckStateToStatus(rawState: string | undefined): CICheck["status
 }
 
 async function getCIChecksFromStatusRollup(pr: PRInfo): Promise<CICheck[]> {
-  const raw = await gh([
+  const raw = await dedupeGh([
     "pr",
     "view",
     String(pr.number),
@@ -442,6 +461,94 @@ function parseDate(val: string | undefined | null): Date {
 }
 
 // ---------------------------------------------------------------------------
+// Batching utilities
+// ---------------------------------------------------------------------------
+
+/**
+ * Temporary cache for batched PR data during a single enrichment operation.
+ *
+ * Uses WeakMap to avoid memory leaks - entries are automatically removed
+ * when the PRInfo object is garbage collected. This is safe because:
+ * 1. PRInfo objects are typically short-lived (created per request)
+ * 2. The cache is cleared after each batched operation
+ * 3. If a PRInfo is reused, the batch will re-fetch fresh data
+ */
+const prViewDataCache = new WeakMap<PRInfo, Promise<PRViewData>>();
+
+/**
+ * Shape of the batched PR data from a single gh pr view call.
+ */
+interface PRViewData {
+  state: string;
+  title: string;
+  additions: number;
+  deletions: number;
+  reviewDecision: string;
+  reviews: Array<{
+    author: { login: string };
+    state: string;
+    body: string;
+    submittedAt: string;
+  }>;
+  mergeable: string;
+  mergeStateStatus: string;
+  isDraft: boolean;
+}
+
+/**
+ * Comprehensive PR data fetch in a single gh CLI call.
+ *
+ * Batches multiple gh pr view requests into one by requesting all needed
+ * fields in a single --json parameter. This eliminates duplicate API calls.
+ *
+ * @param pr - PR to fetch data for
+ * @returns All PR data needed by multiple SCM methods
+ */
+async function getPRViewData(pr: PRInfo): Promise<PRViewData> {
+  const raw = await dedupeGh([
+    "pr",
+    "view",
+    String(pr.number),
+    "--repo",
+    repoFlag(pr),
+    // All fields needed across multiple SCM methods:
+    // - getPRSummary: state, title, additions, deletions
+    // - getReviewDecision: reviewDecision
+    // - getReviews: reviews (sub-field)
+    // - getMergeability: mergeable, mergeStateStatus, isDraft
+    "--json",
+    "state,title,additions,deletions,reviewDecision,reviews,mergeable,mergeStateStatus,isDraft",
+  ]);
+
+  return JSON.parse(raw) as PRViewData;
+}
+
+/**
+ * Get batched PR data with temporary caching.
+ *
+ * Uses a WeakMap-based cache to ensure multiple calls to different
+ * PR methods during the same enrichment share a single gh pr view call.
+ *
+ * The cache entry is a Promise, so concurrent calls automatically share
+ * the same in-flight request.
+ *
+ * @param pr - PR to fetch data for
+ * @returns Promise resolving to PR view data
+ */
+async function getBatchedPRData(pr: PRInfo): Promise<PRViewData> {
+  const cached = prViewDataCache.get(pr);
+  if (cached) return cached;
+
+  const promise = getPRViewData(pr).finally(() => {
+    // Clear the cache after the promise completes
+    // This ensures fresh data on the next enrichment cycle
+    prViewDataCache.delete(pr);
+  });
+  prViewDataCache.set(pr, promise);
+  return promise;
+}
+
+// ---------------------------------------------------------------------------
 // SCM implementation
 // ---------------------------------------------------------------------------
 
@@ -603,21 +710,7 @@ function createGitHubSCM(): SCM {
     },
 
     async getPRSummary(pr: PRInfo) {
-      const raw = await gh([
-        "pr",
-        "view",
-        String(pr.number),
-        "--repo",
-        repoFlag(pr),
-        "--json",
-        "state,title,additions,deletions",
-      ]);
-      const data: {
-        state: string;
-        title: string;
-        additions: number;
-        deletions: number;
-      } = JSON.parse(raw);
+      const data = await getBatchedPRData(pr);
       const s = data.state.toUpperCase();
       const state: PRState = s === "MERGED" ? "merged" : s === "CLOSED" ? "closed" : "open";
       return {
@@ -640,7 +733,7 @@ function createGitHubSCM(): SCM {
 
     async getCIChecks(pr: PRInfo): Promise<CICheck[]> {
       try {
-        const raw = await gh([
+        const raw = await dedupeGh([
           "pr",
           "checks",
           String(pr.number),
@@ -678,10 +771,16 @@ function createGitHubSCM(): SCM {
       }
     },
 
-    async getCISummary(pr: PRInfo): Promise<CIStatus> {
-      let checks: CICheck[];
+    /**
+     * Get CI summary status.
+     *
+     * @param pr - PR to check
+     * @param checks - Optional pre-fetched checks to avoid duplicate API call
+     */
+    async getCISummary(pr: PRInfo, checks?: CICheck[]): Promise<CIStatus> {
+      let ciChecks: CICheck[];
       try {
-        checks = await this.getCIChecks(pr);
+        ciChecks = checks ?? await this.getCIChecks(pr);
       } catch {
         // Before fail-closing, check if the PR is merged/closed —
         // GitHub may not return check data for those, and reporting
@@ -696,41 +795,24 @@ function createGitHubSCM(): SCM {
         // "none" (which getMergeability treats as passing).
         return "failing";
       }
-      if (checks.length === 0) return "none";
+      if (ciChecks.length === 0) return "none";
 
-      const hasFailing = checks.some((c) => c.status === "failed");
+      const hasFailing = ciChecks.some((c) => c.status === "failed");
       if (hasFailing) return "failing";
 
-      const hasPending = checks.some((c) => c.status === "pending" || c.status === "running");
+      const hasPending = ciChecks.some((c) => c.status === "pending" || c.status === "running");
       if (hasPending) return "pending";
 
       // Only report passing if at least one check actually passed
       // (not all skipped)
-      const hasPassing = checks.some((c) => c.status === "passed");
+      const hasPassing = ciChecks.some((c) => c.status === "passed");
       if (!hasPassing) return "none";
 
       return "passing";
     },
 
     async getReviews(pr: PRInfo): Promise<Review[]> {
-      const raw = await gh([
-        "pr",
-        "view",
-        String(pr.number),
-        "--repo",
-        repoFlag(pr),
-        "--json",
-        "reviews",
-      ]);
-      const data: {
-        reviews: Array<{
-          author: { login: string };
-          state: string;
-          body: string;
-          submittedAt: string;
-        }>;
-      } = JSON.parse(raw);
-
+      const data = await getBatchedPRData(pr);
       return data.reviews.map((r) => {
         let state: Review["state"];
         const s = r.state?.toUpperCase();
@@ -750,17 +832,7 @@ function createGitHubSCM(): SCM {
     },
 
     async getReviewDecision(pr: PRInfo): Promise<ReviewDecision> {
-      const raw = await gh([
-        "pr",
-        "view",
-        String(pr.number),
-        "--repo",
-        repoFlag(pr),
-        "--json",
-        "reviewDecision",
-      ]);
-      const data: { reviewDecision: string } = JSON.parse(raw);
-
+      const data = await getBatchedPRData(pr);
       const d = (data.reviewDecision ?? "").toUpperCase();
       if (d === "APPROVED") return "approved";
       if (d === "CHANGES_REQUESTED") return "changes_requested";
@@ -771,7 +843,7 @@ function createGitHubSCM(): SCM {
     async getPendingComments(pr: PRInfo): Promise<ReviewComment[]> {
       try {
         // Use GraphQL with variables to get review threads with actual isResolved status
-        const raw = await gh([
+        const raw = await dedupeGh([
           "api",
           "graphql",
           "-f",
@@ -873,7 +945,7 @@ function createGitHubSCM(): SCM {
         }> = [];
 
         for (let page = 1; ; page++) {
-          const raw = await gh([
+          const raw = await dedupeGh([
             "api",
             "--method",
             "GET",
@@ -940,11 +1012,14 @@ function createGitHubSCM(): SCM {
     async getMergeability(pr: PRInfo): Promise<MergeReadiness> {
       const blockers: string[] = [];
 
+      // PR details are now fetched via getBatchedPRData()
+      const data = await getBatchedPRData(pr);
+
       // First, check if the PR is merged
       // GitHub returns mergeable=null for merged PRs, which is not useful
       // Note: We only skip checks for merged PRs. Closed PRs still need accurate status.
-      const state = await this.getPRState(pr);
-      if (state === "merged") {
+      const state = data.state.toUpperCase();
+      if (state === "MERGED") {
         // For merged PRs, return a clean result without querying mergeable status
         return {
           mergeable: true,
@@ -954,24 +1029,6 @@ function createGitHubSCM(): SCM {
           blockers: [],
         };
       }
-
-      // Fetch PR details with merge state
-      const raw = await gh([
-        "pr",
-        "view",
-        String(pr.number),
-        "--repo",
-        repoFlag(pr),
-        "--json",
-        "mergeable,reviewDecision,mergeStateStatus,isDraft",
-      ]);
-
-      const data: {
-        mergeable: string;
-        reviewDecision: string;
-        mergeStateStatus: string;
-        isDraft: boolean;
-      } = JSON.parse(raw);
 
       // CI
       const ciStatus = await this.getCISummary(pr);

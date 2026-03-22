@@ -571,8 +571,13 @@ export interface SCM {
   /** Get individual CI check statuses */
   getCIChecks(pr: PRInfo): Promise<CICheck[]>;
 
-  /** Get overall CI summary */
-  getCISummary(pr: PRInfo): Promise<CIStatus>;
+  /**
+   * Get overall CI summary.
+   *
+   * @param pr - PR to check
+   * @param checks - Optional pre-fetched checks to avoid duplicate API call
+   */
+  getCISummary(pr: PRInfo, checks?: CICheck[]): Promise<CIStatus>;
 
   // --- Review Tracking ---
 
