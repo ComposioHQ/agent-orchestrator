@@ -1,9 +1,4 @@
-/**
- * @composio/ao-core
- *
- * Core library for the Agent Orchestrator.
- * Exports all types, config loader, and service implementations.
- */
+// Public API for @composio/ao-core: exports types, config, session/lifecycle managers, tmux wrappers, decomposer, prompt builder, observability, feedback tools, and path utilities.
 
 // Types — everything plugins and consumers need
 export * from "./types.js";
