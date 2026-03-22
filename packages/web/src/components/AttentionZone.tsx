@@ -162,6 +162,7 @@ function AttentionZoneView({
               onKill={onKill}
               onMerge={onMerge}
               onRestore={onRestore}
+              onSwitchLlm={onSwitchLlm}
             />
           ))}
         </div>

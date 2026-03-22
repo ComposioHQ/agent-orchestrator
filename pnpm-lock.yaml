@@ -572,6 +572,9 @@ importers:
       '@composio/ao-plugin-agent-claude-code':
         specifier: workspace:*
         version: link:../plugins/agent-claude-code
+      '@composio/ao-plugin-agent-local-llm':
+        specifier: workspace:*
+        version: link:../plugins/agent-local-llm
       '@composio/ao-plugin-agent-opencode':
         specifier: workspace:*
         version: link:../plugins/agent-opencode
