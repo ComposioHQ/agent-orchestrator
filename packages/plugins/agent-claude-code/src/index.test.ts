@@ -696,19 +696,20 @@ describe("getSessionInfo", () => {
 // METADATA_UPDATER_SCRIPT — content verification (unit tests)
 // =========================================================================
 describe("METADATA_UPDATER_SCRIPT content", () => {
-  it("uses AST-based parsing with metadata-parser.js", () => {
-    expect(METADATA_UPDATER_SCRIPT).toContain("PARSER_SCRIPT=");
-    expect(METADATA_UPDATER_SCRIPT).toContain("metadata-parser.js");
+  it("uses inline JavaScript parser via node -e", () => {
+    // The script uses node -e to run the inline parser
+    expect(METADATA_UPDATER_SCRIPT).toContain("node -e");
+    expect(METADATA_UPDATER_SCRIPT).toContain("parseCommands");
   });
 
-  it("delegates parsing to Node.js via node command", () => {
-    // The script uses node to run the parser
-    expect(METADATA_UPDATER_SCRIPT).toContain("node");
-    expect(METADATA_UPDATER_SCRIPT).toContain("metadata-parser.js");
+  it("does NOT use separate metadata-parser.js file", () => {
+    // Inline parser approach doesn't require a separate file
+    expect(METADATA_UPDATER_SCRIPT).not.toContain("metadata-parser.js");
+    expect(METADATA_UPDATER_SCRIPT).not.toContain("PARSER_SCRIPT=");
   });
 
   it("does NOT use regex-based clean_command stripping logic", () => {
-    // AST approach doesn't need regex cd prefix stripping
+    // Inline parser approach doesn't need regex cd prefix stripping
     expect(METADATA_UPDATER_SCRIPT).not.toContain("clean_command");
     expect(METADATA_UPDATER_SCRIPT).not.toMatch(/while.*cd/);
   });

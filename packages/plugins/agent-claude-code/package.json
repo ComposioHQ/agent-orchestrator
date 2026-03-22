@@ -34,12 +34,10 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@composio/ao-core": "workspace:*",
-    "shell-quote": "^1.8.2"
+    "@composio/ao-core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^25.2.3",
-    "@types/shell-quote": "^1.7.5",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   }

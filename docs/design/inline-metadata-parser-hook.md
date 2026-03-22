@@ -1,4 +1,4 @@
-# AST-Based Metadata Hook Design Document
+# Inline JavaScript Parser for Metadata Hook
 
 ## Problem Statement
 
@@ -11,13 +11,14 @@ cd ~/.worktrees/project; git checkout -b feature-branch
 
 The regex `^gh[[:space:]]+pr[[:space:]]+create` only matches commands starting at the beginning of the string, so it doesn't detect these patterns.
 
-## Solution: AST-Based Shell Parsing
+## Solution: Inline JavaScript Parser
 
-Replace regex-based command detection with Abstract Syntax Tree (AST) parsing using the `shell-quote` library. This approach provides:
+Replace regex-based command detection with an inline JavaScript parser embedded in the bash script. This approach provides:
 
-1. **100% accuracy** in command detection - no false positives or missed commands
-2. **Handles complex shell syntax**: command chains, subshells, pipelines, background processes
-3. **Maintainable**: Extensible pattern matching through structured AST nodes
+1. **Accurate command detection** - handles `&&`, `;`, and `||` command chaining
+2. **No external dependencies** - parser is self-contained
+3. **No file copying** - everything is in the bash script itself
+4. **Maintainable** - structured JavaScript code instead of complex regex
 
 ## Architecture
 
@@ -34,14 +35,12 @@ Replace regex-based command detection with Abstract Syntax Tree (AST) parsing us
                      │
                      ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│              metadata-parser.js (AST Parser)                        │
+│           Inline JavaScript Parser (node -e)                      │
 │                                                                │
-│  Uses shell-quote library to parse shell syntax:                  │
+│  Parses shell commands via simple tokenizer:                       │
 │  - &&, ;, || (command chaining)                               │
-│  - | (pipelines)                                                 │
-│  - & (background)                                                 │
-│  - $(cmd) (command substitution)                                   │
-│  - (cmd; cmd) (subshells)                                       │
+│  - " and ' and \` (quotes)                                      │
+│  - \\ (escapes)                                                  │
 │                                                                │
 │  Extracts: PR URLs, branch names, merge actions                    │
 │                                                                │
@@ -67,116 +66,125 @@ Replace regex-based command detection with Abstract Syntax Tree (AST) parsing us
 ```
 packages/plugins/agent-claude-code/
 ├── src/
-│   ├── index.ts                    # Hook setup & script template
-│   ├── metadata-parser.ts          # AST parser (TypeScript)
-│   └── ...
+│   ├── index.ts                    # Hook setup & script template with inline parser
+│   └── index.test.ts               # Tests for hook script
 ├── dist/
-│   ├── index.js
-│   └── metadata-parser.js         # Compiled parser for Node.js
+│   └── index.js
 └── package.json
 ```
 
-The compiled `metadata-parser.js` is copied to `.claude/metadata-parser.js` during workspace setup.
+No separate parser file is needed - everything is inline.
 
 ## Implementation Details
 
-### Shell Command Parsing
+### Shell Command Tokenizer
 
-The `parseCommands()` function uses `shell-quote` to tokenize shell commands:
+The inline JavaScript parser implements a simple shell tokenizer:
 
-```typescript
-function parseCommands(commandStr: string): CommandInfo[] {
-  const tokens = parse(commandStr);
-  const commands: CommandInfo[] = [];
-  let currentWords: string[] = [];
+```javascript
+function parseCommands(str) {
+  const commands = [];
+  let current = "";
+  let inQuote = false;
+  let quoteChar = "";
+  let i = 0;
 
-  for (const token of tokens) {
-    if (token === "&&" || token === ";" || token === "||" || token === "|") {
-      commands.push({ words: currentWords });
-      currentWords = [];
-    } else if (typeof token === "string") {
-      currentWords.push(token);
+  while (i < str.length) {
+    const c = str[i];
+
+    if (inQuote) {
+      if (c === quoteChar && (i === 0 || str[i - 1] !== "\\")) {
+        inQuote = false;
+      }
+      current += c;
+    } else if (c === '"' || c === "'" || c === "`") {
+      inQuote = true;
+      quoteChar = c;
+      current += c;
+    } else if (c === "\\") {
+      current += c + (str[i + 1] || "");
+      i++;
+    } else if (c === "&" && i + 1 < str.length && str[i + 1] === "&") {
+      if (current.trim()) commands.push(current.trim());
+      current = "";
+      i++;
+    } else if (c === ";" || c === "|" || c === "||") {
+      if (current.trim()) commands.push(current.trim());
+      current = "";
+    } else {
+      current += c;
     }
+    i++;
   }
-  // ...
+
+  if (current.trim()) commands.push(current.trim());
+  return commands.map(cmd => cmd.split(/\s+/).filter(Boolean));
 }
 ```
 
 This correctly handles:
 - `cd /path && gh pr create` → 2 separate commands
-- `(cd /path; gh pr create)` → 2 separate commands (subshell)
+- `cd /path; gh pr create` → 2 separate commands
 - `gh pr create &` → 1 command (background)
 
 ### Command Matching
 
 The `matchCommand()` function matches command patterns:
 
-```typescript
-function matchCommand(words: string[], output: string): ParseResult | null {
-  const [cmd, arg1, arg2, arg3, ...rest] = words;
+```javascript
+function matchCommand(words, output) {
+  if (words.length === 0) return null;
+  const [cmd, arg1, arg2, arg3] = words;
 
   if (cmd === "gh" && arg1 === "pr" && arg2 === "create") {
     const prUrl = extractPRUrl(output);
-    return prUrl ? { type: "pr_create", value: prUrl } : { type: "none" };
+    return prUrl ? `PR_CREATE:${prUrl}` : "NONE";
+  }
+
+  if (cmd === "gh" && arg1 === "pr" && arg2 === "merge") {
+    return "MERGE:";
   }
 
   if (cmd === "git" && arg1 === "checkout" && arg2 === "-b") {
-    return { type: "checkout", value: arg3 };
+    return `BRANCH:${arg3}`;
   }
 
   // ... more patterns
 }
 ```
 
-### Graceful Degradation
+## Comparison: Regex vs Inline Parser
 
-If AST parsing fails, the regex fallback is retained:
-
-```typescript
-export function parseShellCommand(command: string, output: string): ParseResult {
-  try {
-    const commands = parseCommands(command);
-    for (const cmdInfo of commands) {
-      const match = matchCommand(cmdInfo.words, output);
-      if (match) return match;
-    }
-    return { type: "none" };
-  } catch (error) {
-    return parseWithRegex(command, output); // Fallback
-  }
-}
-```
-
-## Comparison: Regex vs AST
-
-| Aspect | Regex Approach | AST Approach |
+| Aspect | Regex Approach | Inline Parser |
 |--------|----------------|---------------|
 | `cd /path && gh pr create` | ❌ Fails | ✅ Works |
-| `(cd /path; gh pr create)` | ❌ Fails | ✅ Works |
+| `cd /path; gh pr create` | ❌ Fails | ✅ Works |
 | `gh pr create &` | ⚠️ May work | ✅ Works |
 | Paths with special chars | ⚠️ May break | ✅ Safe |
+| Dependencies | None | None (inline) |
+| File copying | None | None |
 | Maintainability | Low (complex regex) | High (structured code) |
 | Extensibility | Low (add new regex) | High (add new pattern) |
 
 ## Deployment
 
-1. **Build**: TypeScript compiles `metadata-parser.ts` → `dist/metadata-parser.js`
-2. **Setup**: `setupHookInWorkspace()` copies compiled parser to `.claude/metadata-parser.js`
-3. **Runtime**: Hook script invokes parser via `node .claude/metadata-parser.js`
+1. **Build**: TypeScript compiles `index.ts` → `dist/index.js`
+2. **Setup**: `setupHookInWorkspace()` writes the script to `.claude/metadata-updater.sh`
+3. **Runtime**: Hook script invokes parser via `node -e` with inline JavaScript
 
 ## Trade-offs
 
 ### Pros
-- Robust command detection regardless of shell syntax
-- Maintained in TypeScript (type-safe)
-- Extensible for new command patterns
+- Robust command detection for common shell chaining patterns
+- No external dependencies to manage or copy
+- Self-contained - everything in one bash script
+- Easy to debug and extend
 
 ### Cons
-- Requires Node.js at runtime (already available in AO environment)
-- Additional file to copy during setup (minimal overhead)
+- Simplified tokenizer (doesn't handle all shell edge cases like subshells, pipelines)
+- Still relies on Node.js at runtime (already available in AO environment)
 
 ## References
 
 - Issue: #324
 - PR: https://github.com/ComposioHQ/agent-orchestrator/pull/609
-- shell-quote: https://www.npmjs.com/package/shell-quote

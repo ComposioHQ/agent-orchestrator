@@ -47,7 +47,7 @@ export const METADATA_UPDATER_SCRIPT = `#!/usr/bin/env bash
 # - git checkout -b / git switch -c: extracts branch name and writes to metadata
 # - gh pr merge: updates status to "merged"
 #
-# Uses AST-based parsing for 100% accuracy in command detection.
+# Uses inline JavaScript parser to handle command chaining (cd &&, ;, ||).
 
 set -euo pipefail
 
@@ -125,18 +125,120 @@ update_metadata_key() {
 }
 
 # ============================================================================
-# AST-Based Command Parsing
+# Inline JavaScript Parser for Shell Commands
 # ============================================================================
 
-# Get directory where this script is located
-SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
-PARSER_SCRIPT="\$SCRIPT_DIR/metadata-parser.js"
-
-# Parse command using AST parser (Node.js)
+# Parse command using inline JavaScript parser
 # The parser outputs: TYPE:value (e.g., PR_CREATE:https://... or BRANCH:feature)
 parsed_output=""
-if [[ -f "\$PARSER_SCRIPT" ]] && command -v node &>/dev/null; then
-  parsed_output=\$(node "\$PARSER_SCRIPT" "\$command" "\$output" 2>/dev/null || echo "")
+if command -v node &>/dev/null; then
+  parsed_output=\$(node -e '
+    const command = process.argv[2] || "";
+    const output = process.argv[3] || "";
+
+    // Simple shell command tokenizer
+    function parseCommands(str) {
+      const commands = [];
+      let current = "";
+      let inQuote = false;
+      let quoteChar = "";
+      let i = 0;
+
+      while (i < str.length) {
+        const c = str[i];
+
+        if (inQuote) {
+          if (c === quoteChar && (i === 0 || str[i - 1] !== "\\\\")) {
+            inQuote = false;
+          }
+          current += c;
+        } else if (c === '"' || c === "'"\''"'" || c === "'\`") {
+          inQuote = true;
+          quoteChar = c;
+          current += c;
+        } else if (c === "\\\\") {
+          current += c + (str[i + 1] || "");
+          i++;
+        } else if (c === "&" && i + 1 < str.length && str[i + 1] === "&") {
+          if (current.trim()) commands.push(current.trim());
+          current = "";
+          i++;
+        } else if (c === ";" || c === "|" || c === "\\|\\|") {
+          if (current.trim()) commands.push(current.trim());
+          current = "";
+        } else {
+          current += c;
+        }
+        i++;
+      }
+
+      if (current.trim()) commands.push(current.trim());
+      return commands.map(cmd => cmd.split(/\\s+/).filter(Boolean));
+    }
+
+    // Extract PR URL from output
+    function extractPRUrl(out) {
+      const match = out.match(/https:\\/\\/github\\.com\\/[^\\/\\s]+\\/[^\\/\\s]+\\/pull\\/\\d+/);
+      return match ? match[0] : null;
+    }
+
+    // Match command pattern
+    function matchCommand(words, out) {
+      if (words.length === 0) return null;
+      const [cmd, arg1, arg2, arg3] = words;
+
+      // gh pr create
+      if (cmd === "gh" && arg1 === "pr" && arg2 === "create") {
+        const prUrl = extractPRUrl(out);
+        return prUrl ? \`PR_CREATE:\${prUrl}\` : "NONE";
+      }
+
+      // gh pr merge
+      if (cmd === "gh" && arg1 === "pr" && arg2 === "merge") {
+        return "MERGE:";
+      }
+
+      // git checkout -b <branch>
+      if (cmd === "git" && arg1 === "checkout" && arg2 === "-b" && arg3) {
+        return \`BRANCH:\${arg3}\`;
+      }
+
+      // git switch -c <branch>
+      if (cmd === "git" && arg1 === "switch" && arg2 === "-c" && arg3) {
+        return \`BRANCH:\${arg3}\`;
+      }
+
+      // git checkout <feature-branch> (existing branch detection)
+      if (cmd === "git" && arg1 === "checkout" && arg2) {
+        const branch = arg2;
+        if (branch && (branch.includes("/") || branch.includes("-")) && branch !== "HEAD") {
+          return \`BRANCH:\${branch}\`;
+        }
+      }
+
+      // git switch <feature-branch>
+      if (cmd === "git" && arg1 === "switch" && arg2) {
+        const branch = arg2;
+        if (branch && (branch.includes("/") || branch.includes("-")) && branch !== "HEAD") {
+          return \`BRANCH:\${branch}\`;
+        }
+      }
+
+      return null;
+    }
+
+    // Parse and match
+    const commands = parseCommands(command);
+    for (const words of commands) {
+      const match = matchCommand(words, output);
+      if (match) {
+        console.log(match);
+        process.exit(0);
+      }
+    }
+
+    console.log("NONE");
+  ' "\$command" "\$output" 2>/dev/null || echo "")
 fi
 
 # Handle: PR_CREATE
@@ -562,19 +664,6 @@ async function setupHookInWorkspace(workspacePath: string, hookCommand: string):
   // Write the metadata updater script
   await writeFile(hookScriptPath, METADATA_UPDATER_SCRIPT, "utf-8");
   await chmod(hookScriptPath, 0o755); // Make executable
-
-  // Copy metadata-parser.js to .claude directory
-  // The hook script references this file relative to itself
-  const parserSrcPath = join(__dirname, "..", "dist", "metadata-parser.js");
-  const parserDestPath = join(claudeDir, "metadata-parser.js");
-  if (existsSync(parserSrcPath)) {
-    await writeFile(
-      parserDestPath,
-      await readFile(parserSrcPath, "utf-8"),
-      "utf-8"
-    );
-    await chmod(parserDestPath, 0o755); // Make executable
-  }
 
   // Read existing settings if present
   let existingSettings: Record<string, unknown> = {};
