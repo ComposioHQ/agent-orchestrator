@@ -3,12 +3,26 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { ProjectSidebar } from "@/components/ProjectSidebar";
 
 const mockPush = vi.fn();
-const mockPathname = "/";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
-  usePathname: () => mockPathname,
 }));
+
+beforeEach(() => {
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    value: vi.fn((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
+});
 
 describe("ProjectSidebar", () => {
   const projects = [
@@ -76,7 +90,7 @@ describe("ProjectSidebar", () => {
   it("navigates to project query param when clicking a project", () => {
     render(<ProjectSidebar {...defaultProps} />);
     fireEvent.click(screen.getByRole("button", { name: "Project Two" }));
-    expect(mockPush).toHaveBeenCalledWith("/?project=project-2");
+    expect(mockPush).toHaveBeenCalledWith("/projects/project-2");
   });
 
   it("encodes project ID in URL", () => {
@@ -86,7 +100,7 @@ describe("ProjectSidebar", () => {
     ];
     render(<ProjectSidebar {...defaultProps} projects={projectsWithSpecialChars} activeProjectId="my-app" />);
     fireEvent.click(screen.getByRole("button", { name: "Other Project" }));
-    expect(mockPush).toHaveBeenCalledWith("/?project=other-project");
+    expect(mockPush).toHaveBeenCalledWith("/projects/other-project");
   });
 
   it("renders All Projects button that navigates to /", () => {

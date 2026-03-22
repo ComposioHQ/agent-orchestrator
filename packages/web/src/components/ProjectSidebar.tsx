@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { cn } from "@/lib/cn";
 import type { ProjectInfo } from "@/lib/project-name";
 import type { DashboardOrchestratorLink } from "@/lib/types";
 import { SpawnOrchestratorButton } from "./SpawnOrchestratorButton";
+import { useIsMobile } from "@/hooks/useMediaQuery";
 
 const SIDEBAR_MIN_WIDTH = 160;
 const SIDEBAR_MAX_WIDTH = 320;
@@ -34,18 +35,20 @@ export function ProjectSidebar({
   onWidthChange,
 }: ProjectSidebarProps) {
   const router = useRouter();
-  const pathname = usePathname();
+  const isMobile = useIsMobile();
   const [showAddHint, setShowAddHint] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const dragStartX = useRef(0);
   const dragStartWidth = useRef(0);
 
   const handleProjectClick = (projectId: string) => {
-    router.push(pathname + `?project=${encodeURIComponent(projectId)}`);
+    router.push(`/projects/${encodeURIComponent(projectId)}`);
+    if (isMobile) onCollapsedChange(true);
   };
 
   const handleAllProjects = () => {
     router.push("/");
+    if (isMobile) onCollapsedChange(true);
   };
 
   const getOrchestrator = (projectId: string) =>

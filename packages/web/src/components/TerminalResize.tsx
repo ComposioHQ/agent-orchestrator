@@ -1,16 +1,16 @@
-import { useEffect } from "react";
+import { useEffect, type RefObject } from "react";
 import type { Terminal as TerminalType } from "xterm";
 import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 
 interface UseTerminalResizeOptions {
-  /** The xterm.js terminal instance. */
-  terminal: TerminalType | null;
-  /** The FitAddon instance used to resize the terminal. */
-  fitAddon: FitAddonType | null;
+  /** Ref to the xterm.js terminal instance. */
+  terminalRef: RefObject<TerminalType | null>;
+  /** Ref to the FitAddon instance used to resize the terminal. */
+  fitAddonRef: RefObject<FitAddonType | null>;
   /** A ref-like getter for the current WebSocket (may reconnect). */
   getWebSocket: () => WebSocket | null;
-  /** The terminal container element. */
-  container: HTMLDivElement | null;
+  /** Ref to the terminal container element. */
+  containerRef: RefObject<HTMLDivElement | null>;
   /** Whether the terminal is in fullscreen mode. */
   fullscreen: boolean;
 }
@@ -35,15 +35,22 @@ export function sendResizeMessage(
  * It waits for the container's CSS transition to settle (height stops
  * changing between animation frames) before performing the fit, with
  * backup timers at 300 ms and 600 ms.
+ *
+ * Accepts refs (not .current values) so it always reads the latest
+ * ref value inside the effect, avoiding stale closures.
  */
 export function useTerminalResize({
-  terminal,
-  fitAddon,
+  terminalRef,
+  fitAddonRef,
   getWebSocket,
-  container,
+  containerRef,
   fullscreen,
 }: UseTerminalResizeOptions): void {
   useEffect(() => {
+    const fitAddon = fitAddonRef.current;
+    const terminal = terminalRef.current;
+    const container = containerRef.current;
+
     if (!fitAddon || !terminal || !container) return;
 
     const ws = getWebSocket();
@@ -116,5 +123,5 @@ export function useTerminalResize({
       clearTimeout(timer1);
       clearTimeout(timer2);
     };
-  }, [fullscreen, terminal, fitAddon, getWebSocket, container]);
+  }, [fullscreen, terminalRef, fitAddonRef, getWebSocket, containerRef]);
 }

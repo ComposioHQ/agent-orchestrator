@@ -66,7 +66,7 @@ export function ProjectOverviewGrid({
               </div>
             </div>
             <a
-              href={`/?project=${encodeURIComponent(project.id)}`}
+              href={`/projects/${encodeURIComponent(project.id)}`}
               className="min-h-[44px] min-w-[44px] inline-flex items-center justify-center rounded-[var(--radius-lg)] border border-[var(--color-border-default)] px-3 py-1.5 text-[11px] font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:no-underline"
             >
               Open project

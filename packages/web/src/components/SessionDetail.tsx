@@ -29,7 +29,7 @@ export function SessionDetail({
   const accentColor = "var(--color-accent)";
 
   const backHref = session.projectId
-    ? `/?project=${encodeURIComponent(session.projectId)}`
+    ? `/projects/${encodeURIComponent(session.projectId)}`
     : "/";
 
   const isOpenCodeSession = session.metadata["agent"] === "opencode";
