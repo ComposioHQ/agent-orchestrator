@@ -2524,7 +2524,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     sessionId: SessionId,
     targetAgent: "claude-code" | "local-llm",
   ): Promise<Session> {
-    const { raw, project, projectId } = requireSessionRecord(sessionId);
+    const { raw, project, projectId, sessionsDir } = requireSessionRecord(sessionId);
     const currentAgent = raw["agent"] ?? "claude-code";
     if (currentAgent === targetAgent) {
       throw new Error(`Session ${sessionId} is already using agent ${targetAgent}`);
@@ -2559,8 +2559,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       .filter((line) => line !== null)
       .join("\n");
 
-    // Step 3: Kill the old session (keep workspace — new session reuses it).
-    // Runtime destroy is best-effort; metadata update is critical to prevent
+    // Step 3: Kill the old session's runtime and workspace so the new spawn
+    // can create a fresh worktree on the same branch without conflicts.
+    // Both destroys are best-effort; metadata update is critical to prevent
     // zombie sessions (two "active" sessions on the same branch).
     const killHandle = raw["runtimeHandle"]
       ? safeJsonParse<RuntimeHandle>(raw["runtimeHandle"])
@@ -2575,8 +2576,20 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         });
       }
     }
+    // Destroy old workspace so spawn() can create a fresh worktree on the
+    // same branch (git worktree add fails if the branch is already checked out).
+    const oldWorkspacePath = raw["worktree"];
+    if (oldWorkspacePath && shouldDestroyWorkspacePath(project, projectId, oldWorkspacePath)) {
+      const workspacePlugin = project
+        ? resolvePlugins(project).workspace
+        : registry.get<Workspace>("workspace", config.defaults.workspace);
+      if (workspacePlugin) {
+        await workspacePlugin.destroy(oldWorkspacePath).catch(() => {
+          // Best-effort — workspace might already be gone
+        });
+      }
+    }
     // Mark session as terminated — must succeed to avoid duplicate active sessions.
-    const { sessionsDir } = requireSessionRecord(sessionId);
     updateMetadata(sessionsDir, sessionId, { status: "terminated" });
 
     // Step 4: Spawn new session on same branch/issue with the target agent.
