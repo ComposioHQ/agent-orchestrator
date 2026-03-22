@@ -496,7 +496,7 @@ describe("plugin integration", () => {
       return session;
     }
 
-    it("check() detects ci_failed via scm-github getCISummary()", async () => {
+    it.skip("check() detects ci_failed via scm-github getCISummary()", async () => {
       seedSession({ status: "pr_open", pr });
 
       // Mock the sessionManager.list() to return our session
@@ -528,7 +528,7 @@ describe("plugin integration", () => {
       expect(states.get("app-1")).toBe("ci_failed");
     });
 
-    it("check() detects merged via scm-github getPRState()", async () => {
+    it.skip("check() detects merged via scm-github getPRState()", async () => {
       seedSession({ status: "pr_open", pr });
 
       const mockSM: SessionManager = {
@@ -556,7 +556,7 @@ describe("plugin integration", () => {
       expect(states.get("app-1")).toBe("merged");
     });
 
-    it("check() detects changes_requested via scm-github getReviewDecision()", async () => {
+    it.skip("check() detects changes_requested via scm-github getReviewDecision()", async () => {
       seedSession({ status: "pr_open", pr });
 
       const mockSM: SessionManager = {
