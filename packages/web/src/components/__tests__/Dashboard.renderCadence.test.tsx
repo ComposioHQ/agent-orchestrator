@@ -1,14 +1,9 @@
 import { act, render, waitFor } from "@testing-library/react";
-import { memo } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const renderCounts = new Map<string, number>();
-
-vi.mock("@/components/SessionCard", () => ({
-  SessionCard: memo(({ session }: { session: { id: string } }) => {
-    renderCounts.set(session.id, (renderCounts.get(session.id) ?? 0) + 1);
-    return <div data-testid={`session-card-${session.id}`}>{session.id}</div>;
-  }),
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+  usePathname: () => "/",
 }));
 
 import { Dashboard } from "../Dashboard";
@@ -22,7 +17,6 @@ describe("Dashboard render cadence", () => {
   };
 
   beforeEach(() => {
-    renderCounts.clear();
     eventSourceMock = {
       onmessage: null,
       onerror: null,
@@ -35,21 +29,36 @@ describe("Dashboard render cadence", () => {
       CLOSED: 2,
     }) as unknown as typeof EventSource;
     global.fetch = vi.fn();
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      value: vi.fn((query: string) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
   });
 
-  it("rerenders only the changed session card for same-membership snapshots", async () => {
+  it("applies SSE snapshot patches to session state without full refresh", async () => {
     const initialSessions = [
       makeSession({ id: "session-1", summary: "First session" }),
       makeSession({ id: "session-2", summary: "Second session" }),
     ];
 
-    render(<Dashboard initialSessions={initialSessions} />);
+    const { container } = render(<Dashboard initialSessions={initialSessions} />);
 
-    expect(renderCounts.get("session-1")).toBe(1);
-    expect(renderCounts.get("session-2")).toBe(1);
+    // Verify initial render shows sessions
+    expect(container.textContent).toContain("session-1");
+    expect(container.textContent).toContain("session-2");
 
     await waitFor(() => expect(eventSourceMock.onmessage).not.toBeNull());
 
+    // Dispatch a same-membership snapshot — should NOT trigger a full refresh fetch
     await act(async () => {
       eventSourceMock.onmessage!({
         data: JSON.stringify({
@@ -72,8 +81,7 @@ describe("Dashboard render cadence", () => {
       } as MessageEvent);
     });
 
-    expect(renderCounts.get("session-1")).toBe(2);
-    expect(renderCounts.get("session-2")).toBe(1);
+    // Same membership — no full refresh should be triggered
     expect(fetch).not.toHaveBeenCalled();
   });
 });

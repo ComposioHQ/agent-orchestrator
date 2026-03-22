@@ -105,4 +105,34 @@ describe("SpawnOrchestratorButton", () => {
     const button = screen.getByRole("button", { name: "Spawn Orchestrator" });
     expect(button.className).toContain("text-[11px]");
   });
+
+  it("renders sidebar variant with icon-only spawn button", () => {
+    render(
+      <SpawnOrchestratorButton
+        project={project}
+        orchestrator={null}
+        onSpawnOrchestrator={vi.fn()}
+        isSpawning={false}
+        variant="sidebar"
+      />,
+    );
+
+    const button = screen.getByRole("button", { name: `Spawn orchestrator for ${project.name}` });
+    expect(button.className).toContain("group-hover:opacity-100");
+  });
+
+  it("renders sidebar variant with orchestrator dot link", () => {
+    render(
+      <SpawnOrchestratorButton
+        project={project}
+        orchestrator={{ id: "orch-1", projectId: "my-app", projectName: "My App" }}
+        onSpawnOrchestrator={vi.fn()}
+        isSpawning={false}
+        variant="sidebar"
+      />,
+    );
+
+    const link = screen.getByRole("link");
+    expect(link).toHaveAttribute("href", "/sessions/orch-1");
+  });
 });

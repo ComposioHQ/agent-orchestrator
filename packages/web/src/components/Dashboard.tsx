@@ -13,10 +13,10 @@ import {
 } from "@/lib/types";
 import { CI_STATUS } from "@composio/ao-core/types";
 import { AttentionZone } from "./AttentionZone";
-import { PRTableRow } from "./PRStatus";
 import { DynamicFavicon } from "./DynamicFavicon";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
+import { useDashboardActions } from "@/hooks/useDashboardActions";
 import { ProjectSidebar } from "./ProjectSidebar";
 import type { ProjectInfo } from "@/lib/project-name";
 import { StatusLine } from "./StatusLine";
@@ -26,6 +26,7 @@ import { GlobalPauseBanner } from "./GlobalPauseBanner";
 import { RateLimitBanner } from "./RateLimitBanner";
 import { EmptyState } from "./EmptyState";
 import { SpawnOrchestratorButton } from "./SpawnOrchestratorButton";
+import { PRTable } from "./PRTable";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 
 interface DashboardProps {
@@ -69,25 +70,21 @@ export function Dashboard({
       hasAutoCollapsed.current = false;
     }
   }, [isMobile, setSidebarCollapsed]);
-  const { sessions, globalPause } = useSessionEvents(
-    initialSessions,
-    initialGlobalPause,
-    projectId,
-  );
+  const { sessions, globalPause } = useSessionEvents(initialSessions, initialGlobalPause, projectId);
   const [rateLimitDismissed, setRateLimitDismissed] = useState(false);
   const [globalPauseDismissed, setGlobalPauseDismissed] = useState(false);
   const [activeOrchestrators, setActiveOrchestrators] =
     useState<DashboardOrchestratorLink[]>(orchestratorLinks);
-  const [spawningProjectIds, setSpawningProjectIds] = useState<string[]>([]);
-  const [spawnErrors, setSpawnErrors] = useState<Record<string, string>>({});
+
+  const {
+    spawningProjectIds, spawnErrors,
+    handleSend, handleKill, handleMerge, handleRestore, handleSpawnOrchestrator,
+  } = useDashboardActions(setActiveOrchestrators);
+
   const allProjectsView = projects.length > 1 && projectId === undefined;
   const selectedProject = useMemo(() => {
-    if (projectId) {
-      return projects.find((project) => project.id === projectId) ?? null;
-    }
-    if (projects.length === 1) {
-      return projects[0];
-    }
+    if (projectId) return projects.find((p) => p.id === projectId) ?? null;
+    if (projects.length === 1) return projects[0];
     return null;
   }, [projectId, projects]);
 
@@ -99,156 +96,52 @@ export function Dashboard({
   useEffect(() => {
     setActiveOrchestrators((current) => mergeOrchestrators(current, orchestratorLinks));
   }, [orchestratorLinks]);
+
   const grouped = useMemo(() => {
     const zones: Record<AttentionLevel, DashboardSession[]> = {
-      merge: [],
-      respond: [],
-      review: [],
-      pending: [],
-      working: [],
-      done: [],
+      merge: [], respond: [], review: [], pending: [], working: [], done: [],
     };
-    for (const session of sessions) {
-      zones[getAttentionLevel(session)].push(session);
-    }
+    for (const session of sessions) zones[getAttentionLevel(session)].push(session);
     return zones;
   }, [sessions]);
 
   const openPRs = useMemo(() => {
     return sessions
-      .filter(
-        (session): session is DashboardSession & { pr: DashboardPR } =>
-          session.pr?.state === "open",
-      )
-      .map((session) => session.pr)
+      .filter((s): s is DashboardSession & { pr: DashboardPR } => s.pr?.state === "open")
+      .map((s) => s.pr)
       .sort((a, b) => mergeScore(a) - mergeScore(b));
   }, [sessions]);
 
   const projectOverviews = useMemo(() => {
     if (!allProjectsView) return [];
-
     return projects.map((project) => {
-      const projectSessions = sessions.filter((session) => session.projectId === project.id);
+      const projectSessions = sessions.filter((s) => s.projectId === project.id);
       const counts: Record<AttentionLevel, number> = {
-        merge: 0,
-        respond: 0,
-        review: 0,
-        pending: 0,
-        working: 0,
-        done: 0,
+        merge: 0, respond: 0, review: 0, pending: 0, working: 0, done: 0,
       };
-
-      for (const session of projectSessions) {
-        counts[getAttentionLevel(session)]++;
-      }
-
+      for (const s of projectSessions) counts[getAttentionLevel(s)]++;
       return {
         project,
-        orchestrator:
-          activeOrchestrators.find((orchestrator) => orchestrator.projectId === project.id) ?? null,
+        orchestrator: activeOrchestrators.find((o) => o.projectId === project.id) ?? null,
         sessionCount: projectSessions.length,
-        openPRCount: projectSessions.filter((session) => session.pr?.state === "open").length,
+        openPRCount: projectSessions.filter((s) => s.pr?.state === "open").length,
         counts,
       };
     });
   }, [activeOrchestrators, allProjectsView, projects, sessions]);
 
-  const handleSend = async (sessionId: string, message: string) => {
-    const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/send`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message }),
-    });
-    if (!res.ok) {
-      console.error(`Failed to send message to ${sessionId}:`, await res.text());
-    }
-  };
-
-  const handleKill = async (sessionId: string) => {
-    if (!confirm(`Kill session ${sessionId}?`)) return;
-    const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/kill`, {
-      method: "POST",
-    });
-    if (!res.ok) {
-      console.error(`Failed to kill ${sessionId}:`, await res.text());
-    }
-  };
-
-  const handleMerge = async (prNumber: number) => {
-    const res = await fetch(`/api/prs/${prNumber}/merge`, { method: "POST" });
-    if (!res.ok) {
-      console.error(`Failed to merge PR #${prNumber}:`, await res.text());
-    }
-  };
-
-  const handleRestore = async (sessionId: string) => {
-    if (!confirm(`Restore session ${sessionId}?`)) return;
-    const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/restore`, {
-      method: "POST",
-    });
-    if (!res.ok) {
-      console.error(`Failed to restore ${sessionId}:`, await res.text());
-    }
-  };
-
-  const handleSpawnOrchestrator = async (project: ProjectInfo) => {
-    setSpawningProjectIds((current) =>
-      current.includes(project.id) ? current : [...current, project.id],
-    );
-    setSpawnErrors(({ [project.id]: _ignored, ...current }) => current);
-
-    try {
-      const res = await fetch("/api/orchestrators", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: project.id }),
-      });
-
-      const data = (await res.json().catch(() => null)) as {
-        orchestrator?: DashboardOrchestratorLink;
-        error?: string;
-      } | null;
-
-      if (!res.ok || !data?.orchestrator) {
-        throw new Error(data?.error ?? `Failed to spawn orchestrator for ${project.name}`);
-      }
-
-      const orchestrator = data.orchestrator;
-
-      setActiveOrchestrators((current) => {
-        const next = current.filter((orchestrator) => orchestrator.projectId !== project.id);
-        next.push(orchestrator);
-        return next;
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to spawn orchestrator";
-      setSpawnErrors((current) => ({ ...current, [project.id]: message }));
-      console.error(`Failed to spawn orchestrator for ${project.id}:`, error);
-    } finally {
-      setSpawningProjectIds((current) => current.filter((id) => id !== project.id));
-    }
-  };
-
   const hasKanbanSessions = KANBAN_LEVELS.some((level) => grouped[level].length > 0);
-
   const anyRateLimited = useMemo(
-    () => sessions.some((session) => session.pr && isPRRateLimited(session.pr)),
+    () => sessions.some((s) => s.pr && isPRRateLimited(s.pr)),
     [sessions],
   );
 
-  const liveStats = useMemo<DashboardStats>(
-    () => ({
-      totalSessions: sessions.length,
-      workingSessions: sessions.filter(
-        (session) => session.activity !== null && session.activity !== "exited",
-      ).length,
-      openPRs: sessions.filter((session) => session.pr?.state === "open").length,
-      needsReview: sessions.filter(
-        (session) => session.pr && !session.pr.isDraft && session.pr.reviewDecision === "pending",
-      ).length,
-    }),
-    [sessions],
-  );
+  const liveStats = useMemo<DashboardStats>(() => ({
+    totalSessions: sessions.length,
+    workingSessions: sessions.filter((s) => s.activity !== null && s.activity !== "exited").length,
+    openPRs: sessions.filter((s) => s.pr?.state === "open").length,
+    needsReview: sessions.filter((s) => s.pr && !s.pr.isDraft && s.pr.reviewDecision === "pending").length,
+  }), [sessions]);
 
   const resumeAtLabel = useMemo(() => {
     if (!globalPause) return null;
@@ -261,7 +154,6 @@ export function Dashboard({
 
   return (
     <div className="flex h-screen">
-      {/* Desktop sidebar — hidden on mobile via CSS, hidden when collapsed via JS */}
       {!sidebarCollapsed && (
         <div className="hidden md:block">
           <ProjectSidebar
@@ -277,13 +169,9 @@ export function Dashboard({
           />
         </div>
       )}
-      {/* Mobile sidebar — overlay, only rendered client-side when isMobile && expanded */}
       {isMobile && !sidebarCollapsed && (
         <>
-          <div
-            className="fixed inset-0 z-30 bg-black/50"
-            onClick={() => setSidebarCollapsed(true)}
-          />
+          <div className="fixed inset-0 z-30 bg-black/50" onClick={() => setSidebarCollapsed(true)} />
           <div className="fixed inset-y-0 left-0 z-40">
             <ProjectSidebar
               projects={projects}
@@ -332,46 +220,25 @@ export function Dashboard({
 
         <div className="px-4 py-5 md:px-8 md:py-7">
         {globalPause && !globalPauseDismissed && (
-          <GlobalPauseBanner
-            globalPause={globalPause}
-            resumeAtLabel={resumeAtLabel}
-            onDismiss={() => setGlobalPauseDismissed(true)}
-          />
+          <GlobalPauseBanner globalPause={globalPause} resumeAtLabel={resumeAtLabel} onDismiss={() => setGlobalPauseDismissed(true)} />
         )}
-
         {anyRateLimited && !rateLimitDismissed && (
           <RateLimitBanner onDismiss={() => setRateLimitDismissed(true)} />
         )}
-
         {allProjectsView && (
-          <ProjectOverviewGrid
-            overviews={projectOverviews}
-            onSpawnOrchestrator={handleSpawnOrchestrator}
-            spawningProjectIds={spawningProjectIds}
-            spawnErrors={spawnErrors}
-          />
+          <ProjectOverviewGrid overviews={projectOverviews} onSpawnOrchestrator={handleSpawnOrchestrator} spawningProjectIds={spawningProjectIds} spawnErrors={spawnErrors} />
         )}
-
         {!allProjectsView && hasKanbanSessions && (
           <div className="mb-8 flex snap-x snap-mandatory gap-3 overflow-x-auto pb-2 md:snap-none md:gap-4">
             {KANBAN_LEVELS.map((level) =>
               grouped[level].length > 0 ? (
                 <div key={level} className="min-w-[260px] flex-1 snap-start sm:min-w-[200px]">
-                  <AttentionZone
-                    level={level}
-                    sessions={grouped[level]}
-                    variant="column"
-                    onSend={handleSend}
-                    onKill={handleKill}
-                    onMerge={handleMerge}
-                    onRestore={handleRestore}
-                  />
+                  <AttentionZone level={level} sessions={grouped[level]} variant="column" onSend={handleSend} onKill={handleKill} onMerge={handleMerge} onRestore={handleRestore} />
                 </div>
               ) : null,
             )}
           </div>
         )}
-
         {!allProjectsView && !hasKanbanSessions && sessions.length === 0 && selectedProject && (
           <div className="mb-8">
             <EmptyState
@@ -384,46 +251,12 @@ export function Dashboard({
             />
           </div>
         )}
-
         {!allProjectsView && grouped.done.length > 0 && (
           <div className="mb-8">
-            <AttentionZone
-              level="done"
-              sessions={grouped.done}
-              variant="grid"
-              onSend={handleSend}
-              onKill={handleKill}
-              onMerge={handleMerge}
-              onRestore={handleRestore}
-            />
+            <AttentionZone level="done" sessions={grouped.done} variant="grid" onSend={handleSend} onKill={handleKill} onMerge={handleMerge} onRestore={handleRestore} />
           </div>
         )}
-
-        {openPRs.length > 0 && (
-          <div className="mx-auto max-w-[900px]">
-            <h2 className="mb-3 px-1 text-[10px] font-bold uppercase tracking-[0.10em] text-[var(--color-text-tertiary)]">
-              Pull Requests
-            </h2>
-            <div className="overflow-x-auto rounded-[var(--radius-md)] border border-[var(--color-border-default)]">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="border-b border-[var(--color-border-muted)]">
-                    {["PR", "Title", "Size", "CI", "Review", "Unresolved"].map((col) => (
-                      <th key={col} className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
-                        {col}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {openPRs.map((pr) => (
-                    <PRTableRow key={pr.number} pr={pr} />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
+        <PRTable openPRs={openPRs} />
         </div>
       </div>
     </div>

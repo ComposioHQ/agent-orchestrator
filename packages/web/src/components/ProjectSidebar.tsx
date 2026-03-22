@@ -5,6 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { cn } from "@/lib/cn";
 import type { ProjectInfo } from "@/lib/project-name";
 import type { DashboardOrchestratorLink } from "@/lib/types";
+import { SpawnOrchestratorButton } from "./SpawnOrchestratorButton";
 
 const SIDEBAR_MIN_WIDTH = 160;
 const SIDEBAR_MAX_WIDTH = 320;
@@ -167,7 +168,15 @@ export function ProjectSidebar({
               >
                 {project.name}
               </button>
-              {orch ? (
+              {onSpawnOrchestrator ? (
+                <SpawnOrchestratorButton
+                  project={project}
+                  orchestrator={orch}
+                  onSpawnOrchestrator={onSpawnOrchestrator}
+                  isSpawning={isSpawning}
+                  variant="sidebar"
+                />
+              ) : orch ? (
                 <a
                   href={`/sessions/${encodeURIComponent(orch.id)}`}
                   title="Orchestrator running"
@@ -175,18 +184,6 @@ export function ProjectSidebar({
                 >
                   <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] opacity-80" />
                 </a>
-              ) : onSpawnOrchestrator ? (
-                <button
-                  type="button"
-                  aria-label={`Spawn orchestrator for ${project.name}`}
-                  onClick={() => void onSpawnOrchestrator(project)}
-                  disabled={isSpawning}
-                  className="shrink-0 px-1 text-[var(--color-text-muted)] opacity-0 transition-opacity hover:text-[var(--color-text-primary)] group-hover:opacity-100 disabled:cursor-wait disabled:opacity-50"
-                >
-                  <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                    <path d="M12 5v14M5 12h14" />
-                  </svg>
-                </button>
               ) : null}
             </div>
           );
