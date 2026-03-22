@@ -3,7 +3,8 @@ import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AcpxBridge,
-  buildAcpxArgs,
+  buildEnsureSessionArgs,
+  buildPromptArgs,
   composePrompt,
   DEFAULT_ACPX_AGENT,
   normalizeAcpxAgent,
@@ -28,11 +29,12 @@ describe("bridge helpers", () => {
     expect(composePrompt("Fix the bug\n", "You are ACPX")).toBe("You are ACPX\n\nFix the bug");
   });
 
-  it("builds supported acpx args as positional prompt invocation", () => {
-    expect(buildAcpxArgs({ acpxAgent: "pi", prompt: "hello" })).toEqual(["pi", "hello"]);
-    expect(buildAcpxArgs({ acpxAgent: "codex", prompt: "hello" })).toEqual(["codex", "hello"]);
-    expect(buildAcpxArgs({ acpxAgent: "claude", prompt: "hello" })).toEqual(["claude", "hello"]);
-    expect(buildAcpxArgs({ acpxAgent: "gemini", prompt: "hello" })).toEqual(["gemini", "hello"]);
+  it("builds supported acpx args for session ensure and prompt", () => {
+    expect(buildEnsureSessionArgs({ acpxAgent: "pi" })).toEqual(["pi", "sessions", "ensure"]);
+    expect(buildPromptArgs({ acpxAgent: "pi", prompt: "hello" })).toEqual(["pi", "prompt", "hello"]);
+    expect(buildPromptArgs({ acpxAgent: "codex", prompt: "hello" })).toEqual(["codex", "prompt", "hello"]);
+    expect(buildPromptArgs({ acpxAgent: "claude", prompt: "hello" })).toEqual(["claude", "prompt", "hello"]);
+    expect(buildPromptArgs({ acpxAgent: "gemini", prompt: "hello" })).toEqual(["gemini", "prompt", "hello"]);
   });
 
   it("loads the system prompt from a file when provided", async () => {
@@ -85,7 +87,12 @@ describe("AcpxBridge", () => {
     expect(calls).toEqual([
       {
         command: "acpx",
-        args: ["pi", "System rules\n\nLine one\nLine two"],
+        args: ["pi", "sessions", "ensure"],
+        cwd: "/workspace/test",
+      },
+      {
+        command: "acpx",
+        args: ["pi", "prompt", "System rules\n\nLine one\nLine two"],
         cwd: "/workspace/test",
       },
     ]);
@@ -95,9 +102,9 @@ describe("AcpxBridge", () => {
     const order: string[] = [];
     const spawnImpl = vi.fn((_command: string, args: readonly string[]) => {
       const child = new FakeChildProcess();
-      order.push(`start:${String(args[1])}`);
+      order.push(`start:${args.join(' ')}`);
       setTimeout(() => {
-        order.push(`end:${String(args[1])}`);
+        order.push(`end:${args.join(' ')}`);
         child.emit("close", 0, null);
       }, 5);
       return child as never;
@@ -111,7 +118,16 @@ describe("AcpxBridge", () => {
     await vi.runAllTimersAsync();
     await bridge.drain();
 
-    expect(order).toEqual(["start:first", "end:first", "start:second", "end:second"]);
+    expect(order).toEqual([
+      "start:pi sessions ensure",
+      "end:pi sessions ensure",
+      "start:pi prompt first",
+      "end:pi prompt first",
+      "start:pi sessions ensure",
+      "end:pi sessions ensure",
+      "start:pi prompt second",
+      "end:pi prompt second",
+    ]);
   });
 
   it("keeps running after a failed acpx invocation", async () => {
@@ -135,6 +151,28 @@ describe("AcpxBridge", () => {
     await bridge.drain();
 
     expect(stderr.read()?.toString("utf-8")).toContain("acpx pi failed with exit code 1");
-    expect(spawnImpl).toHaveBeenCalledTimes(2);
+    expect(spawnImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not send the prompt when session ensure fails", async () => {
+    const calls: string[][] = [];
+    const stderr = new PassThrough();
+    const spawnImpl = vi.fn((_command: string, args: readonly string[]) => {
+      calls.push([...args]);
+      const child = new FakeChildProcess();
+      setTimeout(() => {
+        child.emit("close", 4, null);
+      }, 0);
+      return child as never;
+    });
+
+    const bridge = new AcpxBridge({ spawnImpl, stderr });
+    bridge.acceptInput("hello\n");
+    await vi.advanceTimersByTimeAsync(150);
+    await vi.runAllTimersAsync();
+    await bridge.drain();
+
+    expect(calls).toEqual([["pi", "sessions", "ensure"]]);
+    expect(stderr.read()?.toString("utf-8")).toContain("acpx pi failed with exit code 4");
   });
 });

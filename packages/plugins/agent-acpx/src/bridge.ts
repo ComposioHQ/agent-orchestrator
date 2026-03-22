@@ -64,11 +64,17 @@ export function composePrompt(prompt: string, systemPrompt?: string): string {
   return `${trimmedSystemPrompt}\n\n${trimmedPrompt}`;
 }
 
-export function buildAcpxArgs(options: {
+export function buildEnsureSessionArgs(options: {
+  acpxAgent?: string;
+}): string[] {
+  return [normalizeAcpxAgent(options.acpxAgent), "sessions", "ensure"];
+}
+
+export function buildPromptArgs(options: {
   acpxAgent?: string;
   prompt: string;
 }): string[] {
-  return [normalizeAcpxAgent(options.acpxAgent), options.prompt];
+  return [normalizeAcpxAgent(options.acpxAgent), "prompt", options.prompt];
 }
 
 export class AcpxBridge {
@@ -173,10 +179,17 @@ export class AcpxBridge {
     }
   }
 
-  private dispatchPrompt(prompt: string): Promise<void> {
-    const composedPrompt = composePrompt(prompt, this.systemPrompt);
-    const args = buildAcpxArgs({ acpxAgent: this.acpxAgent, prompt: composedPrompt });
+  private async dispatchPrompt(prompt: string): Promise<void> {
+    const ensured = await this.runAcpxCommand(buildEnsureSessionArgs({ acpxAgent: this.acpxAgent }));
+    if (!ensured) {
+      return;
+    }
 
+    const composedPrompt = composePrompt(prompt, this.systemPrompt);
+    await this.runAcpxCommand(buildPromptArgs({ acpxAgent: this.acpxAgent, prompt: composedPrompt }));
+  }
+
+  private runAcpxCommand(args: string[]): Promise<boolean> {
     return new Promise((resolve) => {
       let settled = false;
       const child = this.spawnImpl(this.acpxPath, args, {
@@ -195,7 +208,7 @@ export class AcpxBridge {
         if (settled) return;
         settled = true;
         this.stderr.write(`[acpx bridge] failed to start acpx: ${error.message}\n`);
-        resolve();
+        resolve(false);
       });
 
       child.once("close", (code, signal) => {
@@ -204,8 +217,10 @@ export class AcpxBridge {
         if (code !== 0) {
           const reason = signal ? `signal ${signal}` : `exit code ${String(code)}`;
           this.stderr.write(`[acpx bridge] acpx ${this.acpxAgent} failed with ${reason}\n`);
+          resolve(false);
+          return;
         }
-        resolve();
+        resolve(true);
       });
     });
   }
