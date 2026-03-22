@@ -1,10 +1,9 @@
 /**
  * Direct WebSocket terminal server using node-pty.
- * Connects browser xterm.js directly to tmux sessions via WebSocket.
+ * Connects the browser terminal emulator directly to tmux sessions via WebSocket.
  *
  * This bypasses ttyd and gives us control over terminal initialization,
- * allowing us to implement the XDA (Extended Device Attributes) handler
- * that tmux requires for clipboard support.
+ * reconnection, and resize behavior while keeping a native PTY bridge.
  */
 
 import { createServer, type Server } from "node:http";
@@ -283,7 +282,7 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
     ws.on("message", (data) => {
       const message = data.toString("utf8");
 
-      // Handle resize messages (sent by xterm.js FitAddon)
+      // Handle resize messages from the browser terminal
       if (message.startsWith("{")) {
         try {
           const parsed = JSON.parse(message) as { type?: string; cols?: number; rows?: number };

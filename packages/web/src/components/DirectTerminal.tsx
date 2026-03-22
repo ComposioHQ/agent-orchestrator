@@ -4,12 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/cn";
 
-// Import xterm CSS (must be imported in client component)
-import "xterm/css/xterm.css";
-
-// Dynamically import xterm types for TypeScript
-import type { Terminal as TerminalType } from "xterm";
-import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
+import type { FitAddon as FitAddonType, Terminal as TerminalType } from "ghostty-web";
 
 interface DirectTerminalProps {
   sessionId: string;
@@ -37,6 +32,20 @@ interface DirectTerminalWsUrlOptions {
   directTerminalPort?: string;
 }
 
+type GhosttyWebModule = typeof import("ghostty-web");
+
+let ghosttyWebInitPromise: Promise<GhosttyWebModule> | null = null;
+
+function loadGhosttyWeb(): Promise<GhosttyWebModule> {
+  if (!ghosttyWebInitPromise) {
+    ghosttyWebInitPromise = import("ghostty-web").then(async (mod) => {
+      await mod.init();
+      return mod;
+    });
+  }
+  return ghosttyWebInitPromise;
+}
+
 export function buildDirectTerminalWsUrl({
   location,
   sessionId,
@@ -57,16 +66,7 @@ export function buildDirectTerminalWsUrl({
   return `${protocol}//${location.hostname}:${port}/ws?session=${encodeURIComponent(sessionId)}`;
 }
 
-/**
- * Direct xterm.js terminal with native WebSocket connection.
- * Implements Extended Device Attributes (XDA) handler to enable
- * tmux clipboard support (OSC 52) without requiring iTerm2 attachment.
- *
- * Based on DeepWiki analysis:
- * - tmux queries for XDA (CSI > q / XTVERSION) to detect terminal type
- * - When tmux sees "XTerm(" in response, it enables TTYC_MS (clipboard)
- * - xterm.js doesn't implement XDA by default, so we register custom handler
- */
+/** Direct Ghostty terminal with native WebSocket connection. */
 export function DirectTerminal({
   sessionId,
   startFullscreen = false,
@@ -152,7 +152,7 @@ export function DirectTerminal({
     permanentErrorRef.current = false;
     reconnectAttemptRef.current = 0;
 
-    // Dynamically import xterm.js to avoid SSR issues
+    // Dynamically import ghostty-web to avoid SSR issues
     let mounted = true;
     let cleanup: (() => void) | null = null;
     let inputDisposable: { dispose(): void } | null = null;
@@ -160,12 +160,8 @@ export function DirectTerminal({
     const PERMANENT_CLOSE_CODES = new Set([4001, 4004]); // auth failure, session not found
     const MAX_RECONNECT_DELAY = 15_000;
 
-    Promise.all([
-      import("xterm").then((mod) => mod.Terminal),
-      import("@xterm/addon-fit").then((mod) => mod.FitAddon),
-      import("@xterm/addon-web-links").then((mod) => mod.WebLinksAddon),
-    ])
-      .then(([Terminal, FitAddon, WebLinksAddon]) => {
+    loadGhosttyWeb()
+      .then(({ Terminal, FitAddon, UrlRegexProvider }) => {
         if (!mounted || !terminalRef.current) return;
 
         // Cursor and selection color differ by variant:
@@ -174,7 +170,7 @@ export function DirectTerminal({
         const selectionColor =
           variant === "orchestrator" ? "rgba(163, 113, 247, 0.25)" : "rgba(91, 126, 248, 0.3)";
 
-        // Initialize xterm.js Terminal
+        // Initialize Ghostty terminal
         const terminal = new Terminal({
           cursorBlink: true,
           fontSize: 13,
@@ -204,54 +200,13 @@ export function DirectTerminal({
             brightWhite: "#eeeef5",
           },
           scrollback: 10000,
-          allowProposedApi: true,
-          fastScrollModifier: "alt",
-          fastScrollSensitivity: 3,
-          scrollSensitivity: 1,
         });
 
-        // Add FitAddon for responsive sizing
         const fit = new FitAddon();
         terminal.loadAddon(fit);
         fitAddon.current = fit;
 
-        // Add WebLinksAddon for clickable links
-        const webLinks = new WebLinksAddon();
-        terminal.loadAddon(webLinks);
-
-        // **CRITICAL FIX**: Register XDA (Extended Device Attributes) handler
-        // This makes tmux recognize our terminal and enable clipboard support
-        terminal.parser.registerCsiHandler(
-          { prefix: ">", final: "q" }, // CSI > q is XTVERSION / XDA
-          () => {
-            // Respond with XTerm identification that tmux recognizes
-            // tmux looks for "XTerm(" in the response (see tmux tty-keys.c)
-            // Format: DCS > | XTerm(version) ST
-            // DCS = \x1bP, ST = \x1b\\
-            terminal.write("\x1bP>|XTerm(370)\x1b\\");
-            console.log("[DirectTerminal] Sent XDA response for clipboard support");
-            return true; // Handled
-          },
-        );
-
-        // Register OSC 52 handler for clipboard support
-        // tmux sends OSC 52 with base64-encoded text when copying
-        terminal.parser.registerOscHandler(52, (data) => {
-          const parts = data.split(";");
-          if (parts.length < 2) return false;
-          const b64 = parts[parts.length - 1];
-          try {
-            // Decode base64 → binary string → Uint8Array → UTF-8 text
-            // atob() alone only handles Latin-1; TextDecoder is needed for UTF-8
-            const binary = atob(b64);
-            const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
-            const text = new TextDecoder().decode(bytes);
-            navigator.clipboard?.writeText(text).catch(() => {});
-          } catch {
-            // Ignore decode errors
-          }
-          return true;
-        });
+        terminal.registerLinkProvider(new UrlRegexProvider(terminal));
 
         // Open terminal in DOM
         terminal.open(terminalRef.current);
@@ -271,7 +226,7 @@ export function DirectTerminal({
         });
 
         // ── Preserve selection while terminal receives output ────────
-        // xterm.js clears the selection on every terminal.write(). We
+        // Terminal output can interrupt interactive selection/copy flows. We
         // buffer incoming data while a selection is active so the
         // highlight stays visible for Cmd+C. The buffer is flushed
         // when the selection is cleared (click, keypress, etc.).
@@ -310,10 +265,9 @@ export function DirectTerminal({
         });
 
         // Intercept Cmd+C (Mac) and Ctrl+Shift+C (Linux/Win) for copy.
-        // Paste (Cmd+V / Ctrl+Shift+V) is handled natively by xterm.js
-        // via its internal textarea — no custom handler needed.
+        // Paste is handled by ghostty-web's internal input handling.
         terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
-          if (e.type !== "keydown") return true;
+          if (e.type !== "keydown") return false;
 
           // Cmd+C / Ctrl+Shift+C — copy selection
           const isCopy =
@@ -323,10 +277,11 @@ export function DirectTerminal({
             navigator.clipboard?.writeText(terminal.getSelection()).catch(() => {});
             // Clear selection so the terminal resumes receiving output
             terminal.clearSelection();
-            return false;
+            e.preventDefault();
+            return true;
           }
 
-          return true;
+          return false;
         });
 
         // Handle window resize (works with whatever ws is current)
@@ -441,7 +396,7 @@ export function DirectTerminal({
         };
       })
       .catch((err) => {
-        console.error("[DirectTerminal] Failed to load xterm.js:", err);
+        console.error("[DirectTerminal] Failed to load ghostty-web:", err);
         permanentErrorRef.current = true;
         setStatus("error");
         setError("Failed to load terminal");
@@ -490,9 +445,7 @@ export function DirectTerminal({
       }
 
       // Container is at target size, now resize terminal
-      terminal.refresh(0, terminal.rows - 1);
       fit.fit();
-      terminal.refresh(0, terminal.rows - 1);
 
       // Send new size to server (use ws.current in case WebSocket reconnected)
       const currentWs = ws.current;
@@ -587,7 +540,7 @@ export function DirectTerminal({
         >
           {statusText}
         </span>
-        {/* XDA clipboard badge */}
+        {/* Emulator badge */}
         <span
           className="rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.06em]"
           style={{
@@ -595,7 +548,7 @@ export function DirectTerminal({
             background: `color-mix(in srgb, ${accentColor} 12%, transparent)`,
           }}
         >
-          XDA
+          Ghostty
         </span>
         {isOpenCodeSession ? (
           <button

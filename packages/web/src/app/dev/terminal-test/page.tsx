@@ -557,8 +557,8 @@ function TerminalTestPageContent() {
               </h3>
               <ul className="ml-6 list-disc space-y-1">
                 <li>tmux source analysis: DeepWiki.com (Feb 15, 2026)</li>
-                <li>xterm.js parser API documentation</li>
-                <li>XTerm Control Sequences: XTVERSION / Device Attributes</li>
+                <li>ghostty-web API and WASM runtime</li>
+                <li>Ghostty terminal behavior for VT/OSC responses</li>
                 <li>
                   tmux <code className="rounded bg-black px-1 py-0.5">tty-keys.c</code>: Terminal
                   type detection logic
@@ -578,7 +578,7 @@ function TerminalTestPageContent() {
               <code className="rounded bg-black px-1 py-0.5">
                 packages/web/src/components/DirectTerminal.tsx
               </code>{" "}
-              - Main component with XDA handler
+              - Main component using ghostty-web
             </li>
             <li>
               <code className="rounded bg-black px-1 py-0.5">
@@ -598,7 +598,7 @@ function TerminalTestPageContent() {
         {/* Footer */}
         <div className="mt-8 border-t border-[var(--color-border-default)] pt-4 text-center text-xs text-[var(--color-text-secondary)]">
           <p>Investigation: Feb 15-16, 2026 • Duration: 12+ hours • Status: ✅ Resolved</p>
-          <p className="mt-1">Node 20.20.0 • node-pty 1.1.0 • xterm.js 5.3.0</p>
+          <p className="mt-1">Node 20.20.0 • node-pty 1.1.0 • ghostty-web 0.4.0</p>
         </div>
       </div>
     </div>

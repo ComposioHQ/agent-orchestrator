@@ -8,16 +8,12 @@ import { Suspense } from "react";
 export const dynamic = "force-dynamic";
 
 /**
- * Test page for DirectTerminal with XDA clipboard support.
+ * Test page for DirectTerminal using ghostty-web.
  *
  * Examples:
  * - http://localhost:3000/test-direct
  * - http://localhost:3000/test-direct?session=ao-20
  * - http://localhost:3000/test-direct?session=ao-20&fullscreen=true
- *
- * This uses native xterm.js with registered XDA handler,
- * which should enable clipboard (OSC 52) in tmux without
- * requiring iTerm2 attachment.
  */
 function TestDirectPageContent() {
   const searchParams = useSearchParams();
@@ -28,12 +24,12 @@ function TestDirectPageContent() {
       <div className="mx-auto max-w-7xl">
         <div className="mb-6">
           <h1 className="text-2xl font-bold text-[var(--color-text-primary)]">
-            DirectTerminal Test - XDA Clipboard Support
+            DirectTerminal Test - Ghostty Web
           </h1>
           <p className="mt-2 text-sm text-[var(--color-text-muted)]">
-            This terminal has XDA (Extended Device Attributes) handler registered.
+            This terminal uses Ghostty's web terminal emulator.
             <br />
-            tmux should recognize it as XTerm and enable clipboard support (OSC 52).
+            Clipboard, selection, resize, and shell I/O should behave through the native PTY bridge.
           </p>
           <div className="mt-4 rounded-lg border border-[var(--color-border-default)] bg-[var(--color-bg-secondary)] p-4">
             <h2 className="mb-2 text-sm font-semibold text-[var(--color-text-primary)]">
@@ -45,8 +41,8 @@ function TestDirectPageContent() {
             <ol className="list-inside list-decimal space-y-1 text-sm text-[var(--color-text-muted)]">
               <li>Connected to tmux session: {sessionId}</li>
               <li>
-                Verify XDA badge shows{" "}
-                <span className="text-[var(--color-accent-green)]">✓ XDA</span>
+                Verify emulator badge shows{" "}
+                <span className="text-[var(--color-accent-green)]">✓ Ghostty</span>
               </li>
               <li>Drag-select text in the terminal</li>
               <li>Press Cmd+C (macOS) or Ctrl+C (Linux/Windows)</li>
@@ -61,10 +57,10 @@ function TestDirectPageContent() {
               Technical Details:
             </h2>
             <ul className="list-inside list-disc space-y-1 text-sm text-[var(--color-text-muted)]">
-              <li>Registers CSI &gt; q (XDA) handler in xterm.js parser</li>
-              <li>Responds with DCS &gt; | XTerm(370) ST sequence</li>
-              <li>tmux detects "XTerm(" and enables TTYC_MS (clipboard capability)</li>
-              <li>OSC 52 sequences flow: tmux → WebSocket → xterm.js → navigator.clipboard</li>
+              <li>Uses `ghostty-web` instead of `xterm.js` in the browser</li>
+              <li>Keeps the existing node-pty + WebSocket transport to tmux</li>
+              <li>Auto-fits the canvas to the terminal container</li>
+              <li>Preserves copy, paste, resize, reconnect, and link detection behavior</li>
             </ul>
           </div>
         </div>
