@@ -193,6 +193,11 @@ export interface SessionSpawnConfig {
   lineage?: string[];
   /** Decomposition context — sibling task descriptions (passed to prompt builder) */
   siblings?: string[];
+  /**
+   * Per-session LLM override — bypasses global routing and forces a specific agent.
+   * "claude-code" | "local-llm" — takes precedence over routing.mode but not agent/worker.agent.
+   */
+  llmOverride?: "claude-code" | "local-llm";
 }
 
 /** Config for creating an orchestrator session */
@@ -877,6 +882,30 @@ export interface ReactionResult {
 // CONFIGURATION
 // =============================================================================
 
+/** Local LLM configuration for smart routing */
+export interface LocalLlmConfig {
+  /** OpenAI-compatible API base URL (e.g. http://localhost:11434/v1) */
+  baseUrl: string;
+  /** Model name to use (e.g. llama3, mistral) */
+  model: string;
+}
+
+/**
+ * Routing mode:
+ * - "always-claude": all sessions use Claude Code (default)
+ * - "smart": Haiku classifies task complexity; simple→local LLM, complex→Claude
+ * - "always-local": all sessions use the local LLM entirely
+ */
+export type RoutingMode = "always-claude" | "smart" | "always-local";
+
+/** Smart routing configuration — controls how tasks are routed to LLMs */
+export interface RoutingConfig {
+  /** Routing mode (default: "always-claude") */
+  mode: RoutingMode;
+  /** Local LLM endpoint settings (used when mode is "smart" or "always-local") */
+  localLlm: LocalLlmConfig;
+}
+
 /** Top-level orchestrator configuration (from agent-orchestrator.yaml) */
 export interface OrchestratorConfig {
   /**
@@ -912,6 +941,9 @@ export interface OrchestratorConfig {
 
   /** Default reaction configs */
   reactions: Record<string, ReactionConfig>;
+
+  /** Smart LLM routing configuration */
+  routing?: RoutingConfig;
 }
 
 export interface DefaultPlugins {
@@ -1158,6 +1190,7 @@ export interface SessionMetadata {
   terminalWsPort?: number;
   directTerminalWsPort?: number;
   opencodeSessionId?: string;
+  llmOverride?: string; // User-selected LLM override (e.g. "local-llm", "claude-code")
 }
 
 // =============================================================================
@@ -1178,6 +1211,8 @@ export interface SessionManager {
   ): Promise<CleanupResult>;
   send(sessionId: SessionId, message: string): Promise<void>;
   claimPR(sessionId: SessionId, prRef: string, options?: ClaimPROptions): Promise<ClaimPRResult>;
+  /** Merge key/value pairs into a session's persisted metadata. */
+  setMetadata(sessionId: SessionId, updates: Record<string, string | undefined>): Promise<void>;
 }
 
 /** OpenCode-specific session manager with remap capability */

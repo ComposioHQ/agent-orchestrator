@@ -13,10 +13,11 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve, join, basename } from "node:path";
 import { homedir } from "node:os";
-import { parse as parseYaml } from "yaml";
+import { parse as parseYaml, parseDocument } from "yaml";
 import { z } from "zod";
-import { ConfigNotFoundError, type OrchestratorConfig } from "./types.js";
+import { ConfigNotFoundError, type OrchestratorConfig, type RoutingConfig } from "./types.js";
 import { generateSessionPrefix } from "./paths.js";
+import { atomicWriteFileSync } from "./atomic-write.js";
 
 function inferScmPlugin(project: {
   repo: string;
@@ -142,6 +143,16 @@ const DecomposerConfigSchema = z
     requireApproval: true,
   });
 
+const LocalLlmConfigSchema = z.object({
+  baseUrl: z.string().default("http://localhost:11434/v1"),
+  model: z.string().default(""),
+});
+
+const RoutingConfigSchema = z.object({
+  mode: z.enum(["always-claude", "smart", "always-local"]).default("always-claude"),
+  localLlm: LocalLlmConfigSchema.default({}),
+});
+
 const ProjectConfigSchema = z.object({
   name: z.string().optional(),
   repo: z.string(),
@@ -196,6 +207,7 @@ const OrchestratorConfigSchema = z.object({
     info: ["composio"],
   }),
   reactions: z.record(ReactionConfigSchema).default({}),
+  routing: RoutingConfigSchema.optional(),
 });
 
 // =============================================================================
@@ -521,4 +533,33 @@ export function getDefaultConfig(): OrchestratorConfig {
   return validateConfig({
     projects: {},
   });
+}
+
+/**
+ * Write routing config back to the YAML config file.
+ * Reads the existing YAML, merges the routing section, and writes it back.
+ */
+export function writeRoutingConfig(routing: RoutingConfig, configPath?: string): void {
+  const path = configPath ?? findConfigFile();
+
+  if (!path) {
+    throw new ConfigNotFoundError();
+  }
+
+  const raw = readFileSync(path, "utf-8");
+
+  // Use parseDocument so comments and formatting are preserved on round-trip.
+  // parseDocument handles empty files (null contents) gracefully — setIn creates
+  // the root map if needed.
+  const doc = parseDocument(raw.trim() || "{}");
+
+  doc.setIn(["routing"], {
+    mode: routing.mode,
+    localLlm: {
+      baseUrl: routing.localLlm.baseUrl,
+      model: routing.localLlm.model,
+    },
+  });
+
+  atomicWriteFileSync(path, doc.toString());
 }

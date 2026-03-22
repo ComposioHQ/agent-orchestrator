@@ -17,6 +17,7 @@ import { PRTableRow } from "./PRStatus";
 import { DynamicFavicon } from "./DynamicFavicon";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
 import { ProjectSidebar } from "./ProjectSidebar";
+import { RoutingButton } from "./RoutingButton";
 import type { ProjectInfo } from "@/lib/project-name";
 
 interface DashboardProps {
@@ -256,7 +257,10 @@ export function Dashboard({
             </h1>
             <StatusLine stats={liveStats} />
           </div>
-          {!allProjectsView && <OrchestratorControl orchestrators={activeOrchestrators} />}
+          <div className="flex items-center gap-2">
+            {!allProjectsView && <OrchestratorControl orchestrators={activeOrchestrators} />}
+            <RoutingButton />
+          </div>
         </div>
 
         {globalPause && !globalPauseDismissed && (

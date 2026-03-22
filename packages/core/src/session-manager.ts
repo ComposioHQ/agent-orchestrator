@@ -11,7 +11,7 @@
  * Reference: scripts/claude-ao-session, scripts/send-to-session
  */
 
-import { statSync, existsSync, readdirSync, writeFileSync, mkdirSync, utimesSync } from "node:fs";
+import { statSync, existsSync, readdirSync, writeFileSync, mkdirSync, utimesSync, readFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { basename, join, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -74,10 +74,54 @@ import {
 import { sessionFromMetadata } from "./utils/session-from-metadata.js";
 import { safeJsonParse } from "./utils/validation.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
+import Anthropic from "@anthropic-ai/sdk";
 
 const execFileAsync = promisify(execFile);
 const OPENCODE_DISCOVERY_TIMEOUT_MS = 2_000;
 const OPENCODE_INTERACTIVE_DISCOVERY_TIMEOUT_MS = 10_000;
+
+// =============================================================================
+// Task Complexity Classification
+// =============================================================================
+
+/**
+ * Classify a task as simple or complex using Claude Haiku.
+ *
+ * - Simple: single-file changes, typo fixes, config changes, small bug fixes, doc updates
+ * - Complex: multi-file changes, new features, architectural changes, debugging across systems
+ *
+ * Falls back to "complex" on any error to preserve existing behavior.
+ */
+export async function classifyTaskComplexity(
+  issueContext: string,
+): Promise<"simple" | "complex"> {
+  if (!issueContext.trim()) return "complex";
+
+  try {
+    const client = new Anthropic();
+    const res = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 10,
+      messages: [
+        {
+          role: "user",
+          content: `Classify this software task as either 'simple' or 'complex'.
+Simple: single-file changes, typo fixes, config changes, small bug fixes, doc updates.
+Complex: multi-file changes, new features, architectural changes, debugging across systems, PR review cycles.
+Respond with only: simple or complex
+Task: ${issueContext}`,
+        },
+      ],
+    });
+
+    const text =
+      res.content[0]?.type === "text" ? res.content[0].text.trim().toLowerCase() : "";
+    return text === "simple" ? "simple" : "complex";
+  } catch {
+    // Fall back to complex on any error to preserve existing behavior
+    return "complex";
+  }
+}
 
 function errorIncludesSessionNotFound(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
@@ -723,11 +767,12 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     sessionId: string,
     metadata: Record<string, string>,
   ) {
+    const llmOverride = metadata["llm_override"] || undefined;
     return resolveAgentSelection({
       role: resolveSessionRole(sessionId, metadata),
       project,
       defaults: config.defaults,
-      persistedAgent: metadata["agent"],
+      persistedAgent: llmOverride ?? metadata["agent"],
     });
   }
 
@@ -903,27 +948,18 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       );
     }
 
-    const selection = resolveAgentSelection({
-      role: "worker",
-      project,
-      defaults: config.defaults,
-      spawnAgentOverride: spawnConfig.agent,
-    });
-    const plugins = resolvePlugins(project, selection.agentName);
-    if (!plugins.runtime) {
-      throw new Error(`Runtime plugin '${project.runtime ?? config.defaults.runtime}' not found`);
-    }
-
-    if (!plugins.agent) {
-      throw new Error(`Agent plugin '${selection.agentName}' not found`);
-    }
+    // Resolve tracker plugin early — needed for issue validation before agent selection
+    // (tracker does not depend on agent choice)
+    const trackerPlugin = project.tracker
+      ? registry.get<Tracker>("tracker", project.tracker.plugin)
+      : null;
 
     // Validate issue exists BEFORE creating any resources
     let resolvedIssue: Issue | undefined;
-    if (spawnConfig.issueId && plugins.tracker) {
+    if (spawnConfig.issueId && trackerPlugin) {
       try {
         // Fetch and validate the issue exists
-        resolvedIssue = await plugins.tracker.getIssue(spawnConfig.issueId, project);
+        resolvedIssue = await trackerPlugin.getIssue(spawnConfig.issueId, project);
       } catch (err) {
         // Issue fetch failed - determine why
         if (isIssueNotFoundError(err)) {
@@ -934,6 +970,54 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           throw new Error(`Failed to fetch issue ${spawnConfig.issueId}: ${err}`, { cause: err });
         }
       }
+    }
+
+    // Classify task complexity for smart agent routing.
+    // Priority order: explicit agent (CLI/config) > per-session llmOverride > global routing mode.
+    //   always-claude  → skip classification; complexity stays undefined (routes to Claude)
+    //   smart          → call classifier to decide per-task
+    //   always-local   → skip classification; force "simple" so resolveAgentSelection
+    //                    picks local-llm unconditionally
+    const hasExplicitAgent =
+      !!spawnConfig.agent || !!project.worker?.agent || !!project.agent;
+    // Per-session llmOverride maps directly to an agent name, bypassing routing mode.
+    // When hasExplicitAgent is true, use spawnConfig.agent as the override (may be
+    // undefined if the explicit agent comes from project config rather than spawn args —
+    // resolveAgentSelection will pick it up from the project anyway).
+    const effectiveAgent = hasExplicitAgent
+      ? spawnConfig.agent
+      : spawnConfig.llmOverride ?? undefined;
+    const classificationInput = resolvedIssue
+      ? `${resolvedIssue.title}\n${resolvedIssue.description}`
+      : (spawnConfig.prompt ?? spawnConfig.issueId ?? "");
+    const routingMode = config.routing?.mode ?? "always-claude";
+    let complexity: "simple" | "complex" | undefined;
+    if (hasExplicitAgent || effectiveAgent || routingMode === "always-claude") {
+      // Skip classifier when any explicit agent is configured (spawn arg, project.worker.agent,
+      // or project.agent) — the result would be ignored by resolveAgentSelection anyway, so
+      // avoid the unnecessary Haiku API call.
+      complexity = undefined;
+    } else if (routingMode === "always-local") {
+      complexity = "simple";
+    } else {
+      // smart mode — classify and route based on result
+      complexity = await classifyTaskComplexity(classificationInput);
+    }
+
+    const selection = resolveAgentSelection({
+      role: "worker",
+      project,
+      defaults: config.defaults,
+      spawnAgentOverride: effectiveAgent,
+      complexity,
+    });
+    const plugins = resolvePlugins(project, selection.agentName);
+    if (!plugins.runtime) {
+      throw new Error(`Runtime plugin '${project.runtime ?? config.defaults.runtime}' not found`);
+    }
+
+    if (!plugins.agent) {
+      throw new Error(`Agent plugin '${selection.agentName}' not found`);
     }
 
     // Get the sessions directory for this project
@@ -1019,12 +1103,36 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     }
 
+    // Check for a HANDOFF.md from a previous session for the same issue.
+    // This is written by the outgoing agent when the user switches LLMs, providing
+    // continuity of context for the incoming agent.
+    let handoffContext: string | undefined;
+    if (spawnConfig.issueId) {
+      const allSessions = await list(spawnConfig.projectId);
+      for (const s of allSessions) {
+        if (s.issueId !== spawnConfig.issueId) continue;
+        const handoffPath = s.metadata["worktree"]
+          ? join(s.metadata["worktree"], "HANDOFF.md")
+          : null;
+        if (handoffPath && existsSync(handoffPath)) {
+          try {
+            handoffContext = readFileSync(handoffPath, "utf8");
+          } catch {
+            // best effort
+          }
+          break;
+        }
+      }
+    }
+
     const composedPrompt = buildPrompt({
       project,
       projectId: spawnConfig.projectId,
       issueId: spawnConfig.issueId,
       issueContext,
-      userPrompt: spawnConfig.prompt,
+      userPrompt: handoffContext
+        ? `${spawnConfig.prompt ?? ""}\n\n---\n**Handoff context from previous agent:**\n\n${handoffContext}`
+        : spawnConfig.prompt,
       lineage: spawnConfig.lineage,
       siblings: spawnConfig.siblings,
     });
@@ -1039,12 +1147,22 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
             strategy: opencodeIssueSessionStrategy,
           })
         : undefined;
+    // When routing to local-llm, forward the saved baseURL/model from routing config
+    // into agentConfig so the plugin's getEnvironment() can pick them up per-session.
+    const localLlmOverrides =
+      selection.agentName === "local-llm" && config.routing?.localLlm
+        ? {
+            baseURL: config.routing.localLlm.baseUrl,
+            ...(config.routing.localLlm.model ? { model: config.routing.localLlm.model } : {}),
+          }
+        : {};
     const agentLaunchConfig = {
       sessionId,
       projectConfig: {
         ...project,
         agentConfig: {
           ...selection.agentConfig,
+          ...localLlmOverrides,
           ...(reusedOpenCodeSessionId ? { opencodeSessionId: reusedOpenCodeSessionId } : {}),
         },
       },
@@ -2071,6 +2189,19 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     }
   }
 
+  async function setMetadata(
+    sessionId: SessionId,
+    updates: Record<string, string | undefined>,
+  ): Promise<void> {
+    const { sessionsDir } = requireSessionRecord(sessionId);
+    // Filter out undefined values — they represent key deletions (write empty string)
+    const patch: Record<string, string> = {};
+    for (const [k, v] of Object.entries(updates)) {
+      patch[k] = v ?? "";
+    }
+    updateMetadata(sessionsDir, sessionId, patch);
+  }
+
   async function claimPR(
     sessionId: SessionId,
     prRef: string,
@@ -2281,6 +2412,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         createdAt: raw["createdAt"],
         runtimeHandle: raw["runtimeHandle"],
         opencodeSessionId: raw["opencodeSessionId"],
+        llmOverride: raw["llm_override"],
       });
     }
 
@@ -2427,5 +2559,5 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return restoredSession;
   }
 
-  return { spawn, spawnOrchestrator, restore, list, get, kill, cleanup, send, claimPR, remap };
+  return { spawn, spawnOrchestrator, restore, list, get, kill, cleanup, send, claimPR, remap, setMetadata };
 }

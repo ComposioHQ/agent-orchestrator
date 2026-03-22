@@ -16,6 +16,7 @@ export {
   getDefaultConfig,
   findConfig,
   findConfigFile,
+  writeRoutingConfig,
 } from "./config.js";
 
 // Plugin registry
@@ -44,7 +45,7 @@ export {
 } from "./tmux.js";
 
 // Session manager — session CRUD
-export { createSessionManager } from "./session-manager.js";
+export { createSessionManager, classifyTaskComplexity } from "./session-manager.js";
 export type { SessionManagerDeps } from "./session-manager.js";
 
 // Lifecycle manager — state machine + reaction engine
