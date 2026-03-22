@@ -26,6 +26,7 @@ import {
   SessionNotRestorableError,
   WorkspaceMissingError,
   isIssueNotFoundError,
+  SESSION_STATUS,
   type OrchestratorConfig,
   type PluginRegistry,
   type Runtime,
@@ -304,6 +305,22 @@ describe("spawn", () => {
     expect(mockAgent.getLaunchCommand).toHaveBeenCalled();
     // Verify runtime was created
     expect(mockRuntime.create).toHaveBeenCalled();
+  });
+
+  it("blocks spawn when maxActiveWorkers limit is reached", async () => {
+    config.projects["my-app"].maxActiveWorkers = 1;
+    writeMetadata(sessionsDir, "app-9", {
+      worktree: join(tmpDir, "my-app", "app-9"),
+      branch: "feat/INT-9",
+      status: SESSION_STATUS.WORKING,
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-existing")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    await expect(sm.spawn({ projectId: "my-app" })).rejects.toThrow(/maxActiveWorkers=1/);
+    expect(mockRuntime.create).not.toHaveBeenCalled();
   });
 
   it("blocks spawn while the project is globally paused", async () => {
