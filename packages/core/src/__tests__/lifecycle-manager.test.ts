@@ -1149,6 +1149,84 @@ describe("reactions", () => {
     expect(mockNotifier.notify).not.toHaveBeenCalled();
   });
 
+  it("retries a failed ci_failed send-to-agent reaction on subsequent polls", async () => {
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("failing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn(),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    const pr = makePR();
+    const session = makeSession({ status: "pr_open", pr });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+    vi.mocked(mockSessionManager.send)
+      .mockRejectedValueOnce(new Error("delivery failed"))
+      .mockResolvedValueOnce(undefined);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+      pr: pr.url,
+    });
+
+    const configWithReaction = {
+      ...config,
+      reactions: {
+        "ci-failed": {
+          auto: true,
+          action: "send-to-agent" as const,
+          message: "Fix CI",
+          retries: 3,
+          escalateAfter: 3,
+        },
+      },
+    };
+
+    const lm = createLifecycleManager({
+      config: configWithReaction,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+    expect(lm.getStates().get("app-1")).toBe("ci_failed");
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+
+    session.status = "ci_failed";
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "ci_failed",
+      project: "my-app",
+      pr: pr.url,
+    });
+
+    await lm.check("app-1");
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(2);
+    expect(mockSessionManager.send).toHaveBeenLastCalledWith("app-1", "Fix CI");
+  });
+
   it("dispatches unresolved review comments even when reviewDecision stays unchanged", async () => {
     config.reactions = {
       "changes-requested": {
