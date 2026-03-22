@@ -143,8 +143,10 @@ export class GhCache {
     const prNum = String(pr.number);
     const prNumPatterns = [
       `:${prNum}:`, // Matches `gh:pr:view:123:--repo:owner/repo:...`
-      `number=${prNum}`, // Matches GraphQL queries `...-F number=123`
-      `pulls/${prNum}/`, // Matches REST API `repos/.../pulls/123/comments`
+      `:-F:number=${prNum}:`, // Matches GraphQL `...-F number=123` (capital F)
+      `:-f:number=${prNum}:`, // Matches GraphQL `...-f number=123` (lowercase f)
+      `number=${prNum}&`, // Matches URL params `...&number=123&`
+      `/pulls/${prNum}/`, // Matches REST API `repos/.../pulls/123/comments`
     ];
 
     Array.from(this.cache.keys()).forEach((key) => {
