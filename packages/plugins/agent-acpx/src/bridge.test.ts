@@ -28,8 +28,11 @@ describe("bridge helpers", () => {
     expect(composePrompt("Fix the bug\n", "You are ACPX")).toBe("You are ACPX\n\nFix the bug");
   });
 
-  it("builds pi args as positional prompt invocation", () => {
+  it("builds supported acpx args as positional prompt invocation", () => {
     expect(buildAcpxArgs({ acpxAgent: "pi", prompt: "hello" })).toEqual(["pi", "hello"]);
+    expect(buildAcpxArgs({ acpxAgent: "codex", prompt: "hello" })).toEqual(["codex", "hello"]);
+    expect(buildAcpxArgs({ acpxAgent: "claude", prompt: "hello" })).toEqual(["claude", "hello"]);
+    expect(buildAcpxArgs({ acpxAgent: "gemini", prompt: "hello" })).toEqual(["gemini", "hello"]);
   });
 
   it("loads the system prompt from a file when provided", async () => {
