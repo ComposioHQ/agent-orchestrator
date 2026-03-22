@@ -2532,21 +2532,20 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     const workspacePath = raw["worktree"] ?? null;
 
-    // Step 1: Tell current agent to commit its work
-    try {
-      await send(
-        sessionId,
-        "Please commit all your current work with a descriptive commit message. " +
-          "Then write a file called HANDOFF.md in the repo root summarizing: " +
-          "1) What task you were working on, 2) What you have completed so far, " +
-          "3) What remains to be done, 4) Any important context or decisions made. " +
-          "Keep it concise but complete enough for another agent to continue.",
-      );
-      // Give the agent time to commit and write HANDOFF.md
-      await new Promise((resolve) => setTimeout(resolve, 15_000));
-    } catch {
-      // Non-fatal — agent might already be stopped; proceed with handoff anyway
-    }
+    // Step 1: Tell current agent to commit its work (fire-and-forget).
+    // We don't wait — HANDOFF.md fallback in step 2 covers the case where the
+    // agent hasn't finished. Blocking the entire request for an arbitrary
+    // duration would cause client timeouts and poor UX.
+    send(
+      sessionId,
+      "Please commit all your current work with a descriptive commit message. " +
+        "Then write a file called HANDOFF.md in the repo root summarizing: " +
+        "1) What task you were working on, 2) What you have completed so far, " +
+        "3) What remains to be done, 4) Any important context or decisions made. " +
+        "Keep it concise but complete enough for another agent to continue.",
+    ).catch(() => {
+      // Non-fatal — agent might already be stopped
+    });
 
     // Step 2: Write HANDOFF.md ourselves as a fallback if agent didn't
     if (workspacePath) {
@@ -2576,25 +2575,25 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     }
 
-    // Step 3: Kill the old session (keep workspace — new session reuses it)
-    try {
-      const killHandle = raw["runtimeHandle"]
-        ? safeJsonParse<RuntimeHandle>(raw["runtimeHandle"])
-        : null;
-      if (killHandle) {
-        const runtimeName =
-          killHandle.runtimeName ?? project.runtime ?? config.defaults.runtime;
-        const runtimePlugin = registry.get<Runtime>("runtime", runtimeName);
-        if (runtimePlugin) {
-          await runtimePlugin.destroy(killHandle).catch(() => {});
-        }
+    // Step 3: Kill the old session (keep workspace — new session reuses it).
+    // Runtime destroy is best-effort; metadata update is critical to prevent
+    // zombie sessions (two "active" sessions on the same branch).
+    const killHandle = raw["runtimeHandle"]
+      ? safeJsonParse<RuntimeHandle>(raw["runtimeHandle"])
+      : null;
+    if (killHandle) {
+      const runtimeName =
+        killHandle.runtimeName ?? project.runtime ?? config.defaults.runtime;
+      const runtimePlugin = registry.get<Runtime>("runtime", runtimeName);
+      if (runtimePlugin) {
+        await runtimePlugin.destroy(killHandle).catch(() => {
+          // Best-effort — runtime might already be gone
+        });
       }
-      // Mark session as terminated (don't destroy workspace)
-      const { sessionsDir } = requireSessionRecord(sessionId);
-      updateMetadata(sessionsDir, sessionId, { status: "terminated" });
-    } catch {
-      // Non-fatal — proceed to spawn
     }
+    // Mark session as terminated — must succeed to avoid duplicate active sessions.
+    const { sessionsDir } = requireSessionRecord(sessionId);
+    updateMetadata(sessionsDir, sessionId, { status: "terminated" });
 
     // Step 4: Spawn new session on same branch/issue with the target agent
     const newSession = await spawn({

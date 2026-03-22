@@ -3,6 +3,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RoutingConfig, RoutingMode } from "@composio/ao-core";
 
+/**
+ * Validate that a URL is safe to fetch from the browser.
+ * Only http:// and https:// are allowed to prevent probing
+ * non-HTTP schemes. Returns false for file://, ftp://, etc.
+ */
+function isSafeUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 type ConnectionStatus = "idle" | "testing" | "ok" | "error";
 
 const MODE_OPTIONS: { value: RoutingMode; label: string; description: string }[] = [
@@ -93,6 +107,11 @@ export function RoutingPanel({ onClose, triggerRef }: RoutingPanelProps) {
   const handleTestConnection = useCallback(async () => {
     setConnectionStatus("testing");
     setConnectionError("");
+    if (!isSafeUrl(baseUrl)) {
+      setConnectionStatus("error");
+      setConnectionError("URL must start with http:// or https://");
+      return;
+    }
     try {
       const res = await fetch(`${baseUrl.replace(/\/$/, "")}/models`);
       if (!res.ok) {
@@ -134,6 +153,7 @@ export function RoutingPanel({ onClose, triggerRef }: RoutingPanelProps) {
 
     const timer = setTimeout(() => {
       void (async () => {
+        if (!isSafeUrl(baseUrl)) return;
         try {
           const res = await fetch(
             `${baseUrl.replace(/\/$/, "")}/models`,
