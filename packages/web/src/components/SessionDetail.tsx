@@ -8,6 +8,7 @@ import { cn } from "@/lib/cn";
 import { CICheckList } from "./CIBadge";
 import { DirectTerminal } from "./DirectTerminal";
 import { ActivityDot } from "./ActivityDot";
+import { SessionLlmBadge } from "./SessionLlmBadge";
 
 interface OrchestratorZones {
   merge: number;
@@ -221,6 +222,7 @@ export function SessionDetail({
       {/* Nav bar — glass effect */}
       <nav className="nav-glass sticky top-0 z-10 border-b border-[var(--color-border-subtle)]">
         <div className="mx-auto flex max-w-[900px] items-center gap-2 px-8 py-2.5">
+          <div className="flex flex-1 items-center gap-2">
           <a
             href="/"
             className="flex items-center gap-1 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-text-primary)] hover:no-underline"
@@ -252,6 +254,7 @@ export function SessionDetail({
               orchestrator
             </span>
           )}
+          </div>
         </div>
       </nav>
 
@@ -373,6 +376,12 @@ export function SessionDetail({
                 lastActivityAt={session.lastActivityAt}
               />
             </div>
+            {!isOrchestrator && (
+              <SessionLlmBadge
+                sessionId={session.id}
+                agentName={session.metadata["agent"] as string | undefined}
+              />
+            )}
           </div>
         </div>
 

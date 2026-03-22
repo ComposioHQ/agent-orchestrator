@@ -93,6 +93,7 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
       ? Number(raw["directTerminalWsPort"])
       : undefined,
     opencodeSessionId: raw["opencodeSessionId"],
+    llmOverride: raw["llm_override"],
   };
 }
 
@@ -142,6 +143,7 @@ export function writeMetadata(
   if (metadata.directTerminalWsPort !== undefined)
     data["directTerminalWsPort"] = String(metadata.directTerminalWsPort);
   if (metadata.opencodeSessionId) data["opencodeSessionId"] = metadata.opencodeSessionId;
+  if (metadata.llmOverride) data["llm_override"] = metadata.llmOverride;
 
   atomicWriteFileSync(path, serializeMetadata(data));
 }

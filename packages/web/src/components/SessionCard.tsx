@@ -15,6 +15,7 @@ import { getSessionTitle } from "@/lib/format";
 import { PRStatus } from "./PRStatus";
 import { CICheckList } from "./CIBadge";
 import { ActivityDot } from "./ActivityDot";
+import { SessionLlmBadge } from "./SessionLlmBadge";
 
 interface SessionCardProps {
   session: DashboardSession;
@@ -87,12 +88,16 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
         setExpanded(!expanded);
       }}
     >
-      {/* Header row: dot + session ID + terminal link */}
+      {/* Header row: dot + session ID + llm badge + terminal link */}
       <div className="flex items-center gap-2 px-4 pt-4 pb-2">
         <ActivityDot activity={session.activity} />
         <span className="font-[var(--font-mono)] text-[11px] tracking-wide text-[var(--color-text-muted)]">
           {session.id}
         </span>
+        <SessionLlmBadge
+          sessionId={session.id}
+          agentName={session.metadata?.agent}
+        />
         <div className="flex-1" />
         {isRestorable && (
           <button
