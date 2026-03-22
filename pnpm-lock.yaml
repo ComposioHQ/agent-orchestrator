@@ -243,16 +243,10 @@ importers:
       '@composio/ao-core':
         specifier: workspace:*
         version: link:../../core
-      shell-quote:
-        specifier: ^1.8.2
-        version: 1.8.3
     devDependencies:
       '@types/node':
         specifier: ^25.2.3
         version: 25.2.3
-      '@types/shell-quote':
-        specifier: ^1.7.5
-        version: 1.7.5
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
@@ -1894,9 +1888,6 @@ packages:
 
   '@types/react@19.2.14':
     resolution: {integrity: sha512-ilcTH/UniCkMdtexkoCN0bI7pMcJDvmQFPvuPvmEaYA/NSfFTAgdUSLAoVjaRJm7+6PvcM+q1zYOwS4wTYMF9w==}
-
-  '@types/shell-quote@1.7.5':
-    resolution: {integrity: sha512-+UE8GAGRPbJVQDdxi16dgadcBfQ+KG2vgZhV1+3A1XmHbmwcdwhCUwIdy+d3pAGrbvgRoVSjeI9vOWyq376Yzw==}
 
   '@types/uuid@10.0.0':
     resolution: {integrity: sha512-7gqG38EyHgyP1S+7+xomFtL+ZNHcKv6DwNaCZmJmo1vgMugyF3TCnXVg4t1uk89mLNwnLtnY3TpOpCOyp1/xHQ==}
@@ -5221,8 +5212,6 @@ snapshots:
   '@types/react@19.2.14':
     dependencies:
       csstype: 3.2.3
-
-  '@types/shell-quote@1.7.5': {}
 
   '@types/uuid@10.0.0': {}
 
