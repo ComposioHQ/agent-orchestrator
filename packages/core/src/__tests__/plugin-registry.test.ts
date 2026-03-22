@@ -146,11 +146,13 @@ describe("loadBuiltins", () => {
 
     const fakeClaudeCode = makePlugin("agent", "claude-code");
     const fakeCodex = makePlugin("agent", "codex");
+    const fakeAcpx = makePlugin("agent", "acpx");
     const fakeOpenCode = makePlugin("agent", "opencode");
 
     await registry.loadBuiltins(undefined, async (pkg: string) => {
       if (pkg === "@composio/ao-plugin-agent-claude-code") return fakeClaudeCode;
       if (pkg === "@composio/ao-plugin-agent-codex") return fakeCodex;
+      if (pkg === "@composio/ao-plugin-agent-acpx") return fakeAcpx;
       if (pkg === "@composio/ao-plugin-agent-opencode") return fakeOpenCode;
       throw new Error(`Not found: ${pkg}`);
     });
@@ -158,10 +160,12 @@ describe("loadBuiltins", () => {
     const agents = registry.list("agent");
     expect(agents).toContainEqual(expect.objectContaining({ name: "claude-code", slot: "agent" }));
     expect(agents).toContainEqual(expect.objectContaining({ name: "codex", slot: "agent" }));
+    expect(agents).toContainEqual(expect.objectContaining({ name: "acpx", slot: "agent" }));
     expect(agents).toContainEqual(expect.objectContaining({ name: "opencode", slot: "agent" }));
 
     expect(registry.get("agent", "codex")).not.toBeNull();
     expect(registry.get("agent", "claude-code")).not.toBeNull();
+    expect(registry.get("agent", "acpx")).not.toBeNull();
     expect(registry.get("agent", "opencode")).not.toBeNull();
   });
 

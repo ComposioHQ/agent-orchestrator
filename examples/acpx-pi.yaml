@@ -1,0 +1,17 @@
+# ACPX worker setup using the built-in acpx agent plugin.
+
+defaults:
+  runtime: tmux
+  agent: acpx
+  workspace: worktree
+  notifiers: [desktop]
+
+projects:
+  my-app:
+    repo: owner/my-app
+    path: ~/code/my-app
+    defaultBranch: main
+    sessionPrefix: app
+    agentConfig:
+      acpxAgent: pi
+

@@ -100,6 +100,7 @@ const AgentSpecificConfigSchema = z
     permissions: AgentPermissionSchema,
     model: z.string().optional(),
     orchestratorModel: z.string().optional(),
+    acpxAgent: z.enum(["pi"]).optional(),
     opencodeSessionId: z.string().optional(),
   })
   .passthrough();
@@ -111,6 +112,7 @@ const RoleAgentSpecificConfigSchema = z
       .optional(),
     model: z.string().optional(),
     orchestratorModel: z.string().optional(),
+    acpxAgent: z.enum(["pi"]).optional(),
     opencodeSessionId: z.string().optional(),
   })
   .passthrough();
