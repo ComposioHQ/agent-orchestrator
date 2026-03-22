@@ -1,11 +1,16 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
+import { Dashboard } from "@/components/Dashboard";
 import { CIBadge, CICheckList } from "@/components/CIBadge";
 import { PRStatus } from "@/components/PRStatus";
 import { SessionCard } from "@/components/SessionCard";
 import { AttentionZone } from "@/components/AttentionZone";
 import { ActivityDot } from "@/components/ActivityDot";
 import { makeSession, makePR } from "./helpers";
+
+vi.mock("@/hooks/useSessionEvents", () => ({
+  useSessionEvents: (initialSessions: unknown[]) => initialSessions,
+}));
 
 // ── ActivityDot ───────────────────────────────────────────────────────
 
@@ -492,5 +497,32 @@ describe("AttentionZone", () => {
     render(<AttentionZone level="respond" sessions={sessions} onRestore={onRestore} />);
     fireEvent.click(screen.getByText("restore"));
     expect(onRestore).toHaveBeenCalledWith("s1");
+  });
+});
+
+// ── Dashboard ───────────────────────────────────────────────────────
+
+describe("Dashboard", () => {
+  it("dedupes open PR rows by PR number", () => {
+    const sharedPr = makePR({ number: 42, title: "feat: shared PR" });
+    const sessions = [
+      makeSession({ id: "s1", pr: sharedPr }),
+      makeSession({ id: "s2", pr: sharedPr }),
+      makeSession({ id: "s3", pr: makePR({ number: 77, title: "feat: unique PR" }) }),
+    ];
+
+    render(
+      <Dashboard
+        initialSessions={sessions}
+        stats={{ totalSessions: 3, workingSessions: 3, openPRs: 2, needsReview: 0 }}
+      />,
+    );
+
+    const prTable = screen.getByRole("table");
+    const rows = within(prTable).getAllByRole("row");
+
+    expect(rows).toHaveLength(3);
+    expect(within(prTable).getAllByText("#42")).toHaveLength(1);
+    within(prTable).getByText("#77");
   });
 });

@@ -43,10 +43,14 @@ export function Dashboard({ initialSessions, stats, orchestratorId, projectName 
   }, [sessions]);
 
   const openPRs = useMemo(() => {
-    return sessions
-      .filter((s): s is DashboardSession & { pr: DashboardPR } => s.pr?.state === "open")
-      .map((s) => s.pr)
-      .sort((a, b) => mergeScore(a) - mergeScore(b));
+    const unique = new Map<number, DashboardPR>();
+    for (const session of sessions) {
+      if (session.pr?.state !== "open") continue;
+      if (!unique.has(session.pr.number)) {
+        unique.set(session.pr.number, session.pr);
+      }
+    }
+    return Array.from(unique.values()).sort((a, b) => mergeScore(a) - mergeScore(b));
   }, [sessions]);
 
   const handleSend = async (sessionId: string, message: string) => {

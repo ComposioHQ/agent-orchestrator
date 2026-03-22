@@ -378,10 +378,17 @@ export async function enrichSessionsMetadata(
 
 /** Compute dashboard stats from a list of sessions. */
 export function computeStats(sessions: DashboardSession[]): DashboardStats {
+  const uniqueOpenPRs = new Set<number>();
+  for (const session of sessions) {
+    if (session.pr?.state === "open") {
+      uniqueOpenPRs.add(session.pr.number);
+    }
+  }
+
   return {
     totalSessions: sessions.length,
     workingSessions: sessions.filter((s) => s.activity !== null && s.activity !== "exited").length,
-    openPRs: sessions.filter((s) => s.pr?.state === "open").length,
+    openPRs: uniqueOpenPRs.size,
     needsReview: sessions.filter((s) => s.pr && !s.pr.isDraft && s.pr.reviewDecision === "pending")
       .length,
   };

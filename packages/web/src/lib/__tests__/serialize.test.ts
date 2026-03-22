@@ -1007,6 +1007,42 @@ describe("computeStats", () => {
     expect(stats.totalSessions).toBe(5);
     expect(stats.workingSessions).toBe(3); // active + idle + ready
   });
+
+  it("counts unique open PRs instead of per-session duplicates", () => {
+    const sharedPr = {
+      number: 42,
+      url: "https://github.com/test/repo/pull/42",
+      title: "Shared PR",
+      owner: "test",
+      repo: "repo",
+      branch: "feat/shared",
+      baseBranch: "main",
+      isDraft: false,
+      state: "open" as const,
+      additions: 0,
+      deletions: 0,
+      ciStatus: "none" as const,
+      ciChecks: [],
+      reviewDecision: "none" as const,
+      mergeability: {
+        mergeable: false,
+        ciPassing: false,
+        approved: false,
+        noConflicts: true,
+        blockers: ["Data not loaded"],
+      },
+      unresolvedThreads: 0,
+      unresolvedComments: [],
+    };
+
+    const sessions = [
+      makeDashboard({ id: "s1", pr: sharedPr }),
+      makeDashboard({ id: "s2", pr: sharedPr }),
+      makeDashboard({ id: "s3", pr: { ...sharedPr, number: 77, url: "https://github.com/test/repo/pull/77" } }),
+    ];
+
+    expect(computeStats(sessions).openPRs).toBe(2);
+  });
 });
 
 describe("basicPRToDashboard defaults", () => {
