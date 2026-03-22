@@ -76,6 +76,18 @@ Use this if:
 - You need agent-specific configuration
 - You're evaluating different AI coding assistants
 
+### [acpx-pi.yaml](./acpx-pi.yaml)
+
+**Using ACPX with the `pi` agent**
+
+Shows how to route AO prompts through the built-in ACPX bridge while keeping AO in control of the session lifecycle.
+
+Use this if:
+
+- You want AO sessions to dispatch work through the `acpx` CLI
+- You are starting with ACPX's `pi` agent
+- You need a minimal example for `agentConfig.acpxAgent`
+
 ## Configuration Tips
 
 1. **Start simple** - Use `simple-github.yaml` as a starting point

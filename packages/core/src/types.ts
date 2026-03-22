@@ -1053,7 +1053,14 @@ export interface AgentSpecificConfig {
   permissions?: AgentPermissionMode;
   model?: string;
   orchestratorModel?: string;
+  acpxAgent?: AcpxAgentName;
   [key: string]: unknown;
+}
+
+export type AcpxAgentName = "pi";
+
+export interface AcpxAgentConfig extends AgentSpecificConfig {
+  acpxAgent?: AcpxAgentName;
 }
 
 export interface OpenCodeAgentConfig extends AgentSpecificConfig {

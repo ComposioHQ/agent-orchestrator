@@ -234,6 +234,48 @@ describe("Config Validation - Session Prefix Uniqueness", () => {
   });
 });
 
+describe("Config Validation - Agent Specific Config", () => {
+  it("accepts acpxAgent in project agentConfig", () => {
+    const config = validateConfig({
+      defaults: {
+        runtime: "tmux",
+        agent: "acpx",
+        workspace: "worktree",
+        notifiers: [],
+      },
+      projects: {
+        proj1: {
+          path: "/repos/acpx-project",
+          repo: "org/acpx-project",
+          defaultBranch: "main",
+          agentConfig: {
+            acpxAgent: "pi",
+          },
+        },
+      },
+    });
+
+    expect(config.projects.proj1.agentConfig?.acpxAgent).toBe("pi");
+  });
+
+  it("rejects unsupported acpxAgent values", () => {
+    expect(() =>
+      validateConfig({
+        projects: {
+          proj1: {
+            path: "/repos/acpx-project",
+            repo: "org/acpx-project",
+            defaultBranch: "main",
+            agentConfig: {
+              acpxAgent: "oracle",
+            },
+          },
+        },
+      }),
+    ).toThrow();
+  });
+});
+
 describe("Config Validation - Session Prefix Regex", () => {
   it("accepts valid session prefixes", () => {
     const validPrefixes = ["int", "app", "my-app", "app_v2", "app123"];
