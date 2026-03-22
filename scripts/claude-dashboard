@@ -166,63 +166,108 @@ for url in $pr_urls; do
 
     # Launch each PR fetch in background
     (
-        info=$(gh pr view "$num" --repo "$repo" --json title,state,mergeable,reviewDecision,additions,deletions,createdAt 2>/dev/null)
+        info=$(gh pr view "$num" --repo "$repo" --json title,state,mergeable,reviewDecision,additions,deletions,createdAt,url 2>/dev/null)
         [ -z "$info" ] && exit 0
 
-        gql=$(gh api graphql -f query="query {
+        checks=$(gh pr checks "$num" --repo "$repo" --json name,state,link 2>/dev/null || printf '[]')
+        threads=$(gh api graphql -f query="query {
           repository(owner: \"$owner\", name: \"$reponame\") {
             pullRequest(number: $num) {
               reviewThreads(first: 100) {
                 nodes { isResolved comments(first: 1) { nodes { url path } } }
               }
-              commits(last: 1) {
-                nodes {
-                  commit {
-                    statusCheckRollup {
-                      contexts(first: 50) {
-                        nodes {
-                          ... on CheckRun { crName: name conclusion status: status detailsUrl }
-                          ... on StatusContext { scName: context cstate: state targetUrl }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
             }
           }
-        }" 2>/dev/null)
+        }" 2>/dev/null || printf '')
 
-        printf '%s\n%s' "$info" "$gql" | python3 -c "
-import sys, json
-lines = sys.stdin.read().strip().split('\n')
-d = json.loads(lines[0])
-try:
-    gql = json.loads(lines[1])
-    pr = gql['data']['repository']['pullRequest']
-    threads = pr['reviewThreads']['nodes']
-    unresolved = [{'url': t.get('comments',{}).get('nodes',[{}])[0].get('url',''), 'path': t.get('comments',{}).get('nodes',[{}])[0].get('path','')} for t in threads if not t['isResolved']]
-    d['unresolvedThreads'] = len(unresolved)
-    d['unresolvedList'] = unresolved
-    nodes = pr['commits']['nodes'][0]['commit']['statusCheckRollup']['contexts']['nodes']
-    counts, checks = {}, []
-    for n in nodes:
-        name = n.get('crName') or n.get('scName') or 'unknown'
-        s = (n.get('conclusion') or n.get('status') or n.get('cstate') or 'UNKNOWN').upper()
-        url = n.get('detailsUrl') or n.get('targetUrl') or ''
-        counts[s] = counts.get(s, 0) + 1
-        checks.append({'name': name, 'status': s, 'url': url})
-    parts = []
-    for k in ['SUCCESS', 'FAILURE', 'PENDING', 'NEUTRAL', 'SKIPPED', 'IN_PROGRESS']:
-        if k in counts: parts.append(f'{counts[k]} {k.lower()}')
-    for k in counts:
-        if k not in ['SUCCESS', 'FAILURE', 'PENDING', 'NEUTRAL', 'SKIPPED', 'IN_PROGRESS']:
-            parts.append(f'{counts[k]} {k.lower()}')
-    d['ciSummary'] = ','.join(parts) if parts else 'none'
-    d['ciChecks'] = checks
-except: d.update({'unresolvedThreads': 0, 'unresolvedList': [], 'ciSummary': 'none', 'ciChecks': []})
-print(json.dumps(d))
-" > "$pr_tmp/$num.json" 2>/dev/null
+        info_file="$pr_tmp/$num.info"
+        checks_file="$pr_tmp/$num.checks"
+        threads_file="$pr_tmp/$num.threads"
+        printf '%s' "$info" > "$info_file"
+        printf '%s' "$checks" > "$checks_file"
+        printf '%s' "$threads" > "$threads_file"
+
+        python3 - "$info_file" "$checks_file" "$threads_file" <<'PY' > "$pr_tmp/$num.json" 2>/dev/null
+import json
+import sys
+
+info_path, checks_path, threads_path = sys.argv[1:4]
+
+with open(info_path, "r", encoding="utf-8") as fh:
+    data = json.load(fh)
+
+def load_json(path, default):
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            raw = fh.read().strip()
+        return json.loads(raw) if raw else default
+    except Exception:
+        return default
+
+def normalize_check_status(state):
+    value = (state or "UNKNOWN").upper()
+    if value in {"PENDING", "QUEUED"}:
+        return "PENDING"
+    if value == "IN_PROGRESS":
+        return "IN_PROGRESS"
+    if value == "SUCCESS":
+        return "SUCCESS"
+    if value in {"FAILURE", "FAILING", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE", "STALE"}:
+        return "FAILURE"
+    if value == "NEUTRAL":
+        return "NEUTRAL"
+    if value == "SKIPPED":
+        return "SKIPPED"
+    return value
+
+checks_payload = load_json(checks_path, [])
+threads_payload = load_json(threads_path, {})
+
+counts = {}
+ci_checks = []
+for item in checks_payload if isinstance(checks_payload, list) else []:
+    status = normalize_check_status(item.get("state"))
+    counts[status] = counts.get(status, 0) + 1
+    ci_checks.append({
+        "name": item.get("name") or "unknown",
+        "status": status,
+        "url": item.get("link") or "",
+    })
+
+thread_nodes = (
+    threads_payload.get("data", {})
+    .get("repository", {})
+    .get("pullRequest", {})
+    .get("reviewThreads", {})
+    .get("nodes", [])
+)
+unresolved = []
+for thread in thread_nodes if isinstance(thread_nodes, list) else []:
+    if thread.get("isResolved"):
+        continue
+    first_comment = ((thread.get("comments") or {}).get("nodes") or [{}])[0]
+    unresolved.append({
+        "url": first_comment.get("url", ""),
+        "path": first_comment.get("path", ""),
+    })
+
+parts = []
+known_statuses = ["SUCCESS", "FAILURE", "PENDING", "NEUTRAL", "SKIPPED", "IN_PROGRESS"]
+for key in known_statuses:
+    if key in counts:
+        parts.append(f"{counts[key]} {key.lower()}")
+for key in counts:
+    if key not in known_statuses:
+        parts.append(f"{counts[key]} {key.lower()}")
+
+data["unresolvedThreads"] = len(unresolved)
+data["unresolvedList"] = unresolved
+data["ciSummary"] = ",".join(parts) if parts else "none"
+data["ciChecks"] = ci_checks
+print(json.dumps(data))
+PY
+
+        rm -f "$info_file" "$checks_file" "$threads_file"
         echo "  PR #$num: done"
     ) &
 done

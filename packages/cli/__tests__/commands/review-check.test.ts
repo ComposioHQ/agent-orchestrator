@@ -222,6 +222,29 @@ describe("review-check command", () => {
     expect(output).toContain("dry run");
   });
 
+  it("falls back to REST reviewDecision when unresolved-thread GraphQL is unavailable", async () => {
+    writeFileSync(
+      join(sessionsDir, "app-1"),
+      "branch=feat/fix\npr=https://github.com/org/my-app/pull/10\n",
+    );
+
+    mockGh.mockImplementation(async (args: string[]) => {
+      if (args[0] === "pr" && args[1] === "view") {
+        return JSON.stringify({ reviewDecision: "CHANGES_REQUESTED" });
+      }
+      if (args[0] === "api" && args[1] === "graphql") {
+        return null;
+      }
+      return null;
+    });
+
+    await program.parseAsync(["node", "test", "review-check", "--dry-run"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("app-1");
+    expect(output).toContain("CHANGES_REQUESTED");
+  });
+
   it("skips sessions without PR metadata", async () => {
     writeFileSync(join(sessionsDir, "app-1"), "branch=feat/fix\nstatus=working\n");
 

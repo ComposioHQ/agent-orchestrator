@@ -1620,9 +1620,13 @@ describe("shell wrapper content", () => {
       expect(content).not.toMatch(/grep -v "\^\$ao_bin_dir\$"/);
     });
 
-    it("only captures output for pr/create and pr/merge", async () => {
+    it("captures output for REST pull creation and pr/merge", async () => {
       const content = await getWrapperContent("gh");
-      expect(content).toContain("pr/create|pr/merge");
+      expect(content).toContain('"$1" == "api"');
+      expect(content).toContain("repos/*/pulls");
+      expect(content).toContain("pr/merge");
+      expect(content).toContain("pr_merge");
+      expect(content).toContain("rest_pull_create");
     });
 
     it("uses exec for non-PR commands (transparent passthrough)", async () => {
@@ -1644,8 +1648,18 @@ describe("shell wrapper content", () => {
 
     it("extracts PR URL from gh pr create output", async () => {
       const content = await getWrapperContent("gh");
-      expect(content).toContain("https://github");
+      expect(content).toContain("extract_pr_url");
+      expect(content).toContain("pr_create|rest_pull_create");
       expect(content).toContain("update_ao_metadata pr");
+    });
+
+    it("extracts PR URL from REST pull creation output", async () => {
+      const content = await getWrapperContent("gh");
+      expect(content).toContain("html_url");
+      expect(content).toContain("extract_pr_url");
+      expect(content).toContain("update_ao_metadata pr");
+      expect(content).toContain("status pr_open");
+      expect(content).toContain("rest_pull_create");
     });
 
     it("updates status to merged on gh pr merge", async () => {
