@@ -15,6 +15,7 @@ import {
   type ProjectConfig,
   type OrchestratorConfig,
   type PluginRegistry,
+  type CIStatus,
 } from "@composio/ao-core";
 import type {
   DashboardSession,
@@ -150,32 +151,53 @@ export async function enrichSessionPR(
   if (opts?.cacheOnly) return false;
 
   // Fetch from SCM
+  // Note: With batching and deduplication in scm-github plugin:
+  // - getPRSummary, getReviewDecision, getMergeability now share a single gh pr view call
+  // - getCIChecks is deduplicated (if called concurrently, calls share one API request)
+  // - getCISummary now accepts optional checks parameter to avoid duplicate fetch
   const results = await Promise.allSettled([
     scm.getPRSummary
       ? scm.getPRSummary(pr)
       : scm.getPRState(pr).then((state) => ({ state, title: "", additions: 0, deletions: 0 })),
     scm.getCIChecks(pr),
-    scm.getCISummary(pr),
     scm.getReviewDecision(pr),
     scm.getMergeability(pr),
     scm.getPendingComments(pr),
   ]);
 
-  const [summaryR, checksR, ciR, reviewR, mergeR, commentsR] = results;
+  const [summaryR, checksR, reviewR, mergeR, commentsR] = results;
+
+  // Get CI summary from the checks we already fetched to avoid duplicate API call
+  let ciR: PromiseSettledResult<CIStatus>;
+  if (checksR.status === "fulfilled") {
+    ciR = {
+      status: "fulfilled",
+      value: await scm.getCISummary(pr, checksR.value),
+    };
+  } else {
+    // If getCIChecks failed, call getCISummary directly (it will try again)
+    try {
+      const value = await scm.getCISummary(pr);
+      ciR = { status: "fulfilled", value };
+    } catch (err) {
+      ciR = { status: "rejected", reason: err };
+    }
+  }
 
   // Check if most critical requests failed (likely rate limit)
   // Note: Some methods (like getCISummary) return fallback values instead of rejecting,
   // so we can't rely on "all rejected" — check if majority failed instead
-  const failedCount = results.filter((r) => r.status === "rejected").length;
-  const mostFailed = failedCount >= results.length / 2;
+  const allResults = [summaryR, checksR, ciR, reviewR, mergeR, commentsR];
+  const failedCount = allResults.filter((r) => r.status === "rejected").length;
+  const mostFailed = failedCount >= allResults.length / 2;
 
   if (mostFailed) {
-    const rejectedResults = results.filter(
+    const rejectedResults = allResults.filter(
       (r) => r.status === "rejected",
     ) as PromiseRejectedResult[];
     const firstError = rejectedResults[0]?.reason;
     console.warn(
-      `[enrichSessionPR] ${failedCount}/${results.length} API calls failed for PR #${pr.number} (rate limited or unavailable):`,
+      `[enrichSessionPR] ${failedCount}/${allResults.length} API calls failed for PR #${pr.number} (rate limited or unavailable):`,
       String(firstError),
     );
     // Don't return early — apply any successful results below
