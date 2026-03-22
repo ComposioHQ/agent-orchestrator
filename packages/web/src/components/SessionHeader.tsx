@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, type ReactNode } from "react";
+import { useState, useEffect } from "react";
 import type { DashboardSession } from "@/lib/types";
 import { ActivityDisplay } from "./ActivityDisplay";
 import {
@@ -14,10 +14,9 @@ import {
 interface SessionHeaderProps {
   session: DashboardSession;
   isOrchestrator?: boolean;
-  spawnButton?: ReactNode;
 }
 
-export function SessionHeader({ session, isOrchestrator = false, spawnButton }: SessionHeaderProps) {
+export function SessionHeader({ session, isOrchestrator = false }: SessionHeaderProps) {
   const pr = session.pr;
   const activity = (session.activity && activityMeta[session.activity]) ?? {
     label: session.activity ?? "unknown",
@@ -129,9 +128,6 @@ export function SessionHeader({ session, isOrchestrator = false, spawnButton }: 
             lastActivityAt={session.lastActivityAt}
           />
         </div>
-        {spawnButton ? (
-          <div className="shrink-0">{spawnButton}</div>
-        ) : null}
       </div>
     </div>
   );
