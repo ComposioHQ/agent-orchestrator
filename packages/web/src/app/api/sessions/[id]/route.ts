@@ -142,7 +142,6 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         reason: error instanceof Error ? error.message : "Internal server error",
       });
     }
-    const message = error instanceof Error ? error.message : "Internal server error";
-    return jsonWithCorrelation({ error: message }, { status: 500 }, correlationId);
+    return jsonWithCorrelation({ error: "Internal server error" }, { status: 500 }, correlationId);
   }
 }

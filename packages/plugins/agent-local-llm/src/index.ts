@@ -1,4 +1,5 @@
 import {
+  shellEscape,
   type Agent,
   type AgentLaunchConfig,
   type AgentSessionInfo,
@@ -150,7 +151,7 @@ function createLocalLlmAgent(pluginConfig: LocalLlmPluginConfig): Agent {
 
     getLaunchCommand(_config: AgentLaunchConfig): string {
       const scriptPath = ensureRunnerScript();
-      return `node '${scriptPath}'`;
+      return `node ${shellEscape(scriptPath)}`;
     },
 
     getEnvironment(config: AgentLaunchConfig): Record<string, string> {

@@ -2530,8 +2530,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       throw new Error(`Session ${sessionId} is already using agent ${targetAgent}`);
     }
 
-    const workspacePath = raw["worktree"] ?? null;
-
     // Step 1: Tell current agent to commit its work (fire-and-forget).
     // We don't wait — HANDOFF.md fallback in step 2 covers the case where the
     // agent hasn't finished. Blocking the entire request for an arbitrary
@@ -2547,33 +2545,19 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       // Non-fatal — agent might already be stopped
     });
 
-    // Step 2: Write HANDOFF.md ourselves as a fallback if agent didn't
-    if (workspacePath) {
-      const handoffPath = join(workspacePath, "HANDOFF.md");
-      if (!existsSync(handoffPath)) {
-        const handoffContent = [
-          "# Session Handoff",
-          "",
-          `Switched from \`${currentAgent}\` to \`${targetAgent}\` via dashboard.`,
-          "",
-          "## Context",
-          `- Session ID: ${sessionId}`,
-          `- Branch: ${raw["branch"] ?? "unknown"}`,
-          raw["issue"] ? `- Issue: ${raw["issue"]}` : null,
-          "",
-          "## Instructions",
-          "Continue the work on the current branch. Check git log for recent commits.",
-        ]
-          .filter((line) => line !== null)
-          .join("\n");
-
-        try {
-          writeFileSync(handoffPath, handoffContent, "utf8");
-        } catch {
-          // Non-fatal
-        }
-      }
-    }
+    // Step 2: Build handoff context to embed in the new session's prompt.
+    // We do NOT rely on HANDOFF.md being present on disk — the new session may
+    // get a freshly-created workspace that doesn't share files with the old one.
+    // Instead, embed everything the new agent needs directly in its spawn prompt.
+    const handoffContext = [
+      `Switched from \`${currentAgent}\` to \`${targetAgent}\` via dashboard.`,
+      `- Previous session: ${sessionId}`,
+      `- Branch: ${raw["branch"] ?? "unknown"}`,
+      raw["issue"] ? `- Issue: ${raw["issue"]}` : null,
+      "Run `git log --oneline -10` to see what was committed before the switch.",
+    ]
+      .filter((line) => line !== null)
+      .join("\n");
 
     // Step 3: Kill the old session (keep workspace — new session reuses it).
     // Runtime destroy is best-effort; metadata update is critical to prevent
@@ -2595,16 +2579,19 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     const { sessionsDir } = requireSessionRecord(sessionId);
     updateMetadata(sessionsDir, sessionId, { status: "terminated" });
 
-    // Step 4: Spawn new session on same branch/issue with the target agent
+    // Step 4: Spawn new session on same branch/issue with the target agent.
+    // Handoff context is embedded in the prompt — do not rely on filesystem files
+    // since the new session may have a different workspace directory.
     const newSession = await spawn({
       projectId,
       issueId: raw["issue"] ?? undefined,
       branch: raw["branch"] ?? undefined,
       agent: targetAgent,
       prompt:
-        "Continue the work from the previous session. " +
-        "If HANDOFF.md exists in the repo root, read it first for context. " +
-        "Then check `git log --oneline -10` to see recent work.",
+        "You are continuing work from a previous session that was switched to a different LLM.\n\n" +
+        "Handoff context:\n" +
+        handoffContext +
+        "\n\nPick up where the previous session left off.",
     });
 
     return newSession;
