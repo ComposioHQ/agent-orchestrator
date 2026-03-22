@@ -2511,5 +2511,105 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return restoredSession;
   }
 
-  return { spawn, spawnOrchestrator, restore, list, get, kill, cleanup, send, claimPR, remap };
+  /**
+   * Switch a running session to a different LLM agent.
+   *
+   * Performs a real handoff:
+   * 1. Sends a commit-and-summarize message to the current session
+   * 2. Writes HANDOFF.md with context for the replacement session
+   * 3. Kills the old session
+   * 4. Spawns a new session with the target agent on the same branch/issue
+   */
+  async function switchLlm(
+    sessionId: SessionId,
+    targetAgent: "claude-code" | "local-llm",
+  ): Promise<Session> {
+    const { raw, project, projectId } = requireSessionRecord(sessionId);
+    const currentAgent = raw["agent"] ?? "claude-code";
+    if (currentAgent === targetAgent) {
+      throw new Error(`Session ${sessionId} is already using agent ${targetAgent}`);
+    }
+
+    const workspacePath = raw["worktree"] ?? null;
+
+    // Step 1: Tell current agent to commit its work
+    try {
+      await send(
+        sessionId,
+        "Please commit all your current work with a descriptive commit message. " +
+          "Then write a file called HANDOFF.md in the repo root summarizing: " +
+          "1) What task you were working on, 2) What you have completed so far, " +
+          "3) What remains to be done, 4) Any important context or decisions made. " +
+          "Keep it concise but complete enough for another agent to continue.",
+      );
+      // Give the agent time to commit and write HANDOFF.md
+      await new Promise((resolve) => setTimeout(resolve, 15_000));
+    } catch {
+      // Non-fatal — agent might already be stopped; proceed with handoff anyway
+    }
+
+    // Step 2: Write HANDOFF.md ourselves as a fallback if agent didn't
+    if (workspacePath) {
+      const handoffPath = join(workspacePath, "HANDOFF.md");
+      if (!existsSync(handoffPath)) {
+        const handoffContent = [
+          "# Session Handoff",
+          "",
+          `Switched from \`${currentAgent}\` to \`${targetAgent}\` via dashboard.`,
+          "",
+          "## Context",
+          `- Session ID: ${sessionId}`,
+          `- Branch: ${raw["branch"] ?? "unknown"}`,
+          raw["issue"] ? `- Issue: ${raw["issue"]}` : null,
+          "",
+          "## Instructions",
+          "Continue the work on the current branch. Check git log for recent commits.",
+        ]
+          .filter((line) => line !== null)
+          .join("\n");
+
+        try {
+          writeFileSync(handoffPath, handoffContent, "utf8");
+        } catch {
+          // Non-fatal
+        }
+      }
+    }
+
+    // Step 3: Kill the old session (keep workspace — new session reuses it)
+    try {
+      const killHandle = raw["runtimeHandle"]
+        ? safeJsonParse<RuntimeHandle>(raw["runtimeHandle"])
+        : null;
+      if (killHandle) {
+        const runtimeName =
+          killHandle.runtimeName ?? project.runtime ?? config.defaults.runtime;
+        const runtimePlugin = registry.get<Runtime>("runtime", runtimeName);
+        if (runtimePlugin) {
+          await runtimePlugin.destroy(killHandle).catch(() => {});
+        }
+      }
+      // Mark session as terminated (don't destroy workspace)
+      const { sessionsDir } = requireSessionRecord(sessionId);
+      updateMetadata(sessionsDir, sessionId, { status: "terminated" });
+    } catch {
+      // Non-fatal — proceed to spawn
+    }
+
+    // Step 4: Spawn new session on same branch/issue with the target agent
+    const newSession = await spawn({
+      projectId,
+      issueId: raw["issue"] ?? undefined,
+      branch: raw["branch"] ?? undefined,
+      agent: targetAgent,
+      prompt:
+        "Continue the work from the previous session. " +
+        "If HANDOFF.md exists in the repo root, read it first for context. " +
+        "Then check `git log --oneline -10` to see recent work.",
+    });
+
+    return newSession;
+  }
+
+  return { spawn, spawnOrchestrator, restore, list, get, kill, cleanup, send, claimPR, remap, switchLlm };
 }

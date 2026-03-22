@@ -179,6 +179,22 @@ export function Dashboard({
     }
   }, []);
 
+  const handleSwitchLlm = useCallback(
+    async (sessionId: string, targetAgent: "claude-code" | "local-llm") => {
+      const label = targetAgent === "local-llm" ? "Local LLM" : "Claude";
+      if (!confirm(`Switch session ${sessionId} to ${label}? This will commit current work and spawn a new session.`)) return;
+      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetAgent }),
+      });
+      if (!res.ok) {
+        console.error(`Failed to switch LLM for ${sessionId}:`, await res.text());
+      }
+    },
+    [],
+  );
+
   const handleSpawnOrchestrator = async (project: ProjectInfo) => {
     setSpawningProjectIds((current) =>
       current.includes(project.id) ? current : [...current, project.id],
@@ -390,6 +406,7 @@ export function Dashboard({
                     onKill={handleKill}
                     onMerge={handleMerge}
                     onRestore={handleRestore}
+                    onSwitchLlm={handleSwitchLlm}
                   />
                 </div>
               ) : null,

@@ -75,6 +75,8 @@ export interface DashboardSession {
   lastActivityAt: string;
   pr: DashboardPR | null;
   metadata: Record<string, string>;
+  /** Agent plugin used for this session (e.g. "claude-code", "local-llm") */
+  agent: string | null;
 }
 
 /**

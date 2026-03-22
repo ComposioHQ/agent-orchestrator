@@ -1207,10 +1207,15 @@ export interface SessionManager {
   claimPR(sessionId: SessionId, prRef: string, options?: ClaimPROptions): Promise<ClaimPRResult>;
 }
 
-/** OpenCode-specific session manager with remap capability */
+/** OpenCode-specific session manager with remap and LLM-switch capabilities */
 export interface OpenCodeSessionManager extends SessionManager {
   /** Remap session to OpenCode session ID, returns the mapped OpenCode session ID */
   remap(sessionId: SessionId, force?: boolean): Promise<string>;
+  /**
+   * Switch a running session to a different LLM agent.
+   * Commits current work, writes HANDOFF.md, kills old session, spawns new one.
+   */
+  switchLlm(sessionId: SessionId, targetAgent: "claude-code" | "local-llm"): Promise<Session>;
 }
 
 export interface ClaimPROptions {
@@ -1230,7 +1235,10 @@ export interface ClaimPRResult {
 
 /** Type guard to check if a SessionManager supports OpenCode-specific remap operation */
 export function isOpenCodeSessionManager(sm: SessionManager): sm is OpenCodeSessionManager {
-  return typeof (sm as OpenCodeSessionManager).remap === "function";
+  return (
+    typeof (sm as OpenCodeSessionManager).remap === "function" &&
+    typeof (sm as OpenCodeSessionManager).switchLlm === "function"
+  );
 }
 
 export interface CleanupResult {

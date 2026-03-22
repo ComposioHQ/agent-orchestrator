@@ -77,3 +77,72 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     return jsonWithCorrelation({ error: "Internal server error" }, { status: 500 }, correlationId);
   }
 }
+
+/**
+ * PATCH /api/sessions/[id]
+ * Switch the LLM agent for a session (triggers a real handoff).
+ * Body: { targetAgent: "claude-code" | "local-llm" }
+ */
+export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const correlationId = getCorrelationId(request);
+  const startedAt = Date.now();
+  try {
+    const { id } = await params;
+    const body = await request.json() as Record<string, unknown>;
+    const targetAgent = body["targetAgent"];
+
+    if (targetAgent !== "claude-code" && targetAgent !== "local-llm") {
+      return jsonWithCorrelation(
+        { error: "targetAgent must be \"claude-code\" or \"local-llm\"" },
+        { status: 400 },
+        correlationId,
+      );
+    }
+
+    const { config, sessionManager } = await getServices();
+
+    const existing = await sessionManager.get(id);
+    if (!existing) {
+      return jsonWithCorrelation({ error: "Session not found" }, { status: 404 }, correlationId);
+    }
+
+    const newSession = await sessionManager.switchLlm(id, targetAgent);
+    const dashboardSession = sessionToDashboard(newSession);
+
+    recordApiObservation({
+      config,
+      method: "PATCH",
+      path: "/api/sessions/[id]",
+      correlationId,
+      startedAt,
+      outcome: "success",
+      statusCode: 200,
+      projectId: existing.projectId,
+      sessionId: id,
+    });
+
+    return jsonWithCorrelation(
+      { newSessionId: newSession.id, session: dashboardSession },
+      { status: 200 },
+      correlationId,
+    );
+  } catch (error) {
+    const { id } = await params;
+    const { config } = await getServices().catch(() => ({ config: undefined }));
+    if (config) {
+      recordApiObservation({
+        config,
+        method: "PATCH",
+        path: "/api/sessions/[id]",
+        correlationId,
+        startedAt,
+        outcome: "failure",
+        statusCode: 500,
+        sessionId: id,
+        reason: error instanceof Error ? error.message : "Internal server error",
+      });
+    }
+    const message = error instanceof Error ? error.message : "Internal server error";
+    return jsonWithCorrelation({ error: message }, { status: 500 }, correlationId);
+  }
+}

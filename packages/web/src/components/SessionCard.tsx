@@ -22,6 +22,7 @@ interface SessionCardProps {
   onKill?: (sessionId: string) => void;
   onMerge?: (prNumber: number) => void;
   onRestore?: (sessionId: string) => void;
+  onSwitchLlm?: (sessionId: string, targetAgent: "claude-code" | "local-llm") => void;
 }
 
 const borderColorByLevel: Record<AttentionLevel, string> = {
@@ -33,7 +34,7 @@ const borderColorByLevel: Record<AttentionLevel, string> = {
   done: "border-l-[var(--color-border-default)]",
 };
 
-function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: SessionCardProps) {
+function SessionCardView({ session, onSend, onKill, onMerge, onRestore, onSwitchLlm }: SessionCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [sendingAction, setSendingAction] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -104,6 +105,13 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
           >
             restore
           </button>
+        )}
+        {!isTerminal && onSwitchLlm && (
+          <LlmBadge
+            sessionId={session.id}
+            currentAgent={session.agent ?? "claude-code"}
+            onSwitch={onSwitchLlm}
+          />
         )}
         {!isTerminal && (
           <a
@@ -338,7 +346,8 @@ function areSessionCardPropsEqual(prev: SessionCardProps, next: SessionCardProps
     prev.onSend === next.onSend &&
     prev.onKill === next.onKill &&
     prev.onMerge === next.onMerge &&
-    prev.onRestore === next.onRestore
+    prev.onRestore === next.onRestore &&
+    prev.onSwitchLlm === next.onSwitchLlm
   );
 }
 
@@ -443,4 +452,57 @@ function getAlerts(session: DashboardSession): Alert[] {
   }
 
   return alerts;
+}
+
+interface LlmBadgeProps {
+  sessionId: string;
+  currentAgent: string;
+  onSwitch: (sessionId: string, targetAgent: "claude-code" | "local-llm") => void;
+}
+
+function LlmBadge({ sessionId, currentAgent, onSwitch }: LlmBadgeProps) {
+  const [open, setOpen] = useState(false);
+  const isLocal = currentAgent === "local-llm";
+  const label = isLocal ? "Local LLM" : "Claude";
+
+  return (
+    <div className="relative">
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        className="rounded border border-[var(--color-border-default)] bg-[var(--color-bg-subtle)] px-2 py-0.5 text-[10px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+        title="Switch LLM agent"
+      >
+        {label}
+      </button>
+      {open && (
+        <div
+          className="absolute right-0 top-full z-10 mt-1 min-w-[120px] rounded border border-[var(--color-border-default)] bg-[var(--color-bg-overlay,#1a2030)] py-1 shadow-lg"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {(["claude-code", "local-llm"] as const).map((agent) => (
+            <button
+              key={agent}
+              onClick={() => {
+                setOpen(false);
+                if (agent !== currentAgent) {
+                  onSwitch(sessionId, agent);
+                }
+              }}
+              className={cn(
+                "block w-full px-3 py-1.5 text-left text-[11px] transition-colors hover:bg-[rgba(88,166,255,0.1)]",
+                agent === currentAgent
+                  ? "font-semibold text-[var(--color-accent)]"
+                  : "text-[var(--color-text-secondary)]",
+              )}
+            >
+              {agent === "local-llm" ? "Local LLM" : "Claude"}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
