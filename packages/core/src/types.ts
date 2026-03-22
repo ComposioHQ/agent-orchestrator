@@ -1046,7 +1046,7 @@ export interface AgentSpecificConfig {
   [key: string]: unknown;
 }
 
-export type AcpxAgentName = "pi";
+export type AcpxAgentName = "pi" | "codex" | "claude" | "gemini";
 
 export interface AcpxAgentConfig extends AgentSpecificConfig {
   acpxAgent?: AcpxAgentName;

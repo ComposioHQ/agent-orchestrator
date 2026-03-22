@@ -5,8 +5,9 @@ import type { SpawnOptions } from "node:child_process";
 
 export const DEFAULT_ACPX_AGENT = "pi";
 export const DEFAULT_PROMPT_FLUSH_DELAY_MS = 150;
+export const SUPPORTED_ACPX_AGENTS = [DEFAULT_ACPX_AGENT, "codex", "claude", "gemini"] as const;
 
-export type SupportedAcpxAgent = typeof DEFAULT_ACPX_AGENT;
+export type SupportedAcpxAgent = (typeof SUPPORTED_ACPX_AGENTS)[number];
 
 export interface BridgeSpawn {
   (
@@ -28,8 +29,12 @@ export interface AcpxBridgeOptions {
 }
 
 export function normalizeAcpxAgent(agent: string | undefined): SupportedAcpxAgent {
-  if (!agent || agent === DEFAULT_ACPX_AGENT) {
+  if (!agent) {
     return DEFAULT_ACPX_AGENT;
+  }
+
+  if ((SUPPORTED_ACPX_AGENTS as readonly string[]).includes(agent)) {
+    return agent as SupportedAcpxAgent;
   }
 
   throw new Error(`Unsupported acpx agent: ${agent}`);
