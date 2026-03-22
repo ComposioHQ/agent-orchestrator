@@ -86,6 +86,7 @@ export interface DashboardSession {
   lastActivityAt: string;
   pr: DashboardPR | null;
   metadata: Record<string, string>;
+  isOrchestrator: boolean;
 }
 
 /**

@@ -52,14 +52,10 @@ export default function SessionPage() {
   const sessionProjectId = session?.projectId ?? null;
   const sessionIsOrchestrator = session ? isOrchestratorSession(session) : false;
 
-  // Update document title based on session data
+  // Update document title when session data loads (initial title set by layout.tsx metadata)
   useEffect(() => {
-    if (session) {
-      document.title = buildSessionTitle(session);
-    } else {
-      document.title = `${id} | Session Detail`;
-    }
-  }, [session, id]);
+    if (session) document.title = buildSessionTitle(session);
+  }, [session]);
 
   // Fetch session data (memoized to avoid recreating on every render)
   const fetchSession = useCallback(async () => {
@@ -116,14 +112,29 @@ export default function SessionPage() {
     return () => clearTimeout(t);
   }, [fetchSession, fetchZoneCounts]);
 
-  // Poll every 5s
+  // Real-time updates via SSE — falls back to refetch on membership change
   useEffect(() => {
-    const interval = setInterval(() => {
-      fetchSession();
-      fetchZoneCounts();
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [fetchSession, fetchZoneCounts]);
+    const es = new EventSource("/api/events");
+    es.onmessage = (event: MessageEvent) => {
+      try {
+        const data = JSON.parse(event.data as string) as { type: string; sessions?: Array<{ id: string; status: string; activity: string | null; lastActivityAt: string }> };
+        if (data.type === "snapshot" && data.sessions) {
+          const patch = data.sessions.find((s) => s.id === id);
+          if (patch) {
+            setSession((prev) => {
+              if (!prev) return prev;
+              if (prev.status === patch.status && prev.activity === patch.activity && prev.lastActivityAt === patch.lastActivityAt) return prev;
+              return { ...prev, status: patch.status as DashboardSession["status"], activity: patch.activity as DashboardSession["activity"], lastActivityAt: patch.lastActivityAt };
+            });
+          }
+        }
+      } catch { /* ignore parse errors */ }
+    };
+    es.onerror = () => undefined;
+    // Full refetch every 15s as fallback for enriched data (PR state, etc.)
+    const fallback = setInterval(() => { fetchSession(); fetchZoneCounts(); }, 15_000);
+    return () => { es.close(); clearInterval(fallback); };
+  }, [id, fetchSession, fetchZoneCounts]);
 
   if (loading) {
     return (

@@ -37,14 +37,14 @@ interface DashboardProps {
   orchestrators?: DashboardOrchestratorLink[];
 }
 
-const KANBAN_LEVELS = ["working", "pending", "review", "respond", "merge"] as const;
+const KANBAN_LEVELS = ["working", "pending", "review", "respond", "merge", "done"] as const;
 const KANBAN_LABELS: Record<string, string> = {
-  working: "Working", pending: "Pending", review: "Review", respond: "Respond", merge: "Merge",
+  working: "Working", pending: "Pending", review: "Review", respond: "Respond", merge: "Merge", done: "Done",
 };
 const KANBAN_LABEL_COLORS: Record<string, string> = {
   working: "var(--color-status-working)", pending: "var(--color-status-attention)",
   review: "var(--color-accent-orange)", respond: "var(--color-status-error)",
-  merge: "var(--color-status-ready)",
+  merge: "var(--color-status-ready)", done: "var(--color-text-tertiary)",
 };
 const EMPTY_ORCHESTRATORS: DashboardOrchestratorLink[] = [];
 
@@ -84,7 +84,7 @@ export function Dashboard({
   }, [isMobile, setSidebarCollapsed]);
   const { sessions, globalPause } = useSessionEvents(initialSessions, initialGlobalPause, projectId);
   const [rateLimitDismissed, setRateLimitDismissed] = useState(false);
-  const [globalPauseDismissed, setGlobalPauseDismissed] = useState(false);
+  const [dismissedPauseKey, setDismissedPauseKey] = useState<string | null>(null);
   const [activeOrchestrators, setActiveOrchestrators] =
     useState<DashboardOrchestratorLink[]>(orchestratorLinks);
 
@@ -160,9 +160,10 @@ export function Dashboard({
     return new Date(globalPause.pausedUntil).toLocaleString();
   }, [globalPause]);
 
-  useEffect(() => {
-    setGlobalPauseDismissed(false);
-  }, [globalPause?.pausedUntil, globalPause?.reason, globalPause?.sourceSessionId]);
+  const currentPauseKey = globalPause
+    ? `${globalPause.pausedUntil}|${globalPause.reason}|${globalPause.sourceSessionId}`
+    : null;
+  const globalPauseDismissed = currentPauseKey !== null && currentPauseKey === dismissedPauseKey;
 
   return (
     <div className="flex h-screen">
@@ -232,7 +233,7 @@ export function Dashboard({
 
         <div className="px-4 py-5 md:px-8 md:py-7">
         {globalPause && !globalPauseDismissed && (
-          <GlobalPauseBanner globalPause={globalPause} resumeAtLabel={resumeAtLabel} onDismiss={() => setGlobalPauseDismissed(true)} />
+          <GlobalPauseBanner globalPause={globalPause} resumeAtLabel={resumeAtLabel} onDismiss={() => setDismissedPauseKey(currentPauseKey)} />
         )}
         {anyRateLimited && !rateLimitDismissed && (
           <RateLimitBanner onDismiss={() => setRateLimitDismissed(true)} />
@@ -266,11 +267,6 @@ export function Dashboard({
                 <SpawnOrchestratorButton project={selectedProject} orchestrator={null} onSpawnOrchestrator={handleSpawnOrchestrator} isSpawning={spawningProjectIds.includes(selectedProject.id)} error={spawnErrors[selectedProject.id]} variant="default" />
               ) : undefined}
             />
-          </div>
-        )}
-        {!allProjectsView && grouped.done.length > 0 && (
-          <div className="mb-8">
-            <AttentionZone level="done" sessions={grouped.done} variant="grid" onSend={handleSend} onKill={handleKill} onMerge={handleMerge} onRestore={handleRestore} />
           </div>
         )}
         <PRTable openPRs={openPRs} />

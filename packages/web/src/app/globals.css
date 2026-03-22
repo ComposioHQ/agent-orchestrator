@@ -211,3 +211,7 @@ html, body {
     0 0 60px rgba(63,185,80,0.2),
     inset 0 1px 0 rgba(255,255,255,0.1);
 }
+
+.session-card.card-expanded {
+  background: linear-gradient(175deg, var(--color-bg-elevated) 0%, var(--color-bg-surface) 100%);
+}

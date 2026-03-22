@@ -71,13 +71,9 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
           ? "card-merge-ready border-[rgba(63,185,80,0.3)]"
           : "border-[var(--color-border-default)]",
         expanded && "border-[var(--color-border-strong)]",
+        expanded && !isReadyToMerge && "card-expanded",
         pr?.state === "merged" && "opacity-55",
       )}
-      style={{
-        background: (expanded && !isReadyToMerge)
-          ? "linear-gradient(175deg, rgba(32,41,53,1) 0%, rgba(22,28,37,1) 100%)"
-          : undefined,
-      }}
       onClick={(e) => {
         if ((e.target as HTMLElement).closest("a, button, textarea")) return;
         setExpanded(!expanded);

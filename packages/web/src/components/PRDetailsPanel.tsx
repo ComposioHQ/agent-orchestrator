@@ -163,65 +163,16 @@ export function PRDetailsPanel({ pr, sessionId }: PRDetailsPanelProps) {
               </span>
             </h4>
             <div className="space-y-1">
-              {pr.unresolvedComments.map((c) => {
-                const { title, description } = cleanBugbotComment(c.body);
-                return (
-                  <details key={c.url} className="group">
-                    <summary className="flex cursor-pointer list-none items-center gap-2 rounded-[var(--radius-md)] px-2 py-1.5 text-[12px] transition-colors hover:bg-[rgba(255,255,255,0.04)]">
-                      <svg
-                        className="h-3 w-3 shrink-0 text-[var(--color-text-tertiary)] transition-transform group-open:rotate-90"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        viewBox="0 0 24 24"
-                      >
-                        <path d="M9 5l7 7-7 7" />
-                      </svg>
-                      <span className="font-medium text-[var(--color-text-secondary)]">
-                        {title}
-                      </span>
-                      <span className="text-[var(--color-text-tertiary)]">· {c.author}</span>
-                      <a
-                        href={c.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        className="ml-auto text-[10px] text-[var(--color-accent)] hover:underline"
-                      >
-                        view →
-                      </a>
-                    </summary>
-                    <div className="ml-5 mt-1 space-y-1.5 px-2 pb-2">
-                      <div className="font-[var(--font-mono)] text-[10px] text-[var(--color-text-tertiary)]">
-                        {c.path}
-                      </div>
-                      <p className="border-l-2 border-[var(--color-border-default)] pl-3 text-[12px] leading-relaxed text-[var(--color-text-secondary)]">
-                        {description}
-                      </p>
-                      <button
-                        onClick={() => handleAskAgentToFix(c)}
-                        disabled={sendingComments.has(c.url)}
-                        className={cn(
-                          "mt-1.5 rounded-[var(--radius-sm)] px-3 py-1 text-[11px] font-semibold transition-all",
-                          sentComments.has(c.url)
-                            ? "bg-[var(--color-status-ready)] text-white"
-                            : errorComments.has(c.url)
-                              ? "bg-[var(--color-status-error)] text-white"
-                              : "bg-[var(--color-accent)] text-white hover:opacity-90 disabled:opacity-50",
-                        )}
-                      >
-                        {sendingComments.has(c.url)
-                          ? "Sending\u2026"
-                          : sentComments.has(c.url)
-                            ? "Sent \u2713"
-                            : errorComments.has(c.url)
-                              ? "Failed"
-                              : "Ask Agent to Fix"}
-                      </button>
-                    </div>
-                  </details>
-                );
-              })}
+              {pr.unresolvedComments.map((c) => (
+                <CommentDisclosure
+                  key={c.url}
+                  comment={c}
+                  onAskAgentToFix={handleAskAgentToFix}
+                  isSending={sendingComments.has(c.url)}
+                  isSent={sentComments.has(c.url)}
+                  isError={errorComments.has(c.url)}
+                />
+              ))}
             </div>
           </div>
         )}
@@ -294,6 +245,78 @@ function IssuesList({ pr }: { pr: DashboardPR }) {
           <span className="text-[var(--color-text-secondary)]">{issue.text}</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+function CommentDisclosure({
+  comment: c,
+  onAskAgentToFix,
+  isSending,
+  isSent,
+  isError,
+}: {
+  comment: { url: string; path: string; author: string; body: string };
+  onAskAgentToFix: (c: { url: string; path: string; author: string; body: string }) => void;
+  isSending: boolean;
+  isSent: boolean;
+  isError: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const { title, description } = cleanBugbotComment(c.body);
+
+  return (
+    <div>
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex w-full cursor-pointer items-center gap-2 rounded-[var(--radius-md)] px-2 py-1.5 text-left text-[12px] transition-colors hover:bg-[rgba(255,255,255,0.04)]"
+      >
+        <svg
+          className={cn(
+            "h-3 w-3 shrink-0 text-[var(--color-text-tertiary)] transition-transform duration-150",
+            open && "rotate-90",
+          )}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          viewBox="0 0 24 24"
+        >
+          <path d="M9 5l7 7-7 7" />
+        </svg>
+        <span className="font-medium text-[var(--color-text-secondary)]">{title}</span>
+        <span className="text-[var(--color-text-tertiary)]">· {c.author}</span>
+        <a
+          href={c.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="ml-auto text-[10px] text-[var(--color-accent)] hover:underline"
+        >
+          view →
+        </a>
+      </button>
+      {open && (
+        <div className="ml-5 mt-1 space-y-1.5 px-2 pb-2">
+          <div className="font-[var(--font-mono)] text-[10px] text-[var(--color-text-tertiary)]">{c.path}</div>
+          <p className="border-l-2 border-[var(--color-border-default)] pl-3 text-[12px] leading-relaxed text-[var(--color-text-secondary)]">
+            {description}
+          </p>
+          <button
+            onClick={() => onAskAgentToFix(c)}
+            disabled={isSending}
+            className={cn(
+              "mt-1.5 rounded-[var(--radius-sm)] px-3 py-1 text-[11px] font-semibold transition-all",
+              isSent
+                ? "bg-[var(--color-status-ready)] text-white"
+                : isError
+                  ? "bg-[var(--color-status-error)] text-white"
+                  : "bg-[var(--color-accent)] text-white hover:opacity-90 disabled:opacity-50",
+            )}
+          >
+            {isSending ? "Sending\u2026" : isSent ? "Sent \u2713" : isError ? "Failed" : "Ask Agent to Fix"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

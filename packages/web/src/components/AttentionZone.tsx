@@ -1,8 +1,9 @@
 "use client";
 
-import { memo, useState } from "react";
+import { memo } from "react";
 import type { DashboardSession, AttentionLevel } from "@/lib/types";
 import { SessionCard } from "./SessionCard";
+import { useLocalStorage } from "@/hooks/useLocalStorage";
 
 interface AttentionZoneProps {
   level: AttentionLevel;
@@ -64,7 +65,7 @@ function AttentionZoneView({
   onRestore,
 }: AttentionZoneProps) {
   const config = zoneConfig[level];
-  const [collapsed, setCollapsed] = useState(config.defaultCollapsed);
+  const [collapsed, setCollapsed] = useLocalStorage(`ao-kanban-collapsed-${level}`, config.defaultCollapsed);
 
   if (sessions.length === 0) return null;
 

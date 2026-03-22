@@ -34,9 +34,6 @@ export function SessionHeader({ session, isOrchestrator = false, spawnButton }: 
     >
       <div className="flex flex-col gap-3 md:flex-row md:items-start">
         <div className="min-w-0 flex-1">
-          {spawnButton ? (
-            <div className="mb-3 md:float-right md:mb-0 md:ml-3">{spawnButton}</div>
-          ) : null}
           <div className="flex flex-wrap items-center gap-2.5">
             <h1 className="break-all font-[var(--font-mono)] text-[14px] font-semibold tracking-[-0.01em] text-[var(--color-text-primary)] md:text-[17px]">
               {session.id}
@@ -132,6 +129,9 @@ export function SessionHeader({ session, isOrchestrator = false, spawnButton }: 
             lastActivityAt={session.lastActivityAt}
           />
         </div>
+        {spawnButton ? (
+          <div className="shrink-0">{spawnButton}</div>
+        ) : null}
       </div>
     </div>
   );
