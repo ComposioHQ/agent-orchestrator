@@ -185,6 +185,7 @@ export interface LifecycleManagerDeps {
 interface ReactionTracker {
   attempts: number;
   firstTriggered: Date;
+  pendingRetry?: boolean;
 }
 
 /** Create a LifecycleManager instance. */
@@ -375,7 +376,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     let tracker = reactionTrackers.get(trackerKey);
 
     if (!tracker) {
-      tracker = { attempts: 0, firstTriggered: new Date() };
+      tracker = { attempts: 0, firstTriggered: new Date(), pendingRetry: false };
       reactionTrackers.set(trackerKey, tracker);
     }
 
@@ -403,6 +404,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
 
     if (shouldEscalate) {
+      tracker.pendingRetry = false;
       // Escalate to human
       const event = createEvent("reaction.escalated", {
         sessionId,
@@ -428,6 +430,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           try {
             await sessionManager.send(sessionId, reactionConfig.message);
 
+            tracker.pendingRetry = false;
             return {
               reactionType: reactionKey,
               success: true,
@@ -437,6 +440,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             };
           } catch {
             // Send failed — allow retry on next poll cycle (don't escalate immediately)
+            tracker.pendingRetry = true;
             return {
               reactionType: reactionKey,
               success: false,
@@ -456,6 +460,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           data: { reactionKey },
         });
         await notifyHuman(event, reactionConfig.priority ?? "info");
+        tracker.pendingRetry = false;
         return {
           reactionType: reactionKey,
           success: true,
@@ -465,24 +470,61 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
 
       case "auto-merge": {
-        // Auto-merge is handled by the SCM plugin
-        // For now, just notify
-        const event = createEvent("reaction.triggered", {
-          sessionId,
-          projectId,
-          message: `Reaction '${reactionKey}' triggered auto-merge`,
-          data: { reactionKey },
-        });
-        await notifyHuman(event, "action");
-        return {
-          reactionType: reactionKey,
-          success: true,
-          action: "auto-merge",
-          escalated: false,
-        };
+        const project = config.projects[projectId];
+        const scmPlugin = project?.scm
+          ? registry.get<SCM>("scm", project.scm.plugin)
+          : null;
+        const targetSession = await sessionManager.get(sessionId);
+        if (!scmPlugin || !targetSession?.pr || targetSession.projectId !== projectId) {
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action: "auto-merge",
+            escalated: false,
+          };
+        }
+        try {
+          const mergeMethod =
+            (reactionConfig as ReactionConfig & { mergeMethod?: MergeMethod }).mergeMethod ??
+            "squash";
+          await scmPlugin.mergePR(targetSession.pr, mergeMethod);
+          const event = createEvent("merge.completed", {
+            sessionId,
+            projectId,
+            message: `Auto-merged PR via '${reactionKey}' reaction (${mergeMethod})`,
+            data: { reactionKey, mergeMethod },
+          });
+          await notifyHuman(event, "action");
+          tracker.pendingRetry = false;
+          return {
+            reactionType: reactionKey,
+            success: true,
+            action: "auto-merge",
+            escalated: false,
+          };
+        } catch (err) {
+          observer.recordOperation({
+            metric: "lifecycle_poll",
+            operation: "lifecycle.auto-merge",
+            outcome: "failure",
+            correlationId: createCorrelationId("auto-merge"),
+            projectId,
+            sessionId,
+            data: { error: err instanceof Error ? err.message : String(err) },
+            level: "warn",
+          });
+          tracker.pendingRetry = true;
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action: "auto-merge",
+            escalated: false,
+          };
+        }
       }
     }
 
+    tracker.pendingRetry = true;
     return {
       reactionType: reactionKey,
       success: false,
@@ -786,6 +828,23 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     } else {
       // No transition but track current state
       states.set(session.id, newStatus);
+
+      const stableEventType = statusToEventType(oldStatus, newStatus);
+      const stableReactionKey = stableEventType ? eventToReactionKey(stableEventType) : null;
+      const stableTracker = stableReactionKey
+        ? reactionTrackers.get(`${session.id}:${stableReactionKey}`)
+        : undefined;
+
+      if (stableReactionKey && stableTracker?.pendingRetry) {
+        const reactionConfig = getReactionConfigForSession(session, stableReactionKey);
+        if (
+          reactionConfig &&
+          reactionConfig.action &&
+          (reactionConfig.auto !== false || reactionConfig.action === "notify")
+        ) {
+          await executeReaction(session.id, session.projectId, stableReactionKey, reactionConfig);
+        }
+      }
     }
 
     await maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction);
