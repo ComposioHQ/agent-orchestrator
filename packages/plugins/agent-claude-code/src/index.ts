@@ -32,7 +32,7 @@ const METADATA_UPDATER_SCRIPT = `#!/usr/bin/env bash
 # Metadata Updater Hook for Agent Orchestrator
 #
 # This PostToolUse hook automatically updates session metadata when:
-# - gh pr create: extracts PR URL and writes to metadata
+# - gh pr create / gh api repos/.../pulls -X POST: extracts PR URL and writes to metadata
 # - git checkout -b / git switch -c: extracts branch name and writes to metadata
 # - gh pr merge: updates status to "merged"
 
@@ -111,14 +111,32 @@ update_metadata_key() {
   mv "$temp_file" "$metadata_file"
 }
 
+extract_pr_url() {
+  local output="$1"
+  local pr_url
+
+  pr_url=$(printf '%s' "$output" \
+    | grep -Eo '"html_url"[[:space:]]*:[[:space:]]*"https://github[.]com/[^"]+/pull/[0-9]+"' \
+    | head -1 \
+    | sed -E 's/.*"(https:\/\/github[.]com\/[^"]+\/pull\/[0-9]+)".*/\\1/')
+
+  if [[ -z "$pr_url" ]]; then
+    pr_url=$(printf '%s' "$output" | grep -Eo 'https://github[.]com/[^/]+/[^/]+/pull/[0-9]+' | head -1)
+  fi
+
+  printf '%s' "$pr_url"
+}
+
 # ============================================================================
 # Command Detection and Parsing
 # ============================================================================
 
-# Detect: gh pr create
-if [[ "$command" =~ ^gh[[:space:]]+pr[[:space:]]+create ]]; then
+# Detect: gh pr create or REST pull creation via gh api
+if [[ "$command" =~ ^gh[[:space:]]+pr[[:space:]]+create ]] || \
+   ([[ "$command" =~ ^gh[[:space:]]+api[[:space:]]+repos/[^[:space:]]+/[^[:space:]]+/pulls([[:space:]]|$) ]] && \
+    [[ "$command" =~ (^|[[:space:]])(-X|--method)[[:space:]]+POST([[:space:]]|$) ]]); then
   # Extract PR URL from output
-  pr_url=$(echo "$output" | grep -Eo 'https://github[.]com/[^/]+/[^/]+/pull/[0-9]+' | head -1)
+  pr_url=$(extract_pr_url "$output")
 
   if [[ -n "$pr_url" ]]; then
     update_metadata_key "pr" "$pr_url"

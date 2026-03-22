@@ -36,6 +36,8 @@ export const BASE_AGENT_PROMPT = `You are an AI coding agent managed by the Agen
 ## PR Best Practices
 - Write a clear PR title and description explaining what changed and why.
 - Link the issue in the PR description so it auto-closes when merged.
+- Create PRs via the REST API: write a JSON payload file and use \`gh api repos/<owner>/<repo>/pulls -X POST --input <file>\` instead of \`gh pr create\`.
+- After creating the PR, verify issue auto-close wiring with \`gh pr view <pr-number> --json closingIssuesReferences\`; if missing, patch the PR body with \`gh api repos/<owner>/<repo>/pulls/<pr-number> -X PATCH --input <file>\` before finishing.
 - If the repo has CI checks, make sure they pass before requesting review.
 - Respond to every review comment, even if just to acknowledge it.`;
 

@@ -213,4 +213,11 @@ describe("BASE_AGENT_PROMPT", () => {
     expect(BASE_AGENT_PROMPT).toContain("Git Workflow");
     expect(BASE_AGENT_PROMPT).toContain("PR Best Practices");
   });
+
+  it("prefers REST pull creation over gh pr create", () => {
+    expect(BASE_AGENT_PROMPT).toContain("gh api repos/<owner>/<repo>/pulls -X POST");
+    expect(BASE_AGENT_PROMPT).not.toContain("gh pr create --body-file");
+    expect(BASE_AGENT_PROMPT).toContain("closingIssuesReferences");
+    expect(BASE_AGENT_PROMPT).toContain("gh api repos/<owner>/<repo>/pulls/<pr-number> -X PATCH");
+  });
 });
