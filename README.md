@@ -14,6 +14,7 @@ Spawn parallel AI coding agents, each in its own git worktree. Agents autonomous
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![PRs merged](https://img.shields.io/badge/PRs_merged-61-brightgreen?style=flat-square)](https://github.com/ComposioHQ/agent-orchestrator/pulls?q=is%3Amerged)
 [![Tests](https://img.shields.io/badge/test_cases-3%2C288-blue?style=flat-square)](https://github.com/ComposioHQ/agent-orchestrator/releases/tag/metrics-v1)
+[![Discord](https://img.shields.io/badge/Discord-Join%20Community-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/UZv7JjxbwG)
 
 </div>
 
@@ -43,65 +44,62 @@ Agent Orchestrator manages fleets of AI coding agents working in parallel on you
 
 ## Quick Start
 
-**Option A — From a repo URL (fastest):**
+> **Prerequisites:** [Node.js 20+](https://nodejs.org), [Git 2.25+](https://git-scm.com), [tmux](https://github.com/tmux/tmux/wiki/Installing), [`gh` CLI](https://cli.github.com). Install tmux via `brew install tmux` (macOS) or `sudo apt install tmux` (Linux).
+
+### Install
 
 ```bash
-# Install
+npm install -g @composio/ao
+```
+
+<details>
+<summary>Permission denied? Install from source?</summary>
+
+If `npm install -g` fails with EACCES, prefix with `sudo` or [fix your npm permissions](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally).
+
+To install from source (for contributors):
+
+```bash
 git clone https://github.com/ComposioHQ/agent-orchestrator.git
 cd agent-orchestrator && bash scripts/setup.sh
+```
+</details>
 
-# One command to clone, configure, and launch
+### Start
+
+Point it at any repo — it clones, configures, and launches the dashboard in one command:
+
+```bash
 ao start https://github.com/your-org/your-repo
 ```
 
-Auto-detects language, package manager, SCM platform, and default branch. Generates `agent-orchestrator.yaml` and starts the dashboard + orchestrator.
-
-**Option B — From an existing local repo:**
+Or from inside an existing local repo:
 
 ```bash
-cd ~/your-project && ao init --auto
-ao start
+cd ~/your-project && ao start
 ```
 
-Then spawn agents:
+That's it. The dashboard opens at `http://localhost:3000` and the orchestrator agent starts managing your project.
+
+### Add more projects
 
 ```bash
-ao spawn my-project 123    # GitHub issue, Linear ticket, or ad-hoc
+ao start ~/path/to/another-repo
 ```
-
-Dashboard opens at `http://localhost:3000`. Run `ao status` for the CLI view.
 
 ## How It Works
 
-```
-ao spawn my-project 123
-```
+1. **You start** — `ao start` launches the dashboard and an orchestrator agent
+2. **Orchestrator spawns workers** — each issue gets its own agent in an isolated git worktree
+3. **Agents work autonomously** — they read code, write tests, create PRs
+4. **Reactions handle feedback** — CI failures and review comments are automatically routed back to the agent
+5. **You review and merge** — you only get pulled in when human judgment is needed
 
-1. **Workspace** creates an isolated git worktree with a feature branch
-2. **Runtime** starts a tmux session (or Docker container)
-3. **Agent** launches Claude Code (or Codex, or Aider) with issue context
-4. Agent works autonomously — reads code, writes tests, creates PR
-5. **Reactions** auto-handle CI failures and review comments
-6. **Notifier** pings you only when judgment is needed
-
-### Plugin Architecture
-
-Eight slots. Every abstraction is swappable.
-
-| Slot | Default | Alternatives |
-|------|---------|-------------|
-| Runtime | tmux | docker, k8s, process |
-| Agent | claude-code | codex, aider, opencode |
-| Workspace | worktree | clone |
-| Tracker | github | linear |
-| SCM | github | — |
-| Notifier | desktop | slack, composio, webhook |
-| Terminal | iterm2 | web |
-| Lifecycle | core | — |
-
-All interfaces defined in [`packages/core/src/types.ts`](packages/core/src/types.ts). A plugin implements one interface and exports a `PluginModule`. That's it.
+The orchestrator agent uses the [AO CLI](docs/CLI.md) internally to manage sessions. You don't need to learn or use the CLI — the dashboard and orchestrator handle everything.
 
 ## Configuration
+
+`ao start` auto-generates `agent-orchestrator.yaml` with sensible defaults. You can edit it afterwards to customize behavior:
 
 ```yaml
 # agent-orchestrator.yaml
@@ -130,25 +128,30 @@ reactions:
     action: send-to-agent
     escalateAfter: 30m
   approved-and-green:
-    auto: false       # flip to true for auto-merge
+    auto: false # flip to true for auto-merge
     action: notify
 ```
 
 CI fails → agent gets the logs and fixes it. Reviewer requests changes → agent addresses them. PR approved with green CI → you get a notification to merge.
 
-See [`agent-orchestrator.yaml.example`](agent-orchestrator.yaml.example) for the full reference.
+See [`agent-orchestrator.yaml.example`](agent-orchestrator.yaml.example) for the full reference, or run `ao config-help` for the complete schema.
 
-## CLI
+## Plugin Architecture
 
-```bash
-ao status                              # Overview of all sessions
-ao spawn <project> [issue]             # Spawn an agent
-ao send <session> "Fix the tests"      # Send instructions
-ao session ls                          # List sessions
-ao session kill <session>              # Kill a session
-ao session restore <session>           # Revive a crashed agent
-ao dashboard                           # Open web dashboard
-```
+Eight slots. Every abstraction is swappable.
+
+| Slot      | Default     | Alternatives             |
+| --------- | ----------- | ------------------------ |
+| Runtime   | tmux        | docker, k8s, process     |
+| Agent     | claude-code | codex, aider, opencode   |
+| Workspace | worktree    | clone                    |
+| Tracker   | github      | linear                   |
+| SCM       | github      | —                        |
+| Notifier  | desktop     | slack, composio, webhook |
+| Terminal  | iterm2      | web                      |
+| Lifecycle | core        | —                        |
+
+All interfaces defined in [`packages/core/src/types.ts`](packages/core/src/types.ts). A plugin implements one interface and exports a `PluginModule`. That's it.
 
 ## Why Agent Orchestrator?
 
@@ -156,14 +159,17 @@ Running one AI agent in a terminal is easy. Running 30 across different issues, 
 
 **Without orchestration**, you manually: create branches, start agents, check if they're stuck, read CI failures, forward review comments, track which PRs are ready to merge, clean up when done.
 
-**With Agent Orchestrator**, you: `ao spawn` and walk away. The system handles isolation, feedback routing, and status tracking. You review PRs and make decisions — the rest is automated.
+**With Agent Orchestrator**, you: `ao start` and walk away. The system handles isolation, feedback routing, and status tracking. You review PRs and make decisions — the rest is automated.
 
-## Prerequisites
+## Documentation
 
-- Node.js 20+
-- Git 2.25+
-- tmux (for default runtime)
-- `gh` CLI (for GitHub integration)
+| Doc                                      | What it covers                                               |
+| ---------------------------------------- | ------------------------------------------------------------ |
+| [Setup Guide](SETUP.md)                  | Detailed installation, configuration, and troubleshooting    |
+| [CLI Reference](docs/CLI.md)             | All `ao` commands (mostly used by the orchestrator agent)    |
+| [Examples](examples/)                    | Config templates (GitHub, Linear, multi-project, auto-merge) |
+| [Development Guide](docs/DEVELOPMENT.md) | Architecture, conventions, plugin pattern                    |
+| [Contributing](CONTRIBUTING.md)          | How to contribute, build plugins, PR process                 |
 
 ## Development
 
@@ -173,20 +179,11 @@ pnpm test                      # Run tests (3,288 test cases)
 pnpm dev                       # Start web dashboard dev server
 ```
 
-See [CLAUDE.md](CLAUDE.md) for code conventions and architecture details.
-
-## Documentation
-
-| Doc | What it covers |
-|-----|---------------|
-| [Setup Guide](SETUP.md) | Detailed installation and configuration |
-| [Examples](examples/) | Config templates (GitHub, Linear, multi-project, auto-merge) |
-| [CLAUDE.md](CLAUDE.md) | Architecture, conventions, plugin pattern |
-| [Troubleshooting](TROUBLESHOOTING.md) | Common issues and fixes |
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for code conventions and architecture details.
 
 ## Contributing
 
-Contributions welcome. The plugin system makes it straightforward to add support for new agents, runtimes, trackers, and notification channels. Every plugin is an implementation of a TypeScript interface — see [CLAUDE.md](CLAUDE.md) for the pattern.
+Contributions welcome. The plugin system makes it straightforward to add support for new agents, runtimes, trackers, and notification channels. Every plugin is an implementation of a TypeScript interface — see [CONTRIBUTING.md](CONTRIBUTING.md) and the [Development Guide](docs/DEVELOPMENT.md) for the pattern.
 
 ## License
 

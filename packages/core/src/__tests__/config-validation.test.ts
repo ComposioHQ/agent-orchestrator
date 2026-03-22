@@ -274,6 +274,64 @@ describe("Config Validation - Session Prefix Regex", () => {
   });
 });
 
+describe("Config Validation - SCM webhook contract", () => {
+  it("accepts a project scm webhook block and defaults enabled=true", () => {
+    const config = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          scm: {
+            plugin: "github",
+            webhook: {
+              path: "/api/webhooks/github",
+              secretEnvVar: "GITHUB_WEBHOOK_SECRET",
+              eventHeader: "x-github-event",
+              deliveryHeader: "x-github-delivery",
+              signatureHeader: "x-hub-signature-256",
+              maxBodyBytes: 1048576,
+            },
+          },
+        },
+      },
+    });
+
+    expect(config.projects["proj1"]?.scm).toEqual({
+      plugin: "github",
+      webhook: {
+        enabled: true,
+        path: "/api/webhooks/github",
+        secretEnvVar: "GITHUB_WEBHOOK_SECRET",
+        eventHeader: "x-github-event",
+        deliveryHeader: "x-github-delivery",
+        signatureHeader: "x-hub-signature-256",
+        maxBodyBytes: 1048576,
+      },
+    });
+  });
+
+  it("rejects non-positive scm webhook maxBodyBytes", () => {
+    expect(() =>
+      validateConfig({
+        projects: {
+          proj1: {
+            path: "/repos/test",
+            repo: "org/test",
+            defaultBranch: "main",
+            scm: {
+              plugin: "github",
+              webhook: {
+                maxBodyBytes: 0,
+              },
+            },
+          },
+        },
+      }),
+    ).toThrow();
+  });
+});
+
 describe("Config Schema Validation", () => {
   it("requires projects field", () => {
     const config = {
@@ -336,6 +394,91 @@ describe("Config Schema Validation", () => {
     expect(validated.projects.proj1.sessionPrefix).toBeDefined();
     expect(validated.projects.proj1.sessionPrefix).toBe("test"); // "test" is 4 chars, used as-is
   });
+
+  it("accepts orchestratorModel in agentConfig", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          agentConfig: {
+            model: "worker-model",
+            orchestratorModel: "orchestrator-model",
+          },
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.projects.proj1.agentConfig?.model).toBe("worker-model");
+    expect(validated.projects.proj1.agentConfig?.orchestratorModel).toBe("orchestrator-model");
+  });
+
+  it("accepts role-specific agent overrides at defaults and project scope", () => {
+    const config = {
+      defaults: {
+        agent: "claude-code",
+        orchestrator: {
+          agent: "opencode",
+        },
+        worker: {
+          agent: "codex",
+        },
+      },
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          orchestrator: {
+            agent: "claude-code",
+            agentConfig: {
+              model: "orchestrator-model",
+            },
+          },
+          worker: {
+            agent: "codex",
+            agentConfig: {
+              model: "worker-model",
+            },
+          },
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.defaults.orchestrator?.agent).toBe("opencode");
+    expect(validated.defaults.worker?.agent).toBe("codex");
+    expect(validated.projects.proj1.orchestrator?.agent).toBe("claude-code");
+    expect(validated.projects.proj1.orchestrator?.agentConfig?.model).toBe("orchestrator-model");
+    expect(validated.projects.proj1.worker?.agent).toBe("codex");
+    expect(validated.projects.proj1.worker?.agentConfig?.model).toBe("worker-model");
+  });
+
+  it("does not inject default permissions into role-specific agent config", () => {
+    const config = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          agentConfig: {
+            permissions: "suggest",
+          },
+          worker: {
+            agent: "codex",
+            agentConfig: {
+              model: "worker-model",
+            },
+          },
+        },
+      },
+    });
+
+    expect(config.projects.proj1.agentConfig?.permissions).toBe("suggest");
+    expect(config.projects.proj1.worker?.agentConfig?.permissions).toBeUndefined();
+  });
 });
 
 describe("Config Defaults", () => {
@@ -397,5 +540,45 @@ describe("Config Defaults", () => {
 
     const validated = validateConfig(config);
     expect(validated.projects.proj1.tracker).toEqual({ plugin: "github" });
+  });
+
+  it("infers GitLab tracker default from scm plugin", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          scm: {
+            plugin: "gitlab",
+            host: "gitlab.company.com",
+          },
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.projects.proj1.scm).toEqual({ plugin: "gitlab", host: "gitlab.company.com" });
+    expect(validated.projects.proj1.tracker).toEqual({ plugin: "gitlab" });
+  });
+
+  it("infers GitLab scm default from tracker plugin", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: {
+            plugin: "gitlab",
+            host: "gitlab.com",
+          },
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.projects.proj1.tracker).toEqual({ plugin: "gitlab", host: "gitlab.com" });
+    expect(validated.projects.proj1.scm).toEqual({ plugin: "gitlab" });
   });
 });

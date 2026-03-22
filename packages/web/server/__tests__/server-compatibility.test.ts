@@ -40,6 +40,13 @@ describe("direct-terminal-ws.ts", () => {
   it("does not check file existence for session validation", () => {
     expect(source).not.toMatch(/existsSync.*session/i);
   });
+
+  it("exposes terminal health metrics in /health response", () => {
+    expect(source).toMatch(/metrics/);
+    expect(source).toMatch(/totalConnections/);
+    expect(source).toMatch(/totalDisconnects/);
+    expect(source).toMatch(/totalErrors/);
+  });
 });
 
 describe("terminal-websocket.ts", () => {
@@ -69,9 +76,7 @@ describe("OrchestratorConfig compatibility", () => {
       "utf-8",
     );
 
-    const configMatch = typesSource.match(
-      /export interface OrchestratorConfig \{[\s\S]*?\n\}/,
-    );
+    const configMatch = typesSource.match(/export interface OrchestratorConfig \{[\s\S]*?\n\}/);
     expect(configMatch).toBeTruthy();
     const configBlock = configMatch![0];
 

@@ -35,7 +35,9 @@ function httpGet(path: string): Promise<{ status: number; body: string }> {
       { hostname: "localhost", port, path, method: "GET", timeout: 3000 },
       (res: IncomingMessage) => {
         let body = "";
-        res.on("data", (chunk: Buffer) => { body += chunk.toString(); });
+        res.on("data", (chunk: Buffer) => {
+          body += chunk.toString();
+        });
         res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
       },
     );
@@ -93,7 +95,10 @@ function waitForMarker(ws: WebSocket, marker: string, timeoutMs = 3000): Promise
       }
     };
     ws.on("message", handler);
-    setTimeout(() => { ws.off("message", handler); resolve(buf); }, timeoutMs);
+    setTimeout(() => {
+      ws.off("message", handler);
+      resolve(buf);
+    }, timeoutMs);
   });
 }
 
@@ -103,8 +108,12 @@ function waitForMarker(ws: WebSocket, marker: string, timeoutMs = 3000): Promise
 
 beforeAll(() => {
   // Create test tmux sessions
-  execFileSync(TMUX, ["new-session", "-d", "-s", TEST_SESSION, "-x", "80", "-y", "24"], { timeout: 5000 });
-  execFileSync(TMUX, ["new-session", "-d", "-s", TEST_HASH_SESSION, "-x", "80", "-y", "24"], { timeout: 5000 });
+  execFileSync(TMUX, ["new-session", "-d", "-s", TEST_SESSION, "-x", "80", "-y", "24"], {
+    timeout: 5000,
+  });
+  execFileSync(TMUX, ["new-session", "-d", "-s", TEST_HASH_SESSION, "-x", "80", "-y", "24"], {
+    timeout: 5000,
+  });
 
   // Start the server on a random port
   terminal = createDirectTerminalServer(TMUX);
@@ -126,8 +135,16 @@ afterAll(() => {
   terminal.shutdown();
 
   // Kill test tmux sessions
-  try { execFileSync(TMUX, ["kill-session", "-t", TEST_SESSION], { timeout: 5000 }); } catch { /* already dead */ }
-  try { execFileSync(TMUX, ["kill-session", "-t", TEST_HASH_SESSION], { timeout: 5000 }); } catch { /* already dead */ }
+  try {
+    execFileSync(TMUX, ["kill-session", "-t", TEST_SESSION], { timeout: 5000 });
+  } catch {
+    /* already dead */
+  }
+  try {
+    execFileSync(TMUX, ["kill-session", "-t", TEST_HASH_SESSION], { timeout: 5000 });
+  } catch {
+    /* already dead */
+  }
 });
 
 // =============================================================================
@@ -142,6 +159,10 @@ describe("health endpoint", () => {
     const data = JSON.parse(res.body);
     expect(data).toHaveProperty("active");
     expect(data).toHaveProperty("sessions");
+    expect(data).toHaveProperty("metrics");
+    expect(data.metrics).toHaveProperty("totalConnections");
+    expect(data.metrics).toHaveProperty("totalErrors");
+    expect(data.metrics).toHaveProperty("lastDisconnectReason");
   });
 
   it("health shows 0 active sessions initially", async () => {
@@ -168,7 +189,9 @@ describe("health endpoint", () => {
   it("health active count matches number of connections", async () => {
     // Create a second tmux session for this test
     const secondSession = `ao-test-health-${process.pid}`;
-    execFileSync(TMUX, ["new-session", "-d", "-s", secondSession, "-x", "80", "-y", "24"], { timeout: 5000 });
+    execFileSync(TMUX, ["new-session", "-d", "-s", secondSession, "-x", "80", "-y", "24"], {
+      timeout: 5000,
+    });
 
     try {
       const ws1 = await connectWs(TEST_SESSION);
@@ -186,7 +209,11 @@ describe("health endpoint", () => {
       ws1.close();
       ws2.close();
     } finally {
-      try { execFileSync(TMUX, ["kill-session", "-t", secondSession], { timeout: 5000 }); } catch { /* */ }
+      try {
+        execFileSync(TMUX, ["kill-session", "-t", secondSession], { timeout: 5000 });
+      } catch {
+        /* */
+      }
     }
   });
 
@@ -453,7 +480,9 @@ describe("hash-prefixed session resolution", () => {
     const hashOnlySession = `ao-hashtest-${process.pid}`;
     const hashPrefixedName = `deadbeef0123-${hashOnlySession}`;
 
-    execFileSync(TMUX, ["new-session", "-d", "-s", hashPrefixedName, "-x", "80", "-y", "24"], { timeout: 5000 });
+    execFileSync(TMUX, ["new-session", "-d", "-s", hashPrefixedName, "-x", "80", "-y", "24"], {
+      timeout: 5000,
+    });
 
     try {
       const ws = await connectWs(hashOnlySession);
@@ -464,7 +493,11 @@ describe("hash-prefixed session resolution", () => {
 
       ws.close();
     } finally {
-      try { execFileSync(TMUX, ["kill-session", "-t", hashPrefixedName], { timeout: 5000 }); } catch { /* */ }
+      try {
+        execFileSync(TMUX, ["kill-session", "-t", hashPrefixedName], { timeout: 5000 });
+      } catch {
+        /* */
+      }
     }
   });
 
@@ -472,7 +505,9 @@ describe("hash-prefixed session resolution", () => {
     const hashOnlySession = `ao-hashcmd-${process.pid}`;
     const hashPrefixedName = `cafebabe0123-${hashOnlySession}`;
 
-    execFileSync(TMUX, ["new-session", "-d", "-s", hashPrefixedName, "-x", "80", "-y", "24"], { timeout: 5000 });
+    execFileSync(TMUX, ["new-session", "-d", "-s", hashPrefixedName, "-x", "80", "-y", "24"], {
+      timeout: 5000,
+    });
 
     try {
       const ws = await connectWs(hashOnlySession);
@@ -485,7 +520,11 @@ describe("hash-prefixed session resolution", () => {
 
       ws.close();
     } finally {
-      try { execFileSync(TMUX, ["kill-session", "-t", hashPrefixedName], { timeout: 5000 }); } catch { /* */ }
+      try {
+        execFileSync(TMUX, ["kill-session", "-t", hashPrefixedName], { timeout: 5000 });
+      } catch {
+        /* */
+      }
     }
   });
 
@@ -493,7 +532,9 @@ describe("hash-prefixed session resolution", () => {
     const hashOnlySession = `ao-hashkey-${process.pid}`;
     const hashPrefixedName = `face12340000-${hashOnlySession}`;
 
-    execFileSync(TMUX, ["new-session", "-d", "-s", hashPrefixedName, "-x", "80", "-y", "24"], { timeout: 5000 });
+    execFileSync(TMUX, ["new-session", "-d", "-s", hashPrefixedName, "-x", "80", "-y", "24"], {
+      timeout: 5000,
+    });
 
     try {
       const ws = await connectWs(hashOnlySession);
@@ -505,7 +546,11 @@ describe("hash-prefixed session resolution", () => {
 
       ws.close();
     } finally {
-      try { execFileSync(TMUX, ["kill-session", "-t", hashPrefixedName], { timeout: 5000 }); } catch { /* */ }
+      try {
+        execFileSync(TMUX, ["kill-session", "-t", hashPrefixedName], { timeout: 5000 });
+      } catch {
+        /* */
+      }
     }
   });
 
@@ -516,7 +561,9 @@ describe("hash-prefixed session resolution", () => {
     const hashSession15 = `deadbeef01ab-${session15}`;
     const session1 = `ao-crosstest-1-${process.pid}`;
 
-    execFileSync(TMUX, ["new-session", "-d", "-s", hashSession15, "-x", "80", "-y", "24"], { timeout: 5000 });
+    execFileSync(TMUX, ["new-session", "-d", "-s", hashSession15, "-x", "80", "-y", "24"], {
+      timeout: 5000,
+    });
 
     try {
       // ao-crosstest-1-PID should NOT resolve to deadbeef01ab-ao-crosstest-15-PID
@@ -526,7 +573,11 @@ describe("hash-prefixed session resolution", () => {
       expect(result.code).toBe(1008);
       expect(result.reason).toContain("Session not found");
     } finally {
-      try { execFileSync(TMUX, ["kill-session", "-t", hashSession15], { timeout: 5000 }); } catch { /* */ }
+      try {
+        execFileSync(TMUX, ["kill-session", "-t", hashSession15], { timeout: 5000 });
+      } catch {
+        /* */
+      }
     }
   });
 });
@@ -657,7 +708,9 @@ describe("connection lifecycle", () => {
   it("cleans up activeSessions on WebSocket close", async () => {
     // Use a dedicated session to avoid race conditions with afterEach cleanup
     const cleanupSession = `ao-test-cleanup-${process.pid}`;
-    execFileSync(TMUX, ["new-session", "-d", "-s", cleanupSession, "-x", "80", "-y", "24"], { timeout: 5000 });
+    execFileSync(TMUX, ["new-session", "-d", "-s", cleanupSession, "-x", "80", "-y", "24"], {
+      timeout: 5000,
+    });
 
     try {
       const ws = await connectWs(cleanupSession);
@@ -672,7 +725,11 @@ describe("connection lifecycle", () => {
       // After close, the session should be cleaned up
       expect(terminal.activeSessions.has(cleanupSession)).toBe(false);
     } finally {
-      try { execFileSync(TMUX, ["kill-session", "-t", cleanupSession], { timeout: 5000 }); } catch { /* */ }
+      try {
+        execFileSync(TMUX, ["kill-session", "-t", cleanupSession], { timeout: 5000 });
+      } catch {
+        /* */
+      }
     }
   });
 
@@ -715,11 +772,7 @@ describe("connection lifecycle", () => {
 
   it("multiple health checks work consistently", async () => {
     // Rapid health checks shouldn't break anything
-    const results = await Promise.all([
-      httpGet("/health"),
-      httpGet("/health"),
-      httpGet("/health"),
-    ]);
+    const results = await Promise.all([httpGet("/health"), httpGet("/health"), httpGet("/health")]);
 
     for (const res of results) {
       expect(res.status).toBe(200);

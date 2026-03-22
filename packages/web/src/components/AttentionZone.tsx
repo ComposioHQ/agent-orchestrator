@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import type { DashboardSession, AttentionLevel } from "@/lib/types";
 import { SessionCard } from "./SessionCard";
 
@@ -54,7 +54,7 @@ const zoneConfig: Record<
   },
 };
 
-export function AttentionZone({
+function AttentionZoneView({
   level,
   sessions,
   variant = "grid",
@@ -76,10 +76,7 @@ export function AttentionZone({
           className="mb-2.5 flex items-center gap-2 py-0.5 text-left"
           onClick={() => setCollapsed(!collapsed)}
         >
-          <div
-            className="h-1.5 w-1.5 shrink-0 rounded-full"
-            style={{ background: config.color }}
-          />
+          <div className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: config.color }} />
           <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-tertiary)]">
             {config.label}
           </span>
@@ -128,10 +125,7 @@ export function AttentionZone({
         onClick={() => setCollapsed(!collapsed)}
       >
         {/* Semantic dot — only zone-colored element */}
-        <div
-          className="h-1.5 w-1.5 shrink-0 rounded-full"
-          style={{ background: config.color }}
-        />
+        <div className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: config.color }} />
         {/* Label — neutral, not zone-colored */}
         <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--color-text-tertiary)]">
           {config.label}
@@ -172,3 +166,18 @@ export function AttentionZone({
     </div>
   );
 }
+
+function areAttentionZonePropsEqual(prev: AttentionZoneProps, next: AttentionZoneProps): boolean {
+  return (
+    prev.level === next.level &&
+    prev.variant === next.variant &&
+    prev.onSend === next.onSend &&
+    prev.onKill === next.onKill &&
+    prev.onMerge === next.onMerge &&
+    prev.onRestore === next.onRestore &&
+    prev.sessions.length === next.sessions.length &&
+    prev.sessions.every((session, index) => session === next.sessions[index])
+  );
+}
+
+export const AttentionZone = memo(AttentionZoneView, areAttentionZonePropsEqual);

@@ -46,6 +46,7 @@ describe("writeMetadata + readMetadata", () => {
       status: "pr_open",
       issue: "https://linear.app/team/issue/INT-100",
       pr: "https://github.com/org/repo/pull/42",
+      prAutoDetect: "off",
       summary: "Implementing feature X",
       project: "my-app",
       createdAt: "2025-01-01T00:00:00.000Z",
@@ -56,6 +57,7 @@ describe("writeMetadata + readMetadata", () => {
     expect(meta).not.toBeNull();
     expect(meta!.issue).toBe("https://linear.app/team/issue/INT-100");
     expect(meta!.pr).toBe("https://github.com/org/repo/pull/42");
+    expect(meta!.prAutoDetect).toBe("off");
     expect(meta!.summary).toBe("Implementing feature X");
     expect(meta!.project).toBe("my-app");
     expect(meta!.createdAt).toBe("2025-01-01T00:00:00.000Z");

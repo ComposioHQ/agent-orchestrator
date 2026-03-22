@@ -1,6 +1,6 @@
 {
   "name": "@composio/ao-plugin-runtime-process",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Runtime plugin: child processes",
   "license": "MIT",
   "type": "module",

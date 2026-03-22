@@ -8,6 +8,9 @@ import {
   type CIStatus,
   type ReviewDecision,
   type ActivityState,
+  type Tracker,
+  type ProjectConfig,
+  isOrchestratorSession,
   loadConfig,
 } from "@composio/ao-core";
 import { git, getTmuxSessions, getTmuxActivity } from "../lib/shell.js";
@@ -25,6 +28,7 @@ import { getSessionManager } from "../lib/create-session-manager.js";
 
 interface SessionInfo {
   name: string;
+  role: "worker" | "orchestrator";
   branch: string | null;
   status: string | null;
   summary: string | null;
@@ -46,10 +50,11 @@ async function gatherSessionInfo(
   scm: SCM,
   projectConfig: ReturnType<typeof loadConfig>,
 ): Promise<SessionInfo> {
+  const suppressPROwnership = isOrchestratorSession(session);
   let branch = session.branch;
   const status = session.status;
   const summary = session.metadata["summary"] ?? null;
-  const prUrl = session.metadata["pr"] ?? null;
+  const prUrl = suppressPROwnership ? null : (session.metadata["pr"] ?? null);
   const issue = session.issueId;
 
   // Get live branch from worktree if available
@@ -89,7 +94,7 @@ async function gatherSessionInfo(
     }
   }
 
-  if (branch) {
+  if (branch && !suppressPROwnership) {
     try {
       const project = projectConfig.projects[session.projectId];
       if (project) {
@@ -115,6 +120,7 @@ async function gatherSessionInfo(
 
   return {
     name: session.id,
+    role: isOrchestratorSession(session) ? "orchestrator" : "worker",
     branch,
     status,
     summary,
@@ -186,6 +192,18 @@ function printSessionRow(info: SessionInfo): void {
   }
 }
 
+function printOrchestratorRow(info: SessionInfo): void {
+  const lastActivity =
+    info.lastActivity === "-" ? chalk.dim("unknown") : chalk.dim(info.lastActivity);
+  console.log(
+    `  ${chalk.magenta("Orchestrator:")} ${chalk.green(info.name)} ${chalk.dim("(")}${lastActivity}${chalk.dim(")")}`,
+  );
+  const displaySummary = info.claudeSummary || info.summary;
+  if (displaySummary) {
+    console.log(`                ${chalk.dim(displaySummary.slice(0, 60))}`);
+  }
+}
+
 export function registerStatus(program: Command): void {
   program
     .command("status")
@@ -227,8 +245,9 @@ export function registerStatus(program: Command): void {
 
       // Show projects that have no sessions too (if not filtered)
       const projectIds = opts.project ? [opts.project] : Object.keys(config.projects);
-      let totalSessions = 0;
       const jsonOutput: SessionInfo[] = [];
+      let totalWorkers = 0;
+      let totalOrchestrators = 0;
 
       for (const projectId of projectIds) {
         const projectConfig = config.projects[projectId];
@@ -255,27 +274,43 @@ export function registerStatus(program: Command): void {
           continue;
         }
 
-        totalSessions += projectSessions.length;
-
-        if (!opts.json) {
-          printTableHeader();
-        }
-
         // Gather all session info in parallel
         const infoPromises = projectSessions.map((s) => gatherSessionInfo(s, agent, scm, config));
         const sessionInfos = await Promise.all(infoPromises);
 
+        const orchestrators = sessionInfos.filter((info) => info.role === "orchestrator");
+        const workers = sessionInfos.filter((info) => info.role === "worker");
+
+        totalWorkers += workers.length;
+        totalOrchestrators += orchestrators.length;
+
         for (const info of sessionInfos) {
           if (opts.json) {
             jsonOutput.push(info);
-          } else {
-            printSessionRow(info);
           }
         }
 
-        if (!opts.json) {
-          console.log();
+        if (opts.json) {
+          continue;
         }
+
+        if (orchestrators.length > 0) {
+          for (const info of orchestrators) {
+            printOrchestratorRow(info);
+          }
+        }
+
+        if (workers.length === 0) {
+          console.log(chalk.dim("  (no active sessions)"));
+          console.log();
+          continue;
+        }
+
+        printTableHeader();
+        for (const info of workers) {
+          printSessionRow(info);
+        }
+        console.log();
       }
 
       if (opts.json) {
@@ -283,9 +318,47 @@ export function registerStatus(program: Command): void {
       } else {
         console.log(
           chalk.dim(
-            `  ${totalSessions} active session${totalSessions !== 1 ? "s" : ""} across ${projectIds.length} project${projectIds.length !== 1 ? "s" : ""}`,
+            `  ${totalWorkers} active session${totalWorkers !== 1 ? "s" : ""} across ${projectIds.length} project${projectIds.length !== 1 ? "s" : ""}` +
+              (totalOrchestrators > 0
+                ? ` · ${totalOrchestrators} orchestrator${totalOrchestrators !== 1 ? "s" : ""}`
+                : ""),
           ),
         );
+
+        // Check for issues awaiting verification across all projects
+        try {
+          const { createPluginRegistry } = await import("@composio/ao-core");
+          const registry = createPluginRegistry();
+          await registry.loadFromConfig(config, (pkg: string) => import(pkg));
+
+          let unverifiedTotal = 0;
+          for (const projectId of projectIds) {
+            const project: ProjectConfig | undefined = config.projects[projectId];
+            if (!project?.tracker) continue;
+            const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
+            if (!tracker?.listIssues) continue;
+            try {
+              const issues = await tracker.listIssues(
+                { state: "open", labels: ["merged-unverified"], limit: 20 },
+                project,
+              );
+              unverifiedTotal += issues.length;
+            } catch {
+              // Tracker query failed — not critical
+            }
+          }
+
+          if (unverifiedTotal > 0) {
+            console.log(
+              chalk.yellow(
+                `  ⚠ ${unverifiedTotal} issue${unverifiedTotal !== 1 ? "s" : ""} awaiting verification (use \`ao verify --list\` to see them)`,
+              ),
+            );
+          }
+        } catch {
+          // Plugin registry or tracker unavailable — skip silently
+        }
+
         console.log();
       }
     });

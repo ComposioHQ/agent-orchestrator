@@ -3,6 +3,7 @@
  */
 
 import { open, stat } from "node:fs/promises";
+import type { OrchestratorConfig } from "./types.js";
 
 /**
  * POSIX-safe shell escaping: wraps value in single quotes,
@@ -30,6 +31,30 @@ export function validateUrl(url: string, label: string): void {
   if (!url.startsWith("https://") && !url.startsWith("http://")) {
     throw new Error(`[${label}] Invalid url: must be http(s), got "${url}"`);
   }
+}
+
+/**
+ * Returns true if an HTTP status code should be retried.
+ * Retry only 429 (rate-limit) and 5xx (server) failures.
+ */
+export function isRetryableHttpStatus(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+/**
+ * Normalize retry config from plugin config with sane defaults.
+ */
+export function normalizeRetryConfig(
+  config: Record<string, unknown> | undefined,
+  defaults: { retries: number; retryDelayMs: number } = { retries: 2, retryDelayMs: 1000 },
+): { retries: number; retryDelayMs: number } {
+  const rawRetries = config?.retries as number | undefined;
+  const rawDelay = config?.retryDelayMs as number | undefined;
+  const retries = Number.isFinite(rawRetries) ? Math.max(0, rawRetries ?? 0) : defaults.retries;
+  const retryDelayMs = Number.isFinite(rawDelay) && (rawDelay ?? -1) >= 0
+    ? (rawDelay as number)
+    : defaults.retryDelayMs;
+  return { retries, retryDelayMs };
 }
 
 /**
@@ -93,7 +118,6 @@ export async function readLastJsonlEntry(
   try {
     const [line, fileStat] = await Promise.all([readLastLine(filePath), stat(filePath)]);
 
-
     if (!line) return null;
 
     const parsed: unknown = JSON.parse(line);
@@ -107,4 +131,21 @@ export async function readLastJsonlEntry(
   } catch {
     return null;
   }
+}
+
+/**
+ * Given a session ID and the orchestrator config, find which project it belongs
+ * to by matching session prefixes.
+ */
+export function resolveProjectIdForSessionId(
+  config: OrchestratorConfig,
+  sessionId: string,
+): string | undefined {
+  for (const [projectId, project] of Object.entries(config.projects)) {
+    const prefix = project.sessionPrefix;
+    if (sessionId === prefix || sessionId.startsWith(`${prefix}-`)) {
+      return projectId;
+    }
+  }
+  return undefined;
 }

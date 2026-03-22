@@ -124,6 +124,41 @@ describe("tracker-github plugin", () => {
       await expect(tracker.getIssue("999", project)).rejects.toThrow("issue not found");
     });
 
+    it("falls back when gh does not support stateReason field", async () => {
+      mockGhError('gh issue view failed: Unknown JSON field "stateReason"');
+      mockGh({ ...sampleIssue, stateReason: undefined });
+
+      const issue = await tracker.getIssue("123", project);
+
+      expect(issue.state).toBe("open");
+      expect(ghMock).toHaveBeenCalledTimes(2);
+      expect(ghMock.mock.calls[0]?.[1]).toEqual(
+        expect.arrayContaining([expect.stringContaining("state,stateReason")]),
+      );
+      expect(ghMock.mock.calls[1]?.[1]).toEqual(
+        expect.arrayContaining([expect.stringContaining("state,labels,assignees")]),
+      );
+    });
+
+    it("falls back on alternative unknown-field phrasing for stateReason", async () => {
+      mockGhError("gh issue view failed: invalid field 'stateReason'");
+      mockGh({ ...sampleIssue, stateReason: undefined });
+
+      const issue = await tracker.getIssue("123", project);
+
+      expect(issue.state).toBe("open");
+      expect(ghMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not swallow unrelated unknown-field errors", async () => {
+      mockGhError('gh issue view failed: Unknown JSON field "milestone"');
+
+      await expect(tracker.getIssue("123", project)).rejects.toThrow(
+        'Unknown JSON field "milestone"',
+      );
+      expect(ghMock).toHaveBeenCalledTimes(1);
+    });
+
     it("throws on malformed JSON response", async () => {
       ghMock.mockResolvedValueOnce({ stdout: "not json{" });
       await expect(tracker.getIssue("123", project)).rejects.toThrow();
@@ -278,6 +313,33 @@ describe("tracker-github plugin", () => {
         expect.arrayContaining(["--limit", "5"]),
         expect.any(Object),
       );
+    });
+
+    it("falls back to legacy JSON fields when stateReason is unsupported", async () => {
+      mockGhError('gh issue list failed: Unknown JSON field "stateReason"');
+      mockGh([{ ...sampleIssue, stateReason: undefined }]);
+
+      const issues = await tracker.listIssues!({}, project);
+
+      expect(issues).toHaveLength(1);
+      expect(issues[0]?.id).toBe("123");
+      expect(ghMock).toHaveBeenCalledTimes(2);
+      expect(ghMock.mock.calls[0]?.[1]).toEqual(
+        expect.arrayContaining([expect.stringContaining("state,stateReason")]),
+      );
+      expect(ghMock.mock.calls[1]?.[1]).toEqual(
+        expect.arrayContaining([expect.stringContaining("state,labels,assignees")]),
+      );
+    });
+
+    it("falls back for list when stateReason error uses alternate wording", async () => {
+      mockGhError("gh issue list failed: unknown field stateReason");
+      mockGh([{ ...sampleIssue, stateReason: undefined }]);
+
+      const issues = await tracker.listIssues!({}, project);
+
+      expect(issues).toHaveLength(1);
+      expect(ghMock).toHaveBeenCalledTimes(2);
     });
   });
 

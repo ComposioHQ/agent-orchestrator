@@ -1,6 +1,6 @@
 {
   "name": "@composio/ao-plugin-notifier-composio",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Notifier plugin: Composio unified notifications (Slack, Discord, email)",
   "license": "MIT",
   "type": "module",

@@ -10,13 +10,22 @@ import {
   type RuntimeHandle,
   type Session,
 } from "@composio/ao-core";
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { stat, access } from "node:fs/promises";
 import { join } from "node:path";
 import { constants } from "node:fs";
 
 const execFileAsync = promisify(execFile);
+
+function normalizePermissionMode(mode: string | undefined): "permissionless" | "default" | "auto-edit" | "suggest" | undefined {
+  if (!mode) return undefined;
+  if (mode === "skip") return "permissionless";
+  if (mode === "permissionless" || mode === "default" || mode === "auto-edit" || mode === "suggest") {
+    return mode;
+  }
+  return undefined;
+}
 
 // =============================================================================
 // Aider Activity Detection Helpers
@@ -61,6 +70,7 @@ export const manifest = {
   slot: "agent" as const,
   description: "Agent plugin: Aider",
   version: "0.1.0",
+  displayName: "Aider",
 };
 
 // =============================================================================
@@ -75,7 +85,8 @@ function createAiderAgent(): Agent {
     getLaunchCommand(config: AgentLaunchConfig): string {
       const parts: string[] = ["aider"];
 
-      if (config.permissions === "skip") {
+      const permissionMode = normalizePermissionMode(config.permissions);
+      if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
         parts.push("--yes");
       }
 
@@ -212,4 +223,13 @@ export function create(): Agent {
   return createAiderAgent();
 }
 
-export default { manifest, create } satisfies PluginModule<Agent>;
+export function detect(): boolean {
+  try {
+    execFileSync("aider", ["--version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export default { manifest, create, detect } satisfies PluginModule<Agent>;

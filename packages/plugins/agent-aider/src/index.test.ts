@@ -89,6 +89,7 @@ describe("plugin manifest & exports", () => {
       slot: "agent",
       description: "Agent plugin: Aider",
       version: "0.1.0",
+      displayName: "Aider",
     });
   });
 
@@ -114,8 +115,20 @@ describe("getLaunchCommand", () => {
     expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("aider");
   });
 
-  it("includes --yes when permissions=skip", () => {
-    const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "skip" }));
+  it("includes --yes when permissions=permissionless", () => {
+    const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "permissionless" }));
+    expect(cmd).toContain("--yes");
+  });
+
+  it("treats legacy permissions=skip as permissionless", () => {
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({ permissions: "skip" as unknown as AgentLaunchConfig["permissions"] }),
+    );
+    expect(cmd).toContain("--yes");
+  });
+
+  it("maps permissions=auto-edit to no-prompt mode on Aider", () => {
+    const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "auto-edit" }));
     expect(cmd).toContain("--yes");
   });
 
@@ -131,7 +144,7 @@ describe("getLaunchCommand", () => {
 
   it("combines all options", () => {
     const cmd = agent.getLaunchCommand(
-      makeLaunchConfig({ permissions: "skip", model: "sonnet", prompt: "Go" }),
+      makeLaunchConfig({ permissions: "permissionless", model: "sonnet", prompt: "Go" }),
     );
     expect(cmd).toBe("aider --yes --model 'sonnet' --message 'Go'");
   });

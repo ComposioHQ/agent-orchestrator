@@ -67,6 +67,10 @@ describe("getAgentByName", () => {
     expect(getAgentByName("aider").name).toBe("aider");
   });
 
+  it("returns agent for opencode", () => {
+    expect(getAgentByName("opencode").name).toBe("opencode");
+  });
+
   it("throws on unknown name", () => {
     expect(() => getAgentByName("unknown")).toThrow("Unknown agent plugin: unknown");
   });

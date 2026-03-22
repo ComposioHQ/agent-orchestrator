@@ -1,6 +1,6 @@
 {
   "name": "@composio/ao-plugin-notifier-webhook",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Notifier plugin: generic webhook",
   "license": "MIT",
   "type": "module",

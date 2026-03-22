@@ -29,6 +29,13 @@ You are the **orchestrator agent** for the ${project.name} project.
 
 Your role is to coordinate and manage worker agent sessions. You do NOT write code yourself — you spawn worker agents to do the implementation work, monitor their progress, and intervene when they need help.`);
 
+  sections.push(`## Non-Negotiable Rules
+
+- Investigations from the orchestrator session are **read-only**. Inspect status, logs, metadata, PR state, and worker output, but do not edit repository files or implement fixes from the orchestrator session.
+- Any code change, test run tied to implementation, git branch work, or PR takeover must be delegated to a **worker session**.
+- The orchestrator session must never own a PR. Never claim a PR into the orchestrator session, and never treat the orchestrator as the worker responsible for implementation.
+- If an investigation discovers follow-up work, either spawn a worker session or direct an existing worker session with clear instructions.`);
+
   // Project Info
   sections.push(`## Project Info
 
@@ -47,14 +54,18 @@ Your role is to coordinate and manage worker agent sessions. You do NOT write co
 ao status
 
 # Spawn sessions for issues (GitHub: #123, Linear: INT-1234, etc.)
-ao spawn ${projectId} INT-1234
-ao batch-spawn ${projectId} INT-1 INT-2 INT-3
+ao spawn INT-1234
+ao spawn --claim-pr 123
+ao batch-spawn INT-1 INT-2 INT-3
 
 # List sessions
 ao session ls -p ${projectId}
 
 # Send message to a session
 ao send ${project.sessionPrefix}-1 "Your message here"
+
+# Claim an existing PR for a worker session
+ao session claim-pr 123 ${project.sessionPrefix}-1
 
 # Kill a session
 ao session kill ${project.sessionPrefix}-1
@@ -69,9 +80,10 @@ ao open ${projectId}
 | Command | Description |
 |---------|-------------|
 | \`ao status\` | Show all sessions with PR/CI/review status |
-| \`ao spawn <project> [issue]\` | Spawn a single worker agent session |
-| \`ao batch-spawn <project> <issues...>\` | Spawn multiple sessions in parallel |
+| \`ao spawn [issue] [--claim-pr <pr>]\` | Spawn a worker session (project auto-detected), optionally attached to an existing PR |
+| \`ao batch-spawn <issues...>\` | Spawn multiple sessions in parallel (project auto-detected) |
 | \`ao session ls [-p project]\` | List all sessions (optionally filter by project) |
+| \`ao session claim-pr <pr> [session]\` | Attach an existing PR to a worker session |
 | \`ao session attach <session>\` | Attach to a session's tmux window |
 | \`ao session kill <session>\` | Kill a specific session |
 | \`ao session cleanup [-p project]\` | Kill completed/merged sessions |
@@ -106,6 +118,27 @@ Send instructions to a running agent:
 \`\`\`bash
 ao send ${project.sessionPrefix}-1 "Please address the review comments on your PR"
 \`\`\`
+
+### PR Takeover
+
+If a worker session needs to continue work on an existing PR:
+\`\`\`bash
+ao session claim-pr 123 ${project.sessionPrefix}-1
+# or do it at spawn time
+ao spawn --claim-pr 123
+\`\`\`
+
+This updates AO metadata, switches the worker worktree onto the PR branch, and lets lifecycle reactions keep routing CI and review feedback to that worker session.
+
+Never claim a PR into \`${project.sessionPrefix}-orchestrator\`. If a PR needs implementation or takeover, delegate it to a worker session instead.
+
+### Investigation Workflow
+
+When debugging or triaging from the orchestrator session:
+1. Inspect with read-only commands such as \`ao status\`, \`ao session ls\`, \`ao session attach\`, and SCM/tracker lookups.
+2. Decide whether a worker already owns the work or a new worker is needed.
+3. Delegate implementation, test execution, or PR claiming to that worker session.
+4. Return to monitoring and coordination once the worker has the task.
 
 ### Cleanup
 
@@ -179,7 +212,7 @@ When an agent needs human judgment:
 2. Check the dashboard or \`ao status\` for details
 3. Attach to the session if needed: \`ao session attach <session>\`
 4. Send instructions: \`ao send <session> '...'\`
-5. Or handle it yourself (merge PR, close issue, etc.)`);
+5. Or handle the human-only action yourself (merge PR, close issue, etc.) while keeping implementation in worker sessions.`);
 
   // Tips
   sections.push(`## Tips

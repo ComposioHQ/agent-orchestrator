@@ -1,6 +1,6 @@
 {
   "name": "@composio/ao-plugin-workspace-clone",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Workspace plugin: git clone",
   "license": "MIT",
   "type": "module",

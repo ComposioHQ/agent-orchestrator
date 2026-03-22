@@ -57,54 +57,65 @@ Comprehensive guide to installing, configuring, and troubleshooting Agent Orches
 
 ## Installation
 
-### Build from Source (Current Method)
+### Install via npm (recommended)
 
-The package is not yet published to npm. Install by building from source:
+```bash
+npm install -g @composio/ao
+
+# Verify
+ao --version
+```
+
+This installs the `ao` CLI globally along with all default plugins and the web dashboard.
+
+**Permission denied (EACCES)?** This is common on macOS. Three options:
+
+```bash
+# Option 1: Use sudo
+sudo npm install -g @composio/ao
+
+# Option 2: Use npx (no global install needed)
+npx @composio/ao start
+
+# Option 3: Fix npm permissions permanently (recommended)
+mkdir -p ~/.npm-global
+npm config set prefix '~/.npm-global'
+echo 'export PATH=~/.npm-global/bin:$PATH' >> ~/.zshrc
+source ~/.zshrc
+npm install -g @composio/ao
+```
+
+### Build from Source (for contributors)
+
+If you want to develop or contribute to Agent Orchestrator:
 
 ```bash
 # Clone the repository
 git clone https://github.com/ComposioHQ/agent-orchestrator
 cd agent-orchestrator
 
-# Install dependencies (requires pnpm)
-pnpm install
-
-# Build all packages
-pnpm build
-
-# Link CLI globally
-npm link -g packages/cli
+# Run the setup script (installs deps, builds, links CLI)
+bash scripts/setup.sh
 
 # Verify
 ao --version
 ```
 
-> **Coming soon:** `npm install -g @composio/ao-cli` once published to npm.
+The setup script handles pnpm installation, dependency resolution, building all packages, and linking the `ao` command globally (with automatic permission handling on macOS).
 
-**If you don't have pnpm:**
+## First-Time Setup
 
-```bash
-npm install -g pnpm
-```
+### `ao start` — the only command you need
 
-## First-Time Configuration
+`ao start` handles everything: auto-detecting your project, generating config, and launching the dashboard + orchestrator. There are three ways to use it:
 
-### Quick Onboarding with `ao start <url>`
-
-The fastest way to get started with any repo:
+**From a URL (fastest for any repo):**
 
 ```bash
 ao start https://github.com/your-org/your-repo
 ```
 
-This single command will:
-
-1. **Clone** the repo (or reuse an existing clone)
-2. **Auto-detect** language, package manager, SCM platform, and default branch
-3. **Generate** `agent-orchestrator.yaml` with smart defaults
-4. **Start** the dashboard and orchestrator agent
-
-Supports GitHub, GitLab, and Bitbucket URLs (HTTPS and SSH):
+This clones the repo, auto-detects language/framework/branch, generates `agent-orchestrator.yaml`, and starts everything. Supports GitHub, GitLab, and Bitbucket (HTTPS and SSH):
 
 ```bash
 ao start https://github.com/owner/repo
@@ -112,45 +123,36 @@ ao start https://gitlab.com/org/project
 ao start git@github.com:owner/repo.git
 ```
 
-If the repo already has an `agent-orchestrator.yaml`, it will be used as-is.
-
-### Quick Setup with `ao init`
-
-For more control over configuration:
+**From a local repo (zero prompts):**
 
 ```bash
-cd ~/your-repo
-ao init
+cd ~/your-project
+ao start
 ```
 
-The wizard will prompt you for:
+Auto-detects git remote, default branch, language, and available agent runtimes. Generates config and starts.
 
-1. **Data directory** - Where to store session metadata (default: `~/.agent-orchestrator`)
-2. **Worktree directory** - Where to create isolated workspaces (default: `~/.worktrees`)
-3. **Dashboard port** - Web interface port (default: `3000`)
-4. **Runtime plugin** - Session runtime (default: `tmux`)
-5. **Agent plugin** - AI coding assistant (default: `claude-code`)
-6. **Workspace plugin** - Workspace isolation method (default: `worktree`)
-7. **Notifiers** - Notification channels (default: `desktop`)
-8. **Project ID** - Short name for your project
-9. **GitHub repo** - Repository in `owner/repo` format
-10. **Local path** - Path to your repository
-11. **Default branch** - Main branch name (usually `main` or `master`)
+**Adding more projects:**
 
-### What `ao init` Detects Automatically
+```bash
+ao start ~/path/to/another-repo
+```
 
-The wizard is smart and tries to help:
+If a config already exists, the new project is appended. If not, one is created first.
 
-- **Git repository** - Detects if you're in a git repo
-- **GitHub remote** - Parses `owner/repo` from git remote
-- **Current branch** - Suggests default branch from git
-- **API keys** - Checks for `LINEAR_API_KEY` in environment
-- **GitHub auth** - Verifies `gh` CLI authentication status
-- **tmux availability** - Warns if tmux is not installed
+### What `ao start` detects automatically
+
+- **Git remote** — parses `owner/repo` from origin
+- **Default branch** — checks symbolic-ref, GitHub API, then common names (main/master)
+- **Project type** — language, framework, test runner, package manager
+- **Agent runtime** — which AI agents are installed (Claude Code, Codex, Aider, OpenCode)
+- **Free port** — if configured port is busy, auto-finds the next available
+- **tmux** — warns if not installed
+- **GitHub CLI** — checks `gh auth status`
 
 ### Manual Configuration
 
-If you prefer to write the config manually:
+If you prefer to write the config by hand:
 
 ```bash
 cp agent-orchestrator.yaml.example agent-orchestrator.yaml
@@ -168,19 +170,17 @@ nano agent-orchestrator.yaml
 
 ### Minimal Configuration
 
-The absolute minimum needed:
+The absolute minimum needed (everything else has sensible defaults):
 
 ```yaml
-dataDir: ~/.agent-orchestrator
-worktreeDir: ~/.worktrees
-port: 3000
-
 projects:
   my-app:
     repo: owner/my-app
     path: ~/my-app
     defaultBranch: main
 ```
+
+`ao start` generates this automatically — you only need to write it manually if you want full control.
 
 ### Full Configuration Schema
 
@@ -388,9 +388,31 @@ To add a custom tracker (Jira, Asana, etc.), create a plugin:
 2. Implement the `Tracker` interface from `@composio/ao-core`
 3. Register your plugin in the config
 
-See [CLAUDE.md](./CLAUDE.md) for plugin development guidelines.
+See [Development Guide](./docs/DEVELOPMENT.md) for plugin development guidelines.
 
 ## Troubleshooting
+
+### Run `ao doctor`
+
+Use the built-in doctor before debugging a broken install by hand:
+
+```bash
+ao doctor
+ao doctor --fix
+```
+
+`ao doctor` reports deterministic PASS/WARN/FAIL checks for PATH and launcher resolution, required binaries, tmux and GitHub CLI health, stale AO temp files, config support directories, and core build/runtime sanity. `--fix` only applies safe fixes such as creating missing AO support directories, refreshing the local launcher link, and removing stale AO temp files.
+
+### Run `ao update`
+
+When you installed AO from this repository and want to refresh that local install:
+
+```bash
+git switch main
+ao update
+```
+
+`ao update` is intentionally conservative: it requires a clean working tree on `main`, fast-forwards from `origin/main`, reinstalls dependencies, clean-rebuilds the critical core/CLI/web packages, refreshes the launcher with `npm link`, and runs CLI smoke tests. Use `ao update --skip-smoke` to stop after rebuild, or `ao update --smoke-only` to rerun just the smoke checks.
 
 ### "No agent-orchestrator.yaml found"
 
@@ -399,10 +421,10 @@ See [CLAUDE.md](./CLAUDE.md) for plugin development guidelines.
 **Solution:**
 
 ```bash
-# Run init wizard
-ao init
+# ao start auto-creates the config if none exists
+ao start
 
-# Or copy an example
+# Or copy an example and edit manually
 cp examples/simple-github.yaml agent-orchestrator.yaml
 ```
 
@@ -466,7 +488,7 @@ echo $LINEAR_API_KEY
 
 **Problem:** Another service is using the dashboard port (default 3000).
 
-**Solution:**
+**Note:** `ao start` automatically finds the next free port if the configured port is busy. You'll see a message like "Port 3000 is busy — using 3001 instead." If you still need to fix it manually:
 
 ```bash
 # Option 1: Change port in agent-orchestrator.yaml
@@ -475,8 +497,6 @@ port: 3001
 # Option 2: Find and kill the process using the port
 lsof -ti:3000 | xargs kill
 ```
-
-**Note:** When running multiple projects, each needs a different `port:` value in its config.
 
 ### "Workspace creation failed"
 
@@ -527,7 +547,7 @@ ao send <session-name> "Please report your current status"
 
 # Kill and respawn if necessary
 ao session kill <session-name>
-ao spawn <project-id> <issue-id>
+ao spawn <issue-id>
 ```
 
 ### "Permission denied" when spawning
@@ -615,7 +635,7 @@ Create custom plugins for:
 - Different trackers (Jira, Asana, custom systems)
 - Different notifiers (email, webhooks, custom integrations)
 
-See [CLAUDE.md](./CLAUDE.md) for plugin development guidelines.
+See [Development Guide](./docs/DEVELOPMENT.md) for plugin development guidelines.
 
 ### Docker Runtime
 
@@ -775,7 +795,7 @@ ao open <session-name>
 
 # Kill and respawn if necessary
 ao session kill <session-name>
-ao spawn <project-id> <issue-id>
+ao spawn <issue-id>
 ```
 
 Agents also send "stuck" notifications automatically after inactivity threshold.
@@ -811,12 +831,12 @@ Useful for:
 
 ## Next Steps
 
-1. **Run `ao init`** - Create your first config
-2. **Spawn an agent** - `ao spawn my-app ISSUE-123`
-3. **Monitor progress** - `ao status` or dashboard
-4. **Read [CLAUDE.md](./CLAUDE.md)** - Code conventions and architecture
-5. **Explore examples** - See [examples/](./examples/) for more configs
-6. **Join the community** - Report issues, share configs, contribute plugins
+1. **Start the orchestrator** — `ao start` (auto-creates config on first run)
+2. **Spawn an agent** — `ao spawn 123` (project auto-detected from cwd)
+3. **Monitor progress** — `ao status` or dashboard at http://localhost:3000
+4. **Read [Development Guide](./docs/DEVELOPMENT.md)** — Code conventions and architecture
+5. **Explore examples** — See [examples/](./examples/) for more configs
+6. **Join the community** — Report issues, share configs, contribute plugins
 
 ---
 
