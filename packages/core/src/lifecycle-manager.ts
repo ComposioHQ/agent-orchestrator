@@ -215,6 +215,7 @@ interface ReactionTracker {
   attempts: number;
   firstTriggered: Date;
   pendingRetry?: boolean;
+  escalated?: boolean;
 }
 
 /** Create a LifecycleManager instance. */
@@ -462,14 +463,17 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     if (shouldEscalate) {
       tracker.pendingRetry = false;
-      // Escalate to human
-      const event = createEvent("reaction.escalated", {
-        sessionId,
-        projectId,
-        message: `Reaction '${reactionKey}' escalated after ${tracker.attempts} attempts`,
-        data: { reactionKey, attempts: tracker.attempts },
-      });
-      await notifyHuman(event, reactionConfig.priority ?? "urgent");
+      if (!tracker.escalated) {
+        // Escalate to human once; subsequent polls should not spam repeats.
+        const event = createEvent("reaction.escalated", {
+          sessionId,
+          projectId,
+          message: `Reaction '${reactionKey}' escalated after ${tracker.attempts} attempts`,
+          data: { reactionKey, attempts: tracker.attempts },
+        });
+        await notifyHuman(event, reactionConfig.priority ?? "urgent");
+        tracker.escalated = true;
+      }
       return {
         reactionType: reactionKey,
         success: true,
@@ -979,8 +983,21 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           if (!mergeReady.noConflicts) {
             const reactionKey = "merge-conflicts";
             const reactionConfig = getReactionConfigForSession(session, reactionKey);
-            const alreadyFired = mergeConflictReactionFired.get(session.id) === true;
-            if (reactionConfig && reactionConfig.auto !== false && !alreadyFired) {
+            const tracker = reactionTrackers.get(`${session.id}:${reactionKey}`);
+            const dispatchMarker = session.metadata[reactionDispatchMarkerKey(reactionKey)];
+            const conflictMarker = "conflicted";
+            const escalateAfter = reactionConfig?.escalateAfter;
+            const escalateDue =
+              !!reactionConfig &&
+              !!tracker &&
+              !tracker.escalated &&
+              typeof escalateAfter === "string" &&
+              parseDuration(escalateAfter) > 0 &&
+              Date.now() - tracker.firstTriggered.getTime() > parseDuration(escalateAfter);
+            const needsReplay =
+              (tracker?.pendingRetry ?? false) || dispatchMarker !== conflictMarker || escalateDue;
+
+            if (reactionConfig && reactionConfig.auto !== false && needsReplay) {
               const result = await executeReaction(
                 session.id,
                 session.projectId,
@@ -988,12 +1005,18 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
                 reactionConfig,
               );
               if (result.success) {
+                updateSessionMetadata(session, {
+                  [reactionDispatchMarkerKey(reactionKey)]: conflictMarker,
+                });
                 mergeConflictReactionFired.set(session.id, true);
               }
             }
           } else {
             mergeConflictReactionFired.delete(session.id);
             clearReactionTracker(session.id, "merge-conflicts");
+            updateSessionMetadata(session, {
+              [reactionDispatchMarkerKey("merge-conflicts")]: "",
+            });
           }
         } catch {
           // Merge conflict detection is best-effort; don't block the poll cycle

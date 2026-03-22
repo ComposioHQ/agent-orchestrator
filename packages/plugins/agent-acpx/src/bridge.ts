@@ -77,6 +77,10 @@ export function buildPromptArgs(options: {
   return [normalizeAcpxAgent(options.acpxAgent), "prompt", options.prompt];
 }
 
+function formatStateMarker(state: "active" | "idle"): string {
+  return `[acpx bridge] state=${state} ts=${new Date().toISOString()}\n`;
+}
+
 export class AcpxBridge {
   private readonly acpxPath: string;
   private readonly acpxAgent: SupportedAcpxAgent;
@@ -147,7 +151,11 @@ export class AcpxBridge {
   }
 
   private queuePrompt(prompt: string): void {
+    const wasIdle = !this.dispatching && this.queue.length === 0;
     this.queue.push(prompt);
+    if (wasIdle) {
+      this.stdout.write(formatStateMarker("active"));
+    }
     if (!this.dispatching) {
       void this.processQueue();
     }
@@ -174,6 +182,7 @@ export class AcpxBridge {
       return;
     }
 
+    this.stdout.write(formatStateMarker("idle"));
     for (const waiter of this.idleWaiters.splice(0)) {
       waiter();
     }

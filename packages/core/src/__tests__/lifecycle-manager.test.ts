@@ -1686,6 +1686,89 @@ describe("reactions", () => {
     expect(mockSessionManager.send).toHaveBeenCalledWith("app-1", "Fix CI");
   });
 
+  it("replays and then escalates unresolved merge conflicts without spamming repeated escalations", async () => {
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("passing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("none"),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn().mockResolvedValue({ mergeable: false, noConflicts: false }),
+    };
+
+    const mockNotifier: Notifier = {
+      name: "desktop",
+      notify: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const registryWithNotifier: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "notifier" && name === "desktop") return mockNotifier;
+        return null;
+      }),
+    };
+
+    const pr = makePR();
+    const session = makeSession({ status: "pr_open", pr });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+    vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+      pr: pr.url,
+    });
+
+    const configWithReaction = {
+      ...config,
+      notificationRouting: {
+        urgent: ["desktop"],
+        action: [],
+        warning: [],
+        info: [],
+      },
+      reactions: {
+        "merge-conflicts": {
+          auto: true,
+          action: "send-to-agent" as const,
+          message: "Resolve merge conflicts",
+          escalateAfter: "1s",
+        },
+      },
+    };
+
+    const lm = createLifecycleManager({
+      config: configWithReaction,
+      registry: registryWithNotifier,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+    expect(mockSessionManager.send).toHaveBeenLastCalledWith("app-1", "Resolve merge conflicts");
+    expect(mockNotifier.notify).not.toHaveBeenCalled();
+
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    await lm.check("app-1");
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+    expect(mockNotifier.notify).toHaveBeenCalledTimes(1);
+
+    await lm.check("app-1");
+    expect(mockNotifier.notify).toHaveBeenCalledTimes(1);
+  });
+
   it("dispatches unresolved review comments even when reviewDecision stays unchanged", async () => {
     config.reactions = {
       "changes-requested": {

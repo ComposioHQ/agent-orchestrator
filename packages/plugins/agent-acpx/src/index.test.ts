@@ -109,7 +109,7 @@ describe("create()", () => {
     });
   });
 
-  it("returns null activity while the bridge process is running", async () => {
+  it("returns null activity while the bridge process is running without activity markers", async () => {
     const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
     const result = await agent.getActivityState(
       makeSession({
@@ -118,6 +118,36 @@ describe("create()", () => {
     );
     expect(result).toBeNull();
     killSpy.mockRestore();
+  });
+
+  it("parses idle bridge markers from tmux output", async () => {
+    mockExecFileAsync.mockImplementation((command: string, args?: string[]) => {
+      if (command === "tmux" && args?.[0] === "list-panes") {
+        return Promise.resolve({ stdout: "/dev/ttys003\n", stderr: "" });
+      }
+      if (command === "ps") {
+        return Promise.resolve({
+          stdout: "  PID TT       ARGS\n  321 ttys003  /usr/bin/node /tmp/agent-acpx/dist/bridge.js --agent codex\n",
+          stderr: "",
+        });
+      }
+      if (command === "tmux" && args?.[0] === "capture-pane") {
+        return Promise.resolve({
+          stdout: "[acpx bridge] state=idle ts=2026-03-22T20:00:00.000Z\n",
+          stderr: "",
+        });
+      }
+      return Promise.reject(new Error(`unexpected ${command}`));
+    });
+
+    const result = await agent.getActivityState(
+      makeSession({ runtimeHandle: makeTmuxHandle() }),
+    );
+
+    expect(result).toEqual({
+      state: "idle",
+      timestamp: new Date("2026-03-22T20:00:00.000Z"),
+    });
   });
 
   it("returns exited when the bridge process is gone", async () => {

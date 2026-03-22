@@ -19,6 +19,32 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const BRIDGE_PATH = join(dirname(fileURLToPath(import.meta.url)), "bridge.js");
 
+type BridgeActivityState = "active" | "idle";
+
+function parseBridgeActivity(output: string): ActivityDetection | null {
+  const matches = [...output.matchAll(/\[acpx bridge\] state=(active|idle) ts=([^\s]+)/g)];
+  const last = matches.at(-1);
+  if (!last) return null;
+
+  const state = last[1] as BridgeActivityState;
+  const timestamp = new Date(last[2]);
+  return {
+    state,
+    timestamp: Number.isNaN(timestamp.getTime()) ? undefined : timestamp,
+  };
+}
+
+async function captureTmuxOutput(handle: RuntimeHandle, lines = 40): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync("tmux", ["capture-pane", "-t", handle.id, "-p", "-S", `-${lines}`], {
+      timeout: 30_000,
+    });
+    return stdout;
+  } catch {
+    return "";
+  }
+}
+
 async function isTmuxProcessRunning(handle: RuntimeHandle): Promise<boolean> {
   try {
     const { stdout: ttyOut } = await execFileAsync(
@@ -87,6 +113,8 @@ function createAcpxAgent(): Agent {
     },
 
     detectActivity(terminalOutput: string): ActivityState {
+      const bridgeState = parseBridgeActivity(terminalOutput)?.state;
+      if (bridgeState) return bridgeState;
       if (!terminalOutput.trim()) return "idle";
       return "active";
     },
@@ -101,6 +129,14 @@ function createAcpxAgent(): Agent {
       const running = await this.isProcessRunning(session.runtimeHandle);
       if (!running) {
         return { state: "exited", timestamp: exitedAt };
+      }
+
+      if (session.runtimeHandle.runtimeName === "tmux") {
+        const output = await captureTmuxOutput(session.runtimeHandle);
+        const detected = parseBridgeActivity(output);
+        if (detected) {
+          return detected;
+        }
       }
 
       return null;
