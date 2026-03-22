@@ -149,6 +149,7 @@ const ProjectConfigSchema = z.object({
   repo: z.string(),
   path: z.string(),
   defaultBranch: z.string().default("main"),
+  maxActiveWorkers: z.number().int().positive().optional(),
   sessionPrefix: z
     .string()
     .regex(/^[a-zA-Z0-9_-]+$/, "sessionPrefix must match [a-zA-Z0-9_-]+")

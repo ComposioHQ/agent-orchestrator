@@ -37,6 +37,7 @@ projects:
     repo: owner/repo          # GitHub "owner/repo" format
     path: ~/code/my-app       # Local path to the repo
     defaultBranch: main       # main | master | next | develop
+    maxActiveWorkers: 1       # Optional cap on concurrent worker sessions for this project
     sessionPrefix: myapp      # Prefix for session names (e.g. myapp-1, myapp-2)
 
     # ── Per-project plugin overrides (optional) ───────────────────

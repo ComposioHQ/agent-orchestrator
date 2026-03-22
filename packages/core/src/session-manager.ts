@@ -20,6 +20,7 @@ import {
   isIssueNotFoundError,
   isRestorable,
   NON_RESTORABLE_STATUSES,
+  TERMINAL_STATUSES,
   SessionNotFoundError,
   SessionNotRestorableError,
   WorkspaceMissingError,
@@ -973,6 +974,19 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           // Other error (auth, network, etc) - fail fast
           throw new Error(`Failed to fetch issue ${spawnConfig.issueId}: ${err}`, { cause: err });
         }
+      }
+    }
+
+    if (project.maxActiveWorkers !== undefined) {
+      const activeWorkers = loadActiveSessionRecords(project).filter(
+        ({ sessionName, raw }) =>
+          !isOrchestratorSessionRecord(sessionName, raw) &&
+          !TERMINAL_STATUSES.has((raw["status"] as Session["status"]) ?? "working"),
+      );
+      if (activeWorkers.length >= project.maxActiveWorkers) {
+        throw new Error(
+          `Project '${spawnConfig.projectId}' already has ${activeWorkers.length} active worker(s); maxActiveWorkers=${project.maxActiveWorkers}`,
+        );
       }
     }
 

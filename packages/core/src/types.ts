@@ -956,6 +956,9 @@ export interface ProjectConfig {
   /** Default branch (main, master, next, develop, etc.) */
   defaultBranch: string;
 
+  /** Maximum number of active worker sessions allowed for this project. */
+  maxActiveWorkers?: number;
+
   /** Session name prefix (e.g. "app" → "app-1", "app-2") */
   sessionPrefix: string;
 
