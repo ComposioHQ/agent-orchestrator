@@ -38,6 +38,14 @@ interface DashboardProps {
 }
 
 const KANBAN_LEVELS = ["working", "pending", "review", "respond", "merge"] as const;
+const KANBAN_LABELS: Record<string, string> = {
+  working: "Working", pending: "Pending", review: "Review", respond: "Respond", merge: "Merge",
+};
+const KANBAN_LABEL_COLORS: Record<string, string> = {
+  working: "var(--color-status-working)", pending: "var(--color-status-attention)",
+  review: "var(--color-accent-orange)", respond: "var(--color-status-error)",
+  merge: "var(--color-status-ready)",
+};
 const EMPTY_ORCHESTRATORS: DashboardOrchestratorLink[] = [];
 
 function mergeOrchestrators(
@@ -232,15 +240,20 @@ export function Dashboard({
         {allProjectsView && (
           <ProjectOverviewGrid overviews={projectOverviews} onSpawnOrchestrator={handleSpawnOrchestrator} spawningProjectIds={spawningProjectIds} spawnErrors={spawnErrors} />
         )}
-        {!allProjectsView && hasKanbanSessions && (
+        {!allProjectsView && (hasKanbanSessions || sessions.length > 0) && (
           <div className="mb-8 flex snap-x snap-mandatory gap-3 overflow-x-auto pb-2 md:snap-none md:gap-4">
-            {KANBAN_LEVELS.map((level) =>
-              grouped[level].length > 0 ? (
-                <div key={level} className="min-w-[260px] flex-1 snap-start sm:min-w-[200px]">
+            {KANBAN_LEVELS.map((level) => (
+              <div key={level} className="min-w-[260px] flex-1 snap-start sm:min-w-[200px]">
+                {grouped[level].length > 0 ? (
                   <AttentionZone level={level} sessions={grouped[level]} variant="column" onSend={handleSend} onKill={handleKill} onMerge={handleMerge} onRestore={handleRestore} />
-                </div>
-              ) : null,
-            )}
+                ) : (
+                  <div className="rounded-[var(--radius-lg)] border border-dashed border-[var(--color-border-subtle)] px-3 py-4">
+                    <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.10em]" style={{ color: KANBAN_LABEL_COLORS[level] }}>{KANBAN_LABELS[level]}</div>
+                    <p className="text-[11px] text-[var(--color-text-muted)]">No sessions</p>
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         )}
         {!allProjectsView && !hasKanbanSessions && sessions.length === 0 && selectedProject && (
