@@ -8,7 +8,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve, dirname } from "node:path";
 import { isPortAvailable } from "./web-dir.js";
 import { exec } from "./shell.js";
 
@@ -32,14 +32,31 @@ async function checkPort(port: number): Promise<void> {
  * starting the dashboard. Works with both `next dev` and `next build`.
  */
 async function checkBuilt(webDir: string): Promise<void> {
-  const nodeModules = resolve(webDir, "node_modules", "@composio", "ao-core");
-  if (!existsSync(nodeModules)) {
+  // Walk up from webDir checking node_modules/@composio/ao-core at each level.
+  // This handles both pnpm (symlinked in webDir/node_modules) and npm global
+  // installs (hoisted to a parent node_modules).
+  const corePkgDir = findPackageUp(webDir, "@composio", "ao-core");
+  if (!corePkgDir) {
     throw new Error("Dependencies not installed. Run: pnpm install && pnpm build");
   }
-  const coreEntry = resolve(nodeModules, "dist", "index.js");
+  const coreEntry = resolve(corePkgDir, "dist", "index.js");
   if (!existsSync(coreEntry)) {
     throw new Error("Packages not built. Run: pnpm build");
   }
+}
+
+/** Walk up from `startDir` looking for `node_modules/<segments>`. */
+function findPackageUp(startDir: string, ...segments: string[]): string | null {
+  let dir = resolve(startDir);
+  const root = dirname(dir) === dir ? dir : undefined; // filesystem root guard
+  while (true) {
+    const candidate = resolve(dir, "node_modules", ...segments);
+    if (existsSync(candidate)) return candidate;
+    const parent = dirname(dir);
+    if (parent === dir || parent === root) break;
+    dir = parent;
+  }
+  return null;
 }
 
 /**
