@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useReducer, useRef } from "react";
-import type { DashboardSession, GlobalPauseState, SSESnapshotEvent } from "@/lib/types";
+import type { DashboardSession, GlobalPauseState, SSESnapshotEvent, SSEDispatcherState } from "@/lib/types";
 
 const MEMBERSHIP_REFRESH_DELAY_MS = 120;
 const STALE_REFRESH_INTERVAL_MS = 15000;
@@ -9,16 +9,21 @@ const STALE_REFRESH_INTERVAL_MS = 15000;
 interface State {
   sessions: DashboardSession[];
   globalPause: GlobalPauseState | null;
+  dispatcherState: SSEDispatcherState | null;
 }
 
 type Action =
-  | { type: "reset"; sessions: DashboardSession[]; globalPause: GlobalPauseState | null }
-  | { type: "snapshot"; patches: SSESnapshotEvent["sessions"] };
+  | { type: "reset"; sessions: DashboardSession[]; globalPause: GlobalPauseState | null; dispatcherState?: SSEDispatcherState | null }
+  | { type: "snapshot"; patches: SSESnapshotEvent["sessions"]; dispatcherState?: SSEDispatcherState | null };
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
     case "reset":
-      return { sessions: action.sessions, globalPause: action.globalPause };
+      return {
+        sessions: action.sessions,
+        globalPause: action.globalPause,
+        dispatcherState: action.dispatcherState ?? state.dispatcherState,
+      };
     case "snapshot": {
       const patchMap = new Map(action.patches.map((p) => [p.id, p]));
       let changed = false;
@@ -40,7 +45,13 @@ function reducer(state: State, action: Action): State {
           lastActivityAt: patch.lastActivityAt,
         };
       });
-      return changed ? { ...state, sessions: next } : state;
+      const dispatcherChanged = action.dispatcherState !== undefined;
+      if (!changed && !dispatcherChanged) return state;
+      return {
+        ...state,
+        sessions: changed ? next : state.sessions,
+        dispatcherState: dispatcherChanged ? (action.dispatcherState ?? null) : state.dispatcherState,
+      };
     }
   }
 }
@@ -62,6 +73,7 @@ export function useSessionEvents(
   const [state, dispatch] = useReducer(reducer, {
     sessions: initialSessions,
     globalPause: initialGlobalPause ?? null,
+    dispatcherState: null,
   });
   const sessionsRef = useRef(state.sessions);
   const refreshingRef = useRef(false);
@@ -149,7 +161,7 @@ export function useSessionEvents(
         const data = JSON.parse(event.data as string) as { type: string };
         if (data.type === "snapshot") {
           const snapshot = data as SSESnapshotEvent;
-          dispatch({ type: "snapshot", patches: snapshot.sessions });
+          dispatch({ type: "snapshot", patches: snapshot.sessions, dispatcherState: snapshot.dispatcher });
 
           const currentMembershipKey = createMembershipKey(sessionsRef.current);
           const snapshotMembershipKey = createMembershipKey(snapshot.sessions);

@@ -15,13 +15,15 @@ import {
   type ProjectConfig,
   type OrchestratorConfig,
   type PluginRegistry,
-} from "@composio/ao-core";
-import type {
-  DashboardSession,
-  DashboardPR,
-  DashboardStats,
-  DashboardOrchestratorLink,
-} from "./types.js";
+} from "@composio/ao-core/types";
+import {
+  type DashboardSession,
+  type DashboardPR,
+  type DashboardStats,
+  type DashboardOrchestratorLink,
+  getAttentionLevel,
+  ACTIONABLE_ATTENTION_LEVELS,
+} from "./types";
 import { TTLCache, prCache, prCacheKey, type PREnrichmentData } from "./cache";
 
 /** Cache for issue titles (5 min TTL — issue titles rarely change) */
@@ -406,7 +408,10 @@ export async function enrichSessionsMetadata(
 export function computeStats(sessions: DashboardSession[]): DashboardStats {
   return {
     totalSessions: sessions.length,
-    workingSessions: sessions.filter((s) => s.activity !== null && s.activity !== "exited").length,
+    busySessions: sessions.filter((s) => s.activity === "active").length,
+    attentionSessions: sessions.filter((s) =>
+      ACTIONABLE_ATTENTION_LEVELS.has(getAttentionLevel(s)),
+    ).length,
     openPRs: sessions.filter((s) => s.pr?.state === "open").length,
     needsReview: sessions.filter((s) => s.pr && !s.pr.isDraft && s.pr.reviewDecision === "pending")
       .length,

@@ -90,13 +90,13 @@ async function ghIssueListJson(args: string[]): Promise<string> {
   const withStateReason = [
     ...args,
     "--json",
-    "number,title,body,url,state,stateReason,labels,assignees",
+    "number,title,body,url,state,stateReason,labels,assignees,createdAt",
   ];
   try {
     return await gh(withStateReason);
   } catch (err) {
     if (!isUnknownJsonFieldError(err, "stateReason")) throw err;
-    return gh([...args, "--json", "number,title,body,url,state,labels,assignees"]);
+    return gh([...args, "--json", "number,title,body,url,state,labels,assignees,createdAt"]);
   }
 }
 
@@ -239,6 +239,7 @@ function createGitHubTracker(): Tracker {
         stateReason?: string | null;
         labels: Array<{ name: string }>;
         assignees: Array<{ login: string }>;
+        createdAt?: string;
       }> = JSON.parse(raw);
 
       return issues.map((data) => ({
@@ -249,6 +250,7 @@ function createGitHubTracker(): Tracker {
         state: mapState(data.state, data.stateReason),
         labels: data.labels.map((l) => l.name),
         assignee: data.assignees[0]?.login,
+        createdAt: data.createdAt,
       }));
     },
 

@@ -15,6 +15,8 @@ import {
   createPluginRegistry,
   createSessionManager,
   createLifecycleManager,
+  createDispatcher,
+  readPersistedDispatcherStatus,
   decompose,
   getLeaves,
   getSiblings,
@@ -23,6 +25,7 @@ import {
   type PluginRegistry,
   type OpenCodeSessionManager,
   type LifecycleManager,
+  type Dispatcher,
   type SCM,
   type ProjectConfig,
   type Tracker,
@@ -48,6 +51,7 @@ export interface Services {
   registry: PluginRegistry;
   sessionManager: OpenCodeSessionManager;
   lifecycleManager: LifecycleManager;
+  dispatcher: Dispatcher;
 }
 
 // Cache in globalThis for Next.js HMR stability
@@ -92,7 +96,28 @@ async function initServices(): Promise<Services> {
   const lifecycleManager = createLifecycleManager({ config, registry, sessionManager });
   lifecycleManager.start(30_000);
 
-  const services = { config, registry, sessionManager, lifecycleManager };
+  // Initialize the dispatcher — intelligent issue scoring + auto-dispatch
+  const dispatcher = createDispatcher({ config, registry, sessionManager });
+
+  // Auto-start the dispatcher based on persisted status + config
+  const hasEnabledDispatcher = Object.values(config.projects).some(
+    (p) => p.dispatcher?.enabled,
+  );
+  if (hasEnabledDispatcher) {
+    const persistedStatus = readPersistedDispatcherStatus();
+    // Respect persisted pause/stop — only auto-start if not explicitly paused or stopped
+    if (persistedStatus === "paused") {
+      // Restore paused state without starting the poll loop
+      console.log("[dispatcher] Restored paused state from previous session");
+    } else if (persistedStatus === "stopped") {
+      console.log("[dispatcher] Staying stopped (persisted from previous session)");
+    } else {
+      // No persisted status or was running — start normally
+      dispatcher.start();
+    }
+  }
+
+  const services = { config, registry, sessionManager, lifecycleManager, dispatcher };
   globalForServices._aoServices = services;
   return services;
 }

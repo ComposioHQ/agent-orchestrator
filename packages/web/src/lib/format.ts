@@ -3,7 +3,7 @@
  * No side effects, no external dependencies.
  */
 
-import type { DashboardSession } from "./types.js";
+import type { DashboardSession } from "./types";
 
 /**
  * Humanize a git branch name into a readable title.

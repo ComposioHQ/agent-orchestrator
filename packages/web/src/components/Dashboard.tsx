@@ -8,15 +8,18 @@ import {
   type AttentionLevel,
   type GlobalPauseState,
   type DashboardOrchestratorLink,
+  type SSEDispatcherState,
   getAttentionLevel,
   isPRRateLimited,
 } from "@/lib/types";
 import { CI_STATUS } from "@composio/ao-core/types";
+import { computeStats } from "@/lib/serialize";
 import { AttentionZone } from "./AttentionZone";
 import { PRTableRow } from "./PRStatus";
 import { DynamicFavicon } from "./DynamicFavicon";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
 import { ProjectSidebar } from "./ProjectSidebar";
+import { DispatcherPanel } from "./DispatcherPanel";
 import type { ProjectInfo } from "@/lib/project-name";
 
 interface DashboardProps {
@@ -53,13 +56,14 @@ export function Dashboard({
   orchestrators,
 }: DashboardProps) {
   const orchestratorLinks = orchestrators ?? EMPTY_ORCHESTRATORS;
-  const { sessions, globalPause } = useSessionEvents(
+  const { sessions, globalPause, dispatcherState } = useSessionEvents(
     initialSessions,
     initialGlobalPause,
     projectId,
   );
   const [rateLimitDismissed, setRateLimitDismissed] = useState(false);
   const [globalPauseDismissed, setGlobalPauseDismissed] = useState(false);
+  const [dispatcherOpen, setDispatcherOpen] = useState(false);
   const [activeOrchestrators, setActiveOrchestrators] =
     useState<DashboardOrchestratorLink[]>(orchestratorLinks);
   const [spawningProjectIds, setSpawningProjectIds] = useState<string[]>([]);
@@ -221,19 +225,7 @@ export function Dashboard({
     [sessions],
   );
 
-  const liveStats = useMemo<DashboardStats>(
-    () => ({
-      totalSessions: sessions.length,
-      workingSessions: sessions.filter(
-        (session) => session.activity !== null && session.activity !== "exited",
-      ).length,
-      openPRs: sessions.filter((session) => session.pr?.state === "open").length,
-      needsReview: sessions.filter(
-        (session) => session.pr && !session.pr.isDraft && session.pr.reviewDecision === "pending",
-      ).length,
-    }),
-    [sessions],
-  );
+  const liveStats = useMemo(() => computeStats(sessions), [sessions]);
 
   const resumeAtLabel = useMemo(() => {
     if (!globalPause) return null;
@@ -246,7 +238,22 @@ export function Dashboard({
 
   return (
     <div className="flex h-screen">
-      {showSidebar && <ProjectSidebar projects={projects} activeProjectId={projectId} />}
+      {showSidebar && (
+        <ProjectSidebar
+          projects={projects}
+          activeProjectId={projectId}
+          dispatcherState={dispatcherState}
+          onToggleDispatcher={() => setDispatcherOpen((prev) => !prev)}
+          dispatcherOpen={dispatcherOpen}
+        />
+      )}
+      {dispatcherOpen && (
+        <DispatcherPanel
+          projectId={projectId}
+          dispatcherState={dispatcherState}
+          onClose={() => setDispatcherOpen(false)}
+        />
+      )}
       <div className="flex-1 overflow-y-auto px-8 py-7">
         <DynamicFavicon sessions={sessions} projectName={projectName} />
         <div className="mb-8 flex items-center justify-between border-b border-[var(--color-border-subtle)] pb-6">
@@ -256,7 +263,14 @@ export function Dashboard({
             </h1>
             <StatusLine stats={liveStats} />
           </div>
-          {!allProjectsView && <OrchestratorControl orchestrators={activeOrchestrators} />}
+          <div className="flex items-center gap-3">
+            {!showSidebar && <DispatcherToggle
+              dispatcherState={dispatcherState}
+              onClick={() => setDispatcherOpen((prev) => !prev)}
+              active={dispatcherOpen}
+            />}
+            {!allProjectsView && <OrchestratorControl orchestrators={activeOrchestrators} />}
+          </div>
         </div>
 
         {globalPause && !globalPauseDismissed && (
@@ -345,7 +359,7 @@ export function Dashboard({
           <div className="mb-8 flex gap-4 overflow-x-auto pb-2">
             {KANBAN_LEVELS.map((level) =>
               grouped[level].length > 0 ? (
-                <div key={level} className="min-w-[200px] flex-1">
+                <div key={level} id={`zone-${level}`} className="min-w-[200px] flex-1">
                   <AttentionZone
                     level={level}
                     sessions={grouped[level]}
@@ -362,7 +376,7 @@ export function Dashboard({
         )}
 
         {!allProjectsView && grouped.done.length > 0 && (
-          <div className="mb-8">
+          <div id="zone-done" className="mb-8">
             <AttentionZone
               level="done"
               sessions={grouped.done}
@@ -376,7 +390,7 @@ export function Dashboard({
         )}
 
         {openPRs.length > 0 && (
-          <div className="mx-auto max-w-[900px]">
+          <div id="pr-table" className="mx-auto max-w-[900px]">
             <h2 className="mb-3 px-1 text-[10px] font-bold uppercase tracking-[0.10em] text-[var(--color-text-tertiary)]">
               Pull Requests
             </h2>
@@ -530,22 +544,25 @@ function ProjectOverviewGrid({
           </div>
 
           <div className="mb-4 flex flex-wrap gap-2">
-            <ProjectMetric label="Merge" value={counts.merge} tone="var(--color-status-ready)" />
+            <ProjectMetric label="Merge" value={counts.merge} tone="var(--color-status-ready)" tooltip="PRs approved and ready to merge" />
             <ProjectMetric
               label="Respond"
               value={counts.respond}
               tone="var(--color-status-error)"
+              tooltip="Agents waiting for your input"
             />
-            <ProjectMetric label="Review" value={counts.review} tone="var(--color-accent-orange)" />
+            <ProjectMetric label="Review" value={counts.review} tone="var(--color-accent-orange)" tooltip="CI failures, change requests, or conflicts" />
             <ProjectMetric
               label="Pending"
               value={counts.pending}
               tone="var(--color-status-attention)"
+              tooltip="Waiting on reviewers or CI"
             />
             <ProjectMetric
               label="Working"
               value={counts.working}
               tone="var(--color-status-working)"
+              tooltip="Agents actively processing"
             />
           </div>
 
@@ -585,17 +602,48 @@ function ProjectOverviewGrid({
   );
 }
 
-function ProjectMetric({ label, value, tone }: { label: string; value: number; tone: string }) {
+function ProjectMetric({
+  label,
+  value,
+  tone,
+  tooltip,
+}: {
+  label: string;
+  value: number;
+  tone: string;
+  tooltip: string;
+}) {
   return (
-    <div className="min-w-[78px] rounded-[8px] border border-[var(--color-border-subtle)] px-2.5 py-2">
+    <div className="group/metric relative min-w-[78px] rounded-[8px] border border-[var(--color-border-subtle)] px-2.5 py-2">
       <div className="text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-tertiary)]">
         {label}
       </div>
       <div className="mt-1 text-[18px] font-semibold tabular-nums" style={{ color: tone }}>
         {value}
       </div>
+      <span className="pointer-events-none absolute left-1/2 top-full z-50 mt-1.5 -translate-x-1/2 whitespace-nowrap rounded-[5px] bg-[var(--color-bg-elevated)] px-2.5 py-1.5 text-[11px] text-[var(--color-text-secondary)] opacity-0 shadow-[0_4px_12px_rgba(0,0,0,0.3)] ring-1 ring-[var(--color-border-default)] transition-opacity duration-75 group-hover/metric:opacity-100">
+        {tooltip}
+      </span>
     </div>
   );
+}
+
+function scrollToFirst(...ids: string[]) {
+  for (const id of ids) {
+    const el = document.getElementById(id);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+  }
+}
+
+interface StatPart {
+  value: number;
+  label: string;
+  tooltip: string;
+  color?: string;
+  onClick?: () => void;
 }
 
 function StatusLine({ stats }: { stats: DashboardStats }) {
@@ -603,34 +651,128 @@ function StatusLine({ stats }: { stats: DashboardStats }) {
     return <span className="text-[13px] text-[var(--color-text-muted)]">no sessions</span>;
   }
 
-  const parts: Array<{ value: number; label: string; color?: string }> = [
-    { value: stats.totalSessions, label: "sessions" },
-    ...(stats.workingSessions > 0
-      ? [{ value: stats.workingSessions, label: "working", color: "var(--color-status-working)" }]
+  const parts: StatPart[] = [
+    {
+      value: stats.totalSessions,
+      label: "sessions",
+      tooltip: "Total sessions across all states",
+    },
+    ...(stats.busySessions > 0
+      ? [
+          {
+            value: stats.busySessions,
+            label: "busy",
+            tooltip: "Agents actively processing right now",
+            color: "var(--color-status-working)",
+            onClick: () => scrollToFirst("zone-working"),
+          },
+        ]
       : []),
-    ...(stats.openPRs > 0 ? [{ value: stats.openPRs, label: "PRs" }] : []),
+    ...(stats.attentionSessions > 0
+      ? [
+          {
+            value: stats.attentionSessions,
+            label: "need attention",
+            tooltip: "Ready to merge, waiting for your input, or have issues to investigate",
+            color: "var(--color-status-error)",
+            onClick: () => scrollToFirst("zone-merge", "zone-respond", "zone-review"),
+          },
+        ]
+      : []),
+    ...(stats.openPRs > 0
+      ? [
+          {
+            value: stats.openPRs,
+            label: "open PRs",
+            tooltip: "Pull requests currently open",
+            onClick: () => scrollToFirst("pr-table"),
+          },
+        ]
+      : []),
     ...(stats.needsReview > 0
-      ? [{ value: stats.needsReview, label: "need review", color: "var(--color-status-attention)" }]
+      ? [
+          {
+            value: stats.needsReview,
+            label: "need review",
+            tooltip: "Open PRs awaiting reviewer approval",
+            color: "var(--color-status-attention)",
+            onClick: () => scrollToFirst("zone-pending", "pr-table"),
+          },
+        ]
       : []),
   ];
 
   return (
     <div className="flex items-baseline gap-0.5">
       {parts.map((part, index) => (
-        <span key={part.label} className="flex items-baseline">
+        <span
+          key={part.label}
+          className="group/stat relative flex items-baseline"
+        >
           {index > 0 && (
-            <span className="mx-3 text-[11px] text-[var(--color-border-strong)]">·</span>
+            <span className="mx-3 text-[11px] text-[var(--color-border-strong)]">&middot;</span>
           )}
           <span
-            className="text-[20px] font-bold tabular-nums tracking-tight"
-            style={{ color: part.color ?? "var(--color-text-primary)" }}
+            role={part.onClick ? "button" : undefined}
+            tabIndex={part.onClick ? 0 : undefined}
+            onClick={part.onClick}
+            onKeyDown={part.onClick ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); part.onClick!(); } } : undefined}
+            className={part.onClick ? "cursor-pointer rounded-[4px] px-1 py-0.5 transition-colors hover:bg-[rgba(255,255,255,0.06)]" : "px-1 py-0.5"}
           >
-            {part.value}
+            <span
+              className="text-[20px] font-bold tabular-nums tracking-tight"
+              style={{ color: part.color ?? "var(--color-text-primary)" }}
+            >
+              {part.value}
+            </span>
+            <span className="ml-1.5 text-[11px] text-[var(--color-text-muted)]">{part.label}</span>
           </span>
-          <span className="ml-1.5 text-[11px] text-[var(--color-text-muted)]">{part.label}</span>
+          {/* Zero-delay tooltip */}
+          <span className="pointer-events-none absolute left-1/2 top-full z-50 mt-2 -translate-x-1/2 whitespace-nowrap rounded-[5px] bg-[var(--color-bg-elevated)] px-2.5 py-1.5 text-[11px] text-[var(--color-text-secondary)] opacity-0 shadow-[0_4px_12px_rgba(0,0,0,0.3)] ring-1 ring-[var(--color-border-default)] transition-opacity duration-75 group-hover/stat:opacity-100">
+            {part.tooltip}
+          </span>
         </span>
       ))}
     </div>
+  );
+}
+
+function DispatcherToggle({
+  dispatcherState,
+  onClick,
+  active,
+}: {
+  dispatcherState: SSEDispatcherState | null;
+  onClick: () => void;
+  active: boolean;
+}) {
+  const status = dispatcherState?.status ?? "stopped";
+  const color =
+    status === "running"
+      ? "var(--color-status-ready)"
+      : status === "paused"
+        ? "var(--color-status-attention)"
+        : "var(--color-text-muted)";
+
+  return (
+    <button
+      onClick={onClick}
+      className={`flex items-center gap-2 rounded-[7px] border px-3 py-1.5 text-[11px] font-medium transition-colors ${
+        active
+          ? "border-[var(--color-accent)] bg-[var(--color-accent-subtle)] text-[var(--color-accent)]"
+          : "border-[var(--color-border-default)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]"
+      }`}
+      title="Toggle dispatcher panel"
+    >
+      <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+        <path d="M13 10V3L4 14h7v7l9-11h-7z" />
+      </svg>
+      Dispatcher
+      <span
+        className="h-1.5 w-1.5 rounded-full"
+        style={{ backgroundColor: color }}
+      />
+    </button>
   );
 }
 

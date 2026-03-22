@@ -142,6 +142,45 @@ const DecomposerConfigSchema = z
     requireApproval: true,
   });
 
+const DispatcherScoringSchema = z
+  .object({
+    severity: z.number().min(0).default(40),
+    quickWin: z.number().min(0).default(25),
+    staleness: z.number().min(0).default(15),
+    dependencies: z.number().min(0).default(20),
+  })
+  .default({});
+
+const DispatcherConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    pollInterval: z.number().min(30).default(120),
+    maxConcurrent: z.number().min(1).max(5).default(3),
+    maxSpawnsPerCycle: z.number().min(1).max(5).default(2),
+    cooldownAfterSpawn: z.number().min(0).default(30),
+    commentOnDispatch: z.boolean().default(true),
+    backlogBoost: z.number().min(0).default(30),
+    scoring: DispatcherScoringSchema,
+    excludeLabels: z.array(z.string()).default([]),
+    severityLabels: z.record(z.number().min(0).max(1)).default({}),
+    quickWinLabels: z.array(z.string()).default([]),
+    blockedLabels: z.array(z.string()).default([]),
+  })
+  .default({
+    enabled: false,
+    pollInterval: 120,
+    maxConcurrent: 3,
+    maxSpawnsPerCycle: 2,
+    cooldownAfterSpawn: 30,
+    commentOnDispatch: true,
+    backlogBoost: 30,
+    scoring: { severity: 40, quickWin: 25, staleness: 15, dependencies: 20 },
+    excludeLabels: [],
+    severityLabels: {},
+    quickWinLabels: [],
+    blockedLabels: [],
+  });
+
 const ProjectConfigSchema = z.object({
   name: z.string().optional(),
   repo: z.string(),
@@ -170,6 +209,7 @@ const ProjectConfigSchema = z.object({
     .optional(),
   opencodeIssueSessionStrategy: z.enum(["reuse", "delete", "ignore"]).optional(),
   decomposer: DecomposerConfigSchema.optional(),
+  dispatcher: DispatcherConfigSchema.optional(),
 });
 
 const DefaultPluginsSchema = z.object({

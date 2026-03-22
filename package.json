@@ -11,7 +11,7 @@
   "type": "module",
   "scripts": {
     "build": "pnpm -r build",
-    "dev": "pnpm --filter @composio/ao-web dev",
+    "dev": "pnpm --filter @composio/ao-core dev & pnpm --filter @composio/ao-web dev",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",

@@ -49,12 +49,24 @@ vi.mock("@composio/ao-core", () => ({
     getStates: vi.fn(),
     check: vi.fn(),
   }),
+  createDispatcher: () => ({
+    start: vi.fn(),
+    stop: vi.fn(),
+    pause: vi.fn(),
+    resume: vi.fn(),
+    getSnapshot: vi.fn(() => ({ status: "stopped", scoreboard: [], cycleCount: 0 })),
+    getProjectConfig: vi.fn(),
+    updateProjectConfig: vi.fn(),
+    runCycleNow: vi.fn(),
+  }),
   decompose: vi.fn(),
   getLeaves: vi.fn(),
   getSiblings: vi.fn(),
   formatPlanTree: vi.fn(),
+  readPersistedDispatcherStatus: vi.fn(() => null),
   DEFAULT_DECOMPOSER_CONFIG: {},
   TERMINAL_STATUSES: new Set(["merged", "killed"]) as ReadonlySet<string>,
+  isOrchestratorSession: vi.fn(() => false),
 }));
 
 vi.mock("@composio/ao-plugin-runtime-tmux", () => ({ default: tmuxPlugin }));

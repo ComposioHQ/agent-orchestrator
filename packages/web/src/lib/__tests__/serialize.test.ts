@@ -970,29 +970,29 @@ describe("computeStats", () => {
     };
   }
 
-  it("counts active sessions as working", () => {
+  it("counts active sessions as busy", () => {
     const sessions = [makeDashboard({ activity: "active" })];
-    expect(computeStats(sessions).workingSessions).toBe(1);
+    expect(computeStats(sessions).busySessions).toBe(1);
   });
 
-  it("counts idle sessions as working", () => {
+  it("does not count idle sessions as busy", () => {
     const sessions = [makeDashboard({ activity: "idle" })];
-    expect(computeStats(sessions).workingSessions).toBe(1);
+    expect(computeStats(sessions).busySessions).toBe(0);
   });
 
-  it("counts ready sessions as working", () => {
+  it("does not count ready sessions as busy", () => {
     const sessions = [makeDashboard({ activity: "ready" })];
-    expect(computeStats(sessions).workingSessions).toBe(1);
+    expect(computeStats(sessions).busySessions).toBe(0);
   });
 
-  it("excludes exited sessions from working count", () => {
+  it("excludes exited sessions from busy count", () => {
     const sessions = [makeDashboard({ activity: "exited" })];
-    expect(computeStats(sessions).workingSessions).toBe(0);
+    expect(computeStats(sessions).busySessions).toBe(0);
   });
 
-  it("excludes sessions with null activity from working count", () => {
+  it("excludes sessions with null activity from busy count", () => {
     const sessions = [makeDashboard({ activity: null })];
-    expect(computeStats(sessions).workingSessions).toBe(0);
+    expect(computeStats(sessions).busySessions).toBe(0);
   });
 
   it("counts mixed activity states correctly", () => {
@@ -1005,7 +1005,7 @@ describe("computeStats", () => {
     ];
     const stats = computeStats(sessions);
     expect(stats.totalSessions).toBe(5);
-    expect(stats.workingSessions).toBe(3); // active + idle + ready
+    expect(stats.busySessions).toBe(1); // only active
   });
 });
 

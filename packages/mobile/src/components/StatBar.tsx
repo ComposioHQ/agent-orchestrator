@@ -10,7 +10,8 @@ export default function StatBar({ stats }: Props) {
   return (
     <View style={styles.container}>
       <StatItem label="Sessions" value={stats.totalSessions} color="#e6edf3" />
-      <StatItem label="Working" value={stats.workingSessions} color="#58a6ff" />
+      <StatItem label="Busy" value={stats.busySessions} color="#58a6ff" />
+      <StatItem label="Attention" value={stats.attentionSessions} color="#ef4444" />
       <StatItem label="PRs" value={stats.openPRs} color="#3fb950" />
       <StatItem label="Review" value={stats.needsReview} color="#d29922" />
     </View>

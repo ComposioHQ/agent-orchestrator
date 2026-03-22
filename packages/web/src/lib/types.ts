@@ -123,9 +123,19 @@ export interface DashboardUnresolvedComment {
   body: string;
 }
 
+/** Attention levels that require human action — used to compute attentionSessions. */
+export const ACTIONABLE_ATTENTION_LEVELS: ReadonlySet<AttentionLevel> = new Set([
+  "merge",
+  "respond",
+  "review",
+]);
+
 export interface DashboardStats {
   totalSessions: number;
-  workingSessions: number;
+  /** Only sessions where the agent is actively processing (activity === "active") */
+  busySessions: number;
+  /** Sessions in merge + respond + review attention zones — requires your action */
+  attentionSessions: number;
   openPRs: number;
   needsReview: number;
 }
@@ -134,6 +144,16 @@ export interface DashboardOrchestratorLink {
   id: string;
   projectId: string;
   projectName: string;
+}
+
+/** Compact dispatcher state included in SSE snapshots */
+export interface SSEDispatcherState {
+  status: "running" | "stopped" | "paused";
+  activeDispatches: number;
+  eligibleCount: number;
+  lastCycleAt: string | null;
+  nextCycleAt: string | null;
+  cycleCount: number;
 }
 
 /** SSE snapshot event from /api/events */
@@ -148,6 +168,7 @@ export interface SSESnapshotEvent {
     attentionLevel: AttentionLevel;
     lastActivityAt: string;
   }>;
+  dispatcher?: SSEDispatcherState;
 }
 
 /** SSE activity update event from /api/events */

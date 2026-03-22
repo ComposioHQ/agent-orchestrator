@@ -95,7 +95,10 @@ export interface DashboardSession {
 
 export interface DashboardStats {
   totalSessions: number;
-  workingSessions: number;
+  /** Only sessions where the agent is actively processing (activity === "active") */
+  busySessions: number;
+  /** Sessions in merge + respond + review attention zones — requires your action */
+  attentionSessions: number;
   openPRs: number;
   needsReview: number;
 }

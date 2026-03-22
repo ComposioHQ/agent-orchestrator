@@ -205,7 +205,6 @@ export function SessionDetail({
   const accentColor = "var(--color-accent)";
   const terminalVariant = isOrchestrator ? "orchestrator" : "agent";
 
-  const terminalHeight = isOrchestrator ? "calc(100vh - 240px)" : "max(440px, calc(100vh - 440px))";
   const isOpenCodeSession = session.metadata["agent"] === "opencode";
   const opencodeSessionId =
     typeof session.metadata["opencodeSessionId"] === "string" &&
@@ -260,128 +259,135 @@ export function SessionDetail({
         <OrchestratorStatusStrip zones={orchestratorZones} createdAt={session.createdAt} />
       )}
 
-      <div className="mx-auto max-w-[900px] px-8 py-6">
-        {/* ── Header card ─────────────────────────────────────────── */}
-        <div
-          className="detail-card mb-6 rounded-[8px] border border-[var(--color-border-default)] p-5"
-          style={{
-            borderLeft: isOrchestrator ? `3px solid ${accentColor}` : `3px solid ${activity.color}`,
-          }}
-        >
-          <div className="flex items-start gap-3">
-            <div className="flex-1 min-w-0">
-              <div className="flex flex-wrap items-center gap-2.5">
-                <h1 className="font-[var(--font-mono)] text-[17px] font-semibold tracking-[-0.01em] text-[var(--color-text-primary)]">
-                  {session.id}
-                </h1>
-                {/* Activity badge */}
-                <div
-                  className="flex items-center gap-1.5 rounded-full px-2.5 py-0.5"
-                  style={{
-                    background: `color-mix(in srgb, ${activity.color} 12%, transparent)`,
-                    border: `1px solid color-mix(in srgb, ${activity.color} 20%, transparent)`,
-                  }}
-                >
-                  <ActivityDot activity={session.activity} dotOnly size={6} />
-                  <span className="text-[11px] font-semibold" style={{ color: activity.color }}>
-                    {activity.label}
-                  </span>
+      {/* Desktop: two-column (info left, terminal right). Mobile: stacked. */}
+      <div className={cn(
+        "flex flex-col lg:flex-row",
+        isOrchestrator && orchestratorZones ? "lg:h-[calc(100vh-105px)]" : "lg:h-[calc(100vh-41px)]",
+      )}>
+        {/* ── Left column: session info + PR ─────────────────────── */}
+        <div className="lg:w-[420px] lg:min-w-[360px] lg:shrink-0 lg:overflow-y-auto lg:border-r lg:border-[var(--color-border-subtle)] px-6 py-6">
+          {/* Header card */}
+          <div
+            className="detail-card mb-6 rounded-[8px] border border-[var(--color-border-default)] p-5"
+            style={{
+              borderLeft: isOrchestrator ? `3px solid ${accentColor}` : `3px solid ${activity.color}`,
+            }}
+          >
+            <div className="flex items-start gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <h1 className="font-[var(--font-mono)] text-[17px] font-semibold tracking-[-0.01em] text-[var(--color-text-primary)]">
+                    {session.id}
+                  </h1>
+                  {/* Activity badge */}
+                  <div
+                    className="flex items-center gap-1.5 rounded-full px-2.5 py-0.5"
+                    style={{
+                      background: `color-mix(in srgb, ${activity.color} 12%, transparent)`,
+                      border: `1px solid color-mix(in srgb, ${activity.color} 20%, transparent)`,
+                    }}
+                  >
+                    <ActivityDot activity={session.activity} dotOnly size={6} />
+                    <span className="text-[11px] font-semibold" style={{ color: activity.color }}>
+                      {activity.label}
+                    </span>
+                  </div>
                 </div>
-              </div>
 
-              {session.summary && (
-                <p className="mt-2 text-[13px] leading-relaxed text-[var(--color-text-secondary)]">
-                  {session.summary}
-                </p>
-              )}
-
-              {/* Meta chips */}
-              <div className="mt-3 flex flex-wrap items-center gap-1.5">
-                {session.projectId && (
-                  <>
-                    {pr ? (
-                      <a
-                        href={buildGitHubRepoUrl(pr)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.04)] px-2 py-0.5 text-[11px] text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-primary)] hover:no-underline"
-                      >
-                        {session.projectId}
-                      </a>
-                    ) : (
-                      <span className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.04)] px-2 py-0.5 text-[11px] text-[var(--color-text-secondary)]">
-                        {session.projectId}
-                      </span>
-                    )}
-                    <span className="text-[var(--color-text-tertiary)]">&middot;</span>
-                  </>
+                {session.summary && (
+                  <p className="mt-2 text-[13px] leading-relaxed text-[var(--color-text-secondary)]">
+                    {session.summary}
+                  </p>
                 )}
 
-                {pr && (
-                  <>
+                {/* Meta chips */}
+                <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                  {session.projectId && (
+                    <>
+                      {pr ? (
+                        <a
+                          href={buildGitHubRepoUrl(pr)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.04)] px-2 py-0.5 text-[11px] text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-primary)] hover:no-underline"
+                        >
+                          {session.projectId}
+                        </a>
+                      ) : (
+                        <span className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.04)] px-2 py-0.5 text-[11px] text-[var(--color-text-secondary)]">
+                          {session.projectId}
+                        </span>
+                      )}
+                      <span className="text-[var(--color-text-tertiary)]">&middot;</span>
+                    </>
+                  )}
+
+                  {pr && (
+                    <>
+                      <a
+                        href={pr.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.04)] px-2 py-0.5 text-[11px] text-[var(--color-accent)] transition-colors hover:border-[var(--color-accent)] hover:no-underline"
+                      >
+                        PR #{pr.number}
+                      </a>
+                      {(session.branch || session.issueUrl) && (
+                        <span className="text-[var(--color-text-tertiary)]">&middot;</span>
+                      )}
+                    </>
+                  )}
+
+                  {session.branch && (
+                    <>
+                      {pr ? (
+                        <a
+                          href={buildGitHubBranchUrl(pr)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.04)] px-2 py-0.5 font-[var(--font-mono)] text-[10px] text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-primary)] hover:no-underline"
+                        >
+                          {session.branch}
+                        </a>
+                      ) : (
+                        <span className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.04)] px-2 py-0.5 font-[var(--font-mono)] text-[10px] text-[var(--color-text-secondary)]">
+                          {session.branch}
+                        </span>
+                      )}
+                      {session.issueUrl && (
+                        <span className="text-[var(--color-text-tertiary)]">&middot;</span>
+                      )}
+                    </>
+                  )}
+
+                  {session.issueUrl && (
                     <a
-                      href={pr.url}
+                      href={session.issueUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.04)] px-2 py-0.5 text-[11px] text-[var(--color-accent)] transition-colors hover:border-[var(--color-accent)] hover:no-underline"
+                      className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.04)] px-2 py-0.5 text-[11px] text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-primary)] hover:no-underline"
                     >
-                      PR #{pr.number}
+                      {session.issueLabel || session.issueUrl}
                     </a>
-                    {(session.branch || session.issueUrl) && (
-                      <span className="text-[var(--color-text-tertiary)]">&middot;</span>
-                    )}
-                  </>
-                )}
+                  )}
+                </div>
 
-                {session.branch && (
-                  <>
-                    {pr ? (
-                      <a
-                        href={buildGitHubBranchUrl(pr)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.04)] px-2 py-0.5 font-[var(--font-mono)] text-[10px] text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-primary)] hover:no-underline"
-                      >
-                        {session.branch}
-                      </a>
-                    ) : (
-                      <span className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.04)] px-2 py-0.5 font-[var(--font-mono)] text-[10px] text-[var(--color-text-secondary)]">
-                        {session.branch}
-                      </span>
-                    )}
-                    {session.issueUrl && (
-                      <span className="text-[var(--color-text-tertiary)]">&middot;</span>
-                    )}
-                  </>
-                )}
-
-                {session.issueUrl && (
-                  <a
-                    href={session.issueUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.04)] px-2 py-0.5 text-[11px] text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-primary)] hover:no-underline"
-                  >
-                    {session.issueLabel || session.issueUrl}
-                  </a>
-                )}
+                <ClientTimestamps
+                  status={session.status}
+                  createdAt={session.createdAt}
+                  lastActivityAt={session.lastActivityAt}
+                />
               </div>
-
-              <ClientTimestamps
-                status={session.status}
-                createdAt={session.createdAt}
-                lastActivityAt={session.lastActivityAt}
-              />
             </div>
           </div>
+
+          {/* PR Card */}
+          {pr && <PRCard pr={pr} sessionId={session.id} />}
         </div>
 
-        {/* ── PR Card ─────────────────────────────────────────────── */}
-        {pr && <PRCard pr={pr} sessionId={session.id} />}
-
-        {/* ── Terminal ─────────────────────────────────────────────── */}
-        <div className={pr ? "mt-6" : ""}>
-          <div className="mb-3 flex items-center gap-2">
+        {/* ── Right column: terminal (fills remaining width) ──────── */}
+        <div className="flex-1 flex flex-col px-6 py-6 lg:px-0 lg:py-0">
+          <div className="mb-3 flex items-center gap-2 lg:hidden">
             <div
               className="h-3 w-0.5 rounded-full"
               style={{ background: isOrchestrator ? accentColor : activity.color, opacity: 0.7 }}
@@ -394,7 +400,7 @@ export function SessionDetail({
             sessionId={session.id}
             startFullscreen={startFullscreen}
             variant={terminalVariant}
-            height={terminalHeight}
+            height={isOrchestrator ? "100%" : "100%"}
             isOpenCodeSession={isOpenCodeSession}
             reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
           />

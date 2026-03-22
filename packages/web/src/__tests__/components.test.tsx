@@ -184,11 +184,15 @@ describe("PRStatus", () => {
 // ── SessionCard ──────────────────────────────────────────────────────
 
 describe("SessionCard", () => {
-  it("renders session id and summary", () => {
+  it("renders summary and shows session id when expanded", () => {
     const session = makeSession({ id: "backend-1", summary: "Fixing auth" });
     render(<SessionCard session={session} />);
-    expect(screen.getByText("backend-1")).toBeInTheDocument();
+    // Session ID is hidden when collapsed
+    expect(screen.queryByText("backend-1")).not.toBeInTheDocument();
     expect(screen.getByText("Fixing auth")).toBeInTheDocument();
+    // Expand the card to reveal session ID
+    fireEvent.click(screen.getByText("Fixing auth"));
+    expect(screen.getByText("backend-1")).toBeInTheDocument();
   });
 
   it("shows PR title instead of summary when PR exists", () => {
@@ -453,7 +457,7 @@ describe("AttentionZone", () => {
     const sessions = [makeSession({ id: "s1" })];
     render(<AttentionZone level="respond" sessions={sessions} />);
     // respond is defaultCollapsed: false, so cards should be visible
-    expect(screen.getByText("s1")).toBeInTheDocument();
+    expect(screen.getByText("Test session")).toBeInTheDocument();
   });
 
   it("working zone is collapsed by default", () => {
@@ -466,8 +470,8 @@ describe("AttentionZone", () => {
   it("done zone is collapsed by default", () => {
     const sessions = [makeSession({ id: "s1" })];
     render(<AttentionZone level="done" sessions={sessions} />);
-    // done is defaultCollapsed: true, so session id should not be visible
-    expect(screen.queryByText("s1")).not.toBeInTheDocument();
+    // done is defaultCollapsed: true, so session title should not be visible
+    expect(screen.queryByText("Test session")).not.toBeInTheDocument();
     expect(screen.getByText("Done")).toBeInTheDocument();
   });
 
@@ -475,15 +479,15 @@ describe("AttentionZone", () => {
     const sessions = [makeSession({ id: "s1" })];
     render(<AttentionZone level="done" sessions={sessions} />);
     // done starts collapsed
-    expect(screen.queryByText("s1")).not.toBeInTheDocument();
+    expect(screen.queryByText("Test session")).not.toBeInTheDocument();
 
     // Click the zone header to expand
     fireEvent.click(screen.getByText("Done"));
-    expect(screen.getByText("s1")).toBeInTheDocument();
+    expect(screen.getByText("Test session")).toBeInTheDocument();
 
     // Click again to collapse
     fireEvent.click(screen.getByText("Done"));
-    expect(screen.queryByText("s1")).not.toBeInTheDocument();
+    expect(screen.queryByText("Test session")).not.toBeInTheDocument();
   });
 
   it("passes callbacks to SessionCards", () => {

@@ -241,7 +241,7 @@ describe("API Routes", () => {
       const res = await sessionsGET(makeRequest("http://localhost:3000/api/sessions"));
       const data = await res.json();
       expect(data.stats).toHaveProperty("totalSessions");
-      expect(data.stats).toHaveProperty("workingSessions");
+      expect(data.stats).toHaveProperty("busySessions");
       expect(data.stats).toHaveProperty("openPRs");
       expect(data.stats).toHaveProperty("needsReview");
     });

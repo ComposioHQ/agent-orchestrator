@@ -455,6 +455,23 @@ async function startDashboard(
 
   let child: ChildProcess;
   if (isDevMode) {
+    // Monorepo development: start core watcher alongside web dev server
+    // so changes to @composio/ao-core auto-recompile and Next.js picks them up
+    const coreDir = resolve(webDir, "..", "core");
+    if (existsSync(resolve(coreDir, "package.json"))) {
+      const coreWatcher = spawn("pnpm", ["run", "dev"], {
+        cwd: coreDir,
+        stdio: "ignore",
+        detached: false,
+        env,
+      });
+      coreWatcher.on("error", () => {
+        // Non-fatal — core watch is a convenience, not required
+      });
+      // Clean up core watcher when the process exits
+      process.on("exit", () => { try { coreWatcher.kill(); } catch {} });
+    }
+
     // Monorepo development: use pnpm run dev (tsx, HMR, etc.)
     child = spawn("pnpm", ["run", "dev"], {
       cwd: webDir,
@@ -622,8 +639,8 @@ async function runStartup(
   let openAbort: AbortController | undefined;
   if (opts?.dashboard !== false) {
     openAbort = new AbortController();
-    const orchestratorUrl = `http://localhost:${port}/sessions/${sessionId}`;
-    void waitForPortAndOpen(port, orchestratorUrl, openAbort.signal);
+    const dashboardUrl = `http://localhost:${port}`;
+    void waitForPortAndOpen(port, dashboardUrl, openAbort.signal);
   }
 
   // Graceful shutdown on Ctrl+C — run the same cleanup as `ao stop`.

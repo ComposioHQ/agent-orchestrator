@@ -81,6 +81,23 @@ export async function GET(request: Request): Promise<Response> {
           const dashboardSessions = workerSessions.map(sessionToDashboard);
           const projectObserver = ensureObserver(config);
 
+          // Include dispatcher state in the snapshot
+          let dispatcherState = undefined;
+          try {
+            const { dispatcher } = await getServices();
+            const snap = dispatcher.getSnapshot();
+            dispatcherState = {
+              status: snap.status,
+              activeDispatches: snap.activeDispatches,
+              eligibleCount: snap.eligibleCount,
+              lastCycleAt: snap.lastCycleAt,
+              nextCycleAt: snap.nextCycleAt,
+              cycleCount: snap.cycleCount,
+            };
+          } catch {
+            // Dispatcher not available
+          }
+
           const initialEvent = {
             type: "snapshot",
             correlationId,
@@ -92,6 +109,7 @@ export async function GET(request: Request): Promise<Response> {
               attentionLevel: getAttentionLevel(s),
               lastActivityAt: s.lastActivityAt,
             })),
+            dispatcher: dispatcherState,
           };
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(initialEvent)}\n\n`));
           if (projectObserver && observerProjectId) {
@@ -155,6 +173,23 @@ export async function GET(request: Request): Promise<Response> {
             }
 
             try {
+              // Include dispatcher state in periodic snapshots
+              let dispatcherState = undefined;
+              try {
+                const { dispatcher } = await getServices();
+                const snap = dispatcher.getSnapshot();
+                dispatcherState = {
+                  status: snap.status,
+                  activeDispatches: snap.activeDispatches,
+                  eligibleCount: snap.eligibleCount,
+                  lastCycleAt: snap.lastCycleAt,
+                  nextCycleAt: snap.nextCycleAt,
+                  cycleCount: snap.cycleCount,
+                };
+              } catch {
+                // Dispatcher not available
+              }
+
               const event = {
                 type: "snapshot",
                 correlationId,
@@ -166,6 +201,7 @@ export async function GET(request: Request): Promise<Response> {
                   attentionLevel: getAttentionLevel(s),
                   lastActivityAt: s.lastActivityAt,
                 })),
+                dispatcher: dispatcherState,
               };
               controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
               if (projectObserver && observerProjectId) {

@@ -490,6 +490,8 @@ export interface Issue {
   labels: string[];
   assignee?: string;
   priority?: number;
+  /** ISO 8601 timestamp — used by dispatcher for staleness scoring */
+  createdAt?: string;
 }
 
 export interface IssueFilters {
@@ -1010,6 +1012,48 @@ export interface ProjectConfig {
     /** Require human approval before executing decomposed plans (default: true) */
     requireApproval: boolean;
   };
+
+  /** Intelligent issue dispatcher configuration */
+  dispatcher?: DispatcherProjectConfig;
+}
+
+// =============================================================================
+// DISPATCHER
+// =============================================================================
+
+/** Per-project dispatcher configuration */
+export interface DispatcherProjectConfig {
+  /** Enable intelligent issue dispatching (default: false) */
+  enabled: boolean;
+  /** Seconds between dispatch cycles (default: 120) */
+  pollInterval: number;
+  /** Max concurrent agent sessions for this project (default: 3, hard cap: 5) */
+  maxConcurrent: number;
+  /** Max new sessions to spawn per cycle (default: 2) */
+  maxSpawnsPerCycle: number;
+  /** Seconds to wait between spawns in a cycle (default: 30) */
+  cooldownAfterSpawn: number;
+  /** Post a tracker comment when dispatching an issue (default: true) */
+  commentOnDispatch: boolean;
+  /** Score boost for agent:backlog labeled issues (default: 30) */
+  backlogBoost: number;
+  /** Scoring weights (higher = more influence) */
+  scoring: DispatcherScoringWeights;
+  /** Labels to auto-exclude from dispatching (auto-detected if empty) */
+  excludeLabels: string[];
+  /** Custom severity label → score (0–1) mapping */
+  severityLabels: Record<string, number>;
+  /** Labels that signal quick-win issues */
+  quickWinLabels: string[];
+  /** Labels that signal blocked issues */
+  blockedLabels: string[];
+}
+
+export interface DispatcherScoringWeights {
+  severity: number;
+  quickWin: number;
+  staleness: number;
+  dependencies: number;
 }
 
 export interface TrackerConfig {

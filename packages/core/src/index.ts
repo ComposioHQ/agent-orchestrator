@@ -74,6 +74,17 @@ export type {
   DecomposerConfig,
 } from "./decomposer.js";
 
+// Dispatcher — intelligent issue scoring + dispatch
+export { createDispatcher, scoreIssues, readPersistedDispatcherStatus, DEFAULT_DISPATCHER_CONFIG } from "./dispatcher.js";
+export type {
+  DispatcherDeps,
+  ScoredIssue,
+  DispatchRecord,
+  DispatcherStatus,
+  DispatcherSnapshot,
+  Dispatcher,
+} from "./dispatcher.js";
+
 // Orchestrator prompt — generates orchestrator context for `ao start`
 export { generateOrchestratorPrompt } from "./orchestrator-prompt.js";
 export type { OrchestratorPromptConfig } from "./orchestrator-prompt.js";
