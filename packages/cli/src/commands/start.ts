@@ -331,7 +331,13 @@ async function autoCreateConfig(workingDir: string): Promise<OrchestratorConfig>
   }
 
   if (!env.hasTmux) {
-    console.log(chalk.yellow("⚠ tmux not found — install with: brew install tmux"));
+    const tmuxHint =
+      process.platform === "darwin"
+        ? "brew install tmux"
+        : process.platform === "win32"
+          ? "Use WSL: wsl --install, then: sudo apt install tmux"
+          : "sudo apt install tmux (Debian/Ubuntu) or sudo dnf install tmux (Fedora)";
+    console.log(chalk.yellow(`⚠ tmux not found — install with: ${tmuxHint}`));
   }
   if (!env.ghAuthed && env.hasGh) {
     console.log(chalk.yellow("⚠ GitHub CLI not authenticated — run: gh auth login"));
