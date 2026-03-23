@@ -15,6 +15,8 @@ export const manifest = {
   version: "0.1.0",
 };
 
+const DEFAULT_TIMEOUT_MS = 10_000;
+
 type WakeMode = "now" | "next-heartbeat";
 
 interface OpenClawWebhookPayload {
@@ -36,16 +38,29 @@ async function postWithRetry(
   let lastError: Error | undefined;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
     try {
       const response = await fetch(url, {
         method: "POST",
         headers,
         body: JSON.stringify(payload),
+        signal: controller.signal,
       });
 
       if (response.ok) return;
 
       const body = await response.text();
+
+      if (response.status === 401 || response.status === 403) {
+        lastError = new Error(
+          `OpenClaw rejected the auth token (HTTP ${response.status}).\n` +
+          `  Check that hooks.token in your OpenClaw config matches OPENCLAW_HOOKS_TOKEN.\n` +
+          `  Reconfigure: ao setup openclaw`,
+        );
+        throw lastError;
+      }
+
       lastError = new Error(`OpenClaw webhook failed (${response.status}): ${body}`);
 
       if (!isRetryableHttpStatus(response.status)) {
@@ -61,11 +76,21 @@ async function postWithRetry(
       if (err === lastError) throw err;
       lastError = err instanceof Error ? err : new Error(String(err));
 
+      if (lastError.message.includes("ECONNREFUSED")) {
+        throw new Error(
+          `Can't reach OpenClaw gateway at ${url}.\n` +
+          `  Is OpenClaw running? Check: openclaw status\n` +
+          `  Wrong URL? Run: ao setup openclaw`,
+        );
+      }
+
       if (attempt < retries) {
         console.warn(
           `[notifier-openclaw] Retry ${attempt + 1}/${retries} for session=${context.sessionId} after network error: ${lastError.message}`,
         );
       }
+    } finally {
+      clearTimeout(timer);
     }
 
     if (attempt < retries) {
@@ -127,7 +152,9 @@ export function create(config?: Record<string, unknown>): Notifier {
 
   if (!token) {
     console.warn(
-      "[notifier-openclaw] No token configured (token or OPENCLAW_HOOKS_TOKEN). Sending without Authorization header.",
+      "[notifier-openclaw] No token configured.\n" +
+      "  Set OPENCLAW_HOOKS_TOKEN env var, or add token to your notifier config.\n" +
+      "  Run: ao setup openclaw",
     );
   }
 
