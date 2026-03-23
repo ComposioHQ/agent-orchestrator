@@ -18,6 +18,7 @@ import { DynamicFavicon } from "./DynamicFavicon";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
 import { ProjectSidebar } from "./ProjectSidebar";
 import { BacklogPanel } from "./BacklogPanel";
+import type { BacklogState } from "./BacklogPanel";
 import type { ProjectInfo } from "@/lib/project-name";
 
 interface DashboardProps {
@@ -31,6 +32,12 @@ interface DashboardProps {
 
 const KANBAN_LEVELS = ["working", "pending", "review", "respond", "merge"] as const;
 const EMPTY_ORCHESTRATORS: DashboardOrchestratorLink[] = [];
+
+/**
+ * Module-level cache so fetched backlog issues survive full Dashboard remounts
+ * (e.g. navigating to "All Projects" and back reuses previously fetched data).
+ */
+const backlogCache = new Map<string, BacklogState>();
 
 function mergeOrchestrators(
   current: DashboardOrchestratorLink[],
@@ -245,6 +252,10 @@ export function Dashboard({
     setGlobalPauseDismissed(false);
   }, [globalPause?.pausedUntil, globalPause?.reason, globalPause?.sourceSessionId]);
 
+  const handleBacklogStateChange = useCallback((pid: string, state: BacklogState) => {
+    backlogCache.set(pid, state);
+  }, []);
+
   return (
     <div className="flex h-screen">
       {showSidebar && <ProjectSidebar projects={projects} activeProjectId={projectId} />}
@@ -344,11 +355,12 @@ export function Dashboard({
 
         {!allProjectsView && projectId && (
           <BacklogPanel
-            key={projectId}
             projectId={projectId}
             triggerLabels={projects.find((p) => p.id === projectId)?.triggerLabels}
             triggerAssignee={projects.find((p) => p.id === projectId)?.triggerAssignee}
             columns={projects.find((p) => p.id === projectId)?.columns}
+            cachedState={backlogCache.get(projectId)}
+            onStateChange={handleBacklogStateChange}
           />
         )}
 

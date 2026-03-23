@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import type { ColumnConfig } from "@/lib/project-name";
 
-interface BacklogIssue {
+export interface BacklogIssue {
   projectId: string;
   id: string;
   title: string;
@@ -15,12 +15,23 @@ interface BacklogIssue {
   statusName?: string;
 }
 
+/** Serialisable state that Dashboard caches per-project. */
+export interface BacklogState {
+  issues: BacklogIssue[];
+  polled: boolean;
+  assigneeFilter: string;
+}
+
 interface BacklogPanelProps {
   projectId: string;
   triggerLabels?: string[];
   /** Default assignee filter from project config (tracker.trigger.assignee) */
   triggerAssignee?: string;
   columns?: ColumnConfig[];
+  /** Previously cached state for this project (survives project navigation). */
+  cachedState?: BacklogState;
+  /** Called whenever panel state changes so the parent can persist it. */
+  onStateChange?: (projectId: string, state: BacklogState) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -60,17 +71,33 @@ export function BacklogPanel({
   triggerLabels,
   triggerAssignee,
   columns,
+  cachedState,
+  onStateChange,
 }: BacklogPanelProps) {
-  const [issues, setIssues] = useState<BacklogIssue[]>([]);
+  const [issues, setIssues] = useState<BacklogIssue[]>(cachedState?.issues ?? []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [spawning, setSpawning] = useState<Record<string, boolean>>({});
   const [spawnedIds, setSpawnedIds] = useState<Set<string>>(new Set());
   const [spawnErrors, setSpawnErrors] = useState<Record<string, string>>({});
-  const [polled, setPolled] = useState(false);
-  const [assigneeFilter, setAssigneeFilter] = useState(triggerAssignee ?? "");
+  const [polled, setPolled] = useState(cachedState?.polled ?? false);
+  const [assigneeFilter, setAssigneeFilter] = useState(
+    cachedState?.assigneeFilter ?? triggerAssignee ?? "",
+  );
 
   const labelParam = triggerLabels?.[0];
+
+  // When the active project changes, reset local state to whatever is cached
+  // for the new project (or to empty if it has never been fetched).
+  useEffect(() => {
+    setIssues(cachedState?.issues ?? []);
+    setPolled(cachedState?.polled ?? false);
+    setAssigneeFilter(cachedState?.assigneeFilter ?? triggerAssignee ?? "");
+    setError(null);
+    setSpawning({});
+    setSpawnedIds(new Set());
+    setSpawnErrors({});
+  }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handlePoll = useCallback(async () => {
     setLoading(true);
@@ -87,12 +114,13 @@ export function BacklogPanel({
       const data = (await res.json()) as { issues: BacklogIssue[] };
       setIssues(data.issues);
       setPolled(true);
+      onStateChange?.(projectId, { issues: data.issues, polled: true, assigneeFilter });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fetch issues");
     } finally {
       setLoading(false);
     }
-  }, [projectId, labelParam, assigneeFilter]);
+  }, [projectId, labelParam, assigneeFilter, onStateChange]);
 
   const handleSpawn = useCallback(
     async (issue: BacklogIssue) => {
@@ -150,7 +178,11 @@ export function BacklogPanel({
           <input
             type="text"
             value={assigneeFilter}
-            onChange={(e) => setAssigneeFilter(e.target.value)}
+            onChange={(e) => {
+              const next = e.target.value;
+              setAssigneeFilter(next);
+              onStateChange?.(projectId, { issues, polled, assigneeFilter: next });
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter") void handlePoll();
             }}
