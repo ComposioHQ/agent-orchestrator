@@ -88,7 +88,7 @@ export function reviewDecisionIcon(decision: ReviewDecision | null): string {
 export function activityIcon(activity: ActivityState | null): string {
   switch (activity) {
     case "active":
-      return chalk.green("working");
+      return chalk.green("active");
     case "ready":
       return chalk.cyan("ready");
     case "idle":

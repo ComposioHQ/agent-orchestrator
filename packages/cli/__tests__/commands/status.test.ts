@@ -388,10 +388,11 @@ describe("status command", () => {
     expect(output).toContain("Branch");
     expect(output).toContain("PR");
     expect(output).toContain("CI");
+    expect(output).toContain("State");
     expect(output).toContain("Activity");
   });
 
-  it("shows PR number, CI status, review decision, and threads", async () => {
+  it("shows state, PR number, CI status, review decision, and threads", async () => {
     writeFileSync(
       join(sessionsDir, "app-1"),
       "worktree=/tmp/wt\nbranch=feat/test\nstatus=working\n",
@@ -438,10 +439,57 @@ describe("status command", () => {
     await program.parseAsync(["node", "test", "status"]);
 
     const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(output).toContain("working");
     expect(output).toContain("#42");
     expect(output).toContain("pass");
     expect(output).toContain("ok"); // approved
     expect(output).toContain("2"); // pending threads
+  });
+
+  it("shows lifecycle state separately from activity", async () => {
+    writeFileSync(
+      join(sessionsDir, "app-1"),
+      "worktree=/tmp/wt\nbranch=feat/review\nstatus=pr_open\npr=https://github.com/org/repo/pull/42\n",
+    );
+
+    mockTmux.mockImplementation(async (...args: string[]) => {
+      if (args[0] === "list-sessions") return "app-1";
+      if (args[0] === "display-message") return String(Math.floor(Date.now() / 1000) - 60);
+      return null;
+    });
+    mockGit.mockResolvedValue("feat/review");
+
+    mockDetectPR.mockResolvedValue({
+      number: 42,
+      url: "https://github.com/org/repo/pull/42",
+      title: "Review PR",
+      owner: "org",
+      repo: "repo",
+      branch: "feat/review",
+      baseBranch: "main",
+      isDraft: false,
+    });
+    mockGetCISummary.mockResolvedValue("none");
+    mockGetReviewDecision.mockResolvedValue("none");
+    mockGetPendingComments.mockResolvedValue([]);
+
+    mockSessionManager.list.mockResolvedValue([
+      makeSession({
+        id: "app-1",
+        projectId: "my-app",
+        status: "pr_open",
+        activity: "active",
+        branch: "feat/review",
+        workspacePath: "/tmp/wt",
+        metadata: { pr: "https://github.com/org/repo/pull/42", status: "pr_open" },
+      }),
+    ]);
+
+    await program.parseAsync(["node", "test", "status"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("pr_open");
+    expect(output).toContain("active");
   });
 
   it("shows failing CI and changes_requested review", async () => {
