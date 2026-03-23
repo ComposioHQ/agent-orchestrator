@@ -378,7 +378,11 @@ export async function enrichSessionsPRBatch(
       // Batch failed - throw to allow individual API fallback
       // instead of populating fake data that would block fallback
       const errorMsg = err instanceof Error ? err.message : String(err);
-      throw new Error(`Batch enrichment failed: ${errorMsg}`);
+      const error = new Error(`Batch enrichment failed: ${errorMsg}`);
+      if (err instanceof Error) {
+        error.cause = err;
+      }
+      throw error;
     }
   }
 
