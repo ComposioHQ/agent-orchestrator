@@ -15,12 +15,16 @@ export function useLocalStorage<T>(key: string, defaultValue: T): [T, (value: T 
     try {
       const stored = localStorage.getItem(key);
       if (stored !== null) {
-        setValue(JSON.parse(stored) as T);
+        const parsed: unknown = JSON.parse(stored);
+        // Runtime type check: only accept values whose type matches the default
+        if (typeof parsed === typeof defaultValue) {
+          setValue(parsed as T);
+        }
       }
     } catch {
       // Ignore parse errors or missing localStorage
     }
-  }, [key]);
+  }, [key, defaultValue]);
 
   const set = useCallback(
     (next: T | ((prev: T) => T)) => {
