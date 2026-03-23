@@ -37,7 +37,11 @@ import {
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import { exec, execSilent, git } from "../lib/shell.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
-import { ensureLifecycleWorker, stopLifecycleWorker } from "../lib/lifecycle-service.js";
+import {
+  ensureLifecycleWorker,
+  getLifecycleWorkerStatus,
+  stopLifecycleWorker,
+} from "../lib/lifecycle-service.js";
 import {
   findWebDir,
   buildDashboardEnv,
@@ -48,7 +52,13 @@ import {
 } from "../lib/web-dir.js";
 import { cleanNextCache } from "../lib/dashboard-rebuild.js";
 import { preflight } from "../lib/preflight.js";
-import { register, unregister, isAlreadyRunning, getRunning, waitForExit } from "../lib/running-state.js";
+import {
+  register,
+  unregister,
+  isAlreadyRunning,
+  getRunning,
+  waitForExit,
+} from "../lib/running-state.js";
 import { isHumanCaller } from "../lib/caller-context.js";
 import { detectEnvironment } from "../lib/detect-env.js";
 import { detectAgentRuntime } from "../lib/detect-agent.js";
@@ -60,10 +70,35 @@ import {
 } from "../lib/project-detection.js";
 
 const DEFAULT_PORT = 3000;
+const TERMINAL_CONTROL_PLANE_STATUSES = new Set([
+  "done",
+  "merged",
+  "terminated",
+  "cleanup",
+  "killed",
+]);
 
 // =============================================================================
 // HELPERS
 // =============================================================================
+
+async function isProjectControlPlaneHealthy(
+  config: OrchestratorConfig,
+  projectId: string,
+  project: ProjectConfig,
+): Promise<boolean> {
+  if (!getLifecycleWorkerStatus(config, projectId).running) {
+    return false;
+  }
+
+  try {
+    const sm = await getSessionManager(config);
+    const orchestrator = await sm.get(`${project.sessionPrefix}-orchestrator`);
+    return !!orchestrator && !TERMINAL_CONTROL_PLANE_STATUSES.has(orchestrator.status);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Resolve project from config.
@@ -358,7 +393,9 @@ async function addProjectToConfig(
     let i = 2;
     while (config.projects[`${projectId}-${i}`]) i++;
     const newId = `${projectId}-${i}`;
-    console.log(chalk.yellow(`  ⚠ Project "${projectId}" already exists — using "${newId}" instead.`));
+    console.log(
+      chalk.yellow(`  ⚠ Project "${projectId}" already exists — using "${newId}" instead.`),
+    );
     projectId = newId;
   }
 
@@ -739,7 +776,8 @@ export function registerStart(program: Command): void {
 
               // Check if project is already in config (match by path)
               const existingEntry = Object.entries(config.projects).find(
-                ([, p]) => resolve(p.path.replace(/^~/, process.env["HOME"] || "")) === resolvedPath,
+                ([, p]) =>
+                  resolve(p.path.replace(/^~/, process.env["HOME"] || "")) === resolvedPath,
               );
 
               if (existingEntry) {
@@ -774,7 +812,26 @@ export function registerStart(program: Command): void {
           // ── Already-running detection (Step 9) ──
           const running = await isAlreadyRunning();
           if (running) {
+            const controlPlaneHealthy = await isProjectControlPlaneHealthy(
+              config,
+              projectId,
+              project,
+            );
             if (isHumanCaller()) {
+              if (!controlPlaneHealthy) {
+                console.log(
+                  chalk.yellow(
+                    `\n⚠ AO dashboard is running, but ${project.name} lost its lifecycle worker or orchestrator.`,
+                  ),
+                );
+                await runStartup(config, projectId, project, {
+                  ...opts,
+                  dashboard: false,
+                });
+                console.log(`Reused existing dashboard on port ${running.port}.`);
+                return;
+              }
+
               console.log(chalk.cyan(`\nℹ AO is already running.`));
               console.log(`  Dashboard: ${chalk.cyan(`http://localhost:${running.port}`)}`);
               console.log(`  PID: ${running.pid} | Up since: ${running.startedAt}`);
@@ -805,9 +862,9 @@ export function registerStart(program: Command): void {
 
                 // Collect existing prefixes to avoid collisions
                 const existingPrefixes = new Set(
-                  Object.values(rawConfig.projects as Record<string, Record<string, unknown>>).map(
-                    (p) => p.sessionPrefix as string,
-                  ).filter(Boolean),
+                  Object.values(rawConfig.projects as Record<string, Record<string, unknown>>)
+                    .map((p) => p.sessionPrefix as string)
+                    .filter(Boolean),
                 );
 
                 let newId: string;
@@ -829,10 +886,18 @@ export function registerStart(program: Command): void {
                 project = config.projects[newId];
                 // Continue to startup below
               } else if (choice.trim() === "3") {
-                try { process.kill(running.pid, "SIGTERM"); } catch { /* already dead */ }
+                try {
+                  process.kill(running.pid, "SIGTERM");
+                } catch {
+                  /* already dead */
+                }
                 if (!(await waitForExit(running.pid, 5000))) {
                   console.log(chalk.yellow("  Process didn't exit cleanly, sending SIGKILL..."));
-                  try { process.kill(running.pid, "SIGKILL"); } catch { /* already dead */ }
+                  try {
+                    process.kill(running.pid, "SIGKILL");
+                  } catch {
+                    /* already dead */
+                  }
                 }
                 await unregister();
                 console.log(chalk.yellow("\n  Stopped existing instance. Restarting...\n"));
@@ -913,9 +978,7 @@ export function registerStop(program: Command): void {
                 // Already dead
               }
               await unregister();
-              console.log(
-                chalk.green(`\n✓ Stopped AO on port ${running.port}`),
-              );
+              console.log(chalk.green(`\n✓ Stopped AO on port ${running.port}`));
               console.log(chalk.dim(`  Projects: ${running.projects.join(", ")}\n`));
             } else {
               console.log(chalk.yellow("No running AO instance found in running.json."));
@@ -963,12 +1026,8 @@ export function registerStop(program: Command): void {
           await stopDashboard(running?.port ?? port);
 
           console.log(chalk.bold.green("\n✓ Orchestrator stopped\n"));
-          console.log(
-            chalk.dim(`  Uptime: since ${running?.startedAt ?? "unknown"}`),
-          );
-          console.log(
-            chalk.dim(`  Projects: ${Object.keys(config.projects).join(", ")}\n`),
-          );
+          console.log(chalk.dim(`  Uptime: since ${running?.startedAt ?? "unknown"}`));
+          console.log(chalk.dim(`  Projects: ${Object.keys(config.projects).join(", ")}\n`));
         } catch (err) {
           if (err instanceof Error) {
             console.error(chalk.red("\nError:"), err.message);
