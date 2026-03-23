@@ -15,6 +15,8 @@ import {
   SESSION_STATUS,
   PR_STATE,
   CI_STATUS,
+  TERMINAL_STATUSES,
+  isOrchestratorSession,
   type LifecycleManager,
   type SessionManager,
   type SessionId,
@@ -37,6 +39,10 @@ import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
 import { createCorrelationId, createProjectObserver } from "./observability.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
+import {
+  generateOrchestratorPrompt,
+  generateOrchestratorStartupPrompt,
+} from "./orchestrator-prompt.js";
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
@@ -791,6 +797,40 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     await maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction);
   }
 
+  async function ensureOrchestratorsForOpenWork(sessions: Session[]): Promise<boolean> {
+    const projectIds = scopedProjectId ? [scopedProjectId] : Object.keys(config.projects);
+    let spawnedOrchestrator = false;
+
+    await Promise.allSettled(
+      projectIds.map(async (projectId) => {
+        const project = config.projects[projectId];
+        if (!project) return;
+
+        const projectSessions = sessions.filter((session) => session.projectId === projectId);
+        const hasOpenWork = projectSessions.some(
+          (session) =>
+            !isOrchestratorSession(session) &&
+            !TERMINAL_STATUSES.has(session.status),
+        );
+        if (!hasOpenWork) return;
+
+        const hasLiveOrchestrator = projectSessions.some(
+          (session) => isOrchestratorSession(session) && !TERMINAL_STATUSES.has(session.status),
+        );
+        if (hasLiveOrchestrator) return;
+
+        await sessionManager.spawnOrchestrator({
+          projectId,
+          systemPrompt: generateOrchestratorPrompt({ config, projectId, project }),
+          prompt: generateOrchestratorStartupPrompt({ config, projectId, project }),
+        });
+        spawnedOrchestrator = true;
+      }),
+    );
+
+    return spawnedOrchestrator;
+  }
+
   /** Run one polling cycle across all sessions. */
   async function pollAll(): Promise<void> {
     const correlationId = createCorrelationId("lifecycle-poll");
@@ -800,7 +840,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     polling = true;
 
     try {
-      const sessions = await sessionManager.list(scopedProjectId);
+      let sessions = await sessionManager.list(scopedProjectId);
+      const spawnedOrchestrator = await ensureOrchestratorsForOpenWork(sessions);
+      if (spawnedOrchestrator) {
+        sessions = await sessionManager.list(scopedProjectId);
+      }
 
       // Include sessions that are active OR whose status changed from what we last saw
       // (e.g., list() detected a dead runtime and marked it "killed" — we need to

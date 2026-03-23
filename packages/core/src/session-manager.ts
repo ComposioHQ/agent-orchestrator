@@ -1353,6 +1353,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       permissions: "permissionless" as const,
       model: selection.model,
       systemPromptFile,
+      prompt: orchestratorConfig.prompt,
       subagent: selection.subagent,
     };
 
@@ -1443,6 +1444,16 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         /* best effort */
       }
       throw err;
+    }
+
+    if (plugins.agent.promptDelivery === "post-launch" && agentLaunchConfig.prompt) {
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 5_000));
+        await plugins.runtime.sendMessage(handle, agentLaunchConfig.prompt);
+      } catch {
+        // Non-fatal: agent is running but didn't receive the initial prompt.
+        // User can retry with `ao send`.
+      }
     }
 
     return session;

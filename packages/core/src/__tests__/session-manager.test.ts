@@ -3788,6 +3788,7 @@ describe("spawnOrchestrator", () => {
     await sm.spawnOrchestrator({
       projectId: "my-app",
       systemPrompt: "You are the orchestrator.",
+      prompt: "Do an initial orchestration pass.",
     });
 
     // Should pass systemPromptFile (not inline systemPrompt) to avoid tmux truncation
@@ -3795,6 +3796,7 @@ describe("spawnOrchestrator", () => {
       expect.objectContaining({
         sessionId: "app-orchestrator",
         systemPromptFile: expect.stringContaining("orchestrator-prompt.md"),
+        prompt: "Do an initial orchestration pass.",
       }),
     );
 
@@ -3804,6 +3806,53 @@ describe("spawnOrchestrator", () => {
     expect(existsSync(promptFile)).toBe(true);
     const { readFileSync } = await import("node:fs");
     expect(readFileSync(promptFile, "utf-8")).toBe("You are the orchestrator.");
+  });
+
+  it("passes the initial orchestrator prompt to the agent launch config", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    await sm.spawnOrchestrator({
+      projectId: "my-app",
+      prompt: "Check ready issues and spawn workers.",
+    });
+
+    expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "app-orchestrator",
+        prompt: "Check ready issues and spawn workers.",
+      }),
+    );
+  });
+
+  it("sends orchestrator prompt post-launch when agent.promptDelivery is 'post-launch'", async () => {
+    vi.useFakeTimers();
+    const postLaunchAgent = {
+      ...mockAgent,
+      promptDelivery: "post-launch" as const,
+    };
+    const registryWithPostLaunch: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return postLaunchAgent;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+
+    const sm = createSessionManager({ config, registry: registryWithPostLaunch });
+    const spawnPromise = sm.spawnOrchestrator({
+      projectId: "my-app",
+      prompt: "Do an initial orchestration pass.",
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await spawnPromise;
+
+    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: expect.any(String) }),
+      "Do an initial orchestration pass.",
+    );
+    vi.useRealTimers();
   });
 
   it("throws for unknown project", async () => {
