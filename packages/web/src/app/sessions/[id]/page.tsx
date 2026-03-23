@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { isOrchestratorSession } from "@composio/ao-core/types";
 import { SessionDetail } from "@/components/SessionDetail";
@@ -112,12 +112,15 @@ export default function SessionPage() {
     return () => clearTimeout(t);
   }, [fetchSession, fetchZoneCounts]);
 
-  // Real-time updates via SSE — falls back to refetch on membership change
+  // Keep refs to latest callbacks so the SSE effect doesn't re-run when they change
+  const fetchSessionRef = useRef(fetchSession);
+  const fetchZoneCountsRef = useRef(fetchZoneCounts);
+  useEffect(() => { fetchSessionRef.current = fetchSession; }, [fetchSession]);
+  useEffect(() => { fetchZoneCountsRef.current = fetchZoneCounts; }, [fetchZoneCounts]);
+
+  // Real-time updates via SSE — stable effect that only reconnects when id changes
   useEffect(() => {
-    const eventUrl = sessionProjectId
-      ? `/api/events?project=${encodeURIComponent(sessionProjectId)}`
-      : "/api/events";
-    const es = new EventSource(eventUrl);
+    const es = new EventSource("/api/events");
     es.onmessage = (event: MessageEvent) => {
       try {
         const data = JSON.parse(event.data as string) as { type: string; sessions?: Array<{ id: string; status: string; activity: string | null; lastActivityAt: string }> };
@@ -135,9 +138,9 @@ export default function SessionPage() {
     };
     es.onerror = () => undefined;
     // Full refetch every 15s as fallback for enriched data (PR state, etc.)
-    const fallback = setInterval(() => { fetchSession(); fetchZoneCounts(); }, 15_000);
+    const fallback = setInterval(() => { fetchSessionRef.current(); fetchZoneCountsRef.current(); }, 15_000);
     return () => { es.close(); clearInterval(fallback); };
-  }, [id, sessionProjectId, fetchSession, fetchZoneCounts]);
+  }, [id]);
 
   if (loading) {
     return (

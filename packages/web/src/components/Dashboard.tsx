@@ -77,6 +77,10 @@ export function Dashboard({
   }, [isMobile]);
   const effectiveSidebarCollapsed = isMobile ? mobileForceCollapsed : sidebarCollapsed;
   const noop = useCallback(() => {}, []);
+  const setDesktopCollapsed = useCallback(
+    (value: boolean) => { if (!window.matchMedia("(max-width: 767px)").matches) setSidebarCollapsed(value); },
+    [setSidebarCollapsed],
+  );
   const { sessions, globalPause } = useSessionEvents(initialSessions, initialGlobalPause, projectId);
   const [rateLimitDismissed, setRateLimitDismissed] = useState(false);
   const [dismissedPauseKey, setDismissedPauseKey] = useState<string | null>(null);
@@ -168,7 +172,7 @@ export function Dashboard({
           activeProjectId={projectId}
           orchestrators={activeOrchestrators}
           collapsed={sidebarCollapsed}
-          onCollapsedChange={setSidebarCollapsed}
+          onCollapsedChange={setDesktopCollapsed}
           width={sidebarWidth}
           onWidthChange={setSidebarWidth}
         />
@@ -195,7 +199,7 @@ export function Dashboard({
           <div className="flex flex-wrap items-center gap-3 md:gap-6">
             {effectiveSidebarCollapsed && (
               <button
-                onClick={() => isMobile ? setMobileForceCollapsed(false) : setSidebarCollapsed(false)}
+                onClick={() => isMobile ? setMobileForceCollapsed(false) : setDesktopCollapsed(false)}
                 aria-label="Expand sidebar"
                 className="flex h-7 w-7 items-center justify-center rounded border border-[var(--color-border-subtle)] text-[var(--color-text-tertiary)] transition-colors hover:bg-[rgba(255,255,255,0.06)] hover:text-[var(--color-text-primary)]"
               >

@@ -31,11 +31,17 @@ jobs:
     needs: ci
     runs-on: ubuntu-latest
     steps:
-      - name: Extract PR number from branch name
+      - name: Extract and validate branch name
         id: pr
         run: |
-          PR=$(echo "${{ github.ref_name }}" | grep -oP '\d+' | head -1)
+          BRANCH="${{ github.ref_name }}"
+          if ! echo "$BRANCH" | grep -qP '^[a-zA-Z0-9/_.-]+$'; then
+            echo "::error::Branch name contains unsafe characters: $BRANCH"
+            exit 1
+          fi
+          PR=$(echo "$BRANCH" | grep -oP '\d+' | head -1)
           echo "number=${PR}" >> $GITHUB_OUTPUT
+          echo "branch=${BRANCH}" >> $GITHUB_OUTPUT
           echo "Deploying PR #${PR}"
 
       - name: Deploy to Preview CT
@@ -43,7 +49,7 @@ jobs:
           ssh -o StrictHostKeyChecking=no \
             -i ${{ secrets.PREVIEW_DEPLOY_KEY }} \
             deploy@192.168.10.193 \
-            "/home/deploy/deploy.sh ao ${{ steps.pr.outputs.number }} ${{ github.sha }} ${{ github.ref_name }}"
+            "/home/deploy/deploy.sh ao ${{ steps.pr.outputs.number }} ${{ github.sha }} ${{ steps.pr.outputs.branch }}"
 
   teardown:
     if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
