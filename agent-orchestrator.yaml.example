@@ -37,8 +37,28 @@ projects:
 
     # Issue tracker (defaults to github issues)
     # tracker:
-    #   plugin: linear
-    #   teamId: "your-team-id"
+    #   plugin: linear          # linear | github | jira
+    #   teamId: "your-team-id"  # Linear: team identifier
+    #   projectKey: "MYAPP"     # Jira: project key
+    #
+    #   # Labels that trigger automatic agent assignment from the backlog UI
+    #   trigger:
+    #     labels:
+    #       - agent:backlog
+    #
+    #   # Optional: divide the backlog view into named columns by issue statusName.
+    #   # statusName is the raw status string returned by the tracker (e.g. Jira workflow
+    #   # status names). Issues whose statusName does not match any column are placed in
+    #   # a leading "Other" column automatically.
+    #   columns:
+    #     - label: To Do
+    #       statuses: [To Do, Backlog, Open]
+    #     - label: In Progress
+    #       statuses: [In Progress, In Development]
+    #     - label: In Review
+    #       statuses: [In Review, Code Review]
+    #     - label: Done
+    #       statuses: [Done, Closed, Resolved]
 
     # SCM webhook acceleration (optional)
     # scm:
