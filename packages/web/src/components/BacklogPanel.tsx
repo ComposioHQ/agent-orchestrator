@@ -10,6 +10,7 @@ interface BacklogIssue {
   url: string;
   state: string;
   labels: string[];
+  assignee?: string;
   issueType?: string;
   statusName?: string;
 }
@@ -17,6 +18,8 @@ interface BacklogIssue {
 interface BacklogPanelProps {
   projectId: string;
   triggerLabels?: string[];
+  /** Default assignee filter from project config (tracker.trigger.assignee) */
+  triggerAssignee?: string;
   columns?: ColumnConfig[];
 }
 
@@ -29,10 +32,7 @@ interface ResolvedColumn {
   issues: BacklogIssue[];
 }
 
-function groupIssuesIntoColumns(
-  issues: BacklogIssue[],
-  columns: ColumnConfig[],
-): ResolvedColumn[] {
+function groupIssuesIntoColumns(issues: BacklogIssue[], columns: ColumnConfig[]): ResolvedColumn[] {
   const assigned = new Set<string>();
   const namedColumns: ResolvedColumn[] = columns.map((col) => {
     const matched = issues.filter((issue) => {
@@ -55,7 +55,12 @@ function groupIssuesIntoColumns(
 // Main component
 // ---------------------------------------------------------------------------
 
-export function BacklogPanel({ projectId, triggerLabels, columns }: BacklogPanelProps) {
+export function BacklogPanel({
+  projectId,
+  triggerLabels,
+  triggerAssignee,
+  columns,
+}: BacklogPanelProps) {
   const [issues, setIssues] = useState<BacklogIssue[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,6 +68,7 @@ export function BacklogPanel({ projectId, triggerLabels, columns }: BacklogPanel
   const [spawnedIds, setSpawnedIds] = useState<Set<string>>(new Set());
   const [spawnErrors, setSpawnErrors] = useState<Record<string, string>>({});
   const [polled, setPolled] = useState(false);
+  const [assigneeFilter, setAssigneeFilter] = useState(triggerAssignee ?? "");
 
   const labelParam = triggerLabels?.[0];
 
@@ -72,6 +78,7 @@ export function BacklogPanel({ projectId, triggerLabels, columns }: BacklogPanel
     try {
       const params = new URLSearchParams({ project: projectId, state: "open" });
       if (labelParam) params.set("label", labelParam);
+      if (assigneeFilter.trim()) params.set("assignee", assigneeFilter.trim());
       const res = await fetch(`/api/issues?${params.toString()}`);
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -85,7 +92,7 @@ export function BacklogPanel({ projectId, triggerLabels, columns }: BacklogPanel
     } finally {
       setLoading(false);
     }
-  }, [projectId, labelParam]);
+  }, [projectId, labelParam, assigneeFilter]);
 
   const handleSpawn = useCallback(
     async (issue: BacklogIssue) => {
@@ -139,53 +146,63 @@ export function BacklogPanel({ projectId, triggerLabels, columns }: BacklogPanel
             </span>
           )}
         </div>
-        <button
-          type="button"
-          onClick={() => void handlePoll()}
-          disabled={loading}
-          className="flex items-center gap-1.5 rounded-[6px] border border-[var(--color-border-default)] px-3 py-1.5 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:cursor-wait disabled:opacity-60"
-        >
-          {loading ? (
-            <>
-              <svg className="h-3 w-3 animate-spin" fill="none" viewBox="0 0 24 24">
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            value={assigneeFilter}
+            onChange={(e) => setAssigneeFilter(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void handlePoll();
+            }}
+            placeholder="Assignee"
+            className="h-[28px] rounded-[6px] border border-[var(--color-border-default)] bg-transparent px-2.5 text-[11px] text-[var(--color-text-secondary)] placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-accent)] focus:outline-none w-[120px]"
+          />
+          <button
+            type="button"
+            onClick={() => void handlePoll()}
+            disabled={loading}
+            className="flex items-center gap-1.5 rounded-[6px] border border-[var(--color-border-default)] px-3 py-1.5 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:cursor-wait disabled:opacity-60"
+          >
+            {loading ? (
+              <>
+                <svg className="h-3 w-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="3"
+                  />
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                  />
+                </svg>
+                Polling...
+              </>
+            ) : (
+              <>
+                <svg
+                  className="h-3 w-3"
+                  fill="none"
                   stroke="currentColor"
-                  strokeWidth="3"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                />
-              </svg>
-              Polling...
-            </>
-          ) : (
-            <>
-              <svg
-                className="h-3 w-3"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                viewBox="0 0 24 24"
-              >
-                <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-              Poll for new tasks
-            </>
-          )}
-        </button>
+                  strokeWidth="2"
+                  viewBox="0 0 24 24"
+                >
+                  <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Poll for new tasks
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Error */}
       {error && (
-        <div className="px-4 py-2.5 text-[11px] text-[var(--color-status-error)]">
-          {error}
-        </div>
+        <div className="px-4 py-2.5 text-[11px] text-[var(--color-status-error)]">{error}</div>
       )}
 
       {/* Empty state */}
@@ -285,8 +302,9 @@ function IssueRow({
             #{issue.id}
           </span>
           {issue.issueType && <IssueTypeBadge type={issue.issueType} />}
-          {issue.statusName && (
-            <StatusPill status={issue.statusName} state={issue.state} />
+          {issue.statusName && <StatusPill status={issue.statusName} state={issue.state} />}
+          {issue.assignee && (
+            <span className="text-[10px] text-[var(--color-text-muted)]">@{issue.assignee}</span>
           )}
           {issue.labels.map((label) => (
             <span
@@ -336,9 +354,7 @@ function IssueTypeBadge({ type }: { type: string }) {
     color = "text-[var(--color-text-secondary)] border-[var(--color-border-subtle)]";
 
   return (
-    <span className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${color}`}>
-      {type}
-    </span>
+    <span className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${color}`}>{type}</span>
   );
 }
 
@@ -349,7 +365,5 @@ function StatusPill({ status, state }: { status: string; state: string }) {
     color = "text-[var(--color-text-secondary)] border-[var(--color-border-subtle)]";
   else if (state === "closed") color = "text-[#4ade80] border-[#4ade80]/30 bg-[#4ade80]/10";
 
-  return (
-    <span className={`rounded border px-1.5 py-0.5 text-[10px] ${color}`}>{status}</span>
-  );
+  return <span className={`rounded border px-1.5 py-0.5 text-[10px] ${color}`}>{status}</span>;
 }

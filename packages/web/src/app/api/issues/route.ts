@@ -7,17 +7,28 @@ export const dynamic = "force-dynamic";
 
 /**
  * GET /api/issues — List open issues from all configured trackers.
- * Query params: ?state=open|closed|all&label=agent:backlog&project=Saas-code
+ * Query params: ?state=open|closed|all&label=agent:backlog&project=Saas-code&assignee=username
  */
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
   const state = (searchParams.get("state") ?? "open") as "open" | "closed" | "all";
   const label = searchParams.get("label") ?? undefined;
+  const assignee = searchParams.get("assignee") ?? undefined;
   const projectFilter = searchParams.get("project") ?? undefined;
 
   try {
     const { config, registry } = await getServices();
-    const allIssues: Array<{ projectId: string; id: string; title: string; url: string; state: string; labels: string[]; issueType?: string; statusName?: string }> = [];
+    const allIssues: Array<{
+      projectId: string;
+      id: string;
+      title: string;
+      url: string;
+      state: string;
+      labels: string[];
+      assignee?: string;
+      issueType?: string;
+      statusName?: string;
+    }> = [];
 
     for (const [projectId, project] of Object.entries(config.projects)) {
       if (projectFilter && projectId !== projectFilter) continue;
@@ -28,7 +39,7 @@ export async function GET(request: NextRequest) {
 
       try {
         const issues = await tracker.listIssues(
-          { state, labels: label ? [label] : undefined, limit: 50 },
+          { state, labels: label ? [label] : undefined, assignee, limit: 50 },
           project,
         );
         for (const issue of issues) {
@@ -76,12 +87,18 @@ export async function POST(request: NextRequest) {
     }
 
     if (!project.tracker) {
-      return NextResponse.json({ error: "No tracker configured for this project" }, { status: 422 });
+      return NextResponse.json(
+        { error: "No tracker configured for this project" },
+        { status: 422 },
+      );
     }
 
     const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
     if (!tracker?.createIssue) {
-      return NextResponse.json({ error: "Tracker does not support issue creation" }, { status: 422 });
+      return NextResponse.json(
+        { error: "Tracker does not support issue creation" },
+        { status: 422 },
+      );
     }
 
     const labels = body.addToBacklog ? ["agent:backlog"] : [];

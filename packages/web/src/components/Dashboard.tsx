@@ -347,6 +347,7 @@ export function Dashboard({
             key={projectId}
             projectId={projectId}
             triggerLabels={projects.find((p) => p.id === projectId)?.triggerLabels}
+            triggerAssignee={projects.find((p) => p.id === projectId)?.triggerAssignee}
             columns={projects.find((p) => p.id === projectId)?.columns}
           />
         )}
