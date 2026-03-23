@@ -4,8 +4,17 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { isOrchestratorSession } from "@composio/ao-core/types";
 import { SessionDetail } from "@/components/SessionDetail";
-import { type DashboardSession, getAttentionLevel, type AttentionLevel } from "@/lib/types";
+import { type DashboardSession, getAttentionLevel, type AttentionLevel, type SessionStatus, type ActivityState } from "@/lib/types";
 import { activityIcon } from "@/lib/activity-icons";
+
+const VALID_STATUSES: ReadonlySet<string> = new Set<string>([
+  "spawning", "working", "pr_open", "ci_failed", "review_pending",
+  "changes_requested", "approved", "mergeable", "merged", "cleanup",
+  "needs_input", "stuck", "errored", "killed", "idle", "done", "terminated",
+]);
+const VALID_ACTIVITIES: ReadonlySet<string> = new Set<string>([
+  "active", "ready", "idle", "waiting_input", "blocked", "exited",
+]);
 
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + "..." : s;
@@ -118,19 +127,24 @@ export default function SessionPage() {
   useEffect(() => { fetchSessionRef.current = fetchSession; }, [fetchSession]);
   useEffect(() => { fetchZoneCountsRef.current = fetchZoneCounts; }, [fetchZoneCounts]);
 
-  // Real-time updates via SSE — stable effect that only reconnects when id changes
+  // Real-time updates via SSE — reconnects when id or project scope changes
   useEffect(() => {
-    const es = new EventSource("/api/events");
+    const eventUrl = sessionProjectId
+      ? `/api/events?project=${encodeURIComponent(sessionProjectId)}`
+      : "/api/events";
+    const es = new EventSource(eventUrl);
     es.onmessage = (event: MessageEvent) => {
       try {
         const data = JSON.parse(event.data as string) as { type: string; sessions?: Array<{ id: string; status: string; activity: string | null; lastActivityAt: string }> };
         if (data.type === "snapshot" && data.sessions) {
           const patch = data.sessions.find((s) => s.id === id);
           if (patch) {
+            if (!VALID_STATUSES.has(patch.status)) return;
+            if (patch.activity !== null && !VALID_ACTIVITIES.has(patch.activity)) return;
             setSession((prev) => {
               if (!prev) return prev;
               if (prev.status === patch.status && prev.activity === patch.activity && prev.lastActivityAt === patch.lastActivityAt) return prev;
-              return { ...prev, status: patch.status as DashboardSession["status"], activity: patch.activity as DashboardSession["activity"], lastActivityAt: patch.lastActivityAt };
+              return { ...prev, status: patch.status as SessionStatus, activity: patch.activity as ActivityState | null, lastActivityAt: patch.lastActivityAt };
             });
           }
         }
@@ -140,7 +154,7 @@ export default function SessionPage() {
     // Full refetch every 15s as fallback for enriched data (PR state, etc.)
     const fallback = setInterval(() => { fetchSessionRef.current(); fetchZoneCountsRef.current(); }, 15_000);
     return () => { es.close(); clearInterval(fallback); };
-  }, [id]);
+  }, [id, sessionProjectId]);
 
   if (loading) {
     return (

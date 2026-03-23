@@ -250,6 +250,24 @@ export function Dashboard({
             ))}
           </div>
         )}
+        {!allProjectsView && !selectedProject && sessions.length === 0 && (
+          <div className="mb-8">
+            <EmptyState
+              icon={<svg className="h-8 w-8" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24"><path d="M2 20h20M5 20V10l7-6 7 6v10M9 20v-5h6v5" /></svg>}
+              message="No projects configured"
+              description="Add a project to get started with the orchestrator."
+              action={
+                <p className="text-[11px] text-[var(--color-text-tertiary)]">
+                  Run{" "}
+                  <code className="rounded bg-[rgba(255,255,255,0.06)] px-1 py-0.5 font-[var(--font-mono)] text-[10px]">
+                    ao init &lt;path&gt;
+                  </code>{" "}
+                  to add a project
+                </p>
+              }
+            />
+          </div>
+        )}
         {!allProjectsView && !hasKanbanSessions && sessions.length === 0 && selectedProject && (
           <div className="mb-8">
             <EmptyState
