@@ -1,8 +1,9 @@
 "use client";
 
-import { memo, useState } from "react";
+import { memo } from "react";
 import type { DashboardSession, AttentionLevel } from "@/lib/types";
 import { SessionCard } from "./SessionCard";
+import { useLocalStorage } from "@/hooks/useLocalStorage";
 
 interface AttentionZoneProps {
   level: AttentionLevel;
@@ -64,7 +65,7 @@ function AttentionZoneView({
   onRestore,
 }: AttentionZoneProps) {
   const config = zoneConfig[level];
-  const [collapsed, setCollapsed] = useState(config.defaultCollapsed);
+  const [collapsed, setCollapsed] = useLocalStorage(`ao-kanban-collapsed-${level}`, config.defaultCollapsed);
 
   if (sessions.length === 0) return null;
 
@@ -73,7 +74,7 @@ function AttentionZoneView({
       <div className="flex flex-col">
         {/* Column header */}
         <button
-          className="mb-2.5 flex items-center gap-2 py-0.5 text-left"
+          className="mb-2.5 flex min-h-[44px] items-center gap-2 py-0.5 text-left"
           onClick={() => setCollapsed(!collapsed)}
         >
           <div className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: config.color }} />
@@ -81,15 +82,13 @@ function AttentionZoneView({
             {config.label}
           </span>
           <span
-            className="rounded-full px-1.5 py-0 text-[10px] font-medium tabular-nums text-[var(--color-text-muted)]"
-            style={{ background: "var(--color-bg-subtle)" }}
+            className="rounded-full bg-[var(--color-bg-subtle)] px-1.5 py-0 text-[10px] font-medium tabular-nums text-[var(--color-text-muted)]"
           >
             {sessions.length}
           </span>
           <div className="flex-1" />
           <svg
-            className="h-3 w-3 shrink-0 text-[var(--color-text-muted)] transition-transform duration-150"
-            style={{ transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)" }}
+            className={`h-3 w-3 shrink-0 text-[var(--color-text-muted)] transition-transform duration-150 ${collapsed ? "-rotate-90" : "rotate-0"}`}
             fill="none"
             stroke="currentColor"
             strokeWidth="2"
@@ -121,7 +120,7 @@ function AttentionZoneView({
     <div className="mb-7">
       {/* Zone header: [●] LABEL ──────────────────────────────── count [▾] */}
       <button
-        className="mb-3 flex w-full items-center gap-2.5 py-0.5 text-left"
+        className="mb-3 flex min-h-[44px] w-full items-center gap-2.5 py-0.5 text-left"
         onClick={() => setCollapsed(!collapsed)}
       >
         {/* Semantic dot — only zone-colored element */}
@@ -138,8 +137,7 @@ function AttentionZoneView({
         </span>
         {/* Collapse chevron */}
         <svg
-          className="h-3 w-3 shrink-0 text-[var(--color-text-muted)] transition-transform duration-150"
-          style={{ transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)" }}
+          className={`h-3 w-3 shrink-0 text-[var(--color-text-muted)] transition-transform duration-150 ${collapsed ? "-rotate-90" : "rotate-0"}`}
           fill="none"
           stroke="currentColor"
           strokeWidth="2"

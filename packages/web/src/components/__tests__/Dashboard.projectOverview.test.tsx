@@ -19,6 +19,19 @@ describe("Dashboard project overview cards", () => {
         }) as unknown as EventSource,
     );
     global.fetch = vi.fn();
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      value: vi.fn((query: string) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
   });
 
   it("renders Spawn Orchestrator only for projects without one", () => {
@@ -133,5 +146,48 @@ describe("Dashboard project overview cards", () => {
       expect(screen.getByText("Project is paused")).toBeInTheDocument();
     });
     expect(screen.getAllByRole("button", { name: "Spawn Orchestrator" })).toHaveLength(2);
+  });
+
+  it("shows Spawn Orchestrator on a selected project page", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        orchestrator: {
+          id: "docs-orchestrator",
+          projectId: "docs-app",
+          projectName: "Docs App",
+        },
+      }),
+    } as Response);
+
+    render(
+      <Dashboard
+        initialSessions={[makeSession({ projectId: "docs-app" })]}
+        projectId="docs-app"
+        projectName="Docs App"
+        projects={[
+          { id: "my-app", name: "My App" },
+          { id: "docs-app", name: "Docs App" },
+        ]}
+        orchestrators={[]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Spawn Orchestrator" }));
+
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith("/api/orchestrators", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: "docs-app" }),
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("link", { name: "orchestrator" })).toHaveAttribute(
+        "href",
+        "/sessions/docs-orchestrator",
+      );
+    });
   });
 });

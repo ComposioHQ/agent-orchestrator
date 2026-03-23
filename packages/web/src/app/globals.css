@@ -3,7 +3,7 @@
 @theme {
   /* ── Base surfaces ────────────────────────────────────────────────── */
   --color-bg-base:      #0d1117;
-  --color-bg-surface:   rgba(22, 27, 34, 0.8);
+  --color-bg-surface:   rgb(22, 27, 34);
   --color-bg-elevated:  rgba(28, 33, 40, 0.9);
   --color-bg-subtle:    rgba(33, 38, 45, 0.7);
 
@@ -84,6 +84,13 @@ a {
 }
 a:hover {
   text-decoration: underline;
+}
+
+/* ── Mobile: prevent horizontal overflow ──────────────────────────────── */
+
+html, body {
+  overflow-x: hidden;
+  max-width: 100vw;
 }
 
 /* ── Scrollbar ────────────────────────────────────────────────────────── */
@@ -203,4 +210,8 @@ a:hover {
     0 14px 36px rgba(0,0,0,0.55),
     0 0 60px rgba(63,185,80,0.2),
     inset 0 1px 0 rgba(255,255,255,0.1);
+}
+
+.session-card.card-expanded {
+  background: linear-gradient(175deg, var(--color-bg-elevated) 0%, var(--color-bg-surface) 100%);
 }

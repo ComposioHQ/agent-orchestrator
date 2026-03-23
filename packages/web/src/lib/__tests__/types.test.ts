@@ -576,14 +576,14 @@ describe("isPRMergeReady", () => {
 
 describe("constants sync with core", () => {
   it("TERMINAL_STATUSES matches core", () => {
-    expect(TERMINAL_STATUSES).toBe(CORE_TERMINAL_STATUSES);
+    expect(TERMINAL_STATUSES).toEqual(CORE_TERMINAL_STATUSES);
   });
 
   it("TERMINAL_ACTIVITIES matches core", () => {
-    expect(TERMINAL_ACTIVITIES).toBe(CORE_TERMINAL_ACTIVITIES);
+    expect(TERMINAL_ACTIVITIES).toEqual(CORE_TERMINAL_ACTIVITIES);
   });
 
   it("NON_RESTORABLE_STATUSES matches core", () => {
-    expect(NON_RESTORABLE_STATUSES).toBe(CORE_NON_RESTORABLE_STATUSES);
+    expect(NON_RESTORABLE_STATUSES).toEqual(CORE_NON_RESTORABLE_STATUSES);
   });
 });

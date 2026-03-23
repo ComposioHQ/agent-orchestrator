@@ -1,11 +1,20 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { isOrchestratorSession } from "@composio/ao-core/types";
 import { SessionDetail } from "@/components/SessionDetail";
-import { type DashboardSession, getAttentionLevel, type AttentionLevel } from "@/lib/types";
+import { type DashboardSession, getAttentionLevel, type AttentionLevel, type SessionStatus, type ActivityState } from "@/lib/types";
 import { activityIcon } from "@/lib/activity-icons";
+
+const VALID_STATUSES: ReadonlySet<string> = new Set<string>([
+  "spawning", "working", "pr_open", "ci_failed", "review_pending",
+  "changes_requested", "approved", "mergeable", "merged", "cleanup",
+  "needs_input", "stuck", "errored", "killed", "idle", "done", "terminated",
+]);
+const VALID_ACTIVITIES: ReadonlySet<string> = new Set<string>([
+  "active", "ready", "idle", "waiting_input", "blocked", "exited",
+]);
 
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + "..." : s;
@@ -52,14 +61,10 @@ export default function SessionPage() {
   const sessionProjectId = session?.projectId ?? null;
   const sessionIsOrchestrator = session ? isOrchestratorSession(session) : false;
 
-  // Update document title based on session data
+  // Update document title when session data loads (initial title set by layout.tsx metadata)
   useEffect(() => {
-    if (session) {
-      document.title = buildSessionTitle(session);
-    } else {
-      document.title = `${id} | Session Detail`;
-    }
-  }, [session, id]);
+    if (session) document.title = buildSessionTitle(session);
+  }, [session]);
 
   // Fetch session data (memoized to avoid recreating on every render)
   const fetchSession = useCallback(async () => {
@@ -116,14 +121,40 @@ export default function SessionPage() {
     return () => clearTimeout(t);
   }, [fetchSession, fetchZoneCounts]);
 
-  // Poll every 5s
+  // Keep refs to latest callbacks so the SSE effect doesn't re-run when they change
+  const fetchSessionRef = useRef(fetchSession);
+  const fetchZoneCountsRef = useRef(fetchZoneCounts);
+  useEffect(() => { fetchSessionRef.current = fetchSession; }, [fetchSession]);
+  useEffect(() => { fetchZoneCountsRef.current = fetchZoneCounts; }, [fetchZoneCounts]);
+
+  // Real-time updates via SSE — reconnects when id or project scope changes
   useEffect(() => {
-    const interval = setInterval(() => {
-      fetchSession();
-      fetchZoneCounts();
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [fetchSession, fetchZoneCounts]);
+    const eventUrl = sessionProjectId
+      ? `/api/events?project=${encodeURIComponent(sessionProjectId)}`
+      : "/api/events";
+    const es = new EventSource(eventUrl);
+    es.onmessage = (event: MessageEvent) => {
+      try {
+        const data = JSON.parse(event.data as string) as { type: string; sessions?: Array<{ id: string; status: string; activity: string | null; lastActivityAt: string }> };
+        if (data.type === "snapshot" && data.sessions) {
+          const patch = data.sessions.find((s) => s.id === id);
+          if (patch) {
+            if (!VALID_STATUSES.has(patch.status)) return;
+            if (patch.activity !== null && !VALID_ACTIVITIES.has(patch.activity)) return;
+            setSession((prev) => {
+              if (!prev) return prev;
+              if (prev.status === patch.status && prev.activity === patch.activity && prev.lastActivityAt === patch.lastActivityAt) return prev;
+              return { ...prev, status: patch.status as SessionStatus, activity: patch.activity as ActivityState | null, lastActivityAt: patch.lastActivityAt };
+            });
+          }
+        }
+      } catch { /* ignore parse errors */ }
+    };
+    es.onerror = () => undefined;
+    // Full refetch every 15s as fallback for enriched data (PR state, etc.)
+    const fallback = setInterval(() => { fetchSessionRef.current(); fetchZoneCountsRef.current(); }, 15_000);
+    return () => { es.close(); clearInterval(fallback); };
+  }, [id, sessionProjectId]);
 
   if (loading) {
     return (

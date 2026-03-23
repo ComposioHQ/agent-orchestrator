@@ -4,6 +4,11 @@ import { Dashboard } from "@/components/Dashboard";
 import type { GlobalPauseState } from "@/lib/types";
 import { makeSession } from "@/__tests__/helpers";
 
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+  usePathname: () => "/",
+}));
+
 describe("Dashboard globalPause banner", () => {
   let eventSourceMock: {
     onmessage: ((event: MessageEvent) => void) | null;
@@ -26,6 +31,19 @@ describe("Dashboard globalPause banner", () => {
     };
     global.EventSource = vi.fn(() => eventSourceMock as unknown as EventSource);
     global.fetch = vi.fn();
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      value: vi.fn((query: string) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
   });
 
   afterEach(() => {

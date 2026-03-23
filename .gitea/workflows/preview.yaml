@@ -1,0 +1,67 @@
+name: CI + Deploy Preview
+
+on:
+  push:
+    branches:
+      - 'fix/**'
+      - 'feat/**'
+  pull_request:
+    types: [closed]
+
+jobs:
+  ci:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup pnpm
+        run: npm install -g pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build core
+        run: pnpm --filter @composio/ao-core build
+
+      - name: Run tests
+        run: pnpm --filter @composio/ao-web test --run
+
+  deploy:
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract and validate branch name
+        id: pr
+        run: |
+          BRANCH="${{ github.ref_name }}"
+          if ! echo "$BRANCH" | grep -qP '^[a-zA-Z0-9/_.-]+$'; then
+            echo "::error::Branch name contains unsafe characters: $BRANCH"
+            exit 1
+          fi
+          PR=$(echo "$BRANCH" | grep -oP '\d+' | head -1)
+          echo "number=${PR}" >> $GITHUB_OUTPUT
+          echo "branch=${BRANCH}" >> $GITHUB_OUTPUT
+          echo "Deploying PR #${PR}"
+
+      - name: Deploy to Preview CT
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+            -i ${{ secrets.PREVIEW_DEPLOY_KEY }} \
+            deploy@192.168.10.193 \
+            "/home/deploy/deploy.sh ao ${{ steps.pr.outputs.number }} ${{ github.sha }} ${{ steps.pr.outputs.branch }}"
+
+  teardown:
+    if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract PR number
+        id: pr
+        run: echo "number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+
+      - name: Teardown preview
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+            -i ${{ secrets.PREVIEW_DEPLOY_KEY }} \
+            deploy@192.168.10.193 \
+            "/home/deploy/teardown.sh ao ${{ steps.pr.outputs.number }}"

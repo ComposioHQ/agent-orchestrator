@@ -24,9 +24,6 @@ import {
   ACTIVITY_STATE,
   SESSION_STATUS,
   CI_STATUS,
-  TERMINAL_STATUSES,
-  TERMINAL_ACTIVITIES,
-  NON_RESTORABLE_STATUSES,
   type CICheck as CoreCICheck,
   type MergeReadiness,
   type CIStatus,
@@ -35,8 +32,22 @@ import {
   type ReviewDecision,
 } from "@composio/ao-core/types";
 
-// Re-export for use in client components
-export { TERMINAL_STATUSES, TERMINAL_ACTIVITIES, NON_RESTORABLE_STATUSES };
+// Defined locally to avoid client-bundle issues with re-exports from @composio/ao-core/types.
+// These must stay in sync with the canonical definitions in packages/core/src/types.ts.
+export const TERMINAL_STATUSES: ReadonlySet<SessionStatus> = new Set<SessionStatus>([
+  "killed",
+  "terminated",
+  "done",
+  "cleanup",
+  "errored",
+  "merged",
+]);
+
+export const TERMINAL_ACTIVITIES: ReadonlySet<ActivityState> = new Set<ActivityState>(["exited"]);
+
+export const NON_RESTORABLE_STATUSES: ReadonlySet<SessionStatus> = new Set<SessionStatus>([
+  "merged",
+]);
 
 /**
  * Attention zone priority level, ordered by human action urgency:
@@ -75,6 +86,7 @@ export interface DashboardSession {
   lastActivityAt: string;
   pr: DashboardPR | null;
   metadata: Record<string, string>;
+  isOrchestrator: boolean;
 }
 
 /**
