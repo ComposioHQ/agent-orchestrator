@@ -1826,11 +1826,20 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           }
         }
 
-        // Check if runtime is dead
+        // Check if runtime is dead.
+        // Keep PR-backed sessions around while the PR is still open: lifecycle
+        // can continue polling SCM state and auto-merge/review reactions even
+        // after the original worker runtime disappeared.
         if (!shouldKill && session.runtimeHandle && plugins.runtime) {
           try {
             const alive = await plugins.runtime.isAlive(session.runtimeHandle);
-            if (!alive) shouldKill = true;
+            if (!alive) {
+              if (session.pr) {
+                pushSkipped(session.projectId, session.id);
+                continue;
+              }
+              shouldKill = true;
+            }
           } catch {
             // Can't check — skip
           }

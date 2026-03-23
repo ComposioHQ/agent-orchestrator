@@ -2165,6 +2165,55 @@ describe("cleanup", () => {
     expect(result.skipped).toHaveLength(0);
   });
 
+  it("keeps dead sessions with open PRs so lifecycle can still auto-merge them", async () => {
+    const deadRuntime: Runtime = {
+      ...mockRuntime,
+      isAlive: vi.fn().mockResolvedValue(false),
+    };
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn(),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn(),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return deadRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+      pr: "https://github.com/org/repo/pull/10",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithSCM });
+    const result = await sm.cleanup();
+
+    expect(result.killed).toHaveLength(0);
+    expect(result.skipped).toContain("app-1");
+    expect(readMetadataRaw(sessionsDir, "app-1")).not.toBeNull();
+  });
+
   it("deletes mapped OpenCode session during cleanup", async () => {
     const deleteLogPath = join(tmpDir, "opencode-delete.log");
     const mockBin = installMockOpencode("[]", deleteLogPath);
