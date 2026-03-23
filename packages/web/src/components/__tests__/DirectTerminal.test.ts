@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildDirectTerminalWsUrl } from "@/components/DirectTerminal";
+import { buildDirectTerminalWsUrl, buildTerminalThemes } from "@/components/DirectTerminal";
 
 describe("buildDirectTerminalWsUrl", () => {
   it("keeps non-standard port when proxy path override is set", () => {
@@ -59,5 +59,81 @@ describe("buildDirectTerminalWsUrl", () => {
     });
 
     expect(wsUrl).toBe("ws://localhost:14888/ws?session=session-4");
+  });
+});
+
+const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+const ANSI_KEYS = [
+  "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+  "brightBlack", "brightRed", "brightGreen", "brightYellow", "brightBlue", "brightMagenta", "brightCyan", "brightWhite",
+] as const;
+
+function hexToRgb(hex: string): [number, number, number] {
+  return [
+    Number.parseInt(hex.slice(1, 3), 16),
+    Number.parseInt(hex.slice(3, 5), 16),
+    Number.parseInt(hex.slice(5, 7), 16),
+  ];
+}
+
+function toLinear(channel: number): number {
+  const normalized = channel / 255;
+  return normalized <= 0.04045
+    ? normalized / 12.92
+    : Math.pow((normalized + 0.055) / 1.055, 2.4);
+}
+
+function relativeLuminance(hex: string): number {
+  const [r, g, b] = hexToRgb(hex);
+  return 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
+}
+
+function contrastRatio(a: string, b: string): number {
+  const lighter = Math.max(relativeLuminance(a), relativeLuminance(b));
+  const darker = Math.min(relativeLuminance(a), relativeLuminance(b));
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+describe("buildTerminalThemes", () => {
+  it("dark theme has valid hex colors for bg, fg, and all ANSI slots", () => {
+    const { dark } = buildTerminalThemes("agent");
+    expect(dark.background).toMatch(HEX_RE);
+    expect(dark.foreground).toMatch(HEX_RE);
+    for (const key of ANSI_KEYS) {
+      expect(dark[key]).toMatch(HEX_RE);
+    }
+  });
+
+  it("light theme has valid hex colors for bg, fg, and all ANSI slots", () => {
+    const { light } = buildTerminalThemes("agent");
+    expect(light.background).toBe("#fafafa");
+    expect(light.foreground).toBe("#24292f");
+    for (const key of ANSI_KEYS) {
+      expect(light[key]).toMatch(HEX_RE);
+    }
+  });
+
+  it("light theme ANSI colors maintain readable contrast on the terminal background", () => {
+    const { light } = buildTerminalThemes("agent");
+    for (const key of ANSI_KEYS) {
+      expect(contrastRatio(light.background!, light[key]!)).toBeGreaterThanOrEqual(4);
+    }
+  });
+
+  it("dark theme background is #0a0a0f", () => {
+    const { dark } = buildTerminalThemes("agent");
+    expect(dark.background).toBe("#0a0a0f");
+  });
+
+  it("variant changes cursor color between agent and orchestrator", () => {
+    const agent = buildTerminalThemes("agent");
+    const orch = buildTerminalThemes("orchestrator");
+    expect(agent.dark.cursor).not.toBe(orch.dark.cursor);
+    expect(agent.light.cursor).not.toBe(orch.light.cursor);
+  });
+
+  it("selection colors differ between dark and light themes", () => {
+    const { dark, light } = buildTerminalThemes("agent");
+    expect(dark.selectionBackground).not.toBe(light.selectionBackground);
   });
 });

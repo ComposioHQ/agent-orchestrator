@@ -306,6 +306,30 @@ function validateProjectUniqueness(config: OrchestratorConfig): void {
   }
 }
 
+function validateNotifierNames(config: OrchestratorConfig): void {
+  const notifierNames = new Set<string>();
+
+  for (const name of Object.keys(config.notifiers)) {
+    notifierNames.add(name);
+  }
+  for (const name of config.defaults.notifiers) {
+    notifierNames.add(name);
+  }
+  for (const names of Object.values(config.notificationRouting)) {
+    for (const name of names) {
+      notifierNames.add(name);
+    }
+  }
+
+  for (const name of notifierNames) {
+    if (name.includes(".")) {
+      throw new Error(
+        `Invalid notifier name "${name}": notifier names cannot contain dots.`,
+      );
+    }
+  }
+}
+
 /** Apply default reactions */
 function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
   const defaults: Record<string, (typeof config.reactions)[string]> = {
@@ -512,6 +536,7 @@ export function validateConfig(raw: unknown): OrchestratorConfig {
 
   // Validate project uniqueness and prefix collisions
   validateProjectUniqueness(config);
+  validateNotifierNames(config);
 
   return config;
 }

@@ -195,6 +195,7 @@ vi.mock("@/lib/services", () => ({
 // ── Import routes after mocking ───────────────────────────────────────
 
 import { GET as sessionsGET } from "@/app/api/sessions/route";
+import { GET as sessionGET } from "@/app/api/sessions/[id]/route";
 import { POST as orchestratorsPOST } from "@/app/api/orchestrators/route";
 import { POST as spawnPOST } from "@/app/api/spawn/route";
 import { POST as sendPOST } from "@/app/api/sessions/[id]/send/route";
@@ -255,6 +256,7 @@ describe("API Routes", () => {
       expect(session).toHaveProperty("status");
       expect(session).toHaveProperty("activity");
       expect(session).toHaveProperty("createdAt");
+      expect(session).toHaveProperty("notificationState");
     });
 
     it("skips PR enrichment when metadata enrichment hits timeout", async () => {
@@ -388,6 +390,44 @@ describe("API Routes", () => {
         pausedUntil,
         reason: "Rate limit hit",
         sourceSessionId: "docs-orchestrator",
+      });
+    });
+  });
+
+  describe("GET /api/sessions/:id", () => {
+    it("returns notificationState on detail responses", async () => {
+      (mockSessionManager.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        makeSession({
+          id: "backend-3",
+          metadata: {
+            "notifier.openclaw.status": "warn",
+            "notifier.openclaw.consecutiveFailures": "1",
+            "notifier.openclaw.lastFailureReason": "Connection refused",
+          },
+        }),
+      );
+
+      const res = await sessionGET(makeRequest("http://localhost:3000/api/sessions/backend-3"), {
+        params: Promise.resolve({ id: "backend-3" }),
+      });
+      expect(res.status).toBe(200);
+
+      const data = await res.json();
+      expect(data.notificationState).toEqual({
+        status: "warn",
+        failingNotifiers: ["openclaw"],
+        notifiers: [
+          {
+            name: "openclaw",
+            status: "warn",
+            consecutiveFailures: 1,
+            lastFailureAt: null,
+            lastFailureReason: "Connection refused",
+            lastSuccessAt: null,
+            lastEventType: null,
+            lastPriority: null,
+          },
+        ],
       });
     });
   });

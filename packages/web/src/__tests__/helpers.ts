@@ -16,6 +16,7 @@ export function makeSession(overrides: Partial<DashboardSession> = {}): Dashboar
     createdAt: new Date().toISOString(),
     lastActivityAt: new Date().toISOString(),
     pr: null,
+    notificationState: { status: "ok", failingNotifiers: [], notifiers: [] },
     metadata: {},
     ...overrides,
   };

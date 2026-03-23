@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { createLifecycleManager } from "../lifecycle-manager.js";
 import { createSessionManager } from "../session-manager.js";
 import { writeMetadata, readMetadataRaw } from "../metadata.js";
+import { readObservabilitySummary } from "../observability.js";
 import { getSessionsDir, getProjectBaseDir } from "../paths.js";
 import type {
   OrchestratorConfig,
@@ -1426,6 +1427,360 @@ describe("reactions", () => {
     expect(mockNotifier.notify).toHaveBeenCalledWith(
       expect.objectContaining({ type: "merge.completed" }),
     );
+  });
+
+  it("records notifier failures, persists warning metadata, and continues to later notifiers", async () => {
+    const failingNotifier: Notifier = {
+      name: "desktop",
+      notify: vi.fn().mockRejectedValue(new Error("OpenClaw unavailable")),
+    };
+    const succeedingNotifier: Notifier = {
+      name: "slack",
+      notify: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("merged"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn(),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn(),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    const registryWithNotifiers: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "notifier" && name === "desktop") return failingNotifier;
+        if (slot === "notifier" && name === "slack") return succeedingNotifier;
+        return null;
+      }),
+    };
+
+    const configWithMultipleNotifiers: OrchestratorConfig = {
+      ...config,
+      defaults: {
+        ...config.defaults,
+        notifiers: ["desktop", "slack"],
+      },
+      notificationRouting: {
+        ...config.notificationRouting,
+        action: ["desktop", "slack"],
+      },
+    };
+
+    const session = makeSession({ status: "approved", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "approved",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config: configWithMultipleNotifiers,
+      registry: registryWithNotifiers,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("merged");
+    expect(failingNotifier.notify).toHaveBeenCalledTimes(1);
+    expect(succeedingNotifier.notify).toHaveBeenCalledTimes(1);
+
+    const metadata = readMetadataRaw(sessionsDir, "app-1");
+    expect(metadata?.["notifier.desktop.status"]).toBe("warn");
+    expect(metadata?.["notifier.desktop.lastFailureReason"]).toBe("OpenClaw unavailable");
+    expect(metadata?.["notifier.desktop.consecutiveFailures"]).toBe("1");
+    expect(metadata?.["notifier.slack.status"]).toBe("ok");
+    expect(metadata?.["notifier.slack.consecutiveFailures"]).toBe("0");
+    expect(metadata?.["notifier.slack.lastSuccessAt"]).toBeTruthy();
+
+    const summary = readObservabilitySummary(configWithMultipleNotifiers);
+    expect(summary.projects["my-app"]?.metrics["notification"]?.total).toBe(2);
+    expect(summary.projects["my-app"]?.metrics["notification"]?.success).toBe(1);
+    expect(summary.projects["my-app"]?.metrics["notification"]?.failure).toBe(1);
+    expect(
+      summary.projects["my-app"]?.recentTraces.some(
+        (trace) =>
+          trace.operation === "notifier.notify" &&
+          trace.sessionId === "app-1" &&
+          trace.data?.["notifier"] === "desktop" &&
+          trace.reason === "OpenClaw unavailable",
+      ),
+    ).toBe(true);
+  });
+
+  it("records notifier observability even when session lookup fails after delivery", async () => {
+    const mockNotifier: Notifier = {
+      name: "desktop",
+      notify: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("merged"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn(),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn(),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    const registryWithNotifier: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "notifier" && name === "desktop") return mockNotifier;
+        return null;
+      }),
+    };
+
+    const session = makeSession({ status: "approved", pr: makePR() });
+    vi.mocked(mockSessionManager.get)
+      .mockResolvedValueOnce(session)
+      .mockRejectedValueOnce(new Error("lookup failed"));
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "approved",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithNotifier,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    const metadata = readMetadataRaw(sessionsDir, "app-1");
+    expect(metadata?.["notifier.desktop.status"]).toBeUndefined();
+
+    const summary = readObservabilitySummary(config);
+    expect(summary.projects["my-app"]?.metrics["notification"]?.total).toBe(1);
+    expect(summary.projects["my-app"]?.metrics["notification"]?.success).toBe(1);
+    expect(
+      summary.projects["my-app"]?.recentTraces.some(
+        (trace) =>
+          trace.operation === "notifier.notify" &&
+          trace.sessionId === "app-1" &&
+          trace.data?.["notifier"] === "desktop",
+      ),
+    ).toBe(true);
+  });
+
+  it("preserves lastSuccessAt when a notifier later fails", async () => {
+    const flakyNotifier: Notifier = {
+      name: "desktop",
+      notify: vi
+        .fn()
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error("Temporary OpenClaw outage")),
+    };
+
+    const registryWithNotifier: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "notifier" && name === "desktop") return flakyNotifier;
+        return null;
+      }),
+    };
+
+    const configWithInfoRouting: OrchestratorConfig = {
+      ...config,
+      notificationRouting: {
+        ...config.notificationRouting,
+        info: ["desktop"],
+        urgent: ["desktop"],
+      },
+    };
+
+    const session = makeSession({ status: "spawning" });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+    vi.mocked(mockAgent.getActivityState)
+      .mockResolvedValueOnce({ state: "waiting_input" as ActivityState })
+      .mockResolvedValueOnce({ state: "active" as ActivityState });
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "spawning",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config: configWithInfoRouting,
+      registry: registryWithNotifier,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+    const successMetadata = readMetadataRaw(sessionsDir, "app-1");
+    const lastSuccessAt = successMetadata?.["notifier.desktop.lastSuccessAt"];
+    expect(lastSuccessAt).toBeTruthy();
+
+    await lm.check("app-1");
+    const failureMetadata = readMetadataRaw(sessionsDir, "app-1");
+    expect(failureMetadata?.["notifier.desktop.status"]).toBe("warn");
+    expect(failureMetadata?.["notifier.desktop.lastFailureReason"]).toBe("Temporary OpenClaw outage");
+    expect(failureMetadata?.["notifier.desktop.lastSuccessAt"]).toBe(lastSuccessAt);
+  });
+
+  it("clears notifier warning state after a later successful delivery", async () => {
+    const flakyNotifier: Notifier = {
+      name: "desktop",
+      notify: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("Temporary OpenClaw outage"))
+        .mockResolvedValueOnce(undefined),
+    };
+
+    const registryWithNotifier: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "notifier" && name === "desktop") return flakyNotifier;
+        return null;
+      }),
+    };
+
+    const configWithInfoRouting: OrchestratorConfig = {
+      ...config,
+      notificationRouting: {
+        ...config.notificationRouting,
+        info: ["desktop"],
+        urgent: ["desktop"],
+      },
+    };
+
+    const session = makeSession({ status: "spawning" });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+    vi.mocked(mockAgent.getActivityState)
+      .mockResolvedValueOnce({ state: "active" as ActivityState })
+      .mockResolvedValueOnce({ state: "waiting_input" as ActivityState });
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "spawning",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config: configWithInfoRouting,
+      registry: registryWithNotifier,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+    let metadata = readMetadataRaw(sessionsDir, "app-1");
+    expect(metadata?.["notifier.desktop.status"]).toBe("warn");
+    expect(metadata?.["notifier.desktop.consecutiveFailures"]).toBe("1");
+    expect(metadata?.["notifier.desktop.lastFailureReason"]).toBe("Temporary OpenClaw outage");
+
+    await lm.check("app-1");
+    metadata = readMetadataRaw(sessionsDir, "app-1");
+    expect(metadata?.["notifier.desktop.status"]).toBe("ok");
+    expect(metadata?.["notifier.desktop.consecutiveFailures"]).toBe("0");
+    expect(metadata?.["notifier.desktop.lastFailureAt"]).toBeUndefined();
+    expect(metadata?.["notifier.desktop.lastFailureReason"]).toBeUndefined();
+    expect(metadata?.["notifier.desktop.lastSuccessAt"]).toBeTruthy();
+  });
+
+  it("records notifier observability for all-complete system notifications", async () => {
+    vi.useFakeTimers();
+    try {
+      const mockNotifier: Notifier = {
+        name: "desktop",
+        notify: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const registryWithNotifier: PluginRegistry = {
+        ...mockRegistry,
+        get: vi.fn().mockImplementation((slot: string, name: string) => {
+          if (slot === "runtime") return mockRuntime;
+          if (slot === "agent") return mockAgent;
+          if (slot === "notifier" && name === "desktop") return mockNotifier;
+          return null;
+        }),
+      };
+
+      const configWithAllCompleteReaction: OrchestratorConfig = {
+        ...config,
+        notificationRouting: {
+          ...config.notificationRouting,
+          info: ["desktop"],
+        },
+        reactions: {
+          ...config.reactions,
+          "all-complete": {
+            action: "notify",
+            priority: "info",
+          },
+        },
+      };
+
+      vi.mocked(mockSessionManager.list).mockResolvedValue([
+        makeSession({ id: "app-1", status: "merged" }),
+      ]);
+
+      const lm = createLifecycleManager({
+        config: configWithAllCompleteReaction,
+        registry: registryWithNotifier,
+        sessionManager: mockSessionManager,
+      });
+
+      lm.start(1_000);
+      await vi.advanceTimersByTimeAsync(1_000);
+      lm.stop();
+
+      expect(mockNotifier.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "reaction.triggered",
+          sessionId: "system",
+          projectId: "all",
+        }),
+      );
+
+      const summary = readObservabilitySummary(configWithAllCompleteReaction);
+      expect(summary.projects["all"]?.metrics["notification"]?.total).toBe(1);
+      expect(summary.projects["all"]?.metrics["notification"]?.success).toBe(1);
+      expect(
+        summary.projects["all"]?.recentTraces.some(
+          (trace) =>
+            trace.operation === "notifier.notify" &&
+            trace.sessionId === "system" &&
+            trace.data?.["notifier"] === "desktop",
+        ),
+      ).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

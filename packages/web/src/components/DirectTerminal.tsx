@@ -1,14 +1,15 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
+import { useTheme } from "next-themes";
 import { cn } from "@/lib/cn";
 
 // Import xterm CSS (must be imported in client component)
 import "xterm/css/xterm.css";
 
 // Dynamically import xterm types for TypeScript
-import type { Terminal as TerminalType } from "xterm";
+import type { ITheme, Terminal as TerminalType } from "xterm";
 import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 
 interface DirectTerminalProps {
@@ -35,6 +36,76 @@ interface DirectTerminalWsUrlOptions {
   sessionId: string;
   proxyWsPath?: string;
   directTerminalPort?: string;
+}
+
+type TerminalVariant = "agent" | "orchestrator";
+
+export function buildTerminalThemes(variant: TerminalVariant): { dark: ITheme; light: ITheme } {
+  const agentAccent = {
+    cursor: "#5b7ef8",
+    selDark: "rgba(91, 126, 248, 0.30)",
+    selLight: "rgba(91, 126, 248, 0.25)",
+  };
+  const orchAccent = {
+    cursor: "#a371f7",
+    selDark: "rgba(163, 113, 247, 0.25)",
+    selLight: "rgba(130, 80, 223, 0.20)",
+  };
+  const accent = variant === "orchestrator" ? orchAccent : agentAccent;
+
+  const dark: ITheme = {
+    background: "#0a0a0f",
+    foreground: "#d4d4d8",
+    cursor: accent.cursor,
+    cursorAccent: "#0a0a0f",
+    selectionBackground: accent.selDark,
+    selectionInactiveBackground: "rgba(128, 128, 128, 0.2)",
+    // ANSI colors — slightly warmer than pure defaults
+    black: "#1a1a24",
+    red: "#ef4444",
+    green: "#22c55e",
+    yellow: "#f59e0b",
+    blue: "#5b7ef8",
+    magenta: "#a371f7",
+    cyan: "#22d3ee",
+    white: "#d4d4d8",
+    brightBlack: "#50506a",
+    brightRed: "#f87171",
+    brightGreen: "#4ade80",
+    brightYellow: "#fbbf24",
+    brightBlue: "#7b9cfb",
+    brightMagenta: "#c084fc",
+    brightCyan: "#67e8f9",
+    brightWhite: "#eeeef5",
+  };
+
+  const light: ITheme = {
+    background: "#fafafa",
+    foreground: "#24292f",
+    cursor: accent.cursor,
+    cursorAccent: "#fafafa",
+    selectionBackground: accent.selLight,
+    selectionInactiveBackground: "rgba(128, 128, 128, 0.15)",
+    // ANSI colors — darkened for legibility on #fafafa terminal background
+    black: "#24292f",
+    red: "#b42318",
+    green: "#1f7a3d",
+    yellow: "#8a5a00",
+    blue: "#175cd3",
+    magenta: "#8e24aa",
+    cyan: "#0b7285",
+    white: "#4b5563",
+    brightBlack: "#374151",
+    brightRed: "#912018",
+    brightGreen: "#176639",
+    brightYellow: "#6f4a00",
+    brightBlue: "#1d4ed8",
+    brightMagenta: "#7b1fa2",
+    brightCyan: "#155e75",
+    brightWhite: "#374151",
+  };
+
+  return { dark, light };
 }
 
 export function buildDirectTerminalWsUrl({
@@ -78,6 +149,8 @@ export function DirectTerminal({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const { resolvedTheme } = useTheme();
+  const terminalThemes = useMemo(() => buildTerminalThemes(variant), [variant]);
 
   const terminalRef = useRef<HTMLDivElement>(null);
   const terminalInstance = useRef<TerminalType | null>(null);
@@ -164,45 +237,24 @@ export function DirectTerminal({
       import("xterm").then((mod) => mod.Terminal),
       import("@xterm/addon-fit").then((mod) => mod.FitAddon),
       import("@xterm/addon-web-links").then((mod) => mod.WebLinksAddon),
+      document.fonts.ready,
     ])
       .then(([Terminal, FitAddon, WebLinksAddon]) => {
         if (!mounted || !terminalRef.current) return;
 
-        // Cursor and selection color differ by variant:
-        // agent = blue (#5b7ef8), orchestrator = violet (#a371f7)
-        const cursorColor = variant === "orchestrator" ? "#a371f7" : "#5b7ef8";
-        const selectionColor =
-          variant === "orchestrator" ? "rgba(163, 113, 247, 0.25)" : "rgba(91, 126, 248, 0.3)";
+        const isDark = resolvedTheme !== "light";
+        const activeTheme = isDark ? terminalThemes.dark : terminalThemes.light;
 
         // Initialize xterm.js Terminal
         const terminal = new Terminal({
           cursorBlink: true,
           fontSize: 13,
-          fontFamily: '"IBM Plex Mono", "SF Mono", Menlo, Monaco, "Courier New", monospace',
-          theme: {
-            background: "#0a0a0f",
-            foreground: "#d4d4d8",
-            cursor: cursorColor,
-            cursorAccent: "#0a0a0f",
-            selectionBackground: selectionColor,
-            // ANSI colors — slightly warmer than pure defaults
-            black: "#1a1a24",
-            red: "#ef4444",
-            green: "#22c55e",
-            yellow: "#f59e0b",
-            blue: "#5b7ef8",
-            magenta: "#a371f7",
-            cyan: "#22d3ee",
-            white: "#d4d4d8",
-            brightBlack: "#50506a",
-            brightRed: "#f87171",
-            brightGreen: "#4ade80",
-            brightYellow: "#fbbf24",
-            brightBlue: "#7b9cfb",
-            brightMagenta: "#c084fc",
-            brightCyan: "#67e8f9",
-            brightWhite: "#eeeef5",
-          },
+          fontFamily:
+            'var(--font-jetbrains-mono), "JetBrains Mono", "SF Mono", Menlo, Monaco, "Courier New", monospace',
+          theme: activeTheme,
+          // Light mode needs an explicit contrast floor because agent UIs often emit
+          // dim/faint ANSI sequences that become unreadable on a near-white background.
+          minimumContrastRatio: isDark ? 1 : 7,
           scrollback: 10000,
           allowProposedApi: true,
           fastScrollModifier: "alt",
@@ -457,6 +509,15 @@ export function DirectTerminal({
     };
   }, [sessionId, variant]);
 
+  // Live theme switching without terminal recreation
+  useEffect(() => {
+    const terminal = terminalInstance.current;
+    if (!terminal) return;
+    const isDark = resolvedTheme !== "light";
+    terminal.options.theme = isDark ? terminalThemes.dark : terminalThemes.light;
+    terminal.options.minimumContrastRatio = isDark ? 1 : 7;
+  }, [resolvedTheme, terminalThemes]);
+
   // Re-fit terminal when fullscreen changes
   useEffect(() => {
     const fit = fitAddon.current;
@@ -571,8 +632,8 @@ export function DirectTerminal({
   return (
     <div
       className={cn(
-        "overflow-hidden rounded-[6px] border border-[var(--color-border-default)]",
-        "bg-[#0a0a0f]",
+        "overflow-hidden border border-[var(--color-border-default)]",
+        resolvedTheme === "light" ? "bg-[#fafafa]" : "bg-[#0a0a0f]",
         fullscreen && "fixed inset-0 z-50 rounded-none border-0",
       )}
     >
@@ -589,7 +650,7 @@ export function DirectTerminal({
         </span>
         {/* XDA clipboard badge */}
         <span
-          className="rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.06em]"
+          className="px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.06em]"
           style={{
             color: accentColor,
             background: `color-mix(in srgb, ${accentColor} 12%, transparent)`,
@@ -603,7 +664,7 @@ export function DirectTerminal({
             disabled={reloading || status !== "connected"}
             title="Restart OpenCode session (/exit then resume mapped session)"
             aria-label="Restart OpenCode session"
-            className="ml-auto flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)] disabled:cursor-not-allowed disabled:opacity-70"
+            className="ml-auto flex items-center gap-1 px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)] disabled:cursor-not-allowed disabled:opacity-70"
           >
             {reloading ? (
               <>
@@ -646,7 +707,7 @@ export function DirectTerminal({
         <button
           onClick={() => setFullscreen(!fullscreen)}
           className={cn(
-            "flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]",
+            "flex items-center gap-1 px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]",
             !isOpenCodeSession && "ml-auto",
           )}
         >
