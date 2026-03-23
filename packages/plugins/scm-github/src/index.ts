@@ -287,7 +287,7 @@ async function getCIChecksFromStatusRollup(pr: PRInfo): Promise<CICheck[]> {
 
       return check;
     })
-    .filter((check): check is CICheck => check == null);
+    .filter((check): check is CICheck => check !== null);
 }
 
 function getGitHubWebhookConfig(project: ProjectConfig) {
