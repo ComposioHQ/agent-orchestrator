@@ -364,7 +364,18 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       try {
         const prState = await scm.getPRState(session.pr);
         if (prState === PR_STATE.MERGED) return "merged";
-        if (prState === PR_STATE.CLOSED) return "killed";
+        if (prState === PR_STATE.CLOSED) {
+          // Closed PRs are terminal for this session; clear persisted PR metadata
+          // so killed sessions don't get re-polled forever via `if (s.pr) return true`.
+          session.pr = undefined;
+          try {
+            const sessionsDir = getSessionsDir(config.configPath, project.path);
+            updateMetadata(sessionsDir, session.id, { pr: "" });
+          } catch {
+            // Best effort — lifecycle status should still proceed to killed.
+          }
+          return "killed";
+        }
 
         // Check CI
         const ciStatus = await scm.getCISummary(session.pr);
