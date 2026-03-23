@@ -489,6 +489,10 @@ export interface Issue {
   labels: string[];
   assignee?: string;
   priority?: number;
+  /** Issue type name as reported by the tracker (e.g. "Bug", "Task", "Story") */
+  issueType?: string;
+  /** Human-readable status name as reported by the tracker (e.g. "To Do", "In Progress") */
+  statusName?: string;
 }
 
 export interface IssueFilters {
