@@ -1353,6 +1353,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       permissions: "permissionless" as const,
       model: selection.model,
       systemPromptFile,
+      prompt: orchestratorConfig.prompt,
       subagent: selection.subagent,
     };
 
