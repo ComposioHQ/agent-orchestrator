@@ -1056,7 +1056,6 @@ export interface AgentSpecificConfig {
   permissions?: AgentPermissionMode;
   model?: string;
   orchestratorModel?: string;
-  acpxAgent?: AcpxAgentName;
   [key: string]: unknown;
 }
 
