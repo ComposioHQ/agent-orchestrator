@@ -848,6 +848,7 @@ export default function (api: any) {
 
   let healthInterval: ReturnType<typeof setInterval> | null = null;
   let boardScanInterval: ReturnType<typeof setInterval> | null = null;
+  let boardScanInitialTimeout: ReturnType<typeof setTimeout> | null = null;
   let lastKnownIssueIds: Set<number> = new Set();
   let isFirstBoardScan = true;
 
@@ -922,10 +923,14 @@ export default function (api: any) {
         }
       };
 
-      setTimeout(scan, 10_000);
+      boardScanInitialTimeout = setTimeout(scan, 10_000);
       boardScanInterval = setInterval(scan, scanMs);
     },
     stop: async () => {
+      if (boardScanInitialTimeout) {
+        clearTimeout(boardScanInitialTimeout);
+        boardScanInitialTimeout = null;
+      }
       if (boardScanInterval) {
         clearInterval(boardScanInterval);
         boardScanInterval = null;

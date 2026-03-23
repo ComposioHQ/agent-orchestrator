@@ -198,7 +198,7 @@ export function create(config?: Record<string, unknown>): Notifier {
       if (!webhookUrl) return null;
       const payload: Record<string, unknown> = { username, content: message };
       if (avatarUrl) payload.avatar_url = avatarUrl;
-      if (threadId) payload.thread_id = threadId;
+      // thread_id is already passed as a URL query param via effectiveUrl
       await postWithRetry(effectiveUrl!, payload, retries, retryDelayMs);
       return null;
     },

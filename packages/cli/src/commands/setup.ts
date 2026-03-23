@@ -321,7 +321,11 @@ function writeShellExport(token: string): string | undefined {
     const profileName = shell.endsWith("/zsh") ? ".zshrc" : ".bashrc";
     const profilePath = join(homedir(), profileName);
 
-    const exportLine = `export OPENCLAW_HOOKS_TOKEN="${token}"`;
+    // Sanitize token: escape shell-special characters to prevent injection
+    // when the profile is sourced. Single-quote the value and escape any
+    // embedded single quotes (the only character that breaks '...' quoting).
+    const safeToken = token.replace(/'/g, "'\\''");
+    const exportLine = `export OPENCLAW_HOOKS_TOKEN='${safeToken}'`;
 
     // Check if it already exists
     if (existsSync(profilePath)) {
