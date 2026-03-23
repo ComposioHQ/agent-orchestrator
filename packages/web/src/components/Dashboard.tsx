@@ -237,7 +237,7 @@ export function Dashboard({
         {allProjectsView && (
           <ProjectOverviewGrid overviews={projectOverviews} onSpawnOrchestrator={handleSpawnOrchestrator} spawningProjectIds={spawningProjectIds} spawnErrors={spawnErrors} />
         )}
-        {!allProjectsView && hasKanbanSessions && (
+        {!allProjectsView && (hasKanbanSessions || grouped.done.length > 0) && (
           <div className="mb-8 flex snap-x snap-mandatory gap-3 overflow-x-auto pb-2 md:snap-none md:gap-4">
             {KANBAN_LEVELS.map((level) => (
               <div key={level} className="min-w-[260px] flex-1 snap-start sm:min-w-[200px]">

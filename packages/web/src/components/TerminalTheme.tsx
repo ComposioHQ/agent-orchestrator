@@ -50,8 +50,30 @@ const VARIANT_COLORS = {
   },
 } as const;
 
+/** Light-mode ANSI colors with higher contrast for readability on white backgrounds. */
+const ANSI_COLORS_LIGHT = {
+  black: "#24292f",
+  red: "#cf222e",
+  green: "#116329",
+  yellow: "#9a6700",
+  blue: "#0550ae",
+  magenta: "#8250df",
+  cyan: "#1b7c83",
+  white: "#6e7781",
+  brightBlack: "#57606a",
+  brightRed: "#a40e26",
+  brightGreen: "#1a7f37",
+  brightYellow: "#7d4e00",
+  brightBlue: "#0969da",
+  brightMagenta: "#6639ba",
+  brightCyan: "#1b7c83",
+  brightWhite: "#8c959f",
+} as const;
+
+export const TERMINAL_BACKGROUND_LIGHT = "#fafafa";
+
 /**
- * Build the xterm.js ITheme object for a given variant.
+ * Build dark and light xterm.js ITheme objects for a given variant.
  * All colors here are hex/rgba values required by the xterm.js API --
  * they cannot be replaced with CSS custom properties.
  */
@@ -64,6 +86,18 @@ export function buildTerminalTheme(variant: TerminalVariant): ITheme {
     cursorAccent: TERMINAL_BACKGROUND,
     selectionBackground: colors.selection,
     ...ANSI_COLORS,
+  };
+}
+
+export function buildTerminalThemeLight(variant: TerminalVariant): ITheme {
+  const colors = VARIANT_COLORS[variant];
+  return {
+    background: TERMINAL_BACKGROUND_LIGHT,
+    foreground: "#24292f",
+    cursor: colors.cursor,
+    cursorAccent: TERMINAL_BACKGROUND_LIGHT,
+    selectionBackground: colors.selection,
+    ...ANSI_COLORS_LIGHT,
   };
 }
 

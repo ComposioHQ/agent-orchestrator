@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
+import { useTheme } from "next-themes";
 import { cn } from "@/lib/cn";
 import "xterm/css/xterm.css";
 import type { Terminal as TerminalType } from "xterm";
 import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
-import { buildTerminalTheme, TERMINAL_FONT_FAMILY, TERMINAL_FONT_SIZE, TERMINAL_SCROLLBACK, TERMINAL_BACKGROUND, type TerminalVariant, type TerminalStatus } from "./TerminalTheme";
+import { buildTerminalTheme, buildTerminalThemeLight, TERMINAL_FONT_FAMILY, TERMINAL_FONT_SIZE, TERMINAL_SCROLLBACK, TERMINAL_BACKGROUND, TERMINAL_BACKGROUND_LIGHT, type TerminalVariant, type TerminalStatus } from "./TerminalTheme";
 import { useTerminalResize, sendResizeMessage } from "./TerminalResize";
 import { TerminalChromeBar } from "./TerminalChromeBar";
 import { buildDirectTerminalWsUrl } from "@/lib/terminal-ws-url";
@@ -49,6 +50,12 @@ export function DirectTerminal({
   const [error, setError] = useState<string | null>(null);
   const [reloading, setReloading] = useState(false);
   const [reloadError, setReloadError] = useState<string | null>(null);
+  const { resolvedTheme } = useTheme();
+  const isDark = resolvedTheme !== "light";
+  const terminalThemes = useMemo(() => ({
+    dark: buildTerminalTheme(variant),
+    light: buildTerminalThemeLight(variant),
+  }), [variant]);
 
   // Stable getter for the current WebSocket (used by resize hook)
   const getWebSocket = useCallback(() => ws.current, []);
@@ -126,11 +133,13 @@ export function DirectTerminal({
       .then(([Terminal, FitAddon, WebLinksAddon]) => {
         if (!mounted || !terminalRef.current) return;
 
+        const activeTheme = isDark ? terminalThemes.dark : terminalThemes.light;
         const terminal = new Terminal({
           cursorBlink: true,
           fontSize: TERMINAL_FONT_SIZE,
           fontFamily: TERMINAL_FONT_FAMILY,
-          theme: buildTerminalTheme(variant),
+          theme: activeTheme,
+          minimumContrastRatio: isDark ? 1 : 7,
           scrollback: TERMINAL_SCROLLBACK,
           allowProposedApi: true,
           fastScrollModifier: "alt",
@@ -333,6 +342,14 @@ export function DirectTerminal({
     };
   }, [sessionId, variant]);
 
+  // Live theme switching when user toggles dark/light mode
+  useEffect(() => {
+    const terminal = terminalInstance.current;
+    if (!terminal) return;
+    terminal.options.theme = isDark ? terminalThemes.dark : terminalThemes.light;
+    terminal.options.minimumContrastRatio = isDark ? 1 : 7;
+  }, [isDark, terminalThemes]);
+
   // Re-fit terminal when fullscreen changes
   useTerminalResize({
     terminalRef: terminalInstance,
@@ -348,7 +365,7 @@ export function DirectTerminal({
         "overflow-hidden rounded-[var(--radius-md)] border border-[var(--color-border-default)]",
         fullscreen && "fixed inset-0 z-50 rounded-none border-0",
       )}
-      style={{ backgroundColor: TERMINAL_BACKGROUND }}
+      style={{ backgroundColor: isDark ? TERMINAL_BACKGROUND : TERMINAL_BACKGROUND_LIGHT }}
     >
       <TerminalChromeBar
         sessionId={sessionId}
