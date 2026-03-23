@@ -98,9 +98,6 @@ async function postWithRetry(
   retryDelayMs: number,
 ): Promise<void> {
   let lastError: Error | undefined;
-  // Separate counter for 429 Retry-After waits so they don't consume the error
-  // retry budget — a server-mandated wait shouldn't cost a retry slot.
-  let rateLimitRetries = 0;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     const controller = new AbortController();
@@ -115,22 +112,14 @@ async function postWithRetry(
 
       if (response.ok || response.status === 204) return;
 
-      // Handle rate limiting: wait then retry without burning an error retry slot.
-      // Use Retry-After if present, otherwise fall back to retryDelayMs.
+      // Handle rate limiting with Retry-After header
       if (response.status === 429) {
-        if (rateLimitRetries < retries) {
-          const retryAfter = response.headers.get("Retry-After");
-          const waitMs = retryAfter ? (parseFloat(retryAfter) || 1) * 1000 : retryDelayMs;
+        const retryAfter = response.headers.get("Retry-After");
+        if (retryAfter && attempt < retries) {
+          const waitMs = (parseFloat(retryAfter) || 1) * 1000;
           await new Promise((resolve) => setTimeout(resolve, waitMs));
-          rateLimitRetries++;
-          attempt--; // undo the for-loop increment so error budget is preserved
           continue;
         }
-        // Rate-limit budget exhausted — fail immediately rather than falling through
-        // to the error retry path (which would compound the two counters).
-        const body = await response.text().catch(() => "");
-        lastError = new Error(`Discord webhook rate-limited (HTTP 429)${body ? `: ${body.trim()}` : ""}`);
-        throw lastError;
       }
 
       const body = await response.text();
@@ -181,7 +170,7 @@ export function create(config?: Record<string, unknown>): Notifier {
 
   // Discord requires thread_id as a URL query param, not in the JSON body
   const effectiveUrl = webhookUrl && threadId
-    ? `${webhookUrl}${webhookUrl.includes("?") ? "&" : "?"}thread_id=${encodeURIComponent(threadId)}`
+    ? `${webhookUrl}${webhookUrl.includes("?") ? "&" : "?"}thread_id=${threadId}`
     : webhookUrl;
 
   function buildPayload(embeds: DiscordEmbed[]): Record<string, unknown> {
@@ -200,17 +189,17 @@ export function create(config?: Record<string, unknown>): Notifier {
     },
 
     async notifyWithActions(event: OrchestratorEvent, actions: NotifyAction[]): Promise<void> {
-      if (!effectiveUrl) return;
+      if (!webhookUrl) return;
       const payload = buildPayload([buildEmbed(event, actions)]);
-      await postWithRetry(effectiveUrl, payload, retries, retryDelayMs);
+      await postWithRetry(effectiveUrl!, payload, retries, retryDelayMs);
     },
 
     async post(message: string, _context?: NotifyContext): Promise<string | null> {
-      if (!effectiveUrl) return null;
+      if (!webhookUrl) return null;
       const payload: Record<string, unknown> = { username, content: message };
       if (avatarUrl) payload.avatar_url = avatarUrl;
-      // thread_id is already passed as a URL query param via effectiveUrl
-      await postWithRetry(effectiveUrl, payload, retries, retryDelayMs);
+      if (threadId) payload.thread_id = threadId;
+      await postWithRetry(effectiveUrl!, payload, retries, retryDelayMs);
       return null;
     },
   };

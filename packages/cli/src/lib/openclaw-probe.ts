@@ -101,7 +101,7 @@ export async function validateToken(
     const body = await response.text().catch(() => "");
     return {
       valid: false,
-      error: `Unexpected response (HTTP ${response.status})${body ? `: ${body.trim()}` : ""}`,
+      error: `Unexpected response (HTTP ${response.status}): ${body}`.trim(),
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

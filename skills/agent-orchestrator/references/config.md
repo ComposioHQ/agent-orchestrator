@@ -58,7 +58,8 @@ projects:
     # Options: reuse | delete | ignore | delete-new | ignore-new | kill-previous
 
     # Workspace setup (optional)
-    symlinks:                  # Symlink into worktrees (avoid .env or secret files)
+    symlinks:                  # Symlink into worktrees
+      - .env
       - node_modules
     postCreate:                # Run after workspace creation
       - pnpm install
@@ -74,12 +75,20 @@ projects:
 
 ## Notifier channels
 
-These are **optional** — only configure notifiers you actually use. None are required for core AO functionality. See the [AO documentation](https://github.com/ComposioHQ/agent-orchestrator) for notifier setup details.
-
 ```yaml
 notifiers:
   desktop:
-    plugin: desktop            # No credentials needed — default notifier
+    plugin: desktop
+  slack:
+    plugin: slack
+    # Requires SLACK_WEBHOOK_URL env var
+  openclaw:
+    plugin: openclaw
+    url: http://127.0.0.1:18789/hooks/agent
+    token: ${OPENCLAW_HOOKS_TOKEN}
+    retries: 3
+    retryDelayMs: 1000
+    wakeMode: now              # now | next-heartbeat
 ```
 
 ## Notification routing

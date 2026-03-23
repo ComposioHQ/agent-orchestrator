@@ -31,14 +31,13 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "clean": "rimraf dist"
+    "clean": "rm -rf dist"
   },
   "dependencies": {
     "@composio/ao-core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^25.2.3",
-    "rimraf": "^6.0.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   }

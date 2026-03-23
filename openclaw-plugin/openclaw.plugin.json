@@ -6,7 +6,6 @@
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
-    "required": ["aoCwd"],
     "properties": {
       "aoPath": {
         "type": "string",
@@ -31,11 +30,6 @@
     }
   },
   "uiHints": {
-    "aoCwd": {
-      "label": "AO working directory",
-      "placeholder": "/home/user/my-project",
-      "help": "Path to the directory containing agent-orchestrator.yaml. Required — most commands fail without this."
-    },
     "aoPath": {
       "label": "AO CLI path",
       "placeholder": "ao",
