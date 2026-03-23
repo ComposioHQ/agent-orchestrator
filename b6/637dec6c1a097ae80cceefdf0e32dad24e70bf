@@ -1,0 +1,21 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.17",
+  "base_commit_sha": "b6637dec6c1a097ae80cceefdf0e32dad24e70bf",
+  "prompts": {
+    "992a30357102eff0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "257f9409-9af0-4cb1-86bc-de750f63a97a",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 1,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    }
+  }
+}
