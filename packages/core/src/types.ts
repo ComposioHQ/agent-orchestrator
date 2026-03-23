@@ -592,6 +592,20 @@ export interface SCM {
 
   /** Check if PR is ready to merge */
   getMergeability(pr: PRInfo): Promise<MergeReadiness>;
+
+  /**
+   * Batch fetch PR data for multiple PRs in a single GraphQL query.
+   * Used by the orchestrator to poll all active sessions efficiently.
+   *
+   * This is an optimization method that, when implemented, can dramatically
+   * reduce API calls by fetching data for multiple PRs in one request
+   * instead of calling getPRState/getCISummary/getReviewDecision separately
+   * for each PR.
+   *
+   * @param prs - Array of PR information to fetch data for
+   * @returns Map keyed by "${owner}/${repo}#${number}" containing enrichment data
+   */
+  enrichSessionsPRBatch?(prs: PRInfo[]): Promise<Map<string, PREnrichmentData>>;
 }
 
 // --- PR Types ---
@@ -716,6 +730,35 @@ export interface MergeReadiness {
   approved: boolean;
   noConflicts: boolean;
   blockers: string[];
+}
+
+/**
+ * Batch enrichment data returned by SCM plugins.
+ * Contains all the information the orchestrator needs for status detection.
+ */
+export interface PREnrichmentData {
+  /** Current PR state */
+  state: PRState;
+  /** Overall CI status */
+  ciStatus: CIStatus;
+  /** Review decision */
+  reviewDecision: ReviewDecision;
+  /** Whether the PR is mergeable based on CI, reviews, and merge state */
+  mergeable: boolean;
+  /** PR title */
+  title?: string;
+  /** Number of additions */
+  additions?: number;
+  /** Number of deletions */
+  deletions?: number;
+  /** Whether PR is a draft */
+  isDraft?: boolean;
+  /** Whether PR has merge conflicts */
+  hasConflicts?: boolean;
+  /** Whether PR is behind base branch */
+  isBehind?: boolean;
+  /** List of blockers preventing merge */
+  blockers?: string[];
 }
 
 // =============================================================================

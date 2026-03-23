@@ -32,6 +32,7 @@ import {
   type Session,
   type EventPriority,
   type ProjectConfig as _ProjectConfig,
+  type PREnrichmentData,
 } from "./types.js";
 import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
@@ -198,6 +199,78 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   let polling = false; // re-entrancy guard
   let allCompleteEmitted = false; // guard against repeated all_complete
 
+  /**
+   * Cache for PR enrichment data within a single poll cycle.
+   * Cleared at the start of each pollAll() call.
+   * Key format: "${owner}/${repo}#${number}"
+   */
+  let prEnrichmentCache = new Map<string, PREnrichmentData>();
+
+  /**
+   * Populate the PR enrichment cache using batch GraphQL queries.
+   * This is called once per poll cycle to fetch data for all PRs efficiently.
+   */
+  async function populatePREnrichmentCache(sessions: Session[]): Promise<void> {
+    // Clear previous cache
+    prEnrichmentCache.clear();
+
+    // Collect all unique PRs
+    const prs = sessions
+      .map((s) => s.pr)
+      .filter((pr): pr is NonNullable<typeof pr> => pr !== null);
+
+    // Deduplicate by key
+    const uniquePRs = Array.from(
+      new Map(prs.map((pr) => [`${pr.owner}/${pr.repo}#${pr.number}`, pr])).values(),
+    );
+
+    if (uniquePRs.length === 0) return;
+
+    // Group by SCM plugin and batch fetch for each group
+    const prsByPlugin = new Map<string, typeof uniquePRs>();
+    for (const pr of uniquePRs) {
+      // Find the project for this PR
+      const project = Object.values(config.projects).find((p) => {
+        const [owner, repo] = p.repo.split("/");
+        return owner === pr.owner && repo === pr.repo;
+      });
+      if (!project?.scm) continue;
+
+      const pluginKey = project.scm.plugin;
+      if (!prsByPlugin.has(pluginKey)) {
+        prsByPlugin.set(pluginKey, []);
+      }
+      prsByPlugin.get(pluginKey)!.push(pr);
+    }
+
+    // Fetch enrichment data for each plugin's PRs
+    for (const [pluginKey, pluginPRs] of prsByPlugin) {
+      const scm = registry.get<SCM>("scm", pluginKey);
+      if (!scm?.enrichSessionsPRBatch) continue;
+
+      try {
+        const enrichmentData = await scm.enrichSessionsPRBatch(pluginPRs);
+        // Merge into cache
+        for (const [key, data] of enrichmentData) {
+          prEnrichmentCache.set(key, data);
+        }
+      } catch (err) {
+        // Batch fetch failed - individual calls will still work
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        const batchCorrelationId = createCorrelationId("batch-enrichment");
+        observer?.recordOperation?.({
+          metric: "lifecycle_poll",
+          operation: "batch_enrichment",
+          correlationId: batchCorrelationId,
+          outcome: "failure",
+          reason: errorMsg,
+          level: "warn",
+          data: { plugin: pluginKey, prCount: pluginPRs.length },
+        });
+      }
+    }
+  }
+
   /** Check if idle time exceeds the agent-stuck threshold. */
   function isIdleBeyondThreshold(session: Session, idleTimestamp: Date): boolean {
     const stuckReaction = getReactionConfigForSession(session, "agent-stuck");
@@ -311,6 +384,43 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     // 4. Check PR state if PR exists
     if (session.pr && scm) {
       try {
+        // Try to use cached enrichment data from batch GraphQL query
+        const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
+        const cachedData = prEnrichmentCache.get(prKey);
+
+        if (cachedData) {
+          // Use cached enrichment data - avoids individual API calls
+          if (cachedData.state === PR_STATE.MERGED) return "merged";
+          if (cachedData.state === PR_STATE.CLOSED) return "killed";
+
+          // Check CI
+          if (cachedData.ciStatus === CI_STATUS.FAILING) return "ci_failed";
+
+          // Check reviews
+          if (cachedData.reviewDecision === "changes_requested")
+            return "changes_requested";
+          if (cachedData.reviewDecision === "approved" || cachedData.reviewDecision === "none") {
+            // Check merge readiness — treat "none" (no reviewers required)
+            // the same as "approved" so CI-green PRs reach "mergeable" status
+            // and fire the merge.ready event / approved-and-green reaction.
+            if (cachedData.mergeable) return "mergeable";
+            if (cachedData.reviewDecision === "approved") return "approved";
+          }
+          if (cachedData.reviewDecision === "pending") return "review_pending";
+
+          // 4b. Post-PR stuck detection: agent has a PR open but is idle beyond
+          // threshold. This catches the case where step 2's stuck check was
+          // bypassed (getActivityState returned null) or the idle timestamp
+          // wasn't available during step 2 but the session has been at pr_open
+          // for a long time. Without this, sessions get stuck at "pr_open" forever.
+          if (detectedIdleTimestamp && isIdleBeyondThreshold(session, detectedIdleTimestamp)) {
+            return "stuck";
+          }
+
+          return "pr_open";
+        }
+
+        // Fall back to individual API calls if no cached data
         const prState = await scm.getPRState(session.pr);
         if (prState === PR_STATE.MERGED) return "merged";
         if (prState === PR_STATE.CLOSED) return "killed";
@@ -810,6 +920,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const tracked = states.get(s.id);
         return tracked !== undefined && tracked !== s.status;
       });
+
+      // Populate PR enrichment cache using batch GraphQL queries
+      // This reduces API calls from N×3 to 1 per poll cycle
+      await populatePREnrichmentCache(sessionsToCheck);
 
       // Poll all sessions concurrently
       await Promise.allSettled(sessionsToCheck.map((s) => checkSession(s)));
