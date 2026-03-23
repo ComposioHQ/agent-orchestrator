@@ -1,6 +1,6 @@
 {
   "name": "@composio/ao-plugin-terminal-iterm2",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Terminal plugin: macOS iTerm2",
   "license": "MIT",
   "type": "module",

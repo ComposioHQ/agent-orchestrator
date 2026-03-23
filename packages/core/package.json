@@ -1,6 +1,6 @@
 {
   "name": "@composio/ao-core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Core library — types, config, session manager, lifecycle manager, event bus",
   "license": "MIT",
   "type": "module",
