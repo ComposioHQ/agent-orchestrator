@@ -67,6 +67,10 @@ describe("getAgentByName", () => {
     expect(getAgentByName("aider").name).toBe("aider");
   });
 
+  it("returns agent for acpx", () => {
+    expect(getAgentByName("acpx").name).toBe("acpx");
+  });
+
   it("returns agent for opencode", () => {
     expect(getAgentByName("opencode").name).toBe("opencode");
   });

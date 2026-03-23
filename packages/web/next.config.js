@@ -2,6 +2,7 @@
 const nextConfig = {
   transpilePackages: [
     "@composio/ao-core",
+    "@composio/ao-plugin-agent-acpx",
     "@composio/ao-plugin-agent-claude-code",
     "@composio/ao-plugin-agent-opencode",
     "@composio/ao-plugin-runtime-tmux",
