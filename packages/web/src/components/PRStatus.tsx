@@ -3,7 +3,7 @@
 import { type DashboardPR, isPRRateLimited } from "@/lib/types";
 import { CIBadge } from "./CIBadge";
 
-function getSizeLabel(additions: number, deletions: number): string {
+export function getSizeLabel(additions: number, deletions: number): string {
   const size = additions + deletions;
   return size > 1000 ? "XL" : size > 500 ? "L" : size > 200 ? "M" : size > 50 ? "S" : "XS";
 }

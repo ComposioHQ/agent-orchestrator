@@ -1,81 +1,421 @@
+/**
+ * Design System Tokens — Agent Orchestrator Dashboard
+ * =====================================================
+ * All tokens are defined in @theme using Tailwind v4 CSS custom properties.
+ * Reference tokens in components via: bg-[var(--color-bg-surface)], etc.
+ *
+ * Token categories:
+ *   --color-bg-*        Surface / background colors
+ *   --color-border-*    Border colors
+ *   --color-text-*      Text colors
+ *   --color-accent-*    Interactive and semantic accent colors
+ *   --color-status-*    Status indicator colors
+ *   --font-*            Font family stacks (in @theme — generates font-family utilities)
+ *   --radius-*          Border-radius scale (in @theme — generates rounded-* utilities)
+ *   --transition-*      Easing / duration tokens (in @theme)
+ *
+ * Tokens in :root (not @theme, to avoid Tailwind utility namespace collisions):
+ *   --font-size-*       Font-size scale (xs → xl); avoids --font-* font-family collision
+ *   --box-shadow-*      Box-shadow levels (sm → xl); avoids --shadow-* utility collision
+ *   --space-*           Spacing reference tokens; avoids potential --space-* utility collision
+ *   --z-*               Z-index scale; Tailwind v4 z-index namespace is --z-index-*, not --z-*
+ *   --gradient-*        Named gradient surfaces for cards and buttons
+ */
+
 @import "tailwindcss";
 
-@theme {
-  /* ── Base surfaces ────────────────────────────────────────────────── */
-  --color-bg-base:      #0d1117;
-  --color-bg-surface:   rgba(22, 27, 34, 0.8);
-  --color-bg-elevated:  rgba(28, 33, 40, 0.9);
-  --color-bg-subtle:    rgba(33, 38, 45, 0.7);
+/* ── Light mode (default) ─────────────────────────────────────────── */
+:root {
+  /* Base surfaces — Linear-standard light palette */
+  --color-bg-base: #ffffff;
+  --color-bg-surface: #ffffff;
+  --color-bg-elevated: #ffffff;
+  --color-bg-elevated-hover: #f7f7f8;
+  --color-bg-subtle: #f2f2f2;
 
   /* Backward-compat aliases */
-  --color-bg-primary:   var(--color-bg-base);
+  --color-bg-primary: var(--color-bg-base);
   --color-bg-secondary: var(--color-bg-surface);
-  --color-bg-tertiary:  var(--color-bg-elevated);
+  --color-bg-tertiary: var(--color-bg-elevated);
 
-  /* ── Borders ─────────────────────────────────────────────────────── */
-  --color-border-subtle:   rgba(48, 54, 61, 0.6);
-  --color-border-default:  rgba(48, 54, 61, 1);
-  --color-border-strong:   rgba(72, 79, 88, 1);
+  /* Borders */
+  --color-border-subtle: #e8e8ec;
+  --color-border-default: #d9d9de;
+  --color-border-strong: #c1c1c6;
 
   /* Backward-compat aliases */
-  --color-border-muted:    var(--color-border-subtle);
+  --color-border-muted: var(--color-border-subtle);
   --color-border-emphasis: var(--color-border-strong);
 
-  /* ── Text ─────────────────────────────────────────────────────────── */
-  --color-text-primary:   #e6edf3;
-  --color-text-secondary: #7d8590;
-  --color-text-tertiary:  #484f58;
-  --color-text-muted:     #484f58;
-  --color-text-inverse:   #0d1117;
+  /* Text */
+  --color-text-primary: #1b1b1f;
+  --color-text-secondary: #5e5e66;
+  --color-text-tertiary: #8b8b93;
+  --color-text-muted: #8b8b93;
+  --color-text-inverse: #ffffff;
 
-  /* ── Interactive accent ──────────────────────────────────────────── */
-  --color-accent:         #58a6ff;
-  --color-accent-hover:   #79b8ff;
-  --color-accent-subtle:  rgba(88, 166, 255, 0.12);
+  /* Interactive accent — Linear indigo */
+  --color-accent: #5e6ad2;
+  --color-accent-hover: #4850b8;
+  --color-accent-subtle: rgba(94, 106, 210, 0.08);
 
-  /* ── Status / semantic colors ────────────────────────────────────── */
-  --color-status-working:   #58a6ff;
-  --color-status-ready:     #3fb950;
-  --color-status-attention: #d29922;
-  --color-status-idle:      #484f58;
-  --color-status-done:      #30363d;
-  --color-status-error:     #f85149;
+  /* Status / semantic colors */
+  --color-status-working: #5e6ad2;
+  --color-status-ready: #1a7f37;
+  --color-status-attention: #9a6700;
+  --color-status-idle: #8b949e;
+  --color-status-done: #d0d7de;
+  --color-status-error: #cf222e;
 
   /* Semantic aliases */
-  --color-accent-blue:    #58a6ff;
-  --color-accent-green:   #3fb950;
-  --color-accent-yellow:  #d29922;
-  --color-accent-orange:  #d18616;
-  --color-accent-red:     #f85149;
-  --color-accent-violet:  #a371f7;
-  --color-accent-purple:  #bc8cff;
+  --color-accent-blue: #5e6ad2;
+  --color-accent-green: #1a7f37;
+  --color-accent-yellow: #9a6700;
+  --color-accent-orange: #bc4c00;
+  --color-accent-red: #cf222e;
+  --color-accent-violet: #8250df;
+  --color-accent-purple: #8250df;
 
+  /* Theme-adaptive tints (bg tints behind status pills) */
+  --color-tint-blue: rgba(94, 106, 210, 0.08);
+  --color-tint-green: rgba(26, 127, 55, 0.08);
+  --color-tint-yellow: rgba(154, 103, 0, 0.08);
+  --color-tint-red: rgba(207, 34, 46, 0.08);
+  --color-tint-violet: rgba(130, 80, 223, 0.08);
+  --color-tint-orange: rgba(188, 76, 0, 0.08);
+  --color-tint-neutral: rgba(0, 0, 0, 0.04);
+
+  /* Chip/badge background */
+  --color-chip-bg: #f2f2f2;
+
+  /* Hover overlay */
+  --color-hover-overlay: #f7f7f8;
+
+  /* Scrollbar */
+  --color-scrollbar: rgba(0, 0, 0, 0.08);
+  --color-scrollbar-hover: rgba(0, 0, 0, 0.15);
+  --color-scrollbar-active: rgba(0, 0, 0, 0.25);
+
+  /* Body radial gradient tints — none in light mode */
+  --color-body-gradient-blue: transparent;
+  --color-body-gradient-violet: transparent;
+
+  /* Nav */
+  --color-nav-bg: #ffffff;
+
+  /* Card surfaces — clean white on light gray */
+  --card-bg: #ffffff;
+  --card-merge-bg: #f6fbf8;
+  --card-expanded-bg: #f7f7f8;
+  --card-shadow: none;
+  --card-shadow-hover: 0 2px 6px rgba(0, 0, 0, 0.08);
+  --card-inset: none;
+  --card-border: #d5d7de;
+
+  /* Done card surfaces */
+  --card-done-bg: #fafafa;
+  --card-done-border: #e8e8ec;
+
+  --done-pill-exited-bg: #f2f2f2;
+  --done-pill-exited-color: #8b8b93;
+  --done-pill-merged-bg: rgba(26, 127, 55, 0.08);
+  --done-pill-merged-color: #1a7f37;
+  --done-pill-killed-bg: rgba(207, 34, 46, 0.06);
+  --done-pill-killed-color: #cf222e;
+  --done-meta-chip-bg: #f2f2f2;
+  --done-meta-chip-border: #e8e8ec;
+  --done-section-border: #ececf0;
+  --done-title-color: #5e5e66;
+  --done-restore-bg: rgba(9, 105, 218, 0.06);
+  --done-restore-border: rgba(9, 105, 218, 0.2);
+  --done-restore-hover-bg: rgba(9, 105, 218, 0.12);
+
+  /* Detail card */
+  --detail-card-bg: #ffffff;
+  --detail-card-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+
+  /* Orchestrator button */
+  --btn-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  --btn-shadow-hover: 0 2px 4px rgba(0, 0, 0, 0.1);
+  --btn-inset: none;
+
+  /* Kanban column */
+  --color-column-bg: #f4f5f7;
+  --color-column-header: transparent;
+
+  /* Alert colors */
+  --color-alert-ci: #6366f1;
+  --color-alert-ci-bg: #4f46e5;
+  --color-alert-ci-unknown: #9a6700;
+  --color-alert-review: #1a7f37;
+  --color-alert-review-bg: #1a7f37;
+  --color-alert-changes: #8250df;
+  --color-alert-changes-bg: #7c3aed;
+  --color-alert-conflict: #9a6700;
+  --color-alert-conflict-bg: #92400e;
+  --color-alert-comment: #bc4c00;
+  --color-alert-comment-bg: #c2410c;
+
+  /* Activity pulse glow */
+  --color-activity-pulse: rgba(94, 106, 210, 0.45);
+  --color-activity-pulse-end: rgba(94, 106, 210, 0);
+}
+
+/* ── Dark mode ────────────────────────────────────────────────────── */
+.dark {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  /* Base surfaces — graphite dashboard */
+  --color-bg-base: #0a0d12;
+  --color-bg-surface: #11161d;
+  --color-bg-elevated: #171d26;
+  --color-bg-elevated-hover: #1c2430;
+  --color-bg-subtle: rgba(177, 206, 255, 0.05);
+
+  /* Borders */
+  --color-border-subtle: rgba(160, 190, 255, 0.08);
+  --color-border-default: rgba(160, 190, 255, 0.14);
+  --color-border-strong: rgba(185, 214, 255, 0.24);
+
+  /* Text */
+  --color-text-primary: #eef3ff;
+  --color-text-secondary: #a5afc4;
+  --color-text-tertiary: #6f7c94;
+  --color-text-muted: #6f7c94;
+  --color-text-inverse: #0a0d12;
+
+  /* Interactive accent */
+  --color-accent: #8fb4ff;
+  --color-accent-hover: #b4ccff;
+  --color-accent-subtle: rgba(143, 180, 255, 0.16);
+
+  /* Status */
+  --color-status-working: #6e8fff;
+  --color-status-ready: #73e0aa;
+  --color-status-attention: #f1be64;
+  --color-status-idle: #293142;
+  --color-status-done: #202838;
+  --color-status-error: #ff7b72;
+
+  /* Semantic aliases */
+  --color-accent-blue: #8fb4ff;
+  --color-accent-green: #5fd39a;
+  --color-accent-yellow: #f1be64;
+  --color-accent-orange: #ff9d57;
+  --color-accent-red: #ff7b72;
+  --color-accent-violet: #b59cff;
+  --color-accent-purple: #b59cff;
+
+  /* Theme-adaptive tints */
+  --color-tint-blue: rgba(143, 180, 255, 0.12);
+  --color-tint-green: rgba(95, 211, 154, 0.12);
+  --color-tint-yellow: rgba(241, 190, 100, 0.12);
+  --color-tint-red: rgba(255, 123, 114, 0.12);
+  --color-tint-violet: rgba(181, 156, 255, 0.12);
+  --color-tint-orange: rgba(255, 157, 87, 0.12);
+  --color-tint-neutral: rgba(255, 255, 255, 0.05);
+
+  /* Chip/badge background */
+  --color-chip-bg: rgba(255, 255, 255, 0.06);
+
+  /* Hover overlay */
+  --color-hover-overlay: rgba(143, 180, 255, 0.05);
+
+  /* Scrollbar */
+  --color-scrollbar: rgba(255, 255, 255, 0.08);
+  --color-scrollbar-hover: rgba(255, 255, 255, 0.15);
+  --color-scrollbar-active: rgba(255, 255, 255, 0.25);
+
+  /* Body */
+  --color-body-gradient-blue: rgba(110, 143, 255, 0.2);
+  --color-body-gradient-violet: rgba(91, 208, 177, 0.08);
+
+  /* Nav glass */
+  --color-nav-bg: rgba(10, 13, 18, 0.82);
+
+  /* Card surfaces */
+  --card-bg: linear-gradient(180deg, rgba(22, 28, 37, 0.98) 0%, rgba(16, 21, 29, 0.98) 100%);
+  --card-merge-bg: linear-gradient(
+    180deg,
+    rgba(22, 29, 38, 0.98) 0%,
+    rgba(17, 23, 31, 0.98) 58%,
+    rgba(14, 19, 27, 0.98) 100%
+  );
+  --card-expanded-bg: linear-gradient(
+    180deg,
+    rgba(26, 34, 45, 0.98) 0%,
+    rgba(18, 24, 33, 0.98) 100%
+  );
+  --card-shadow: 0 18px 36px rgba(2, 6, 12, 0.24);
+  --card-shadow-hover: 0 24px 54px rgba(2, 6, 12, 0.34);
+  --card-inset: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --card-border: rgba(166, 190, 226, 0.18);
+
+  /* Done card surfaces */
+  --card-done-bg: linear-gradient(180deg, rgba(18, 24, 33, 0.72) 0%, rgba(14, 19, 27, 0.72) 100%);
+  --card-done-border: rgba(160, 190, 255, 0.1);
+
+  --done-pill-exited-bg: rgba(143, 180, 255, 0.08);
+  --done-pill-exited-color: #8a9ab6;
+  --done-pill-merged-bg: rgba(95, 211, 154, 0.14);
+  --done-pill-merged-color: #5fd39a;
+  --done-pill-killed-bg: rgba(255, 123, 114, 0.12);
+  --done-pill-killed-color: #ff7b72;
+  --done-meta-chip-bg: rgba(143, 180, 255, 0.05);
+  --done-meta-chip-border: rgba(160, 190, 255, 0.1);
+  --done-section-border: rgba(160, 190, 255, 0.08);
+  --done-title-color: #9ba8bf;
+  --done-restore-bg: rgba(143, 180, 255, 0.1);
+  --done-restore-border: rgba(143, 180, 255, 0.24);
+  --done-restore-hover-bg: rgba(143, 180, 255, 0.18);
+
+  /* Detail card */
+  --detail-card-bg: linear-gradient(180deg, rgba(20, 26, 35, 0.98) 0%, rgba(14, 19, 27, 0.98) 100%);
+  --detail-card-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
+
+  /* Orchestrator button */
+  --btn-shadow: 0 10px 24px rgba(34, 63, 116, 0.16);
+  --btn-shadow-hover: 0 16px 34px rgba(34, 63, 116, 0.22);
+  --btn-inset: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+
+  /* Kanban column */
+  --color-column-bg: #0d1218;
+  --color-column-header: transparent;
+
+  /* Alert colors — Linear-muted */
+  --color-alert-ci: #7b85e0;
+  --color-alert-ci-bg: rgba(94, 106, 210, 0.25);
+  --color-alert-ci-unknown: #d4a72c;
+  --color-alert-review: #4dab6e;
+  --color-alert-review-bg: rgba(77, 171, 110, 0.25);
+  --color-alert-changes: #9b8afb;
+  --color-alert-changes-bg: rgba(155, 138, 251, 0.25);
+  --color-alert-conflict: #d4a72c;
+  --color-alert-conflict-bg: rgba(212, 167, 44, 0.25);
+  --color-alert-comment: #c88a2e;
+  --color-alert-comment-bg: rgba(200, 138, 46, 0.25);
+
+  /* Activity pulse glow */
+  --color-activity-pulse: rgba(94, 106, 210, 0.45);
+  --color-activity-pulse-end: rgba(94, 106, 210, 0);
+}
+
+@theme {
   /* ── Typography ──────────────────────────────────────────────────── */
   --font-sans: var(--font-ibm-plex-sans), "SF Pro Text", -apple-system, system-ui, sans-serif;
   --font-mono: var(--font-ibm-plex-mono), "SF Mono", "Menlo", "Consolas", monospace;
 
-  /* ── Border radius ────────────────────────────────────────────────── */
+  /* ── Border radius ───────────────────────────────────────────────── */
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 8px;
   --radius-xl: 12px;
 
   /* ── Transitions ──────────────────────────────────────────────────── */
-  --transition-quick:   0.1s;
+  --transition-quick: 0.1s;
   --transition-regular: 0.25s;
+}
+
+/* ── Reference tokens (outside @theme to avoid Tailwind namespace collisions) ── */
+
+:root {
+  /* Spacing reference tokens — in :root to avoid potential Tailwind utility conflicts */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* Z-index scale — in :root; Tailwind v4 z-index namespace is --z-index-*, not --z-* */
+  --z-base: 0;
+  --z-raised: 10;
+  --z-nav: 100;
+  --z-modal: 200;
+  --z-overlay: 300;
+  --z-toast: 400;
+
+  /* Font-size scale — in :root to avoid --font-* font-family namespace in @theme */
+  --font-size-xs: 10px;
+  --font-size-sm: 11px;
+  --font-size-base: 13px;
+  --font-size-lg: 15px;
+  --font-size-xl: 17px;
+
+  /* Shadow levels — in :root to avoid --shadow-* utility namespace in @theme */
+  --box-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.6);
+  --box-shadow-md: 0 1px 3px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --box-shadow-lg:
+    0 1px 2px rgba(0, 0, 0, 0.9), 0 3px 10px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  --box-shadow-xl:
+    0 4px 8px rgba(0, 0, 0, 0.85), 0 14px 36px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+
+  /* Gradient surfaces */
+  --gradient-session-card: linear-gradient(
+    175deg,
+    rgba(30, 30, 35, 1) 0%,
+    rgba(23, 23, 27, 1) 100%
+  );
+  --gradient-session-card-expanded: linear-gradient(
+    175deg,
+    rgba(38, 38, 44, 1) 0%,
+    rgba(30, 30, 35, 1) 100%
+  );
+  --gradient-session-card-merge: linear-gradient(
+    175deg,
+    rgba(23, 29, 25, 1) 0%,
+    rgba(17, 22, 19, 1) 100%
+  );
+  --gradient-detail-card: linear-gradient(175deg, rgba(30, 30, 35, 1) 0%, rgba(23, 23, 27, 1) 100%);
+  --gradient-orchestrator-btn: linear-gradient(
+    175deg,
+    rgba(94, 106, 210, 0.12) 0%,
+    rgba(94, 106, 210, 0.06) 100%
+  );
+  --gradient-orchestrator-btn-hover: linear-gradient(
+    175deg,
+    rgba(94, 106, 210, 0.18) 0%,
+    rgba(94, 106, 210, 0.1) 100%
+  );
+  --gradient-status-strip: linear-gradient(
+    to bottom,
+    rgba(94, 106, 210, 0.04) 0%,
+    transparent 100%
+  );
 }
 
 /* ── Base styles ─────────────────────────────────────────────────────── */
 
 body {
   font-family: var(--font-sans);
-  background:
-    radial-gradient(ellipse 70% 40% at 15% 0%, rgba(88, 166, 255, 0.05) 0%, transparent 60%),
-    radial-gradient(ellipse 50% 30% at 85% 90%, rgba(163, 113, 247, 0.04) 0%, transparent 60%),
-    var(--color-bg-base);
+  background: var(--color-bg-base);
   color: var(--color-text-primary);
   min-height: 100vh;
   letter-spacing: -0.011em;
+}
+
+/* Light mode: solid white, NO gradient */
+html:not(.dark) body {
+  background: #ffffff;
+}
+
+/* Radial gradient only for dark mode */
+.dark body {
+  background:
+    radial-gradient(ellipse 70% 40% at 15% 0%, var(--color-body-gradient-blue) 0%, transparent 60%),
+    radial-gradient(
+      ellipse 50% 30% at 85% 90%,
+      var(--color-body-gradient-violet) 0%,
+      transparent 60%
+    ),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.015) 0%, transparent 28%), var(--color-bg-base);
 }
 
 a {
@@ -88,119 +428,1454 @@ a:hover {
 
 /* ── Scrollbar ────────────────────────────────────────────────────────── */
 
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
-::-webkit-scrollbar-thumb:active { background: rgba(255,255,255,0.25); }
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-scrollbar);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-scrollbar-hover);
+}
+::-webkit-scrollbar-thumb:active {
+  background: var(--color-scrollbar-active);
+}
+
+/* ── xterm.js terminal viewport scrollbar — macOS-style auto-hide ──── */
+
+.xterm .xterm-viewport {
+  overflow-y: overlay !important;
+}
+
+.xterm .xterm-viewport::-webkit-scrollbar {
+  width: 5px;
+}
+.xterm .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Dark — invisible by default, visible on hover */
+.xterm .xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0);
+  border-radius: 2.5px;
+  transition: background 0.3s ease;
+}
+.xterm .xterm-viewport:hover::-webkit-scrollbar-thumb,
+.xterm .xterm-viewport:active::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+}
+.xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+.xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
+  background: rgba(255, 255, 255, 0.35);
+}
+
+/* Light — same pattern, darker thumb */
+html.light .xterm .xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0);
+  transition: background 0.3s ease;
+}
+html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb,
+html.light .xterm .xterm-viewport:active::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+}
+html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.28);
+}
+html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
+  background: rgba(0, 0, 0, 0.4);
+}
 
 /* ── Animations ──────────────────────────────────────────────────────── */
 
+@keyframes progress-shimmer {
+  0% {
+    transform: translateX(-200%);
+  }
+  100% {
+    transform: translateX(500%);
+  }
+}
+
 @keyframes activity-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(88, 166, 255, 0.45); }
-  50%       { box-shadow: 0 0 0 4px rgba(88, 166, 255, 0); }
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 var(--color-activity-pulse);
+  }
+  50% {
+    box-shadow: 0 0 0 4px var(--color-activity-pulse-end);
+  }
 }
 
 @keyframes spin {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0.4; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
 }
 
 @keyframes slide-up {
-  from { opacity: 0; transform: translateY(4px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes ready-sheen {
+  0% {
+    transform: translateX(-160%);
+    opacity: 0;
+  }
+  18% {
+    opacity: 0.28;
+  }
+  100% {
+    transform: translateX(220%);
+    opacity: 0;
+  }
+}
+
+@keyframes ready-rail-breathe {
+  0%,
+  100% {
+    box-shadow:
+      inset 0 1px 0 color-mix(in srgb, white 4%, transparent),
+      0 18px 34px color-mix(in srgb, var(--color-status-ready) 10%, transparent);
+  }
+  50% {
+    box-shadow:
+      inset 0 1px 0 color-mix(in srgb, white 4%, transparent),
+      0 18px 38px color-mix(in srgb, var(--color-status-ready) 14%, transparent);
+  }
+}
+
+@keyframes ready-dot-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.95;
+  }
+  50% {
+    transform: scale(1.22);
+    opacity: 1;
+  }
+}
+
+/* ── Kanban card entrance ─────────────────────────────────────────────── */
+
+.kanban-card-enter {
+  animation: slide-up 0.18s ease forwards;
 }
 
 /* ── Orchestrator button ──────────────────────────────────────────────── */
 
 .orchestrator-btn {
+  border-radius: 0;
   color: var(--color-accent);
-  background: linear-gradient(175deg, rgba(88,166,255,0.12) 0%, rgba(88,166,255,0.06) 100%);
-  border: 1px solid rgba(88,166,255,0.25);
-  box-shadow:
-    0 1px 2px rgba(0,0,0,0.6),
-    0 3px 8px rgba(0,0,0,0.3),
-    inset 0 1px 0 rgba(255,255,255,0.08);
-  transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+  background: linear-gradient(
+    175deg,
+    color-mix(in srgb, var(--color-accent) 12%, transparent) 0%,
+    color-mix(in srgb, var(--color-accent) 6%, transparent) 100%
+  );
+  border: 1px solid color-mix(in srgb, var(--color-accent) 25%, transparent);
+  box-shadow: var(--btn-shadow);
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease,
+    background 0.12s ease,
+    border-color 0.12s ease;
 }
 
 .orchestrator-btn:hover {
   transform: translateY(-1px);
-  background: linear-gradient(175deg, rgba(88,166,255,0.18) 0%, rgba(88,166,255,0.1) 100%);
-  border-color: rgba(88,166,255,0.45);
-  box-shadow:
-    0 2px 6px rgba(0,0,0,0.7),
-    0 8px 20px rgba(0,0,0,0.35),
-    0 0 20px rgba(88,166,255,0.12),
-    inset 0 1px 0 rgba(255,255,255,0.12);
+  background: linear-gradient(
+    175deg,
+    color-mix(in srgb, var(--color-accent) 18%, transparent) 0%,
+    color-mix(in srgb, var(--color-accent) 10%, transparent) 100%
+  );
+  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
+  box-shadow: var(--btn-shadow-hover);
 }
 
 /* ── Glass nav ────────────────────────────────────────────────────────── */
 
 .nav-glass {
-  background: rgba(13, 17, 23, 0.88);
+  background: var(--color-nav-bg);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
+}
+
+/* ── Dashboard shell ───────────────────────────────────────────────── */
+
+.dashboard-shell {
+  position: relative;
+}
+
+.dashboard-main {
+  position: relative;
+}
+
+.dashboard-main::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 140px;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.015) 0%, transparent 100%);
+}
+
+.dashboard-hero {
+  position: relative;
+  overflow: visible;
+  border: 1px solid var(--color-border-default);
+  border-radius: 0;
+  background: var(--color-bg-surface);
+  box-shadow: 0 10px 24px rgba(2, 6, 12, 0.06);
+}
+
+.dashboard-hero__backdrop {
+  display: none;
+}
+
+.dashboard-hero__content {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 18px;
+}
+
+.dashboard-hero__primary {
+  display: flex;
+  flex: 1 1 720px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.dashboard-hero__heading {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 760px;
+  min-width: 0;
+}
+
+.dashboard-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  padding: 4px 8px;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 18%, var(--color-border-default));
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+  color: var(--color-accent);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.dashboard-eyebrow__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 18px currentColor;
+}
+
+.dashboard-title {
+  font-size: clamp(22px, 2.8vw, 32px);
+  line-height: 1;
+  letter-spacing: -0.05em;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.dashboard-subtitle {
+  margin-top: 3px;
+  max-width: 56ch;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--color-text-muted);
+}
+
+.dashboard-hero__meta {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.dashboard-stat-cards {
+  display: flex;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  max-width: none;
+  margin-left: auto;
+}
+
+.dashboard-stat-card {
+  display: inline-flex;
+  min-height: 0;
+  min-width: 0;
+  flex-direction: row;
+  align-items: baseline;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 88%, transparent);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--color-bg-base) 72%, transparent);
+  padding: 6px 9px;
+  box-shadow: none;
+}
+
+.dashboard-stat-card--empty {
+  max-width: 180px;
+}
+
+.dashboard-stat-card__value {
+  font-size: 18px;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: -0.05em;
+  font-variant-numeric: tabular-nums;
+}
+
+.dashboard-stat-card__label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+.dashboard-stat-card__meta {
+  display: none;
+  color: var(--color-text-muted);
+}
+
+.dashboard-alert {
+  border-radius: 0;
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.08);
 }
 
 /* ── Detail page cards — subtle depth, no hover lift ─────────────────── */
 
 .detail-card {
-  background: linear-gradient(175deg, rgba(24,31,40,1) 0%, rgba(17,22,29,1) 100%);
-  box-shadow:
-    0 1px 3px rgba(0,0,0,0.6),
-    inset 0 1px 0 rgba(255,255,255,0.05);
-  --color-text-secondary: #8b949e;
-  --color-text-muted:     #656d76;
-  --color-text-tertiary:  #656d76;
+  background: var(--detail-card-bg);
+  box-shadow: var(--detail-card-shadow);
+  border-radius: 0;
 }
 
-/* ── Session cards ────────────────────────────────────────────────────── */
+.session-detail-page {
+  background:
+    radial-gradient(
+      circle at top right,
+      color-mix(in srgb, var(--color-accent) 6%, transparent),
+      transparent 28%
+    ),
+    var(--color-bg-base);
+}
+
+.session-page-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  border: 1px solid var(--color-border-default);
+  padding: 14px 16px;
+  background: var(--detail-card-bg);
+  box-shadow: var(--detail-card-shadow);
+}
+
+@media (min-width: 900px) {
+  .session-page-header {
+    gap: 12px;
+  }
+}
+
+.session-page-header__crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.session-page-header__mode {
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 20%, transparent);
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+.session-page-header__main {
+  display: grid;
+  gap: 12px;
+}
+
+.session-page-header__identity {
+  min-width: 0;
+}
+
+.session-page-header__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.session-page-header__side {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+@media (min-width: 1100px) {
+  .session-page-header__main {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .session-page-header__side {
+    justify-content: flex-end;
+  }
+}
+
+.session-detail-link-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--color-bg-elevated) 88%, transparent);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.session-detail-link-pill {
+  transition:
+    border-color 0.14s ease,
+    color 0.14s ease,
+    background 0.14s ease;
+}
+
+.session-detail-link-pill:hover {
+  border-color: var(--color-border-strong);
+  color: var(--color-text-primary);
+}
+
+.session-detail-link-pill--accent {
+  color: var(--color-accent);
+  border-color: color-mix(in srgb, var(--color-accent) 20%, var(--color-border-subtle));
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+}
+
+.dark .detail-card {
+  --color-text-secondary: #9898a0;
+  --color-text-muted: #5c5c66;
+  --color-text-tertiary: #5c5c66;
+}
+
+/* ── Session cards — flat, Linear-style ──────────────────────────────── */
 
 .session-card {
-  background: linear-gradient(175deg, rgba(28,36,47,1) 0%, rgba(18,23,31,1) 100%);
+  background: var(--card-bg);
+  border-color: var(--card-border);
+  border-radius: 0;
   box-shadow:
-    0 1px 2px rgba(0,0,0,0.9),
-    0 3px 10px rgba(0,0,0,0.55),
-    inset 0 1px 0 rgba(255,255,255,0.07);
-  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+    inset 0 1px 0 color-mix(in srgb, white 4%, transparent),
+    0 10px 20px rgba(0, 0, 0, 0.08);
+  transition:
+    transform 0.12s ease,
+    border-color 0.12s ease,
+    background 0.12s ease,
+    box-shadow 0.12s ease;
+}
 
-  /* Bump dim text colors inside the card — the elevated surface is darker
-     than the transparent bg these values were calibrated for */
-  --color-text-secondary: #8b949e;
-  --color-text-muted:     #656d76;
-  --color-text-tertiary:  #656d76;
+.session-card--fixed {
+  display: flex;
+  height: 242px;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.session-card--alert-frame,
+.session-card--merge-frame {
+  display: flex;
+  height: auto;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.session-card--alert-frame {
+  min-height: 292px;
+}
+
+.session-card--merge-frame {
+  min-height: 264px;
+}
+
+.dark .session-card {
+  --color-text-secondary: #9898a0;
+  --color-text-muted: #5c5c66;
+  --color-text-tertiary: #5c5c66;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 14px 30px rgba(0, 0, 0, 0.34);
+}
+
+/* ── Dark mode weight reduction ────────────────────────────────────────
+   Light text on dark backgrounds appears visually heavier due to
+   subpixel antialiasing. Step down one weight level.                    */
+
+.dark .kanban-column [class*="font-semibold"] {
+  font-weight: 500;
+}
+.dark .kanban-column [class*="font-bold"] {
+  font-weight: 600;
+}
+.dark .session-card-done .done-status-pill {
+  font-weight: 500;
+}
+.dark .session-card-done .done-detail-heading {
+  font-weight: 600;
 }
 
 .session-card:hover {
-  transform: translateY(-2px);
+  transform: translateY(-1px);
+  border-color: var(--color-border-strong);
   box-shadow:
-    0 4px 8px rgba(0,0,0,0.85),
-    0 14px 36px rgba(0,0,0,0.55),
-    inset 0 1px 0 rgba(255,255,255,0.1);
+    inset 0 1px 0 color-mix(in srgb, white 5%, transparent),
+    0 18px 34px rgba(0, 0, 0, 0.09);
+}
+
+.session-card__header,
+.session-card__title-wrap,
+.session-card__meta,
+.session-card__actions {
+  position: relative;
+  z-index: 1;
+}
+
+.session-card__title-wrap::after {
+  display: none;
+}
+
+.session-card__title {
+  -webkit-line-clamp: 3;
+}
+
+.session-card__secondary {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-height: 1.45;
+}
+
+.session-card__alert-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.session-card__alert-pill {
+  max-width: 100%;
+}
+
+.session-card__footer {
+  margin-top: auto;
+  min-height: 34px;
+  background: color-mix(in srgb, var(--color-bg-base) 35%, transparent);
+}
+
+.session-card__control {
+  height: 28px;
+  padding-left: 10px;
+  padding-right: 10px;
+  box-sizing: border-box;
+  white-space: nowrap;
+}
+
+.session-card__control-icon {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+.session-card__terminate {
+  border-radius: 0;
+  line-height: 1;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.session-card__merge-control {
+  border-color: color-mix(in srgb, var(--color-status-ready) 68%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-status-ready) 34%, transparent) 0%,
+    color-mix(in srgb, var(--color-status-ready) 18%, transparent) 100%
+  );
+  color: var(--color-status-ready);
+  text-decoration: none;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 26%, transparent),
+    0 8px 18px color-mix(in srgb, var(--color-status-ready) 16%, transparent);
+}
+
+.session-card__merge-control:hover {
+  border-color: var(--color-status-ready);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-status-ready) 46%, transparent) 0%,
+    color-mix(in srgb, var(--color-status-ready) 24%, transparent) 100%
+  );
+  text-decoration: none;
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 30%, transparent),
+    0 10px 22px color-mix(in srgb, var(--color-status-ready) 20%, transparent);
+}
+
+.session-card__merge-control .session-card__control-icon {
+  transition: transform 0.14s ease;
+}
+
+.session-card__merge-control:hover .session-card__control-icon {
+  transform: translateX(2px);
 }
 
 .session-card.card-merge-ready {
-  background: linear-gradient(175deg, rgba(16,40,24,1) 0%, rgba(10,26,15,1) 100%);
+  position: relative;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-status-ready) 10%, var(--card-merge-bg)) 0%,
+    color-mix(in srgb, var(--color-status-ready) 6%, var(--card-merge-bg)) 28%,
+    color-mix(in srgb, var(--color-status-ready) 3%, var(--card-merge-bg)) 100%
+  );
+  border-color: color-mix(in srgb, var(--color-status-ready) 30%, var(--color-border-default));
   box-shadow:
-    0 0 0 1px rgba(63,185,80,0.22),
-    0 1px 2px rgba(0,0,0,0.9),
-    0 3px 10px rgba(0,0,0,0.55),
-    0 0 40px rgba(63,185,80,0.13),
-    inset 0 1px 0 rgba(255,255,255,0.07);
+    inset 0 1px 0 color-mix(in srgb, white 4%, transparent),
+    0 22px 40px color-mix(in srgb, var(--color-status-ready) 18%, transparent);
+  animation: ready-rail-breathe 3.8s ease-in-out infinite;
+}
+
+.session-card.card-merge-ready::before {
+  display: none;
+}
+
+.session-card.card-merge-ready::after {
+  content: "";
+  position: absolute;
+  inset: -14px -10px -18px -10px;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(
+      ellipse at 50% 100%,
+      color-mix(in srgb, var(--color-status-ready) 18%, transparent) 0%,
+      color-mix(in srgb, var(--color-status-ready) 8%, transparent) 42%,
+      transparent 72%
+    ),
+    radial-gradient(
+      ellipse at 50% 0%,
+      color-mix(in srgb, var(--color-status-ready) 10%, transparent) 0%,
+      transparent 58%
+    );
+  filter: blur(10px);
+  opacity: 0.9;
+}
+
+.session-card.card-merge-ready > * {
+  position: relative;
+  z-index: 1;
+}
+
+.dark .session-card.card-merge-ready::after {
+  background:
+    radial-gradient(
+      ellipse at 50% 100%,
+      color-mix(in srgb, var(--color-status-ready) 24%, transparent) 0%,
+      color-mix(in srgb, var(--color-status-ready) 10%, transparent) 44%,
+      transparent 72%
+    ),
+    radial-gradient(
+      ellipse at 50% 0%,
+      color-mix(in srgb, var(--color-status-ready) 12%, transparent) 0%,
+      transparent 58%
+    );
+  opacity: 0.75;
+}
+
+.session-card.card-merge-ready:hover::after {
+  opacity: 1;
+  filter: blur(12px);
+  background:
+    radial-gradient(
+      ellipse at 50% 100%,
+      color-mix(in srgb, var(--color-status-ready) 24%, transparent) 0%,
+      color-mix(in srgb, var(--color-status-ready) 10%, transparent) 44%,
+      transparent 74%
+    ),
+    radial-gradient(
+      ellipse at 50% 0%,
+      color-mix(in srgb, var(--color-status-ready) 12%, transparent) 0%,
+      transparent 58%
+    );
+}
+
+.dark .session-card.card-merge-ready:hover::after {
+  background:
+    radial-gradient(
+      ellipse at 50% 100%,
+      color-mix(in srgb, var(--color-status-ready) 28%, transparent) 0%,
+      color-mix(in srgb, var(--color-status-ready) 12%, transparent) 44%,
+      transparent 74%
+    ),
+    radial-gradient(
+      ellipse at 50% 0%,
+      color-mix(in srgb, var(--color-status-ready) 14%, transparent) 0%,
+      transparent 58%
+    );
+}
+
+.session-card.card-merge-ready::after {
+  transition:
+    opacity 0.18s ease,
+    filter 0.18s ease,
+    background 0.18s ease;
 }
 
 .session-card.card-merge-ready:hover {
   transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--color-status-ready) 42%, var(--color-border-strong));
   box-shadow:
-    0 0 0 1px rgba(63,185,80,0.35),
-    0 4px 8px rgba(0,0,0,0.85),
-    0 14px 36px rgba(0,0,0,0.55),
-    0 0 60px rgba(63,185,80,0.2),
-    inset 0 1px 0 rgba(255,255,255,0.1);
+    inset 0 1px 0 color-mix(in srgb, white 6%, transparent),
+    0 28px 52px color-mix(in srgb, var(--color-status-ready) 22%, transparent);
+}
+
+.session-card.card-merge-ready .session-card__header > span:first-child > span:first-child {
+  animation: ready-dot-pulse 2.8s ease-in-out infinite;
+}
+
+/* ── Done cards — compact, de-emphasized ─────────────────────────────── */
+
+.session-card-done {
+  background: var(--card-done-bg);
+  border: 1px solid var(--card-done-border);
+  border-radius: 0;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    box-shadow 0.15s ease;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.session-card-done:hover {
+  border-color: var(--color-border-strong);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+
+.dark .session-card-done:hover {
+  box-shadow: none;
+}
+
+.session-card-done.done-expanded {
+  border-color: var(--color-border-strong);
+}
+
+/* Status pill inside done cards */
+.done-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.4;
+}
+
+.done-status-pill--exited {
+  background: var(--done-pill-exited-bg);
+  color: var(--done-pill-exited-color);
+}
+
+.done-status-pill--merged {
+  background: var(--done-pill-merged-bg);
+  color: var(--done-pill-merged-color);
+}
+
+.done-status-pill--killed {
+  background: var(--done-pill-killed-bg);
+  color: var(--done-pill-killed-color);
+}
+
+/* Meta chip inside done cards */
+.done-meta-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border-radius: 0;
+  background: var(--done-meta-chip-bg);
+  border: 1px solid var(--done-meta-chip-border);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+}
+
+/* Restore button inside done cards */
+.done-restore-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 0;
+  border: 1px solid var(--done-restore-border);
+  background: var(--done-restore-bg);
+  color: var(--color-accent);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.done-restore-btn:hover {
+  background: var(--done-restore-hover-bg);
+  border-color: color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+
+/* Done card expand section */
+.done-expand-section {
+  border-top: 1px solid var(--done-section-border);
+  animation: done-slide-in 0.15s ease-out;
+}
+
+@keyframes done-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Done detail section heading */
+.done-detail-heading {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-tertiary);
+  margin-bottom: 6px;
+}
+
+.done-detail-heading svg {
+  width: 11px;
+  height: 11px;
+  opacity: 0.6;
+}
+
+/* ── Project sidebar ────────────────────────────────────────────────── */
+
+.project-sidebar nav::-webkit-scrollbar {
+  width: 4px;
+}
+.project-sidebar nav::-webkit-scrollbar-track {
+  background: transparent;
+}
+.project-sidebar nav::-webkit-scrollbar-thumb {
+  background: var(--color-scrollbar);
+  border-radius: 2px;
+}
+
+.project-sidebar {
+  border-right: 1px solid var(--color-border-subtle);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-bg-elevated) 92%, black 8%) 0%,
+    color-mix(in srgb, var(--color-bg-base) 90%, black 10%) 100%
+  );
+}
+
+.project-sidebar--collapsed {
+  align-items: center;
+}
+
+.project-sidebar__header {
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-accent) 4%, transparent) 0%,
+    transparent 100%
+  );
+}
+
+.project-sidebar__eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+}
+
+.project-sidebar__title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.project-sidebar__title {
+  font-size: 13px;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.project-sidebar__subtitle {
+  margin-top: 3px;
+  max-width: 18ch;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--color-text-muted);
+}
+
+.project-sidebar__badge {
+  display: inline-flex;
+  min-width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border-default);
+  background: color-mix(in srgb, var(--color-bg-base) 42%, transparent);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.project-sidebar__summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.project-sidebar__metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 6px 5px;
+  border: 1px solid var(--color-border-subtle);
+  background: color-mix(in srgb, var(--color-bg-base) 40%, transparent);
+}
+
+.project-sidebar__metric-value {
+  font-size: 13px;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.project-sidebar__metric-label {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.project-sidebar__divider {
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.project-sidebar__item {
+  position: relative;
+  border: 1px solid transparent;
+  background: transparent;
+}
+
+.project-sidebar__item:hover {
+  background: var(--color-hover-overlay);
+  border-color: var(--color-border-subtle);
+}
+
+.project-sidebar__item--active {
+  border-color: color-mix(in srgb, var(--color-accent) 24%, var(--color-border-default));
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-accent) 16%, transparent),
+    transparent 90%
+  );
+}
+
+.project-sidebar__count {
+  border: 1px solid var(--color-border-subtle);
+  background: color-mix(in srgb, var(--color-bg-base) 40%, transparent);
+}
+
+.project-sidebar__children {
+  position: relative;
+  margin-top: 4px;
+  border-left: 1px solid color-mix(in srgb, var(--color-border-subtle) 82%, transparent);
+}
+
+.project-sidebar__session {
+  position: relative;
+  margin: 2px 0 2px 8px;
+  border: 1px solid transparent;
+  background: transparent;
+}
+
+.project-sidebar__session:hover {
+  border-color: var(--color-border-subtle);
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-hover-overlay) 90%, transparent),
+    transparent 100%
+  );
+}
+
+.project-sidebar__session--active {
+  border-color: color-mix(in srgb, var(--color-accent) 18%, var(--color-border-subtle));
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-accent) 12%, transparent),
+    transparent 88%
+  );
+  box-shadow: inset 2px 0 0 var(--color-accent);
+}
+
+.project-sidebar__session::before {
+  content: "";
+  position: absolute;
+  left: -9px;
+  top: 50%;
+  width: 8px;
+  height: 1px;
+  background: var(--color-border-subtle);
+  transform: translateY(-50%);
+}
+
+.project-sidebar__session-tone {
+  flex-shrink: 0;
+  padding: 2px 6px;
+  border: 1px solid var(--color-border-subtle);
+  background: color-mix(in srgb, var(--color-bg-base) 40%, transparent);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.project-sidebar__session-id {
+  opacity: 0;
+  color: var(--color-text-tertiary);
+  transition:
+    opacity 0.15s ease,
+    color 0.15s ease;
+}
+
+.project-sidebar__session:hover .project-sidebar__session-id,
+.project-sidebar__session--active .project-sidebar__session-id {
+  opacity: 0.75;
+}
+
+.project-sidebar__session--active .project-sidebar__session-tone {
+  border-color: color-mix(in srgb, var(--color-accent) 24%, var(--color-border-subtle));
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  color: var(--color-accent);
+}
+
+.project-sidebar__collapse-btn,
+.project-sidebar__collapsed-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  border: 1px solid var(--color-border-subtle);
+  background: color-mix(in srgb, var(--color-bg-base) 40%, transparent);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  transition:
+    border-color 0.12s ease,
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.project-sidebar__collapse-btn {
+  padding: 9px 10px;
+}
+
+.project-sidebar__collapsed-toggle {
+  width: 36px;
+  height: 36px;
+}
+
+.project-sidebar__collapse-btn:hover,
+.project-sidebar__collapsed-toggle:hover {
+  border-color: var(--color-border-default);
+  background: var(--color-hover-overlay);
+  color: var(--color-text-primary);
+}
+
+.project-sidebar__collapsed-project {
+  position: relative;
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  background: var(--color-bg-surface);
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.project-sidebar__collapsed-project:hover {
+  border-color: var(--color-border-default);
+  background: var(--color-bg-elevated);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.project-sidebar__collapsed-project--active {
+  border-color: color-mix(in srgb, var(--color-accent) 35%, var(--color-border-default));
+  background: color-mix(in srgb, var(--color-accent) 8%, var(--color-bg-elevated));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 12%, transparent);
+}
+
+.project-sidebar__avatar {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--color-text-secondary);
+  user-select: none;
+}
+
+.project-sidebar__collapsed-project--active .project-sidebar__avatar {
+  color: var(--color-accent);
+}
+
+.project-sidebar__health-indicator {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1.5px solid var(--color-bg-surface);
+  box-sizing: content-box;
+}
+
+/* ── Kanban board ────────────────────────────────────────────────────── */
+
+.kanban-board {
+  display: flex;
+  gap: 8px;
+  height: calc(100vh - 280px);
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+.kanban-board-wrap {
+  position: relative;
+  margin-top: 12px;
+}
+
+.board-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.board-section-head__title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+.board-section-head__subtitle {
+  margin-top: 5px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.board-section-head__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.board-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--color-bg-elevated) 88%, transparent);
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
+.board-legend-item__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+}
+
+.kanban-column {
+  flex: 1 0 260px;
+  min-width: 260px;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-border-default);
+  border-radius: 0;
+  background: var(--color-column-bg);
+  padding: 4px;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 2%, transparent),
+    0 16px 34px rgba(0, 0, 0, 0.05);
+}
+
+.kanban-column[data-level="merge"] {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-status-ready) 4%, var(--color-column-bg)) 0%,
+    var(--color-column-bg) 100%
+  );
+}
+
+.dark .kanban-column {
+  border-color: rgba(170, 195, 230, 0.14);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.02),
+    0 18px 42px rgba(0, 0, 0, 0.24);
+}
+
+.dark .kanban-column[data-level="merge"] {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-status-ready) 7%, var(--color-column-bg)) 0%,
+    var(--color-column-bg) 100%
+  );
+}
+
+.kanban-column__header {
+  margin-bottom: 14px;
+  padding: 2px 2px 0;
+}
+
+.kanban-column__title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.kanban-column__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+}
+
+.kanban-column__title {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--color-text-primary);
+}
+
+.kanban-column__count {
+  margin-left: auto;
+  min-width: 28px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--color-bg-base) 72%, transparent);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.kanban-column__caption {
+  display: block;
+  margin-top: 7px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+.kanban-column-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.kanban-column-body::-webkit-scrollbar {
+  width: 4px;
+}
+.kanban-column-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+.kanban-column-body::-webkit-scrollbar-thumb {
+  background: var(--color-scrollbar);
+  border-radius: 2px;
+}
+
+/* ── Session card zone glow (hover) ──────────────────────────────────── */
+
+.kanban-column__empty {
+  display: flex;
+  min-height: 132px;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed color-mix(in srgb, var(--color-border-default) 82%, transparent);
+  border-radius: 0;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-bg-base) 28%, transparent) 0%,
+    transparent 100%
+  );
+}
+
+.kanban-column__empty-label {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: none;
+  color: var(--color-text-tertiary);
+}
+
+/* Card glow effects removed for Linear-clean look */
+
+@media (max-width: 960px) {
+  .dashboard-hero__content {
+    padding: 12px 14px;
+  }
+
+  .dashboard-hero__primary {
+    width: 100%;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .dashboard-hero__meta {
+    width: 100%;
+    align-items: flex-start;
+    justify-content: space-between;
+  }
+
+  .dashboard-stat-cards {
+    width: 100%;
+  }
+
+  .kanban-board {
+    height: auto;
+    min-height: calc(100vh - 280px);
+  }
+
+  .session-card--fixed {
+    height: 232px;
+  }
+
+  .session-card--alert-frame {
+    min-height: 280px;
+  }
+
+  .session-card--merge-frame {
+    min-height: 252px;
+  }
+}
+
+@media (max-width: 640px) {
+  .dashboard-title {
+    font-size: 26px;
+  }
+
+  .dashboard-stat-cards {
+    gap: 6px;
+  }
+
+  .kanban-column {
+    min-width: min(86vw, 320px);
+  }
+
+  .session-card--fixed {
+    height: 224px;
+  }
+
+  .session-card--alert-frame {
+    min-height: 268px;
+  }
+
+  .session-card--merge-frame {
+    min-height: 244px;
+  }
 }

@@ -4,6 +4,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const renderCounts = new Map<string, number>();
 
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+  usePathname: () => "/",
+  useSearchParams: () => new URLSearchParams(),
+}));
+
 vi.mock("@/components/SessionCard", () => ({
   SessionCard: memo(({ session }: { session: { id: string } }) => {
     renderCounts.set(session.id, (renderCounts.get(session.id) ?? 0) + 1);

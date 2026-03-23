@@ -6,6 +6,7 @@ import { makeSession } from "@/__tests__/helpers";
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
   usePathname: () => "/",
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 describe("Dashboard project overview cards", () => {
