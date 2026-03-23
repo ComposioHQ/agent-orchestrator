@@ -56,7 +56,7 @@ async function checkBuilt(webDir: string): Promise<void> {
  * Works with pnpm workspaces (symlinked deps) and npm/yarn global installs
  * (hoisted deps) transparently.
  */
-export function findPackageUp(startDir: string, ...segments: string[]): string | null {
+function findPackageUp(startDir: string, ...segments: string[]): string | null {
   let dir = resolve(startDir);
   while (true) {
     const candidate = resolve(dir, "node_modules", ...segments);
