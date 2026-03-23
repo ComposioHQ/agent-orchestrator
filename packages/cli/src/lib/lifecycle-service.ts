@@ -15,6 +15,7 @@ const LIFECYCLE_PID_FILE = "lifecycle-worker.pid";
 const LIFECYCLE_LOG_FILE = "lifecycle-worker.log";
 const DEFAULT_START_TIMEOUT_MS = 5_000;
 const STOP_TIMEOUT_MS = 5_000;
+let systemdRunAvailable: boolean | null = null;
 
 export interface LifecycleWorkerStatus {
   running: boolean;
@@ -41,6 +42,24 @@ export function getLifecycleLogFile(config: OrchestratorConfig, projectId: strin
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function canUseSystemdRunScope(): boolean {
+  if (process.platform !== "linux" || process.env.AO_DISABLE_SYSTEMD_SCOPE === "1") {
+    return false;
+  }
+  if (systemdRunAvailable !== null) {
+    return systemdRunAvailable;
+  }
+  try {
+    execFileSync("systemd-run", ["--user", "--version"], {
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    systemdRunAvailable = true;
+  } catch {
+    systemdRunAvailable = false;
+  }
+  return systemdRunAvailable;
 }
 
 function isProcessRunning(pid: number): boolean {
@@ -183,23 +202,45 @@ export async function ensureLifecycleWorker(
 
   try {
     const launch = resolveLifecycleWorkerLaunch(projectId);
-    const child = spawn(launch.command, launch.args, {
-      cwd: process.cwd(),
-      detached: true,
-      stdio: ["ignore", stdoutFd, stderrFd],
-      env: {
-        ...process.env,
-        AO_LIFECYCLE_PROJECT: projectId,
-        AO_CONFIG_PATH: config.configPath,
-      },
-    });
+    const useSystemdScope = canUseSystemdRunScope();
+    const child = useSystemdScope
+      ? spawn(
+          "systemd-run",
+          [
+            "--user",
+            "--scope",
+            "--quiet",
+            "--same-dir",
+            "env",
+            `AO_LIFECYCLE_PROJECT=${projectId}`,
+            `AO_CONFIG_PATH=${config.configPath}`,
+            launch.command,
+            ...launch.args,
+          ],
+          {
+            cwd: process.cwd(),
+            detached: true,
+            stdio: ["ignore", stdoutFd, stderrFd],
+            env: process.env,
+          },
+        )
+      : spawn(launch.command, launch.args, {
+          cwd: process.cwd(),
+          detached: true,
+          stdio: ["ignore", stdoutFd, stderrFd],
+          env: {
+            ...process.env,
+            AO_LIFECYCLE_PROJECT: projectId,
+            AO_CONFIG_PATH: config.configPath,
+          },
+        });
 
     child.unref();
 
-    // Write PID from the parent immediately after spawn to close the TOCTOU
-    // window: without this, a second concurrent `ensureLifecycleWorker` call
-    // could pass the "not running" check before the child writes its own PID.
-    if (child.pid) {
+    // Only the direct-spawn path can safely use the immediate child PID.
+    // The systemd-run path launches an intermediate wrapper process; the
+    // lifecycle worker writes its own PID once it is fully running.
+    if (!useSystemdScope && child.pid) {
       writeLifecycleWorkerPid(config, projectId, child.pid);
     }
   } finally {
