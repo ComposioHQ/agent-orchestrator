@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { setTimeout as sleep } from "node:timers/promises";
 import { randomUUID } from "node:crypto";
@@ -16,6 +16,7 @@ import type {
 
 const execFileAsync = promisify(execFile);
 const TMUX_COMMAND_TIMEOUT_MS = 5_000;
+let systemdRunAvailable: boolean | null = null;
 
 export const manifest = {
   name: "tmux",
@@ -34,8 +35,31 @@ function assertValidSessionId(id: string): void {
 }
 
 /** Run a tmux command and return stdout */
+function canUseSystemdRunScope(): boolean {
+  if (process.platform !== "linux" || process.env.AO_DISABLE_SYSTEMD_SCOPE === "1") {
+    return false;
+  }
+  if (systemdRunAvailable !== null) {
+    return systemdRunAvailable;
+  }
+  try {
+    execFileSync("systemd-run", ["--user", "--version"], {
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    systemdRunAvailable = true;
+  } catch {
+    systemdRunAvailable = false;
+  }
+  return systemdRunAvailable;
+}
+
 async function tmux(...args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync("tmux", args, {
+  const useSystemdScope = args[0] === "new-session" && canUseSystemdRunScope();
+  const command = useSystemdScope ? "systemd-run" : "tmux";
+  const commandArgs = useSystemdScope
+    ? ["--user", "--scope", "--quiet", "tmux", ...args]
+    : args;
+  const { stdout } = await execFileAsync(command, commandArgs, {
     timeout: TMUX_COMMAND_TIMEOUT_MS,
   });
   return stdout.trimEnd();
