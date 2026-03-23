@@ -8,6 +8,7 @@ import { cn } from "@/lib/cn";
 import { CICheckList } from "./CIBadge";
 import { DirectTerminal } from "./DirectTerminal";
 import { ActivityDot } from "./ActivityDot";
+import { getSessionTitle } from "@/lib/format";
 
 interface OrchestratorZones {
   merge: number;
@@ -34,18 +35,6 @@ const activityMeta: Record<string, { label: string; color: string }> = {
   blocked: { label: "Blocked", color: "var(--color-status-error)" },
   exited: { label: "Exited", color: "var(--color-status-error)" },
 };
-
-function humanizeStatus(status: string): string {
-  return status
-    .replace(/_/g, " ")
-    .replace(/\bci\b/gi, "CI")
-    .replace(/\bpr\b/gi, "PR")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-function getSessionHeadline(session: DashboardSession): string {
-  return session.issueTitle ?? session.summary ?? session.id;
-}
 
 function cleanBugbotComment(body: string): { title: string; description: string } {
   const isBugbot = body.includes("<!-- DESCRIPTION START -->") || body.includes("### ");
@@ -191,7 +180,7 @@ function OrchestratorStatusStrip({
   branch,
   pr,
 }: {
-  zones: OrchestratorZones;
+  zones?: OrchestratorZones;
   createdAt: string;
   headline: string;
   activityLabel: string;
@@ -213,17 +202,60 @@ function OrchestratorStatusStrip({
     return () => clearInterval(id);
   }, [createdAt]);
 
-  const stats: Array<{ value: number; label: string; color: string; bg: string }> = [
-    { value: zones.merge, label: "merge-ready", color: "#3fb950", bg: "rgba(63,185,80,0.1)" },
-    { value: zones.respond, label: "responding", color: "#f85149", bg: "rgba(248,81,73,0.1)" },
-    { value: zones.review, label: "review", color: "#d18616", bg: "rgba(209,134,22,0.1)" },
-    { value: zones.working, label: "working", color: "#58a6ff", bg: "rgba(88,166,255,0.1)" },
-    { value: zones.pending, label: "pending", color: "#d29922", bg: "rgba(210,153,34,0.1)" },
-    { value: zones.done, label: "done", color: "#484f58", bg: "rgba(72,79,88,0.15)" },
-  ].filter((s) => s.value > 0);
+  const zoneSlot = zones ? (() => {
+    const stats: Array<{ value: number; label: string; color: string; bg: string }> = [
+      { value: zones.merge, label: "merge-ready", color: "#3fb950", bg: "rgba(63,185,80,0.1)" },
+      { value: zones.respond, label: "responding", color: "#f85149", bg: "rgba(248,81,73,0.1)" },
+      { value: zones.review, label: "review", color: "#d18616", bg: "rgba(209,134,22,0.1)" },
+      { value: zones.working, label: "working", color: "#58a6ff", bg: "rgba(88,166,255,0.1)" },
+      { value: zones.pending, label: "pending", color: "#d29922", bg: "rgba(210,153,34,0.1)" },
+      { value: zones.done, label: "done", color: "#484f58", bg: "rgba(72,79,88,0.15)" },
+    ].filter((s) => s.value > 0);
 
-  const total =
-    zones.merge + zones.respond + zones.review + zones.working + zones.pending + zones.done;
+    const total =
+      zones.merge + zones.respond + zones.review + zones.working + zones.pending + zones.done;
+
+    return (
+      <>
+        <div className="flex items-baseline gap-1.5 mr-2">
+          <span className="text-[22px] font-bold leading-none tabular-nums text-[var(--color-text-primary)]">
+            {total}
+          </span>
+          <span className="text-[11px] text-[var(--color-text-tertiary)]">agents</span>
+        </div>
+
+        <div className="h-5 w-px bg-[var(--color-border-subtle)] mr-1" />
+
+        {/* Per-zone pills */}
+        {stats.length > 0 ? (
+          stats.map((s) => (
+            <div
+              key={s.label}
+              className="flex items-center gap-1.5 px-2.5 py-1"
+              style={{ background: s.bg }}
+            >
+              <span
+                className="text-[15px] font-bold leading-none tabular-nums"
+                style={{ color: s.color }}
+              >
+                {s.value}
+              </span>
+              <span
+                className="text-[10px] font-medium"
+                style={{ color: s.color, opacity: 0.8 }}
+              >
+                {s.label}
+              </span>
+            </div>
+          ))
+        ) : (
+          <span className="text-[12px] text-[var(--color-text-tertiary)]">
+            no active agents
+          </span>
+        )}
+      </>
+    );
+  })() : null;
 
   return (
     <div className="mx-auto max-w-[1180px] px-5 pt-5 lg:px-8">
@@ -236,42 +268,7 @@ function OrchestratorStatusStrip({
         isOrchestrator
         rightSlot={
           <div className="flex flex-wrap items-center gap-3 lg:justify-end">
-            <div className="flex items-baseline gap-1.5 mr-2">
-              <span className="text-[22px] font-bold leading-none tabular-nums text-[var(--color-text-primary)]">
-                {total}
-              </span>
-              <span className="text-[11px] text-[var(--color-text-tertiary)]">agents</span>
-            </div>
-
-            <div className="h-5 w-px bg-[var(--color-border-subtle)] mr-1" />
-
-            {/* Per-zone pills */}
-            {stats.length > 0 ? (
-              stats.map((s) => (
-                <div
-                  key={s.label}
-                  className="flex items-center gap-1.5 px-2.5 py-1"
-                  style={{ background: s.bg }}
-                >
-                  <span
-                    className="text-[15px] font-bold leading-none tabular-nums"
-                    style={{ color: s.color }}
-                  >
-                    {s.value}
-                  </span>
-                  <span
-                    className="text-[10px] font-medium"
-                    style={{ color: s.color, opacity: 0.8 }}
-                  >
-                    {s.label}
-                  </span>
-                </div>
-              ))
-            ) : (
-              <span className="text-[12px] text-[var(--color-text-tertiary)]">
-                no active agents
-              </span>
-            )}
+            {zoneSlot}
 
             {uptime && (
               <span className="ml-auto font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]">
@@ -299,7 +296,7 @@ export function SessionDetail({
     label: session.activity ?? "unknown",
     color: "var(--color-text-muted)",
   };
-  const headline = getSessionHeadline(session);
+  const headline = getSessionTitle(session);
 
   const accentColor = "var(--color-accent)";
   const terminalVariant = isOrchestrator ? "orchestrator" : "agent";
@@ -317,7 +314,7 @@ export function SessionDetail({
 
   return (
     <div className="session-detail-page min-h-screen bg-[var(--color-bg-base)]">
-      {isOrchestrator && orchestratorZones && (
+      {isOrchestrator && (
         <OrchestratorStatusStrip
           zones={orchestratorZones}
           createdAt={session.createdAt}
