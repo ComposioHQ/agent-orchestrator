@@ -48,22 +48,22 @@ describe("preflight.checkPort", () => {
 
 describe("preflight.checkBuilt", () => {
   it("passes when node_modules and core dist exist", async () => {
+    // findPackageUp finds ao-core, then dist/index.js exists
     mockExistsSync.mockReturnValue(true);
     await expect(preflight.checkBuilt("/web")).resolves.toBeUndefined();
     expect(mockExistsSync).toHaveBeenCalled();
   });
 
-  it("throws 'pnpm install' when node_modules is missing", async () => {
-    // First call checks node_modules/@composio/ao-core — missing
+  it("throws 'pnpm install' when ao-core is not found anywhere", async () => {
+    // findPackageUp never finds node_modules/@composio/ao-core
     mockExistsSync.mockReturnValue(false);
     await expect(preflight.checkBuilt("/web")).rejects.toThrow(
       "pnpm install",
     );
   });
 
-  it("throws 'pnpm build' when node_modules exists but dist is missing", async () => {
-    // First call: node_modules/@composio/ao-core exists
-    // Second call: dist/index.js does not exist
+  it("throws 'pnpm build' when ao-core exists but dist is missing", async () => {
+    // findPackageUp finds ao-core (first call), but dist/index.js missing (second call)
     mockExistsSync
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(false);
