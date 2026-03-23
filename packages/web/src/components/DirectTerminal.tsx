@@ -571,7 +571,7 @@ export function DirectTerminal({
   return (
     <div
       className={cn(
-        "overflow-hidden rounded-[6px] border border-[var(--color-border-default)]",
+        "overflow-hidden border border-[var(--color-border-default)]",
         "bg-[#0a0a0f]",
         fullscreen && "fixed inset-0 z-50 rounded-none border-0",
       )}
@@ -589,7 +589,7 @@ export function DirectTerminal({
         </span>
         {/* XDA clipboard badge */}
         <span
-          className="rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.06em]"
+          className="px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.06em]"
           style={{
             color: accentColor,
             background: `color-mix(in srgb, ${accentColor} 12%, transparent)`,
@@ -603,7 +603,7 @@ export function DirectTerminal({
             disabled={reloading || status !== "connected"}
             title="Restart OpenCode session (/exit then resume mapped session)"
             aria-label="Restart OpenCode session"
-            className="ml-auto flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)] disabled:cursor-not-allowed disabled:opacity-70"
+            className="ml-auto flex items-center gap-1 px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)] disabled:cursor-not-allowed disabled:opacity-70"
           >
             {reloading ? (
               <>
@@ -646,7 +646,7 @@ export function DirectTerminal({
         <button
           onClick={() => setFullscreen(!fullscreen)}
           className={cn(
-            "flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]",
+            "flex items-center gap-1 px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]",
             !isOpenCodeSession && "ml-auto",
           )}
         >
