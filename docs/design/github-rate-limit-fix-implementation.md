@@ -1,6 +1,6 @@
 # GitHub Rate Limit Fix - Implementation Guide
 
-**Version:** 1.0 | **Date:** March 22, 2026 | **Status:** Implemented
+**Version:** 1.1 | **Date:** March 23, 2026 | **Status:** Implemented
 
 ---
 
@@ -122,7 +122,7 @@ This implementation uses **two complementary approaches** to maximize API call r
 |----------|---------------|---------|
 | **1. Cache** (implemented) | Store responses with TTL | ~70% reduction |
 | **2. Deduplication** (implemented) | Share concurrent identical requests | ~15% reduction |
-| **3. Batching** (future work) | Combine multiple gh calls into one | TBD |
+| **3. Batching** (implemented) | Combine multiple gh pr view calls into one | ~10% additional reduction |
 
 ### Architecture Diagram
 
