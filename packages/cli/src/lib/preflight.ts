@@ -66,21 +66,57 @@ function findPackageUp(startDir: string, ...segments: string[]): string | null {
 }
 
 /**
- * Check that tmux is installed (required for the default runtime).
- * Throws with platform-appropriate install instructions.
+ * Check that tmux is installed. If missing, attempt auto-install.
+ * Falls back to a clear error with platform-appropriate instructions
+ * if auto-install is not possible.
  */
 async function checkTmux(): Promise<void> {
   try {
     await exec("tmux", ["-V"]);
+    return;
   } catch {
-    const hint =
-      process.platform === "darwin"
-        ? "brew install tmux"
-        : process.platform === "win32"
-          ? "tmux is not available on Windows. Use WSL: wsl --install, then: sudo apt install tmux"
-          : "sudo apt install tmux (Debian/Ubuntu) or sudo dnf install tmux (Fedora)";
-    throw new Error(`tmux is not installed. Install it: ${hint}`);
+    // tmux not found — try to install it
   }
+
+  // Attempt auto-install based on platform
+  const installed = await autoInstallTmux();
+  if (installed) return;
+
+  const hint =
+    process.platform === "darwin"
+      ? "brew install tmux"
+      : process.platform === "win32"
+        ? "tmux is not available on Windows. Use WSL: wsl --install, then: sudo apt install tmux"
+        : "sudo apt install tmux (Debian/Ubuntu) or sudo dnf install tmux (Fedora)";
+  throw new Error(`tmux is not installed. Install it: ${hint}`);
+}
+
+/**
+ * Try to auto-install tmux. Returns true if successful.
+ * Tries brew (macOS), apt-get, then dnf (Linux). Silent on failure.
+ */
+async function autoInstallTmux(): Promise<boolean> {
+  const attempts: Array<{ cmd: string; args: string[] }> =
+    process.platform === "darwin"
+      ? [{ cmd: "brew", args: ["install", "tmux"] }]
+      : process.platform === "linux"
+        ? [
+            { cmd: "sudo", args: ["apt-get", "install", "-y", "tmux"] },
+            { cmd: "sudo", args: ["dnf", "install", "-y", "tmux"] },
+          ]
+        : [];
+
+  for (const { cmd, args } of attempts) {
+    try {
+      await exec(cmd, args);
+      // Verify it actually worked
+      await exec("tmux", ["-V"]);
+      return true;
+    } catch {
+      // Try next method
+    }
+  }
+  return false;
 }
 
 /**

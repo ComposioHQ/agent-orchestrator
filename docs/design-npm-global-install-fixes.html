@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Design: True Two-Step Setup Fixes — Agent Orchestrator</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+      --accent: #58a6ff;
+      --green: #3fb950;
+      --red: #f85149;
+      --yellow: #d29922;
+      --orange: #db6d28;
+      --code-bg: #1c2128;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      padding: 40px 20px;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      font-size: 2rem;
+      margin-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 16px;
+    }
+
+    .meta {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      margin-bottom: 32px;
+    }
+
+    .meta span {
+      margin-right: 24px;
+    }
+
+    h2 {
+      font-size: 1.4rem;
+      margin-top: 40px;
+      margin-bottom: 16px;
+      color: var(--accent);
+    }
+
+    h3 {
+      font-size: 1.1rem;
+      margin-top: 28px;
+      margin-bottom: 12px;
+    }
+
+    p {
+      margin-bottom: 12px;
+    }
+
+    ul, ol {
+      margin: 8px 0 16px 24px;
+    }
+
+    li {
+      margin-bottom: 6px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0 24px;
+      font-size: 0.9rem;
+    }
+
+    th {
+      background: var(--surface);
+      text-align: left;
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      font-weight: 600;
+    }
+
+    td {
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      vertical-align: top;
+    }
+
+    tr:nth-child(even) td {
+      background: rgba(22, 27, 34, 0.5);
+    }
+
+    code {
+      background: var(--code-bg);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.85em;
+      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    }
+
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      overflow-x: auto;
+      margin: 12px 0 20px;
+      font-size: 0.85rem;
+      line-height: 1.5;
+    }
+
+    pre code {
+      background: none;
+      padding: 0;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+
+    .badge-p0 { background: rgba(248, 81, 73, 0.2); color: var(--red); }
+    .badge-p1 { background: rgba(210, 153, 34, 0.2); color: var(--yellow); }
+    .badge-p2 { background: rgba(219, 109, 40, 0.2); color: var(--orange); }
+    .badge-fixed { background: rgba(63, 185, 80, 0.2); color: var(--green); }
+
+    .before-after {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin: 16px 0 24px;
+    }
+
+    .before-after > div {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    .before-after h4 {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 10px;
+    }
+
+    .before-after .before h4 { color: var(--red); }
+    .before-after .after h4 { color: var(--green); }
+
+    .callout {
+      background: var(--surface);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 14px 18px;
+      margin: 16px 0 20px;
+      font-size: 0.9rem;
+    }
+
+    .callout-warning {
+      border-left-color: var(--yellow);
+    }
+
+    .callout-warning::before {
+      content: "Note: ";
+      color: var(--yellow);
+      font-weight: 600;
+    }
+
+    .callout-decision {
+      border-left-color: var(--green);
+    }
+
+    .callout-decision::before {
+      content: "Decision: ";
+      color: var(--green);
+      font-weight: 600;
+    }
+
+    .files-changed {
+      list-style: none;
+      padding: 0;
+    }
+
+    .files-changed li {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      padding: 2px 0;
+    }
+
+    .files-changed li::before {
+      content: "~";
+      color: var(--yellow);
+      margin-right: 8px;
+    }
+
+    .files-changed li.new::before {
+      content: "+";
+      color: var(--green);
+    }
+
+    .section-divider {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 40px 0;
+    }
+
+    .flow-diagram {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px;
+      margin: 16px 0 24px;
+      font-family: 'SFMono-Regular', Consolas, monospace;
+      font-size: 0.85rem;
+      line-height: 1.8;
+      white-space: pre;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <h1>True Two-Step Setup Fixes</h1>
+  <div class="meta">
+    <span>PR #638</span>
+    <span>Issues: #619, #624</span>
+    <span>Status: Open</span>
+    <span>Date: 2026-03-24</span>
+  </div>
+
+  <!-- ================================================================ -->
+  <h2>1. Problem Statement</h2>
+
+  <p>
+    The target onboarding experience for Agent Orchestrator is <strong>truly two commands
+    from a fresh machine</strong>:
+  </p>
+
+  <pre><code>npm install -g @composio/ao && ao start</code></pre>
+
+  <p>
+    <strong>This does not work.</strong> Multiple bugs cause <code>ao start</code> to fail after
+    a global npm install. Beyond the bugs, there is an architectural issue: <code>ao start</code>
+    hardcodes <code>runtime: "tmux"</code> in the generated config, making tmux a hidden
+    prerequisite that breaks the "two commands" promise.
+  </p>
+
+  <p>The failure chain on a fresh machine:</p>
+
+  <ol>
+    <li><strong>"Dependencies not installed"</strong> &mdash; <code>checkBuilt()</code> hardcoded path fails for npm hoisted layout</li>
+    <li><strong>"posix_spawnp: Operation not permitted"</strong> &mdash; node-pty spawn-helper missing execute bit</li>
+    <li><strong>tmux is a hidden prerequisite</strong> &mdash; config always sets <code>runtime: "tmux"</code>, orchestrator creation fails hard if tmux is missing, kills the dashboard</li>
+    <li><strong>Terminal server crash is permanent</strong> &mdash; no auto-restart after crash</li>
+  </ol>
+
+  <hr class="section-divider">
+
+  <!-- ================================================================ -->
+  <h2>2. Bug Analysis</h2>
+
+  <table>
+    <thead>
+      <tr><th>#</th><th>Bug</th><th>Severity</th><th>Issue</th><th>Affects</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td><code>checkBuilt()</code> hardcoded single-level path</td>
+        <td><span class="badge badge-p0">P0</span></td>
+        <td><a href="https://github.com/ComposioHQ/agent-orchestrator/issues/619">#619</a></td>
+        <td>All npm/yarn global installs</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td>node-pty <code>spawn-helper</code> missing execute bit</td>
+        <td><span class="badge badge-p0">P0</span></td>
+        <td><a href="https://github.com/ComposioHQ/agent-orchestrator/issues/624">#624</a></td>
+        <td>macOS + Linux npm installs</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td>tmux is a hidden prerequisite &mdash; hardcoded <code>runtime: "tmux"</code>, no auto-install, no fallback</td>
+        <td><span class="badge badge-p0">P0</span></td>
+        <td>&mdash;</td>
+        <td>Any fresh machine without tmux</td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td>Terminal server crash is permanent (no restart), bookkeeping bug on restart</td>
+        <td><span class="badge badge-p1">P1</span></td>
+        <td>Related to <a href="https://github.com/ComposioHQ/agent-orchestrator/issues/489">#489</a></td>
+        <td>linux-arm64 (AWS Graviton)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <hr class="section-divider">
+
+  <!-- ================================================================ -->
+  <h2>3. Fix 1 &mdash; checkBuilt() Walk-Up Resolution</h2>
+
+  <h3>Root Cause</h3>
+  <p>
+    <code>preflight.ts</code> verifies <code>@composio/ao-core</code> exists using a single hardcoded path:
+  </p>
+
+  <pre><code>// BEFORE: only checks one level deep
+const nodeModules = resolve(webDir, "node_modules", "@composio", "ao-core");</code></pre>
+
+  <p>
+    npm <strong>hoists</strong> dependencies to a parent <code>node_modules/</code>.
+    The check always fails for global installs because <code>ao-core</code> lives one or more
+    levels up from <code>ao-web</code>.
+  </p>
+
+  <div class="before-after">
+    <div class="before">
+      <h4>pnpm layout (works)</h4>
+      <pre><code>packages/web/
+  node_modules/
+    @composio/ao-core -> ../../core</code></pre>
+    </div>
+    <div class="after">
+      <h4>npm global layout (broken)</h4>
+      <pre><code>/usr/lib/node_modules/@composio/
+  ao-web/          # webDir
+  ao-core/         # sibling, not child</code></pre>
+    </div>
+  </div>
+
+  <h3>Fix</h3>
+  <p>
+    Replace with <code>findPackageUp()</code> &mdash; walks up directories checking
+    <code>node_modules/@composio/ao-core</code> at each level, mirroring Node's own resolution:
+  </p>
+
+  <pre><code>function findPackageUp(startDir: string, ...segments: string[]): string | null {
+  let dir = resolve(startDir);
+  while (true) {
+    const candidate = resolve(dir, "node_modules", ...segments);
+    if (existsSync(candidate)) return candidate;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}</code></pre>
+
+  <p>Error messages distinguish install method:</p>
+  <ul>
+    <li>Path contains <code>node_modules</code> &rarr; <code>"npm install -g @composio/ao@latest"</code></li>
+    <li>Otherwise &rarr; <code>"pnpm install && pnpm build"</code></li>
+  </ul>
+
+  <hr class="section-divider">
+
+  <!-- ================================================================ -->
+  <h2>4. Fix 2 &mdash; node-pty spawn-helper Postinstall</h2>
+
+  <h3>Root Cause</h3>
+  <p>
+    <code>node-pty@1.1.0</code> ships <code>spawn-helper</code> without the execute bit.
+    The monorepo's <code>scripts/rebuild-node-pty.js</code> fixes this via <code>node-gyp rebuild</code>,
+    but it hardcodes pnpm paths and never runs for npm global installs.
+    Upstream fix (<a href="https://github.com/microsoft/node-pty/pull/866">microsoft/node-pty#866</a>)
+    is only in <code>1.2.0-beta</code>.
+  </p>
+
+  <h3>Fix</h3>
+  <p>
+    New <code>packages/ao/bin/postinstall.js</code> runs after <code>npm install -g @composio/ao</code>.
+    Uses the same <code>findPackageUp</code> pattern to locate node-pty, then <code>chmod 0o755</code>
+    on <code>spawn-helper</code>. Skips on Windows, silent on failure.
+  </p>
+
+  <div class="callout callout-warning">
+    Temporary workaround. Remove when <code>node-pty</code> ships stable release with the upstream fix.
+  </div>
+
+  <hr class="section-divider">
+
+  <!-- ================================================================ -->
+  <h2>5. Fix 3 &mdash; tmux Auto-Install + Process Runtime Fallback</h2>
+
+  <h3>Root Cause</h3>
+  <p>
+    This was the biggest gap in the "two-step" promise. Three compounding issues:
+  </p>
+  <ul>
+    <li><code>start.ts:299</code> &mdash; Config generation hardcodes <code>runtime: "tmux"</code></li>
+    <li><code>start.ts:581-592</code> &mdash; Orchestrator creation fails hard if tmux runtime fails, then kills the dashboard</li>
+    <li><code>preflight.ts:checkTmux()</code> &mdash; Only showed <code>"brew install tmux"</code> (macOS-only), didn't attempt install</li>
+  </ul>
+
+  <p>On a fresh machine without tmux, the user saw:</p>
+  <pre><code>$ ao start
+✓ Config created: agent-orchestrator.yaml
+⚠ tmux not found — install with: brew install tmux
+...
+✗ Failed to setup orchestrator: tmux: command not found</code></pre>
+
+  <h3>Fix: Three-Layer Strategy</h3>
+
+  <div class="flow-diagram">ao start
+  &darr;
+  detectEnvironment() &rarr; hasTmux = false
+  &darr;
+  [1] Try auto-install tmux
+      macOS: brew install tmux
+      Linux: sudo apt-get install -y tmux || sudo dnf install -y tmux
+      &darr;
+      Success? &rarr; hasTmux = true, use runtime: "tmux"
+      &darr;
+      Fail? &rarr; continue
+  &darr;
+  [2] Fallback: generate config with runtime: "process"
+      (agents run as child processes instead of tmux sessions)
+  &darr;
+  [3] If auto-install impossible (e.g. no sudo, Windows):
+      Show platform-specific instructions as last resort</div>
+
+  <h3>Layer 1: Auto-Install</h3>
+  <p><code>checkTmux()</code> now attempts installation before throwing:</p>
+
+  <pre><code>async function autoInstallTmux(): Promise&lt;boolean&gt; {
+  const attempts =
+    process.platform === "darwin"
+      ? [{ cmd: "brew", args: ["install", "tmux"] }]
+      : process.platform === "linux"
+        ? [
+            { cmd: "sudo", args: ["apt-get", "install", "-y", "tmux"] },
+            { cmd: "sudo", args: ["dnf", "install", "-y", "tmux"] },
+          ]
+        : [];
+
+  for (const { cmd, args } of attempts) {
+    try {
+      await exec(cmd, args);
+      await exec("tmux", ["-V"]); // verify
+      return true;
+    } catch { /* try next */ }
+  }
+  return false;
+}</code></pre>
+
+  <h3>Layer 2: Process Runtime Fallback</h3>
+  <p>
+    <code>start.ts</code> config generation now checks <code>env.hasTmux</code>:
+  </p>
+
+  <pre><code>const runtime = env.hasTmux ? "tmux" : "process";</code></pre>
+
+  <p>
+    The <code>process</code> runtime (<code>@composio/ao-plugin-runtime-process</code>) runs agents as
+    plain child processes. No tmux dependency. Users get a working AO immediately &mdash; they
+    can install tmux later and update the config for the full experience.
+  </p>
+
+  <h3>Layer 3: Platform-Specific Error Messages</h3>
+  <p>If auto-install fails and the user needs manual action:</p>
+  <ul>
+    <li><strong>macOS:</strong> <code>brew install tmux</code></li>
+    <li><strong>Linux:</strong> <code>sudo apt install tmux (Debian/Ubuntu) or sudo dnf install tmux (Fedora)</code></li>
+    <li><strong>Windows:</strong> <code>tmux is not available on Windows. Use WSL: wsl --install, then: sudo apt install tmux</code></li>
+  </ul>
+
+  <div class="callout callout-decision">
+    Process runtime is a degraded experience (no tmux session attach, no terminal panel in dashboard),
+    but it unblocks the two-step setup completely. The user is informed and can upgrade to tmux later.
+  </div>
+
+  <hr class="section-divider">
+
+  <!-- ================================================================ -->
+  <h2>6. Fix 4 &mdash; Terminal Server Crash Recovery</h2>
+
+  <h3>Root Cause</h3>
+  <p>
+    <code>start-all.ts</code> spawns three child processes. If a terminal server crashes,
+    it logs the exit and never restarts.
+  </p>
+
+  <h3>Fix</h3>
+  <p>
+    Auto-restart logic with <strong>correct bookkeeping</strong>:
+  </p>
+
+  <ul>
+    <li>Terminal servers restart up to <strong>3 times</strong> on non-zero exit</li>
+    <li>Next.js is <strong>not</strong> restarted</li>
+    <li>No restart during graceful shutdown</li>
+  </ul>
+
+  <h3>Bookkeeping: Slot-Based Child Tracking</h3>
+  <p>
+    The initial version had a bug: <code>launch()</code> always called <code>children.push(child)</code>,
+    creating duplicate entries on restart. The <code>cleanup()</code> function counts
+    <code>children.length</code> and waits for exits, so stale handles would skew the alive count
+    and trigger the 5-second force-shutdown timer.
+  </p>
+
+  <p>Fix: each process gets a <strong>slot index</strong> assigned on first launch. Restarts replace in-place:</p>
+
+  <pre><code>let slotIndex = -1;
+
+function launch(): ChildProcess {
+  const child = spawn(command, args, { ... });
+
+  child.on("exit", (code) => {
+    if (!shuttingDown && opts?.restart && code !== 0 && restarts < maxRestarts) {
+      restarts++;
+      const replacement = launch();
+      children[slotIndex] = replacement; // replace in-place
+    }
+  });
+
+  // Only push on first launch; restarts replace the existing slot
+  if (slotIndex === -1) {
+    slotIndex = children.length;
+    children.push(child);
+  }
+
+  return child;
+}</code></pre>
+
+  <hr class="section-divider">
+
+  <!-- ================================================================ -->
+  <h2>7. Files Changed</h2>
+
+  <ul class="files-changed">
+    <li>packages/cli/src/lib/preflight.ts &mdash; walk-up resolver, auto-install tmux, platform messages</li>
+    <li>packages/cli/src/commands/start.ts &mdash; runtime fallback to "process", auto-install attempt</li>
+    <li class="new">packages/ao/bin/postinstall.js &mdash; node-pty spawn-helper chmod</li>
+    <li>packages/ao/package.json &mdash; postinstall script registration</li>
+    <li>packages/web/server/start-all.ts &mdash; restart logic with slot-based bookkeeping</li>
+    <li>eslint.config.js &mdash; packages/ao/bin globals override</li>
+    <li>packages/cli/__tests__/lib/preflight.test.ts &mdash; expanded tests</li>
+  </ul>
+
+  <hr class="section-divider">
+
+  <!-- ================================================================ -->
+  <h2>8. What Was Already Working</h2>
+
+  <p>Investigated but not broken:</p>
+
+  <table>
+    <thead>
+      <tr><th>Suspected Blocker</th><th>Actual State</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Port 3000 conflict</td>
+        <td><span class="badge badge-fixed">Already fixed</span> &mdash; <code>findFreePort(port + 1)</code> auto-increments up to 100 ports</td>
+      </tr>
+      <tr>
+        <td>node-pty crash kills dashboard</td>
+        <td><span class="badge badge-fixed">Already handled</span> &mdash; <code>direct-terminal-ws.ts</code> catches import failure, gracefully rejects connections</td>
+      </tr>
+      <tr>
+        <td><code>findWebDir()</code> in global install</td>
+        <td><span class="badge badge-fixed">Already handled</span> &mdash; uses <code>require.resolve()</code> with proper walk-up</td>
+      </tr>
+      <tr>
+        <td><code>concurrently</code> at runtime</td>
+        <td><span class="badge badge-fixed">Already fixed</span> &mdash; production uses <code>node dist-server/start-all.js</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <hr class="section-divider">
+
+  <!-- ================================================================ -->
+  <h2>9. Post-Merge: True Two-Step Matrix</h2>
+
+  <p>After this PR, <code>npm install -g @composio/ao && ao start</code> works on:</p>
+
+  <table>
+    <thead>
+      <tr><th>Platform</th><th>tmux Available</th><th>tmux Not Available</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>macOS (Intel + Apple Silicon)</td>
+        <td><span class="badge badge-fixed">Full experience</span><br>runtime: tmux</td>
+        <td><span class="badge badge-fixed">Auto-installs via brew</span><br>Falls back to process if brew missing</td>
+      </tr>
+      <tr>
+        <td>Linux x64</td>
+        <td><span class="badge badge-fixed">Full experience</span><br>runtime: tmux</td>
+        <td><span class="badge badge-fixed">Auto-installs via apt/dnf</span><br>Falls back to process if sudo unavailable</td>
+      </tr>
+      <tr>
+        <td>Linux arm64 (Graviton)</td>
+        <td><span class="badge badge-fixed">Works</span><br>Direct terminal unavailable (no node-pty prebuild)</td>
+        <td><span class="badge badge-fixed">Falls back to process</span><br>Functional but no tmux attach</td>
+      </tr>
+      <tr>
+        <td>Windows</td>
+        <td>N/A</td>
+        <td><span class="badge badge-p2">Falls back to process</span><br>Error message guides to WSL for full experience</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>
+    <strong>Key improvement:</strong> No platform requires manual prerequisite installation before
+    <code>ao start</code>. The worst case is <code>runtime: "process"</code> &mdash; a degraded
+    but functional experience.
+  </p>
+
+  <hr class="section-divider">
+
+  <!-- ================================================================ -->
+  <h2>10. Testing</h2>
+
+  <table>
+    <thead>
+      <tr><th>Check</th><th>Result</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>TypeScript typecheck</td><td>Passes (CLI + web server)</td></tr>
+      <tr><td>ESLint</td><td>No new errors on changed files</td></tr>
+      <tr><td>Preflight tests</td><td>15/15 pass (expanded from 13)</td></tr>
+      <tr><td>CLI tests</td><td>222/223 pass (1 = pre-existing flaky doctor-script.test.ts)</td></tr>
+    </tbody>
+  </table>
+
+  <h3>New/Updated Test Cases</h3>
+  <table>
+    <thead>
+      <tr><th>Test</th><th>What It Verifies</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>pnpm layout (direct match)</td>
+        <td><code>findPackageUp</code> finds ao-core in webDir/node_modules on first check</td>
+      </tr>
+      <tr>
+        <td>npm hoisted layout (walk-up)</td>
+        <td><code>findPackageUp</code> misses first level, finds ao-core one level up</td>
+      </tr>
+      <tr>
+        <td>npm hint on missing deps</td>
+        <td>Global install path shows <code>npm install -g</code> hint</td>
+      </tr>
+      <tr>
+        <td>pnpm hint on missing deps</td>
+        <td>Monorepo path shows <code>pnpm install && pnpm build</code> hint</td>
+      </tr>
+      <tr>
+        <td>Missing dist</td>
+        <td>ao-core found but <code>dist/index.js</code> missing shows build hint</td>
+      </tr>
+      <tr>
+        <td>tmux auto-install success</td>
+        <td>When tmux -V fails initially but install succeeds, checkTmux passes</td>
+      </tr>
+      <tr>
+        <td>tmux auto-install failure</td>
+        <td>When all install attempts fail, throws with platform-specific instructions</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <hr class="section-divider">
+
+  <!-- ================================================================ -->
+  <h2>11. Design Decisions</h2>
+
+  <div class="callout callout-decision">
+    <strong>Auto-install tmux rather than just messaging.</strong>
+    Showing "install tmux" defeats the two-step promise. We try brew (macOS) and apt/dnf (Linux)
+    automatically. If sudo is unavailable or the package manager fails, we fall back to process
+    runtime instead of blocking.
+  </div>
+
+  <div class="callout callout-decision">
+    <strong>Process runtime as fallback, not an error.</strong>
+    The <code>process</code> runtime runs agents as child processes. It lacks tmux session attach
+    and the dashboard terminal panel, but agents work correctly. Users see
+    <code>"Using process runtime (tmux not available)"</code> and can upgrade later.
+  </div>
+
+  <div class="callout callout-decision">
+    <strong>Slot-based restart bookkeeping.</strong>
+    Each child process gets a fixed slot index in the <code>children</code> array on first launch.
+    Restarts replace in-place (<code>children[slotIndex] = replacement</code>) instead of pushing,
+    preventing duplicate entries that would break the cleanup countdown.
+  </div>
+
+  <div class="callout callout-decision">
+    <strong>Postinstall is temporary.</strong>
+    The <code>spawn-helper</code> chmod workaround will be removed once <code>node-pty</code> ships
+    a stable release with the upstream fix (microsoft/node-pty#866).
+  </div>
+
+</div>
+</body>
+</html>

@@ -294,10 +294,15 @@ async function autoCreateConfig(workingDir: string): Promise<OrchestratorConfig>
     console.log(chalk.yellow(`  ⚠ Port ${DEFAULT_PORT} is busy — using ${port} instead.`));
   }
 
+  const runtime = env.hasTmux ? "tmux" : "process";
+  if (runtime === "process") {
+    console.log(chalk.dim("  Using process runtime (tmux not available)"));
+  }
+
   const config: Record<string, unknown> = {
     port: port ?? DEFAULT_PORT,
     defaults: {
-      runtime: "tmux",
+      runtime,
       agent,
       workspace: "worktree",
       notifiers: ["desktop"],
@@ -331,13 +336,14 @@ async function autoCreateConfig(workingDir: string): Promise<OrchestratorConfig>
   }
 
   if (!env.hasTmux) {
-    const tmuxHint =
-      process.platform === "darwin"
-        ? "brew install tmux"
-        : process.platform === "win32"
-          ? "Use WSL: wsl --install, then: sudo apt install tmux"
-          : "sudo apt install tmux (Debian/Ubuntu) or sudo dnf install tmux (Fedora)";
-    console.log(chalk.yellow(`⚠ tmux not found — install with: ${tmuxHint}`));
+    console.log(chalk.yellow("⚠ tmux not found — attempting auto-install..."));
+    try {
+      await preflight.checkTmux(); // attempts auto-install
+      env.hasTmux = true;
+      console.log(chalk.green("  ✓ tmux installed successfully"));
+    } catch {
+      console.log(chalk.yellow("  ⚠ Could not auto-install tmux — using process runtime instead"));
+    }
   }
   if (!env.ghAuthed && env.hasGh) {
     console.log(chalk.yellow("⚠ GitHub CLI not authenticated — run: gh auth login"));

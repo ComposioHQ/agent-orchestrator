@@ -91,22 +91,26 @@ describe("preflight.checkBuilt", () => {
 });
 
 describe("preflight.checkTmux", () => {
-  it("passes when tmux is installed", async () => {
+  it("passes when tmux is already installed", async () => {
     mockExec.mockResolvedValue({ stdout: "tmux 3.3a", stderr: "" });
     await expect(preflight.checkTmux()).resolves.toBeUndefined();
     expect(mockExec).toHaveBeenCalledWith("tmux", ["-V"]);
   });
 
-  it("throws when tmux is not installed", async () => {
-    mockExec.mockRejectedValue(new Error("ENOENT"));
-    await expect(preflight.checkTmux()).rejects.toThrow(
-      "tmux is not installed",
-    );
+  it("attempts auto-install when tmux is missing", async () => {
+    // First call: tmux -V fails (not installed)
+    // Second call: auto-install attempt (brew/apt/dnf)
+    // Third call: tmux -V succeeds (installed now)
+    mockExec
+      .mockRejectedValueOnce(new Error("ENOENT")) // tmux -V
+      .mockResolvedValueOnce({ stdout: "", stderr: "" }) // install command
+      .mockResolvedValueOnce({ stdout: "tmux 3.3a", stderr: "" }); // verify
+    await expect(preflight.checkTmux()).resolves.toBeUndefined();
   });
 
-  it("includes platform-appropriate install instruction in error", async () => {
+  it("throws with install instructions when auto-install fails", async () => {
+    // All attempts fail
     mockExec.mockRejectedValue(new Error("ENOENT"));
-    // On macOS: brew install tmux, on Linux: apt/dnf, on Windows: WSL
     const err = await preflight.checkTmux().catch((e: Error) => e);
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toContain("tmux is not installed");

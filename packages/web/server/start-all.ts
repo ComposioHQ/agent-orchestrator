@@ -30,6 +30,7 @@ function spawnProcess(
 ): ChildProcess {
   let restarts = 0;
   const maxRestarts = opts?.maxRestarts ?? 3;
+  let slotIndex = -1;
 
   function launch(): ChildProcess {
     const child = spawn(command, args, {
@@ -56,13 +57,17 @@ function spawnProcess(
         restarts++;
         log(label, `restarting (attempt ${restarts}/${maxRestarts})`);
         const replacement = launch();
-        const idx = children.indexOf(child);
-        if (idx !== -1) children[idx] = replacement;
-        else children.push(replacement);
+        // Replace in-place — slot was assigned on first push
+        children[slotIndex] = replacement;
       }
     });
 
-    children.push(child);
+    // Only push on first launch; restarts replace the existing slot
+    if (slotIndex === -1) {
+      slotIndex = children.length;
+      children.push(child);
+    }
+
     return child;
   }
 
