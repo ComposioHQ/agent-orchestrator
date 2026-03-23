@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   type DashboardSession,
   type DashboardStats,
@@ -68,15 +68,15 @@ export function Dashboard({
   const isMobile = useIsMobile();
   const [sidebarCollapsed, setSidebarCollapsed] = useLocalStorage("ao-sidebar-collapsed", false);
   const [sidebarWidth, setSidebarWidth] = useLocalStorage("ao-sidebar-width", 180);
-  const [mobileForceCollapsed, setMobileForceCollapsed] = useState(false);
+  const [mobileForceCollapsed, setMobileForceCollapsed] = useState(() => {
+    if (typeof window === "undefined") return true;
+    return window.matchMedia("(max-width: 767px)").matches;
+  });
   useEffect(() => {
-    if (isMobile) {
-      setMobileForceCollapsed(true);
-    } else {
-      setMobileForceCollapsed(false);
-    }
+    setMobileForceCollapsed(isMobile);
   }, [isMobile]);
   const effectiveSidebarCollapsed = isMobile ? mobileForceCollapsed : sidebarCollapsed;
+  const noop = useCallback(() => {}, []);
   const { sessions, globalPause } = useSessionEvents(initialSessions, initialGlobalPause, projectId);
   const [rateLimitDismissed, setRateLimitDismissed] = useState(false);
   const [dismissedPauseKey, setDismissedPauseKey] = useState<string | null>(null);
@@ -184,7 +184,7 @@ export function Dashboard({
               collapsed={false}
               onCollapsedChange={() => setMobileForceCollapsed(true)}
               width={260}
-              onWidthChange={setSidebarWidth}
+              onWidthChange={noop}
             />
           </div>
         </>

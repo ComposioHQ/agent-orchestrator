@@ -2,7 +2,6 @@ import type { AttentionLevel, DashboardOrchestratorLink } from "@/lib/types";
 import type { ProjectInfo } from "@/lib/project-name";
 import { ProjectMetric } from "./ProjectMetric";
 import { SpawnOrchestratorButton } from "./SpawnOrchestratorButton";
-import { EmptyState } from "./EmptyState";
 
 export interface ProjectOverview {
   project: ProjectInfo;
@@ -23,31 +22,6 @@ export function ProjectOverviewGrid({
   spawningProjectIds: string[];
   spawnErrors: Record<string, string>;
 }) {
-  if (overviews.length === 0) {
-    return (
-      <div className="mb-8">
-        <EmptyState
-          icon={
-            <svg className="h-8 w-8" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
-              <path d="M2 20h20M5 20V10l7-6 7 6v10M9 20v-5h6v5" />
-            </svg>
-          }
-          message="No projects configured"
-          description="Add a project to get started with the orchestrator."
-          action={
-            <p className="text-[11px] text-[var(--color-text-tertiary)]">
-              Run{" "}
-              <code className="rounded bg-[rgba(255,255,255,0.06)] px-1 py-0.5 font-[var(--font-mono)] text-[10px]">
-                ao init &lt;path&gt;
-              </code>{" "}
-              to add a project
-            </p>
-          }
-        />
-      </div>
-    );
-  }
-
   return (
     <div className="mb-8 grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-3">
       {overviews.map(({ project, orchestrator, sessionCount, openPRCount, counts }) => (
