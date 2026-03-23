@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const { config, registry } = await getServices();
-    const allIssues: Array<{ projectId: string; id: string; title: string; url: string; state: string; labels: string[] }> = [];
+    const allIssues: Array<{ projectId: string; id: string; title: string; url: string; state: string; labels: string[]; issueType?: string; statusName?: string }> = [];
 
     for (const [projectId, project] of Object.entries(config.projects)) {
       if (projectFilter && projectId !== projectFilter) continue;

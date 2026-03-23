@@ -4,6 +4,8 @@ import { loadConfig } from "@composio/ao-core";
 export interface ProjectInfo {
   id: string;
   name: string;
+  /** Labels used to filter backlog issues for this project (from tracker.trigger.labels) */
+  triggerLabels?: string[];
 }
 
 export const getProjectName = cache((): string => {
@@ -34,10 +36,15 @@ export const getPrimaryProjectId = cache((): string => {
 export const getAllProjects = cache((): ProjectInfo[] => {
   try {
     const config = loadConfig();
-    return Object.entries(config.projects).map(([id, project]) => ({
-      id,
-      name: project.name ?? id,
-    }));
+    return Object.entries(config.projects).map(([id, project]) => {
+      const trigger = (project.tracker as { trigger?: { labels?: string[] } } | undefined)
+        ?.trigger;
+      return {
+        id,
+        name: project.name ?? id,
+        triggerLabels: trigger?.labels,
+      };
+    });
   } catch {
     return [];
   }

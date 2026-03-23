@@ -36,9 +36,15 @@ const borderColorByLevel: Record<AttentionLevel, string> = {
 function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: SessionCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [sendingAction, setSendingAction] = useState<string | null>(null);
+  const [qaReply, setQaReply] = useState("");
+  const [sendingQa, setSendingQa] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const level = getAttentionLevel(session);
   const pr = session.pr;
+
+  const needsInput =
+    session.status === "needs_input" ||
+    session.activity === "waiting_input";
 
   useEffect(() => {
     return () => {
@@ -51,6 +57,18 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
     onSend?.(session.id, message);
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => setSendingAction(null), 2000);
+  };
+
+  const handleQaSend = async () => {
+    const message = qaReply.trim();
+    if (!message) return;
+    setSendingQa(true);
+    try {
+      await onSend?.(session.id, message);
+      setQaReply("");
+    } finally {
+      setSendingQa(false);
+    }
   };
 
   const rateLimited = pr ? isPRRateLimited(pr) : false;
@@ -217,6 +235,41 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Q&A panel — agent waiting for human input */}
+      {needsInput && (
+        <div
+          className="mx-4 mb-3.5 rounded-[6px] border border-[rgba(239,68,68,0.25)] bg-[rgba(239,68,68,0.04)] p-3"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <p className="mb-2 text-[11px] font-semibold text-[var(--color-status-error)]">
+            Agent waiting for input
+          </p>
+          <div className="flex gap-2">
+            <textarea
+              value={qaReply}
+              onChange={(e) => setQaReply(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  void handleQaSend();
+                }
+              }}
+              placeholder="Type your reply… (Enter to send)"
+              rows={2}
+              className="flex-1 resize-none rounded-[5px] border border-[var(--color-border-default)] bg-[var(--color-bg-input,var(--color-bg-elevated))] px-2.5 py-1.5 font-[var(--font-mono)] text-[11px] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:border-[var(--color-accent)] focus:outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => void handleQaSend()}
+              disabled={sendingQa || !qaReply.trim()}
+              className="self-end rounded-[6px] border border-[var(--color-border-default)] px-3 py-1.5 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {sendingQa ? "Sending…" : "Send"}
+            </button>
+          </div>
         </div>
       )}
 

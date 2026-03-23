@@ -17,6 +17,7 @@ import { PRTableRow } from "./PRStatus";
 import { DynamicFavicon } from "./DynamicFavicon";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
 import { ProjectSidebar } from "./ProjectSidebar";
+import { BacklogPanel } from "./BacklogPanel";
 import type { ProjectInfo } from "@/lib/project-name";
 
 interface DashboardProps {
@@ -338,6 +339,13 @@ export function Dashboard({
             onSpawnOrchestrator={handleSpawnOrchestrator}
             spawningProjectIds={spawningProjectIds}
             spawnErrors={spawnErrors}
+          />
+        )}
+
+        {!allProjectsView && projectId && (
+          <BacklogPanel
+            projectId={projectId}
+            triggerLabels={projects.find((p) => p.id === projectId)?.triggerLabels}
           />
         )}
 
