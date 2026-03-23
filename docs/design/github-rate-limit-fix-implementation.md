@@ -356,29 +356,35 @@ curl http://localhost:3000/api/stats
 
 ### Potential Improvements
 
-1. **Batched PR View** - Combine multiple `gh pr view` calls into a single request with all fields
-2. **Persistent Cache** - Use Redis or disk cache for multi-process scenarios
-3. **Webhook Invalidation** - Use GitHub webhooks to proactively invalidate cache
-4. **Cache Metrics** - Expose hit/miss rates for monitoring
-5. **Configurable TTL** - Allow users to adjust TTL via config
+1. **Persistent Cache** - Use Redis or disk cache for multi-process scenarios
+2. **Webhook Invalidation** - Use GitHub webhooks to proactively invalidate cache
+3. **Cache Metrics** - Expose hit/miss rates for monitoring
+4. **Configurable TTL** - Allow users to adjust TTL via config
+5. **Batched GraphQL** - Extend batching to GraphQL API calls for additional savings
 
-### Batched PR View (Future Work)
+### Batched PR View (Implemented)
 
-Currently, multiple `gh pr view` calls are made for different fields. A future enhancement would batch them:
+Multiple `gh pr view` calls with different fields are now combined into a single call:
 
 ```typescript
 // Instead of 3 separate calls:
 await gh(["pr", "view", "123", "--json", "state,title"])
-await gh(["pr", "view", "123", "--json", "reviewDecision"])
-await gh(["pr", "view", "123", "--json", "mergeable,mergeStateStatus"])
+await gh(["pr", "view", "123", "--json", "reviews"])
+await gh(["pr", "view", "123", "--json", "mergeable,reviewDecision"])
 
 // One call with all fields:
 await gh(["pr", "view", "123", "--json",
-  "state,title,reviewDecision,mergeable,mergeStateStatus,isDraft,reviews"
+  "state,title,reviews,mergeable,reviewDecision"
 ])
 ```
 
-This would reduce per-enrichment calls from 7 to 4 (43% reduction before caching, ~95% with caching).
+This reduces concurrent enrichment calls by up to 66% (3 calls → 1 call).
+
+**Implementation Details:**
+- `batchGhPRView()` collects concurrent requests for same PR
+- 5ms delay window allows multiple requests to join batch
+- Full result is cached and requested fields are extracted for each caller
+- Existing `GhCache` deduplication still prevents duplicate concurrent requests
 
 ---
 
