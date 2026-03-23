@@ -262,9 +262,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     let detectedIdleTimestamp: Date | null = null;
     let runtimeDead = false;
 
+    const resolvedRuntimeName =
+      session.runtimeHandle?.runtimeName ?? project.runtime ?? config.defaults.runtime;
+
     // 1. Check if runtime is alive
     if (session.runtimeHandle) {
-      const runtime = registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime);
+      const runtime = registry.get<Runtime>("runtime", resolvedRuntimeName);
       if (runtime) {
         const alive = await runtime.isAlive(session.runtimeHandle).catch(() => true);
         if (!alive) {
@@ -299,10 +302,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           // proceed to PR checks below
         } else {
           // getActivityState returned null — fall back to terminal output parsing
-          const runtime = registry.get<Runtime>(
-            "runtime",
-            project.runtime ?? config.defaults.runtime,
-          );
+          const runtime = registry.get<Runtime>("runtime", resolvedRuntimeName);
           const terminalOutput = runtime ? await runtime.getOutput(session.runtimeHandle, 10) : "";
           if (terminalOutput) {
             const activity = agent.detectActivity(terminalOutput);
