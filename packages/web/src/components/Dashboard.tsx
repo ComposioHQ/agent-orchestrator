@@ -344,6 +344,7 @@ export function Dashboard({
 
         {!allProjectsView && projectId && (
           <BacklogPanel
+            key={projectId}
             projectId={projectId}
             triggerLabels={projects.find((p) => p.id === projectId)?.triggerLabels}
             columns={projects.find((p) => p.id === projectId)?.columns}
