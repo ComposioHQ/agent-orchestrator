@@ -428,16 +428,14 @@ const nodeModules = resolve(webDir, "node_modules", "@composio", "ao-core");</co
       &darr;
       Success? &rarr; hasTmux = true, use runtime: "tmux"
       &darr;
-      Fail? &rarr; continue
+      Fail? &rarr; exit with clear instructions
   &darr;
-  [2] Fallback: generate config with runtime: "process"
-      (agents run as child processes instead of tmux sessions)
-  &darr;
-  [3] If auto-install impossible (e.g. no sudo, Windows):
-      Show platform-specific instructions as last resort</div>
+  [2] If auto-install fails:
+      Show platform-specific install command + "then re-run ao start"
+      Exit with code 1</div>
 
-  <h3>Layer 1: Auto-Install</h3>
-  <p><code>checkTmux()</code> now attempts installation before throwing:</p>
+  <h3>Auto-Install</h3>
+  <p><code>checkTmux()</code> now attempts installation before erroring:</p>
 
   <pre><code>async function autoInstallTmux(): Promise&lt;boolean&gt; {
   const attempts =
@@ -460,30 +458,25 @@ const nodeModules = resolve(webDir, "node_modules", "@composio", "ao-core");</co
   return false;
 }</code></pre>
 
-  <h3>Layer 2: Process Runtime Fallback</h3>
+  <h3>Clear Error on Failure</h3>
   <p>
-    <code>start.ts</code> config generation now checks <code>env.hasTmux</code>:
+    If auto-install fails, <code>ao start</code> exits with a clear, actionable message
+    instead of silently degrading to a limited runtime:
   </p>
 
-  <pre><code>const runtime = env.hasTmux ? "tmux" : "process";</code></pre>
+  <pre><code>✗ tmux is required but could not be installed automatically.
 
-  <p>
-    The <code>process</code> runtime (<code>@composio/ao-plugin-runtime-process</code>) runs agents as
-    plain child processes. No tmux dependency. Users get a working AO immediately &mdash; they
-    can install tmux later and update the config for the full experience.
-  </p>
+  Install tmux manually, then re-run ao start:
 
-  <h3>Layer 3: Platform-Specific Error Messages</h3>
-  <p>If auto-install fails and the user needs manual action:</p>
-  <ul>
-    <li><strong>macOS:</strong> <code>brew install tmux</code></li>
-    <li><strong>Linux:</strong> <code>sudo apt install tmux (Debian/Ubuntu) or sudo dnf install tmux (Fedora)</code></li>
-    <li><strong>Windows:</strong> <code>tmux is not available on Windows. Use WSL: wsl --install, then: sudo apt install tmux</code></li>
-  </ul>
+    brew install tmux          # macOS
+    sudo apt install tmux      # Debian/Ubuntu
+    sudo dnf install tmux      # Fedora/RHEL</code></pre>
 
   <div class="callout callout-decision">
-    Process runtime is a degraded experience (no tmux session attach, no terminal panel in dashboard),
-    but it unblocks the two-step setup completely. The user is informed and can upgrade to tmux later.
+    We chose to block and show clear instructions rather than fall back to <code>runtime: "process"</code>.
+    The process runtime lacks session attach, terminal panel, and message sending &mdash; core AO
+    features. A degraded first impression is worse than a one-line install command that gives the
+    full experience.
   </div>
 
   <hr class="section-divider">
@@ -591,7 +584,7 @@ function launch(): ChildProcess {
   <!-- ================================================================ -->
   <h2>9. Post-Merge: True Two-Step Matrix</h2>
 
-  <p>After this PR, <code>npm install -g @composio/ao && ao start</code> works on:</p>
+  <p>After this PR, <code>npm install -g @composio/ao && ao start</code>:</p>
 
   <table>
     <thead>
@@ -600,31 +593,31 @@ function launch(): ChildProcess {
     <tbody>
       <tr>
         <td>macOS (Intel + Apple Silicon)</td>
-        <td><span class="badge badge-fixed">Full experience</span><br>runtime: tmux</td>
-        <td><span class="badge badge-fixed">Auto-installs via brew</span><br>Falls back to process if brew missing</td>
+        <td><span class="badge badge-fixed">Works</span></td>
+        <td><span class="badge badge-fixed">Auto-installs via brew</span><br>Clear error if brew missing</td>
       </tr>
       <tr>
         <td>Linux x64</td>
-        <td><span class="badge badge-fixed">Full experience</span><br>runtime: tmux</td>
-        <td><span class="badge badge-fixed">Auto-installs via apt/dnf</span><br>Falls back to process if sudo unavailable</td>
+        <td><span class="badge badge-fixed">Works</span></td>
+        <td><span class="badge badge-fixed">Auto-installs via apt/dnf</span><br>Clear error if sudo unavailable</td>
       </tr>
       <tr>
         <td>Linux arm64 (Graviton)</td>
         <td><span class="badge badge-fixed">Works</span><br>Direct terminal unavailable (no node-pty prebuild)</td>
-        <td><span class="badge badge-fixed">Falls back to process</span><br>Functional but no tmux attach</td>
+        <td><span class="badge badge-fixed">Auto-installs via apt/dnf</span><br>Clear error if sudo unavailable</td>
       </tr>
       <tr>
         <td>Windows</td>
         <td>N/A</td>
-        <td><span class="badge badge-p2">Falls back to process</span><br>Error message guides to WSL for full experience</td>
+        <td><span class="badge badge-p2">Clear error</span><br>Guides user to WSL</td>
       </tr>
     </tbody>
   </table>
 
   <p>
-    <strong>Key improvement:</strong> No platform requires manual prerequisite installation before
-    <code>ao start</code>. The worst case is <code>runtime: "process"</code> &mdash; a degraded
-    but functional experience.
+    <strong>Key improvement:</strong> Most platforms get tmux auto-installed. When auto-install
+    fails, the user gets a one-line command to copy-paste, then <code>ao start</code> again.
+    No degraded modes, no confusing config state.
   </p>
 
   <hr class="section-divider">
@@ -687,17 +680,11 @@ function launch(): ChildProcess {
   <h2>11. Design Decisions</h2>
 
   <div class="callout callout-decision">
-    <strong>Auto-install tmux rather than just messaging.</strong>
-    Showing "install tmux" defeats the two-step promise. We try brew (macOS) and apt/dnf (Linux)
-    automatically. If sudo is unavailable or the package manager fails, we fall back to process
-    runtime instead of blocking.
-  </div>
-
-  <div class="callout callout-decision">
-    <strong>Process runtime as fallback, not an error.</strong>
-    The <code>process</code> runtime runs agents as child processes. It lacks tmux session attach
-    and the dashboard terminal panel, but agents work correctly. Users see
-    <code>"Using process runtime (tmux not available)"</code> and can upgrade later.
+    <strong>Auto-install tmux, then block with clear instructions on failure.</strong>
+    We try brew (macOS) and apt/dnf (Linux) automatically. If auto-install fails, we exit
+    with a clear one-line install command rather than falling back to <code>runtime: "process"</code>.
+    The process runtime lacks session attach, terminal panel, and <code>ao send</code> &mdash;
+    a degraded first impression is worse than asking the user to run one command.
   </div>
 
   <div class="callout callout-decision">

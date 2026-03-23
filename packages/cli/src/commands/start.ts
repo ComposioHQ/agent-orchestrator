@@ -294,15 +294,10 @@ async function autoCreateConfig(workingDir: string): Promise<OrchestratorConfig>
     console.log(chalk.yellow(`  ⚠ Port ${DEFAULT_PORT} is busy — using ${port} instead.`));
   }
 
-  const runtime = env.hasTmux ? "tmux" : "process";
-  if (runtime === "process") {
-    console.log(chalk.dim("  Using process runtime (tmux not available)"));
-  }
-
   const config: Record<string, unknown> = {
     port: port ?? DEFAULT_PORT,
     defaults: {
-      runtime,
+      runtime: "tmux",
       agent,
       workspace: "worktree",
       notifiers: ["desktop"],
@@ -341,8 +336,20 @@ async function autoCreateConfig(workingDir: string): Promise<OrchestratorConfig>
       await preflight.checkTmux(); // attempts auto-install
       env.hasTmux = true;
       console.log(chalk.green("  ✓ tmux installed successfully"));
-    } catch {
-      console.log(chalk.yellow("  ⚠ Could not auto-install tmux — using process runtime instead"));
+    } catch (err) {
+      console.error(chalk.red("\n✗ tmux is required but could not be installed automatically.\n"));
+      console.log(chalk.bold("  Install tmux manually, then re-run ao start:\n"));
+      if (process.platform === "darwin") {
+        console.log(chalk.cyan("    brew install tmux"));
+      } else if (process.platform === "win32") {
+        console.log(chalk.cyan("    # Install WSL first, then inside WSL:"));
+        console.log(chalk.cyan("    sudo apt install tmux"));
+      } else {
+        console.log(chalk.cyan("    sudo apt install tmux      # Debian/Ubuntu"));
+        console.log(chalk.cyan("    sudo dnf install tmux      # Fedora/RHEL"));
+      }
+      console.log();
+      process.exit(1);
     }
   }
   if (!env.ghAuthed && env.hasGh) {
