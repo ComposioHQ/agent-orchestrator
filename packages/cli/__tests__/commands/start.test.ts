@@ -23,6 +23,7 @@ const {
   mockWaitForPortAndOpen,
   mockSpawn,
   mockEnsureLifecycleWorker,
+  mockGetLifecycleWorkerStatus,
   mockStopLifecycleWorker,
   mockIsAlreadyRunning,
   mockIsHumanCaller,
@@ -43,6 +44,12 @@ const {
   mockWaitForPortAndOpen: vi.fn().mockResolvedValue(undefined),
   mockSpawn: vi.fn(),
   mockEnsureLifecycleWorker: vi.fn(),
+  mockGetLifecycleWorkerStatus: vi.fn().mockReturnValue({
+    running: true,
+    pid: 4243,
+    pidFile: "/tmp/lifecycle-worker.pid",
+    logFile: "/tmp/lifecycle-worker.log",
+  }),
   mockStopLifecycleWorker: vi.fn(),
   mockIsAlreadyRunning: vi.fn().mockResolvedValue(null),
   mockIsHumanCaller: vi.fn().mockReturnValue(true),
@@ -95,6 +102,7 @@ vi.mock("../../src/lib/create-session-manager.js", () => ({
 
 vi.mock("../../src/lib/lifecycle-service.js", () => ({
   ensureLifecycleWorker: (...args: unknown[]) => mockEnsureLifecycleWorker(...args),
+  getLifecycleWorkerStatus: (...args: unknown[]) => mockGetLifecycleWorkerStatus(...args),
   stopLifecycleWorker: (...args: unknown[]) => mockStopLifecycleWorker(...args),
 }));
 
@@ -135,7 +143,13 @@ vi.mock("../../src/lib/caller-context.js", () => ({
 
 vi.mock("../../src/lib/detect-env.js", () => ({
   detectEnvironment: vi.fn().mockResolvedValue({
-    git: { isRepo: true, remoteUrl: null, ownerRepo: null, currentBranch: "main", defaultBranch: "main" },
+    git: {
+      isRepo: true,
+      remoteUrl: null,
+      ownerRepo: null,
+      currentBranch: "main",
+      defaultBranch: "main",
+    },
     tools: { hasTmux: true, hasGh: false, ghAuthed: false },
     apiKeys: { hasLinear: false, hasSlack: false },
   }),
@@ -205,6 +219,13 @@ beforeEach(() => {
     running: true,
     started: true,
     pid: 12345,
+    pidFile: "/tmp/lifecycle-worker.pid",
+    logFile: "/tmp/lifecycle-worker.log",
+  });
+  mockGetLifecycleWorkerStatus.mockReset();
+  mockGetLifecycleWorkerStatus.mockReturnValue({
+    running: true,
+    pid: 4243,
     pidFile: "/tmp/lifecycle-worker.pid",
     logFile: "/tmp/lifecycle-worker.log",
   });
@@ -401,6 +422,45 @@ describe("start command — already running recovery", () => {
       .mock.calls.map((c) => c.join(" "))
       .join("\n");
     expect(output).toContain("AO is already running.");
+    expect(output).toContain("Reused existing dashboard on port 3000.");
+  });
+
+  it("auto-recovers the requested project for human callers when the control plane is missing", async () => {
+    mockConfigRef.current = makeConfig({
+      frontend: makeProject({ name: "Frontend", sessionPrefix: "fe" }),
+      backend: makeProject({ name: "Backend", sessionPrefix: "api" }),
+    });
+    mockIsHumanCaller.mockReturnValue(true);
+    mockIsAlreadyRunning.mockResolvedValue({
+      pid: 4242,
+      port: 3000,
+      startedAt: "2026-03-20T20:00:00.000Z",
+      projects: ["frontend", "backend"],
+    });
+    mockGetLifecycleWorkerStatus.mockReturnValue({
+      running: false,
+      pid: null,
+      pidFile: "/tmp/lifecycle-worker.pid",
+      logFile: "/tmp/lifecycle-worker.log",
+    });
+    mockSessionManager.spawnOrchestrator.mockResolvedValue({ id: "api-orchestrator" });
+
+    await program.parseAsync(["node", "test", "start", "backend"]);
+
+    expect(mockEnsureLifecycleWorker).toHaveBeenCalledWith(
+      expect.objectContaining({ configPath: expect.any(String) }),
+      "backend",
+    );
+    expect(mockSessionManager.spawnOrchestrator).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: "backend" }),
+    );
+    expect(mockSpawn).not.toHaveBeenCalled();
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("lost its lifecycle worker or orchestrator");
     expect(output).toContain("Reused existing dashboard on port 3000.");
   });
 });
