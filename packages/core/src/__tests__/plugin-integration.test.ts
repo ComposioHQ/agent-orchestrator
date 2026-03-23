@@ -38,7 +38,7 @@ import { createLifecycleManager } from "../lifecycle-manager.js";
 import { writeMetadata } from "../metadata.js";
 import { getSessionsDir } from "../paths.js";
 import trackerGithub from "@composio/ao-plugin-tracker-github";
-import scmGithub from "@composio/ao-plugin-scm-github";
+import scmGithub, { __clearGhCacheForTesting__ as clearGhCache } from "@composio/ao-plugin-scm-github";
 import type {
   OrchestratorConfig,
   PluginRegistry,
@@ -108,6 +108,8 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Clear gh cache to prevent stale data from interfering with mocks
+  clearGhCache();
 
   tmpDir = join(tmpdir(), `ao-test-plugin-int-${randomUUID()}`);
   mkdirSync(tmpDir, { recursive: true });
@@ -476,6 +478,10 @@ describe("plugin integration", () => {
     beforeEach(() => {
       registry = createTestRegistry();
       sm = createSessionManager({ config, registry });
+      // Clear gh mock to ensure fresh mocks for each test
+      ghMock.mockReset();
+      // Clear gh cache to prevent stale data from interfering with mocks
+      clearGhCache();
     });
 
     function seedSession(overrides: Partial<Session> = {}): Session {

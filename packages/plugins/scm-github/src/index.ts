@@ -7,6 +7,7 @@
 import { execFile } from "node:child_process";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
+import { ghCache } from "./cache.js";
 import {
   CI_STATUS,
   type PluginModule,
@@ -71,12 +72,80 @@ async function execCli(bin: ExecCommand, args: string[], cwd?: string): Promise<
   }
 }
 
+// Module-level gh function
+const _gh = (args: string[]): Promise<string> => execCli("gh", args);
+
 async function gh(args: string[]): Promise<string> {
-  return execCli("gh", args);
+  return _gh(args);
 }
 
 async function ghInDir(args: string[], cwd: string): Promise<string> {
   return execCli("gh", args, cwd);
+}
+
+/**
+ * Wrapper that adds caching, deduplication, and batching to gh CLI calls.
+ *
+ * For `gh pr view` commands with --json fields, batching combines multiple
+ * concurrent requests for the same PR into a single API call.
+ *
+ * Flow:
+ * 1. Generate cache key from arguments
+ * 2. Check cache for existing unexpired value
+ * 3. If cache miss, check if this is a pr view with --json
+ * 4. If yes, use batch to combine concurrent requests
+ * 5. If no, use dedupe() to avoid duplicate concurrent calls
+ * 6. Execute gh CLI, cache result, return
+ *
+ * @param args - Arguments to pass to gh CLI
+ * @returns CLI output (trimmed)
+ */
+async function cachedGh(args: string[]): Promise<string> {
+  const cacheKey = ghCache.key(args);
+  const ttl = ghCache.getTTL(args);
+
+  // Check cache first
+  const cached = ghCache.get<string>(cacheKey);
+  if (cached !== null) {
+    return cached;
+  }
+
+  // Determine if this is a batchable pr view call
+  const isPRViewWithJson =
+    args[0] === "pr" && args[1] === "view" && args.includes("--json");
+
+  if (isPRViewWithJson) {
+    // Extract repo and PR number for batching key
+    const repoIndex = args.indexOf("--repo");
+    const prNumber = args[2];
+    const repoFlag = repoIndex !== -1 ? args[repoIndex + 1] : "";
+    const prKey = `${repoFlag}:${prNumber}`;
+
+    // Use batching for concurrent pr view requests
+    return ghCache.dedupe(cacheKey, async () => {
+      const batchedResult = await ghCache.batchGhPRView(
+        prKey,
+        args,
+        async (fields) => {
+          const result = await _gh(["pr", "view", prNumber, "--repo", repoFlag, "--json", fields]);
+          // Note: Caching with batching is more complex since different
+          // callers request different field sets. For now, batching
+          // handles concurrent requests without caching the intermediate results.
+          return result;
+        },
+      );
+
+      // batchedResult is Record<string, unknown>, serialize to JSON string
+      return JSON.stringify(batchedResult);
+    });
+  }
+
+  // Cache miss - dedupe concurrent requests and execute
+  return ghCache.dedupe(cacheKey, async () => {
+    const result = await _gh(args);
+    ghCache.set(cacheKey, result, ttl);
+    return result;
+  });
 }
 
 async function git(args: string[], cwd: string): Promise<string> {
@@ -158,7 +227,7 @@ function mapRawCheckStateToStatus(rawState: string | undefined): CICheck["status
 }
 
 async function getCIChecksFromStatusRollup(pr: PRInfo): Promise<CICheck[]> {
-  const raw = await gh([
+  const raw = await cachedGh([
     "pr",
     "view",
     String(pr.number),
@@ -568,6 +637,7 @@ function createGitHubSCM(): SCM {
 
     async assignPRToCurrentUser(pr: PRInfo): Promise<void> {
       await gh(["pr", "edit", String(pr.number), "--repo", repoFlag(pr), "--add-assignee", "@me"]);
+      ghCache.invalidatePR(pr);
     },
 
     async checkoutPR(pr: PRInfo, workspacePath: string): Promise<boolean> {
@@ -603,7 +673,7 @@ function createGitHubSCM(): SCM {
     },
 
     async getPRSummary(pr: PRInfo) {
-      const raw = await gh([
+      const raw = await cachedGh([
         "pr",
         "view",
         String(pr.number),
@@ -632,15 +702,17 @@ function createGitHubSCM(): SCM {
       const flag = method === "rebase" ? "--rebase" : method === "merge" ? "--merge" : "--squash";
 
       await gh(["pr", "merge", String(pr.number), "--repo", repoFlag(pr), flag, "--delete-branch"]);
+      ghCache.invalidatePR(pr);
     },
 
     async closePR(pr: PRInfo): Promise<void> {
       await gh(["pr", "close", String(pr.number), "--repo", repoFlag(pr)]);
+      ghCache.invalidatePR(pr);
     },
 
     async getCIChecks(pr: PRInfo): Promise<CICheck[]> {
       try {
-        const raw = await gh([
+        const raw = await cachedGh([
           "pr",
           "checks",
           String(pr.number),
@@ -713,7 +785,7 @@ function createGitHubSCM(): SCM {
     },
 
     async getReviews(pr: PRInfo): Promise<Review[]> {
-      const raw = await gh([
+      const raw = await cachedGh([
         "pr",
         "view",
         String(pr.number),
@@ -750,7 +822,7 @@ function createGitHubSCM(): SCM {
     },
 
     async getReviewDecision(pr: PRInfo): Promise<ReviewDecision> {
-      const raw = await gh([
+      const raw = await cachedGh([
         "pr",
         "view",
         String(pr.number),
@@ -771,7 +843,7 @@ function createGitHubSCM(): SCM {
     async getPendingComments(pr: PRInfo): Promise<ReviewComment[]> {
       try {
         // Use GraphQL with variables to get review threads with actual isResolved status
-        const raw = await gh([
+        const raw = await cachedGh([
           "api",
           "graphql",
           "-f",
@@ -873,7 +945,7 @@ function createGitHubSCM(): SCM {
         }> = [];
 
         for (let page = 1; ; page++) {
-          const raw = await gh([
+          const raw = await cachedGh([
             "api",
             "--method",
             "GET",
@@ -1037,4 +1109,17 @@ export function create(): SCM {
   return createGitHubSCM();
 }
 
+// Export ghCache for testing and monitoring. This allows external callers to:
+// - Inspect cache statistics (size, pending requests) for monitoring
+// - Clear cache in test environments via __clearGhCacheForTesting__()
+export { ghCache } from "./cache.js";
+
 export default { manifest, create } satisfies PluginModule<SCM>;
+
+// Export for testing - allows tests to clear the cache between test runs
+export function __clearGhCacheForTesting__() {
+  ghCache.clear();
+}
+
+ 
+// test

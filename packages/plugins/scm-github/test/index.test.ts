@@ -14,7 +14,7 @@ vi.mock("node:child_process", () => {
   return { execFile };
 });
 
-import { create, manifest } from "../src/index.js";
+import { create, manifest, __clearGhCacheForTesting__ } from "../src/index.js";
 import type { PRInfo, SCMWebhookRequest, Session, ProjectConfig } from "@composio/ao-core";
 
 // ---------------------------------------------------------------------------
@@ -97,6 +97,8 @@ describe("scm-github plugin", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     scm = create();
+    // Clear cache between tests to avoid stale data affecting test results
+    __clearGhCacheForTesting__();
     delete process.env["GITHUB_WEBHOOK_SECRET"];
   });
 

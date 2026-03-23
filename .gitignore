@@ -64,3 +64,6 @@ CLAUDE.md
 AGENTS.md
 .claude/
 .opencode/
+
+# Package manager lock files (only use pnpm, ignore npm lock)
+package-lock.json
