@@ -92,6 +92,9 @@ export function Dashboard({
     handleSend, handleKill, handleMerge, handleRestore, handleSpawnOrchestrator,
   } = useDashboardActions(setActiveOrchestrators);
 
+  // Multi-project overview only when >1 project and no specific project selected.
+  // Single-project setups skip the overview grid and auto-select the sole project
+  // via selectedProject below, rendering the kanban view directly.
   const allProjectsView = projects.length > 1 && projectId === undefined;
   const selectedProject = useMemo(() => {
     if (projectId) return projects.find((p) => p.id === projectId) ?? null;
