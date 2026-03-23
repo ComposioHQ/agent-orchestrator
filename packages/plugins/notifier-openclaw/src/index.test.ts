@@ -172,4 +172,47 @@ describe("notifier-openclaw", () => {
     await expect(notifier.notify(makeEvent())).rejects.toThrow("OpenClaw webhook failed (401)");
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it("debounces repeated escalations for same session+reason", async () => {
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const notifier = create({ token: "tok", debounceWindowMs: 60_000, batchTriggerCount: 99 });
+    const event = makeEvent({ sessionId: "ao-12", data: { reason: "ci_failed" } });
+
+    await notifier.notify(event);
+    await notifier.notify(event);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining("Debounced repeated escalation"));
+  });
+
+  it("batches burst escalations into a summary payload", async () => {
+    vi.useFakeTimers();
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const notifier = create({
+      token: "tok",
+      debounceWindowMs: 1,
+      batchTriggerCount: 2,
+      batchWindowMs: 50,
+      batchSessionKey: "hook:ao:ops",
+    });
+
+    await notifier.notify(makeEvent({ sessionId: "ao-1", data: { reason: "ci_failed" } }));
+    await notifier.notify(makeEvent({ sessionId: "ao-2", data: { reason: "tests_failed" } }));
+    await notifier.notify(makeEvent({ sessionId: "ao-3", data: { reason: "tests_failed" } }));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(60);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const summaryBody = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(summaryBody.sessionKey).toBe("hook:ao:ops");
+    expect(summaryBody.message).toContain("batched_escalations");
+    expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining("Batched escalation"));
+  });
 });
