@@ -1,11 +1,18 @@
 import { cache } from "react";
 import { loadConfig } from "@composio/ao-core";
 
+export interface ColumnConfig {
+  label: string;
+  statuses?: string[];
+}
+
 export interface ProjectInfo {
   id: string;
   name: string;
   /** Labels used to filter backlog issues for this project (from tracker.trigger.labels) */
   triggerLabels?: string[];
+  /** Column definitions for the backlog task view (from tracker.columns) */
+  columns?: ColumnConfig[];
 }
 
 export const getProjectName = cache((): string => {
@@ -37,12 +44,15 @@ export const getAllProjects = cache((): ProjectInfo[] => {
   try {
     const config = loadConfig();
     return Object.entries(config.projects).map(([id, project]) => {
-      const trigger = (project.tracker as { trigger?: { labels?: string[] } } | undefined)
-        ?.trigger;
+      const tracker = project.tracker as {
+        trigger?: { labels?: string[] };
+        columns?: ColumnConfig[];
+      } | undefined;
       return {
         id,
         name: project.name ?? id,
-        triggerLabels: trigger?.labels,
+        triggerLabels: tracker?.trigger?.labels,
+        columns: tracker?.columns,
       };
     });
   } catch {

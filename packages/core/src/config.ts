@@ -61,9 +61,15 @@ const ReactionConfigSchema = z.object({
   includeSummary: z.boolean().optional(),
 });
 
+const TrackerColumnConfigSchema = z.object({
+  label: z.string(),
+  statuses: z.array(z.string()).optional(),
+});
+
 const TrackerConfigSchema = z
   .object({
     plugin: z.string(),
+    columns: z.array(TrackerColumnConfigSchema).optional(),
   })
   .passthrough();
 

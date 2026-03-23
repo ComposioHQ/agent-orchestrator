@@ -1015,8 +1015,17 @@ export interface ProjectConfig {
   };
 }
 
+export interface TrackerColumnConfig {
+  /** Display name for the column */
+  label: string;
+  /** Issue statusName values that belong in this column */
+  statuses?: string[];
+}
+
 export interface TrackerConfig {
   plugin: string;
+  /** Optional column definitions for the backlog task view */
+  columns?: TrackerColumnConfig[];
   /** Plugin-specific config (e.g. teamId for Linear) */
   [key: string]: unknown;
 }
