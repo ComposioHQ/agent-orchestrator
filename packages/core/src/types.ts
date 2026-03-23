@@ -912,6 +912,21 @@ export interface OrchestratorConfig {
 
   /** Default reaction configs */
   reactions: Record<string, ReactionConfig>;
+
+  /**
+   * External plugin paths to load at startup.
+   * Each entry is a local filesystem path to a built plugin's dist/index.js.
+   *
+   * Example (agent-orchestrator.yaml):
+   *   plugins:
+   *     - path: ~/ao-private-plugins/scm-gongfeng
+   */
+  plugins?: ExternalPluginConfig[];
+}
+
+export interface ExternalPluginConfig {
+  /** Absolute or home-relative path to the plugin directory (must contain dist/index.js) */
+  path: string;
 }
 
 export interface DefaultPlugins {
