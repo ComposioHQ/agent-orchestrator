@@ -942,6 +942,63 @@ describe("check (single session)", () => {
     expect(dockerRuntime.destroy).not.toHaveBeenCalled();
   });
 
+  it("uses runtimeHandle.runtimeName for liveness checks", async () => {
+    const tmuxRuntime: Runtime = {
+      ...mockRuntime,
+      name: "tmux",
+      isAlive: vi.fn().mockResolvedValue(true),
+      getOutput: vi.fn().mockResolvedValue(""),
+    };
+    const dockerRuntime: Runtime = {
+      ...mockRuntime,
+      name: "docker",
+      isAlive: vi.fn().mockResolvedValue(false),
+      getOutput: vi.fn().mockResolvedValue(""),
+    };
+
+    config.defaults.runtime = "docker";
+    config.projects["my-app"] = {
+      ...config.projects["my-app"],
+      runtime: "docker",
+    };
+
+    const registryWithRuntimeMismatch: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime" && name === "tmux") return tmuxRuntime;
+        if (slot === "runtime" && name === "docker") return dockerRuntime;
+        if (slot === "agent") return mockAgent;
+        return null;
+      }),
+    };
+
+    const session = makeSession({
+      status: "working",
+      pr: null,
+      runtimeHandle: { id: "tmux-app-1", runtimeName: "tmux", data: {} },
+    });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithRuntimeMismatch,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(tmuxRuntime.isAlive).toHaveBeenCalledWith(session.runtimeHandle);
+    expect(dockerRuntime.isAlive).not.toHaveBeenCalled();
+    expect(lm.getStates().get("app-1")).toBe("working");
+  });
+
   it("detects mergeable when approved + CI green", async () => {
     const mockSCM: SCM = {
       name: "mock-scm",
