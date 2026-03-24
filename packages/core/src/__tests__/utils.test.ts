@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import type { OrchestratorConfig } from "../types.js";
 import {
   isRetryableHttpStatus,
   normalizeRetryConfig,
@@ -244,7 +245,7 @@ describe("resolveProjectIdForSessionId", () => {
         proj1: { sessionPrefix: "foo" },
         proj2: { sessionPrefix: "bar" },
       },
-    };
+    } as unknown as OrchestratorConfig;
     expect(resolveProjectIdForSessionId(config, "foo")).toBe("proj1");
     expect(resolveProjectIdForSessionId(config, "bar")).toBe("proj2");
   });
@@ -255,7 +256,7 @@ describe("resolveProjectIdForSessionId", () => {
         proj1: { sessionPrefix: "foo" },
         proj2: { sessionPrefix: "bar" },
       },
-    };
+    } as unknown as OrchestratorConfig;
     expect(resolveProjectIdForSessionId(config, "foo-123")).toBe("proj1");
     expect(resolveProjectIdForSessionId(config, "bar-456")).toBe("proj2");
   });
@@ -266,7 +267,7 @@ describe("resolveProjectIdForSessionId", () => {
         proj1: { sessionPrefix: "foo" },
         proj2: { sessionPrefix: "bar" },
       },
-    };
+    } as unknown as OrchestratorConfig;
     expect(resolveProjectIdForSessionId(config, "baz")).toBeUndefined();
     expect(resolveProjectIdForSessionId(config, "baz-123")).toBeUndefined();
   });
@@ -276,12 +277,12 @@ describe("resolveProjectIdForSessionId", () => {
       projects: {
         proj1: { sessionPrefix: "test" },
       },
-    };
+    } as unknown as OrchestratorConfig;
     expect(resolveProjectIdForSessionId(config, "test")).toBe("proj1");
   });
 
   it("returns undefined when projects config is empty", () => {
-    const config = { projects: {} };
+    const config = { projects: {} } as unknown as OrchestratorConfig;
     expect(resolveProjectIdForSessionId(config, "test-123")).toBeUndefined();
   });
 
@@ -290,7 +291,7 @@ describe("resolveProjectIdForSessionId", () => {
       projects: {
         proj1: { sessionPrefix: "foo" },
       },
-    };
+    } as unknown as OrchestratorConfig;
     // "foobar" starts with "foo" but doesn't have hyphen, should NOT match
     expect(resolveProjectIdForSessionId(config, "foobar")).toBeUndefined();
     expect(resolveProjectIdForSessionId(config, "foo-xyz")).toBe("proj1");
