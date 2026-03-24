@@ -15,6 +15,10 @@ export default defineConfig({
         "../plugins/tracker-github/src/index.ts",
       ),
       "@composio/ao-plugin-scm-github": resolve(__dirname, "../plugins/scm-github/src/index.ts"),
+      // The plugins above import from @composio/ao-core. Alias sub-path
+      // exports to source so the tests work without a pre-built dist.
+      "@composio/ao-core/scm-webhook-utils": resolve(__dirname, "src/scm-webhook-utils.ts"),
+      "@composio/ao-core": resolve(__dirname, "src/index.ts"),
     },
   },
 });

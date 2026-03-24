@@ -8,7 +8,8 @@
  */
 
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { createRequire } from "node:module";
+import { resolve, dirname } from "node:path";
 import { isPortAvailable } from "./web-dir.js";
 import { exec } from "./shell.js";
 
@@ -30,13 +31,22 @@ async function checkPort(port: number): Promise<void> {
  * Verifies @composio/ao-core dist output exists from the web package's
  * node_modules, since a missing dist/ causes module resolution errors when
  * starting the dashboard. Works with both `next dev` and `next build`.
+ *
+ * Uses Node's module resolution (createRequire) so that npm-hoisted packages
+ * are found correctly when `ao` is installed globally via npm.
  */
 async function checkBuilt(webDir: string): Promise<void> {
-  const nodeModules = resolve(webDir, "node_modules", "@composio", "ao-core");
-  if (!existsSync(nodeModules)) {
+  const require = createRequire(resolve(webDir, "package.json"));
+
+  let coreDir: string;
+  try {
+    const corePkgJson = require.resolve("@composio/ao-core/package.json");
+    coreDir = dirname(corePkgJson);
+  } catch {
     throw new Error("Dependencies not installed. Run: pnpm install && pnpm build");
   }
-  const coreEntry = resolve(nodeModules, "dist", "index.js");
+
+  const coreEntry = resolve(coreDir, "dist", "index.js");
   if (!existsSync(coreEntry)) {
     throw new Error("Packages not built. Run: pnpm build");
   }
