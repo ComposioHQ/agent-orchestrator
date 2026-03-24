@@ -25,7 +25,11 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   if (event.request.mode === "navigate") {
     event.respondWith(
-      fetch(event.request).catch(() => caches.match(OFFLINE_URL))
+      fetch(event.request).catch(() =>
+        caches.match(OFFLINE_URL).then((r) =>
+          r || new Response("Offline", { status: 503, headers: { "Content-Type": "text/plain" } })
+        )
+      )
     );
   }
 });
