@@ -1,0 +1,36 @@
+docs/superpowers/specs/2026-03-24-request-review-design.md
+  377caccb760d8de7 1-137
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.17",
+  "base_commit_sha": "9a90758416fd09ebd2002dac6c78f7d6faeba0d7",
+  "prompts": {
+    "1f11f70a1447ad99": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d1a9e-50d2-7691-ae47-1bd1b29f08d7",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 249,
+      "total_deletions": 73,
+      "accepted_lines": 243,
+      "overriden_lines": 0
+    },
+    "377caccb760d8de7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "30b95b6b-5511-4cad-95ea-ce7b34663337",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 137,
+      "total_deletions": 0,
+      "accepted_lines": 137,
+      "overriden_lines": 0
+    }
+  }
+}
