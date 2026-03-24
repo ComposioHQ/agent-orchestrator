@@ -864,7 +864,18 @@ export function _resetSessionFileCache(): void {
   sessionFileCache.clear();
 }
 
-export { CodexAppServerClient } from "./app-server-client.js";
+export {
+  CodexAppServerClient,
+  CodexClientError,
+  ClientStateError,
+  ClientClosedError,
+  ClientNotInitializedError,
+  ClientConnectingError,
+  RequestTimeoutError,
+  JsonRpcServerError,
+  ProcessError,
+  StdioError,
+} from "./app-server-client.js";
 export type {
   AppServerClientOptions,
   ThreadStartParams,
