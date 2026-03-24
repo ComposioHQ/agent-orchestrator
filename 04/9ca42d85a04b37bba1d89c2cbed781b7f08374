@@ -1,0 +1,25 @@
+packages/web/src/hooks/__tests__/useMediaQuery.test.ts
+  11e09340c0760e62 1-129
+packages/web/src/hooks/useMediaQuery.ts
+  11e09340c0760e62 33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.17",
+  "base_commit_sha": "049ca42d85a04b37bba1d89c2cbed781b7f08374",
+  "prompts": {
+    "11e09340c0760e62": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "21ec3665-889a-47af-abe8-9e064a01ecf0",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 130,
+      "total_deletions": 5,
+      "accepted_lines": 130,
+      "overriden_lines": 0
+    }
+  }
+}
