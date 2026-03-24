@@ -1,0 +1,23 @@
+packages/web/public/sw.js
+  550c05ea05d1bbd7 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.17",
+  "base_commit_sha": "9128a793a2d8c76f71004679720cf8d19ac7cdda",
+  "prompts": {
+    "550c05ea05d1bbd7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40331246-2b0e-4f54-85f1-09702e3d74a9",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
