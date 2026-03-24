@@ -1,10 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockExec, mockIsPortAvailable, mockExistsSync } = vi.hoisted(() => ({
-  mockExec: vi.fn(),
-  mockIsPortAvailable: vi.fn(),
-  mockExistsSync: vi.fn(),
-}));
+const { mockExec, mockIsPortAvailable, mockExistsSync, mockRequireResolve, mockCreateRequire } = vi.hoisted(() => {
+  const mockRequireResolve = vi.fn();
+  const mockCreateRequire = vi.fn(() => ({ resolve: mockRequireResolve }));
+  return {
+    mockExec: vi.fn(),
+    mockIsPortAvailable: vi.fn(),
+    mockExistsSync: vi.fn(),
+    mockRequireResolve,
+    mockCreateRequire,
+  };
+});
 
 vi.mock("../../src/lib/shell.js", () => ({
   exec: mockExec,
@@ -18,12 +24,19 @@ vi.mock("node:fs", () => ({
   existsSync: mockExistsSync,
 }));
 
+vi.mock("node:module", () => ({
+  createRequire: mockCreateRequire,
+}));
+
 import { preflight } from "../../src/lib/preflight.js";
 
 beforeEach(() => {
   mockExec.mockReset();
   mockIsPortAvailable.mockReset();
   mockExistsSync.mockReset();
+  mockRequireResolve.mockReset();
+  mockCreateRequire.mockReset();
+  mockCreateRequire.mockReturnValue({ resolve: mockRequireResolve });
 });
 
 describe("preflight.checkPort", () => {
@@ -47,29 +60,32 @@ describe("preflight.checkPort", () => {
 });
 
 describe("preflight.checkBuilt", () => {
-  it("passes when node_modules and core dist exist", async () => {
+  it("passes when ao-core resolves and dist exists", async () => {
+    mockRequireResolve.mockReturnValue("/some/path/@composio/ao-core/package.json");
     mockExistsSync.mockReturnValue(true);
     await expect(preflight.checkBuilt("/web")).resolves.toBeUndefined();
+    expect(mockRequireResolve).toHaveBeenCalledWith("@composio/ao-core/package.json");
     expect(mockExistsSync).toHaveBeenCalled();
   });
 
-  it("throws 'pnpm install' when node_modules is missing", async () => {
-    // First call checks node_modules/@composio/ao-core — missing
-    mockExistsSync.mockReturnValue(false);
-    await expect(preflight.checkBuilt("/web")).rejects.toThrow(
-      "pnpm install",
-    );
+  it("throws 'pnpm install' when ao-core cannot be resolved (not installed)", async () => {
+    mockRequireResolve.mockImplementation(() => { throw new Error("Cannot find module"); });
+    await expect(preflight.checkBuilt("/web")).rejects.toThrow("pnpm install");
   });
 
-  it("throws 'pnpm build' when node_modules exists but dist is missing", async () => {
-    // First call: node_modules/@composio/ao-core exists
-    // Second call: dist/index.js does not exist
-    mockExistsSync
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(false);
+  it("throws 'pnpm build' when ao-core resolves but dist/index.js is missing", async () => {
+    mockRequireResolve.mockReturnValue("/some/path/@composio/ao-core/package.json");
+    mockExistsSync.mockReturnValue(false);
     await expect(preflight.checkBuilt("/web")).rejects.toThrow(
       "Packages not built. Run: pnpm build",
     );
+  });
+
+  it("resolves ao-core via hoisted path (npm global install)", async () => {
+    // Simulate hoisted path: ao-core is not under webDir/node_modules but resolves via createRequire
+    mockRequireResolve.mockReturnValue("/global/node_modules/@composio/ao-core/package.json");
+    mockExistsSync.mockReturnValue(true);
+    await expect(preflight.checkBuilt("/web")).resolves.toBeUndefined();
   });
 });
 
