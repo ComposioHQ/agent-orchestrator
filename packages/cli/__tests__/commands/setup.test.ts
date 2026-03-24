@@ -282,25 +282,19 @@ describe("setup openclaw command", () => {
       expect(mockWriteFileSync).not.toHaveBeenCalled();
     });
 
-    it("exits when validation fails in non-interactive mode", async () => {
+    it("skips validation and writes config even with bad token in non-interactive mode", async () => {
       mockValidateToken.mockResolvedValue({ valid: false, error: "Token rejected" });
       const program = createProgram();
 
-      const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
-        throw new Error("process.exit");
-      });
+      await program.parseAsync([
+        "node", "test", "setup", "openclaw",
+        "--url", "http://127.0.0.1:18789/hooks/agent",
+        "--token", "bad-token",
+        "--non-interactive",
+      ]);
 
-      await expect(
-        program.parseAsync([
-          "node", "test", "setup", "openclaw",
-          "--url", "http://127.0.0.1:18789/hooks/agent",
-          "--token", "bad-token",
-          "--non-interactive",
-        ]),
-      ).rejects.toThrow("process.exit");
-
-      expect(exitSpy).toHaveBeenCalledWith(1);
-      expect(mockWriteFileSync).not.toHaveBeenCalled();
+      // nonInteractiveSetup skips pre-write validation, so config should still be written
+      expect(mockWriteFileSync).toHaveBeenCalled();
     });
 
     it("exits when --url missing in non-interactive mode", async () => {
@@ -321,23 +315,18 @@ describe("setup openclaw command", () => {
       expect(exitSpy).toHaveBeenCalledWith(1);
     });
 
-    it("exits when --token missing in non-interactive mode", async () => {
+    it("auto-generates token when --token missing in non-interactive mode", async () => {
       delete process.env["OPENCLAW_HOOKS_TOKEN"];
       const program = createProgram();
 
-      const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
-        throw new Error("process.exit");
-      });
+      await program.parseAsync([
+        "node", "test", "setup", "openclaw",
+        "--url", "http://127.0.0.1:18789/hooks/agent",
+        "--non-interactive",
+      ]);
 
-      await expect(
-        program.parseAsync([
-          "node", "test", "setup", "openclaw",
-          "--url", "http://127.0.0.1:18789/hooks/agent",
-          "--non-interactive",
-        ]),
-      ).rejects.toThrow("process.exit");
-
-      expect(exitSpy).toHaveBeenCalledWith(1);
+      // nonInteractiveSetup auto-generates a token when none is provided
+      expect(mockWriteFileSync).toHaveBeenCalled();
     });
   });
 });

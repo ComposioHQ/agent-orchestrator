@@ -13,7 +13,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import chalk from "chalk";
 import type { Command } from "commander";
-import { parse as yamlParse, stringify as yamlStringify } from "yaml";
+import { parse as yamlParse, stringify as yamlStringify, parseDocument } from "yaml";
 import { findConfigFile } from "@composio/ao-core";
 import {
   probeGateway,
@@ -224,7 +224,10 @@ function writeOpenClawConfig(
   nonInteractive: boolean,
 ): void {
   const rawYaml = readFileSync(configPath, "utf-8");
-  const rawConfig = yamlParse(rawYaml) ?? {};
+
+  // Use parseDocument to preserve YAML comments during round-trip
+  const doc = parseDocument(rawYaml);
+  const rawConfig = (doc.toJS() as Record<string, any>) ?? {};
 
   // Add notifiers.openclaw block — write actual token, not a placeholder
   // (AO does not expand env placeholders in YAML at runtime)
@@ -267,7 +270,12 @@ function writeOpenClawConfig(
     }
   }
 
-  writeFileSync(configPath, yamlStringify(rawConfig, { indent: 2 }));
+  // Update the document tree from the modified plain object while preserving comments
+  doc.setIn(["notifiers"], rawConfig.notifiers);
+  doc.setIn(["defaults"], rawConfig.defaults);
+  doc.setIn(["notificationRouting"], rawConfig.notificationRouting);
+
+  writeFileSync(configPath, doc.toString({ indent: 2 }));
 
   if (nonInteractive) {
     console.log(chalk.green(`✓ Config written to ${configPath}`));
