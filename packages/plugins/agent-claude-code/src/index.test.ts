@@ -701,6 +701,13 @@ describe("METADATA_UPDATER_SCRIPT content", () => {
     expect(METADATA_UPDATER_SCRIPT).toMatch(/while.*clean_command.*cd/);
   });
 
+  it("recognizes REST pull creation output", () => {
+    expect(METADATA_UPDATER_SCRIPT).toContain("html_url");
+    expect(METADATA_UPDATER_SCRIPT).toContain("/pulls");
+    expect(METADATA_UPDATER_SCRIPT).toContain("extract_pr_url");
+    expect(METADATA_UPDATER_SCRIPT).toContain('update_metadata_key "status" "pr_open"');
+  });
+
   it("uses $clean_command (not $command) for all regex-based command detection", () => {
     const lines = METADATA_UPDATER_SCRIPT.split("\n");
     for (const line of lines) {
@@ -740,6 +747,13 @@ describe("METADATA_UPDATER_SCRIPT content", () => {
     expect(METADATA_UPDATER_SCRIPT).toMatch(
       /"\$clean_command"\s*=~\s*\^gh\[/,
     );
+  });
+
+  it("detects REST pull creation on clean_command", () => {
+    expect(METADATA_UPDATER_SCRIPT).toContain('^gh[[:space:]]+api');
+    expect(METADATA_UPDATER_SCRIPT).toContain('/pulls');
+    expect(METADATA_UPDATER_SCRIPT).toContain("(-X|--method)");
+    expect(METADATA_UPDATER_SCRIPT).toContain("POST");
   });
 
   it("detects git checkout -b on clean_command", () => {

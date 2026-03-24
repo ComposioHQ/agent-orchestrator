@@ -133,8 +133,9 @@ update_ao_metadata() {
 `;
 
 /**
- * gh wrapper — intercepts `gh pr create` and `gh pr merge` to auto-update
- * session metadata. All other commands pass through transparently.
+ * gh wrapper — intercepts PR creation/merge commands to auto-update session
+ * metadata. Supports both `gh pr create` and REST `gh api repos/.../pulls -X POST`.
+ * All other commands pass through transparently.
  */
 const GH_WRAPPER = `#!/usr/bin/env bash
 # ao gh wrapper — auto-updates session metadata on PR operations
@@ -166,38 +167,77 @@ fi
 # Source the metadata helper
 source "\$ao_bin_dir/ao-metadata-helper.sh" 2>/dev/null || true
 
-# Only capture output for commands we need to parse (pr/create, pr/merge).
+extract_pr_url() {
+  local output="\$1"
+  local pr_url
+
+  pr_url="\$(printf '%s' "\$output" \
+    | grep -Eo '"html_url"[[:space:]]*:[[:space:]]*"https://github\\.com/[^"]+/pull/[0-9]+"' \
+    | head -1 \
+    | sed -E 's/.*"(https:\\/\\/github\\.com\\/[^"]+\\/pull\\/[0-9]+)".*/\\1/')"
+
+  if [[ -z "\$pr_url" ]]; then
+    pr_url="\$(printf '%s' "\$output" | grep -Eo 'https://github\\.com/[^/]+/[^/]+/pull/[0-9]+' | head -1)"
+  fi
+
+  printf '%s' "\$pr_url"
+}
+
+# Only capture output for commands we need to parse.
 # All other commands pass through transparently without stream merging.
+capture_kind=""
 case "\$1/\$2" in
-  pr/create|pr/merge)
-    tmpout="\$(mktemp)"
-    trap 'rm -f "\$tmpout"' EXIT
-
-    "\$real_gh" "\$@" 2>&1 | tee "\$tmpout"
-    exit_code=\${PIPESTATUS[0]}
-
-    if [[ \$exit_code -eq 0 ]]; then
-      output="\$(cat "\$tmpout")"
-      case "\$1/\$2" in
-        pr/create)
-          pr_url="\$(echo "\$output" | grep -Eo 'https://github\\.com/[^/]+/[^/]+/pull/[0-9]+' | head -1)"
-          if [[ -n "\$pr_url" ]]; then
-            update_ao_metadata pr "\$pr_url"
-            update_ao_metadata status pr_open
-          fi
-          ;;
-        pr/merge)
-          update_ao_metadata status merged
-          ;;
-      esac
-    fi
-
-    exit \$exit_code
+  pr/create)
+    capture_kind="pr_create"
     ;;
-  *)
-    exec "\$real_gh" "\$@"
+  pr/merge)
+    capture_kind="pr_merge"
     ;;
 esac
+
+if [[ -z "\$capture_kind" && "\$1" == "api" && "\$2" == repos/*/pulls ]]; then
+  method="GET"
+  prev=""
+  for arg in "\$@"; do
+    if [[ "\$prev" == "-X" || "\$prev" == "--method" ]]; then
+      method="\$(printf '%s' "\$arg" | tr '[:lower:]' '[:upper:]')"
+      break
+    fi
+    prev="\$arg"
+  done
+
+  if [[ "\$method" == "POST" ]]; then
+    capture_kind="rest_pull_create"
+  fi
+fi
+
+if [[ -n "\$capture_kind" ]]; then
+  tmpout="\$(mktemp)"
+  trap 'rm -f "\$tmpout"' EXIT
+
+  "\$real_gh" "\$@" 2>&1 | tee "\$tmpout"
+  exit_code=\${PIPESTATUS[0]}
+
+  if [[ \$exit_code -eq 0 ]]; then
+    output="\$(cat "\$tmpout")"
+    case "\$capture_kind" in
+      pr_create|rest_pull_create)
+        pr_url="\$(extract_pr_url "\$output")"
+        if [[ -n "\$pr_url" ]]; then
+          update_ao_metadata pr "\$pr_url"
+          update_ao_metadata status pr_open
+        fi
+        ;;
+      pr_merge)
+        update_ao_metadata status merged
+        ;;
+    esac
+  fi
+
+  exit \$exit_code
+fi
+
+exec "\$real_gh" "\$@"
 `;
 
 /**

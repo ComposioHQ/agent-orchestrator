@@ -140,10 +140,28 @@ while [[ "$clean_command" =~ ^[[:space:]]*cd[[:space:]] ]]; do
   fi
 done
 
-# Detect: gh pr create
-if [[ "$clean_command" =~ ^gh[[:space:]]+pr[[:space:]]+create ]]; then
+extract_pr_url() {
+  local output="$1"
+  local pr_url
+
+  pr_url=$(printf '%s' "$output" \
+    | grep -Eo '"html_url"[[:space:]]*:[[:space:]]*"https://github[.]com/[^"]+/pull/[0-9]+"' \
+    | head -1 \
+    | sed -E 's/.*"(https:\/\/github[.]com\/[^"]+\/pull\/[0-9]+)".*/\\1/')
+
+  if [[ -z "$pr_url" ]]; then
+    pr_url=$(printf '%s' "$output" | grep -Eo 'https://github[.]com/[^/]+/[^/]+/pull/[0-9]+' | head -1)
+  fi
+
+  printf '%s' "$pr_url"
+}
+
+# Detect: gh pr create or REST pull creation via gh api
+if [[ "$clean_command" =~ ^gh[[:space:]]+pr[[:space:]]+create ]] || \
+   ([[ "$clean_command" =~ ^gh[[:space:]]+api[[:space:]]+repos/[^[:space:]]+/[^[:space:]]+/pulls([[:space:]]|$) ]] && \
+    [[ "$clean_command" =~ (^|[[:space:]])(-X|--method)[[:space:]]+POST([[:space:]]|$) ]]); then
   # Extract PR URL from output
-  pr_url=$(echo "$output" | grep -Eo 'https://github[.]com/[^/]+/[^/]+/pull/[0-9]+' | head -1)
+  pr_url=$(extract_pr_url "$output")
 
   if [[ -n "$pr_url" ]]; then
     update_metadata_key "pr" "$pr_url"
