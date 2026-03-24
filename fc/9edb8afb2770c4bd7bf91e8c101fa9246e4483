@@ -1,0 +1,29 @@
+packages/web/src/components/Dashboard.tsx
+  11e09340c0760e62 27,65,319
+packages/web/src/components/ConnectionBar.tsx
+  11e09340c0760e62 1-21
+packages/web/src/app/globals.css
+  11e09340c0760e62 337,2604-2643
+packages/web/src/hooks/useSessionEvents.ts
+  11e09340c0760e62 9-10,14,19-20,25-27,71,179-190
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.17",
+  "base_commit_sha": "fc9edb8afb2770c4bd7bf91e8c101fa9246e4483",
+  "prompts": {
+    "11e09340c0760e62": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "21ec3665-889a-47af-abe8-9e064a01ecf0",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 86,
+      "total_deletions": 4,
+      "accepted_lines": 86,
+      "overriden_lines": 0
+    }
+  }
+}
