@@ -149,7 +149,9 @@ describe("scripts/ao-doctor.sh", () => {
     const result = spawnSync("bash", [scriptPath, "--fix"], {
       env: {
         ...process.env,
-        PATH: `${binDir}:${process.env.PATH || ""}`,
+        // Use a minimal PATH so a real "ao" installed on the system (e.g.
+        // /opt/homebrew/bin/ao) is not visible, allowing the fix path to run.
+        PATH: `${binDir}:/usr/bin:/bin`,
         AO_REPO_ROOT: fakeRepo,
         AO_CONFIG_PATH: configPath,
         AO_DOCTOR_TMP_ROOT: tmpRoot,

@@ -1,4 +1,5 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
+import { resolve } from "node:path";
 import chalk from "chalk";
 import type { Command } from "commander";
 import { loadConfig } from "@composio/ao-core";
@@ -77,13 +78,60 @@ export function registerDashboard(program: Command): void {
         process.stderr.write(data);
       });
 
+      // Declared as let so cleanup() can reference them before assignment;
+      // child.on("error") fires asynchronously so they are always assigned by then.
+      let terminalServer: ChildProcess | undefined;
+      let directTerminalServer: ChildProcess | undefined;
+      let openAbort: AbortController | undefined;
+
+      // Graceful shutdown: kill all child processes and exit.
+      // Must kill Next.js and call process.exit() — registering a SIGINT/SIGTERM
+      // listener suppresses Node's default exit behavior.
+      function cleanup(exitCode: number = 0): void {
+        if (openAbort) openAbort.abort();
+        child.kill("SIGTERM");
+        terminalServer?.kill("SIGTERM");
+        directTerminalServer?.kill("SIGTERM");
+        process.exit(exitCode);
+      }
+      // Named function so process.off() removes the exact same reference.
+      function handleSignal(): void { cleanup(0); }
+      process.once("SIGINT", handleSignal);
+      process.once("SIGTERM", handleSignal);
+
       child.on("error", (err) => {
         console.error(chalk.red("Could not start dashboard. Ensure Next.js is installed."));
         console.error(chalk.dim(String(err)));
-        process.exit(1);
+        cleanup(1);
       });
 
-      let openAbort: AbortController | undefined;
+      // Spawn terminal WebSocket servers
+      const distServerDir = resolve(webDir, "dist-server");
+
+      function spawnTerminalServer(label: string, scriptName: string) {
+        const proc = spawn("node", [resolve(distServerDir, scriptName)], {
+          cwd: webDir,
+          stdio: ["ignore", "pipe", "pipe"],
+          env,
+        });
+
+        proc.stdout?.on("data", (data: Buffer) => {
+          for (const line of data.toString().split("\n").filter(Boolean)) {
+            process.stdout.write(`[${label}] ${line}\n`);
+          }
+        });
+
+        proc.stderr?.on("data", (data: Buffer) => {
+          for (const line of data.toString().split("\n").filter(Boolean)) {
+            process.stderr.write(`[${label}] ${line}\n`);
+          }
+        });
+
+        return proc;
+      }
+
+      terminalServer = spawnTerminalServer("terminal", "terminal-websocket.js");
+      directTerminalServer = spawnTerminalServer("direct-terminal", "direct-terminal-ws.js");
 
       if (opts.open !== false) {
         openAbort = new AbortController();
@@ -91,7 +139,12 @@ export function registerDashboard(program: Command): void {
       }
 
       child.on("exit", (code) => {
+        // Normal exit path: Next.js exited on its own, clean up terminal servers.
+        process.off("SIGINT", handleSignal);
+        process.off("SIGTERM", handleSignal);
         if (openAbort) openAbort.abort();
+        terminalServer?.kill("SIGTERM");
+        directTerminalServer?.kill("SIGTERM");
 
         if (code !== 0 && code !== null && !opts.rebuild) {
           const stderr = stderrChunks.join("");
