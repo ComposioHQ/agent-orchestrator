@@ -367,7 +367,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         if (prState === PR_STATE.CLOSED) {
           // Closed PRs are terminal for this session; clear persisted PR metadata
           // so killed sessions don't get re-polled forever via `if (s.pr) return true`.
-          session.pr = undefined;
+          session.pr = null;
           try {
             const sessionsDir = getSessionsDir(config.configPath, project.path);
             updateMetadata(sessionsDir, session.id, { pr: "" });
