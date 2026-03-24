@@ -1,0 +1,46 @@
+packages/core/src/types.ts
+  377caccb760d8de7 569-571,982-984
+packages/web/src/components/SessionCard.tsx
+  377caccb760d8de7 24,95,117-125,511-518,613-614,631-632
+packages/plugins/scm-github/src/index.ts
+  377caccb760d8de7 641-651
+packages/web/src/app/api/prs/[id]/request-review/route.ts
+  377caccb760d8de7 1-90
+packages/web/src/components/AttentionZone.tsx
+  377caccb760d8de7 14,68,94,115
+packages/web/src/components/Dashboard.tsx
+  377caccb760d8de7 180-186,412
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.17",
+  "base_commit_sha": "3c3e1ba3d92b8028b1aada7c3d26051d229cf4e8",
+  "prompts": {
+    "1f11f70a1447ad99": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d1a9e-50d2-7691-ae47-1bd1b29f08d7",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 227,
+      "overriden_lines": 0
+    },
+    "377caccb760d8de7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "30b95b6b-5511-4cad-95ea-ce7b34663337",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 142,
+      "total_deletions": 3,
+      "accepted_lines": 142,
+      "overriden_lines": 0
+    }
+  }
+}
