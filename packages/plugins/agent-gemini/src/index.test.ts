@@ -234,9 +234,9 @@ describe("getLaunchCommand", () => {
 describe("getEnvironment", () => {
   const agent = create();
 
-  it("sets CLAUDECODE to empty string (replaces unset in command)", () => {
+  it("does not set CLAUDECODE (only claude-code plugin sets it)", () => {
     const env = agent.getEnvironment(makeLaunchConfig());
-    expect(env["CLAUDECODE"]).toBe("");
+    expect(env["CLAUDECODE"]).toBeUndefined();
   });
 
   it("sets AO_SESSION_ID but not AO_PROJECT_ID (caller's responsibility)", () => {

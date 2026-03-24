@@ -29,7 +29,10 @@ jobs:
         env:
           GITLEAKS_VERSION: "8.21.1"
         run: |
-          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o /tmp/gitleaks.tgz
+          BASE="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          curl -sSL "${BASE}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o /tmp/gitleaks.tgz
+          curl -sSL "${BASE}/checksums.txt" -o /tmp/gitleaks-checksums.txt
+          grep "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" /tmp/gitleaks-checksums.txt | sha256sum -c
           tar -xzf /tmp/gitleaks.tgz -C /tmp
           sudo install -m 755 /tmp/gitleaks /usr/local/bin/gitleaks
 

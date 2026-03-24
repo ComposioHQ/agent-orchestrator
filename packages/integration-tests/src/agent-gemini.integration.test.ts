@@ -71,9 +71,9 @@ describe.skipIf(!canRun)("agent-gemini (integration)", () => {
     const task = `Write a Python fibonacci program to the file fibonacci.py. The program should print the first 10 fibonacci numbers when run. Write only the file, no explanation.`;
     // --yolo skips all permission prompts; -p runs in one-shot (non-interactive) mode.
     // Auth via OAuth (oauth-personal) — no env var needed.
-    // Pass task as direct argument (not via printf %q which double-escapes).
-    const cmd = `${geminiBin} --yolo -p "${task}"`;
-    await createSession(sessionName, cmd, tmpDir);
+    // Pass task via $TASK env var to avoid shell quoting / injection issues.
+    const cmd = `${geminiBin} --yolo -p "$TASK"`;
+    await createSession(sessionName, cmd, tmpDir, { TASK: task });
 
     const handle = makeTmuxHandle(sessionName);
     const session = makeSession("inttest-gemini", handle, tmpDir);

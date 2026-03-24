@@ -69,9 +69,9 @@ describe.skipIf(!canRun)("agent-cursor (integration)", () => {
     const task = `Write a Python fibonacci program to the file fibonacci.py. The program should print the first 10 fibonacci numbers when run. Write only the file, no explanation.`;
     // --force allows file writes without interactive confirmation (cursor plugin's permissionlessFlag).
     // --print runs non-interactively, exits when done.
-    // Pass task as direct argument (not via printf %q which double-escapes).
-    const cmd = `${cursorBin} --print --force "${task}"`;
-    await createSession(sessionName, cmd, tmpDir);
+    // Pass task via $TASK env var to avoid shell quoting / injection issues.
+    const cmd = `${cursorBin} --print --force "$TASK"`;
+    await createSession(sessionName, cmd, tmpDir, { TASK: task });
 
     const handle = makeTmuxHandle(sessionName);
     const session = makeSession("inttest-cursor", handle, tmpDir);

@@ -61,6 +61,8 @@ const claudeConfig: AgentPluginConfig = {
   // Fallback pricing when JSONL has token counts but no direct cost field.
   // Sonnet 4.5 rates — will be inaccurate for other models (Opus, Haiku).
   defaultCostRate: { inputPerMillion: 3.0, outputPerMillion: 15.0 },
+  // Prevent nested Claude Code instances from detecting they are inside Claude Code.
+  unsetClaudeEnv: true,
 };
 
 // =============================================================================

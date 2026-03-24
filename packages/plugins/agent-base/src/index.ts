@@ -14,7 +14,7 @@ import {
   type WorkspaceHooksConfig,
 } from "@composio/ao-core";
 import { execFile } from "node:child_process";
-import { readdir, readFile, stat, open, writeFile, mkdir, chmod } from "node:fs/promises";
+import { readdir, readFile, stat, open, unlink, writeFile, mkdir, chmod } from "node:fs/promises";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
@@ -91,6 +91,13 @@ export interface AgentPluginConfig {
    * (e.g. Gemini uses "AfterTool").
    */
   hookEvent?: "PostToolUse" | "AfterTool";
+  /**
+   * When true, sets CLAUDECODE="" in the spawned environment to prevent
+   * nested Claude Code instances from detecting they are inside Claude Code.
+   * Should only be enabled for the claude-code plugin.
+   * @default false
+   */
+  unsetClaudeEnv?: boolean;
 }
 
 // =============================================================================
@@ -286,10 +293,15 @@ export function toAgentProjectPath(workspacePath: string): string {
 // =============================================================================
 
 /** Find the most recently modified session file in a directory */
-async function findLatestSessionFile(
+/**
+ * Find the most recently modified session file in a directory.
+ * Returns both path and mtime so callers can skip a redundant stat() call.
+ * Excludes agent-* prefixed files (toolkit manifests, not sessions).
+ */
+export async function findLatestSessionFileMeta(
   projectDir: string,
   ext = ".jsonl",
-): Promise<string | null> {
+): Promise<{ path: string; mtime: number } | null> {
   let entries: string[];
   try {
     entries = await readdir(projectDir);
@@ -297,12 +309,11 @@ async function findLatestSessionFile(
     return null;
   }
 
-  const jsonlFiles = entries.filter((f) => f.endsWith(ext) && !f.startsWith("agent-"));
-  if (jsonlFiles.length === 0) return null;
+  const files = entries.filter((f) => f.endsWith(ext) && !f.startsWith("agent-"));
+  if (files.length === 0) return null;
 
-  // Sort by mtime descending
   const withStats = await Promise.all(
-    jsonlFiles.map(async (f) => {
+    files.map(async (f) => {
       const fullPath = join(projectDir, f);
       try {
         const s = await stat(fullPath);
@@ -313,7 +324,14 @@ async function findLatestSessionFile(
     }),
   );
   withStats.sort((a, b) => b.mtime - a.mtime);
-  return withStats[0]?.path ?? null;
+  return withStats[0] ?? null;
+}
+
+async function findLatestSessionFile(
+  projectDir: string,
+  ext = ".jsonl",
+): Promise<string | null> {
+  return (await findLatestSessionFileMeta(projectDir, ext))?.path ?? null;
 }
 
 export interface JsonlLine {
@@ -789,8 +807,10 @@ export function createAgentPlugin(config: AgentPluginConfig, overrides?: Partial
     getEnvironment(launchConfig: AgentLaunchConfig): Record<string, string> {
       const env: Record<string, string> = {};
 
-      // Unset CLAUDECODE to avoid nested agent conflicts
-      env["CLAUDECODE"] = "";
+      // Unset CLAUDECODE to avoid nested agent conflicts (claude-code plugin only)
+      if (config.unsetClaudeEnv) {
+        env["CLAUDECODE"] = "";
+      }
 
       // Set session info for introspection
       env["AO_SESSION"] = launchConfig.sessionId;
@@ -972,6 +992,14 @@ export function createAgentPlugin(config: AgentPluginConfig, overrides?: Partial
     },
 
     async postLaunchSetup(session: Session): Promise<void> {
+      // Best-effort cleanup of system-prompt temp file written at launch.
+      // The agent reads the file at startup; by postLaunchSetup it has already started.
+      if (config.systemPromptEnvVar) {
+        const safeSessionId = session.id.replace(/[^a-zA-Z0-9]/g, "_");
+        const tmpFile = join(homedir(), ".ao-sessions", "tmp", `system-${safeSessionId}.md`);
+        await unlink(tmpFile).catch(() => {}); // Ignore if file doesn't exist or already removed
+      }
+
       if (!session.workspacePath) return;
       // Use a relative script path — see setupWorkspaceHooks comment above.
       // Do NOT set AO_DATA_DIR here; the agent inherits it from its launch environment.

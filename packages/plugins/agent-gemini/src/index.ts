@@ -1,5 +1,6 @@
 import {
   createAgentPlugin,
+  findLatestSessionFileMeta,
   parseJsonlFileTail,
   extractSummary,
   extractCost,
@@ -7,7 +8,7 @@ import {
   type AgentPluginConfig,
 } from "@composio/ao-plugin-agent-base";
 import { execFileSync } from "node:child_process";
-import { readFile, readdir, stat } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import type { Agent, ActivityDetection, AgentSessionInfo, PluginModule, ProjectConfig, Session } from "@composio/ao-core";
 import { DEFAULT_READY_THRESHOLD_MS } from "@composio/ao-core";
 import { createHash } from "node:crypto";
@@ -76,36 +77,6 @@ const geminiConfig: AgentPluginConfig = {
 // Gemini native JSON session reader (orch-cb3e)
 // =============================================================================
 
-/**
- * Find the most recently modified .json session file in a directory,
- * excluding agent-* prefixed files (toolkit manifests, not sessions).
- * Returns both path and mtime so callers can skip a redundant stat() call.
- */
-async function findLatestGeminiSessionFile(
-  projectDir: string,
-): Promise<{ path: string; mtime: number } | null> {
-  let entries: string[];
-  try {
-    entries = await readdir(projectDir);
-  } catch {
-    return null;
-  }
-  const jsonFiles = entries.filter((f) => f.endsWith(".json") && !f.startsWith("agent-"));
-  if (jsonFiles.length === 0) return null;
-  const withStats = await Promise.all(
-    jsonFiles.map(async (f) => {
-      const fullPath = join(projectDir, f);
-      try {
-        const s = await stat(fullPath);
-        return { path: fullPath, mtime: s.mtimeMs };
-      } catch {
-        return { path: fullPath, mtime: 0 };
-      }
-    }),
-  );
-  withStats.sort((a, b) => b.mtime - a.mtime);
-  return withStats[0] ?? null;
-}
 
 /**
  * Read the last message type from a Gemini session file.
@@ -189,7 +160,7 @@ const geminiOverrides: Partial<Agent> = {
 
     const exitedAt = new Date();
     if (!session.runtimeHandle) return { state: "exited", timestamp: exitedAt };
-    const running = await this.isProcessRunning!(session.runtimeHandle);
+    const running = (await this.isProcessRunning?.(session.runtimeHandle)) ?? false;
     if (!running) return { state: "exited", timestamp: exitedAt };
 
     if (!session.workspacePath) return null;
@@ -197,7 +168,7 @@ const geminiOverrides: Partial<Agent> = {
     const projectDir = geminiConfig.getSessionDir?.(session.workspacePath);
     if (!projectDir) return null;
 
-    const latest = await findLatestGeminiSessionFile(projectDir);
+    const latest = await findLatestSessionFileMeta(projectDir, ".json");
     if (!latest) return null;
 
     const entry = await readLastGeminiEntry(latest.path, new Date(latest.mtime));
@@ -238,7 +209,7 @@ const geminiOverrides: Partial<Agent> = {
     const projectDir = geminiConfig.getSessionDir?.(session.workspacePath);
     if (!projectDir) return null;
 
-    const latest = await findLatestGeminiSessionFile(projectDir);
+    const latest = await findLatestSessionFileMeta(projectDir, ".json");
     if (!latest) return null;
 
     // Try native Gemini JSON first: { sessionId, messages: [{type, content, ...}] }
