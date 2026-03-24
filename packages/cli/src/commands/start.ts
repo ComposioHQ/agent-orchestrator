@@ -331,26 +331,7 @@ async function autoCreateConfig(workingDir: string): Promise<OrchestratorConfig>
   }
 
   if (!env.hasTmux) {
-    console.log(chalk.yellow("⚠ tmux not found — attempting auto-install..."));
-    try {
-      await preflight.checkTmux(); // attempts auto-install
-      env.hasTmux = true;
-      console.log(chalk.green("  ✓ tmux installed successfully"));
-    } catch (err) {
-      console.error(chalk.red("\n✗ tmux is required but could not be installed automatically.\n"));
-      console.log(chalk.bold("  Install tmux manually, then re-run ao start:\n"));
-      if (process.platform === "darwin") {
-        console.log(chalk.cyan("    brew install tmux"));
-      } else if (process.platform === "win32") {
-        console.log(chalk.cyan("    # Install WSL first, then inside WSL:"));
-        console.log(chalk.cyan("    sudo apt install tmux"));
-      } else {
-        console.log(chalk.cyan("    sudo apt install tmux      # Debian/Ubuntu"));
-        console.log(chalk.cyan("    sudo dnf install tmux      # Fedora/RHEL"));
-      }
-      console.log();
-      process.exit(1);
-    }
+    console.log(chalk.yellow("⚠ tmux not found — will attempt auto-install at startup"));
   }
   if (!env.ghAuthed && env.hasGh) {
     console.log(chalk.yellow("⚠ GitHub CLI not authenticated — run: gh auth login"));
@@ -510,6 +491,32 @@ async function startDashboard(
 }
 
 /**
+ * Ensure tmux is available — auto-install if missing, exit with clear
+ * instructions if that fails. Called from runStartup() so ALL ao start
+ * paths (normal, URL, retry with existing config) are covered.
+ */
+async function ensureTmux(): Promise<void> {
+  try {
+    await preflight.checkTmux();
+  } catch {
+    // checkTmux already tried auto-install and failed
+    console.error(chalk.red("\n✗ tmux is required but could not be installed automatically.\n"));
+    console.log(chalk.bold("  Install tmux manually, then re-run ao start:\n"));
+    if (process.platform === "darwin") {
+      console.log(chalk.cyan("    brew install tmux"));
+    } else if (process.platform === "win32") {
+      console.log(chalk.cyan("    # Install WSL first, then inside WSL:"));
+      console.log(chalk.cyan("    sudo apt install tmux"));
+    } else {
+      console.log(chalk.cyan("    sudo apt install tmux      # Debian/Ubuntu"));
+      console.log(chalk.cyan("    sudo dnf install tmux      # Fedora/RHEL"));
+    }
+    console.log();
+    process.exit(1);
+  }
+}
+
+/**
  * Shared startup logic: launch dashboard + orchestrator session, print summary.
  * Used by both normal and URL-based start flows.
  */
@@ -519,6 +526,13 @@ async function runStartup(
   project: ProjectConfig,
   opts?: { dashboard?: boolean; orchestrator?: boolean; rebuild?: boolean },
 ): Promise<number> {
+  // Ensure tmux is available before doing anything — covers all entry paths
+  // (normal start, URL start, retry with existing config)
+  const runtime = config.defaults?.runtime ?? "tmux";
+  if (runtime === "tmux") {
+    await ensureTmux();
+  }
+
   const sessionId = `${project.sessionPrefix}-orchestrator`;
   const shouldStartLifecycle = opts?.dashboard !== false || opts?.orchestrator !== false;
   let lifecycleStatus: Awaited<ReturnType<typeof ensureLifecycleWorker>> | null = null;

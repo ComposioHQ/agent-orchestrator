@@ -397,16 +397,16 @@ const nodeModules = resolve(webDir, "node_modules", "@composio", "ao-core");</co
   <hr class="section-divider">
 
   <!-- ================================================================ -->
-  <h2>5. Fix 3 &mdash; tmux Auto-Install + Process Runtime Fallback</h2>
+  <h2>5. Fix 3 &mdash; tmux Auto-Install + All-Path Startup Enforcement</h2>
 
   <h3>Root Cause</h3>
   <p>
     This was the biggest gap in the "two-step" promise. Three compounding issues:
   </p>
   <ul>
-    <li><code>start.ts:299</code> &mdash; Config generation hardcodes <code>runtime: "tmux"</code></li>
-    <li><code>start.ts:581-592</code> &mdash; Orchestrator creation fails hard if tmux runtime fails, then kills the dashboard</li>
-    <li><code>preflight.ts:checkTmux()</code> &mdash; Only showed <code>"brew install tmux"</code> (macOS-only), didn't attempt install</li>
+    <li>Config generation hardcodes <code>runtime: "tmux"</code></li>
+    <li>Orchestrator creation fails hard if tmux runtime fails, then kills the dashboard</li>
+    <li>tmux checks were not enforced consistently across all <code>ao start</code> entry paths (URL start and existing-config retries could bypass friendly remediation)</li>
   </ul>
 
   <p>On a fresh machine without tmux, the user saw:</p>
@@ -416,23 +416,23 @@ const nodeModules = resolve(webDir, "node_modules", "@composio", "ao-core");</co
 ...
 ✗ Failed to setup orchestrator: tmux: command not found</code></pre>
 
-  <h3>Fix: Three-Layer Strategy</h3>
+  <h3>Fix: Centralized Startup Gate</h3>
 
-  <div class="flow-diagram">ao start
+  <div class="flow-diagram">ao start (normal | URL | existing config)
   &darr;
-  detectEnvironment() &rarr; hasTmux = false
+  load/create config (runtime remains "tmux")
   &darr;
-  [1] Try auto-install tmux
-      macOS: brew install tmux
-      Linux: sudo apt-get install -y tmux || sudo dnf install -y tmux
-      &darr;
-      Success? &rarr; hasTmux = true, use runtime: "tmux"
-      &darr;
-      Fail? &rarr; exit with clear instructions
+  runStartup()
   &darr;
-  [2] If auto-install fails:
-      Show platform-specific install command + "then re-run ao start"
-      Exit with code 1</div>
+  ensureTmux()
+  &darr;
+  checkTmux():
+    [1] tmux -V
+    [2] if missing, auto-install (brew or apt/dnf)
+    [3] verify tmux -V
+  &darr;
+  Success? &rarr; continue startup
+  Fail?    &rarr; print platform-specific command + exit 1</div>
 
   <h3>Auto-Install</h3>
   <p><code>checkTmux()</code> now attempts installation before erroring:</p>
@@ -456,6 +456,20 @@ const nodeModules = resolve(webDir, "node_modules", "@composio", "ao-core");</co
     } catch { /* try next */ }
   }
   return false;
+}</code></pre>
+
+  <h3>All-Path Enforcement</h3>
+  <p>
+    <code>start.ts</code> now centralizes tmux enforcement in <code>runStartup()</code>, so all
+    start entry paths are covered (normal start, URL start, and retries with existing config):
+  </p>
+
+  <pre><code>async function runStartup(...) {
+  const runtime = config.defaults?.runtime ?? "tmux";
+  if (runtime === "tmux") {
+    await ensureTmux(); // uses preflight.checkTmux()
+  }
+  // continue dashboard + orchestrator startup...
 }</code></pre>
 
   <h3>Clear Error on Failure</h3>
@@ -540,7 +554,7 @@ function launch(): ChildProcess {
 
   <ul class="files-changed">
     <li>packages/cli/src/lib/preflight.ts &mdash; walk-up resolver, auto-install tmux, platform messages</li>
-    <li>packages/cli/src/commands/start.ts &mdash; runtime fallback to "process", auto-install attempt</li>
+    <li>packages/cli/src/commands/start.ts &mdash; centralized <code>ensureTmux()</code> gate in <code>runStartup()</code> for all start paths</li>
     <li class="new">packages/ao/bin/postinstall.js &mdash; node-pty spawn-helper chmod</li>
     <li>packages/ao/package.json &mdash; postinstall script registration</li>
     <li>packages/web/server/start-all.ts &mdash; restart logic with slot-based bookkeeping</li>
