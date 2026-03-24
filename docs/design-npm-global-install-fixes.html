@@ -231,6 +231,123 @@
       white-space: pre;
       overflow-x: auto;
     }
+
+    /* Visual flowchart styles */
+    .flowchart {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+      margin: 24px 0;
+      padding: 24px 16px;
+    }
+
+    .flow-node {
+      padding: 10px 20px;
+      border-radius: 8px;
+      text-align: center;
+      font-size: 0.85rem;
+      font-family: 'SFMono-Regular', Consolas, monospace;
+      max-width: 420px;
+      width: 100%;
+    }
+
+    .flow-cmd {
+      background: rgba(88, 166, 255, 0.15);
+      border: 2px solid var(--accent);
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .flow-action {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+
+    .flow-decision {
+      background: rgba(210, 153, 34, 0.1);
+      border: 2px solid var(--yellow);
+      color: var(--yellow);
+      transform: rotate(0deg);
+      padding: 8px 16px;
+      font-weight: 600;
+    }
+
+    .flow-success {
+      background: rgba(63, 185, 80, 0.15);
+      border: 2px solid var(--green);
+      color: var(--green);
+      font-weight: 600;
+    }
+
+    .flow-fail {
+      background: rgba(248, 81, 73, 0.12);
+      border: 2px solid var(--red);
+      color: var(--red);
+      font-weight: 600;
+    }
+
+    .flow-arrow {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      line-height: 1;
+    }
+
+    .flow-arrow::before {
+      content: "│";
+      font-size: 1rem;
+    }
+
+    .flow-arrow::after {
+      content: "▼";
+      font-size: 0.7rem;
+      margin-top: -2px;
+    }
+
+    .flow-arrow-label {
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      font-style: italic;
+      margin: 2px 0;
+    }
+
+    .flow-branch {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      width: 100%;
+      max-width: 500px;
+    }
+
+    .flow-branch-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+    }
+
+    .flow-branch-label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 10px;
+      margin-bottom: 4px;
+    }
+
+    .flow-branch-yes { background: rgba(63, 185, 80, 0.15); color: var(--green); }
+    .flow-branch-no { background: rgba(248, 81, 73, 0.12); color: var(--red); }
+
+    .flow-section-label {
+      color: var(--text-muted);
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 4px;
+    }
   </style>
 </head>
 <body>
@@ -271,44 +388,88 @@
   </ol>
 
   <h3>Two-Command Setup Workflow</h3>
-  <div class="flow-diagram">[Command 1] npm install -g @composio/ao
-  |
-  +--> postinstall.js runs
-       |
-       +--> find node-pty via walk-up
-       +--> chmod spawn-helper (+x)
-       +--> continue even if non-critical chmod fails
 
-[Command 2] ao start (normal | URL | existing config)
-  |
-  +--> load/create config (defaults.runtime = "tmux")
-  |
-  +--> runStartup()
-       |
-       +--> ensureTmux()
-            |
-            +--> tmux -V succeeds? ---- yes ----> continue
-            |                        |
-            |                        no
-            |                        |
-            |                        +--> askYesNo("Install tmux now?")
-            |                             |                    |
-            |                             yes                  no --> print hints, exit 1
-            |                             |
-            |                             +--> tryInstallWithAttempts (logs each cmd)
-            |                                  |
-            |                                  +--> verify succeeds? -- yes --> continue
-            |                                                   |
-            |                                                   no
-            |                                                   |
-            |                                                   +--> print manual install command
-            |                                                   +--> exit 1
-            |
-            +--> preflight.checkBuilt() uses findPackageUp(@composio/ao-core)
-            +--> start dashboard (Next + terminal servers with restart)
-            +--> create orchestrator session
-            +--> open dashboard URL
-            +--> SUCCESS</div>
+  <!-- Command 1 -->
+  <div class="flowchart">
+    <div class="flow-section-label">COMMAND 1</div>
+    <div class="flow-node flow-cmd">npm install -g @composio/ao</div>
+    <div class="flow-arrow"></div>
+    <div class="flow-node flow-action">postinstall.js runs</div>
+    <div class="flow-arrow"></div>
+    <div class="flow-node flow-action">find node-pty via walk-up resolver</div>
+    <div class="flow-arrow"></div>
+    <div class="flow-node flow-action">chmod spawn-helper (+x)<br><small style="color:var(--text-muted)">non-fatal on failure</small></div>
+    <div class="flow-arrow"></div>
+    <div class="flow-node flow-success">Install complete</div>
+  </div>
+
+  <!-- Command 2 -->
+  <div class="flowchart">
+    <div class="flow-section-label">COMMAND 2</div>
+    <div class="flow-node flow-cmd">ao start<br><small style="color:var(--text-muted)">normal | URL | existing config</small></div>
+    <div class="flow-arrow"></div>
+    <div class="flow-node flow-action">load/create config<br><small style="color:var(--text-muted)">defaults.runtime = "tmux"</small></div>
+    <div class="flow-arrow"></div>
+    <div class="flow-node flow-action">runStartup()</div>
+    <div class="flow-arrow"></div>
+
+    <!-- tmux check -->
+    <div class="flow-node flow-decision">tmux -V &mdash; installed?</div>
+    <div class="flow-branch">
+      <div class="flow-branch-col">
+        <div class="flow-branch-label flow-branch-yes">YES</div>
+        <div class="flow-arrow"></div>
+        <div class="flow-node flow-success" style="font-size:0.8rem">continue &darr;</div>
+      </div>
+      <div class="flow-branch-col">
+        <div class="flow-branch-label flow-branch-no">NO</div>
+        <div class="flow-arrow"></div>
+        <div class="flow-node flow-decision" style="font-size:0.8rem">askYesNo("Install tmux?")</div>
+      </div>
+    </div>
+
+    <!-- askYesNo branch -->
+    <div style="width:100%;max-width:500px">
+      <div class="flow-branch" style="margin-left:50%">
+        <div class="flow-branch-col">
+          <div class="flow-branch-label flow-branch-yes">YES</div>
+          <div class="flow-arrow"></div>
+          <div class="flow-node flow-action" style="font-size:0.8rem">tryInstallWithAttempts()<br><small style="color:var(--text-muted)">logs each cmd before running</small></div>
+          <div class="flow-arrow"></div>
+          <div class="flow-node flow-decision" style="font-size:0.8rem">verify tmux -V</div>
+          <div class="flow-branch" style="max-width:100%">
+            <div class="flow-branch-col">
+              <div class="flow-branch-label flow-branch-yes" style="font-size:0.65rem">OK</div>
+              <div class="flow-arrow"></div>
+              <div class="flow-node flow-success" style="font-size:0.75rem">continue &darr;</div>
+            </div>
+            <div class="flow-branch-col">
+              <div class="flow-branch-label flow-branch-no" style="font-size:0.65rem">FAIL</div>
+              <div class="flow-arrow"></div>
+              <div class="flow-node flow-fail" style="font-size:0.75rem">print hints<br>exit 1</div>
+            </div>
+          </div>
+        </div>
+        <div class="flow-branch-col">
+          <div class="flow-branch-label flow-branch-no">NO</div>
+          <div class="flow-arrow"></div>
+          <div class="flow-node flow-fail" style="font-size:0.8rem">print platform install hints<br>exit 1</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:16px"></div>
+    <div class="flow-arrow"></div>
+    <div class="flow-node flow-action">preflight.checkBuilt()<br><small style="color:var(--text-muted)">findPackageUp(@composio/ao-core)</small></div>
+    <div class="flow-arrow"></div>
+    <div class="flow-node flow-action">start dashboard<br><small style="color:var(--text-muted)">Next.js + terminal servers (auto-restart)</small></div>
+    <div class="flow-arrow"></div>
+    <div class="flow-node flow-action">create orchestrator session</div>
+    <div class="flow-arrow"></div>
+    <div class="flow-node flow-action">open dashboard URL</div>
+    <div class="flow-arrow"></div>
+    <div class="flow-node flow-success">SUCCESS</div>
+  </div>
 
   <hr class="section-divider">
 
@@ -458,22 +619,53 @@ const nodeModules = resolve(webDir, "node_modules", "@composio", "ao-core");</co
 
   <h3>Fix: Centralized Startup Gate with User Consent</h3>
 
-  <div class="flow-diagram">ao start (normal | URL | existing config)
-  &darr;
-  load/create config (runtime remains "tmux")
-  &darr;
-  runStartup()
-  &darr;
-  ensureTmux()
-  &darr;
-  tmux -V &rarr; found? &rarr; continue
-  &darr; (not found)
-  askYesNo("Install tmux now?")
-  &darr; yes                         &darr; no
-  tryInstallWithAttempts()       print install hints + exit 1
-  (logs each attempt before running)
-  &darr; success                     &darr; failure
-  continue startup               print install hints + exit 1</div>
+  <div class="flowchart">
+    <div class="flow-node flow-cmd">ao start<br><small style="color:var(--text-muted)">normal | URL | existing config</small></div>
+    <div class="flow-arrow"></div>
+    <div class="flow-node flow-action">runStartup()</div>
+    <div class="flow-arrow"></div>
+    <div class="flow-node flow-action">ensureTmux()</div>
+    <div class="flow-arrow"></div>
+    <div class="flow-node flow-decision">tmux -V &mdash; installed?</div>
+    <div class="flow-branch">
+      <div class="flow-branch-col">
+        <div class="flow-branch-label flow-branch-yes">YES</div>
+        <div class="flow-arrow"></div>
+        <div class="flow-node flow-success" style="font-size:0.8rem">continue startup</div>
+      </div>
+      <div class="flow-branch-col">
+        <div class="flow-branch-label flow-branch-no">NO</div>
+        <div class="flow-arrow"></div>
+        <div class="flow-node flow-decision" style="font-size:0.8rem">askYesNo("Install?")</div>
+        <div class="flow-branch" style="max-width:100%">
+          <div class="flow-branch-col">
+            <div class="flow-branch-label flow-branch-yes" style="font-size:0.65rem">YES</div>
+            <div class="flow-arrow"></div>
+            <div class="flow-node flow-action" style="font-size:0.75rem">tryInstallWithAttempts()<br><small>logs each cmd</small></div>
+            <div class="flow-arrow"></div>
+            <div class="flow-node flow-decision" style="font-size:0.75rem">verify?</div>
+            <div class="flow-branch" style="max-width:100%">
+              <div class="flow-branch-col">
+                <div class="flow-branch-label flow-branch-yes" style="font-size:0.6rem">OK</div>
+                <div class="flow-arrow"></div>
+                <div class="flow-node flow-success" style="font-size:0.7rem;padding:6px">continue</div>
+              </div>
+              <div class="flow-branch-col">
+                <div class="flow-branch-label flow-branch-no" style="font-size:0.6rem">FAIL</div>
+                <div class="flow-arrow"></div>
+                <div class="flow-node flow-fail" style="font-size:0.7rem;padding:6px">exit 1</div>
+              </div>
+            </div>
+          </div>
+          <div class="flow-branch-col">
+            <div class="flow-branch-label flow-branch-no" style="font-size:0.65rem">NO</div>
+            <div class="flow-arrow"></div>
+            <div class="flow-node flow-fail" style="font-size:0.75rem">print hints<br>exit 1</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <h3>Two-Layer Install Architecture</h3>
   <p>
