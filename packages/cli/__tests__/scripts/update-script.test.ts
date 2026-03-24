@@ -78,9 +78,9 @@ esac\nexit 0`,
   it("runs the built-in smoke commands in smoke-only mode", () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-smoke-"));
     const fakeRepo = join(tempRoot, "repo");
-    mkdirSync(join(fakeRepo, "packages", "agent-orchestrator", "bin"), { recursive: true });
+    mkdirSync(join(fakeRepo, "packages", "ao", "bin"), { recursive: true });
     writeFileSync(
-      join(fakeRepo, "packages", "agent-orchestrator", "bin", "ao.js"),
+      join(fakeRepo, "packages", "ao", "bin", "ao.js"),
       "#!/usr/bin/env node\n",
     );
 
@@ -109,13 +109,13 @@ exit 0`,
 
     expect(result.status).toBe(0);
     expect(commands).toContain(
-      `node ${join(fakeRepo, "packages", "agent-orchestrator", "bin", "ao.js")} --version`,
+      `node ${join(fakeRepo, "packages", "ao", "bin", "ao.js")} --version`,
     );
     expect(commands).toContain(
-      `node ${join(fakeRepo, "packages", "agent-orchestrator", "bin", "ao.js")} doctor --help`,
+      `node ${join(fakeRepo, "packages", "ao", "bin", "ao.js")} doctor --help`,
     );
     expect(commands).toContain(
-      `node ${join(fakeRepo, "packages", "agent-orchestrator", "bin", "ao.js")} update --help`,
+      `node ${join(fakeRepo, "packages", "ao", "bin", "ao.js")} update --help`,
     );
   });
 
