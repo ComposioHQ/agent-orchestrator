@@ -1717,7 +1717,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
             (s) =>
               s.projectId === session.projectId &&
               s.id !== session.id &&
-              !isOrchestratorSession({ id: s.id, metadata: s.metadata }),
+              !isOrchestratorSession({ id: s.id, metadata: s.metadata }) &&
+              !TERMINAL_STATUSES.has(s.status),
           );
           if (siblingWorkers.length > 0) {
             hasOpenWork = true;
