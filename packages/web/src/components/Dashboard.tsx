@@ -69,7 +69,10 @@ export function Dashboard({
     useState<DashboardOrchestratorLink[]>(orchestratorLinks);
   const [spawningProjectIds, setSpawningProjectIds] = useState<string[]>([]);
   const [spawnErrors, setSpawnErrors] = useState<Record<string, string>>({});
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.innerWidth < 768;
+  });
   const showSidebar = projects.length > 1;
   const allProjectsView = showSidebar && projectId === undefined;
 
