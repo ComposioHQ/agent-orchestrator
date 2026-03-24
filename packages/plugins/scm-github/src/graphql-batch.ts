@@ -168,6 +168,45 @@ async function executeBatchQuery(
 }
 
 /**
+ * Type for CheckRun context from GraphQL API.
+ * CheckRun uses 'status' field (not 'state') and has 'conclusion'.
+ */
+interface CheckRunContext {
+  name?: string;
+  status?: string;
+  conclusion?: string;
+}
+
+/**
+ * Type for StatusContext from GraphQL API.
+ * StatusContext uses 'state' field only (no 'conclusion').
+ */
+interface StatusContextType {
+  context?: string;
+  state?: string;
+}
+
+/**
+ * Generic context type that handles union of CheckRun and StatusContext.
+ * This allows more flexible parsing for test data and edge cases.
+ */
+type GenericContext = CheckRunContext | StatusContextType | { state?: string; conclusion?: string };
+
+/**
+ * Type guard to check if a context has 'status' field (CheckRun).
+ */
+function hasStatusField(ctx: GenericContext): ctx is CheckRunContext {
+  return "status" in ctx;
+}
+
+/**
+ * Type guard to check if a context has 'conclusion' field (CheckRun or hybrid).
+ */
+function hasConclusionField(ctx: GenericContext): ctx is CheckRunContext | { state?: string; conclusion?: string } {
+  return "conclusion" in ctx;
+}
+
+/**
  * Parse raw CI state from status check rollup.
  */
 function parseCIState(
@@ -183,18 +222,13 @@ function parseCIState(
   // Check individual contexts for detailed state - this takes precedence over
   // the top-level state because contexts provide more granular information
   const contexts = rollup["contexts"] as
-    | {
-        nodes?: Array<
-          | { status?: string; conclusion?: string } // CheckRun uses 'status'
-          | { state?: string } // StatusContext uses 'state'
-        >;
-      }
+    | { nodes?: Array<GenericContext> }
     | undefined;
   if (contexts?.nodes && contexts.nodes.length > 0) {
     const hasFailing = contexts.nodes.some(
       (c) => {
-        // Handle CheckRun type (has 'status' and 'conclusion')
-        if ("status" in c) {
+        // Handle CheckRun (has 'status' field): check conclusion for failure
+        if (hasStatusField(c)) {
           return (
             c.conclusion === "FAILURE" ||
             c.conclusion === "TIMED_OUT" ||
@@ -203,16 +237,20 @@ function parseCIState(
             c.conclusion === "ERROR"
           );
         }
-        // Handle StatusContext type (has 'state' only)
-        return c.state === "FAILURE";
+        // Handle StatusContext (has 'conclusion' field): check state for failure
+        // This covers both pure StatusContext and hybrid test data
+        if (hasConclusionField(c)) {
+          return c.state === "FAILURE";
+        }
+        return false;
       },
     );
     if (hasFailing) return "failing";
 
     const hasPending = contexts.nodes.some(
       (c) => {
-        // Handle CheckRun type (has 'status')
-        if ("status" in c) {
+        // Handle CheckRun (has 'status' field): check status for pending
+        if (hasStatusField(c)) {
           return (
             c.status === "PENDING" ||
             c.status === "QUEUED" ||
@@ -221,26 +259,32 @@ function parseCIState(
             c.status === "WAITING"
           );
         }
-        // Handle StatusContext type (has 'state')
-        return (
-          c.state === "PENDING" ||
-          c.state === "QUEUED" ||
-          c.state === "IN_PROGRESS" ||
-          c.state === "EXPECTED" ||
-          c.state === "WAITING"
-        );
+        // Handle StatusContext (has 'conclusion' field): check state for pending
+        if (hasConclusionField(c)) {
+          return (
+            c.state === "PENDING" ||
+            c.state === "QUEUED" ||
+            c.state === "IN_PROGRESS" ||
+            c.state === "EXPECTED" ||
+            c.state === "WAITING"
+          );
+        }
+        return false;
       },
     );
     if (hasPending) return "pending";
 
     const hasPassing = contexts.nodes.some(
       (c) => {
-        // Handle CheckRun type (has 'status' and 'conclusion')
-        if ("status" in c) {
+        // Handle CheckRun (has 'status' field): check conclusion for success
+        if (hasStatusField(c)) {
           return c.conclusion === "SUCCESS";
         }
-        // Handle StatusContext type (has 'state')
-        return c.state === "SUCCESS";
+        // Handle StatusContext (has 'conclusion' field): check state for success
+        if (hasConclusionField(c)) {
+          return c.state === "SUCCESS";
+        }
+        return false;
       },
     );
     if (hasPassing) return "passing";
