@@ -717,27 +717,106 @@ async function ensureTmux(): Promise&lt;void&gt; {
 
   <h3>Interactive Prerequisite Prompts (TTY)</h3>
   <p>
-    For human/TTY runs, <code>ao start</code> asks before attempting installs via <code>askYesNo()</code>.
-    Non-interactive callers keep deterministic behavior (no prompts, defaults apply).
-    All install helpers follow the same pattern: <code>tryInstallWithAttempts()</code> logs each
-    command before running it, so the user knows exactly what's happening.
+    When <code>ao start</code> detects a missing prerequisite on a fresh machine, it prompts
+    the user before attempting any install. This ensures no surprises &mdash; no silent
+    <code>sudo</code>, no unexpected package manager invocations.
   </p>
 
+  <h4>Prerequisite Matrix</h4>
+  <table>
+    <thead>
+      <tr>
+        <th>Prerequisite</th>
+        <th>Required?</th>
+        <th>Prompt</th>
+        <th>Install methods (by platform)</th>
+        <th>On failure</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>tmux</strong></td>
+        <td>Yes <small>(for <code>runtime: "tmux"</code>)</small></td>
+        <td><code>Install tmux now? [Y/n]</code></td>
+        <td>
+          macOS: <code>brew install tmux</code><br>
+          Linux: <code>apt-get</code> &rarr; <code>dnf</code>
+        </td>
+        <td><span class="badge badge-p0" style="font-size:0.7rem">blocks</span> &mdash; prints platform hints + exit 1</td>
+      </tr>
+      <tr>
+        <td><strong>git</strong></td>
+        <td>Yes <small>(for URL clone &amp; add-project)</small></td>
+        <td><code>Install Git now? [Y/n]</code></td>
+        <td>
+          macOS: <code>brew install git</code><br>
+          Linux: <code>apt-get</code> &rarr; <code>dnf</code><br>
+          Windows: <code>winget install Git.Git</code>
+        </td>
+        <td><span class="badge badge-p0" style="font-size:0.7rem">blocks</span> &mdash; prints platform hints + exit 1</td>
+      </tr>
+      <tr>
+        <td><strong>Agent runtime</strong><br><small>(Claude Code, Codex, Aider, OpenCode)</small></td>
+        <td>Yes <small>(at least one)</small></td>
+        <td>Numbered menu:<br><code>Choose runtime to install [1-5]</code></td>
+        <td>
+          1. Claude Code (<code>npm i -g @anthropic-ai/claude-code</code>)<br>
+          2. Codex (<code>npm i -g @openai/codex</code>)<br>
+          3. Aider (<code>pipx install aider-chat</code>)<br>
+          4. OpenCode (<code>go install ...</code>)<br>
+          5. Skip
+        </td>
+        <td>Config generation continues &mdash; user can install later</td>
+      </tr>
+      <tr>
+        <td><strong>GitHub CLI (gh)</strong></td>
+        <td>No <small>(optional)</small></td>
+        <td><code>Install GitHub CLI now? [y/N]</code><br><small>(defaults to <strong>no</strong>)</small></td>
+        <td>
+          macOS: <code>brew install gh</code><br>
+          Linux: <code>apt-get</code> &rarr; <code>dnf</code><br>
+          Windows: <code>winget install GitHub.cli</code>
+        </td>
+        <td>Skipped silently &mdash; optional dependency</td>
+      </tr>
+      <tr>
+        <td><strong>Docker</strong></td>
+        <td>No</td>
+        <td><em>Not prompted</em></td>
+        <td>&mdash;</td>
+        <td>&mdash; <small>(no <code>runtime-docker</code> plugin registered)</small></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h4>Key Behaviors</h4>
   <ul>
-    <li><strong>Git (required contexts):</strong> prompted for install before URL clone and add-project flows</li>
-    <li><strong>tmux:</strong> prompted before install; each attempt logged; if declined/fails, clear platform-specific command + exit</li>
-    <li><strong>Agent runtime binaries:</strong> if none detected, prompt to install one of Claude Code / Codex / Aider / OpenCode</li>
-    <li><strong>GitHub CLI (optional):</strong> prompted as optional install for GitHub-heavy workflows</li>
-    <li><strong>Docker:</strong> intentionally not prompted (no <code>runtime-docker</code> plugin currently registered)</li>
+    <li><strong>Always asks first</strong> &mdash; uses <code>askYesNo()</code> before running any install command. No silent <code>sudo</code> or background package manager invocations.</li>
+    <li><strong>Logs each command</strong> &mdash; shows <code>"Running: brew install tmux"</code> (via <code>tryInstallWithAttempts()</code>) so the user knows exactly what's executing.</li>
+    <li><strong>Blocks on required failures</strong> &mdash; for tmux and git, prints platform-specific manual install instructions and exits rather than silently degrading the experience.</li>
+    <li><strong>Non-interactive fallback</strong> &mdash; when not a TTY (CI, piped scripts, agent callers), <code>canPromptForInstall()</code> returns false and <code>askYesNo()</code> returns its default without prompting. Required tools default to <code>true</code> (attempt install), optional tools default to <code>false</code> (skip).</li>
+    <li><strong>Consistent pattern</strong> &mdash; all prerequisite helpers (<code>ensureTmux()</code>, <code>ensureGit()</code>, <code>promptInstallAgentRuntime()</code>) follow the same structure: detect &rarr; prompt &rarr; install &rarr; verify &rarr; block or skip.</li>
   </ul>
 
-  <h3>Clear Error on Failure</h3>
-  <p>
-    If install is declined or fails, <code>ao start</code> exits with a clear, actionable message
-    instead of silently degrading to a limited runtime:
-  </p>
+  <h4>Example: Fresh Machine Flow</h4>
+  <pre><code>$ ao start
+  Detecting environment...
+  ✓ Agent runtime: claude-code
+  ✓ Config created: agent-orchestrator.yaml
+  ⚠ tmux not found — will prompt to install at startup
 
-  <pre><code>✗ tmux is required but is not installed.
+  ⚠ tmux is required for runtime "tmux".
+  Install tmux now? [Y/n]: y
+    Running: brew install tmux
+  ✓ tmux installed successfully
+
+  Starting dashboard on port 3000...
+  ✓ Dashboard: http://localhost:3000</code></pre>
+
+  <p>If the user declines or install fails:</p>
+  <pre><code>  Install tmux now? [Y/n]: n
+
+  ✗ tmux is required but is not installed.
 
   Install tmux manually, then re-run ao start:
 
