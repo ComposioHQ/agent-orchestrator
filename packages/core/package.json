@@ -22,7 +22,8 @@
     "./scm-webhook-utils": {
       "types": "./dist/scm-webhook-utils.d.ts",
       "import": "./dist/scm-webhook-utils.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist"
