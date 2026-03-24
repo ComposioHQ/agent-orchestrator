@@ -5,6 +5,10 @@
  * (needs to be broken into subtasks). Composite tasks are recursively
  * decomposed until all leaves are atomic.
  *
+ * Supports multiple LLM providers:
+ *   - Anthropic (default) — via @anthropic-ai/sdk
+ *   - MiniMax — via OpenAI-compatible API (https://api.minimax.io/v1)
+ *
  * Integration: sits upstream of SessionManager.spawn(). When enabled,
  * complex issues are decomposed into child issues before agents are spawned.
  */
@@ -17,6 +21,9 @@ import Anthropic from "@anthropic-ai/sdk";
 
 export type TaskKind = "atomic" | "composite";
 export type TaskStatus = "pending" | "decomposing" | "ready" | "running" | "done" | "failed";
+
+/** Supported decomposer LLM providers */
+export type DecomposerProvider = "anthropic" | "minimax";
 
 export interface TaskNode {
   id: string; // hierarchical: "1", "1.2", "1.2.3"
@@ -51,6 +58,12 @@ export interface DecomposerConfig {
   model: string;
   /** Require human approval before executing decomposed plans (default: true) */
   requireApproval: boolean;
+  /**
+   * LLM provider to use for decomposition (default: "anthropic").
+   * - "anthropic": uses Anthropic SDK (ANTHROPIC_API_KEY)
+   * - "minimax": uses MiniMax OpenAI-compatible API (MINIMAX_API_KEY)
+   */
+  provider?: DecomposerProvider;
 }
 
 export const DEFAULT_DECOMPOSER_CONFIG: DecomposerConfig = {
@@ -58,6 +71,7 @@ export const DEFAULT_DECOMPOSER_CONFIG: DecomposerConfig = {
   maxDepth: 3,
   model: "claude-sonnet-4-20250514",
   requireApproval: true,
+  provider: "anthropic",
 };
 
 // =============================================================================
@@ -76,6 +90,108 @@ export function formatSiblings(siblings: string[], current: string): string {
   if (siblings.length === 0) return "";
   const lines = siblings.map((s) => (s === current ? `  - ${s}  <-- (you)` : `  - ${s}`));
   return `Sibling tasks being worked on in parallel:\n${lines.join("\n")}`;
+}
+
+// =============================================================================
+// LLM CLIENT ABSTRACTION
+// =============================================================================
+
+/** Internal abstraction for LLM chat completion, allowing multiple providers. */
+interface LLMClient {
+  chatCompletion(params: {
+    model: string;
+    maxTokens: number;
+    system: string;
+    userMessage: string;
+  }): Promise<string>;
+}
+
+/** Create an Anthropic-backed LLM client. */
+function createAnthropicClient(): LLMClient {
+  const client = new Anthropic();
+  return {
+    async chatCompletion({ model, maxTokens, system, userMessage }) {
+      const res = await client.messages.create({
+        model,
+        max_tokens: maxTokens,
+        system,
+        messages: [{ role: "user", content: userMessage }],
+      });
+      return res.content[0].type === "text" ? res.content[0].text.trim() : "";
+    },
+  };
+}
+
+/**
+ * Strip MiniMax thinking tags from response text.
+ * MiniMax M2.5/M2.7 models may include <think>...</think> blocks in output.
+ */
+export function stripThinkingTags(text: string): string {
+  return text.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+}
+
+/**
+ * Clamp temperature for MiniMax models.
+ * MiniMax accepts temperature in the range [0, 1.0].
+ */
+function clampTemperature(temp: number): number {
+  return Math.max(0, Math.min(1, temp));
+}
+
+/** Create a MiniMax-backed LLM client via OpenAI-compatible API. */
+function createMiniMaxClient(): LLMClient {
+  const apiKey = process.env["MINIMAX_API_KEY"];
+  if (!apiKey) {
+    throw new Error(
+      "MINIMAX_API_KEY environment variable is required when using provider: minimax. " +
+        "Get your API key at https://platform.minimaxi.com/",
+    );
+  }
+
+  const baseURL = process.env["MINIMAX_BASE_URL"] || "https://api.minimax.io/v1";
+
+  return {
+    async chatCompletion({ model, maxTokens, system, userMessage }) {
+      const response = await fetch(`${baseURL}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: maxTokens,
+          temperature: clampTemperature(0.1),
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: userMessage },
+          ],
+        }),
+      });
+
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error(`MiniMax API error (${response.status}): ${body}`);
+      }
+
+      const data = (await response.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      const text = data.choices?.[0]?.message?.content ?? "";
+      return stripThinkingTags(text).trim();
+    },
+  };
+}
+
+/** Create an LLM client for the given provider. */
+export function createLLMClient(provider: DecomposerProvider = "anthropic"): LLMClient {
+  switch (provider) {
+    case "minimax":
+      return createMiniMaxClient();
+    case "anthropic":
+    default:
+      return createAnthropicClient();
+  }
 }
 
 // =============================================================================
@@ -112,39 +228,37 @@ Respond with a JSON array of strings, each being a subtask description. Example:
 Nothing else — just the JSON array.`;
 
 async function classifyTask(
-  client: Anthropic,
+  client: LLMClient,
   model: string,
   task: string,
   lineage: string[],
 ): Promise<TaskKind> {
   const context = formatLineage(lineage, task);
-  const res = await client.messages.create({
+  const text = await client.chatCompletion({
     model,
-    max_tokens: 10,
+    maxTokens: 10,
     system: CLASSIFY_SYSTEM,
-    messages: [{ role: "user", content: `Task hierarchy:\n${context}` }],
+    userMessage: `Task hierarchy:\n${context}`,
   });
 
-  const text = res.content[0].type === "text" ? res.content[0].text.trim().toLowerCase() : "";
-  return text === "composite" ? "composite" : "atomic";
+  return text.toLowerCase() === "composite" ? "composite" : "atomic";
 }
 
 async function decomposeTask(
-  client: Anthropic,
+  client: LLMClient,
   model: string,
   task: string,
   lineage: string[],
 ): Promise<string[]> {
   const context = formatLineage(lineage, task);
-  const res = await client.messages.create({
+  const text = await client.chatCompletion({
     model,
-    max_tokens: 1024,
+    maxTokens: 1024,
     system: DECOMPOSE_SYSTEM,
-    messages: [{ role: "user", content: `Task hierarchy:\n${context}` }],
+    userMessage: `Task hierarchy:\n${context}`,
   });
 
-  const text = res.content[0].type === "text" ? res.content[0].text.trim() : "[]";
-  const jsonMatch = text.match(/\[[\s\S]*\]/);
+  const jsonMatch = (text || "[]").match(/\[[\s\S]*\]/);
   if (!jsonMatch) {
     throw new Error(`Decomposition failed — no JSON array in response: ${text}`);
   }
@@ -172,7 +286,7 @@ function createTaskNode(
 
 /** Recursively decompose a task tree (planning phase — no execution). */
 async function planTree(
-  client: Anthropic,
+  client: LLMClient,
   model: string,
   task: TaskNode,
   maxDepth: number,
@@ -210,7 +324,7 @@ export async function decompose(
   taskDescription: string,
   config: DecomposerConfig = DEFAULT_DECOMPOSER_CONFIG,
 ): Promise<DecompositionPlan> {
-  const client = new Anthropic();
+  const client = createLLMClient(config.provider);
   const tree = createTaskNode("1", taskDescription, 0, []);
 
   await planTree(client, config.model, tree, config.maxDepth);

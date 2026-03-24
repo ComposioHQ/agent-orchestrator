@@ -1008,6 +1008,12 @@ export interface ProjectConfig {
     model: string;
     /** Require human approval before executing decomposed plans (default: true) */
     requireApproval: boolean;
+    /**
+     * LLM provider for decomposition (default: "anthropic").
+     * - "anthropic": uses Anthropic SDK (ANTHROPIC_API_KEY)
+     * - "minimax": uses MiniMax OpenAI-compatible API (MINIMAX_API_KEY)
+     */
+    provider?: "anthropic" | "minimax";
   };
 }
 

@@ -136,6 +136,29 @@ CI fails → agent gets the logs and fixes it. Reviewer requests changes → age
 
 See [`agent-orchestrator.yaml.example`](agent-orchestrator.yaml.example) for the full reference, or run `ao config-help` for the complete schema.
 
+### Task Decomposer — LLM Provider
+
+The task decomposer supports multiple LLM providers for breaking complex issues into subtasks:
+
+| Provider  | Model Examples                        | Env Variable       |
+| --------- | ------------------------------------- | ------------------ |
+| Anthropic | `claude-sonnet-4-20250514` (default)  | `ANTHROPIC_API_KEY` |
+| [MiniMax](https://www.minimaxi.com)   | `MiniMax-M2.7`, `MiniMax-M2.5`       | `MINIMAX_API_KEY`  |
+
+```yaml
+# Use MiniMax for task decomposition
+projects:
+  my-app:
+    repo: owner/my-app
+    path: ~/my-app
+    decomposer:
+      enabled: true
+      provider: minimax          # anthropic (default) | minimax
+      model: MiniMax-M2.7        # MiniMax model to use
+```
+
+MiniMax models are accessed via their [OpenAI-compatible API](https://platform.minimaxi.com/document/OpenAI%20compatibility), so no additional SDK is needed.
+
 ## Plugin Architecture
 
 Eight slots. Every abstraction is swappable.
