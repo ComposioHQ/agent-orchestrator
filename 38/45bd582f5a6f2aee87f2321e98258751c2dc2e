@@ -1,0 +1,25 @@
+packages/web/src/components/Dashboard.tsx
+  11e09340c0760e62 330-340,451,709-770
+packages/web/src/app/globals.css
+  11e09340c0760e62 1960-1965,1969,1971-1974,1977-1983,1986,1988,1992,1996-2062
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.17",
+  "base_commit_sha": "3845bd582f5a6f2aee87f2321e98258751c2dc2e",
+  "prompts": {
+    "11e09340c0760e62": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "21ec3665-889a-47af-abe8-9e064a01ecf0",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 166,
+      "total_deletions": 10,
+      "accepted_lines": 166,
+      "overriden_lines": 0
+    }
+  }
+}
