@@ -1,15 +1,18 @@
 import {
   createAgentPlugin,
+  parseJsonlFileTail,
+  extractSummary,
+  extractCost,
   resetPsCache as _resetPsCache,
   type AgentPluginConfig,
 } from "@composio/ao-plugin-agent-base";
 import { execFileSync } from "node:child_process";
 import { readFile, readdir, stat } from "node:fs/promises";
-import type { Agent, ActivityDetection, PluginModule, ProjectConfig, Session } from "@composio/ao-core";
+import type { Agent, ActivityDetection, AgentSessionInfo, PluginModule, ProjectConfig, Session } from "@composio/ao-core";
 import { DEFAULT_READY_THRESHOLD_MS } from "@composio/ao-core";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 // =============================================================================
 // Plugin Manifest
@@ -227,6 +230,56 @@ const geminiOverrides: Partial<Agent> = {
       default:
         return { state: ageMs > threshold ? "idle" : "active", timestamp };
     }
+  },
+
+  async getSessionInfo(session: Session): Promise<AgentSessionInfo | null> {
+    if (!session.workspacePath) return null;
+
+    const projectDir = geminiConfig.getSessionDir?.(session.workspacePath);
+    if (!projectDir) return null;
+
+    const latest = await findLatestGeminiSessionFile(projectDir);
+    if (!latest) return null;
+
+    // Try native Gemini JSON first: { sessionId, messages: [{type, content, ...}] }
+    try {
+      const content = await readFile(latest.path, "utf-8");
+      const trimmed = content.trim();
+      if (!trimmed) return null;
+
+      const parsed: unknown = JSON.parse(trimmed);
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+        const obj = parsed as Record<string, unknown>;
+        if (Array.isArray(obj.messages)) {
+          const sessionId = typeof obj.sessionId === "string" ? obj.sessionId : null;
+          const agentSessionId =
+            sessionId ?? basename(latest.path, geminiConfig.sessionFileExtension ?? ".json");
+
+          // Use last "gemini" message as summary
+          const messages = obj.messages as Array<Record<string, unknown>>;
+          const lastGemini = [...messages].reverse().find((m) => m["type"] === "gemini");
+          const summary =
+            typeof lastGemini?.["content"] === "string" ? lastGemini["content"] : null;
+
+          return { summary, agentSessionId, cost: undefined };
+        }
+      }
+    } catch {
+      // Not valid single-object JSON — fall through to JSONL
+    }
+
+    // JSONL fallback: one JSON object per line (legacy / compatibility format)
+    const agentSessionId = basename(latest.path, geminiConfig.sessionFileExtension ?? ".json");
+    const lines = await parseJsonlFileTail(latest.path);
+    if (lines.length === 0) return null;
+
+    const summaryResult = extractSummary(lines);
+    return {
+      summary: summaryResult?.summary ?? null,
+      summaryIsFallback: summaryResult?.isFallback,
+      agentSessionId,
+      cost: extractCost(lines, geminiConfig.defaultCostRate),
+    };
   },
 };
 

@@ -8,6 +8,7 @@ import {
 } from "@composio/ao-plugin-agent-base";
 import { execFileSync } from "node:child_process";
 import type { Agent, PluginModule, Session, WorkspaceHooksConfig } from "@composio/ao-core";
+import { shellEscape } from "@composio/ao-core";
 
 // =============================================================================
 // Plugin Manifest
@@ -79,7 +80,7 @@ const claudeOverrides: Partial<Agent> = {
     // hook-execution time. Relative script path keeps settings.json identical
     // across worktrees sharing the same .claude/ dir.
     const hookCommand = config.dataDir
-      ? `AO_DATA_DIR=${config.dataDir} .claude/metadata-updater.sh`
+      ? `AO_DATA_DIR=${shellEscape(config.dataDir)} .claude/metadata-updater.sh`
       : ".claude/metadata-updater.sh";
     await setupHookInWorkspace(workspacePath, ".claude", hookCommand);
   },

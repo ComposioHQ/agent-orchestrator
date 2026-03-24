@@ -316,7 +316,7 @@ async function findLatestSessionFile(
   return withStats[0]?.path ?? null;
 }
 
-interface JsonlLine {
+export interface JsonlLine {
   type?: string;
   summary?: string;
   message?: { content?: string; role?: string };
@@ -340,7 +340,7 @@ interface JsonlLine {
  * readFile is used directly. For large files, only the tail is read via a
  * file handle to avoid loading the entire file into memory.
  */
-async function parseJsonlFileTail(filePath: string, maxBytes = 131_072): Promise<JsonlLine[]> {
+export async function parseJsonlFileTail(filePath: string, maxBytes = 131_072): Promise<JsonlLine[]> {
   let content: string;
   let offset: number;
   try {
@@ -390,7 +390,7 @@ function escapeHookMatcherForBash(matcher: string): string {
 }
 
 /** Extract auto-generated summary from JSONL (last "summary" type entry) */
-function extractSummary(
+export function extractSummary(
   lines: JsonlLine[],
 ): { summary: string; isFallback: boolean } | null {
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -419,7 +419,7 @@ function extractSummary(
 }
 
 /** Aggregate cost estimate from JSONL usage events */
-function extractCost(
+export function extractCost(
   lines: JsonlLine[],
   defaultCostRate: AgentPluginConfig["defaultCostRate"],
 ): CostEstimate | undefined {

@@ -864,7 +864,7 @@ describe("hook setup — relative path (symlink-safe)", () => {
       { dataDir: "/custom/ao-sessions" } as WorkspaceHooksConfig,
     );
     const hookCommand = getWrittenHookCommand();
-    expect(hookCommand).toBe("AO_DATA_DIR=/custom/ao-sessions .claude/metadata-updater.sh");
+    expect(hookCommand).toBe("AO_DATA_DIR='/custom/ao-sessions' .claude/metadata-updater.sh");
   });
 
   it("postLaunchSetup preserves existing AO_DATA_DIR in command", async () => {
@@ -878,7 +878,7 @@ describe("hook setup — relative path (symlink-safe)", () => {
               hooks: [
                 {
                   type: "command",
-                  command: "AO_DATA_DIR=/custom/ao-sessions .claude/metadata-updater.sh",
+                  command: "AO_DATA_DIR='/custom/ao-sessions' .claude/metadata-updater.sh",
                   timeout: 5000,
                 },
               ],
@@ -894,6 +894,6 @@ describe("hook setup — relative path (symlink-safe)", () => {
 
     const hookCommand = getWrittenHookCommand();
     // postLaunchSetup has no config, uses bare command — but existing AO_DATA_DIR is preserved
-    expect(hookCommand).toBe("AO_DATA_DIR=/custom/ao-sessions .claude/metadata-updater.sh");
+    expect(hookCommand).toBe("AO_DATA_DIR='/custom/ao-sessions' .claude/metadata-updater.sh");
   });
 });
