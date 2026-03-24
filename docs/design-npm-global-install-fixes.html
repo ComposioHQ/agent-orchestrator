@@ -270,6 +270,46 @@
     <li><strong>Terminal server crash is permanent</strong> &mdash; no auto-restart after crash</li>
   </ol>
 
+  <h3>Two-Command Setup Workflow</h3>
+  <div class="flow-diagram">[Command 1] npm install -g @composio/ao
+  |
+  +--> postinstall.js runs
+       |
+       +--> find node-pty via walk-up
+       +--> chmod spawn-helper (+x)
+       +--> continue even if non-critical chmod fails
+
+[Command 2] ao start (normal | URL | existing config)
+  |
+  +--> load/create config (defaults.runtime = "tmux")
+  |
+  +--> runStartup()
+       |
+       +--> ensureTmux()
+            |
+            +--> tmux -V succeeds? ---- yes ----> continue
+            |                        |
+            |                        no
+            |                        |
+            |                        +--> askYesNo("Install tmux now?")
+            |                             |                    |
+            |                             yes                  no --> print hints, exit 1
+            |                             |
+            |                             +--> tryInstallWithAttempts (logs each cmd)
+            |                                  |
+            |                                  +--> verify succeeds? -- yes --> continue
+            |                                                   |
+            |                                                   no
+            |                                                   |
+            |                                                   +--> print manual install command
+            |                                                   +--> exit 1
+            |
+            +--> preflight.checkBuilt() uses findPackageUp(@composio/ao-core)
+            +--> start dashboard (Next + terminal servers with restart)
+            +--> create orchestrator session
+            +--> open dashboard URL
+            +--> SUCCESS</div>
+
   <hr class="section-divider">
 
   <!-- ================================================================ -->
@@ -397,7 +437,7 @@ const nodeModules = resolve(webDir, "node_modules", "@composio", "ao-core");</co
   <hr class="section-divider">
 
   <!-- ================================================================ -->
-  <h2>5. Fix 3 &mdash; tmux Auto-Install + All-Path Startup Enforcement</h2>
+  <h2>5. Fix 3 &mdash; Startup Preflight: tmux + Interactive Prerequisites</h2>
 
   <h3>Root Cause</h3>
   <p>
@@ -416,7 +456,7 @@ const nodeModules = resolve(webDir, "node_modules", "@composio", "ao-core");</co
 ...
 ✗ Failed to setup orchestrator: tmux: command not found</code></pre>
 
-  <h3>Fix: Centralized Startup Gate</h3>
+  <h3>Fix: Centralized Startup Gate with User Consent</h3>
 
   <div class="flow-diagram">ao start (normal | URL | existing config)
   &darr;
@@ -426,59 +466,86 @@ const nodeModules = resolve(webDir, "node_modules", "@composio", "ao-core");</co
   &darr;
   ensureTmux()
   &darr;
-  checkTmux():
-    [1] tmux -V
-    [2] if missing, auto-install (brew or apt/dnf)
-    [3] verify tmux -V
-  &darr;
-  Success? &rarr; continue startup
-  Fail?    &rarr; print platform-specific command + exit 1</div>
+  tmux -V &rarr; found? &rarr; continue
+  &darr; (not found)
+  askYesNo("Install tmux now?")
+  &darr; yes                         &darr; no
+  tryInstallWithAttempts()       print install hints + exit 1
+  (logs each attempt before running)
+  &darr; success                     &darr; failure
+  continue startup               print install hints + exit 1</div>
 
-  <h3>Auto-Install</h3>
-  <p><code>checkTmux()</code> now attempts installation before erroring:</p>
+  <h3>Two-Layer Install Architecture</h3>
+  <p>
+    Install logic lives in two layers, each with a clear responsibility:
+  </p>
+  <ul>
+    <li><strong><code>preflight.checkTmux()</code></strong> &mdash; low-level check + auto-install. Logs each attempt
+      (<code>"Attempting: brew install tmux"</code>) before running. Used by preflight checks and
+      non-interactive contexts.</li>
+    <li><strong><code>ensureTmux()</code> in start.ts</strong> &mdash; interactive wrapper. Uses <code>askYesNo()</code>
+      to get user consent before running <code>tryInstallWithAttempts()</code> with
+      <code>tmuxInstallAttempts()</code>. Matches the existing <code>ensureGit()</code> pattern.
+      No silent <code>sudo</code> &mdash; the user sees what will run and approves it.</li>
+  </ul>
 
-  <pre><code>async function autoInstallTmux(): Promise&lt;boolean&gt; {
-  const attempts =
-    process.platform === "darwin"
-      ? [{ cmd: "brew", args: ["install", "tmux"] }]
-      : process.platform === "linux"
-        ? [
-            { cmd: "sudo", args: ["apt-get", "install", "-y", "tmux"] },
-            { cmd: "sudo", args: ["dnf", "install", "-y", "tmux"] },
-          ]
-        : [];
+  <pre><code>// start.ts — interactive install with user consent
+async function ensureTmux(): Promise&lt;void&gt; {
+  const hasTmux = (await execSilent("tmux", ["-V"])) !== null;
+  if (hasTmux) return;
 
-  for (const { cmd, args } of attempts) {
-    try {
-      await exec(cmd, args);
-      await exec("tmux", ["-V"]); // verify
-      return true;
-    } catch { /* try next */ }
+  console.log("⚠ tmux is required for runtime \"tmux\".");
+  const shouldInstall = await askYesNo("Install tmux now?", true);
+  if (shouldInstall) {
+    const installed = await tryInstallWithAttempts(
+      tmuxInstallAttempts(),
+      async () =&gt; (await execSilent("tmux", ["-V"])) !== null,
+    );
+    if (installed) return; // ✓ tmux installed successfully
   }
-  return false;
+
+  // Print platform-specific hints and exit
+  for (const hint of tmuxInstallHints()) console.log(hint);
+  process.exit(1);
 }</code></pre>
 
   <h3>All-Path Enforcement</h3>
   <p>
-    <code>start.ts</code> now centralizes tmux enforcement in <code>runStartup()</code>, so all
+    <code>start.ts</code> centralizes tmux enforcement in <code>runStartup()</code>, so all
     start entry paths are covered (normal start, URL start, and retries with existing config):
   </p>
 
   <pre><code>async function runStartup(...) {
   const runtime = config.defaults?.runtime ?? "tmux";
   if (runtime === "tmux") {
-    await ensureTmux(); // uses preflight.checkTmux()
+    await ensureTmux();
   }
   // continue dashboard + orchestrator startup...
 }</code></pre>
 
+  <h3>Interactive Prerequisite Prompts (TTY)</h3>
+  <p>
+    For human/TTY runs, <code>ao start</code> asks before attempting installs via <code>askYesNo()</code>.
+    Non-interactive callers keep deterministic behavior (no prompts, defaults apply).
+    All install helpers follow the same pattern: <code>tryInstallWithAttempts()</code> logs each
+    command before running it, so the user knows exactly what's happening.
+  </p>
+
+  <ul>
+    <li><strong>Git (required contexts):</strong> prompted for install before URL clone and add-project flows</li>
+    <li><strong>tmux:</strong> prompted before install; each attempt logged; if declined/fails, clear platform-specific command + exit</li>
+    <li><strong>Agent runtime binaries:</strong> if none detected, prompt to install one of Claude Code / Codex / Aider / OpenCode</li>
+    <li><strong>GitHub CLI (optional):</strong> prompted as optional install for GitHub-heavy workflows</li>
+    <li><strong>Docker:</strong> intentionally not prompted (no <code>runtime-docker</code> plugin currently registered)</li>
+  </ul>
+
   <h3>Clear Error on Failure</h3>
   <p>
-    If auto-install fails, <code>ao start</code> exits with a clear, actionable message
+    If install is declined or fails, <code>ao start</code> exits with a clear, actionable message
     instead of silently degrading to a limited runtime:
   </p>
 
-  <pre><code>✗ tmux is required but could not be installed automatically.
+  <pre><code>✗ tmux is required but is not installed.
 
   Install tmux manually, then re-run ao start:
 
@@ -554,7 +621,7 @@ function launch(): ChildProcess {
 
   <ul class="files-changed">
     <li>packages/cli/src/lib/preflight.ts &mdash; walk-up resolver, auto-install tmux, platform messages</li>
-    <li>packages/cli/src/commands/start.ts &mdash; centralized <code>ensureTmux()</code> gate in <code>runStartup()</code> for all start paths</li>
+    <li>packages/cli/src/commands/start.ts &mdash; centralized <code>ensureTmux()</code> gate + interactive install prompts for git/tmux/agent runtimes (+ optional gh)</li>
     <li class="new">packages/ao/bin/postinstall.js &mdash; node-pty spawn-helper chmod</li>
     <li>packages/ao/package.json &mdash; postinstall script registration</li>
     <li>packages/web/server/start-all.ts &mdash; restart logic with slot-based bookkeeping</li>
@@ -650,6 +717,13 @@ function launch(): ChildProcess {
       <tr><td>CLI tests</td><td>222/223 pass (1 = pre-existing flaky doctor-script.test.ts)</td></tr>
     </tbody>
   </table>
+
+  <div class="callout callout-warning">
+    Local validation caveat: if <code>node_modules</code> contains root-owned artifacts
+    (notably <code>node-pty/build/*</code> from earlier sudo installs), <code>pnpm install</code>
+    can fail with <code>EACCES</code> on unlink/rebuild. This is an environment ownership issue,
+    not a behavior regression in startup logic.
+  </div>
 
   <h3>New/Updated Test Cases</h3>
   <table>

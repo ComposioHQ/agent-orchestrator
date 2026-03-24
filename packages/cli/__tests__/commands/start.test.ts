@@ -113,6 +113,7 @@ vi.mock("../../src/lib/preflight.js", () => ({
   preflight: {
     checkPort: vi.fn(),
     checkBuilt: vi.fn(),
+    checkTmux: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
@@ -192,8 +193,16 @@ beforeEach(() => {
   mockSessionManager.kill.mockReset();
   mockExec.mockReset();
   mockExecSilent.mockReset();
-  // Default: execSilent returns null (gh not available), so clone falls through to git SSH/HTTPS
-  mockExecSilent.mockResolvedValue(null);
+  // Default command availability:
+  // - git and tmux are installed
+  // - gh auth is unavailable (clone falls through to git SSH/HTTPS)
+  mockExecSilent.mockImplementation(async (cmd: string, args: string[] = []) => {
+    if (cmd === "git" && args[0] === "--version") return "git version 2.43.0";
+    if (cmd === "tmux" && args[0] === "-V") return "tmux 3.4";
+    if (cmd === "gh" && args[0] === "--version") return null;
+    if (cmd === "gh" && args[0] === "auth" && args[1] === "status") return null;
+    return null;
+  });
   mockWaitForPortAndOpen.mockReset();
   mockWaitForPortAndOpen.mockResolvedValue(undefined);
   mockEnsureLifecycleWorker.mockReset();
@@ -435,7 +444,12 @@ describe("start command — URL argument", () => {
     mockCwd(tmpDir);
 
     // gh auth status fails (not installed or not logged in)
-    mockExecSilent.mockResolvedValue(null);
+    mockExecSilent.mockImplementation(async (cmd: string, args: string[] = []) => {
+      if (cmd === "git" && args[0] === "--version") return "git version 2.43.0";
+      if (cmd === "tmux" && args[0] === "-V") return "tmux 3.4";
+      if (cmd === "gh" && args[0] === "auth" && args[1] === "status") return null;
+      return null;
+    });
 
     mockExec.mockImplementation(async (cmd: string, args: string[]) => {
       // SSH attempt fails

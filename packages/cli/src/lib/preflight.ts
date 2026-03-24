@@ -108,6 +108,8 @@ async function autoInstallTmux(): Promise<boolean> {
 
   for (const { cmd, args } of attempts) {
     try {
+      const label = [cmd, ...args].join(" ");
+      console.log(`  Attempting: ${label}`);
       await exec(cmd, args);
       // Verify it actually worked
       await exec("tmux", ["-V"]);
