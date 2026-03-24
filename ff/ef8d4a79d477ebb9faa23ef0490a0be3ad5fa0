@@ -1,0 +1,29 @@
+packages/web/src/components/AttentionZone.tsx
+  11e09340c0760e62 14-17,63-67,76-77,80-120,160-161
+packages/web/src/app/globals.css
+  11e09340c0760e62 1821-1907,2087,2089
+packages/web/src/__tests__/setup.ts
+  11e09340c0760e62 2-19
+packages/web/src/components/Dashboard.tsx
+  11e09340c0760e62 5,36-37,77-78,110-117,433-466
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.17",
+  "base_commit_sha": "ffef8d4a79d477ebb9faa23ef0490a0be3ad5fa0",
+  "prompts": {
+    "11e09340c0760e62": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "21ec3665-889a-47af-abe8-9e064a01ecf0",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 208,
+      "total_deletions": 16,
+      "accepted_lines": 208,
+      "overriden_lines": 0
+    }
+  }
+}
