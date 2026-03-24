@@ -6,17 +6,17 @@
 </a>
 </p>
 
-<div align="center">
-
+<p align="center">
 Spawn parallel AI coding agents, each in its own git worktree. Agents autonomously fix CI failures, address review comments, and open PRs — you supervise from one dashboard.
+</p>
 
-[![GitHub stars](https://img.shields.io/github/stars/ComposioHQ/agent-orchestrator?style=flat-square)](https://github.com/ComposioHQ/agent-orchestrator/stargazers)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
-[![PRs merged](https://img.shields.io/badge/PRs_merged-61-brightgreen?style=flat-square)](https://github.com/ComposioHQ/agent-orchestrator/pulls?q=is%3Amerged)
-[![Tests](https://img.shields.io/badge/test_cases-3%2C288-blue?style=flat-square)](https://github.com/ComposioHQ/agent-orchestrator/releases/tag/metrics-v1)
-[![Discord](https://img.shields.io/badge/Discord-Join%20Community-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/UZv7JjxbwG)
-
-</div>
+<p align="center">
+<a href="https://github.com/ComposioHQ/agent-orchestrator/stargazers"><img src="https://img.shields.io/github/stars/ComposioHQ/agent-orchestrator?style=flat-square" alt="GitHub stars"></a>
+<a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License: MIT"></a>
+<a href="https://github.com/ComposioHQ/agent-orchestrator/pulls?q=is%3Amerged"><img src="https://img.shields.io/badge/PRs_merged-61-brightgreen?style=flat-square" alt="PRs merged"></a>
+<a href="https://github.com/ComposioHQ/agent-orchestrator/releases/tag/metrics-v1"><img src="https://img.shields.io/badge/test_cases-3%2C288-blue?style=flat-square" alt="Tests"></a>
+<a href="https://discord.gg/UZv7JjxbwG"><img src="https://img.shields.io/badge/Discord-Join%20Community-5865F2?style=flat-square&logo=discord&logoColor=white" alt="Discord"></a>
+</p>
 
 ---
 
@@ -24,10 +24,9 @@ Agent Orchestrator manages fleets of AI coding agents working in parallel on you
 
 **Agent-agnostic** (Claude Code, Codex, Aider) · **Runtime-agnostic** (tmux, Docker) · **Tracker-agnostic** (GitHub, Linear)
 
-<div align="center">
-
 ## See it in action
 
+<p align="center">
 <a href="https://x.com/agent_wrapper/status/2026329204405723180">
   <img src="docs/assets/demo-video-tweet.png" alt="Agent Orchestrator demo — AI agents building their own orchestrator" width="560">
 </a>
@@ -39,8 +38,7 @@ Agent Orchestrator manages fleets of AI coding agents working in parallel on you
 </a>
 <br><br>
 <a href="https://x.com/agent_wrapper/status/2025986105485733945"><img src="docs/assets/btn-read-article.png" alt="Read the Full Article on X" height="48"></a>
-
-</div>
+</p>
 
 ## Quick Start
 
