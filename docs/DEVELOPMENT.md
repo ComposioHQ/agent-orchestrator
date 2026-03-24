@@ -25,7 +25,7 @@ Every abstraction is a swappable plugin. All interfaces are defined in [`package
 | Runtime   | `Runtime`   | `tmux`        | `process`, `docker`, `k8s`, `ssh`, `e2b` |
 | Agent     | `Agent`     | `claude-code` | `codex`, `aider`, `opencode`             |
 | Workspace | `Workspace` | `worktree`    | `clone`                                  |
-| Tracker   | `Tracker`   | `github`      | `linear`                                 |
+| Tracker   | `Tracker`   | `github`      | `linear`, `clickup`                      |
 | SCM       | `SCM`       | `github`      | —                                        |
 | Notifier  | `Notifier`  | `desktop`     | `slack`, `webhook`, `composio`           |
 | Terminal  | `Terminal`  | `iterm2`      | `web`                                    |
@@ -109,7 +109,7 @@ agent-orchestrator/
 │   │   ├── runtime-*/     # Runtime plugins (tmux, docker, k8s)
 │   │   ├── agent-*/       # Agent adapters (claude-code, codex, aider)
 │   │   ├── workspace-*/   # Workspace providers (worktree, clone)
-│   │   ├── tracker-*/     # Issue trackers (github, linear)
+│   │   ├── tracker-*/     # Issue trackers (github, linear, clickup)
 │   │   ├── scm-github/    # SCM adapter
 │   │   ├── notifier-*/    # Notification channels
 │   │   └── terminal-*/    # Terminal UIs

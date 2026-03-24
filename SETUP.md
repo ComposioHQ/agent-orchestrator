@@ -195,7 +195,7 @@ Agent Orchestrator has 8 plugin slots. All are swappable:
 | **Runtime**   | How sessions run     | `tmux`        | `process`, `docker`, `kubernetes`, `ssh`, `e2b` |
 | **Agent**     | AI coding assistant  | `claude-code` | `codex`, `aider`, `goose`, custom               |
 | **Workspace** | Workspace isolation  | `worktree`    | `clone`, `copy`                                 |
-| **Tracker**   | Issue tracking       | `github`      | `linear`, `jira`, custom                        |
+| **Tracker**   | Issue tracking       | `github`      | `linear`, `clickup`, `jira`, custom              |
 | **SCM**       | Source control       | `github`      | GitLab, Bitbucket (future)                      |
 | **Notifier**  | Notifications        | `desktop`     | `slack`, `discord`, `webhook`, `email`          |
 | **Terminal**  | Terminal integration | `iterm2`      | `web`, custom                                   |
@@ -348,6 +348,37 @@ gh auth status
 
 ```bash
 echo $LINEAR_API_KEY  # Should print your key
+```
+
+### ClickUp
+
+**Setup:**
+
+1. Get your API token: https://app.clickup.com/settings/apps
+2. Add to environment:
+
+   ```bash
+   echo 'export CLICKUP_API_TOKEN="pk_..."' >> ~/.zshrc
+   source ~/.zshrc
+   ```
+
+3. Find your list ID:
+   - Open your ClickUp list in the browser
+   - The list ID is in the URL: `https://app.clickup.com/{workspace}/v/li/{listId}`
+
+4. Configure in `agent-orchestrator.yaml`:
+   ```yaml
+   projects:
+     my-app:
+       tracker:
+         plugin: clickup
+         listId: "your-list-id"
+   ```
+
+**Verification:**
+
+```bash
+echo $CLICKUP_API_TOKEN  # Should print your token
 ```
 
 ### Slack
@@ -771,6 +802,11 @@ projects:
     tracker:
       plugin: linear
       teamId: "..."
+
+  mobile:
+    tracker:
+      plugin: clickup
+      listId: "..."
 ```
 
 ### How do I monitor agent progress?

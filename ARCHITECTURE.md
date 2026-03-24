@@ -168,7 +168,7 @@ pr=https://github.com/ComposioHQ/integrator/pull/123
 **Key fields:**
 
 - `project` - Which project this session belongs to (for filtering)
-- `issue` - Linear/GitHub issue ID
+- `issue` - Linear/GitHub/ClickUp issue ID
 - `branch` - Git branch name
 - `worktree` - Path to git worktree
 - `status` - working/idle/pr_open/merged

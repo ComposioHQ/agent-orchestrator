@@ -42,6 +42,21 @@ projects:
       Add OpenAPI docs for new routes.
       Run `pnpm test` and `pnpm lint` before pushing.
 
+  mobile:
+    name: Mobile App
+    repo: org/mobile
+    path: ~/mobile
+    defaultBranch: main
+    sessionPrefix: mob
+
+    tracker:
+      plugin: clickup
+      listId: "your-list-id"
+
+    agentRules: |
+      Follow platform-specific guidelines.
+      Run `pnpm test` before pushing.
+
 # Slack notifications (requires SLACK_WEBHOOK_URL)
 notifiers:
   slack:
