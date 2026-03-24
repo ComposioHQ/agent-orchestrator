@@ -136,6 +136,25 @@ CI fails → agent gets the logs and fixes it. Reviewer requests changes → age
 
 See [`agent-orchestrator.yaml.example`](agent-orchestrator.yaml.example) for the full reference, or run `ao config-help` for the complete schema.
 
+### Agent Rules Example
+
+For projects that require specific coding conventions, you can define agent rules to guide the AI's behavior:
+
+```yaml
+# agent-orchestrator.yaml
+projects:
+  my-app:
+    repo: owner/my-app
+    path: ~/my-app
+    defaultBranch: main
+    agentRules: |
+      Always run tests before pushing changes.
+      Use conventional commits (feat:, fix:, chore:).
+      Add unit tests for new functionality.
+```
+
+Inline rules are automatically included in every agent prompt for this project, ensuring consistent behavior across all sessions.
+
 ## Plugin Architecture
 
 Eight slots. Every abstraction is swappable.
