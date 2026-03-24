@@ -31,15 +31,15 @@ function createHealthyRepo(tempRoot: string): string {
   mkdirSync(join(fakeRepo, "node_modules"), { recursive: true });
   mkdirSync(join(fakeRepo, "packages", "core", "dist"), { recursive: true });
   mkdirSync(join(fakeRepo, "packages", "cli", "dist"), { recursive: true });
-  mkdirSync(join(fakeRepo, "packages", "agent-orchestrator", "bin"), { recursive: true });
+  mkdirSync(join(fakeRepo, "packages", "ao", "bin"), { recursive: true });
   mkdirSync(join(fakeRepo, "packages", "web"), { recursive: true });
   writeFileSync(join(fakeRepo, "packages", "core", "dist", "index.js"), "export {};\n");
   writeFileSync(join(fakeRepo, "packages", "cli", "dist", "index.js"), "export {};\n");
   writeFileSync(
-    join(fakeRepo, "packages", "agent-orchestrator", "bin", "ao.js"),
+    join(fakeRepo, "packages", "ao", "bin", "ao.js"),
     '#!/usr/bin/env node\nconsole.log("0.1.0");\n',
   );
-  chmodSync(join(fakeRepo, "packages", "agent-orchestrator", "bin", "ao.js"), 0o755);
+  chmodSync(join(fakeRepo, "packages", "ao", "bin", "ao.js"), 0o755);
   return fakeRepo;
 }
 
