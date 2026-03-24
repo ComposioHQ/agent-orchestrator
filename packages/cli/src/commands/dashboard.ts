@@ -112,14 +112,18 @@ export function registerDashboard(program: Command): void {
       const terminalServer = spawnTerminalServer("terminal", "terminal-websocket.js");
       const directTerminalServer = spawnTerminalServer("direct-terminal", "direct-terminal-ws.js");
 
-      // Kill terminal servers whenever the parent process is asked to exit,
-      // so they don't become orphans keeping ports occupied.
-      function killTerminalServers(): void {
+      // Graceful shutdown: kill all child processes and exit.
+      // Must also kill Next.js and call process.exit() — registering a
+      // SIGINT/SIGTERM listener suppresses Node's default exit behavior.
+      function cleanup(exitCode: number = 0): void {
+        if (openAbort) openAbort.abort();
+        child.kill("SIGTERM");
         terminalServer.kill("SIGTERM");
         directTerminalServer.kill("SIGTERM");
+        process.exit(exitCode);
       }
-      process.once("SIGINT", killTerminalServers);
-      process.once("SIGTERM", killTerminalServers);
+      process.once("SIGINT", () => cleanup(0));
+      process.once("SIGTERM", () => cleanup(0));
 
       let openAbort: AbortController | undefined;
 
@@ -129,12 +133,12 @@ export function registerDashboard(program: Command): void {
       }
 
       child.on("exit", (code) => {
+        // Normal exit path: Next.js exited on its own, clean up terminal servers.
+        process.off("SIGINT", cleanup);
+        process.off("SIGTERM", cleanup);
         if (openAbort) openAbort.abort();
-
-        // Kill terminal servers when Next.js exits (normal exit path)
-        killTerminalServers();
-        process.off("SIGINT", killTerminalServers);
-        process.off("SIGTERM", killTerminalServers);
+        terminalServer.kill("SIGTERM");
+        directTerminalServer.kill("SIGTERM");
 
         if (code !== 0 && code !== null && !opts.rebuild) {
           const stderr = stderrChunks.join("");
