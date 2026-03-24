@@ -16,7 +16,9 @@ export interface DetectedAgent {
 const AGENT_PLUGINS: Array<{ name: string; pkg: string }> = [
   { name: "claude-code", pkg: "@composio/ao-plugin-agent-claude-code" },
   { name: "aider", pkg: "@composio/ao-plugin-agent-aider" },
+  { name: "amp", pkg: "@composio/ao-plugin-agent-amp" },
   { name: "codex", pkg: "@composio/ao-plugin-agent-codex" },
+  { name: "cursor", pkg: "@composio/ao-plugin-agent-cursor" },
   { name: "opencode", pkg: "@composio/ao-plugin-agent-opencode" },
 ];
 

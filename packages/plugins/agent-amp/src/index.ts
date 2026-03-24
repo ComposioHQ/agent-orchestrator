@@ -1,0 +1,150 @@
+import {
+  type Agent,
+  type AgentSessionInfo,
+  type AgentLaunchConfig,
+  type ActivityDetection,
+  type ActivityState,
+  type PluginModule,
+  type RuntimeHandle,
+  type Session,
+} from "@composio/ao-core";
+import { execFile, execFileSync } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
+
+// =============================================================================
+// Plugin Manifest
+// =============================================================================
+
+export const manifest = {
+  name: "amp",
+  slot: "agent" as const,
+  description: "Agent plugin: Amp CLI",
+  version: "0.1.0",
+  displayName: "Amp",
+};
+
+// =============================================================================
+// Agent Implementation
+// =============================================================================
+
+function createAmpAgent(): Agent {
+  return {
+    name: "amp",
+    processName: "amp",
+    promptDelivery: "post-launch",
+
+    getLaunchCommand(_config: AgentLaunchConfig): string {
+      // Amp launches in interactive mode without any flags
+      // Prompt will be delivered post-launch via runtime.sendMessage()
+      return "amp";
+    },
+
+    getEnvironment(config: AgentLaunchConfig): Record<string, string> {
+      const env: Record<string, string> = {};
+      env["AO_SESSION_ID"] = config.sessionId;
+      // NOTE: AO_PROJECT_ID is the caller's responsibility (spawn.ts sets it)
+      if (config.issueId) {
+        env["AO_ISSUE_ID"] = config.issueId;
+      }
+      return env;
+    },
+
+    detectActivity(terminalOutput: string): ActivityState {
+      if (!terminalOutput.trim()) return "idle";
+      // Amp doesn't have rich terminal output patterns yet
+      return "active";
+    },
+
+    async getActivityState(
+      session: Session,
+      _readyThresholdMs?: number,
+    ): Promise<ActivityDetection | null> {
+      // Check if process is running first
+      const exitedAt = new Date();
+      if (!session.runtimeHandle) return { state: "exited", timestamp: exitedAt };
+      const running = await this.isProcessRunning(session.runtimeHandle);
+      if (!running) return { state: "exited", timestamp: exitedAt };
+
+      // Process is running - return ready state
+      // Without native session files, we can't determine fine-grained activity
+      return { state: "ready", timestamp: new Date() };
+    },
+
+    async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
+      try {
+        if (handle.runtimeName === "tmux" && handle.id) {
+          const { stdout: ttyOut } = await execFileAsync(
+            "tmux",
+            ["list-panes", "-t", handle.id, "-F", "#{pane_tty}"],
+            { timeout: 30_000 },
+          );
+          const ttys = ttyOut
+            .trim()
+            .split("\n")
+            .map((t) => t.trim())
+            .filter(Boolean);
+          if (ttys.length === 0) return false;
+
+          const { stdout: psOut } = await execFileAsync("ps", ["-eo", "pid,tty,args"], {
+            timeout: 30_000,
+          });
+          const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
+          const processRe = /(?:^|\/)amp(?:\s|$)/;
+          for (const line of psOut.split("\n")) {
+            const cols = line.trimStart().split(/\s+/);
+            if (cols.length < 3 || !ttySet.has(cols[1] ?? "")) continue;
+            const args = cols.slice(2).join(" ");
+            if (processRe.test(args)) {
+              return true;
+            }
+          }
+          return false;
+        }
+
+        const rawPid = handle.data["pid"];
+        const pid = typeof rawPid === "number" ? rawPid : Number(rawPid);
+        if (Number.isFinite(pid) && pid > 0) {
+          try {
+            process.kill(pid, 0);
+            return true;
+          } catch (err: unknown) {
+            if (err instanceof Error && "code" in err && err.code === "EPERM") {
+              return true;
+            }
+            return false;
+          }
+        }
+
+        return false;
+      } catch {
+        return false;
+      }
+    },
+
+    async getSessionInfo(_session: Session): Promise<AgentSessionInfo | null> {
+      // Amp doesn't have JSONL session files for introspection yet
+      return null;
+    },
+  };
+}
+
+// =============================================================================
+// Plugin Export
+// =============================================================================
+
+export function create(): Agent {
+  return createAmpAgent();
+}
+
+export function detect(): boolean {
+  try {
+    execFileSync("amp", ["--version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export default { manifest, create, detect } satisfies PluginModule<Agent>;
