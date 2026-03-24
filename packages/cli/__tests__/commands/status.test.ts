@@ -670,7 +670,7 @@ describe("status command", () => {
     expect(parsed[0].activity).toBe("ready");
   });
 
-  it("shows null activity when session has no activity set", async () => {
+  it("shows active fallback when working session has no activity set", async () => {
     writeFileSync(
       join(sessionsDir, "app-1"),
       "worktree=/tmp/wt\nbranch=feat/thr\nstatus=working\n",
@@ -688,10 +688,11 @@ describe("status command", () => {
 
     const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
     const parsed = JSON.parse(jsonCalls);
-    expect(parsed[0].activity).toBeNull();
+    // Working sessions without explicit activity get "active" as fallback
+    expect(parsed[0].activity).toBe("active");
   });
 
-  it("shows null activity when session activity is null", async () => {
+  it("shows active fallback when working session activity is null", async () => {
     writeFileSync(
       join(sessionsDir, "app-1"),
       "worktree=/tmp/wt\nbranch=feat/err\nstatus=working\n",
@@ -709,10 +710,11 @@ describe("status command", () => {
 
     const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
     const parsed = JSON.parse(jsonCalls);
-    expect(parsed[0].activity).toBeNull();
+    // Working sessions without explicit activity get "active" as fallback
+    expect(parsed[0].activity).toBe("active");
   });
 
-  it("shows null activity when session activity is explicitly null", async () => {
+  it("shows active fallback when working session activity is explicitly null", async () => {
     writeFileSync(
       join(sessionsDir, "app-1"),
       "worktree=/tmp/wt\nbranch=feat/null\nstatus=working\n",
@@ -733,7 +735,8 @@ describe("status command", () => {
 
     const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
     const parsed = JSON.parse(jsonCalls);
-    expect(parsed[0].activity).toBeNull();
+    // Working sessions without explicit activity get "active" as fallback
+    expect(parsed[0].activity).toBe("active");
   });
 
   it("shows exited activity from session manager", async () => {
