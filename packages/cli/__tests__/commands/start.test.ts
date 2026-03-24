@@ -23,7 +23,10 @@ const {
   mockWaitForPortAndOpen,
   mockSpawn,
   mockEnsureLifecycleWorker,
+  mockGetLifecycleWorkerStatus,
   mockStopLifecycleWorker,
+  mockIsAlreadyRunning,
+  mockIsHumanCaller,
 } = vi.hoisted(() => ({
   mockExec: vi.fn(),
   mockExecSilent: vi.fn(),
@@ -41,7 +44,15 @@ const {
   mockWaitForPortAndOpen: vi.fn().mockResolvedValue(undefined),
   mockSpawn: vi.fn(),
   mockEnsureLifecycleWorker: vi.fn(),
+  mockGetLifecycleWorkerStatus: vi.fn().mockReturnValue({
+    running: true,
+    pid: 4243,
+    pidFile: "/tmp/lifecycle-worker.pid",
+    logFile: "/tmp/lifecycle-worker.log",
+  }),
   mockStopLifecycleWorker: vi.fn(),
+  mockIsAlreadyRunning: vi.fn().mockResolvedValue(null),
+  mockIsHumanCaller: vi.fn().mockReturnValue(true),
 }));
 
 vi.mock("../../src/lib/shell.js", () => ({
@@ -91,6 +102,7 @@ vi.mock("../../src/lib/create-session-manager.js", () => ({
 
 vi.mock("../../src/lib/lifecycle-service.js", () => ({
   ensureLifecycleWorker: (...args: unknown[]) => mockEnsureLifecycleWorker(...args),
+  getLifecycleWorkerStatus: (...args: unknown[]) => mockGetLifecycleWorkerStatus(...args),
   stopLifecycleWorker: (...args: unknown[]) => mockStopLifecycleWorker(...args),
 }));
 
@@ -119,19 +131,25 @@ vi.mock("../../src/lib/preflight.js", () => ({
 vi.mock("../../src/lib/running-state.js", () => ({
   register: vi.fn(),
   unregister: vi.fn(),
-  isAlreadyRunning: vi.fn().mockReturnValue(null),
+  isAlreadyRunning: (...args: unknown[]) => mockIsAlreadyRunning(...args),
   getRunning: vi.fn().mockReturnValue(null),
   waitForExit: vi.fn().mockReturnValue(true),
 }));
 
 vi.mock("../../src/lib/caller-context.js", () => ({
-  isHumanCaller: vi.fn().mockReturnValue(true),
+  isHumanCaller: (...args: unknown[]) => mockIsHumanCaller(...args),
   getCallerType: vi.fn().mockReturnValue("human"),
 }));
 
 vi.mock("../../src/lib/detect-env.js", () => ({
   detectEnvironment: vi.fn().mockResolvedValue({
-    git: { isRepo: true, remoteUrl: null, ownerRepo: null, currentBranch: "main", defaultBranch: "main" },
+    git: {
+      isRepo: true,
+      remoteUrl: null,
+      ownerRepo: null,
+      currentBranch: "main",
+      defaultBranch: "main",
+    },
     tools: { hasTmux: true, hasGh: false, ghAuthed: false },
     apiKeys: { hasLinear: false, hasSlack: false },
   }),
@@ -204,8 +222,19 @@ beforeEach(() => {
     pidFile: "/tmp/lifecycle-worker.pid",
     logFile: "/tmp/lifecycle-worker.log",
   });
+  mockGetLifecycleWorkerStatus.mockReset();
+  mockGetLifecycleWorkerStatus.mockReturnValue({
+    running: true,
+    pid: 4243,
+    pidFile: "/tmp/lifecycle-worker.pid",
+    logFile: "/tmp/lifecycle-worker.log",
+  });
   mockStopLifecycleWorker.mockReset();
   mockStopLifecycleWorker.mockResolvedValue(true);
+  mockIsAlreadyRunning.mockReset();
+  mockIsAlreadyRunning.mockResolvedValue(null);
+  mockIsHumanCaller.mockReset();
+  mockIsHumanCaller.mockReturnValue(true);
   mockSpawn.mockClear();
 });
 
@@ -361,6 +390,80 @@ describe("start command — project resolution", () => {
 // ---------------------------------------------------------------------------
 // URL detection — `ao start <url>` triggers handleUrlStart
 // ---------------------------------------------------------------------------
+
+describe("start command — already running recovery", () => {
+  it("reuses the existing dashboard for non-human callers and still starts the requested project", async () => {
+    mockConfigRef.current = makeConfig({
+      frontend: makeProject({ name: "Frontend", sessionPrefix: "fe" }),
+      backend: makeProject({ name: "Backend", sessionPrefix: "api" }),
+    });
+    mockIsHumanCaller.mockReturnValue(false);
+    mockIsAlreadyRunning.mockResolvedValue({
+      pid: 4242,
+      port: 3000,
+      startedAt: "2026-03-20T20:00:00.000Z",
+      projects: ["frontend", "backend"],
+    });
+    mockSessionManager.spawnOrchestrator.mockResolvedValue({ id: "api-orchestrator" });
+
+    await program.parseAsync(["node", "test", "start", "backend"]);
+
+    expect(mockEnsureLifecycleWorker).toHaveBeenCalledWith(
+      expect.objectContaining({ configPath: expect.any(String) }),
+      "backend",
+    );
+    expect(mockSessionManager.spawnOrchestrator).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: "backend" }),
+    );
+    expect(mockSpawn).not.toHaveBeenCalled();
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("AO is already running.");
+    expect(output).toContain("Reused existing dashboard on port 3000.");
+  });
+
+  it("auto-recovers the requested project for human callers when the control plane is missing", async () => {
+    mockConfigRef.current = makeConfig({
+      frontend: makeProject({ name: "Frontend", sessionPrefix: "fe" }),
+      backend: makeProject({ name: "Backend", sessionPrefix: "api" }),
+    });
+    mockIsHumanCaller.mockReturnValue(true);
+    mockIsAlreadyRunning.mockResolvedValue({
+      pid: 4242,
+      port: 3000,
+      startedAt: "2026-03-20T20:00:00.000Z",
+      projects: ["frontend", "backend"],
+    });
+    mockGetLifecycleWorkerStatus.mockReturnValue({
+      running: false,
+      pid: null,
+      pidFile: "/tmp/lifecycle-worker.pid",
+      logFile: "/tmp/lifecycle-worker.log",
+    });
+    mockSessionManager.spawnOrchestrator.mockResolvedValue({ id: "api-orchestrator" });
+
+    await program.parseAsync(["node", "test", "start", "backend"]);
+
+    expect(mockEnsureLifecycleWorker).toHaveBeenCalledWith(
+      expect.objectContaining({ configPath: expect.any(String) }),
+      "backend",
+    );
+    expect(mockSessionManager.spawnOrchestrator).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: "backend" }),
+    );
+    expect(mockSpawn).not.toHaveBeenCalled();
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("lost its lifecycle worker or orchestrator");
+    expect(output).toContain("Reused existing dashboard on port 3000.");
+  });
+});
 
 describe("start command — URL argument", () => {
   it("reuses existing clone and generates config", async () => {
@@ -642,6 +745,30 @@ describe("start command — browser open waits for port", () => {
     expect(mockEnsureLifecycleWorker).toHaveBeenCalledWith(
       expect.objectContaining({ configPath: expect.any(String) }),
       "my-app",
+    );
+  });
+
+  it("passes an initial orchestration prompt into spawnOrchestrator", async () => {
+    mockConfigRef.current = makeConfig({
+      "my-app": makeProject({
+        tracker: { plugin: "github", issueFilters: { labels: ["ready"] } },
+      }),
+    });
+
+    mockSessionManager.get.mockResolvedValue(null);
+    mockSessionManager.spawnOrchestrator.mockResolvedValue({ id: "app-orchestrator" });
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
+
+    expect(mockSessionManager.spawnOrchestrator).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "my-app",
+        systemPrompt: expect.stringContaining("You are the **orchestrator agent**"),
+        prompt: expect.stringContaining("initial orchestration pass"),
+      }),
+    );
+    expect(mockSessionManager.spawnOrchestrator).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: expect.stringContaining("labels=ready") }),
     );
   });
 });

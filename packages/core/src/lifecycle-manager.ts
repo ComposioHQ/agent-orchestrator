@@ -15,6 +15,8 @@ import {
   SESSION_STATUS,
   PR_STATE,
   CI_STATUS,
+  TERMINAL_STATUSES,
+  isOrchestratorSession,
   type LifecycleManager,
   type SessionManager,
   type SessionId,
@@ -31,12 +33,17 @@ import {
   type Notifier,
   type Session,
   type EventPriority,
+  type MergeMethod,
   type ProjectConfig as _ProjectConfig,
 } from "./types.js";
 import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
 import { createCorrelationId, createProjectObserver } from "./observability.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
+import {
+  generateOrchestratorPrompt,
+  generateOrchestratorStartupPrompt,
+} from "./orchestrator-prompt.js";
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
@@ -173,6 +180,10 @@ function transitionLogLevel(status: SessionStatus): "info" | "warn" | "error" {
   return "info";
 }
 
+function reactionDispatchMarkerKey(reactionKey: string): string {
+  return `reactionDispatch_${reactionKey}`;
+}
+
 export interface LifecycleManagerDeps {
   config: OrchestratorConfig;
   registry: PluginRegistry;
@@ -185,6 +196,7 @@ export interface LifecycleManagerDeps {
 interface ReactionTracker {
   attempts: number;
   firstTriggered: Date;
+  pendingRetry?: boolean;
 }
 
 /** Create a LifecycleManager instance. */
@@ -313,7 +325,18 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       try {
         const prState = await scm.getPRState(session.pr);
         if (prState === PR_STATE.MERGED) return "merged";
-        if (prState === PR_STATE.CLOSED) return "killed";
+        if (prState === PR_STATE.CLOSED) {
+          // Closed PRs are terminal for this session; clear persisted PR metadata
+          // so killed sessions don't get re-polled forever via `if (s.pr) return true`.
+          session.pr = null;
+          try {
+            const sessionsDir = getSessionsDir(config.configPath, project.path);
+            updateMetadata(sessionsDir, session.id, { pr: "" });
+          } catch {
+            // Best effort — lifecycle status should still proceed to killed.
+          }
+          return "killed";
+        }
 
         // Check CI
         const ciStatus = await scm.getCISummary(session.pr);
@@ -375,7 +398,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     let tracker = reactionTrackers.get(trackerKey);
 
     if (!tracker) {
-      tracker = { attempts: 0, firstTriggered: new Date() };
+      tracker = { attempts: 0, firstTriggered: new Date(), pendingRetry: false };
       reactionTrackers.set(trackerKey, tracker);
     }
 
@@ -403,6 +426,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
 
     if (shouldEscalate) {
+      tracker.pendingRetry = false;
       // Escalate to human
       const event = createEvent("reaction.escalated", {
         sessionId,
@@ -428,6 +452,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           try {
             await sessionManager.send(sessionId, reactionConfig.message);
 
+            tracker.pendingRetry = false;
             return {
               reactionType: reactionKey,
               success: true,
@@ -437,6 +462,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             };
           } catch {
             // Send failed — allow retry on next poll cycle (don't escalate immediately)
+            tracker.pendingRetry = true;
             return {
               reactionType: reactionKey,
               success: false,
@@ -456,6 +482,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           data: { reactionKey },
         });
         await notifyHuman(event, reactionConfig.priority ?? "info");
+        tracker.pendingRetry = false;
         return {
           reactionType: reactionKey,
           success: true,
@@ -465,24 +492,61 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
 
       case "auto-merge": {
-        // Auto-merge is handled by the SCM plugin
-        // For now, just notify
-        const event = createEvent("reaction.triggered", {
-          sessionId,
-          projectId,
-          message: `Reaction '${reactionKey}' triggered auto-merge`,
-          data: { reactionKey },
-        });
-        await notifyHuman(event, "action");
-        return {
-          reactionType: reactionKey,
-          success: true,
-          action: "auto-merge",
-          escalated: false,
-        };
+        const project = config.projects[projectId];
+        const scmPlugin = project?.scm
+          ? registry.get<SCM>("scm", project.scm.plugin)
+          : null;
+        const targetSession = await sessionManager.get(sessionId);
+        if (!scmPlugin || !targetSession?.pr || targetSession.projectId !== projectId) {
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action: "auto-merge",
+            escalated: false,
+          };
+        }
+        try {
+          const mergeMethod =
+            (reactionConfig as ReactionConfig & { mergeMethod?: MergeMethod }).mergeMethod ??
+            "squash";
+          await scmPlugin.mergePR(targetSession.pr, mergeMethod);
+          const event = createEvent("merge.completed", {
+            sessionId,
+            projectId,
+            message: `Auto-merged PR via '${reactionKey}' reaction (${mergeMethod})`,
+            data: { reactionKey, mergeMethod },
+          });
+          await notifyHuman(event, "action");
+          tracker.pendingRetry = false;
+          return {
+            reactionType: reactionKey,
+            success: true,
+            action: "auto-merge",
+            escalated: false,
+          };
+        } catch (err) {
+          observer.recordOperation({
+            metric: "lifecycle_poll",
+            operation: "lifecycle.auto-merge",
+            outcome: "failure",
+            correlationId: createCorrelationId("auto-merge"),
+            projectId,
+            sessionId,
+            data: { error: err instanceof Error ? err.message : String(err) },
+            level: "warn",
+          });
+          tracker.pendingRetry = true;
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action: "auto-merge",
+            escalated: false,
+          };
+        }
       }
     }
 
+    tracker.pendingRetry = true;
     return {
       reactionType: reactionKey,
       success: false,
@@ -738,6 +802,9 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const oldReactionKey = eventToReactionKey(oldEventType);
         if (oldReactionKey) {
           clearReactionTracker(session.id, oldReactionKey);
+          updateSessionMetadata(session, {
+            [reactionDispatchMarkerKey(oldReactionKey)]: "",
+          });
         }
       }
 
@@ -759,6 +826,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
                 reactionKey,
                 reactionConfig,
               );
+              if (reactionResult.success) {
+                updateSessionMetadata(session, {
+                  [reactionDispatchMarkerKey(reactionKey)]: newStatus,
+                });
+              }
               transitionReaction = { key: reactionKey, result: reactionResult };
               // Reaction is handling this event — suppress immediate human notification.
               // "send-to-agent" retries + escalates on its own; "notify"/"auto-merge"
@@ -786,9 +858,76 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     } else {
       // No transition but track current state
       states.set(session.id, newStatus);
+
+      const stableEventType = statusToEventType(oldStatus, newStatus);
+      const stableReactionKey = stableEventType ? eventToReactionKey(stableEventType) : null;
+      const stableTracker = stableReactionKey
+        ? reactionTrackers.get(`${session.id}:${stableReactionKey}`)
+        : undefined;
+      const stableDispatchMarker = stableReactionKey
+        ? session.metadata[reactionDispatchMarkerKey(stableReactionKey)]
+        : undefined;
+      const needsStableReactionReplay =
+        !!stableReactionKey &&
+        ((stableTracker?.pendingRetry ?? false) || stableDispatchMarker !== newStatus);
+
+      if (stableReactionKey && needsStableReactionReplay) {
+        const reactionConfig = getReactionConfigForSession(session, stableReactionKey);
+        if (
+          reactionConfig &&
+          reactionConfig.action &&
+          (reactionConfig.auto !== false || reactionConfig.action === "notify")
+        ) {
+          const reactionResult = await executeReaction(
+            session.id,
+            session.projectId,
+            stableReactionKey,
+            reactionConfig,
+          );
+          if (reactionResult.success) {
+            updateSessionMetadata(session, {
+              [reactionDispatchMarkerKey(stableReactionKey)]: newStatus,
+            });
+          }
+        }
+      }
     }
 
     await maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction);
+  }
+
+  async function ensureOrchestratorsForOpenWork(sessions: Session[]): Promise<boolean> {
+    const projectIds = scopedProjectId ? [scopedProjectId] : Object.keys(config.projects);
+    let spawnedOrchestrator = false;
+
+    await Promise.allSettled(
+      projectIds.map(async (projectId) => {
+        const project = config.projects[projectId];
+        if (!project) return;
+
+        const projectSessions = sessions.filter((session) => session.projectId === projectId);
+        const hasOpenWork = projectSessions.some(
+          (session) =>
+            !isOrchestratorSession(session) &&
+            !TERMINAL_STATUSES.has(session.status),
+        );
+        if (!hasOpenWork) return;
+
+        const hasLiveOrchestrator = projectSessions.some(
+          (session) => isOrchestratorSession(session) && !TERMINAL_STATUSES.has(session.status),
+        );
+        if (hasLiveOrchestrator) return;
+
+        await sessionManager.spawnOrchestrator({
+          projectId,
+          systemPrompt: generateOrchestratorPrompt({ config, projectId, project }),
+          prompt: generateOrchestratorStartupPrompt({ config, projectId, project }),
+        });
+        spawnedOrchestrator = true;
+      }),
+    );
+
+    return spawnedOrchestrator;
   }
 
   /** Run one polling cycle across all sessions. */
@@ -800,7 +939,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     polling = true;
 
     try {
-      const sessions = await sessionManager.list(scopedProjectId);
+      let sessions = await sessionManager.list(scopedProjectId);
+      const spawnedOrchestrator = await ensureOrchestratorsForOpenWork(sessions);
+      if (spawnedOrchestrator) {
+        sessions = await sessionManager.list(scopedProjectId);
+      }
 
       // Include sessions that are active OR whose status changed from what we last saw
       // (e.g., list() detected a dead runtime and marked it "killed" — we need to
