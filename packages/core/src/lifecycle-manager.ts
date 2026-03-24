@@ -868,19 +868,19 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           }
           const idleDuration = Date.now() - orchestratorIdleSince.get(scopedProjectId)!;
           if (idleDuration >= idleTimeoutMs) {
-            observer.recordOperation({
-              metric: "lifecycle_poll",
-              operation: "lifecycle.orchestrator_idle_shutdown",
-              outcome: "success",
-              correlationId,
-              projectId: scopedProjectId,
-              data: { idleDurationMs: idleDuration, timeoutMs: idleTimeoutMs },
-              level: "info",
-            });
             try {
               await sessionManager.kill(orchestratorSession.id);
               states.set(orchestratorSession.id, SESSION_STATUS.KILLED);
               orchestratorIdleSince.delete(scopedProjectId);
+              observer.recordOperation({
+                metric: "lifecycle_poll",
+                operation: "lifecycle.orchestrator_idle_shutdown",
+                outcome: "success",
+                correlationId,
+                projectId: scopedProjectId,
+                data: { idleDurationMs: idleDuration, timeoutMs: idleTimeoutMs },
+                level: "info",
+              });
               // Emit event so notifiers can inform the user
               const event = createEvent("session.orchestrator_idle_shutdown", {
                 sessionId: orchestratorSession.id,

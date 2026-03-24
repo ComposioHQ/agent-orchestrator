@@ -257,7 +257,7 @@ export function registerStatus(program: Command): void {
         // Filter out terminal sessions with no live runtime — these are stale
         // metadata files that haven't been archived yet.  Only show them when
         // the user explicitly passes --all.
-        const TERMINAL_STATUSES = new Set(["killed", "done", "merged", "terminated", "cleanup"]);
+        const TERMINAL_STATUSES = new Set(["killed", "done", "merged", "terminated", "cleanup", "errored"]);
         const projectSessions = (byProject.get(projectId) ?? [])
           .filter((s) => {
             if (opts.all) return true;
