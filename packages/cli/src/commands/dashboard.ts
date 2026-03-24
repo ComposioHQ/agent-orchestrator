@@ -109,25 +109,25 @@ export function registerDashboard(program: Command): void {
       const distServerDir = resolve(webDir, "dist-server");
 
       function spawnTerminalServer(label: string, scriptName: string) {
-        const child = spawn("node", [resolve(distServerDir, scriptName)], {
+        const proc = spawn("node", [resolve(distServerDir, scriptName)], {
           cwd: webDir,
           stdio: ["ignore", "pipe", "pipe"],
           env,
         });
 
-        child.stdout?.on("data", (data: Buffer) => {
+        proc.stdout?.on("data", (data: Buffer) => {
           for (const line of data.toString().split("\n").filter(Boolean)) {
             process.stdout.write(`[${label}] ${line}\n`);
           }
         });
 
-        child.stderr?.on("data", (data: Buffer) => {
+        proc.stderr?.on("data", (data: Buffer) => {
           for (const line of data.toString().split("\n").filter(Boolean)) {
             process.stderr.write(`[${label}] ${line}\n`);
           }
         });
 
-        return child;
+        return proc;
       }
 
       terminalServer = spawnTerminalServer("terminal", "terminal-websocket.js");
