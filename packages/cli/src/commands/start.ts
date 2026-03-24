@@ -76,6 +76,7 @@ const TERMINAL_CONTROL_PLANE_STATUSES = new Set([
   "terminated",
   "cleanup",
   "killed",
+  "errored",
 ]);
 
 // =============================================================================
