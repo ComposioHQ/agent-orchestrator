@@ -873,17 +873,7 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("merged");
   });
 
-  it("destroys the runtime using the session handle runtime name on terminal transitions", async () => {
-    const tmuxRuntime: Runtime = {
-      ...mockRuntime,
-      name: "tmux",
-      destroy: vi.fn().mockResolvedValue(undefined),
-    };
-    const dockerRuntime: Runtime = {
-      ...mockRuntime,
-      name: "docker",
-      destroy: vi.fn().mockResolvedValue(undefined),
-    };
+  it("cleans terminal sessions via sessionManager.kill on terminal transitions", async () => {
     const mockSCM: SCM = {
       name: "mock-scm",
       detectPR: vi.fn(),
@@ -899,17 +889,9 @@ describe("check (single session)", () => {
       getMergeability: vi.fn(),
     };
 
-    config.defaults.runtime = "docker";
-    config.projects["my-app"] = {
-      ...config.projects["my-app"],
-      runtime: "docker",
-    };
-
-    const registryWithRuntimeMismatch: PluginRegistry = {
+    const registryWithSCM: PluginRegistry = {
       ...mockRegistry,
-      get: vi.fn().mockImplementation((slot: string, name: string) => {
-        if (slot === "runtime" && name === "tmux") return tmuxRuntime;
-        if (slot === "runtime" && name === "docker") return dockerRuntime;
+      get: vi.fn().mockImplementation((slot: string) => {
         if (slot === "agent") return mockAgent;
         if (slot === "scm") return mockSCM;
         return null;
@@ -932,14 +914,13 @@ describe("check (single session)", () => {
 
     const lm = createLifecycleManager({
       config,
-      registry: registryWithRuntimeMismatch,
+      registry: registryWithSCM,
       sessionManager: mockSessionManager,
     });
 
     await lm.check("app-1");
 
-    expect(tmuxRuntime.destroy).toHaveBeenCalledWith(session.runtimeHandle);
-    expect(dockerRuntime.destroy).not.toHaveBeenCalled();
+    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-1");
   });
 
   it("uses runtimeHandle.runtimeName for liveness checks", async () => {
@@ -1121,7 +1102,7 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("mergeable");
     expect(mockSCM.mergePR).toHaveBeenCalledWith(session.pr, "squash");
     expect(mockSessionManager.list).not.toHaveBeenCalled();
-    expect(mockSessionManager.get).toHaveBeenCalledTimes(2);
+    expect(mockSessionManager.get).toHaveBeenCalledTimes(3);
   });
 
   it("auto-merges steady-state mergeable sessions after lifecycle restart", async () => {
