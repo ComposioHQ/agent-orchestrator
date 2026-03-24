@@ -25,10 +25,11 @@ async function verifyGhCLI(): Promise<void> {
   try {
     await execFileAsync("gh", ["--version"], { timeout: 5000 });
   } catch {
-    throw new Error(
+    const error = new Error(
       "gh CLI not available or not authenticated. GraphQL batch enrichment requires gh CLI to be installed and configured.",
-      { cause: "GH_CLI_UNAVAILABLE" },
     );
+    (error as any).cause = "GH_CLI_UNAVAILABLE";
+    throw error;
   }
 }
 
@@ -454,7 +455,8 @@ export async function enrichSessionsPRBatch(
   }
 
   // Execute each batch
-  for (const [batchIndex, batch] of batches.entries()) {
+  for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+    const batch = batches[batchIndex];
     const prCountBefore = result.size;
     try {
       const data = await executeBatchQuery(batch);
@@ -475,6 +477,7 @@ export async function enrichSessionsPRBatch(
           // Remove from cache so individual fallback handles it
           result.delete(prKey);
         }
+      });
 
       // Log observability metric for successful batch
       const prCountAfter = result.size;
@@ -491,7 +494,7 @@ export async function enrichSessionsPRBatch(
       const errorMsg = err instanceof Error ? err.message : String(err);
       const error = new Error(`Batch enrichment partially failed: ${errorMsg}`);
       if (err instanceof Error) {
-        error.cause = err;
+        (error as any).cause = err;
       }
 
       // Log the error for observability but don't fail entirely
