@@ -11,7 +11,10 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFile as execFileCb } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFileCb);
 import {
   SESSION_STATUS,
   PR_STATE,
@@ -300,11 +303,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         let scmSession: Session = session;
         if (session.workspacePath) {
           try {
-            const liveBranch = execFileSync("git", ["branch", "--show-current"], {
+            const { stdout } = await execFileAsync("git", ["branch", "--show-current"], {
               cwd: session.workspacePath,
               encoding: "utf8",
               timeout: 5000,
-            }).trim();
+            });
+            const liveBranch = stdout.trim();
             if (liveBranch && liveBranch !== session.branch) {
               scmSession = { ...session, branch: liveBranch };
               // Self-heal stale branch metadata
