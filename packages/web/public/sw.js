@@ -1,4 +1,4 @@
-/* eslint-env serviceworker */
+/* globals self, caches, fetch */
 const CACHE_NAME = "ao-pwa-v1";
 const OFFLINE_URL = "/offline.html";
 
