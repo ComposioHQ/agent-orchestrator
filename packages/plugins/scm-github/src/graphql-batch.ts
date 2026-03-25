@@ -137,14 +137,8 @@ export function generateBatchQuery(prs: PRInfo[]): {
     variables[`${alias}Number`] = pr.number;
   });
 
-  const variableDefs = Object.keys(variables)
-    .map((v) => {
-      // PR numbers should be Int!, all others are String!
-      if (v.endsWith("Number")) {
-        return `$${v}: Int!`;
-      }
-      return `$${v}: String!`;
-    })
+  const variableDefs = Object.entries(variables)
+    .map(([key, value]) => `$${key}: ${typeof value === "number" ? "Int!" : "String!"}`)
     .join(", ");
 
   return {
