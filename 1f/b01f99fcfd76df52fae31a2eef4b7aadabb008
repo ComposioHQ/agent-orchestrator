@@ -1,0 +1,29 @@
+packages/web/.gitignore
+  1c6501c2ba82c4a6 2
+packages/web/src/components/SessionDetail.tsx
+  1c6501c2ba82c4a6 373
+packages/web/src/app/prs/page.tsx
+  1c6501c2ba82c4a6 20-21
+packages/web/src/app/page.tsx
+  1c6501c2ba82c4a6 18-19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.19",
+  "base_commit_sha": "1fb01f99fcfd76df52fae31a2eef4b7aadabb008",
+  "prompts": {
+    "1c6501c2ba82c4a6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d2199f6c-deac-4876-aed4-85cb9bfc52ed",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 6,
+      "total_deletions": 3,
+      "accepted_lines": 6,
+      "overriden_lines": 0
+    }
+  }
+}
