@@ -54,12 +54,13 @@ export function registerLifecycleWorker(program: Command): void {
       const intervalMs = parseInterval(opts.intervalMs ?? "30000");
       let shuttingDown = false;
       let heartbeat: ReturnType<typeof setInterval> | null = null;
+      let lifecycle: Awaited<ReturnType<typeof getLifecycleManager>> | null = null;
 
       const shutdown = (code: number): void => {
         if (shuttingDown) return;
         shuttingDown = true;
         if (heartbeat) clearInterval(heartbeat);
-        lifecycle.stop();
+        lifecycle?.stop();
         clearLifecycleWorkerPid(config, projectId, process.pid);
         observer.setHealth({
           surface: "lifecycle.worker",
@@ -113,7 +114,7 @@ export function registerLifecycleWorker(program: Command): void {
         shutdown(1);
       });
 
-      const lifecycle = await getLifecycleManager(config, projectId, {
+      lifecycle = await getLifecycleManager(config, projectId, {
         onAllSessionsKilled: () => {
           // Runtime server died — kill the dashboard parent process so it
           // doesn't hold the port as an orphan.
