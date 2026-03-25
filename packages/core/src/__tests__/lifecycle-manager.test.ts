@@ -104,6 +104,7 @@ beforeEach(() => {
 
   mockSessionManager = {
     spawn: vi.fn(),
+    previewSpawn: vi.fn(),
     spawnOrchestrator: vi.fn(),
     restore: vi.fn(),
     list: vi.fn().mockResolvedValue([]),

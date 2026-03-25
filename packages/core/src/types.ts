@@ -195,6 +195,17 @@ export interface SessionSpawnConfig {
   siblings?: string[];
 }
 
+/** Preview of what would be spawned, returned by previewSpawn() dry-run */
+export interface SpawnPreview {
+  projectId: string;
+  issueId: string | undefined;
+  agent: string;
+  branch: string;
+  /** Base directory for worktrees (session-specific subdirectory not yet known) */
+  worktreesDir: string;
+  sessionPrefix: string;
+}
+
 /** Config for creating an orchestrator session */
 export interface OrchestratorSpawnConfig {
   projectId: string;
@@ -1167,6 +1178,7 @@ export interface SessionMetadata {
 /** Session manager — CRUD for sessions */
 export interface SessionManager {
   spawn(config: SessionSpawnConfig): Promise<Session>;
+  previewSpawn(config: SessionSpawnConfig): Promise<SpawnPreview>;
   spawnOrchestrator(config: OrchestratorSpawnConfig): Promise<Session>;
   restore(sessionId: SessionId): Promise<Session>;
   list(projectId?: string): Promise<Session[]>;

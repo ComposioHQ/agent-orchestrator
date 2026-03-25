@@ -14,6 +14,7 @@ const { mockExec, mockConfigRef, mockSessionManager, mockEnsureLifecycleWorker }
       cleanup: vi.fn(),
       get: vi.fn(),
       spawn: vi.fn(),
+      previewSpawn: vi.fn(),
       spawnOrchestrator: vi.fn(),
       send: vi.fn(),
       claimPR: vi.fn(),
@@ -113,6 +114,7 @@ beforeEach(() => {
   });
 
   mockSessionManager.spawn.mockReset();
+  mockSessionManager.previewSpawn.mockReset();
   mockSessionManager.claimPR.mockReset();
   mockExec.mockReset();
   mockEnsureLifecycleWorker.mockReset();
@@ -326,6 +328,71 @@ describe("spawn command", () => {
     await expect(program.parseAsync(["node", "test", "spawn"])).rejects.toThrow(
       "process.exit(1)",
     );
+  });
+
+  it("--dry-run shows preview without calling spawn", async () => {
+    mockSessionManager.previewSpawn.mockResolvedValue({
+      projectId: "my-app",
+      issueId: "INT-100",
+      agent: "claude-code",
+      branch: "feat/INT-100",
+      worktreesDir: "/home/user/.worktrees/my-app",
+      sessionPrefix: "app",
+    });
+
+    await program.parseAsync(["node", "test", "spawn", "INT-100", "--dry-run"]);
+
+    expect(mockSessionManager.previewSpawn).toHaveBeenCalledWith({
+      projectId: "my-app",
+      issueId: "INT-100",
+      agent: undefined,
+    });
+    expect(mockSessionManager.spawn).not.toHaveBeenCalled();
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("Dry run");
+    expect(output).toContain("my-app");
+    expect(output).toContain("INT-100");
+    expect(output).toContain("claude-code");
+    expect(output).toContain("feat/INT-100");
+  });
+
+  it("--dry-run passes --agent flag to previewSpawn", async () => {
+    mockSessionManager.previewSpawn.mockResolvedValue({
+      projectId: "my-app",
+      issueId: undefined,
+      agent: "codex",
+      branch: "session/app-<next>",
+      worktreesDir: "/home/user/.worktrees/my-app",
+      sessionPrefix: "app",
+    });
+
+    await program.parseAsync(["node", "test", "spawn", "--agent", "codex", "--dry-run"]);
+
+    expect(mockSessionManager.previewSpawn).toHaveBeenCalledWith({
+      projectId: "my-app",
+      issueId: undefined,
+      agent: "codex",
+    });
+    expect(mockSessionManager.spawn).not.toHaveBeenCalled();
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("codex");
+  });
+
+  it("--dry-run exits with error when previewSpawn fails", async () => {
+    mockSessionManager.previewSpawn.mockRejectedValue(new Error("project not found"));
+
+    await expect(
+      program.parseAsync(["node", "test", "spawn", "--dry-run"]),
+    ).rejects.toThrow("process.exit(1)");
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => String(c[0]))
+      .join("\n");
+    expect(errors).toContain("project not found");
+    expect(mockSessionManager.spawn).not.toHaveBeenCalled();
   });
 
   it("claims a PR for the spawned session when --claim-pr is provided", async () => {

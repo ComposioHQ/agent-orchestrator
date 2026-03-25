@@ -31,6 +31,7 @@ import {
   type CleanupResult,
   type ClaimPROptions,
   type ClaimPRResult,
+  type SpawnPreview,
   type OrchestratorConfig,
   type ProjectConfig,
   type Runtime,
@@ -1191,6 +1192,56 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     }
 
     return session;
+  }
+
+  async function previewSpawn(spawnConfig: SessionSpawnConfig): Promise<SpawnPreview> {
+    const project = config.projects[spawnConfig.projectId];
+    if (!project) {
+      throw new Error(`Unknown project: ${spawnConfig.projectId}`);
+    }
+
+    const selection = resolveAgentSelection({
+      role: "worker",
+      project,
+      defaults: config.defaults,
+      spawnAgentOverride: spawnConfig.agent,
+    });
+    const plugins = resolvePlugins(project, selection.agentName);
+
+    // Compute branch name using same logic as spawn(), but without API calls
+    let branch: string;
+    if (spawnConfig.branch) {
+      branch = spawnConfig.branch;
+    } else if (spawnConfig.issueId && plugins.tracker) {
+      branch = plugins.tracker.branchName(spawnConfig.issueId, project);
+    } else if (spawnConfig.issueId) {
+      const id = spawnConfig.issueId;
+      const isBranchSafe = /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id) && !id.includes("..");
+      const slug = isBranchSafe
+        ? id
+        : id
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .slice(0, 60)
+            .replace(/^-+|-+$/g, "");
+      branch = `feat/${slug || spawnConfig.issueId}`;
+    } else {
+      branch = `session/${project.sessionPrefix}-<next>`;
+    }
+
+    // Compute worktrees base directory
+    const worktreesDir = config.configPath
+      ? getWorktreesDir(config.configPath, project.path)
+      : join(homedir(), ".worktrees", spawnConfig.projectId);
+
+    return {
+      projectId: spawnConfig.projectId,
+      issueId: spawnConfig.issueId,
+      agent: selection.agentName,
+      branch,
+      worktreesDir,
+      sessionPrefix: project.sessionPrefix ?? spawnConfig.projectId,
+    };
   }
 
   async function spawnOrchestrator(orchestratorConfig: OrchestratorSpawnConfig): Promise<Session> {
@@ -2427,5 +2478,5 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return restoredSession;
   }
 
-  return { spawn, spawnOrchestrator, restore, list, get, kill, cleanup, send, claimPR, remap };
+  return { spawn, previewSpawn, spawnOrchestrator, restore, list, get, kill, cleanup, send, claimPR, remap };
 }

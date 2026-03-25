@@ -167,6 +167,7 @@ export function registerSpawn(program: Command): void {
     .option("--assign-on-github", "Assign the claimed PR to the authenticated GitHub user")
     .option("--decompose", "Decompose issue into subtasks before spawning")
     .option("--max-depth <n>", "Max decomposition depth (default: 3)")
+    .option("--dry-run", "Show what would be spawned without creating a session or worktree")
     .action(
       async (
         first: string | undefined,
@@ -178,6 +179,7 @@ export function registerSpawn(program: Command): void {
           assignOnGithub?: boolean;
           decompose?: boolean;
           maxDepth?: string;
+          dryRun?: boolean;
         },
       ) => {
         // Catch old two-arg usage: ao spawn <project> <issue>
@@ -218,6 +220,29 @@ export function registerSpawn(program: Command): void {
         if (!opts.claimPr && opts.assignOnGithub) {
           console.error(chalk.red("--assign-on-github requires --claim-pr on `ao spawn`."));
           process.exit(1);
+        }
+
+        // Dry-run: show what would be spawned without creating anything
+        if (opts.dryRun) {
+          try {
+            const sm = await getSessionManager(config);
+            const preview = await sm.previewSpawn({
+              projectId,
+              issueId,
+              agent: opts.agent,
+            });
+            console.log(chalk.bold("Dry run — nothing will be created"));
+            console.log();
+            console.log(`  Project:  ${chalk.green(preview.projectId)}`);
+            if (preview.issueId) console.log(`  Issue:    ${chalk.green(preview.issueId)}`);
+            console.log(`  Agent:    ${chalk.green(preview.agent)}`);
+            console.log(`  Branch:   ${chalk.green(preview.branch)}`);
+            console.log(`  Worktree: ${chalk.dim(`${preview.worktreesDir}/${preview.sessionPrefix}-<next>`)}`);
+          } catch (err) {
+            console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));
+            process.exit(1);
+          }
+          return;
         }
 
         const claimOptions: SpawnClaimOptions = {
