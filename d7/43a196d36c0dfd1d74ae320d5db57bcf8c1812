@@ -1,0 +1,66 @@
+packages/web/src/components/ServiceWorkerRegistrar.tsx
+  14f00e9bc523e065 8-10
+packages/web/src/components/PullRequestsPage.tsx
+  14f00e9bc523e065 5,18,42,146,176
+packages/web/src/hooks/useMediaQuery.ts
+  14f00e9bc523e065 16-18
+packages/web/src/app/icon-512/route.tsx
+  14f00e9bc523e065 6-7,12-13
+packages/web/public/sw.js
+  14f00e9bc523e065 2,20,25-37
+packages/web/src/components/Dashboard.tsx
+  14f00e9bc523e065 5,27,90,161-162,165-170,415
+packages/web/src/components/SessionDetail.tsx
+  14f00e9bc523e065 5,325,417-425
+packages/web/src/components/ConnectionBar.tsx
+  14f00e9bc523e065 8,10-22,26-28,31
+packages/web/src/hooks/__tests__/useMediaQuery.test.ts
+  14f00e9bc523e065 104
+packages/web/src/components/MobileBottomNav.tsx
+  14f00e9bc523e065 3-4,26,36-37,47,50,61
+packages/web/src/components/BottomSheet.tsx
+  14f00e9bc523e065 57,61-64,80-81,85-88,105
+packages/web/src/app/icon-192/route.tsx
+  14f00e9bc523e065 6-7,12-13
+packages/web/src/lib/project-utils.ts
+  14f00e9bc523e065 34-41
+packages/web/src/lib/dashboard-page-data.ts
+  14f00e9bc523e065 1,39,76-82,87,92,97-99,125
+packages/web/src/hooks/useSessionEvents.ts
+  14f00e9bc523e065 6,8,10,141-144
+packages/web/src/app/globals.css
+  14f00e9bc523e065 2494,2499,2505,2509,2721-2725,2729-2730
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.19",
+  "base_commit_sha": "d743a196d36c0dfd1d74ae320d5db57bcf8c1812",
+  "prompts": {
+    "1079c14401b7a649": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1d91d89f-dc30-4184-bc26-8cd500b27bc9",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 4,
+      "total_deletions": 6,
+      "accepted_lines": 4,
+      "overriden_lines": 0
+    },
+    "14f00e9bc523e065": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "942ce975-9e93-428d-aa56-8523d929e6f1",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 152,
+      "total_deletions": 101,
+      "accepted_lines": 141,
+      "overriden_lines": 0
+    }
+  }
+}
