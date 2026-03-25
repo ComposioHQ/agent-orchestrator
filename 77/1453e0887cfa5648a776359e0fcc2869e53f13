@@ -1,0 +1,25 @@
+packages/web/src/components/SessionCard.tsx
+  4538a92217143cac 20,97-98,100-101,105-120,123,126-127,133-134,141-142,626-627,629-633,637-638,640-644,648-649,651-655,660,664-666,668
+packages/web/src/__tests__/components.test.tsx
+  4538a92217143cac 2,429-501
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.19",
+  "base_commit_sha": "771453e0887cfa5648a776359e0fcc2869e53f13",
+  "prompts": {
+    "4538a92217143cac": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d2511-0727-7641-bd0f-24c5e7c118af",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 129,
+      "total_deletions": 20,
+      "accepted_lines": 129,
+      "overriden_lines": 0
+    }
+  }
+}
