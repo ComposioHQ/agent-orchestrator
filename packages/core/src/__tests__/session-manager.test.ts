@@ -1471,6 +1471,47 @@ describe("list", () => {
     expect(agentWithSpy.getActivityState).not.toHaveBeenCalled();
   });
 
+  it("revives stale killed sessions when tmux runtime and agent activity are alive", async () => {
+    const expectedTmuxName = "hash-app-1";
+    const aliveRuntime: Runtime = {
+      ...mockRuntime,
+      isAlive: vi
+        .fn()
+        .mockImplementation(async (handle: RuntimeHandle) => handle.id === expectedTmuxName),
+    };
+    const agentWithLiveState: Agent = {
+      ...mockAgent,
+      getActivityState: vi.fn().mockResolvedValue({ state: "active" }),
+    };
+    const registryWithAliveRuntime: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return aliveRuntime;
+        if (slot === "agent") return agentWithLiveState;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "feat/issue-53",
+      status: "killed",
+      project: "my-app",
+      tmuxName: expectedTmuxName,
+    });
+
+    const sm = createSessionManager({ config, registry: registryWithAliveRuntime });
+    const sessions = await sm.list("my-app");
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].runtimeHandle?.id).toBe(expectedTmuxName);
+    expect(sessions[0].status).toBe("working");
+    expect(sessions[0].activity).toBe("active");
+    expect(aliveRuntime.isAlive).toHaveBeenCalled();
+    expect(agentWithLiveState.getActivityState).toHaveBeenCalled();
+  });
+
   it("keeps existing activity when getActivityState throws", async () => {
     const agentWithError: Agent = {
       ...mockAgent,
@@ -3804,6 +3845,53 @@ describe("spawnOrchestrator", () => {
     expect(existsSync(promptFile)).toBe(true);
     const { readFileSync } = await import("node:fs");
     expect(readFileSync(promptFile, "utf-8")).toBe("You are the orchestrator.");
+  });
+
+  it("passes the initial orchestrator prompt to the agent launch config", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    await sm.spawnOrchestrator({
+      projectId: "my-app",
+      prompt: "Check ready issues and spawn workers.",
+    });
+
+    expect(mockAgent.getLaunchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "app-orchestrator",
+        prompt: "Check ready issues and spawn workers.",
+      }),
+    );
+  });
+
+  it("sends the initial orchestrator prompt post-launch when the agent requires it", async () => {
+    vi.useFakeTimers();
+    const postLaunchAgent = {
+      ...mockAgent,
+      promptDelivery: "post-launch" as const,
+    };
+    const registryWithPostLaunch: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return postLaunchAgent;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+
+    const sm = createSessionManager({ config, registry: registryWithPostLaunch });
+    const spawnPromise = sm.spawnOrchestrator({
+      projectId: "my-app",
+      prompt: "Check ready issues and spawn workers.",
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await spawnPromise;
+
+    expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: expect.any(String) }),
+      "Check ready issues and spawn workers.",
+    );
+    vi.useRealTimers();
   });
 
   it("throws for unknown project", async () => {

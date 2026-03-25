@@ -11,6 +11,10 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { execFile as execFileCb } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFileCb);
 import {
   SESSION_STATUS,
   PR_STATE,
@@ -294,7 +298,29 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       !session.id.endsWith("-orchestrator")
     ) {
       try {
-        const detectedPR = await scm.detectPR(session, project);
+        // Resolve the live worktree branch — the session metadata branch may
+        // be stale if the agent switched branches after spawn.
+        let scmSession: Session = session;
+        if (session.workspacePath) {
+          try {
+            const { stdout } = await execFileAsync("git", ["branch", "--show-current"], {
+              cwd: session.workspacePath,
+              encoding: "utf8",
+              timeout: 5000,
+            });
+            const liveBranch = stdout.trim();
+            if (liveBranch && liveBranch !== session.branch) {
+              scmSession = { ...session, branch: liveBranch };
+              // Self-heal stale branch metadata
+              const sessionsDir = getSessionsDir(config.configPath, project.path);
+              updateMetadata(sessionsDir, session.id, { branch: liveBranch });
+              session.branch = liveBranch;
+            }
+          } catch {
+            // Worktree gone or git failed — use metadata branch
+          }
+        }
+        const detectedPR = await scm.detectPR(scmSession, project);
         if (detectedPR) {
           session.pr = detectedPR;
           // Persist PR URL so subsequent polls don't need to re-query.
@@ -313,7 +339,18 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       try {
         const prState = await scm.getPRState(session.pr);
         if (prState === PR_STATE.MERGED) return "merged";
-        if (prState === PR_STATE.CLOSED) return "killed";
+        if (prState === PR_STATE.CLOSED) {
+          // Closed PRs are terminal for this session; clear persisted PR metadata
+          // so killed sessions don't get re-polled forever via `if (s.pr) return true`.
+          session.pr = null;
+          try {
+            const sessionsDir = getSessionsDir(config.configPath, project.path);
+            updateMetadata(sessionsDir, session.id, { pr: "" });
+          } catch {
+            // Best effort — lifecycle status should still proceed to killed.
+          }
+          return "killed";
+        }
 
         // Check CI
         const ciStatus = await scm.getCISummary(session.pr);

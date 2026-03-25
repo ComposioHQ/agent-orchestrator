@@ -21,6 +21,7 @@ import {
   activityIcon,
   ciStatusIcon,
   reviewDecisionIcon,
+  statusColor,
   padCol,
 } from "../lib/format.js";
 import { getAgentByName, getSCM } from "../lib/plugins.js";
@@ -77,8 +78,11 @@ async function gatherSessionInfo(
     // Summary extraction failed — not critical
   }
 
-  // Use activity from session (already enriched by sessionManager.list())
-  const activity = session.activity;
+  // Use activity from session (already enriched by sessionManager.list()).
+  // If enrichment revived status to working but did not infer a more specific
+  // activity state, fall back so the status table doesn't misleadingly show
+  // "unknown" for a live worker.
+  const activity = session.activity ?? (status === "working" ? "active" : null);
 
   // Fetch PR, CI, and review data from SCM
   let prNumber: number | null = null;
@@ -98,7 +102,12 @@ async function gatherSessionInfo(
     try {
       const project = projectConfig.projects[session.projectId];
       if (project) {
-        const prInfo: PRInfo | null = await scm.detectPR(session, project);
+        // Use a session copy with the live branch so detectPR queries
+        // GitHub for the actual worktree branch, not stale metadata.
+        const scmSession = branch !== session.branch
+          ? { ...session, branch }
+          : session;
+        const prInfo: PRInfo | null = await scm.detectPR(scmSession, project);
         if (prInfo) {
           prNumber = prInfo.number;
 
@@ -141,6 +150,7 @@ async function gatherSessionInfo(
 const COL = {
   session: 14,
   branch: 24,
+  state: 18,
   pr: 6,
   ci: 6,
   review: 6,
@@ -153,6 +163,7 @@ function printTableHeader(): void {
   const hdr =
     padCol("Session", COL.session) +
     padCol("Branch", COL.branch) +
+    padCol("State", COL.state) +
     padCol("PR", COL.pr) +
     padCol("CI", COL.ci) +
     padCol("Rev", COL.review) +
@@ -161,16 +172,26 @@ function printTableHeader(): void {
     "Age";
   console.log(chalk.dim(`  ${hdr}`));
   const totalWidth =
-    COL.session + COL.branch + COL.pr + COL.ci + COL.review + COL.threads + COL.activity + 3;
+    COL.session +
+    COL.branch +
+    COL.state +
+    COL.pr +
+    COL.ci +
+    COL.review +
+    COL.threads +
+    COL.activity +
+    3;
   console.log(chalk.dim(`  ${"─".repeat(totalWidth)}`));
 }
 
 function printSessionRow(info: SessionInfo): void {
   const prStr = info.prNumber ? `#${info.prNumber}` : "-";
+  const stateStr = info.status ? statusColor(info.status) : chalk.dim("-");
 
   const row =
     padCol(chalk.green(info.name), COL.session) +
     padCol(info.branch ? chalk.cyan(info.branch) : chalk.dim("-"), COL.branch) +
+    padCol(stateStr, COL.state) +
     padCol(info.prNumber ? chalk.blue(prStr) : chalk.dim(prStr), COL.pr) +
     padCol(ciStatusIcon(info.ciStatus), COL.ci) +
     padCol(reviewDecisionIcon(info.reviewDecision), COL.review) +
@@ -207,7 +228,7 @@ function printOrchestratorRow(info: SessionInfo): void {
 export function registerStatus(program: Command): void {
   program
     .command("status")
-    .description("Show all sessions with branch, activity, PR, and CI status")
+    .description("Show all sessions with branch, state, activity, PR, and CI status")
     .option("-p, --project <id>", "Filter by project ID")
     .option("--json", "Output as JSON")
     .action(async (opts: { project?: string; json?: boolean }) => {
