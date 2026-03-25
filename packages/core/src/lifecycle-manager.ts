@@ -1026,7 +1026,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   ): Promise<boolean> {
     const eventWithPriority = { ...event, priority };
     const notificationPlan = plan ?? resolveNotificationPlan(priority);
-    const trackedSession = session ?? (await sessionManager.get(event.sessionId).catch(() => null));
+    const trackedSession =
+      session === undefined
+        ? await sessionManager.get(event.sessionId).catch(() => null)
+        : session;
     let delivered = false;
 
     for (const { name, notifier } of notificationPlan.resolvedTargets) {

@@ -2674,6 +2674,61 @@ describe("reactions", () => {
     }
   });
 
+  it("does not look up a session for all-complete system notifications when session is explicitly null", async () => {
+    vi.useFakeTimers();
+    try {
+      const mockNotifier: Notifier = {
+        name: "desktop",
+        notify: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const registryWithNotifier: PluginRegistry = {
+        ...mockRegistry,
+        get: vi.fn().mockImplementation((slot: string, name: string) => {
+          if (slot === "runtime") return mockRuntime;
+          if (slot === "agent") return mockAgent;
+          if (slot === "notifier" && name === "desktop") return mockNotifier;
+          return null;
+        }),
+      };
+
+      const configWithAllCompleteReaction: OrchestratorConfig = {
+        ...config,
+        notificationRouting: {
+          ...config.notificationRouting,
+          info: ["desktop"],
+        },
+        reactions: {
+          ...config.reactions,
+          "all-complete": {
+            auto: true,
+            action: "notify",
+            priority: "info",
+          },
+        },
+      };
+
+      vi.mocked(mockSessionManager.list).mockResolvedValue([
+        makeSession({ id: "app-1", status: "merged" }),
+      ]);
+
+      const lm = createLifecycleManager({
+        config: configWithAllCompleteReaction,
+        registry: registryWithNotifier,
+        sessionManager: mockSessionManager,
+      });
+
+      lm.start(1_000);
+      await vi.advanceTimersByTimeAsync(1_000);
+      lm.stop();
+
+      expect(mockNotifier.notify).toHaveBeenCalled();
+      expect(mockSessionManager.get).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("retries all-complete notifications when a notifier becomes available later", async () => {
     vi.useFakeTimers();
     try {
