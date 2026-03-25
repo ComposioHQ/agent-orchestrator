@@ -23,6 +23,8 @@ interface OpenClawWebhookPayload {
   sessionKey?: string;
   wakeMode?: WakeMode;
   deliver?: boolean;
+  channel?: string;
+  to?: string;
 }
 
 async function postWithRetry(
@@ -120,6 +122,8 @@ export function create(config?: Record<string, unknown>): Notifier {
     typeof config?.sessionKeyPrefix === "string" ? config.sessionKeyPrefix : "hook:ao:";
   const wakeMode: WakeMode = config?.wakeMode === "next-heartbeat" ? "next-heartbeat" : "now";
   const deliver = typeof config?.deliver === "boolean" ? config.deliver : true;
+  const channel = typeof config?.channel === "string" ? config.channel : undefined;
+  const to = typeof config?.to === "string" ? config.to : undefined;
 
   const { retries, retryDelayMs } = normalizeRetryConfig(config);
 
@@ -138,8 +142,13 @@ export function create(config?: Record<string, unknown>): Notifier {
     if (token) headers["Authorization"] = `Bearer ${token}`;
 
     const sessionId = payload.sessionKey?.slice(sessionKeyPrefix.length) ?? "default";
+    const enrichedPayload = {
+      ...payload,
+      ...(channel && { channel }),
+      ...(to && { to }),
+    };
 
-    await postWithRetry(url, payload, headers, retries, retryDelayMs, { sessionId });
+    await postWithRetry(url, enrichedPayload, headers, retries, retryDelayMs, { sessionId });
   }
 
   return {
