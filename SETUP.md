@@ -618,10 +618,10 @@ projects:
     path: ~/backend
     sessionPrefix: api
 
-  mobile:
-    repo: org/mobile
-    path: ~/mobile
-    sessionPrefix: mob
+  docs:
+    repo: org/docs
+    path: ~/docs
+    sessionPrefix: doc
 ```
 
 See [examples/multi-project.yaml](./examples/multi-project.yaml) for full example.
