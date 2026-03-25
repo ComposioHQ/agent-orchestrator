@@ -298,21 +298,22 @@ async function promptInstallAgentRuntime(available: DetectedAgent[]): Promise<De
 
   console.log(chalk.yellow("⚠ No supported agent runtime detected."));
   console.log(chalk.dim("  You can install one now (recommended) or continue and install later.\n"));
+  const skipOption = AGENT_INSTALL_OPTIONS.length + 1;
   AGENT_INSTALL_OPTIONS.forEach((option, i) => {
     const command = [option.cmd, ...option.args].join(" ");
     console.log(`  ${i + 1}. ${option.label} (${option.id}) — ${command}`);
   });
-  console.log("  5. Skip for now\n");
+  console.log(`  ${skipOption}. Skip for now\n`);
 
   const { createInterface } = await import("node:readline/promises");
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
-    const choice = await rl.question("  Choose runtime to install [1-5]: ");
+    const choice = await rl.question(`  Choose runtime to install [1-${skipOption}]: `);
     const idx = Number.parseInt(choice.trim(), 10);
-    if (!Number.isFinite(idx) || idx < 1 || idx > 5) {
+    if (!Number.isFinite(idx) || idx < 1 || idx > skipOption) {
       return available;
     }
-    if (idx === 5) {
+    if (idx === skipOption) {
       return available;
     }
 
