@@ -70,6 +70,21 @@ describe("Config Validation - Project Uniqueness", () => {
 
     expect(() => validateConfig(config)).not.toThrow();
   });
+
+  it("accepts maxActiveWorkers as a positive integer", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/integrator",
+          repo: "org/integrator",
+          defaultBranch: "main",
+          maxActiveWorkers: 1,
+        },
+      },
+    };
+
+    expect(() => validateConfig(config)).not.toThrow();
+  });
 });
 
 describe("Config Validation - Session Prefix Uniqueness", () => {

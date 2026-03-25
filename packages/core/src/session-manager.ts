@@ -20,6 +20,7 @@ import {
   isIssueNotFoundError,
   isRestorable,
   NON_RESTORABLE_STATUSES,
+  TERMINAL_STATUSES,
   SessionNotFoundError,
   SessionNotRestorableError,
   WorkspaceMissingError,
@@ -936,6 +937,19 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     }
 
+    if (project.maxActiveWorkers !== undefined) {
+      const activeWorkers = loadActiveSessionRecords(project).filter(
+        ({ sessionName, raw }) =>
+          !isOrchestratorSessionRecord(sessionName, raw) &&
+          !TERMINAL_STATUSES.has((raw["status"] as Session["status"]) ?? "working"),
+      );
+      if (activeWorkers.length >= project.maxActiveWorkers) {
+        throw new Error(
+          `Project '${spawnConfig.projectId}' already has ${activeWorkers.length} active worker(s); maxActiveWorkers=${project.maxActiveWorkers}`,
+        );
+      }
+    }
+
     // Get the sessions directory for this project
     const sessionsDir = getProjectSessionsDir(project);
 
@@ -1669,12 +1683,75 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           continue;
         }
 
+        const plugins = resolvePlugins(project);
+
+        // Orchestrator sessions are normally protected from cleanup, but stale
+        // orchestrators (runtime dead + no open work) should be archived so
+        // they don't linger in `ao status` indefinitely.
         if (isCleanupProtectedSession(project, session.id, session.metadata)) {
-          pushSkipped(session.projectId, session.id);
+          let orchestratorStale = false;
+          if (session.runtimeHandle && plugins.runtime) {
+            try {
+              const alive = await plugins.runtime.isAlive(session.runtimeHandle);
+              if (!alive) orchestratorStale = true;
+            } catch {
+              orchestratorStale = true;
+            }
+          } else {
+            // No runtime handle → already dead
+            orchestratorStale = true;
+          }
+
+          if (!orchestratorStale) {
+            // Orchestrator is still alive — don't touch it
+            pushSkipped(session.projectId, session.id);
+            continue;
+          }
+
+          // Runtime is dead — check if there's still open work by looking at
+          // sibling worker sessions in this project.
+          let hasOpenWork = false;
+
+          // Quick local check: are there any non-orchestrator active sessions?
+          const siblingWorkers = sessions.filter(
+            (s) =>
+              s.projectId === session.projectId &&
+              s.id !== session.id &&
+              !isOrchestratorSession({ id: s.id, metadata: s.metadata }) &&
+              !TERMINAL_STATUSES.has(s.status),
+          );
+          if (siblingWorkers.length > 0) {
+            hasOpenWork = true;
+          }
+
+          // Also check the tracker for open issues if available
+          if (!hasOpenWork && plugins.tracker?.listIssues) {
+            try {
+              const openIssues = await plugins.tracker.listIssues(
+                { state: "open", limit: 1 },
+                project,
+              );
+              if (openIssues && openIssues.length > 0) hasOpenWork = true;
+            } catch {
+              // Can't check — assume there might be work, keep it safe
+              hasOpenWork = true;
+            }
+          }
+
+          if (hasOpenWork) {
+            // Still has work but runtime dead — skip, watchdog will restart it
+            pushSkipped(session.projectId, session.id);
+            continue;
+          }
+
+          // Dead orchestrator with no open work → kill it
+          if (!options?.dryRun) {
+            await kill(session.id, { purgeOpenCode: shouldPurgeOpenCode });
+          }
+          pushKilled(session.projectId, session.id);
           continue;
         }
 
-        const plugins = resolvePlugins(project);
         let shouldKill = false;
 
         // Check if PR is merged

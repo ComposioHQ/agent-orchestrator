@@ -873,6 +873,113 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("merged");
   });
 
+  it("cleans terminal sessions via sessionManager.kill on terminal transitions", async () => {
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("merged"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn(),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn(),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    const session = makeSession({
+      status: "approved",
+      pr: makePR(),
+      runtimeHandle: { id: "tmux-app-1", runtimeName: "tmux", data: {} },
+    });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "approved",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(mockSessionManager.kill).toHaveBeenCalledWith("app-1");
+  });
+
+  it("uses runtimeHandle.runtimeName for liveness checks", async () => {
+    const tmuxRuntime: Runtime = {
+      ...mockRuntime,
+      name: "tmux",
+      isAlive: vi.fn().mockResolvedValue(true),
+      getOutput: vi.fn().mockResolvedValue(""),
+    };
+    const dockerRuntime: Runtime = {
+      ...mockRuntime,
+      name: "docker",
+      isAlive: vi.fn().mockResolvedValue(false),
+      getOutput: vi.fn().mockResolvedValue(""),
+    };
+
+    config.defaults.runtime = "docker";
+    config.projects["my-app"] = {
+      ...config.projects["my-app"],
+      runtime: "docker",
+    };
+
+    const registryWithRuntimeMismatch: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime" && name === "tmux") return tmuxRuntime;
+        if (slot === "runtime" && name === "docker") return dockerRuntime;
+        if (slot === "agent") return mockAgent;
+        return null;
+      }),
+    };
+
+    const session = makeSession({
+      status: "working",
+      pr: null,
+      runtimeHandle: { id: "tmux-app-1", runtimeName: "tmux", data: {} },
+    });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithRuntimeMismatch,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(tmuxRuntime.isAlive).toHaveBeenCalledWith(session.runtimeHandle);
+    expect(dockerRuntime.isAlive).not.toHaveBeenCalled();
+    expect(lm.getStates().get("app-1")).toBe("working");
+  });
+
   it("detects mergeable when approved + CI green", async () => {
     const mockSCM: SCM = {
       name: "mock-scm",
@@ -924,6 +1031,145 @@ describe("check (single session)", () => {
     await lm.check("app-1");
 
     expect(lm.getStates().get("app-1")).toBe("mergeable");
+  });
+
+  it("auto-merge reaction uses direct session lookup instead of listing all sessions", async () => {
+    config.reactions = {
+      "approved-and-green": {
+        auto: true,
+        action: "auto-merge",
+      },
+    };
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn().mockResolvedValue(undefined),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("passing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("approved"),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn().mockResolvedValue({
+        mergeable: true,
+        ciPassing: true,
+        approved: true,
+        noConflicts: true,
+        blockers: [],
+      }),
+    };
+
+    const mockNotifier: Notifier = {
+      name: "desktop",
+      notify: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "notifier" && name === "desktop") return mockNotifier;
+        return null;
+      }),
+    };
+
+    const session = makeSession({ status: "approved", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+    vi.mocked(mockSessionManager.list).mockRejectedValue(
+      new Error("auto-merge should not list all sessions"),
+    );
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "approved",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("mergeable");
+    expect(mockSCM.mergePR).toHaveBeenCalledWith(session.pr, "squash");
+    expect(mockSessionManager.list).not.toHaveBeenCalled();
+    expect(mockSessionManager.get).toHaveBeenCalledTimes(3);
+  });
+
+  it("auto-merges steady-state mergeable sessions after lifecycle restart", async () => {
+    config.reactions = {
+      "approved-and-green": {
+        auto: true,
+        action: "auto-merge",
+      },
+    };
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn().mockResolvedValue(undefined),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("passing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("approved"),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn().mockResolvedValue({
+        mergeable: true,
+        ciPassing: true,
+        approved: true,
+        noConflicts: true,
+        blockers: [],
+      }),
+    };
+
+    const mockNotifier: Notifier = {
+      name: "desktop",
+      notify: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "notifier" && name === "desktop") return mockNotifier;
+        return null;
+      }),
+    };
+
+    const session = makeSession({ status: "mergeable", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "mergeable",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("mergeable");
+    expect(mockSCM.mergePR).toHaveBeenCalledWith(session.pr, "squash");
   });
 
   it("throws for nonexistent session", async () => {
