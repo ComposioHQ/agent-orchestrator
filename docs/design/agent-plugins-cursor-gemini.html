@@ -167,8 +167,8 @@
           JSONL/session introspection for all JSONL-based agents.
         </p>
         <p class="muted">
-          PR: <a href="https://github.com/ComposioHQ/agent-orchestrator/pull/511">#511</a>
-          &nbsp;·&nbsp; Status: MERGEABLE &nbsp;·&nbsp; March 2026
+          PR: <a href="https://github.com/ComposioHQ/agent-orchestrator/pull/592">#592</a>
+          &nbsp;·&nbsp; Status: Open &nbsp;·&nbsp; March 2026
         </p>
       </section>
 
@@ -208,7 +208,7 @@
             <li><span class="badge badge-gemini">NEW</span> <code>agent-gemini</code> — Gemini CLI plugin</li>
           </ul>
           <p class="muted" style="margin-top: 0.5rem;">
-            Refactored agent-claude-code to use agent-base (reduced from 800+ to ~80 lines)
+            Refactored agent-claude-code to import ps-cache from agent-base; removes ~40 lines of duplicate process-detection logic
           </p>
         </article>
       </section>
@@ -281,7 +281,7 @@
             <li>✓ agent-gemini (integration) > fibonacci.py runs and outputs correct fibonacci numbers</li>
             <li>✓ agent-cursor (integration) > fibonacci.py runs and outputs correct fibonacci numbers</li>
           </ul>
-          <p class="muted" style="margin-top: 0.5rem;">8 total tests (4 Cursor + 4 Gemini)</p>
+          <p class="muted" style="margin-top: 0.5rem;">8 live integration tests (4 Cursor + 4 Gemini) + 491 unit tests</p>
         </article>
       </section>
 
@@ -289,9 +289,9 @@
         <h2>Files Changed</h2>
         <ul>
           <li><strong>New packages:</strong> 3 (agent-base, agent-cursor, agent-gemini)</li>
-          <li><strong>Modified packages:</strong> web, cli, core</li>
-          <li><strong>New tests:</strong> 200+ unit tests + 8 live integration tests</li>
-          <li><strong>Total:</strong> 71 files changed, 8462 insertions, 1041 deletions</li>
+          <li><strong>Modified packages:</strong> cli, agent-claude-code</li>
+          <li><strong>Unit tests:</strong> 307 (agent-base) + 78 (cursor) + 106 (gemini) = 491 passing</li>
+          <li><strong>Total:</strong> 36 files changed (PR scope: Cursor + Gemini plugins only)</li>
         </ul>
       </section>
 
