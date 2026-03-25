@@ -1,7 +1,6 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import type { SpawnOptions } from "node:child_process";
 
 export const DEFAULT_ACPX_AGENT = "pi";
 export const DEFAULT_PROMPT_FLUSH_DELAY_MS = 150;
@@ -248,7 +247,7 @@ function parseCliArgs(argv: readonly string[]): {
 
     if (arg === "--acpx-path") {
       const next = argv[index + 1];
-      if (next == null) {
+      if (next === undefined || next === null) {
         throw new Error(`Missing value for ${arg}`);
       }
       parsed.acpxPath = next;
@@ -258,7 +257,7 @@ function parseCliArgs(argv: readonly string[]): {
 
     if (arg === "--agent") {
       const next = argv[index + 1];
-      if (next == null) {
+      if (next === undefined || next === null) {
         throw new Error(`Missing value for ${arg}`);
       }
       parsed.acpxAgent = next;
@@ -268,7 +267,7 @@ function parseCliArgs(argv: readonly string[]): {
 
     if (arg === "--cwd") {
       const next = argv[index + 1];
-      if (next == null) {
+      if (next === undefined || next === null) {
         throw new Error(`Missing value for ${arg}`);
       }
       parsed.cwd = next;
@@ -278,7 +277,7 @@ function parseCliArgs(argv: readonly string[]): {
 
     if (arg === "--system-prompt") {
       const next = argv[index + 1];
-      if (next == null) {
+      if (next === undefined || next === null) {
         throw new Error(`Missing value for ${arg}`);
       }
       parsed.systemPrompt = next;
@@ -288,7 +287,7 @@ function parseCliArgs(argv: readonly string[]): {
 
     if (arg === "--system-prompt-file") {
       const next = argv[index + 1];
-      if (next == null) {
+      if (next === undefined || next === null) {
         throw new Error(`Missing value for ${arg}`);
       }
       parsed.systemPromptFile = next;
@@ -298,7 +297,7 @@ function parseCliArgs(argv: readonly string[]): {
 
     if (arg === "--flush-delay-ms") {
       const next = argv[index + 1];
-      if (next == null) {
+      if (next === undefined || next === null) {
         throw new Error(`Missing value for ${arg}`);
       }
       parsed.flushDelayMs = Number(next);
