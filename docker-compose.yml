@@ -1,0 +1,74 @@
+services:
+  # ---- Core library (build dependency, also runs tests in dev) ----
+  core:
+    build:
+      context: .
+      dockerfile: docker/core/Dockerfile
+      target: dev
+    container_name: ao-core
+    volumes:
+      - ./packages/core/src:/app/packages/core/src
+      - ./tsconfig.base.json:/app/tsconfig.base.json
+    environment:
+      - NODE_ENV=development
+    networks:
+      - ao-network
+    restart: unless-stopped
+
+  # ---- Web dashboard (Next.js + terminal WebSocket servers) ----
+  web:
+    build:
+      context: .
+      dockerfile: docker/web/Dockerfile
+      target: dev
+    container_name: ao-web
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+      - "${TERMINAL_PORT:-14800}:14800"
+      - "${DIRECT_TERMINAL_PORT:-14801}:14801"
+    volumes:
+      - ./packages/web/src:/app/packages/web/src
+      - ./packages/web/server:/app/packages/web/server
+      - ./packages/web/next.config.js:/app/packages/web/next.config.js
+      - ./packages/core/src:/app/packages/core/src
+    environment:
+      - NODE_ENV=development
+      - TERMINAL_PORT=14800
+      - DIRECT_TERMINAL_PORT=14801
+      - NEXT_PUBLIC_TERMINAL_PORT=${NEXT_PUBLIC_TERMINAL_PORT:-14800}
+      - NEXT_PUBLIC_DIRECT_TERMINAL_PORT=${NEXT_PUBLIC_DIRECT_TERMINAL_PORT:-14801}
+    depends_on:
+      - core
+    networks:
+      - ao-network
+    restart: unless-stopped
+
+  # ---- CLI service (development mode with watch) ----
+  cli:
+    build:
+      context: .
+      dockerfile: docker/cli/Dockerfile
+      target: dev
+    container_name: ao-cli
+    volumes:
+      - ./packages/cli/src:/app/packages/cli/src
+      - ./packages/cli/templates:/app/packages/cli/templates
+      - ./packages/core/src:/app/packages/core/src
+      - ao-sessions:/home/aouser/.ao-sessions
+    environment:
+      - NODE_ENV=development
+    depends_on:
+      - core
+    networks:
+      - ao-network
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+
+networks:
+  ao-network:
+    driver: bridge
+
+volumes:
+  ao-sessions:
+    driver: local
