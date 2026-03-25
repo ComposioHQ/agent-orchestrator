@@ -7,6 +7,7 @@ import {
   getLifecycleWorkerStatus,
   writeLifecycleWorkerPid,
 } from "../lib/lifecycle-service.js";
+import { readState, isProcessAlive } from "../lib/running-state.js";
 
 function parseInterval(value: string): number {
   const parsed = Number.parseInt(value, 10);
@@ -50,7 +51,6 @@ export function registerLifecycleWorker(program: Command): void {
         return;
       }
 
-      const lifecycle = await getLifecycleManager(config, projectId);
       const intervalMs = parseInterval(opts.intervalMs ?? "30000");
       let shuttingDown = false;
       let heartbeat: ReturnType<typeof setInterval> | null = null;
@@ -111,6 +111,22 @@ export function registerLifecycleWorker(program: Command): void {
           level: "error",
         });
         shutdown(1);
+      });
+
+      const lifecycle = await getLifecycleManager(config, projectId, {
+        onAllSessionsKilled: () => {
+          // Runtime server died — kill the dashboard parent process so it
+          // doesn't hold the port as an orphan.
+          const state = readState();
+          if (state && isProcessAlive(state.pid)) {
+            try {
+              process.kill(state.pid, "SIGTERM");
+            } catch {
+              // Already dead
+            }
+          }
+          shutdown(0);
+        },
       });
 
       writeLifecycleWorkerPid(config, projectId, process.pid);

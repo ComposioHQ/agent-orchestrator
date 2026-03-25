@@ -1457,3 +1457,111 @@ describe("getStates", () => {
     expect(lm.getStates().get("app-1")).toBe("working");
   });
 });
+
+describe("runtime server death detection", () => {
+  it("detects killed state when isAlive throws (tmux server dead)", async () => {
+    vi.mocked(mockRuntime.isAlive).mockRejectedValue(new Error("no server running"));
+
+    const session = makeSession({ status: "working" });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+    expect(lm.getStates().get("app-1")).toBe("killed");
+  });
+
+  it("calls onAllSessionsKilled when all active sessions die in one poll cycle", async () => {
+    vi.mocked(mockRuntime.isAlive).mockRejectedValue(new Error("no server running"));
+
+    const session1 = makeSession({ id: "app-1", status: "working" });
+    const session2 = makeSession({ id: "app-2", status: "working" });
+    vi.mocked(mockSessionManager.list).mockResolvedValue([session1, session2]);
+
+    for (const id of ["app-1", "app-2"]) {
+      writeMetadata(sessionsDir, id, {
+        worktree: "/tmp",
+        branch: "main",
+        status: "working",
+        project: "my-app",
+      });
+    }
+
+    const onAllSessionsKilled = vi.fn();
+
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+      projectId: "my-app",
+      onAllSessionsKilled,
+    });
+
+    // Start with a very long interval so only the immediate poll runs
+    lm.start(999_999);
+    // Wait for the immediate poll to complete
+    await vi.waitFor(() => {
+      expect(onAllSessionsKilled).toHaveBeenCalledTimes(1);
+    });
+    lm.stop();
+
+    expect(lm.getStates().get("app-1")).toBe("killed");
+    expect(lm.getStates().get("app-2")).toBe("killed");
+  });
+
+  it("does not call onAllSessionsKilled when only some sessions die", async () => {
+    // session 1 dies, session 2 stays alive
+    vi.mocked(mockRuntime.isAlive).mockImplementation(async (handle) => {
+      return handle.id !== "rt-1";
+    });
+
+    const session1 = makeSession({
+      id: "app-1",
+      status: "working",
+      runtimeHandle: { id: "rt-1", runtimeName: "mock", data: {} },
+    });
+    const session2 = makeSession({
+      id: "app-2",
+      status: "working",
+      runtimeHandle: { id: "rt-2", runtimeName: "mock", data: {} },
+    });
+    vi.mocked(mockSessionManager.list).mockResolvedValue([session1, session2]);
+
+    for (const id of ["app-1", "app-2"]) {
+      writeMetadata(sessionsDir, id, {
+        worktree: "/tmp",
+        branch: "main",
+        status: "working",
+        project: "my-app",
+      });
+    }
+
+    const onAllSessionsKilled = vi.fn();
+
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+      projectId: "my-app",
+      onAllSessionsKilled,
+    });
+
+    lm.start(999_999);
+    // Wait for the poll to process
+    await new Promise((r) => setTimeout(r, 200));
+    lm.stop();
+
+    expect(onAllSessionsKilled).not.toHaveBeenCalled();
+  });
+});

@@ -19,7 +19,7 @@ function ensureDir(): void {
   mkdirSync(STATE_DIR, { recursive: true });
 }
 
-function isProcessAlive(pid: number): boolean {
+export function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
@@ -72,7 +72,7 @@ async function acquireLock(timeoutMs = 5000): Promise<() => void> {
   }
 }
 
-function readState(): RunningState | null {
+export function readState(): RunningState | null {
   try {
     const raw = readFileSync(STATE_FILE, "utf-8");
     const state = JSON.parse(raw) as RunningState;
