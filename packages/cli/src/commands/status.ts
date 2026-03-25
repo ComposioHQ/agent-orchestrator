@@ -150,7 +150,7 @@ async function gatherSessionInfo(
 const COL = {
   session: 14,
   branch: 24,
-  state: 11,
+  state: 18,
   pr: 6,
   ci: 6,
   review: 6,
