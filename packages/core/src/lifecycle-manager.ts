@@ -40,8 +40,10 @@ import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js"
 
 /**
  * Fallback messages for send-to-agent reactions when no static message is configured.
- * These match the defaults in config.ts so that user overrides that omit `message`
- * still deliver something useful to the agent.
+ * Only includes reaction keys whose default action in applyDefaultReactions() (config.ts)
+ * is "send-to-agent". If a user overrides one of these without a message field, the
+ * shallow config merge drops the default message — this map ensures the agent still
+ * receives useful instructions.
  *
  * Keep in sync with applyDefaultReactions() in config.ts.
  */
@@ -56,8 +58,6 @@ const REACTION_FALLBACK_MESSAGES: Record<string, string> = {
     "Your branch has merge conflicts. Rebase on the default branch and resolve them.",
   "agent-idle":
     "You appear to be idle. If your task is not complete, continue working — write the code, commit, push, and create a PR. If you are blocked, explain what is blocking you.",
-  "agent-stuck":
-    "You appear to be stuck. If your task is not complete, continue working or explain what is blocking you.",
 };
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
