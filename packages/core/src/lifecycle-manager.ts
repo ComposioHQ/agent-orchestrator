@@ -455,10 +455,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           message: `Reaction '${reactionKey}' triggered notification`,
           data: { reactionKey },
         });
-        await notifyHuman(event, reactionConfig.priority ?? "info");
+        const delivered = await notifyHuman(event, reactionConfig.priority ?? "info");
         return {
           reactionType: reactionKey,
-          success: true,
+          success: delivered,
           action: "notify",
           escalated: false,
         };
@@ -532,6 +532,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     return `notifier.${notifierName}.${field}`;
   }
 
+  function sanitizeNotifierReason(error: unknown): string {
+    return (error instanceof Error ? error.message : String(error))
+      .replace(/[\r\n]+/g, " ")
+      .trim()
+      .slice(0, 200);
+  }
+
   function recordNotifierOutcome(
     projectId: string,
     session: Session | null,
@@ -543,12 +550,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   ): void {
     const correlationId = createCorrelationId("notifier");
     const timestamp = new Date().toISOString();
-    const reason =
-      outcome === "failure"
-        ? error instanceof Error
-          ? error.message
-          : String(error)
-        : undefined;
+    const reason = outcome === "failure" ? sanitizeNotifierReason(error) : undefined;
 
     observer.recordOperation({
       metric: "notification",
@@ -587,6 +589,17 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         ? { [notifierMetadataKey(notifierName, "lastSuccessAt")]: timestamp }
         : {}),
     });
+  }
+
+  function logNotifierOutcomeRecordingError(
+    notifierName: string,
+    event: OrchestratorEvent,
+    error: unknown,
+  ): void {
+    const reason = error instanceof Error ? error.message : String(error);
+    process.stderr.write(
+      `[ao] failed to record notifier outcome for ${notifierName} on ${event.type} (${event.sessionId}): ${reason}\n`,
+    );
   }
 
   function makeFingerprint(ids: string[]): string {
@@ -745,9 +758,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   }
 
   /** Send a notification to all configured notifiers. */
-  async function notifyHuman(event: OrchestratorEvent, priority: EventPriority): Promise<void> {
+  async function notifyHuman(event: OrchestratorEvent, priority: EventPriority): Promise<boolean> {
     const eventWithPriority = { ...event, priority };
     const notifierNames = config.notificationRouting[priority] ?? config.defaults.notifiers;
+    let delivered = false;
 
     for (const name of notifierNames) {
       const notifier = registry.get<Notifier>("notifier", name);
@@ -756,15 +770,34 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         // Track separately rather than widening this PR's notifier outcome scope.
         continue;
       }
+
+      let outcome: "success" | "failure" = "success";
+      let notifyError: unknown;
       try {
         await notifier.notify(eventWithPriority);
-        const session = await sessionManager.get(event.sessionId).catch(() => null);
-        recordNotifierOutcome(event.projectId, session, name, eventWithPriority, priority, "success");
+        delivered = true;
       } catch (error) {
-        const session = await sessionManager.get(event.sessionId).catch(() => null);
-        recordNotifierOutcome(event.projectId, session, name, eventWithPriority, priority, "failure", error);
+        outcome = "failure";
+        notifyError = error;
+      }
+
+      const session = await sessionManager.get(event.sessionId).catch(() => null);
+      try {
+        recordNotifierOutcome(
+          event.projectId,
+          session,
+          name,
+          eventWithPriority,
+          priority,
+          outcome,
+          notifyError,
+        );
+      } catch (recordError) {
+        logNotifierOutcomeRecordingError(name, eventWithPriority, recordError);
       }
     }
+
+    return delivered;
   }
 
   /** Poll a single session and handle state transitions. */

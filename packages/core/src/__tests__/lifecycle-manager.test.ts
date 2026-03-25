@@ -1224,6 +1224,93 @@ describe("reactions", () => {
     expect(metadata?.["lastPendingReviewDispatchHash"]).toBe("c1");
   });
 
+  it("retries notify reactions when every notifier delivery fails", async () => {
+    const flakyNotifier: Notifier = {
+      name: "desktop",
+      notify: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("OpenClaw unavailable"))
+        .mockResolvedValueOnce(undefined),
+    };
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("passing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("none"),
+      getPendingComments: vi.fn().mockResolvedValue([
+        {
+          id: "c1",
+          author: "reviewer",
+          body: "Please rename this helper",
+          path: "src/app.ts",
+          line: 12,
+          isResolved: false,
+          createdAt: new Date(),
+          url: "https://example.com/comment/1",
+        },
+      ]),
+      getAutomatedComments: vi.fn().mockResolvedValue([]),
+      getMergeability: vi.fn(),
+    };
+
+    const registryWithNotifier: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "notifier" && name === "desktop") return flakyNotifier;
+        return null;
+      }),
+    };
+
+    const configWithNotifyReaction: OrchestratorConfig = {
+      ...config,
+      reactions: {
+        ...config.reactions,
+        "changes-requested": {
+          auto: true,
+          action: "notify",
+          priority: "action",
+        },
+      },
+    };
+
+    const session = makeSession({ status: "pr_open", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config: configWithNotifyReaction,
+      registry: registryWithNotifier,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+    let metadata = readMetadataRaw(sessionsDir, "app-1");
+    expect(flakyNotifier.notify).toHaveBeenCalledTimes(1);
+    expect(metadata?.["lastPendingReviewDispatchHash"]).toBeUndefined();
+    expect(metadata?.["notifier.desktop.status"]).toBe("warn");
+
+    await lm.check("app-1");
+    metadata = readMetadataRaw(sessionsDir, "app-1");
+    expect(flakyNotifier.notify).toHaveBeenCalledTimes(2);
+    expect(metadata?.["lastPendingReviewDispatchHash"]).toBe("c1");
+    expect(metadata?.["notifier.desktop.status"]).toBe("ok");
+  });
+
   it("does not double-send when changes_requested transition already triggered the reaction", async () => {
     config.reactions = {
       "changes-requested": {
@@ -1523,6 +1610,62 @@ describe("reactions", () => {
     ).toBe(true);
   });
 
+  it("sanitizes multiline notifier failure reasons before persisting metadata", async () => {
+    const failingNotifier: Notifier = {
+      name: "desktop",
+      notify: vi.fn().mockRejectedValue(new Error("OpenClaw unavailable\nretry later\r\nsee logs")),
+    };
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("merged"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn(),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn(),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    const registryWithNotifier: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "notifier" && name === "desktop") return failingNotifier;
+        return null;
+      }),
+    };
+
+    const session = makeSession({ status: "approved", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "approved",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithNotifier,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    const metadata = readMetadataRaw(sessionsDir, "app-1");
+    expect(metadata?.["notifier.desktop.lastFailureReason"]).toBe(
+      "OpenClaw unavailable retry later see logs",
+    );
+  });
+
   it("records notifier observability even when session lookup fails after delivery", async () => {
     const mockNotifier: Notifier = {
       name: "desktop",
@@ -1589,6 +1732,67 @@ describe("reactions", () => {
           trace.data?.["notifier"] === "desktop",
       ),
     ).toBe(true);
+  });
+
+  it("does not reclassify successful notifier delivery when outcome persistence fails", async () => {
+    const mockNotifier: Notifier = {
+      name: "desktop",
+      notify: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("merged"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn(),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn(),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    const registryWithNotifier: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "notifier" && name === "desktop") return mockNotifier;
+        return null;
+      }),
+    };
+
+    const validSession = makeSession({ status: "approved", pr: makePR() });
+    const sessionWithInvalidId = makeSession({ id: "bad/id", status: "approved", pr: makePR() });
+    vi.mocked(mockSessionManager.get)
+      .mockResolvedValueOnce(validSession)
+      .mockResolvedValueOnce(sessionWithInvalidId);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "approved",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithNotifier,
+      sessionManager: mockSessionManager,
+    });
+
+    await expect(lm.check("app-1")).resolves.toBeUndefined();
+    expect(lm.getStates().get("app-1")).toBe("merged");
+    expect(mockNotifier.notify).toHaveBeenCalledTimes(1);
+
+    const summary = readObservabilitySummary(config);
+    expect(summary.projects["my-app"]?.metrics["notification"]?.total).toBe(1);
+    expect(summary.projects["my-app"]?.metrics["notification"]?.success).toBe(1);
+    expect(summary.projects["my-app"]?.metrics["notification"]?.failure).toBe(0);
   });
 
   it("preserves lastSuccessAt when a notifier later fails", async () => {
@@ -1739,6 +1943,7 @@ describe("reactions", () => {
         reactions: {
           ...config.reactions,
           "all-complete": {
+            auto: true,
             action: "notify",
             priority: "info",
           },
