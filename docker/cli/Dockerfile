@@ -9,6 +9,9 @@ WORKDIR /app
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY tsconfig.base.json ./
 
+# Copy postinstall script required by root package.json
+COPY scripts/ scripts/
+
 # Copy all package.json files needed by CLI and its workspace dependencies
 COPY packages/core/package.json packages/core/package.json
 COPY packages/cli/package.json packages/cli/package.json
@@ -33,8 +36,8 @@ COPY packages/core/ packages/core/
 COPY packages/cli/ packages/cli/
 COPY packages/web/ packages/web/
 
-# Build dependencies first
-RUN pnpm --filter @composio/ao-core build
+# Build all transitive workspace dependencies (core + plugins)
+RUN pnpm --filter @composio/ao-cli... build
 
 # Non-root user
 RUN groupadd -r aouser && useradd -r -g aouser -m aouser \
@@ -60,10 +63,8 @@ COPY packages/core/ packages/core/
 COPY packages/cli/ packages/cli/
 COPY packages/web/ packages/web/
 
-# Build in dependency order
-RUN pnpm --filter @composio/ao-core build \
-    && pnpm --filter @composio/ao-web build \
-    && pnpm --filter @composio/ao-cli build
+# Build all transitive workspace dependencies then CLI
+RUN pnpm --filter @composio/ao-cli... build
 
 # ---- Production stage ----
 FROM node:20-bookworm-slim AS prod

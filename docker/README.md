@@ -8,7 +8,7 @@ Run the full Agent Orchestrator development environment in Docker containers.
 |---------|-------------|-------|
 | **core** | Core library (`@composio/ao-core`) — types, config, session manager | — |
 | **web** | Next.js dashboard + terminal WebSocket servers | 3000, 14800, 14801 |
-| **cli** | CLI tool (`@composio/ao-cli`) with tmux and git | — |
+| **cli** | CLI tool (`@composio/ao-cli`) with tmux and git — use via `docker compose exec` | — |
 
 ## Quick Start
 
@@ -62,7 +62,7 @@ All services mount source directories as volumes, so code changes are picked up 
 
 - **core**: `packages/core/src/` is mounted — changes trigger test re-runs
 - **web**: `packages/web/src/` and `packages/web/server/` are mounted — Next.js hot reloads
-- **cli**: `packages/cli/src/` is mounted — tsx watch mode picks up changes
+- **cli**: `packages/cli/src/` is mounted — run commands via `docker compose exec cli pnpm dev -- <command>`
 
 ### Rebuilding
 

@@ -16,6 +16,9 @@ WORKDIR /app
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY tsconfig.base.json ./
 
+# Copy postinstall script required by root package.json
+COPY scripts/ scripts/
+
 # Copy all package.json files needed by web and its workspace dependencies
 COPY packages/core/package.json packages/core/package.json
 COPY packages/web/package.json packages/web/package.json
@@ -34,8 +37,8 @@ RUN pnpm install --frozen-lockfile --filter @composio/ao-web...
 COPY packages/core/ packages/core/
 COPY packages/web/ packages/web/
 
-# Build core first (web depends on it)
-RUN pnpm --filter @composio/ao-core build
+# Build all transitive workspace dependencies (core + plugins)
+RUN pnpm --filter @composio/ao-web... build
 
 # Non-root user
 RUN groupadd -r aouser && useradd -r -g aouser -m aouser \
@@ -59,9 +62,8 @@ RUN pnpm install --frozen-lockfile --filter @composio/ao-web...
 COPY packages/core/ packages/core/
 COPY packages/web/ packages/web/
 
-# Build core first, then web
-RUN pnpm --filter @composio/ao-core build \
-    && pnpm --filter @composio/ao-web build
+# Build all transitive workspace dependencies then web
+RUN pnpm --filter @composio/ao-web... build
 
 # ---- Production stage ----
 FROM node:20-bookworm-slim AS prod

@@ -8,6 +8,9 @@ WORKDIR /app
 # Copy workspace config and lockfile first for layer caching
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 
+# Copy postinstall script (rebuild-node-pty.js) required by root package.json
+COPY scripts/ scripts/
+
 # Copy all package.json files to resolve workspace dependencies
 COPY packages/core/package.json packages/core/package.json
 
@@ -28,9 +31,6 @@ FROM base AS dev
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
-
-# Install all dependencies (including devDependencies) for development
-RUN pnpm install --frozen-lockfile --filter @composio/ao-core...
 
 COPY packages/core/ packages/core/
 COPY tsconfig.base.json ./

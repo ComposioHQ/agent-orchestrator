@@ -63,6 +63,8 @@ services:
       - ao-network
     stdin_open: true
     tty: true
+    # CLI is a one-shot tool, keep container alive for `docker compose exec`
+    entrypoint: ["sleep", "infinity"]
     restart: unless-stopped
 
 networks:
