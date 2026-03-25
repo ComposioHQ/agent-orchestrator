@@ -245,43 +245,62 @@ function parseCliArgs(argv: readonly string[]): {
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    const next = argv[index + 1];
-
-    if (!next) {
-      throw new Error(`Missing value for ${arg}`);
-    }
 
     if (arg === "--acpx-path") {
+      const next = argv[index + 1];
+      if (next == null) {
+        throw new Error(`Missing value for ${arg}`);
+      }
       parsed.acpxPath = next;
       index += 1;
       continue;
     }
 
     if (arg === "--agent") {
+      const next = argv[index + 1];
+      if (next == null) {
+        throw new Error(`Missing value for ${arg}`);
+      }
       parsed.acpxAgent = next;
       index += 1;
       continue;
     }
 
     if (arg === "--cwd") {
+      const next = argv[index + 1];
+      if (next == null) {
+        throw new Error(`Missing value for ${arg}`);
+      }
       parsed.cwd = next;
       index += 1;
       continue;
     }
 
     if (arg === "--system-prompt") {
+      const next = argv[index + 1];
+      if (next == null) {
+        throw new Error(`Missing value for ${arg}`);
+      }
       parsed.systemPrompt = next;
       index += 1;
       continue;
     }
 
     if (arg === "--system-prompt-file") {
+      const next = argv[index + 1];
+      if (next == null) {
+        throw new Error(`Missing value for ${arg}`);
+      }
       parsed.systemPromptFile = next;
       index += 1;
       continue;
     }
 
     if (arg === "--flush-delay-ms") {
+      const next = argv[index + 1];
+      if (next == null) {
+        throw new Error(`Missing value for ${arg}`);
+      }
       parsed.flushDelayMs = Number(next);
       index += 1;
       continue;
