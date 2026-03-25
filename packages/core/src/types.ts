@@ -912,6 +912,11 @@ export interface OrchestratorConfig {
 
   /** Default reaction configs */
   reactions: Record<string, ReactionConfig>;
+
+  /** HTTP API configuration */
+  api?: {
+    token?: string;
+  };
 }
 
 export interface DefaultPlugins {
@@ -1170,7 +1175,7 @@ export interface SessionManager {
   spawnOrchestrator(config: OrchestratorSpawnConfig): Promise<Session>;
   restore(sessionId: SessionId): Promise<Session>;
   list(projectId?: string): Promise<Session[]>;
-  get(sessionId: SessionId): Promise<Session | null>;
+  get(sessionId: SessionId, options?: { includeArchived?: boolean }): Promise<Session | null>;
   kill(sessionId: SessionId, options?: { purgeOpenCode?: boolean }): Promise<void>;
   cleanup(
     projectId?: string,

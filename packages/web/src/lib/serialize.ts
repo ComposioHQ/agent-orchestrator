@@ -7,6 +7,7 @@
 
 import {
   isOrchestratorSession,
+  resolveProjectIdForSessionId,
   type Session,
   type Agent,
   type SCM,
@@ -21,7 +22,9 @@ import type {
   DashboardPR,
   DashboardStats,
   DashboardOrchestratorLink,
-} from "./types.js";
+  DashboardNotificationState,
+  DashboardNotifierState,
+} from "./types";
 import { TTLCache, prCache, prCacheKey, type PREnrichmentData } from "./cache";
 
 /** Cache for issue titles (5 min TTL — issue titles rarely change) */
@@ -36,13 +39,86 @@ export function resolveProject(
   const direct = projects[core.projectId];
   if (direct) return direct;
 
-  // Match by session prefix
-  const entry = Object.entries(projects).find(([, p]) => core.id.startsWith(p.sessionPrefix));
-  if (entry) return entry[1];
+  const resolvedProjectId = resolveProjectIdForSessionId({ projects }, core.id);
+  if (resolvedProjectId) {
+    return projects[resolvedProjectId];
+  }
 
   // Fall back to first project
   const firstKey = Object.keys(projects)[0];
   return firstKey ? projects[firstKey] : undefined;
+}
+
+function parseNotifierState(metadata: Record<string, string>): DashboardNotificationState {
+  const byNotifier = new Map<string, Partial<DashboardNotifierState>>();
+
+  for (const [key, value] of Object.entries(metadata)) {
+    const match = /^notifier\.([^.]+)\.status$/.exec(key);
+    if (!match) continue;
+
+    const [, name] = match;
+    if (value === "ok" || value === "warn") {
+      byNotifier.set(name, { name, status: value });
+    }
+  }
+
+  for (const [key, value] of Object.entries(metadata)) {
+    const match = /^notifier\.([^.]+)\.(.+)$/.exec(key);
+    if (!match) continue;
+
+    const [, name, field] = match;
+    const current = byNotifier.get(name);
+    if (!current) continue;
+
+    switch (field) {
+      case "consecutiveFailures":
+        current.consecutiveFailures = Number.parseInt(value, 10) || 0;
+        break;
+      case "lastFailureAt":
+        current.lastFailureAt = value || null;
+        break;
+      case "lastFailureReason":
+        current.lastFailureReason = value || null;
+        break;
+      case "lastSuccessAt":
+        current.lastSuccessAt = value || null;
+        break;
+      case "lastEventType":
+        current.lastEventType = value || null;
+        break;
+      case "lastPriority":
+        current.lastPriority =
+          value === "urgent" || value === "action" || value === "warning" || value === "info"
+            ? value
+            : null;
+        break;
+    }
+
+    byNotifier.set(name, current);
+  }
+
+  const notifiers = [...byNotifier.values()]
+    .map(
+      (entry): DashboardNotifierState => ({
+        name: entry.name ?? "unknown",
+        status: entry.status ?? "ok",
+        consecutiveFailures: entry.consecutiveFailures ?? 0,
+        lastFailureAt: entry.lastFailureAt ?? null,
+        lastFailureReason: entry.lastFailureReason ?? null,
+        lastSuccessAt: entry.lastSuccessAt ?? null,
+        lastEventType: entry.lastEventType ?? null,
+        lastPriority: entry.lastPriority ?? null,
+      }),
+    )
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const failingNotifiers = notifiers.filter((notifier) => notifier.status === "warn").map((n) => n.name);
+
+  return {
+    status: failingNotifiers.length > 0 ? "warn" : "ok",
+    failingNotifiers,
+    notifiers,
+  };
 }
 
 /** Convert a core Session to a DashboardSession (without PR/issue enrichment). */
@@ -65,6 +141,7 @@ export function sessionToDashboard(session: Session): DashboardSession {
     createdAt: session.createdAt.toISOString(),
     lastActivityAt: session.lastActivityAt.toISOString(),
     pr: session.pr ? basicPRToDashboard(session.pr) : null,
+    notificationState: parseNotifierState(session.metadata),
     metadata: session.metadata,
   };
 }

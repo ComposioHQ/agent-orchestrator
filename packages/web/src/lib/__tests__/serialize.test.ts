@@ -213,6 +213,78 @@ describe("sessionToDashboard", () => {
 
     expect(dashboard.pr).toBeNull();
   });
+
+  it("should expose empty notificationState when no notifier metadata exists", () => {
+    const coreSession = createCoreSession();
+    const dashboard = sessionToDashboard(coreSession);
+
+    expect(dashboard.notificationState).toEqual({
+      status: "ok",
+      failingNotifiers: [],
+      notifiers: [],
+    });
+  });
+
+  it("should derive notificationState from flat notifier metadata", () => {
+    const coreSession = createCoreSession({
+      metadata: {
+        "notifier.openclaw.status": "warn",
+        "notifier.openclaw.consecutiveFailures": "2",
+        "notifier.openclaw.lastFailureAt": "2026-03-24T10:00:00.000Z",
+        "notifier.openclaw.lastFailureReason": "401 Unauthorized",
+        "notifier.openclaw.lastEventType": "merge.completed",
+        "notifier.openclaw.lastPriority": "action",
+        "notifier.desktop.status": "ok",
+        "notifier.desktop.consecutiveFailures": "0",
+        "notifier.desktop.lastSuccessAt": "2026-03-24T10:05:00.000Z",
+      },
+    });
+
+    const dashboard = sessionToDashboard(coreSession);
+
+    expect(dashboard.notificationState).toEqual({
+      status: "warn",
+      failingNotifiers: ["openclaw"],
+      notifiers: [
+        {
+          name: "desktop",
+          status: "ok",
+          consecutiveFailures: 0,
+          lastFailureAt: null,
+          lastFailureReason: null,
+          lastSuccessAt: "2026-03-24T10:05:00.000Z",
+          lastEventType: null,
+          lastPriority: null,
+        },
+        {
+          name: "openclaw",
+          status: "warn",
+          consecutiveFailures: 2,
+          lastFailureAt: "2026-03-24T10:00:00.000Z",
+          lastFailureReason: "401 Unauthorized",
+          lastSuccessAt: null,
+          lastEventType: "merge.completed",
+          lastPriority: "action",
+        },
+      ],
+    });
+  });
+
+  it("should ignore unknown notifier metadata fields without creating a notifier entry", () => {
+    const coreSession = createCoreSession({
+      metadata: {
+        "notifier.openclaw.lastAttemptAt": "2026-03-24T10:00:00.000Z",
+      },
+    });
+
+    const dashboard = sessionToDashboard(coreSession);
+
+    expect(dashboard.notificationState).toEqual({
+      status: "ok",
+      failingNotifiers: [],
+      notifiers: [],
+    });
+  });
 });
 
 describe("resolveProject", () => {
@@ -266,6 +338,24 @@ describe("resolveProject", () => {
     // session id starts with "app" (matches lib's prefix), but projectId is "app" (direct match)
     const session = createCoreSession({ id: "app-1", projectId: "app" });
     expect(resolveProject(session, projects)).toBe(projects.app);
+  });
+
+  it("should not match overlapping prefixes loosely", () => {
+    const projects = {
+      app: makeProject({ name: "app", sessionPrefix: "app" }),
+      apple: makeProject({ name: "apple", sessionPrefix: "apple" }),
+    };
+    const session = createCoreSession({ id: "apple-1", projectId: "unknown" });
+    expect(resolveProject(session, projects)).toBe(projects.apple);
+  });
+
+  it("should prefer the longest matching prefix when prefixes are nested", () => {
+    const projects = {
+      app: makeProject({ name: "app", sessionPrefix: "app" }),
+      "app-foo": makeProject({ name: "app-foo", sessionPrefix: "app-foo" }),
+    };
+    const session = createCoreSession({ id: "app-foo-1", projectId: "unknown" });
+    expect(resolveProject(session, projects)).toBe(projects["app-foo"]);
   });
 });
 
@@ -405,6 +495,7 @@ describe("enrichSessionPR", () => {
       createdAt: new Date().toISOString(),
       lastActivityAt: new Date().toISOString(),
       pr: null,
+      notificationState: { status: "ok", failingNotifiers: [], notifiers: [] },
       metadata: {},
     };
     const pr = createPRInfo();

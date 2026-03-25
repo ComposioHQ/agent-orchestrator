@@ -74,6 +74,7 @@ export interface DashboardSession {
   createdAt: string;
   lastActivityAt: string;
   pr: DashboardPR | null;
+  notificationState?: DashboardNotificationState;
   metadata: Record<string, string>;
 }
 
@@ -128,6 +129,23 @@ export interface DashboardStats {
   workingSessions: number;
   openPRs: number;
   needsReview: number;
+}
+
+export interface DashboardNotifierState {
+  name: string;
+  status: "ok" | "warn";
+  consecutiveFailures: number;
+  lastFailureAt: string | null;
+  lastFailureReason: string | null;
+  lastSuccessAt: string | null;
+  lastEventType: string | null;
+  lastPriority: "urgent" | "action" | "warning" | "info" | null;
+}
+
+export interface DashboardNotificationState {
+  status: "ok" | "warn";
+  failingNotifiers: string[];
+  notifiers: DashboardNotifierState[];
 }
 
 export interface DashboardOrchestratorLink {

@@ -1,7 +1,8 @@
 import { type NextRequest } from "next/server";
 import { validateIdentifier } from "@/lib/validation";
 import { getServices } from "@/lib/services";
-import { sessionToDashboard } from "@/lib/serialize";
+import { checkConfiguredAuth } from "@/lib/api-auth";
+import { toDashboardSessionWithNormalizedProject } from "@/lib/ao-sessions";
 import {
   SessionNotRestorableError,
   WorkspaceMissingError,
@@ -18,14 +19,28 @@ import {
 export async function POST(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const correlationId = getCorrelationId(_request);
   const startedAt = Date.now();
-  const { id } = await params;
-  const idErr = validateIdentifier(id, "id");
-  if (idErr) {
-    return jsonWithCorrelation({ error: idErr }, { status: 400 }, correlationId);
-  }
-
+  let config: (Awaited<ReturnType<typeof getServices>>)["config"] | undefined;
+  let id: string | undefined;
   try {
-    const { config, sessionManager } = await getServices();
+    const authError = checkConfiguredAuth(_request, {
+      correlationId,
+      method: "POST",
+      path: "/api/sessions/[id]/restore",
+      startedAt,
+    });
+    if (authError) {
+      return authError;
+    }
+
+    ({ id } = await params);
+    const idErr = validateIdentifier(id, "id");
+    if (idErr) {
+      return jsonWithCorrelation({ error: idErr }, { status: 400 }, correlationId);
+    }
+
+    const services = await getServices();
+    config = services.config;
+    const { sessionManager } = services;
     const projectId = resolveProjectIdForSessionId(config, id);
     const restored = await sessionManager.restore(id);
 
@@ -45,7 +60,7 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
       {
         ok: true,
         sessionId: id,
-        session: sessionToDashboard(restored),
+        session: toDashboardSessionWithNormalizedProject(restored, config),
       },
       { status: 200 },
       correlationId,
@@ -60,8 +75,7 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
     if (err instanceof WorkspaceMissingError) {
       return jsonWithCorrelation({ error: err.message }, { status: 422 }, correlationId);
     }
-    const { config } = await getServices().catch(() => ({ config: undefined }));
-    const projectId = config ? resolveProjectIdForSessionId(config, id) : undefined;
+    const projectId = config && id ? resolveProjectIdForSessionId(config, id) : undefined;
     if (config) {
       recordApiObservation({
         config,

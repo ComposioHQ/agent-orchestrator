@@ -1,7 +1,8 @@
 import { type NextRequest } from "next/server";
 import { getServices, getSCM } from "@/lib/services";
+import { checkConfiguredAuth } from "@/lib/api-auth";
+import { toDashboardSessionWithNormalizedProject } from "@/lib/ao-sessions";
 import {
-  sessionToDashboard,
   resolveProject,
   enrichSessionPR,
   enrichSessionsMetadata,
@@ -12,15 +13,25 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
   const correlationId = getCorrelationId(_request);
   const startedAt = Date.now();
   try {
+    const authError = checkConfiguredAuth(_request, {
+      correlationId,
+      method: "GET",
+      path: "/api/sessions/[id]",
+      startedAt,
+    });
+    if (authError) {
+      return authError;
+    }
+
     const { id } = await params;
     const { config, registry, sessionManager } = await getServices();
 
-    const coreSession = await sessionManager.get(id);
+    const coreSession = await sessionManager.get(id, { includeArchived: true });
     if (!coreSession) {
       return jsonWithCorrelation({ error: "Session not found" }, { status: 404 }, correlationId);
     }
 
-    const dashboardSession = sessionToDashboard(coreSession);
+    const dashboardSession = toDashboardSessionWithNormalizedProject(coreSession, config);
 
     // Enrich metadata (issue labels, agent summaries, issue titles)
     await enrichSessionsMetadata([coreSession], [dashboardSession], config, registry);
@@ -59,7 +70,9 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       config: undefined,
       sessionManager: undefined,
     }));
-    const session = sessionManager ? await sessionManager.get(id).catch(() => null) : null;
+    const session = sessionManager
+      ? await sessionManager.get(id, { includeArchived: true }).catch(() => null)
+      : null;
     if (config) {
       recordApiObservation({
         config,

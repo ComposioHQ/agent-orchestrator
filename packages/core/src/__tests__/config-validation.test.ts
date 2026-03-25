@@ -95,6 +95,28 @@ describe("Config Validation - Session Prefix Uniqueness", () => {
     expect(() => validateConfig(config)).toThrow(/"app"/);
   });
 
+  it("rejects nested prefixes that would make session IDs ambiguous", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/app",
+          repo: "org/app",
+          defaultBranch: "main",
+          sessionPrefix: "app",
+        },
+        proj2: {
+          path: "/repos/app-foo",
+          repo: "org/app-foo",
+          defaultBranch: "main",
+          sessionPrefix: "app-foo",
+        },
+      },
+    };
+
+    expect(() => validateConfig(config)).toThrow(/session prefix/i);
+    expect(() => validateConfig(config)).toThrow(/app-foo/);
+  });
+
   it("rejects duplicate auto-generated prefixes", () => {
     const config = {
       projects: {
@@ -478,6 +500,34 @@ describe("Config Schema Validation", () => {
 
     expect(config.projects.proj1.agentConfig?.permissions).toBe("suggest");
     expect(config.projects.proj1.worker?.agentConfig?.permissions).toBeUndefined();
+  });
+
+  it("rejects notifier names containing dots", () => {
+    expect(() =>
+      validateConfig({
+        defaults: {
+          notifiers: ["team.slack"],
+        },
+        notifiers: {
+          "team.slack": {
+            plugin: "desktop",
+          },
+        },
+        notificationRouting: {
+          urgent: ["team.slack"],
+          action: ["team.slack"],
+          warning: [],
+          info: [],
+        },
+        projects: {
+          proj1: {
+            path: "/repos/test",
+            repo: "org/test",
+            defaultBranch: "main",
+          },
+        },
+      }),
+    ).toThrow(/notifier names.*dot/i);
   });
 });
 

@@ -86,6 +86,27 @@ function errorIncludesSessionNotFound(err: unknown): boolean {
   return /session not found/i.test(combined);
 }
 
+function errorIncludesMissingResource(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const e = err as Error & { stderr?: string; stdout?: string; code?: string };
+  const combined = [err.message, e.stderr, e.stdout, e.code].filter(Boolean).join("\n");
+  if (
+    /\balready gone\b/i.test(combined) ||
+    /\bsession not found\b/i.test(combined) ||
+    /\bworkspace not found\b/i.test(combined) ||
+    /\bworktree not found\b/i.test(combined) ||
+    /\bno such file or directory\b/i.test(combined) ||
+    /\benoent\b/i.test(combined)
+  ) {
+    return true;
+  }
+
+  return (
+    /\bdoes not exist\b/i.test(combined) &&
+    /\b(session|workspace|worktree|path|file|directory)\b/i.test(combined)
+  );
+}
+
 async function deleteOpenCodeSession(sessionId: string): Promise<void> {
   const validatedSessionId = asValidOpenCodeSessionId(sessionId);
   if (!validatedSessionId) return;
@@ -271,6 +292,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     sessionsDir: string;
     project: ProjectConfig;
     projectId: string;
+    createdAt?: Date;
+    modifiedAt?: Date;
   }
 
   interface ActiveSessionRecord {
@@ -342,6 +365,38 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     const roots = getManagedWorkspaceRoots(project, projectId);
     return roots.some((root) => isPathInside(workspacePath, root));
+  }
+
+  async function canIgnoreRuntimeDestroyError(
+    runtimePlugin: Runtime,
+    handle: RuntimeHandle,
+    error: unknown,
+  ): Promise<boolean> {
+    try {
+      return !(await runtimePlugin.isAlive(handle));
+    } catch (aliveError) {
+      return errorIncludesMissingResource(error) || errorIncludesMissingResource(aliveError);
+    }
+  }
+
+  async function canIgnoreWorkspaceDestroyError(
+    workspacePlugin: Workspace,
+    workspacePath: string,
+    error: unknown,
+  ): Promise<boolean> {
+    if (!existsSync(workspacePath)) {
+      return true;
+    }
+
+    if (!workspacePlugin.exists) {
+      return errorIncludesMissingResource(error);
+    }
+
+    try {
+      return !(await workspacePlugin.exists(workspacePath));
+    } catch (existsError) {
+      return errorIncludesMissingResource(error) || errorIncludesMissingResource(existsError);
+    }
   }
 
   function listArchivedSessionIds(sessionsDir: string): string[] {
@@ -772,6 +827,43 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       });
 
       return { raw: repaired.raw, sessionsDir, project, projectId };
+    }
+
+    return null;
+  }
+
+  function findArchivedSessionRecord(sessionId: SessionId): LocatedSession | null {
+    for (const [projectId, project] of Object.entries(config.projects)) {
+      const sessionsDir = getProjectSessionsDir(project);
+      const archiveDir = join(sessionsDir, "archive");
+      if (!existsSync(archiveDir)) continue;
+
+      const prefix = `${sessionId}_`;
+      let latestArchiveFile: string | null = null;
+      for (const file of readdirSync(archiveDir)) {
+        if (!file.startsWith(prefix)) continue;
+        const charAfterPrefix = file[prefix.length];
+        if (!charAfterPrefix || charAfterPrefix < "0" || charAfterPrefix > "9") continue;
+        if (!latestArchiveFile || file > latestArchiveFile) {
+          latestArchiveFile = file;
+        }
+      }
+
+      if (!latestArchiveFile) continue;
+      const raw = readArchivedMetadataRaw(sessionsDir, sessionId);
+      if (!raw) continue;
+
+      let createdAt: Date | undefined;
+      let modifiedAt: Date | undefined;
+      try {
+        const stats = statSync(join(archiveDir, latestArchiveFile));
+        createdAt = stats.birthtime;
+        modifiedAt = stats.mtime;
+      } catch {
+        // If stat fails, timestamps will fall back to current time
+      }
+
+      return { raw, sessionsDir, project, projectId, createdAt, modifiedAt };
     }
 
     return null;
@@ -1513,14 +1605,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return resolved.filter((session): session is Session => session !== null);
   }
 
-  async function get(sessionId: SessionId): Promise<Session | null> {
-    // Try to find the session in any project's sessions directory
-    for (const [projectId, project] of Object.entries(config.projects)) {
-      const sessionsDir = getProjectSessionsDir(project);
-      const raw = readMetadataRaw(sessionsDir, sessionId);
-      if (!raw) continue;
+  async function get(
+    sessionId: SessionId,
+    options?: { includeArchived?: boolean },
+  ): Promise<Session | null> {
+    const activeRecord = findSessionRecord(sessionId);
+    if (activeRecord) {
+      const { raw, sessionsDir, project, projectId } = activeRecord;
 
-      // Get file timestamps for createdAt/lastActivityAt
       let createdAt: Date | undefined;
       let modifiedAt: Date | undefined;
       try {
@@ -1539,7 +1631,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       });
 
       const session = metadataToSession(sessionId, repaired.raw, projectId, createdAt, modifiedAt);
-
       const selection = resolveSelectionForSession(project, sessionId, repaired.raw);
       const effectiveAgentName = selection.agentName;
       const plugins = resolvePlugins(project, effectiveAgentName);
@@ -1555,13 +1646,47 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       return session;
     }
 
-    return null;
+    if (!options?.includeArchived) {
+      return null;
+    }
+
+    const archivedRecord = findArchivedSessionRecord(sessionId);
+    if (!archivedRecord) {
+      return null;
+    }
+
+    const session = metadataToSession(
+      sessionId,
+      archivedRecord.raw,
+      archivedRecord.projectId,
+      archivedRecord.createdAt,
+      archivedRecord.modifiedAt,
+    );
+    const selection = resolveSelectionForSession(
+      archivedRecord.project,
+      sessionId,
+      archivedRecord.raw,
+    );
+    const plugins = resolvePlugins(archivedRecord.project, selection.agentName);
+    await enrichSessionWithRuntimeState(session, plugins, true);
+    return session;
   }
 
   async function kill(sessionId: SessionId, options?: { purgeOpenCode?: boolean }): Promise<void> {
-    const { raw, sessionsDir, project, projectId } = requireSessionRecord(sessionId);
+    const located = requireSessionRecord(sessionId);
+    let { raw } = located;
+    const { sessionsDir, project, projectId } = located;
 
     const cleanupAgent = resolveSelectionForSession(project, sessionId, raw).agentName;
+
+    const persistKilledMetadata = (): void => {
+      updateMetadata(sessionsDir, sessionId, {
+        status: "killed",
+        runtimeHandle: "",
+      });
+      raw = { ...raw, status: "killed" };
+      delete raw["runtimeHandle"];
+    };
 
     // Destroy runtime — prefer handle.runtimeName to find the correct plugin
     if (raw["runtimeHandle"]) {
@@ -1575,8 +1700,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         if (runtimePlugin) {
           try {
             await runtimePlugin.destroy(handle);
-          } catch {
-            // Runtime might already be gone
+          } catch (error) {
+            if (await canIgnoreRuntimeDestroyError(runtimePlugin, handle, error)) {
+              void 0;
+            } else {
+              throw error instanceof Error
+                ? error
+                : new Error(`Failed to destroy runtime for ${sessionId}`);
+            }
           }
         }
       }
@@ -1590,8 +1721,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       if (workspacePlugin) {
         try {
           await workspacePlugin.destroy(worktree);
-        } catch {
-          // Workspace might already be gone
+        } catch (error) {
+          if (!(await canIgnoreWorkspaceDestroyError(workspacePlugin, worktree, error))) {
+            persistKilledMetadata();
+            throw error instanceof Error
+              ? error
+              : new Error(`Failed to destroy workspace for ${sessionId}`);
+          }
         }
       }
     }
@@ -1614,6 +1750,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         }
       }
     }
+
+    persistKilledMetadata();
 
     // Archive metadata
     deleteMetadata(sessionsDir, sessionId, true);
@@ -2264,26 +2402,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       throw new SessionNotRestorableError(sessionId, "session is not in a terminal state");
     }
 
-    if (fromArchive) {
-      writeMetadata(sessionsDir, sessionId, {
-        worktree: raw["worktree"] ?? "",
-        branch: raw["branch"] ?? "",
-        status: raw["status"] ?? "killed",
-        role: raw["role"],
-        tmuxName: raw["tmuxName"],
-        issue: raw["issue"],
-        pr: raw["pr"],
-        prAutoDetect:
-          raw["prAutoDetect"] === "off" ? "off" : raw["prAutoDetect"] === "on" ? "on" : undefined,
-        summary: raw["summary"],
-        project: raw["project"],
-        agent: raw["agent"],
-        createdAt: raw["createdAt"],
-        runtimeHandle: raw["runtimeHandle"],
-        opencodeSessionId: raw["opencodeSessionId"],
-      });
-    }
-
     // 4. Validate required plugins (plugins already resolved above for enrichment)
     if (!plugins.runtime) {
       throw new Error(`Runtime plugin '${project.runtime ?? config.defaults.runtime}' not found`);
@@ -2298,6 +2416,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       ? await plugins.workspace.exists(workspacePath)
       : existsSync(workspacePath);
 
+    let restoredWorkspacePath: string | null = null;
     if (!workspaceExists) {
       // Try to restore workspace if plugin supports it
       if (!plugins.workspace?.restore) {
@@ -2316,12 +2435,24 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           },
           workspacePath,
         );
+        restoredWorkspacePath = wsInfo.path;
 
         // Run post-create hooks on restored workspace
         if (plugins.workspace.postCreate) {
           await plugins.workspace.postCreate(wsInfo, project);
         }
       } catch (err) {
+        if (
+          restoredWorkspacePath &&
+          plugins.workspace?.destroy &&
+          shouldDestroyWorkspacePath(project, projectId, restoredWorkspacePath)
+        ) {
+          try {
+            await plugins.workspace.destroy(restoredWorkspacePath);
+          } catch {
+            void 0;
+          }
+        }
         throw new WorkspaceMissingError(
           workspacePath,
           `restore failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -2369,30 +2500,69 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     // 8. Create runtime (reuse tmuxName from metadata)
     const tmuxName = raw["tmuxName"];
-    const handle = await plugins.runtime.create({
-      sessionId: tmuxName ?? sessionId,
-      workspacePath,
-      launchCommand,
-      environment: {
-        ...environment,
-        AO_SESSION: sessionId,
-        AO_DATA_DIR: sessionsDir,
-        AO_SESSION_NAME: sessionId,
-        ...(tmuxName && { AO_TMUX_NAME: tmuxName }),
-        AO_CALLER_TYPE: "agent",
-        ...(projectId && { AO_PROJECT_ID: projectId }),
-        AO_CONFIG_PATH: config.configPath,
-        ...(config.port !== undefined && config.port !== null && { AO_PORT: String(config.port) }),
-      },
-    });
-
-    // 9. Update metadata — merge updates, preserving existing fields
+    let handle: RuntimeHandle | null = null;
     const now = new Date().toISOString();
-    updateMetadata(sessionsDir, sessionId, {
-      status: "spawning",
-      runtimeHandle: JSON.stringify(handle),
-      restoredAt: now,
-    });
+    try {
+      handle = await plugins.runtime.create({
+        sessionId: tmuxName ?? sessionId,
+        workspacePath,
+        launchCommand,
+        environment: {
+          ...environment,
+          AO_SESSION: sessionId,
+          AO_DATA_DIR: sessionsDir,
+          AO_SESSION_NAME: sessionId,
+          ...(tmuxName && { AO_TMUX_NAME: tmuxName }),
+          AO_CALLER_TYPE: "agent",
+          ...(projectId && { AO_PROJECT_ID: projectId }),
+          AO_CONFIG_PATH: config.configPath,
+          ...(config.port !== undefined && config.port !== null && { AO_PORT: String(config.port) }),
+        },
+      });
+
+      const metadataUpdates = {
+        status: "spawning",
+        runtimeHandle: JSON.stringify(handle),
+        restoredAt: now,
+      };
+
+      if (fromArchive) {
+        updateMetadata(
+          sessionsDir,
+          sessionId,
+          applyMetadataUpdatesToRaw(raw, metadataUpdates),
+        );
+      } else {
+        updateMetadata(sessionsDir, sessionId, metadataUpdates);
+      }
+    } catch (error) {
+      if (handle) {
+        try {
+          await plugins.runtime.destroy(handle);
+        } catch {
+          void 0;
+        }
+      }
+      if (fromArchive) {
+        try {
+          deleteMetadata(sessionsDir, sessionId, false);
+        } catch {
+          void 0;
+        }
+      }
+      if (
+        restoredWorkspacePath &&
+        plugins.workspace?.destroy &&
+        shouldDestroyWorkspacePath(project, projectId, restoredWorkspacePath)
+      ) {
+        try {
+          await plugins.workspace.destroy(restoredWorkspacePath);
+        } catch {
+          void 0;
+        }
+      }
+      throw error;
+    }
 
     // 10. Run postLaunchSetup (non-fatal)
     const restoredSession: Session = {

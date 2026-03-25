@@ -1,7 +1,8 @@
 import { ACTIVITY_STATE, isOrchestratorSession } from "@composio/ao-core";
 import { getServices, getSCM } from "@/lib/services";
+import { checkConfiguredAuth } from "@/lib/api-auth";
+import { toDashboardSessionWithNormalizedProject } from "@/lib/ao-sessions";
 import {
-  sessionToDashboard,
   resolveProject,
   enrichSessionPR,
   enrichSessionsMetadata,
@@ -35,6 +36,16 @@ export async function GET(request: Request) {
   const correlationId = getCorrelationId(request);
   const startedAt = Date.now();
   try {
+    const authError = checkConfiguredAuth(request, {
+      correlationId,
+      method: "GET",
+      path: "/api/sessions",
+      startedAt,
+    });
+    if (authError) {
+      return authError;
+    }
+
     const { searchParams } = new URL(request.url);
     const projectFilter = searchParams.get("project");
     const activeOnly = searchParams.get("active") === "true";
@@ -53,7 +64,9 @@ export async function GET(request: Request) {
     let workerSessions = visibleSessions.filter((session) => !isOrchestratorSession(session));
 
     // Convert to dashboard format
-    let dashboardSessions = workerSessions.map(sessionToDashboard);
+    let dashboardSessions = workerSessions.map((session) =>
+      toDashboardSessionWithNormalizedProject(session, config),
+    );
 
     if (activeOnly) {
       const activeIndices = dashboardSessions

@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { utimesSync, writeFileSync } from "node:fs";
 
 const {
   mockLoadConfig,
   mockRegister,
   mockCreateSessionManager,
+  mockCreateLifecycleManager,
   mockRegistry,
   tmuxPlugin,
   claudePlugin,
@@ -16,6 +18,12 @@ const {
   const mockLoadConfig = vi.fn();
   const mockRegister = vi.fn();
   const mockCreateSessionManager = vi.fn();
+  const mockCreateLifecycleManager = vi.fn(() => ({
+    start: vi.fn(),
+    stop: vi.fn(),
+    getStates: vi.fn(),
+    check: vi.fn(),
+  }));
   const mockRegistry = {
     register: mockRegister,
     get: vi.fn(),
@@ -28,6 +36,7 @@ const {
     mockLoadConfig,
     mockRegister,
     mockCreateSessionManager,
+    mockCreateLifecycleManager,
     mockRegistry,
     tmuxPlugin: { manifest: { name: "tmux" } },
     claudePlugin: { manifest: { name: "claude-code" } },
@@ -43,12 +52,7 @@ vi.mock("@composio/ao-core", () => ({
   loadConfig: mockLoadConfig,
   createPluginRegistry: () => mockRegistry,
   createSessionManager: mockCreateSessionManager,
-  createLifecycleManager: () => ({
-    start: vi.fn(),
-    stop: vi.fn(),
-    getStates: vi.fn(),
-    check: vi.fn(),
-  }),
+  createLifecycleManager: mockCreateLifecycleManager,
   decompose: vi.fn(),
   getLeaves: vi.fn(),
   getSiblings: vi.fn(),
@@ -70,7 +74,14 @@ describe("services", () => {
     vi.resetModules();
     mockRegister.mockClear();
     mockCreateSessionManager.mockReset();
+    mockCreateLifecycleManager.mockReset();
     mockLoadConfig.mockReset();
+    mockCreateLifecycleManager.mockImplementation(() => ({
+      start: vi.fn(),
+      stop: vi.fn(),
+      getStates: vi.fn(),
+      check: vi.fn(),
+    }));
     mockLoadConfig.mockReturnValue({
       configPath: "/tmp/agent-orchestrator.yaml",
       port: 3000,
@@ -82,13 +93,18 @@ describe("services", () => {
       reactions: {},
     });
     mockCreateSessionManager.mockReturnValue({});
+    writeFileSync("/tmp/agent-orchestrator.yaml", "projects: {}\n");
+    delete (globalThis as typeof globalThis & { _aoConfigCache?: unknown })._aoConfigCache;
     delete (globalThis as typeof globalThis & { _aoServices?: unknown })._aoServices;
     delete (globalThis as typeof globalThis & { _aoServicesInit?: unknown })._aoServicesInit;
+    delete (globalThis as typeof globalThis & { _aoServicesConfig?: unknown })._aoServicesConfig;
   });
 
   afterEach(() => {
+    delete (globalThis as typeof globalThis & { _aoConfigCache?: unknown })._aoConfigCache;
     delete (globalThis as typeof globalThis & { _aoServices?: unknown })._aoServices;
     delete (globalThis as typeof globalThis & { _aoServicesInit?: unknown })._aoServicesInit;
+    delete (globalThis as typeof globalThis & { _aoServicesConfig?: unknown })._aoServicesConfig;
   });
 
   it("registers the OpenCode agent plugin with web services", async () => {
@@ -107,6 +123,87 @@ describe("services", () => {
 
     expect(first).toBe(second);
     expect(mockCreateSessionManager).toHaveBeenCalledTimes(1);
+  });
+
+  it("reloads cached config when the config file changes", async () => {
+    mockLoadConfig
+      .mockReturnValueOnce({
+        configPath: "/tmp/agent-orchestrator.yaml",
+        port: 3000,
+        readyThresholdMs: 300_000,
+        defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+        projects: {},
+        notifiers: {},
+        notificationRouting: { urgent: [], action: [], warning: [], info: [] },
+        reactions: {},
+      })
+      .mockReturnValueOnce({
+        configPath: "/tmp/agent-orchestrator.yaml",
+        port: 4000,
+        readyThresholdMs: 300_000,
+        defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+        projects: {},
+        notifiers: {},
+        notificationRouting: { urgent: [], action: [], warning: [], info: [] },
+        reactions: {},
+      });
+
+    const { getCachedConfig } = await import("../lib/services");
+
+    const first = getCachedConfig();
+    const changedAt = new Date(Date.now() + 5_000);
+    utimesSync("/tmp/agent-orchestrator.yaml", changedAt, changedAt);
+    const second = getCachedConfig();
+
+    expect(first.port).toBe(3000);
+    expect(second.port).toBe(4000);
+    expect(mockLoadConfig).toHaveBeenCalledTimes(2);
+  });
+
+  it("rebuilds cached services when the config file changes", async () => {
+    mockLoadConfig
+      .mockReturnValueOnce({
+        configPath: "/tmp/agent-orchestrator.yaml",
+        port: 3000,
+        readyThresholdMs: 300_000,
+        defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+        projects: {},
+        notifiers: {},
+        notificationRouting: { urgent: [], action: [], warning: [], info: [] },
+        reactions: {},
+      })
+      .mockReturnValueOnce({
+        configPath: "/tmp/agent-orchestrator.yaml",
+        port: 4000,
+        readyThresholdMs: 300_000,
+        defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+        projects: {},
+        notifiers: {},
+        notificationRouting: { urgent: [], action: [], warning: [], info: [] },
+        reactions: {},
+      });
+
+    mockCreateSessionManager
+      .mockReturnValueOnce({ name: "session-manager-1" })
+      .mockReturnValueOnce({ name: "session-manager-2" });
+
+    const { getServices } = await import("../lib/services");
+
+    const first = await getServices();
+    const firstLifecycle = mockCreateLifecycleManager.mock.results[0]?.value as
+      | { stop: ReturnType<typeof vi.fn> }
+      | undefined;
+
+    const changedAt = new Date(Date.now() + 5_000);
+    utimesSync("/tmp/agent-orchestrator.yaml", changedAt, changedAt);
+
+    const second = await getServices();
+
+    expect(first).not.toBe(second);
+    expect(first.config.port).toBe(3000);
+    expect(second.config.port).toBe(4000);
+    expect(mockCreateSessionManager).toHaveBeenCalledTimes(2);
+    expect(firstLifecycle?.stop).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -146,11 +243,14 @@ describe("pollBacklog", () => {
       list: vi.fn().mockResolvedValue([]),
     });
 
+    writeFileSync("/tmp/agent-orchestrator.yaml", "projects: {}\n");
+    delete (globalThis as typeof globalThis & { _aoConfigCache?: unknown })._aoConfigCache;
     delete (globalThis as typeof globalThis & { _aoServices?: unknown })._aoServices;
     delete (globalThis as typeof globalThis & { _aoServicesInit?: unknown })._aoServicesInit;
   });
 
   afterEach(() => {
+    delete (globalThis as typeof globalThis & { _aoConfigCache?: unknown })._aoConfigCache;
     delete (globalThis as typeof globalThis & { _aoServices?: unknown })._aoServices;
     delete (globalThis as typeof globalThis & { _aoServicesInit?: unknown })._aoServicesInit;
   });

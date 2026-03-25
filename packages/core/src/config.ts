@@ -196,6 +196,11 @@ const OrchestratorConfigSchema = z.object({
     info: ["composio"],
   }),
   reactions: z.record(ReactionConfigSchema).default({}),
+  api: z
+    .object({
+      token: z.string().optional(),
+    })
+    .optional(),
 });
 
 // =============================================================================
@@ -301,8 +306,45 @@ function validateProjectUniqueness(config: OrchestratorConfig): void {
       );
     }
 
+    const overlappingPrefix = [...prefixes].find(
+      (existingPrefix) =>
+        prefix.startsWith(`${existingPrefix}-`) || existingPrefix.startsWith(`${prefix}-`),
+    );
+    if (overlappingPrefix) {
+      const firstProjectKey = prefixToProject[overlappingPrefix];
+      throw new Error(
+        `Overlapping session prefix detected: "${overlappingPrefix}" and "${prefix}"\n` +
+          `Projects "${firstProjectKey}" and "${configKey}" would produce ambiguous session IDs.\n\n` +
+          `Use prefixes where neither is the other's dash-delimited prefix.`,
+      );
+    }
+
     prefixes.add(prefix);
     prefixToProject[prefix] = configKey;
+  }
+}
+
+function validateNotifierNames(config: OrchestratorConfig): void {
+  const notifierNames = new Set<string>();
+
+  for (const name of Object.keys(config.notifiers)) {
+    notifierNames.add(name);
+  }
+  for (const name of config.defaults.notifiers) {
+    notifierNames.add(name);
+  }
+  for (const names of Object.values(config.notificationRouting)) {
+    for (const name of names) {
+      notifierNames.add(name);
+    }
+  }
+
+  for (const name of notifierNames) {
+    if (name.includes(".")) {
+      throw new Error(
+        `Invalid notifier name "${name}": notifier names cannot contain dots.`,
+      );
+    }
   }
 }
 
@@ -512,6 +554,7 @@ export function validateConfig(raw: unknown): OrchestratorConfig {
 
   // Validate project uniqueness and prefix collisions
   validateProjectUniqueness(config);
+  validateNotifierNames(config);
 
   return config;
 }
