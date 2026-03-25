@@ -1,14 +1,16 @@
 /**
  * OpenClaw Plugin: Agent Orchestrator v0.3.0
  *
- * Key design: the plugin INJECTS live repo data into the AI's context
- * via hooks — the AI never needs to "decide" to call tools for work questions.
- * This eliminates the #1 friction point where the AI answers from stale memory.
+ * Open-source, pluggable agentic coding orchestrator. Manages durable coding
+ * agents (Claude Code, Codex, OpenCode) and wires up feedback loops so PR
+ * reviews and CI failures automatically route to the right agent.
  *
  * Provides:
- * - Hook: intercepts work-related messages and pre-fetches live data
+ * - Hook: injects live repo data into AI context for work-related messages
  * - Slash command: /ao (with subcommands)
- * - Agent tools: ao_sessions, ao_issues, ao_spawn, ao_batch_spawn, ao_send, ao_kill, ao_doctor
+ * - 14 agent tools: ao_sessions, ao_session_list, ao_status, ao_issues,
+ *   ao_spawn, ao_batch_spawn, ao_send, ao_kill, ao_doctor, ao_review_check,
+ *   ao_verify, ao_session_cleanup, ao_session_restore, ao_session_claim_pr
  * - Background services: health monitoring + issue board scanner + auto follow-up
  */
 
@@ -208,8 +210,16 @@ export default function (api: any) {
   }
 
   // Track pending work-related messages per session/channel to avoid
-  // cross-conversation interference
-  const pendingWorkSessions = new Set<string>();
+  // cross-conversation interference. Uses Map with timestamps for TTL cleanup.
+  const pendingWorkSessions = new Map<string, number>();
+  const PENDING_TTL_MS = 60_000; // 60s — if prompt build doesn't fire, clean up
+
+  function cleanStalePending() {
+    const now = Date.now();
+    for (const [key, ts] of pendingWorkSessions) {
+      if (now - ts > PENDING_TTL_MS) pendingWorkSessions.delete(key);
+    }
+  }
 
   function getSessionKey(event: any): string {
     return event?.sessionKey || event?.sessionId || event?.channelId || "default";
@@ -225,35 +235,49 @@ export default function (api: any) {
       "";
 
     if (isWorkRelated(message)) {
-      pendingWorkSessions.add(getSessionKey(event));
+      cleanStalePending();
+      pendingWorkSessions.set(getSessionKey(event), Date.now());
       api.logger.info("[ao-hook] Work-related message detected, will inject context");
     }
   };
 
-  // Hook 2: before_prompt_build — inject live data into the AI's system context
+  // Hook 2: before_prompt_build — inject AO routing context + live data
   const onBeforePromptBuild = async (event: any) => {
     const key = getSessionKey(event);
-    if (!pendingWorkSessions.has(key)) return;
-    pendingWorkSessions.delete(key);
 
-    api.logger.info("[ao-hook] Injecting live data into prompt context...");
-    const context = buildLiveContext();
-    if (!context) return;
+    // Inform the model that AO is available and what it offers.
+    // Not a command — just context so the model can make an informed choice.
+    const routingContext = [
+      "[Agent Orchestrator] This project has AO installed — an open-source orchestrator " +
+      "for durable coding agents (Claude Code, Codex, OpenCode). ao_spawn creates an " +
+      "isolated git worktree, starts an agent, and wires up feedback loops so PR reviews " +
+      "and CI failures automatically route to the right agent.",
+    ];
+
+    // If this is a work-related message, also inject live repo data
+    if (pendingWorkSessions.has(key)) {
+      pendingWorkSessions.delete(key);
+      api.logger.info("[ao-hook] Injecting live data into prompt context...");
+      const context = buildLiveContext();
+      if (context) routingContext.push(context);
+    }
+
+    const fullContext = routingContext.join("\n\n");
 
     // OpenClaw before_prompt_build supports these injection points:
     if (typeof event.appendSystemContext === "function") {
-      event.appendSystemContext(context);
+      event.appendSystemContext(fullContext);
     } else if (typeof event.prependContext === "function") {
-      event.prependContext(context);
+      event.prependContext(fullContext);
     } else if (event.context && typeof event.context === "object") {
       // Fallback: write to context object directly
-      event.context.aoLiveData = context;
+      event.context.aoLiveData = fullContext;
     } else if (event.messages && Array.isArray(event.messages)) {
       // Last resort: push a system message
-      event.messages.push({ role: "system", content: context });
+      event.messages.push({ role: "system", content: fullContext });
     }
 
-    api.logger.info("[ao-hook] Injected live data into prompt context");
+    api.logger.info("[ao-hook] Injected AO context into prompt");
   };
 
   // Register hooks using the correct OpenClaw event names
@@ -290,6 +314,11 @@ export default function (api: any) {
       const subcommand = parts[0]?.toLowerCase() || "help";
       const rest = parts.slice(1).join(" ").trim();
 
+      // Sanitize user input: strip leading dashes to prevent flag injection
+      const sanitizeArg = (arg: string): string => arg.replace(/^-+/, "");
+      const isValidIssueId = (s: string): boolean => /^#?\d+$/.test(s.trim());
+      const isValidSessionId = (s: string): boolean => /^[\w-]+$/.test(s.trim());
+
       switch (subcommand) {
         case "sessions": {
           const result = tryRunAo(config, ["status"]);
@@ -306,7 +335,9 @@ export default function (api: any) {
 
         case "spawn": {
           if (!rest) return { text: "Usage: /ao spawn <issue-number>" };
-          const result = await spawnWithRetry(config, ["spawn", rest.split(/\s+/)[0]]);
+          const issueArg = sanitizeArg(rest.split(/\s+/)[0]);
+          if (!isValidIssueId(issueArg)) return { text: `Invalid issue identifier: ${issueArg}. Expected a number like 42 or #42.` };
+          const result = await spawnWithRetry(config, ["spawn", issueArg]);
           if (!result.ok) return { text: `Failed to spawn:\n${result.error}` };
           return { text: result.output };
         }
@@ -318,23 +349,29 @@ export default function (api: any) {
 
         case "batch-spawn": {
           if (!rest) return { text: "Usage: /ao batch-spawn <issue1> <issue2> ..." };
-          const result = tryRunAo(config, ["batch-spawn", ...rest.split(/\s+/)], 60_000);
+          const issueArgs = rest.split(/\s+/).map(sanitizeArg);
+          if (!issueArgs.every(isValidIssueId)) return { text: `Invalid issue identifiers. Expected numbers like: 42 43 44` };
+          const result = tryRunAo(config, ["batch-spawn", ...issueArgs], 60_000);
           if (!result.ok) return { text: `Failed to batch-spawn:\n${result.error}` };
           return { text: result.output };
         }
 
         case "retry": {
           if (!rest) return { text: "Usage: /ao retry <session-id>" };
-          const result = tryRunAo(config, ["send", rest, "Please retry the failed task."]);
+          const sessionId = sanitizeArg(rest.trim());
+          if (!isValidSessionId(sessionId)) return { text: `Invalid session ID: ${rest}. Expected format like ao-42.` };
+          const result = tryRunAo(config, ["send", sessionId, "Please retry the failed task."]);
           if (!result.ok) return { text: `Failed to send retry:\n${result.error}` };
-          return { text: `Retry sent to session ${rest}.` };
+          return { text: `Retry sent to session ${sessionId}.` };
         }
 
         case "kill": {
           if (!rest) return { text: "Usage: /ao kill <session-id>" };
-          const result = tryRunAo(config, ["session", "kill", rest]);
+          const sessionId = sanitizeArg(rest.trim());
+          if (!isValidSessionId(sessionId)) return { text: `Invalid session ID: ${rest}. Expected format like ao-42.` };
+          const result = tryRunAo(config, ["session", "kill", sessionId]);
           if (!result.ok) return { text: `Failed to kill session:\n${result.error}` };
-          return { text: `Session ${rest} killed.` };
+          return { text: `Session ${sessionId} killed.` };
         }
 
         case "doctor": {
@@ -387,7 +424,7 @@ export default function (api: any) {
             text: [
               "Agent Orchestrator commands:",
               "  /ao sessions              — list all sessions",
-              "  /ao status <id>           — session details",
+              "  /ao status                — all sessions overview",
               "  /ao issues [owner/repo]   — list open issues",
               "  /ao spawn <issue>         — spawn agent on issue",
               "  /ao batch-spawn <i1> <i2> — spawn multiple agents",
@@ -408,9 +445,8 @@ export default function (api: any) {
   api.registerTool({
     name: "ao_sessions",
     description:
-      "REQUIRED: Call this whenever the user asks about work status, progress, what's running, " +
-      "or how things are going. Returns LIVE session data from Agent Orchestrator. " +
-      "Do NOT answer session/status questions from memory — this tool has real-time data.",
+      "Returns live session data from Agent Orchestrator — what agents are running, " +
+      "their status, branches, and progress. Use when the user asks about status or progress.",
     parameters: { type: "object", properties: {}, required: [] },
     async execute() {
       const result = tryRunAo(config, ["status"]);
@@ -429,9 +465,8 @@ export default function (api: any) {
   api.registerTool({
     name: "ao_issues",
     description:
-      "REQUIRED: Call this whenever the user asks about work, tasks, issues, what to do, " +
-      "what needs attention, or anything about their GitHub repos. Returns LIVE issue data. " +
-      "Your memory about their repos is STALE — always call this tool first for any work-related question.",
+      "Returns live GitHub issue data — open issues, labels, assignees, and priorities. " +
+      "Use when the user asks about work, tasks, issues, or what needs attention.",
     parameters: {
       type: "object",
       properties: {
@@ -469,24 +504,31 @@ export default function (api: any) {
   api.registerTool({
     name: "ao_spawn",
     description:
-      "Spawn a new Agent Orchestrator session on a GitHub issue. " +
-      "Use when the user asks to start an agent or work on an issue. " +
-      "Retries silently on transient failures.",
+      "Spawn a durable coding agent (Claude Code, Codex, or OpenCode) on a task. " +
+      "Creates an isolated git worktree, starts the agent, and wires up feedback " +
+      "loops — CI failures and PR reviews automatically route back to the agent. " +
+      "Works with issue numbers (#42) or without for freeform tasks.",
     parameters: {
       type: "object",
       properties: {
-        issue: { type: "string", description: "Issue identifier (e.g. #42)" },
+        issue: { type: "string", description: "Issue identifier (e.g. #42). Optional — omit for freeform tasks, then use ao_send to describe the work." },
         agent: { type: "string", description: "Override agent plugin (e.g. codex, claude-code)" },
         claimPr: { type: "string", description: "Immediately claim an existing PR number for the session" },
         decompose: { type: "boolean", description: "Decompose issue into subtasks before spawning" },
       },
-      required: ["issue"],
     },
     async execute(
       _toolCallId: string,
-      params: { issue: string; agent?: string; claimPr?: string; decompose?: boolean },
+      params: { issue?: string; agent?: string; claimPr?: string; decompose?: boolean },
     ) {
-      const args = ["spawn", params.issue];
+      const args = ["spawn"];
+      if (params.issue) {
+        args.push(params.issue);
+      } else {
+        // Freeform spawn — ao CLI supports bare `ao spawn` which creates
+        // a session without an issue. Use ao_send afterward to describe the task.
+        api.logger.info("[ao_spawn] Spawning without issue — freeform session");
+      }
       if (params.agent) args.push("--agent", params.agent);
       if (params.claimPr) args.push("--claim-pr", params.claimPr);
       if (params.decompose) args.push("--decompose");
@@ -497,16 +539,19 @@ export default function (api: any) {
           isError: true,
         };
       }
-      return { content: [{ type: "text", text: result.output }] };
+      const spawnOutput = params.issue
+        ? result.output
+        : result.output + "\n\nNote: This is a freeform session (no issue). Use ao_send to describe the task to the agent.";
+      return { content: [{ type: "text", text: spawnOutput }] };
     },
   });
 
   api.registerTool({
     name: "ao_batch_spawn",
     description:
-      "Spawn agents for multiple GitHub issues at once. " +
-      "IMPORTANT: Always show the user the list and get their approval BEFORE calling this. " +
-      "After spawning, tell the user you'll check back with status in a few minutes.",
+      "Spawn durable coding agents for multiple GitHub issues in parallel. " +
+      "Always confirm the list with the user before calling this. " +
+      "Each agent gets its own isolated worktree with CI and PR review feedback loops.",
     parameters: {
       type: "object",
       properties: {
