@@ -120,6 +120,15 @@ export function getFeedbackReportsDir(configPath: string, projectPath: string): 
 }
 
 /**
+ * Get the identities directory for a project.
+ * Ed25519 key files for each session are stored here (mode 0600).
+ * Format: ~/.agent-orchestrator/{hash}-{projectId}/identities
+ */
+export function getIdentitiesDir(configPath: string, projectPath: string): string {
+  return join(getProjectBaseDir(configPath, projectPath), "identities");
+}
+
+/**
  * Get the archive directory for a project.
  * Format: ~/.agent-orchestrator/{hash}-{projectId}/archive
  */

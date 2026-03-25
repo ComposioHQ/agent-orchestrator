@@ -1158,6 +1158,12 @@ export interface SessionMetadata {
   terminalWsPort?: number;
   directTerminalWsPort?: number;
   opencodeSessionId?: string;
+  /** DID-like identifier for this agent: "did:ao:{sessionId}:{fingerprint}" */
+  agentId?: string;
+  /** Hex-encoded SHA-256 fingerprint of the agent's Ed25519 public key */
+  agentFingerprint?: string;
+  /** Session ID of the orchestrator/parent that spawned this agent */
+  agentSpawnedBy?: string;
 }
 
 // =============================================================================

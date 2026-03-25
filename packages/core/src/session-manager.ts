@@ -59,10 +59,15 @@ import {
   getSessionsDir,
   getWorktreesDir,
   getProjectBaseDir,
+  getIdentitiesDir,
   generateTmuxName,
   generateConfigHash,
   validateAndStoreOrigin,
 } from "./paths.js";
+import {
+  generateAgentIdentity,
+  saveAgentIdentityKey,
+} from "./agent-identity.js";
 import { asValidOpenCodeSessionId } from "./opencode-session-id.js";
 import { normalizeOrchestratorSessionStrategy } from "./orchestrator-session-strategy.js";
 import {
@@ -284,6 +289,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
    */
   function getProjectSessionsDir(project: ProjectConfig): string {
     return getSessionsDir(config.configPath, project.path);
+  }
+
+  /**
+   * Get the identities directory for a project.
+   */
+  function getProjectIdentitiesDir(project: ProjectConfig): string {
+    return getIdentitiesDir(config.configPath, project.path);
   }
 
   function getProjectPause(project: ProjectConfig): {
@@ -1115,6 +1127,28 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       },
     };
 
+    // Generate cryptographic identity for the new agent session.
+    // The private key is stored in the project's identities directory;
+    // only the fingerprint and agentId are stored in session metadata.
+    const orchestratorId = `${project.sessionPrefix}-orchestrator`;
+    const orchestratorRaw = readMetadataRaw(sessionsDir, orchestratorId);
+    const spawnedBy =
+      orchestratorRaw && orchestratorRaw["role"] === "orchestrator" ? orchestratorId : null;
+
+    let agentIdentityMeta: { agentId?: string; agentFingerprint?: string; agentSpawnedBy?: string } =
+      {};
+    try {
+      const identity = generateAgentIdentity(sessionId, spawnConfig.projectId, spawnedBy);
+      saveAgentIdentityKey(getProjectIdentitiesDir(project), identity);
+      agentIdentityMeta = {
+        agentId: identity.agentId,
+        agentFingerprint: identity.fingerprint,
+        ...(identity.spawnedBy ? { agentSpawnedBy: identity.spawnedBy } : {}),
+      };
+    } catch {
+      // Identity generation is best-effort — session still spawns without it
+    }
+
     try {
       writeMetadata(sessionsDir, sessionId, {
         worktree: workspacePath,
@@ -1127,6 +1161,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         createdAt: new Date().toISOString(),
         runtimeHandle: JSON.stringify(handle),
         opencodeSessionId: reusedOpenCodeSessionId,
+        ...agentIdentityMeta,
       });
 
       if (plugins.agent.postLaunchSetup) {
