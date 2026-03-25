@@ -2033,7 +2033,10 @@ describe("reactions", () => {
 
     const session = makeSession({ status: "pr_open", pr: makePR() });
     vi.mocked(mockSessionManager.get).mockResolvedValue(session);
-    vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
+    const metadataSnapshotsDuringSend: Array<Record<string, string> | null> = [];
+    vi.mocked(mockSessionManager.send).mockImplementation(async () => {
+      metadataSnapshotsDuringSend.push(readMetadataRaw(sessionsDir, "app-1"));
+    });
 
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp",
@@ -2053,6 +2056,13 @@ describe("reactions", () => {
 
     expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
     expect(mockSessionManager.send).toHaveBeenCalledWith("app-1", "Handle requested changes.");
+    expect(metadataSnapshotsDuringSend).toHaveLength(1);
+    expect(metadataSnapshotsDuringSend[0]?.["reaction.changes-requested.attempts"]).toBeUndefined();
+    expect(metadataSnapshotsDuringSend[0]?.["reaction.changes-requested.firstTriggeredAt"]).toBeUndefined();
+    const metadata = readMetadataRaw(sessionsDir, "app-1");
+    expect(metadata?.["reaction.changes-requested.attempts"]).toBeUndefined();
+    expect(metadata?.["reaction.changes-requested.firstTriggeredAt"]).toBeUndefined();
+    expect(metadata?.["reaction.changes-requested.unresolvedNotifierSignature"]).toBeUndefined();
   });
 
   it("dispatches automated review comments only once for an unchanged backlog", async () => {
@@ -2261,6 +2271,7 @@ describe("reactions", () => {
     expect(lm.getStates().get("app-1")).toBe("merged");
     expect(failingNotifier.notify).toHaveBeenCalledTimes(1);
     expect(succeedingNotifier.notify).toHaveBeenCalledTimes(1);
+    expect(mockSessionManager.get).toHaveBeenCalledTimes(1);
 
     const metadata = readMetadataRaw(sessionsDir, "app-1");
     expect(metadata?.["notifier.desktop.status"]).toBe("warn");
@@ -2341,7 +2352,7 @@ describe("reactions", () => {
     );
   });
 
-  it("records notifier observability even when session lookup fails after delivery", async () => {
+  it("records notifier metadata and observability without refetching the session after delivery", async () => {
     const mockNotifier: Notifier = {
       name: "desktop",
       notify: vi.fn().mockResolvedValue(undefined),
@@ -2374,9 +2385,7 @@ describe("reactions", () => {
     };
 
     const session = makeSession({ status: "approved", pr: makePR() });
-    vi.mocked(mockSessionManager.get)
-      .mockResolvedValueOnce(session)
-      .mockRejectedValueOnce(new Error("lookup failed"));
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
 
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp",
@@ -2394,7 +2403,9 @@ describe("reactions", () => {
     await lm.check("app-1");
 
     const metadata = readMetadataRaw(sessionsDir, "app-1");
-    expect(metadata?.["notifier.desktop.status"]).toBeUndefined();
+    expect(metadata?.["notifier.desktop.status"]).toBe("ok");
+    expect(metadata?.["notifier.desktop.lastSuccessAt"]).toBeTruthy();
+    expect(mockSessionManager.get).toHaveBeenCalledTimes(1);
 
     const summary = readObservabilitySummary(config);
     expect(summary.projects["my-app"]?.metrics["notification"]?.total).toBe(1);

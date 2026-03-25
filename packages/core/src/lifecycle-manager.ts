@@ -431,7 +431,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     } else {
       tracker.unresolvedNotifierSignature = undefined;
     }
-    persistReactionTracker(session, sessionId, reactionKey, tracker);
+    cacheReactionTracker(sessionId, reactionKey, tracker);
 
     if (shouldEscalate) {
       // Escalate to human
@@ -445,9 +445,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         event,
         reactionConfig.priority ?? "urgent",
         notificationPlan ?? undefined,
+        session,
       );
       if (delivered) {
         clearReactionTracker(sessionId, reactionKey, session);
+      } else {
+        persistReactionTracker(session, sessionId, reactionKey, tracker);
       }
       return {
         reactionType: reactionKey,
@@ -473,6 +476,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             };
           } catch {
             // Send failed — allow retry on next poll cycle (don't escalate immediately)
+            persistReactionTracker(session, sessionId, reactionKey, tracker);
             return {
               reactionType: reactionKey,
               success: false,
@@ -495,9 +499,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           event,
           reactionConfig.priority ?? "info",
           notificationPlan ?? undefined,
+          session,
         );
         if (delivered) {
           clearReactionTracker(sessionId, reactionKey, session);
+        } else {
+          persistReactionTracker(session, sessionId, reactionKey, tracker);
         }
         return {
           reactionType: reactionKey,
@@ -516,9 +523,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           message: `Reaction '${reactionKey}' triggered auto-merge`,
           data: { reactionKey },
         });
-        const delivered = await notifyHuman(event, "action", notificationPlan ?? undefined);
+        const delivered = await notifyHuman(event, "action", notificationPlan ?? undefined, session);
         if (delivered) {
           clearReactionTracker(sessionId, reactionKey, session);
+        } else {
+          persistReactionTracker(session, sessionId, reactionKey, tracker);
         }
         return {
           reactionType: reactionKey,
@@ -529,6 +538,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
     }
 
+    persistReactionTracker(session, sessionId, reactionKey, tracker);
     return {
       reactionType: reactionKey,
       success: false,
@@ -679,7 +689,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     reactionKey: string,
     tracker: ReactionTracker,
   ): void {
-    reactionTrackers.set(`${sessionId}:${reactionKey}`, tracker);
+    cacheReactionTracker(sessionId, reactionKey, tracker);
     if (!session) {
       return;
     }
@@ -691,6 +701,14 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       [reactionTrackerMetadataKey(reactionKey, "unresolvedNotifierSignature")]:
         tracker.unresolvedNotifierSignature ?? "",
     });
+  }
+
+  function cacheReactionTracker(
+    sessionId: SessionId,
+    reactionKey: string,
+    tracker: ReactionTracker,
+  ): void {
+    reactionTrackers.set(`${sessionId}:${reactionKey}`, tracker);
   }
 
   function clearReactionTracker(
@@ -1004,9 +1022,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     event: OrchestratorEvent,
     priority: EventPriority,
     plan?: NotificationPlan,
+    session?: Session | null,
   ): Promise<boolean> {
     const eventWithPriority = { ...event, priority };
     const notificationPlan = plan ?? resolveNotificationPlan(priority);
+    const trackedSession = session ?? (await sessionManager.get(event.sessionId).catch(() => null));
     let delivered = false;
 
     for (const { name, notifier } of notificationPlan.resolvedTargets) {
@@ -1020,11 +1040,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         notifyError = error;
       }
 
-      const session = await sessionManager.get(event.sessionId).catch(() => null);
       try {
         recordNotifierOutcome(
           event.projectId,
-          session,
+          trackedSession,
           name,
           eventWithPriority,
           priority,
@@ -1120,7 +1139,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             message: `${session.id}: ${oldStatus} → ${newStatus}`,
             data: { oldStatus, newStatus },
           });
-          await notifyHuman(event, priority);
+          await notifyHuman(event, priority, undefined, session);
         }
       }
     } else {
