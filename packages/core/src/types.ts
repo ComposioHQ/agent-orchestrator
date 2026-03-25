@@ -863,6 +863,13 @@ export interface ReactionConfig {
 
   /** Whether to include a summary in the notification */
   includeSummary?: boolean;
+
+  /**
+   * Re-fire this reaction after the given duration if the triggering state persists.
+   * Only applies to send-to-agent actions. Opt-in per reaction.
+   * Example: "15m" — if CI is still failing 15 minutes after the first message, resend.
+   */
+  retriggerAfter?: string;
 }
 
 export interface ReactionResult {

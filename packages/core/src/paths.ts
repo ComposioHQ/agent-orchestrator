@@ -96,6 +96,15 @@ export function getObservabilityBaseDir(configPath: string): string {
 }
 
 /**
+ * Get the event log path for a config instance.
+ * Format: ~/.agent-orchestrator/{hash}-events.jsonl
+ */
+export function getEventLogPath(configPath: string): string {
+  const hash = generateConfigHash(configPath);
+  return join(expandHome("~/.agent-orchestrator"), `${hash}-events.jsonl`);
+}
+
+/**
  * Get the sessions directory for a project.
  * Format: ~/.agent-orchestrator/{hash}-{projectId}/sessions
  */

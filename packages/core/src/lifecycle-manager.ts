@@ -37,6 +37,7 @@ import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
 import { createCorrelationId, createProjectObserver } from "./observability.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
+import { createNullEventLog, type EventLog } from "./event-log.js";
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
@@ -179,17 +180,22 @@ export interface LifecycleManagerDeps {
   sessionManager: SessionManager;
   /** When set, only poll sessions belonging to this project. */
   projectId?: string;
+  /** Optional event log for recording state transitions and reaction executions. */
+  eventLog?: EventLog;
 }
 
-/** Track attempt counts for reactions per session. */
+/** Track attempt counts and timing for reactions per session. */
 interface ReactionTracker {
   attempts: number;
   firstTriggered: Date;
+  /** When this reaction was most recently fired (used for retriggerAfter). */
+  lastTriggered: Date;
 }
 
 /** Create a LifecycleManager instance. */
 export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleManager {
   const { config, registry, sessionManager, projectId: scopedProjectId } = deps;
+  const eventLog: EventLog = deps.eventLog ?? createNullEventLog();
   const observer = createProjectObserver(config, "lifecycle-manager");
 
   const states = new Map<SessionId, SessionStatus>();
@@ -374,13 +380,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const trackerKey = `${sessionId}:${reactionKey}`;
     let tracker = reactionTrackers.get(trackerKey);
 
+    const now = new Date();
     if (!tracker) {
-      tracker = { attempts: 0, firstTriggered: new Date() };
+      tracker = { attempts: 0, firstTriggered: now, lastTriggered: now };
       reactionTrackers.set(trackerKey, tracker);
     }
 
     // Increment attempts before checking escalation
     tracker.attempts++;
+    tracker.lastTriggered = now;
 
     // Check if we should escalate
     const maxRetries = reactionConfig.retries ?? Infinity;
@@ -410,6 +418,14 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         message: `Reaction '${reactionKey}' escalated after ${tracker.attempts} attempts`,
         data: { reactionKey, attempts: tracker.attempts },
       });
+      eventLog.append({
+        timestamp: event.timestamp.toISOString(),
+        type: event.type,
+        sessionId: event.sessionId,
+        projectId: event.projectId,
+        message: event.message,
+        data: event.data,
+      });
       await notifyHuman(event, reactionConfig.priority ?? "urgent");
       return {
         reactionType: reactionKey,
@@ -427,7 +443,14 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         if (reactionConfig.message) {
           try {
             await sessionManager.send(sessionId, reactionConfig.message);
-
+            eventLog.append({
+              timestamp: new Date().toISOString(),
+              type: "reaction.triggered",
+              sessionId,
+              projectId,
+              message: `Reaction '${reactionKey}' sent message to agent`,
+              data: { reactionKey, action: "send-to-agent", attempts: tracker.attempts },
+            });
             return {
               reactionType: reactionKey,
               success: true,
@@ -455,6 +478,14 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           message: `Reaction '${reactionKey}' triggered notification`,
           data: { reactionKey },
         });
+        eventLog.append({
+          timestamp: event.timestamp.toISOString(),
+          type: event.type,
+          sessionId: event.sessionId,
+          projectId: event.projectId,
+          message: event.message,
+          data: event.data,
+        });
         await notifyHuman(event, reactionConfig.priority ?? "info");
         return {
           reactionType: reactionKey,
@@ -472,6 +503,14 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           projectId,
           message: `Reaction '${reactionKey}' triggered auto-merge`,
           data: { reactionKey },
+        });
+        eventLog.append({
+          timestamp: event.timestamp.toISOString(),
+          type: event.type,
+          sessionId: event.sessionId,
+          projectId: event.projectId,
+          message: event.message,
+          data: event.data,
         });
         await notifyHuman(event, "action");
         return {
@@ -679,6 +718,33 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             });
           }
         }
+      } else if (automatedFingerprint && automatedFingerprint === lastAutomatedDispatchHash) {
+        // Same comments already dispatched — check if retriggerAfter has elapsed
+        const reactionConfig = getReactionConfigForSession(session, automatedReactionKey);
+        if (
+          reactionConfig?.retriggerAfter &&
+          reactionConfig.action === "send-to-agent" &&
+          reactionConfig.auto !== false
+        ) {
+          const retriggerMs = parseDuration(reactionConfig.retriggerAfter);
+          const lastDispatchAt = session.metadata["lastAutomatedReviewDispatchAt"];
+          if (retriggerMs > 0 && lastDispatchAt) {
+            const elapsed = Date.now() - new Date(lastDispatchAt).getTime();
+            if (elapsed > retriggerMs) {
+              const result = await executeReaction(
+                session.id,
+                session.projectId,
+                automatedReactionKey,
+                reactionConfig,
+              );
+              if (result.success) {
+                updateSessionMetadata(session, {
+                  lastAutomatedReviewDispatchAt: new Date().toISOString(),
+                });
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -725,6 +791,17 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         sessionId: session.id,
         data: { oldStatus, newStatus },
         level: transitionLogLevel(newStatus),
+      });
+
+      // Log the transition to the event log
+      const transitionEventType = statusToEventType(oldStatus, newStatus);
+      eventLog.append({
+        timestamp: new Date().toISOString(),
+        type: transitionEventType ?? "session.transition",
+        sessionId: session.id,
+        projectId: session.projectId,
+        message: `${session.id}: ${oldStatus} → ${newStatus}`,
+        data: { oldStatus, newStatus },
       });
 
       // Reset allCompleteEmitted when any session becomes active again
@@ -786,6 +863,40 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     } else {
       // No transition but track current state
       states.set(session.id, newStatus);
+
+      // Check for retriggerAfter: if the state has persisted and enough time has
+      // elapsed since the last reaction fire, resend the message to the agent.
+      // This fills the gap where an agent receives a message but doesn't act on it.
+      const persistedEventType = statusToEventType(undefined, newStatus);
+      if (persistedEventType) {
+        const persistedReactionKey = eventToReactionKey(persistedEventType);
+        if (persistedReactionKey) {
+          const persistedReactionConfig = getReactionConfigForSession(
+            session,
+            persistedReactionKey,
+          );
+          if (
+            persistedReactionConfig?.retriggerAfter &&
+            persistedReactionConfig.action === "send-to-agent" &&
+            (persistedReactionConfig.auto !== false)
+          ) {
+            const retriggerMs = parseDuration(persistedReactionConfig.retriggerAfter);
+            const tracker = reactionTrackers.get(`${session.id}:${persistedReactionKey}`);
+            if (
+              retriggerMs > 0 &&
+              tracker &&
+              Date.now() - tracker.lastTriggered.getTime() > retriggerMs
+            ) {
+              await executeReaction(
+                session.id,
+                session.projectId,
+                persistedReactionKey,
+                persistedReactionConfig,
+              );
+            }
+          }
+        }
+      }
     }
 
     await maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction);
