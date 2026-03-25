@@ -234,6 +234,10 @@ function compareIsoDesc(a: string, b: string): number {
   return b.localeCompare(a);
 }
 
+function shouldTrackSessionSummary(operation: string): boolean {
+  return operation.startsWith("session.") || operation === "lifecycle.transition";
+}
+
 function mergeCounter(
   target: ObservabilityMetricCounter | undefined,
   source: ObservabilityMetricCounter,
@@ -376,7 +380,7 @@ export function createProjectObserver(
             .sort((a, b) => compareIsoDesc(a.timestamp, b.timestamp))
             .slice(0, TRACE_LIMIT);
 
-          if (input.sessionId && operation.startsWith("session.")) {
+          if (input.sessionId && shouldTrackSessionSummary(operation)) {
             snapshot.sessions[input.sessionId] = {
               sessionId: input.sessionId,
               projectId: input.projectId,

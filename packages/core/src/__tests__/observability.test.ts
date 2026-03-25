@@ -122,4 +122,38 @@ describe("observability snapshot", () => {
     expect(project.health["lifecycle.worker"]?.status).toBe("warn");
     expect(summary.overallStatus).toBe("warn");
   });
+
+  it("keeps lifecycle transitions in the session summary slot while excluding notifier traces", () => {
+    const observer = createProjectObserver(config, "lifecycle-manager");
+
+    observer.recordOperation({
+      metric: "lifecycle_poll",
+      operation: "lifecycle.transition",
+      outcome: "success",
+      correlationId: "corr-lifecycle",
+      projectId: "my-app",
+      sessionId: "app-1",
+      data: { oldStatus: "approved", newStatus: "merged" },
+      level: "info",
+    });
+
+    observer.recordOperation({
+      metric: "notification",
+      operation: "notifier.notify",
+      outcome: "failure",
+      correlationId: "corr-notifier",
+      projectId: "my-app",
+      sessionId: "app-1",
+      reason: "OpenClaw unavailable",
+      data: { notifier: "openclaw", eventType: "merge.completed", priority: "action" },
+      level: "error",
+    });
+
+    const summary = readObservabilitySummary(config);
+    const project = summary.projects["my-app"];
+
+    expect(project.sessions["app-1"]?.operation).toBe("lifecycle.transition");
+    expect(project.sessions["app-1"]?.outcome).toBe("success");
+    expect(project.metrics["notification"]?.failure).toBe(1);
+  });
 });
