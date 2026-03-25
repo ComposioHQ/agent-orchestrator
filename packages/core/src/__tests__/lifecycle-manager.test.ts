@@ -1343,7 +1343,12 @@ describe("reactions", () => {
     expect(metadata?.["notifier.desktop.status"]).toBe("ok");
   });
 
-  it("retries notify reactions when no notifier plugin resolves", async () => {
+  it("retries notify reactions when configured notifiers become available later", async () => {
+    const recoveredNotifier: Notifier = {
+      name: "desktop",
+      notify: vi.fn().mockResolvedValue(undefined),
+    };
+
     const mockSCM: SCM = {
       name: "mock-scm",
       detectPR: vi.fn(),
@@ -1370,11 +1375,14 @@ describe("reactions", () => {
       getMergeability: vi.fn(),
     };
 
-    const registryGet = vi.fn().mockImplementation((slot: string) => {
+    let notifierAvailable = false;
+    const registryGet = vi.fn().mockImplementation((slot: string, name: string) => {
       if (slot === "runtime") return mockRuntime;
       if (slot === "agent") return mockAgent;
       if (slot === "scm") return mockSCM;
-      if (slot === "notifier") return null;
+      if (slot === "notifier" && name === "desktop") {
+        return notifierAvailable ? recoveredNotifier : null;
+      }
       return null;
     });
 
@@ -1422,21 +1430,31 @@ describe("reactions", () => {
     await lm.check("app-1");
     let metadata = readMetadataRaw(sessionsDir, "app-1");
     expect(metadata?.["lastPendingReviewDispatchHash"]).toBeUndefined();
-    expect(registryGet).toHaveBeenCalledWith("notifier", "desktop");
-    expect(
-      registryGet.mock.calls.filter(
-        ([slot, name]) => slot === "notifier" && name === "desktop",
-      ),
-    ).toHaveLength(1);
+    expect(recoveredNotifier.notify).not.toHaveBeenCalled();
+    expect(metadata?.["reaction.changes-requested.attempts"]).toBe("1");
+    expect(metadata?.["reaction.changes-requested.firstTriggeredAt"]).toBeTruthy();
+    expect(metadata?.["reaction.changes-requested.unresolvedNotifierSignature"]).toBe("desktop");
 
     await lm.check("app-1");
     metadata = readMetadataRaw(sessionsDir, "app-1");
     expect(metadata?.["lastPendingReviewDispatchHash"]).toBeUndefined();
-    expect(
-      registryGet.mock.calls.filter(
-        ([slot, name]) => slot === "notifier" && name === "desktop",
-      ),
-    ).toHaveLength(2);
+    expect(recoveredNotifier.notify).not.toHaveBeenCalled();
+    expect(metadata?.["reaction.changes-requested.attempts"]).toBe("1");
+    expect(metadata?.["reaction.changes-requested.unresolvedNotifierSignature"]).toBe("desktop");
+
+    notifierAvailable = true;
+
+    await lm.check("app-1");
+    metadata = readMetadataRaw(sessionsDir, "app-1");
+    expect(metadata?.["lastPendingReviewDispatchHash"]).toBe("c1");
+    expect(recoveredNotifier.notify).toHaveBeenCalledTimes(1);
+    expect(metadata?.["reaction.changes-requested.attempts"]).toBeUndefined();
+    expect(metadata?.["reaction.changes-requested.firstTriggeredAt"]).toBeUndefined();
+    expect(metadata?.["reaction.changes-requested.unresolvedNotifierSignature"]).toBeUndefined();
+
+    await lm.check("app-1");
+    expect(recoveredNotifier.notify).toHaveBeenCalledTimes(1);
+    expect(registryGet).toHaveBeenCalledWith("notifier", "desktop");
   });
 
   it("does not persist review dispatch hashes when escalation notify delivery fails", async () => {
@@ -1540,7 +1558,12 @@ describe("reactions", () => {
     expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
   });
 
-  it("retries escalation when no notifier plugin resolves", async () => {
+  it("retries escalation when configured notifiers become available later", async () => {
+    const recoveredNotifier: Notifier = {
+      name: "desktop",
+      notify: vi.fn().mockResolvedValue(undefined),
+    };
+
     const mockSCM: SCM = {
       name: "mock-scm",
       detectPR: vi.fn(),
@@ -1567,11 +1590,14 @@ describe("reactions", () => {
       getMergeability: vi.fn(),
     };
 
-    const registryGet = vi.fn().mockImplementation((slot: string) => {
+    let notifierAvailable = false;
+    const registryGet = vi.fn().mockImplementation((slot: string, name: string) => {
       if (slot === "runtime") return mockRuntime;
       if (slot === "agent") return mockAgent;
       if (slot === "scm") return mockSCM;
-      if (slot === "notifier") return null;
+      if (slot === "notifier" && name === "desktop") {
+        return notifierAvailable ? recoveredNotifier : null;
+      }
       return null;
     });
 
@@ -1628,23 +1654,29 @@ describe("reactions", () => {
     await lm.check("app-1");
     metadata = readMetadataRaw(sessionsDir, "app-1");
     expect(metadata?.["lastPendingReviewDispatchHash"]).toBeUndefined();
-    // Poll 2 must be the escalation path, not another send-to-agent attempt.
     expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
-    expect(
-      registryGet.mock.calls.filter(
-        ([slot, name]) => slot === "notifier" && name === "desktop",
-      ),
-    ).toHaveLength(1);
+    expect(recoveredNotifier.notify).not.toHaveBeenCalled();
+    expect(metadata?.["reaction.changes-requested.attempts"]).toBe("2");
+    expect(metadata?.["reaction.changes-requested.unresolvedNotifierSignature"]).toBe("desktop");
 
     await lm.check("app-1");
     metadata = readMetadataRaw(sessionsDir, "app-1");
     expect(metadata?.["lastPendingReviewDispatchHash"]).toBeUndefined();
     expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
-    expect(
-      registryGet.mock.calls.filter(
-        ([slot, name]) => slot === "notifier" && name === "desktop",
-      ),
-    ).toHaveLength(2);
+    expect(recoveredNotifier.notify).not.toHaveBeenCalled();
+    expect(metadata?.["reaction.changes-requested.attempts"]).toBe("2");
+
+    notifierAvailable = true;
+
+    await lm.check("app-1");
+    metadata = readMetadataRaw(sessionsDir, "app-1");
+    expect(metadata?.["lastPendingReviewDispatchHash"]).toBe("c1");
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+    expect(recoveredNotifier.notify).toHaveBeenCalledTimes(1);
+    expect(metadata?.["reaction.changes-requested.attempts"]).toBeUndefined();
+    expect(metadata?.["reaction.changes-requested.firstTriggeredAt"]).toBeUndefined();
+    expect(metadata?.["reaction.changes-requested.unresolvedNotifierSignature"]).toBeUndefined();
+    expect(registryGet).toHaveBeenCalledWith("notifier", "desktop");
   });
 
   it("does not treat an empty notification route as successful delivery", async () => {
@@ -1849,6 +1881,109 @@ describe("reactions", () => {
     expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
     expect(notifier.notify).toHaveBeenCalledTimes(1);
     expect(metadata?.["lastPendingReviewDispatchHash"]).toBe("c1");
+    expect(metadata?.["reaction.changes-requested.attempts"]).toBeUndefined();
+    expect(metadata?.["reaction.changes-requested.firstTriggeredAt"]).toBeUndefined();
+    expect(metadata?.["reaction.changes-requested.unresolvedNotifierSignature"]).toBeUndefined();
+
+    await lm2.check("app-1");
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+    expect(notifier.notify).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries auto-merge notifications while the session remains mergeable", async () => {
+    const flakyNotifier: Notifier = {
+      name: "desktop",
+      notify: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("OpenClaw unavailable"))
+        .mockResolvedValueOnce(undefined),
+    };
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("passing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("approved"),
+      getPendingComments: vi.fn().mockResolvedValue([]),
+      getAutomatedComments: vi.fn().mockResolvedValue([]),
+      getMergeability: vi.fn().mockResolvedValue({
+        mergeable: true,
+        ciPassing: true,
+        approved: true,
+        noConflicts: true,
+        blockers: [],
+      }),
+    };
+
+    const registryWithNotifier: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "notifier" && name === "desktop") return flakyNotifier;
+        return null;
+      }),
+    };
+
+    const configWithAutoMergeReaction: OrchestratorConfig = {
+      ...config,
+      defaults: {
+        ...config.defaults,
+        notifiers: ["desktop"],
+      },
+      notificationRouting: {
+        ...config.notificationRouting,
+        action: ["desktop"],
+      },
+      reactions: {
+        ...config.reactions,
+        "approved-and-green": {
+          auto: true,
+          action: "auto-merge",
+          priority: "action",
+        },
+      },
+    };
+
+    const session = makeSession({ status: "pr_open", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config: configWithAutoMergeReaction,
+      registry: registryWithNotifier,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+    let metadata = readMetadataRaw(sessionsDir, "app-1");
+    expect(flakyNotifier.notify).toHaveBeenCalledTimes(1);
+    expect(metadata?.["status"]).toBe("mergeable");
+    expect(metadata?.["reaction.approved-and-green.attempts"]).toBe("1");
+    expect(metadata?.["reaction.approved-and-green.firstTriggeredAt"]).toBeTruthy();
+
+    await lm.check("app-1");
+    metadata = readMetadataRaw(sessionsDir, "app-1");
+    expect(flakyNotifier.notify).toHaveBeenCalledTimes(2);
+    expect(metadata?.["status"]).toBe("mergeable");
+    expect(metadata?.["reaction.approved-and-green.attempts"]).toBeUndefined();
+    expect(metadata?.["reaction.approved-and-green.firstTriggeredAt"]).toBeUndefined();
+    expect(metadata?.["reaction.approved-and-green.unresolvedNotifierSignature"]).toBeUndefined();
+
+    await lm.check("app-1");
+    expect(flakyNotifier.notify).toHaveBeenCalledTimes(2);
   });
 
   it("does not double-send when changes_requested transition already triggered the reaction", async () => {
@@ -2523,6 +2658,67 @@ describe("reactions", () => {
             trace.data?.["notifier"] === "desktop",
         ),
       ).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries all-complete notifications when a notifier becomes available later", async () => {
+    vi.useFakeTimers();
+    try {
+      const recoveredNotifier: Notifier = {
+        name: "desktop",
+        notify: vi.fn().mockResolvedValue(undefined),
+      };
+
+      let notifierAvailable = false;
+      const registryWithFlappingNotifier: PluginRegistry = {
+        ...mockRegistry,
+        get: vi.fn().mockImplementation((slot: string, name: string) => {
+          if (slot === "runtime") return mockRuntime;
+          if (slot === "agent") return mockAgent;
+          if (slot === "notifier" && name === "desktop") {
+            return notifierAvailable ? recoveredNotifier : null;
+          }
+          return null;
+        }),
+      };
+
+      const configWithAllCompleteReaction: OrchestratorConfig = {
+        ...config,
+        notificationRouting: {
+          ...config.notificationRouting,
+          info: ["desktop"],
+        },
+        reactions: {
+          ...config.reactions,
+          "all-complete": {
+            auto: true,
+            action: "notify",
+            priority: "info",
+          },
+        },
+      };
+
+      vi.mocked(mockSessionManager.list).mockResolvedValue([
+        makeSession({ id: "app-1", status: "merged" }),
+      ]);
+
+      const lm = createLifecycleManager({
+        config: configWithAllCompleteReaction,
+        registry: registryWithFlappingNotifier,
+        sessionManager: mockSessionManager,
+      });
+
+      lm.start(1_000);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(recoveredNotifier.notify).not.toHaveBeenCalled();
+
+      notifierAvailable = true;
+      await vi.advanceTimersByTimeAsync(1_000);
+      lm.stop();
+
+      expect(recoveredNotifier.notify).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }

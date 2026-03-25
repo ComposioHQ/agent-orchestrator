@@ -185,6 +185,18 @@ export interface LifecycleManagerDeps {
 interface ReactionTracker {
   attempts: number;
   firstTriggered: Date;
+  unresolvedNotifierSignature?: string;
+}
+
+interface NotificationTarget {
+  name: string;
+  notifier: Notifier;
+}
+
+interface NotificationPlan {
+  notifierNames: string[];
+  resolvedTargets: NotificationTarget[];
+  signature: string;
 }
 
 /** Create a LifecycleManager instance. */
@@ -373,30 +385,53 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     reactionConfig: ReactionConfig,
   ): Promise<ReactionResult> {
     const tracker = getReactionTracker(session, sessionId, reactionKey);
+    const action = reactionConfig.action ?? "notify";
+    const nextAttempt = tracker.attempts + 1;
+    const shouldEscalate = shouldEscalateReaction(tracker, reactionConfig, nextAttempt);
 
-    // Increment attempts before checking escalation
-    tracker.attempts++;
-    persistReactionTracker(session, sessionId, reactionKey, tracker);
-
-    // Check if we should escalate
-    const maxRetries = reactionConfig.retries ?? Infinity;
-    const escalateAfter = reactionConfig.escalateAfter;
-    let shouldEscalate = false;
-
-    if (tracker.attempts > maxRetries) {
-      shouldEscalate = true;
+    let notificationPriority: EventPriority | null = null;
+    if (shouldEscalate) {
+      notificationPriority = reactionConfig.priority ?? "urgent";
+    } else if (action === "notify") {
+      notificationPriority = reactionConfig.priority ?? "info";
+    } else if (action === "auto-merge") {
+      notificationPriority = "action";
     }
 
-    if (typeof escalateAfter === "string") {
-      const durationMs = parseDuration(escalateAfter);
-      if (durationMs > 0 && Date.now() - tracker.firstTriggered.getTime() > durationMs) {
-        shouldEscalate = true;
+    const notificationAction = shouldEscalate ? "escalated" : action;
+    const notificationPlan = notificationPriority
+      ? resolveNotificationPlan(notificationPriority)
+      : null;
+
+    if (notificationPlan && shouldSkipUnresolvedNotification(tracker, notificationPlan)) {
+      return {
+        reactionType: reactionKey,
+        success: false,
+        action: notificationAction,
+        escalated: shouldEscalate,
+      };
+    }
+
+    tracker.attempts = nextAttempt;
+    if (notificationPlan) {
+      if (
+        notificationPlan.notifierNames.length > 0 &&
+        notificationPlan.resolvedTargets.length === 0
+      ) {
+        tracker.unresolvedNotifierSignature = notificationPlan.signature;
+        persistReactionTracker(session, sessionId, reactionKey, tracker);
+        return {
+          reactionType: reactionKey,
+          success: false,
+          action: notificationAction,
+          escalated: shouldEscalate,
+        };
       }
+      tracker.unresolvedNotifierSignature = undefined;
+    } else {
+      tracker.unresolvedNotifierSignature = undefined;
     }
-
-    if (typeof escalateAfter === "number" && tracker.attempts > escalateAfter) {
-      shouldEscalate = true;
-    }
+    persistReactionTracker(session, sessionId, reactionKey, tracker);
 
     if (shouldEscalate) {
       // Escalate to human
@@ -406,7 +441,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         message: `Reaction '${reactionKey}' escalated after ${tracker.attempts} attempts`,
         data: { reactionKey, attempts: tracker.attempts },
       });
-      const delivered = await notifyHuman(event, reactionConfig.priority ?? "urgent");
+      const delivered = await notifyHuman(
+        event,
+        reactionConfig.priority ?? "urgent",
+        notificationPlan ?? undefined,
+      );
       if (delivered) {
         clearReactionTracker(sessionId, reactionKey, session);
       }
@@ -417,9 +456,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         escalated: true,
       };
     }
-
-    // Execute the reaction action
-    const action = reactionConfig.action ?? "notify";
 
     switch (action) {
       case "send-to-agent": {
@@ -455,7 +491,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           message: `Reaction '${reactionKey}' triggered notification`,
           data: { reactionKey },
         });
-        const delivered = await notifyHuman(event, reactionConfig.priority ?? "info");
+        const delivered = await notifyHuman(
+          event,
+          reactionConfig.priority ?? "info",
+          notificationPlan ?? undefined,
+        );
         if (delivered) {
           clearReactionTracker(sessionId, reactionKey, session);
         }
@@ -476,11 +516,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           message: `Reaction '${reactionKey}' triggered auto-merge`,
           data: { reactionKey },
         });
-        await notifyHuman(event, "action");
-        clearReactionTracker(sessionId, reactionKey, session);
+        const delivered = await notifyHuman(event, "action", notificationPlan ?? undefined);
+        if (delivered) {
+          clearReactionTracker(sessionId, reactionKey, session);
+        }
         return {
           reactionType: reactionKey,
-          success: true,
+          success: delivered,
           action: "auto-merge",
           escalated: false,
         };
@@ -530,9 +572,71 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
   function reactionTrackerMetadataKey(
     reactionKey: string,
-    field: "attempts" | "firstTriggeredAt",
+    field: "attempts" | "firstTriggeredAt" | "unresolvedNotifierSignature",
   ): string {
     return `reaction.${reactionKey}.${field}`;
+  }
+
+  function shouldEscalateReaction(
+    tracker: ReactionTracker,
+    reactionConfig: ReactionConfig,
+    attempts: number,
+  ): boolean {
+    const maxRetries = reactionConfig.retries ?? Infinity;
+    const escalateAfter = reactionConfig.escalateAfter;
+    let shouldEscalate = attempts > maxRetries;
+
+    if (typeof escalateAfter === "string") {
+      const durationMs = parseDuration(escalateAfter);
+      if (durationMs > 0 && Date.now() - tracker.firstTriggered.getTime() > durationMs) {
+        shouldEscalate = true;
+      }
+    }
+
+    if (typeof escalateAfter === "number" && attempts > escalateAfter) {
+      shouldEscalate = true;
+    }
+
+    return shouldEscalate;
+  }
+
+  function resolveNotificationPlan(priority: EventPriority): NotificationPlan {
+    const notifierNames = config.notificationRouting[priority] ?? config.defaults.notifiers;
+    const resolvedTargets: NotificationTarget[] = [];
+
+    for (const name of notifierNames) {
+      const notifier = registry.get<Notifier>("notifier", name);
+      if (notifier) {
+        resolvedTargets.push({ name, notifier });
+      }
+    }
+
+    return {
+      notifierNames,
+      resolvedTargets,
+      signature: notifierNames.join(","),
+    };
+  }
+
+  function shouldSkipUnresolvedNotification(
+    tracker: ReactionTracker,
+    plan: NotificationPlan,
+  ): boolean {
+    return (
+      plan.notifierNames.length > 0 &&
+      plan.resolvedTargets.length === 0 &&
+      tracker.unresolvedNotifierSignature === plan.signature
+    );
+  }
+
+  function hasReactionTrackerState(session: Session, reactionKey: string): boolean {
+    return (
+      reactionTrackers.has(`${session.id}:${reactionKey}`) ||
+      session.metadata[reactionTrackerMetadataKey(reactionKey, "attempts")] !== undefined ||
+      session.metadata[reactionTrackerMetadataKey(reactionKey, "firstTriggeredAt")] !== undefined ||
+      session.metadata[reactionTrackerMetadataKey(reactionKey, "unresolvedNotifierSignature")] !==
+        undefined
+    );
   }
 
   function getReactionTracker(
@@ -552,6 +656,9 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const persistedFirstTriggeredAt = session?.metadata[
       reactionTrackerMetadataKey(reactionKey, "firstTriggeredAt")
     ];
+    const persistedUnresolvedNotifierSignature = session?.metadata[
+      reactionTrackerMetadataKey(reactionKey, "unresolvedNotifierSignature")
+    ];
     const parsedFirstTriggered = persistedFirstTriggeredAt
       ? new Date(persistedFirstTriggeredAt)
       : new Date();
@@ -560,6 +667,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       attempts: Number.isFinite(persistedAttempts) ? persistedAttempts : 0,
       firstTriggered:
         Number.isNaN(parsedFirstTriggered.getTime()) ? new Date() : parsedFirstTriggered,
+      unresolvedNotifierSignature: persistedUnresolvedNotifierSignature,
     };
     reactionTrackers.set(trackerKey, tracker);
     return tracker;
@@ -580,6 +688,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       [reactionTrackerMetadataKey(reactionKey, "attempts")]: String(tracker.attempts),
       [reactionTrackerMetadataKey(reactionKey, "firstTriggeredAt")]:
         tracker.firstTriggered.toISOString(),
+      [reactionTrackerMetadataKey(reactionKey, "unresolvedNotifierSignature")]:
+        tracker.unresolvedNotifierSignature ?? "",
     });
   }
 
@@ -596,6 +706,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     updateSessionMetadata(session, {
       [reactionTrackerMetadataKey(reactionKey, "attempts")]: "",
       [reactionTrackerMetadataKey(reactionKey, "firstTriggeredAt")]: "",
+      [reactionTrackerMetadataKey(reactionKey, "unresolvedNotifierSignature")]: "",
     });
   }
 
@@ -863,20 +974,42 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
   }
 
+  async function maybeRetryMergeableReaction(
+    session: Session,
+    oldStatus: SessionStatus,
+    newStatus: SessionStatus,
+  ): Promise<void> {
+    const reactionKey = "approved-and-green";
+    if (newStatus !== "mergeable" || oldStatus !== newStatus) {
+      return;
+    }
+    if (!hasReactionTrackerState(session, reactionKey)) {
+      return;
+    }
+
+    const reactionConfig = getReactionConfigForSession(session, reactionKey);
+    if (
+      !reactionConfig ||
+      !reactionConfig.action ||
+      (reactionConfig.auto === false && reactionConfig.action !== "notify")
+    ) {
+      return;
+    }
+
+    await executeReaction(session, session.id, session.projectId, reactionKey, reactionConfig);
+  }
+
   /** Send a notification to all configured notifiers. */
-  async function notifyHuman(event: OrchestratorEvent, priority: EventPriority): Promise<boolean> {
+  async function notifyHuman(
+    event: OrchestratorEvent,
+    priority: EventPriority,
+    plan?: NotificationPlan,
+  ): Promise<boolean> {
     const eventWithPriority = { ...event, priority };
-    const notifierNames = config.notificationRouting[priority] ?? config.defaults.notifiers;
+    const notificationPlan = plan ?? resolveNotificationPlan(priority);
     let delivered = false;
 
-    for (const name of notifierNames) {
-      const notifier = registry.get<Notifier>("notifier", name);
-      if (!notifier) {
-        // Known limitation: missing/unloaded configured notifiers are still silent.
-        // Track separately rather than widening this PR's notifier outcome scope.
-        continue;
-      }
-
+    for (const { name, notifier } of notificationPlan.resolvedTargets) {
       let outcome: "success" | "failure" = "success";
       let notifyError: unknown;
       try {
@@ -996,6 +1129,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
 
     await maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction);
+    await maybeRetryMergeableReaction(session, oldStatus, newStatus);
   }
 
   /** Run one polling cycle across all sessions. */
@@ -1048,7 +1182,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       // Check if all sessions are complete (trigger reaction only once)
       const activeSessions = sessions.filter((s) => s.status !== "merged" && s.status !== "killed");
       if (sessions.length > 0 && activeSessions.length === 0 && !allCompleteEmitted) {
-        allCompleteEmitted = true;
+        let emitAllComplete = true;
 
         // Execute all-complete reaction if configured
         const reactionKey = eventToReactionKey("summary.all_complete");
@@ -1056,16 +1190,18 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           const reactionConfig = config.reactions[reactionKey];
           if (reactionConfig && reactionConfig.action) {
             if (reactionConfig.auto !== false || reactionConfig.action === "notify") {
-              await executeReaction(
+              const result = await executeReaction(
                 null,
                 "system",
                 "all",
                 reactionKey,
                 reactionConfig as ReactionConfig,
               );
+              emitAllComplete = result.success;
             }
           }
         }
+        allCompleteEmitted = emitAllComplete;
       }
       if (scopedProjectId) {
         observer.recordOperation({
