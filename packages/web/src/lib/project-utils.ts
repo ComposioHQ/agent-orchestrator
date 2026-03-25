@@ -1,4 +1,4 @@
-import { isOrchestratorSession } from "@composio/ao-core";
+import { isOrchestratorSession } from "@composio/ao-core/types";
 
 type ProjectWithPrefix = { sessionPrefix?: string };
 type SessionLike = { id: string; projectId: string; metadata?: Record<string, string> };
