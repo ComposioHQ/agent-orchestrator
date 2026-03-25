@@ -36,8 +36,8 @@ COPY packages/core/ packages/core/
 COPY packages/cli/ packages/cli/
 COPY packages/web/ packages/web/
 
-# Build all transitive workspace dependencies (core + plugins)
-RUN pnpm --filter @composio/ao-cli... build
+# Build only transitive dependencies (core + plugins), not cli itself — dev uses tsx
+RUN pnpm --filter @composio/ao-cli^... build
 
 # Non-root user
 RUN groupadd -r aouser && useradd -r -g aouser -m aouser \

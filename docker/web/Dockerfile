@@ -37,8 +37,8 @@ RUN pnpm install --frozen-lockfile --filter @composio/ao-web...
 COPY packages/core/ packages/core/
 COPY packages/web/ packages/web/
 
-# Build all transitive workspace dependencies (core + plugins)
-RUN pnpm --filter @composio/ao-web... build
+# Build only transitive dependencies (core + plugins), not web itself — dev uses next dev
+RUN pnpm --filter @composio/ao-web^... build
 
 # Non-root user
 RUN groupadd -r aouser && useradd -r -g aouser -m aouser \
