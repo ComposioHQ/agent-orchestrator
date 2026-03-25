@@ -61,7 +61,7 @@ docker compose exec web sh
 All services mount source directories as volumes, so code changes are picked up automatically:
 
 - **core**: `packages/core/src/` is mounted — changes trigger test re-runs
-- **web**: `packages/web/src/` and `packages/web/server/` are mounted — Next.js hot reloads
+- **web**: `packages/web/src/` and `packages/web/server/` are mounted — Next.js hot reloads. Note: changes to `@composio/ao-core` require `docker compose up --build` since web resolves core from its built `dist/`
 - **cli**: `packages/cli/src/` is mounted — run commands via `docker compose exec cli pnpm dev -- <command>`
 
 ### Rebuilding
@@ -92,10 +92,8 @@ Configuration is done via `.env` (copy from `.env.docker`):
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `WEB_PORT` | `3000` | Host port for the web dashboard |
-| `TERMINAL_PORT` | `14800` | Host port for the ttyd terminal WebSocket |
-| `DIRECT_TERMINAL_PORT` | `14801` | Host port for the direct terminal WebSocket |
-| `NEXT_PUBLIC_TERMINAL_PORT` | `14800` | Browser-side terminal port |
-| `NEXT_PUBLIC_DIRECT_TERMINAL_PORT` | `14801` | Browser-side direct terminal port |
+| `TERMINAL_PORT` | `14800` | Host port for the ttyd terminal WebSocket (also sets browser-side `NEXT_PUBLIC_TERMINAL_PORT`) |
+| `DIRECT_TERMINAL_PORT` | `14801` | Host port for the direct terminal WebSocket (also sets browser-side `NEXT_PUBLIC_DIRECT_TERMINAL_PORT`) |
 | `NODE_ENV` | `development` | Node environment |
 
 ## Production Build
