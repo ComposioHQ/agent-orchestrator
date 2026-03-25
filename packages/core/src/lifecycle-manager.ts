@@ -366,21 +366,17 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
   /** Execute a reaction for a session. */
   async function executeReaction(
+    session: Session | null,
     sessionId: SessionId,
     projectId: string,
     reactionKey: string,
     reactionConfig: ReactionConfig,
   ): Promise<ReactionResult> {
-    const trackerKey = `${sessionId}:${reactionKey}`;
-    let tracker = reactionTrackers.get(trackerKey);
-
-    if (!tracker) {
-      tracker = { attempts: 0, firstTriggered: new Date() };
-      reactionTrackers.set(trackerKey, tracker);
-    }
+    const tracker = getReactionTracker(session, sessionId, reactionKey);
 
     // Increment attempts before checking escalation
     tracker.attempts++;
+    persistReactionTracker(session, sessionId, reactionKey, tracker);
 
     // Check if we should escalate
     const maxRetries = reactionConfig.retries ?? Infinity;
@@ -411,6 +407,9 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         data: { reactionKey, attempts: tracker.attempts },
       });
       const delivered = await notifyHuman(event, reactionConfig.priority ?? "urgent");
+      if (delivered) {
+        clearReactionTracker(sessionId, reactionKey, session);
+      }
       return {
         reactionType: reactionKey,
         success: delivered,
@@ -427,6 +426,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         if (reactionConfig.message) {
           try {
             await sessionManager.send(sessionId, reactionConfig.message);
+            clearReactionTracker(sessionId, reactionKey, session);
 
             return {
               reactionType: reactionKey,
@@ -456,6 +456,9 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           data: { reactionKey },
         });
         const delivered = await notifyHuman(event, reactionConfig.priority ?? "info");
+        if (delivered) {
+          clearReactionTracker(sessionId, reactionKey, session);
+        }
         return {
           reactionType: reactionKey,
           success: delivered,
@@ -474,6 +477,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           data: { reactionKey },
         });
         await notifyHuman(event, "action");
+        clearReactionTracker(sessionId, reactionKey, session);
         return {
           reactionType: reactionKey,
           success: true,
@@ -489,10 +493,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       action,
       escalated: false,
     };
-  }
-
-  function clearReactionTracker(sessionId: SessionId, reactionKey: string): void {
-    reactionTrackers.delete(`${sessionId}:${reactionKey}`);
   }
 
   function getReactionConfigForSession(
@@ -526,6 +526,77 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       cleaned[key] = value;
     }
     session.metadata = cleaned;
+  }
+
+  function reactionTrackerMetadataKey(
+    reactionKey: string,
+    field: "attempts" | "firstTriggeredAt",
+  ): string {
+    return `reaction.${reactionKey}.${field}`;
+  }
+
+  function getReactionTracker(
+    session: Session | null,
+    sessionId: SessionId,
+    reactionKey: string,
+  ): ReactionTracker {
+    const trackerKey = `${sessionId}:${reactionKey}`;
+    const tracked = reactionTrackers.get(trackerKey);
+    if (tracked) {
+      return tracked;
+    }
+
+    const persistedAttempts = session
+      ? Number.parseInt(session.metadata[reactionTrackerMetadataKey(reactionKey, "attempts")] ?? "0", 10)
+      : 0;
+    const persistedFirstTriggeredAt = session?.metadata[
+      reactionTrackerMetadataKey(reactionKey, "firstTriggeredAt")
+    ];
+    const parsedFirstTriggered = persistedFirstTriggeredAt
+      ? new Date(persistedFirstTriggeredAt)
+      : new Date();
+
+    const tracker: ReactionTracker = {
+      attempts: Number.isFinite(persistedAttempts) ? persistedAttempts : 0,
+      firstTriggered:
+        Number.isNaN(parsedFirstTriggered.getTime()) ? new Date() : parsedFirstTriggered,
+    };
+    reactionTrackers.set(trackerKey, tracker);
+    return tracker;
+  }
+
+  function persistReactionTracker(
+    session: Session | null,
+    sessionId: SessionId,
+    reactionKey: string,
+    tracker: ReactionTracker,
+  ): void {
+    reactionTrackers.set(`${sessionId}:${reactionKey}`, tracker);
+    if (!session) {
+      return;
+    }
+
+    updateSessionMetadata(session, {
+      [reactionTrackerMetadataKey(reactionKey, "attempts")]: String(tracker.attempts),
+      [reactionTrackerMetadataKey(reactionKey, "firstTriggeredAt")]:
+        tracker.firstTriggered.toISOString(),
+    });
+  }
+
+  function clearReactionTracker(
+    sessionId: SessionId,
+    reactionKey: string,
+    session?: Session | null,
+  ): void {
+    reactionTrackers.delete(`${sessionId}:${reactionKey}`);
+    if (!session) {
+      return;
+    }
+
+    updateSessionMetadata(session, {
+      [reactionTrackerMetadataKey(reactionKey, "attempts")]: "",
+      [reactionTrackerMetadataKey(reactionKey, "firstTriggeredAt")]: "",
+    });
   }
 
   function notifierMetadataKey(notifierName: string, field: string): string {
@@ -655,8 +726,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const automatedReactionKey = "bugbot-comments";
 
     if (newStatus === "merged" || newStatus === "killed") {
-      clearReactionTracker(session.id, humanReactionKey);
-      clearReactionTracker(session.id, automatedReactionKey);
+      clearReactionTracker(session.id, humanReactionKey, session);
+      clearReactionTracker(session.id, automatedReactionKey, session);
       updateSessionMetadata(session, {
         lastPendingReviewFingerprint: "",
         lastPendingReviewDispatchHash: "",
@@ -695,7 +766,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         pendingFingerprint !== lastPendingFingerprint &&
         transitionReaction?.key !== humanReactionKey
       ) {
-        clearReactionTracker(session.id, humanReactionKey);
+        clearReactionTracker(session.id, humanReactionKey, session);
       }
       if (pendingFingerprint !== lastPendingFingerprint) {
         updateSessionMetadata(session, {
@@ -704,7 +775,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
 
       if (!pendingFingerprint) {
-        clearReactionTracker(session.id, humanReactionKey);
+        clearReactionTracker(session.id, humanReactionKey, session);
         updateSessionMetadata(session, {
           lastPendingReviewFingerprint: "",
           lastPendingReviewDispatchHash: "",
@@ -731,6 +802,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           (reactionConfig.auto !== false || reactionConfig.action === "notify")
         ) {
           const result = await executeReaction(
+            session,
             session.id,
             session.projectId,
             humanReactionKey,
@@ -753,14 +825,14 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       const lastAutomatedDispatchHash = session.metadata["lastAutomatedReviewDispatchHash"] ?? "";
 
       if (automatedFingerprint !== lastAutomatedFingerprint) {
-        clearReactionTracker(session.id, automatedReactionKey);
+        clearReactionTracker(session.id, automatedReactionKey, session);
         updateSessionMetadata(session, {
           lastAutomatedReviewFingerprint: automatedFingerprint,
         });
       }
 
       if (!automatedFingerprint) {
-        clearReactionTracker(session.id, automatedReactionKey);
+        clearReactionTracker(session.id, automatedReactionKey, session);
         updateSessionMetadata(session, {
           lastAutomatedReviewFingerprint: "",
           lastAutomatedReviewDispatchHash: "",
@@ -774,6 +846,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           (reactionConfig.auto !== false || reactionConfig.action === "notify")
         ) {
           const result = await executeReaction(
+            session,
             session.id,
             session.projectId,
             automatedReactionKey,
@@ -870,7 +943,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       if (oldEventType) {
         const oldReactionKey = eventToReactionKey(oldEventType);
         if (oldReactionKey) {
-          clearReactionTracker(session.id, oldReactionKey);
+          clearReactionTracker(session.id, oldReactionKey, session);
         }
       }
 
@@ -887,6 +960,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             // auto: false skips automated agent actions but still allows notifications
             if (reactionConfig.auto !== false || reactionConfig.action === "notify") {
               const reactionResult = await executeReaction(
+                session,
                 session.id,
                 session.projectId,
                 reactionKey,
@@ -982,7 +1056,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           const reactionConfig = config.reactions[reactionKey];
           if (reactionConfig && reactionConfig.action) {
             if (reactionConfig.auto !== false || reactionConfig.action === "notify") {
-              await executeReaction("system", "all", reactionKey, reactionConfig as ReactionConfig);
+              await executeReaction(
+                null,
+                "system",
+                "all",
+                reactionKey,
+                reactionConfig as ReactionConfig,
+              );
             }
           }
         }

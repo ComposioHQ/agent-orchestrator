@@ -1343,6 +1343,102 @@ describe("reactions", () => {
     expect(metadata?.["notifier.desktop.status"]).toBe("ok");
   });
 
+  it("retries notify reactions when no notifier plugin resolves", async () => {
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("passing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("none"),
+      getPendingComments: vi.fn().mockResolvedValue([
+        {
+          id: "c1",
+          author: "reviewer",
+          body: "Please rename this helper",
+          path: "src/app.ts",
+          line: 12,
+          isResolved: false,
+          createdAt: new Date(),
+          url: "https://example.com/comment/1",
+        },
+      ]),
+      getAutomatedComments: vi.fn().mockResolvedValue([]),
+      getMergeability: vi.fn(),
+    };
+
+    const registryGet = vi.fn().mockImplementation((slot: string) => {
+      if (slot === "runtime") return mockRuntime;
+      if (slot === "agent") return mockAgent;
+      if (slot === "scm") return mockSCM;
+      if (slot === "notifier") return null;
+      return null;
+    });
+
+    const registryWithMissingNotifier: PluginRegistry = {
+      ...mockRegistry,
+      get: registryGet,
+    };
+
+    const configWithNotifyReaction: OrchestratorConfig = {
+      ...config,
+      defaults: {
+        ...config.defaults,
+        notifiers: ["desktop"],
+      },
+      notificationRouting: {
+        ...config.notificationRouting,
+        action: ["desktop"],
+      },
+      reactions: {
+        ...config.reactions,
+        "changes-requested": {
+          auto: true,
+          action: "notify",
+          priority: "action",
+        },
+      },
+    };
+
+    const session = makeSession({ status: "pr_open", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config: configWithNotifyReaction,
+      registry: registryWithMissingNotifier,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+    let metadata = readMetadataRaw(sessionsDir, "app-1");
+    expect(metadata?.["lastPendingReviewDispatchHash"]).toBeUndefined();
+    expect(registryGet).toHaveBeenCalledWith("notifier", "desktop");
+    expect(
+      registryGet.mock.calls.filter(
+        ([slot, name]) => slot === "notifier" && name === "desktop",
+      ),
+    ).toHaveLength(1);
+
+    await lm.check("app-1");
+    metadata = readMetadataRaw(sessionsDir, "app-1");
+    expect(metadata?.["lastPendingReviewDispatchHash"]).toBeUndefined();
+    expect(
+      registryGet.mock.calls.filter(
+        ([slot, name]) => slot === "notifier" && name === "desktop",
+      ),
+    ).toHaveLength(2);
+  });
+
   it("does not persist review dispatch hashes when escalation notify delivery fails", async () => {
     const failingNotifier: Notifier = {
       name: "desktop",
@@ -1435,11 +1531,324 @@ describe("reactions", () => {
     metadata = readMetadataRaw(sessionsDir, "app-1");
     expect(failingNotifier.notify).toHaveBeenCalledTimes(1);
     expect(metadata?.["lastPendingReviewDispatchHash"]).toBeUndefined();
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
 
     await lm.check("app-1");
     metadata = readMetadataRaw(sessionsDir, "app-1");
     expect(failingNotifier.notify).toHaveBeenCalledTimes(2);
     expect(metadata?.["lastPendingReviewDispatchHash"]).toBeUndefined();
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries escalation when no notifier plugin resolves", async () => {
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("passing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("none"),
+      getPendingComments: vi.fn().mockResolvedValue([
+        {
+          id: "c1",
+          author: "reviewer",
+          body: "Please rename this helper",
+          path: "src/app.ts",
+          line: 12,
+          isResolved: false,
+          createdAt: new Date(),
+          url: "https://example.com/comment/1",
+        },
+      ]),
+      getAutomatedComments: vi.fn().mockResolvedValue([]),
+      getMergeability: vi.fn(),
+    };
+
+    const registryGet = vi.fn().mockImplementation((slot: string) => {
+      if (slot === "runtime") return mockRuntime;
+      if (slot === "agent") return mockAgent;
+      if (slot === "scm") return mockSCM;
+      if (slot === "notifier") return null;
+      return null;
+    });
+
+    const registryWithMissingNotifier: PluginRegistry = {
+      ...mockRegistry,
+      get: registryGet,
+    };
+
+    const configWithEscalation = {
+      ...config,
+      defaults: {
+        ...config.defaults,
+        notifiers: ["desktop"],
+      },
+      notificationRouting: {
+        ...config.notificationRouting,
+        urgent: ["desktop"],
+      },
+      reactions: {
+        ...config.reactions,
+        "changes-requested": {
+          auto: true,
+          action: "send-to-agent" as const,
+          message: "Handle review comments.",
+          retries: 1,
+          escalateAfter: 1,
+          priority: "urgent" as const,
+        },
+      },
+    };
+
+    const session = makeSession({ status: "pr_open", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+    vi.mocked(mockSessionManager.send).mockRejectedValue(new Error("agent unavailable"));
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config: configWithEscalation,
+      registry: registryWithMissingNotifier,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+    let metadata = readMetadataRaw(sessionsDir, "app-1");
+    expect(metadata?.["lastPendingReviewDispatchHash"]).toBeUndefined();
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+
+    await lm.check("app-1");
+    metadata = readMetadataRaw(sessionsDir, "app-1");
+    expect(metadata?.["lastPendingReviewDispatchHash"]).toBeUndefined();
+    // Poll 2 must be the escalation path, not another send-to-agent attempt.
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+    expect(
+      registryGet.mock.calls.filter(
+        ([slot, name]) => slot === "notifier" && name === "desktop",
+      ),
+    ).toHaveLength(1);
+
+    await lm.check("app-1");
+    metadata = readMetadataRaw(sessionsDir, "app-1");
+    expect(metadata?.["lastPendingReviewDispatchHash"]).toBeUndefined();
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+    expect(
+      registryGet.mock.calls.filter(
+        ([slot, name]) => slot === "notifier" && name === "desktop",
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("does not treat an empty notification route as successful delivery", async () => {
+    const fallbackNotifier: Notifier = {
+      name: "desktop",
+      notify: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("passing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("none"),
+      getPendingComments: vi.fn().mockResolvedValue([
+        {
+          id: "c1",
+          author: "reviewer",
+          body: "Please rename this helper",
+          path: "src/app.ts",
+          line: 12,
+          isResolved: false,
+          createdAt: new Date(),
+          url: "https://example.com/comment/1",
+        },
+      ]),
+      getAutomatedComments: vi.fn().mockResolvedValue([]),
+      getMergeability: vi.fn(),
+    };
+
+    const registryGet = vi.fn().mockImplementation((slot: string, name: string) => {
+      if (slot === "runtime") return mockRuntime;
+      if (slot === "agent") return mockAgent;
+      if (slot === "scm") return mockSCM;
+      if (slot === "notifier" && name === "desktop") return fallbackNotifier;
+      return null;
+    });
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: registryGet,
+    };
+
+    const configWithEmptyRoute: OrchestratorConfig = {
+      ...config,
+      defaults: {
+        ...config.defaults,
+        notifiers: ["desktop"],
+      },
+      notificationRouting: {
+        ...config.notificationRouting,
+        action: [],
+      },
+      reactions: {
+        ...config.reactions,
+        "changes-requested": {
+          auto: true,
+          action: "notify",
+          priority: "action",
+        },
+      },
+    };
+
+    const session = makeSession({ status: "pr_open", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config: configWithEmptyRoute,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    const metadata = readMetadataRaw(sessionsDir, "app-1");
+    expect(metadata?.["lastPendingReviewDispatchHash"]).toBeUndefined();
+    expect(fallbackNotifier.notify).not.toHaveBeenCalled();
+    expect(
+      registryGet.mock.calls.filter(
+        ([slot, name]) => slot === "notifier" && name === "desktop",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("escalates after a lifecycle manager restart instead of retrying send-to-agent", async () => {
+    const notifier: Notifier = {
+      name: "desktop",
+      notify: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("passing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("none"),
+      getPendingComments: vi.fn().mockResolvedValue([
+        {
+          id: "c1",
+          author: "reviewer",
+          body: "Please rename this helper",
+          path: "src/app.ts",
+          line: 12,
+          isResolved: false,
+          createdAt: new Date(),
+          url: "https://example.com/comment/1",
+        },
+      ]),
+      getAutomatedComments: vi.fn().mockResolvedValue([]),
+      getMergeability: vi.fn(),
+    };
+
+    const registryWithNotifier: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "notifier" && name === "desktop") return notifier;
+        return null;
+      }),
+    };
+
+    const configWithEscalation = {
+      ...config,
+      defaults: {
+        ...config.defaults,
+        notifiers: ["desktop"],
+      },
+      notificationRouting: {
+        ...config.notificationRouting,
+        urgent: ["desktop"],
+      },
+      reactions: {
+        ...config.reactions,
+        "changes-requested": {
+          auto: true,
+          action: "send-to-agent" as const,
+          message: "Handle review comments.",
+          retries: 1,
+          escalateAfter: 1,
+          priority: "urgent" as const,
+        },
+      },
+    };
+
+    const session = makeSession({ status: "pr_open", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+    vi.mocked(mockSessionManager.send).mockRejectedValue(new Error("agent unavailable"));
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+    });
+
+    const lm1 = createLifecycleManager({
+      config: configWithEscalation,
+      registry: registryWithNotifier,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm1.check("app-1");
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+    expect(notifier.notify).not.toHaveBeenCalled();
+    expect(readMetadataRaw(sessionsDir, "app-1")?.["reaction.changes-requested.attempts"]).toBe(
+      "1",
+    );
+
+    const restoredSession = makeSession({
+      status: "pr_open",
+      pr: makePR(),
+      metadata: readMetadataRaw(sessionsDir, "app-1") ?? {},
+    });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(restoredSession);
+
+    const lm2 = createLifecycleManager({
+      config: configWithEscalation,
+      registry: registryWithNotifier,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm2.check("app-1");
+
+    const metadata = readMetadataRaw(sessionsDir, "app-1");
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+    expect(notifier.notify).toHaveBeenCalledTimes(1);
+    expect(metadata?.["lastPendingReviewDispatchHash"]).toBe("c1");
   });
 
   it("does not double-send when changes_requested transition already triggered the reaction", async () => {
