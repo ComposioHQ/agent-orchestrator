@@ -339,6 +339,24 @@ describe("resolveProject", () => {
     const session = createCoreSession({ id: "app-1", projectId: "app" });
     expect(resolveProject(session, projects)).toBe(projects.app);
   });
+
+  it("should not match overlapping prefixes loosely", () => {
+    const projects = {
+      app: makeProject({ name: "app", sessionPrefix: "app" }),
+      apple: makeProject({ name: "apple", sessionPrefix: "apple" }),
+    };
+    const session = createCoreSession({ id: "apple-1", projectId: "unknown" });
+    expect(resolveProject(session, projects)).toBe(projects.apple);
+  });
+
+  it("should prefer the longest matching prefix when prefixes are nested", () => {
+    const projects = {
+      app: makeProject({ name: "app", sessionPrefix: "app" }),
+      "app-foo": makeProject({ name: "app-foo", sessionPrefix: "app-foo" }),
+    };
+    const session = createCoreSession({ id: "app-foo-1", projectId: "unknown" });
+    expect(resolveProject(session, projects)).toBe(projects["app-foo"]);
+  });
 });
 
 describe("enrichSessionPR", () => {

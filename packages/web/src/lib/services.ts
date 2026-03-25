@@ -11,7 +11,6 @@
  */
 
 import {
-  loadConfig,
   createPluginRegistry,
   createSessionManager,
   createLifecycleManager,
@@ -42,6 +41,7 @@ import pluginWorkspaceWorktree from "@composio/ao-plugin-workspace-worktree";
 import pluginScmGithub from "@composio/ao-plugin-scm-github";
 import pluginTrackerGithub from "@composio/ao-plugin-tracker-github";
 import pluginTrackerLinear from "@composio/ao-plugin-tracker-linear";
+import { getCachedConfig } from "./config-cache.js";
 
 export interface Services {
   config: OrchestratorConfig;
@@ -54,26 +54,64 @@ export interface Services {
 const globalForServices = globalThis as typeof globalThis & {
   _aoServices?: Services;
   _aoServicesInit?: Promise<Services>;
+  _aoServicesConfig?: OrchestratorConfig;
 };
+
+export { getCachedConfig };
 
 /** Get (or lazily initialize) the core services singleton. */
 export function getServices(): Promise<Services> {
-  if (globalForServices._aoServices) {
+  const config = getCachedConfig();
+
+  if (globalForServices._aoServices && globalForServices._aoServicesConfig === config) {
     return Promise.resolve(globalForServices._aoServices);
   }
-  if (!globalForServices._aoServicesInit) {
-    globalForServices._aoServicesInit = initServices().catch((err) => {
-      // Clear the cached promise so the next call retries instead of
-      // permanently returning a rejected promise.
-      globalForServices._aoServicesInit = undefined;
+
+  if (
+    globalForServices._aoServices &&
+    globalForServices._aoServicesConfig &&
+    globalForServices._aoServicesConfig !== config
+  ) {
+    try {
+      globalForServices._aoServices.lifecycleManager.stop();
+    } catch {
+      void 0;
+    }
+    globalForServices._aoServices = undefined;
+  }
+
+  if (globalForServices._aoServicesInit && globalForServices._aoServicesConfig === config) {
+    return globalForServices._aoServicesInit;
+  }
+
+  globalForServices._aoServicesConfig = config;
+  globalForServices._aoServicesInit = initServices(config)
+    .then((services) => {
+      if (globalForServices._aoServicesConfig !== config) {
+        try {
+          services.lifecycleManager.stop();
+        } catch {
+          void 0;
+        }
+        return services;
+      }
+
+      globalForServices._aoServices = services;
+      return services;
+    })
+    .catch((err) => {
+      if (globalForServices._aoServicesConfig === config) {
+        // Clear the cached promise so the next call retries instead of
+        // permanently returning a rejected promise.
+        globalForServices._aoServicesInit = undefined;
+        globalForServices._aoServicesConfig = undefined;
+      }
       throw err;
     });
-  }
   return globalForServices._aoServicesInit;
 }
 
-async function initServices(): Promise<Services> {
-  const config = loadConfig();
+async function initServices(config: OrchestratorConfig): Promise<Services> {
   const registry = createPluginRegistry();
 
   // Register plugins explicitly (webpack can't handle dynamic import() in core)
@@ -92,9 +130,7 @@ async function initServices(): Promise<Services> {
   const lifecycleManager = createLifecycleManager({ config, registry, sessionManager });
   lifecycleManager.start(30_000);
 
-  const services = { config, registry, sessionManager, lifecycleManager };
-  globalForServices._aoServices = services;
-  return services;
+  return { config, registry, sessionManager, lifecycleManager };
 }
 
 // ---------------------------------------------------------------------------

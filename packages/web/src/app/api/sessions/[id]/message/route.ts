@@ -1,5 +1,6 @@
 import { type NextRequest } from "next/server";
 import { getServices } from "@/lib/services";
+import { checkConfiguredAuth } from "@/lib/api-auth";
 import { stripControlChars, validateIdentifier, validateString } from "@/lib/validation";
 import { SessionNotFoundError } from "@composio/ao-core";
 import {
@@ -15,6 +16,16 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const correlationId = getCorrelationId(request);
   const startedAt = Date.now();
   try {
+    const authError = checkConfiguredAuth(request, {
+      correlationId,
+      method: "POST",
+      path: "/api/sessions/[id]/message",
+      startedAt,
+    });
+    if (authError) {
+      return authError;
+    }
+
     const { id } = await params;
 
     // Validate session ID to prevent injection

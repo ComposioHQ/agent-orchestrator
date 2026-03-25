@@ -3,7 +3,6 @@ import { NextRequest } from "next/server";
 import {
   SessionNotFoundError,
   SessionNotRestorableError,
-  SessionNotFoundError,
   type Session,
   type SessionManager,
   type OrchestratorConfig,
@@ -11,7 +10,8 @@ import {
   type SCM,
 } from "@composio/ao-core";
 import * as serialize from "@/lib/serialize";
-import { getSCM } from "@/lib/services";
+import { getServices, getSCM } from "@/lib/services";
+import { getCachedConfig } from "@/lib/config-cache";
 
 // ── Mock Data ─────────────────────────────────────────────────────────
 // Provides test sessions covering the key states the dashboard needs.
@@ -181,7 +181,14 @@ const mockConfig: OrchestratorConfig = {
   notifiers: {},
   notificationRouting: { urgent: [], action: [], warning: [], info: [] },
   reactions: {},
+  api: {
+    token: "secret-token",
+  },
 };
+
+vi.mock("@/lib/config-cache", () => ({
+  getCachedConfig: vi.fn(() => mockConfig),
+}));
 
 vi.mock("@/lib/services", () => ({
   getServices: vi.fn(async () => ({
@@ -207,26 +214,146 @@ import { POST as mergePOST } from "@/app/api/prs/[id]/merge/route";
 import { GET as eventsGET } from "@/app/api/events/route";
 import { GET as observabilityGET } from "@/app/api/observability/route";
 
-function makeRequest(url: string, init?: RequestInit): NextRequest {
+function makeRawRequest(url: string, init?: RequestInit): NextRequest {
   return new NextRequest(
     new URL(url, "http://localhost:3000"),
     init as ConstructorParameters<typeof NextRequest>[1],
   );
 }
 
+function makeRequest(url: string, init?: RequestInit): NextRequest {
+  const headers = new Headers(init?.headers);
+  const token = mockConfig.api?.token?.trim();
+  if (token && !headers.has("authorization")) {
+    headers.set("authorization", `Bearer ${token}`);
+  }
+  return makeRawRequest(url, { ...init, headers });
+}
+
 beforeEach(() => {
-  vi.clearAllMocks();
-  // Re-set default return values
+  vi.restoreAllMocks();
+  mockConfig.api = { token: "secret-token" };
+
+  vi.mocked(getServices).mockReset();
+  vi.mocked(getSCM).mockReset();
+  vi.mocked(getCachedConfig).mockReset();
+
+  (mockRegistry.get as ReturnType<typeof vi.fn>).mockReset();
+  (mockRegistry.get as ReturnType<typeof vi.fn>).mockImplementation(() => mockSCM);
+
+  (mockSessionManager.list as ReturnType<typeof vi.fn>).mockReset();
+  (mockSessionManager.get as ReturnType<typeof vi.fn>).mockReset();
+  (mockSessionManager.spawn as ReturnType<typeof vi.fn>).mockReset();
+  (mockSessionManager.kill as ReturnType<typeof vi.fn>).mockReset();
+  (mockSessionManager.send as ReturnType<typeof vi.fn>).mockReset();
+  (mockSessionManager.cleanup as ReturnType<typeof vi.fn>).mockReset();
+  (mockSessionManager.spawnOrchestrator as ReturnType<typeof vi.fn>).mockReset();
+  (mockSessionManager.remap as ReturnType<typeof vi.fn>).mockReset();
+  (mockSessionManager.restore as ReturnType<typeof vi.fn>).mockReset();
+
+  (mockSCM.detectPR as ReturnType<typeof vi.fn>).mockReset();
+  (mockSCM.getPRState as ReturnType<typeof vi.fn>).mockReset();
+  (mockSCM.mergePR as ReturnType<typeof vi.fn>).mockReset();
+  (mockSCM.closePR as ReturnType<typeof vi.fn>).mockReset();
+  (mockSCM.getCIChecks as ReturnType<typeof vi.fn>).mockReset();
+  (mockSCM.getCISummary as ReturnType<typeof vi.fn>).mockReset();
+  (mockSCM.getReviews as ReturnType<typeof vi.fn>).mockReset();
+  (mockSCM.getReviewDecision as ReturnType<typeof vi.fn>).mockReset();
+  (mockSCM.getPendingComments as ReturnType<typeof vi.fn>).mockReset();
+  (mockSCM.getAutomatedComments as ReturnType<typeof vi.fn>).mockReset();
+  (mockSCM.getMergeability as ReturnType<typeof vi.fn>).mockReset();
+
+  vi.mocked(getCachedConfig).mockReturnValue(mockConfig);
+  vi.mocked(getServices).mockResolvedValue({
+    config: mockConfig,
+    registry: mockRegistry,
+    sessionManager: mockSessionManager,
+  });
+  vi.mocked(getSCM).mockReturnValue(mockSCM);
+
   (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValue(testSessions);
   (mockSessionManager.get as ReturnType<typeof vi.fn>).mockImplementation(
     async (id: string) => testSessions.find((s) => s.id === id) ?? null,
   );
+  (mockSessionManager.spawn as ReturnType<typeof vi.fn>).mockImplementation(async (config) =>
+    makeSession({
+      id: `session-${Date.now()}`,
+      projectId: config.projectId,
+      issueId: config.issueId ?? null,
+      status: "spawning",
+    }),
+  );
+  (mockSessionManager.kill as ReturnType<typeof vi.fn>).mockImplementation(async (id: string) => {
+    if (!testSessions.find((s) => s.id === id)) {
+      throw new SessionNotFoundError(id);
+    }
+  });
+  (mockSessionManager.send as ReturnType<typeof vi.fn>).mockImplementation(async (id: string) => {
+    if (!testSessions.find((s) => s.id === id)) {
+      throw new SessionNotFoundError(id);
+    }
+  });
+  (mockSessionManager.cleanup as ReturnType<typeof vi.fn>).mockResolvedValue({
+    killed: [],
+    skipped: [],
+    errors: [],
+  });
+  (mockSessionManager.spawnOrchestrator as ReturnType<typeof vi.fn>).mockResolvedValue(
+    makeSession({
+      id: "my-app-orchestrator",
+      projectId: "my-app",
+      metadata: { role: "orchestrator" },
+    }),
+  );
+  (mockSessionManager.remap as ReturnType<typeof vi.fn>).mockResolvedValue("ses_mock");
+  (mockSessionManager.restore as ReturnType<typeof vi.fn>).mockImplementation(async (id: string) => {
+    const session = testSessions.find((s) => s.id === id);
+    if (!session) {
+      throw new SessionNotFoundError(id);
+    }
+    if (session.status === "working" && session.activity !== "exited") {
+      throw new SessionNotRestorableError(id, "session is not in a terminal state");
+    }
+    return { ...session, status: "spawning" as const, activity: "active" as const };
+  });
+
+  (mockSCM.detectPR as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+  (mockSCM.getPRState as ReturnType<typeof vi.fn>).mockResolvedValue("open" as const);
+  (mockSCM.mergePR as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+  (mockSCM.closePR as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+  (mockSCM.getCIChecks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+  (mockSCM.getCISummary as ReturnType<typeof vi.fn>).mockResolvedValue("passing" as const);
+  (mockSCM.getReviews as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+  (mockSCM.getReviewDecision as ReturnType<typeof vi.fn>).mockResolvedValue("approved" as const);
+  (mockSCM.getPendingComments as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+  (mockSCM.getAutomatedComments as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+  (mockSCM.getMergeability as ReturnType<typeof vi.fn>).mockResolvedValue({
+    mergeable: true,
+    ciPassing: true,
+    approved: true,
+    noConflicts: true,
+    blockers: [],
+  });
 });
 
 describe("API Routes", () => {
   // ── GET /api/sessions ──────────────────────────────────────────────
 
   describe("GET /api/sessions", () => {
+    it("rejects unauthorized requests before initializing services", async () => {
+      vi.mocked(getServices).mockRejectedValueOnce(new Error("services should not initialize"));
+
+      const res = await sessionsGET(
+        makeRequest("http://localhost:3000/api/sessions", {
+          headers: { authorization: "Bearer wrong-token" },
+        }),
+      );
+
+      expect(res.status).toBe(401);
+      expect(res.headers.get("x-correlation-id")).toBeTruthy();
+      expect(getServices).not.toHaveBeenCalled();
+    });
+
     it("returns sessions array and stats", async () => {
       const res = await sessionsGET(makeRequest("http://localhost:3000/api/sessions"));
       expect(res.status).toBe(200);
@@ -318,6 +445,26 @@ describe("API Routes", () => {
       expect(mockSessionManager.list).toHaveBeenCalledWith("docs-app");
     });
 
+    it("normalizes fallback projectId in list responses", async () => {
+      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+        makeSession({
+          id: "docs-9",
+          projectId: "missing-project",
+          status: "working",
+          activity: "active",
+        }),
+      ]);
+
+      const res = await sessionsGET(
+        makeRequest("http://localhost:3000/api/sessions?project=docs-app"),
+      );
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toMatchObject({
+        sessions: [expect.objectContaining({ id: "docs-9", projectId: "docs-app" })],
+      });
+    });
+
     it("keeps global pause sourced from all projects even for project-scoped requests", async () => {
       const pausedUntil = new Date(Date.now() + 60_000).toISOString();
       const pausedSessions = [
@@ -395,6 +542,21 @@ describe("API Routes", () => {
   });
 
   describe("GET /api/sessions/:id", () => {
+    it("rejects unauthorized requests before initializing services", async () => {
+      vi.mocked(getServices).mockRejectedValueOnce(new Error("services should not initialize"));
+
+      const res = await sessionGET(
+        makeRequest("http://localhost:3000/api/sessions/frontend-1", {
+          headers: { authorization: "Bearer wrong-token" },
+        }),
+        { params: Promise.resolve({ id: "frontend-1" }) },
+      );
+
+      expect(res.status).toBe(401);
+      expect(res.headers.get("x-correlation-id")).toBeTruthy();
+      expect(getServices).not.toHaveBeenCalled();
+    });
+
     it("returns notificationState on detail responses", async () => {
       (mockSessionManager.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
         makeSession({
@@ -428,6 +590,52 @@ describe("API Routes", () => {
             lastPriority: null,
           },
         ],
+      });
+    });
+
+    it("returns archived sessions via includeArchived lookup", async () => {
+      (mockSessionManager.get as ReturnType<typeof vi.fn>).mockImplementation(
+        async (id: string, options?: { includeArchived?: boolean }) => {
+          if (id === "frontend-1" && options?.includeArchived) {
+            return makeSession({
+              id: "frontend-1",
+              projectId: "my-app",
+              status: "killed",
+              activity: "exited",
+            });
+          }
+          return null;
+        },
+      );
+
+      const res = await sessionGET(makeRequest("http://localhost:3000/api/sessions/frontend-1"), {
+        params: Promise.resolve({ id: "frontend-1" }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(mockSessionManager.get).toHaveBeenCalledWith("frontend-1", {
+        includeArchived: true,
+      });
+    });
+
+    it("normalizes fallback projectId on detail responses", async () => {
+      (mockSessionManager.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        makeSession({
+          id: "docs-9",
+          projectId: "missing-project",
+          status: "working",
+          activity: "active",
+        }),
+      );
+
+      const res = await sessionGET(makeRequest("http://localhost:3000/api/sessions/docs-9"), {
+        params: Promise.resolve({ id: "docs-9" }),
+      });
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toMatchObject({
+        id: "docs-9",
+        projectId: "docs-app",
       });
     });
   });
@@ -576,6 +784,21 @@ describe("API Routes", () => {
   // ── POST /api/sessions/:id/send ────────────────────────────────────
 
   describe("POST /api/sessions/:id/send", () => {
+    it("rejects requests without auth before initializing services", async () => {
+      vi.mocked(getServices).mockRejectedValueOnce(new Error("services should not initialize"));
+
+      const req = makeRawRequest("/api/sessions/backend-3/send", {
+        method: "POST",
+        body: JSON.stringify({ message: "Fix the tests" }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await sendPOST(req, { params: Promise.resolve({ id: "backend-3" }) });
+
+      expect(res.status).toBe(401);
+      expect(res.headers.get("x-correlation-id")).toBeTruthy();
+      expect(getServices).not.toHaveBeenCalled();
+    });
+
     it("sends a message to a valid session", async () => {
       const req = makeRequest("/api/sessions/backend-3/send", {
         method: "POST",
@@ -638,6 +861,21 @@ describe("API Routes", () => {
   });
 
   describe("POST /api/sessions/:id/message", () => {
+    it("rejects requests without auth before initializing services", async () => {
+      vi.mocked(getServices).mockRejectedValueOnce(new Error("services should not initialize"));
+
+      const req = makeRawRequest("/api/sessions/backend-3/message", {
+        method: "POST",
+        body: JSON.stringify({ message: "Fix the tests" }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await messagePOST(req, { params: Promise.resolve({ id: "backend-3" }) });
+
+      expect(res.status).toBe(401);
+      expect(res.headers.get("x-correlation-id")).toBeTruthy();
+      expect(getServices).not.toHaveBeenCalled();
+    });
+
     it("sends a message to a valid session", async () => {
       const req = makeRequest("/api/sessions/backend-3/message", {
         method: "POST",
@@ -703,6 +941,66 @@ describe("API Routes", () => {
   // ── POST /api/sessions/:id/kill ────────────────────────────────────
 
   describe("POST /api/sessions/:id/kill", () => {
+    it("rejects unauthorized requests before initializing services", async () => {
+      vi.mocked(getServices).mockRejectedValueOnce(new Error("services should not initialize"));
+
+      const res = await killPOST(
+        makeRequest("/api/sessions/backend-3/kill", {
+          method: "POST",
+          headers: { authorization: "Bearer wrong-token" },
+        }),
+        { params: Promise.resolve({ id: "backend-3" }) },
+      );
+
+      expect(res.status).toBe(401);
+      expect(res.headers.get("x-correlation-id")).toBeTruthy();
+      expect(getServices).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [
+        "kill",
+        () => killPOST(makeRequest("/api/sessions/backend-3/kill", { method: "POST" }), {
+          params: Promise.resolve({ id: "backend-3" }),
+        }),
+      ],
+      [
+        "restore",
+        () => restorePOST(makeRequest("/api/sessions/frontend-1/restore", { method: "POST" }), {
+          params: Promise.resolve({ id: "frontend-1" }),
+        }),
+      ],
+      [
+        "send",
+        () =>
+          sendPOST(
+            makeRequest("/api/sessions/backend-3/send", {
+              method: "POST",
+              body: JSON.stringify({ message: "Fix the tests" }),
+              headers: { "Content-Type": "application/json" },
+            }),
+            { params: Promise.resolve({ id: "backend-3" }) },
+          ),
+      ],
+      [
+        "remap",
+        () => remapPOST(makeRequest("/api/sessions/backend-3/remap", { method: "POST" }), {
+          params: Promise.resolve({ id: "backend-3" }),
+        }),
+      ],
+    ])("returns a JSON 500 when auth config reload fails for %s", async (_name, invoke) => {
+      vi.mocked(getCachedConfig).mockImplementationOnce(() => {
+        throw new Error("invalid config");
+      });
+
+      const res = await invoke();
+
+      expect(res.status).toBe(500);
+      expect(res.headers.get("x-correlation-id")).toBeTruthy();
+      await expect(res.json()).resolves.toMatchObject({ error: "invalid config" });
+      expect(getServices).not.toHaveBeenCalled();
+    });
+
     it("kills a valid session", async () => {
       const req = makeRequest("/api/sessions/backend-3/kill", { method: "POST" });
       const res = await killPOST(req, { params: Promise.resolve({ id: "backend-3" }) });
@@ -725,6 +1023,22 @@ describe("API Routes", () => {
   // ── POST /api/sessions/:id/restore ─────────────────────────────────
 
   describe("POST /api/sessions/:id/restore", () => {
+    it("rejects unauthorized requests before initializing services", async () => {
+      vi.mocked(getServices).mockRejectedValueOnce(new Error("services should not initialize"));
+
+      const res = await restorePOST(
+        makeRequest("/api/sessions/frontend-1/restore", {
+          method: "POST",
+          headers: { authorization: "Bearer wrong-token" },
+        }),
+        { params: Promise.resolve({ id: "frontend-1" }) },
+      );
+
+      expect(res.status).toBe(401);
+      expect(res.headers.get("x-correlation-id")).toBeTruthy();
+      expect(getServices).not.toHaveBeenCalled();
+    });
+
     it("restores a killed session", async () => {
       const req = makeRequest("/api/sessions/frontend-1/restore", { method: "POST" });
       const res = await restorePOST(req, { params: Promise.resolve({ id: "frontend-1" }) });
@@ -750,6 +1064,17 @@ describe("API Routes", () => {
   });
 
   describe("POST /api/sessions/:id/remap", () => {
+    it("rejects requests without auth before initializing services", async () => {
+      vi.mocked(getServices).mockRejectedValueOnce(new Error("services should not initialize"));
+
+      const req = makeRawRequest("/api/sessions/backend-3/remap", { method: "POST" });
+      const res = await remapPOST(req, { params: Promise.resolve({ id: "backend-3" }) });
+
+      expect(res.status).toBe(401);
+      expect(res.headers.get("x-correlation-id")).toBeTruthy();
+      expect(getServices).not.toHaveBeenCalled();
+    });
+
     it("remaps a valid session", async () => {
       const req = makeRequest("/api/sessions/backend-3/remap", { method: "POST" });
       const res = await remapPOST(req, { params: Promise.resolve({ id: "backend-3" }) });

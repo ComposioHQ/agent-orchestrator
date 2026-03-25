@@ -7,6 +7,7 @@
 
 import {
   isOrchestratorSession,
+  resolveProjectIdForSessionId,
   type Session,
   type Agent,
   type SCM,
@@ -38,9 +39,10 @@ export function resolveProject(
   const direct = projects[core.projectId];
   if (direct) return direct;
 
-  // Match by session prefix
-  const entry = Object.entries(projects).find(([, p]) => core.id.startsWith(p.sessionPrefix));
-  if (entry) return entry[1];
+  const resolvedProjectId = resolveProjectIdForSessionId({ projects }, core.id);
+  if (resolvedProjectId) {
+    return projects[resolvedProjectId];
+  }
 
   // Fall back to first project
   const firstKey = Object.keys(projects)[0];

@@ -196,6 +196,11 @@ const OrchestratorConfigSchema = z.object({
     info: ["composio"],
   }),
   reactions: z.record(ReactionConfigSchema).default({}),
+  api: z
+    .object({
+      token: z.string().optional(),
+    })
+    .optional(),
 });
 
 // =============================================================================
@@ -298,6 +303,19 @@ function validateProjectUniqueness(config: OrchestratorConfig): void {
           `  ${configKey}:\n` +
           `    path: ${project.path}\n` +
           `    sessionPrefix: ${prefix}2  # Add explicit prefix\n`,
+      );
+    }
+
+    const overlappingPrefix = [...prefixes].find(
+      (existingPrefix) =>
+        prefix.startsWith(`${existingPrefix}-`) || existingPrefix.startsWith(`${prefix}-`),
+    );
+    if (overlappingPrefix) {
+      const firstProjectKey = prefixToProject[overlappingPrefix];
+      throw new Error(
+        `Overlapping session prefix detected: "${overlappingPrefix}" and "${prefix}"\n` +
+          `Projects "${firstProjectKey}" and "${configKey}" would produce ambiguous session IDs.\n\n` +
+          `Use prefixes where neither is the other's dash-delimited prefix.`,
       );
     }
 

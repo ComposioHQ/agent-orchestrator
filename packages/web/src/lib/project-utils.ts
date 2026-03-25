@@ -1,4 +1,4 @@
-import { isOrchestratorSession } from "@composio/ao-core";
+import { isOrchestratorSession, resolveProjectIdForSessionId } from "@composio/ao-core";
 
 type ProjectWithPrefix = { sessionPrefix?: string };
 type SessionLike = { id: string; projectId: string; metadata?: Record<string, string> };
@@ -17,9 +17,7 @@ function matchesProject(
   projects: Record<string, ProjectWithPrefix>,
 ): boolean {
   if (session.projectId === projectId) return true;
-  const project = projects[projectId];
-  if (project?.sessionPrefix && session.id.startsWith(project.sessionPrefix)) return true;
-  return projects[session.projectId]?.sessionPrefix === projectId;
+  return resolveProjectIdForSessionId({ projects }, session.id) === projectId;
 }
 
 export function filterProjectSessions<T extends SessionLike>(

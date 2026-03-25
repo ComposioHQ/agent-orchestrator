@@ -1,6 +1,7 @@
 import { type NextRequest } from "next/server";
 import { validateIdentifier } from "@/lib/validation";
 import { getServices } from "@/lib/services";
+import { checkConfiguredAuth } from "@/lib/api-auth";
 import { SessionNotFoundError } from "@composio/ao-core";
 import {
   getCorrelationId,
@@ -12,14 +13,28 @@ import {
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const correlationId = getCorrelationId(request);
   const startedAt = Date.now();
-  const { id } = await params;
-  const idErr = validateIdentifier(id, "id");
-  if (idErr) {
-    return jsonWithCorrelation({ error: idErr }, { status: 400 }, correlationId);
-  }
-
+  let config: (Awaited<ReturnType<typeof getServices>>)["config"] | undefined;
+  let id: string | undefined;
   try {
-    const { config, sessionManager } = await getServices();
+    const authError = checkConfiguredAuth(request, {
+      correlationId,
+      method: "POST",
+      path: "/api/sessions/[id]/remap",
+      startedAt,
+    });
+    if (authError) {
+      return authError;
+    }
+
+    ({ id } = await params);
+    const idErr = validateIdentifier(id, "id");
+    if (idErr) {
+      return jsonWithCorrelation({ error: idErr }, { status: 400 }, correlationId);
+    }
+
+    const services = await getServices();
+    config = services.config;
+    const { sessionManager } = services;
     const projectId = resolveProjectIdForSessionId(config, id);
     const opencodeSessionId = await sessionManager.remap(id, true);
     recordApiObservation({
@@ -39,8 +54,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       correlationId,
     );
   } catch (err) {
-    const { config } = await getServices().catch(() => ({ config: undefined }));
-    const projectId = config ? resolveProjectIdForSessionId(config, id) : undefined;
+    const projectId = config && id ? resolveProjectIdForSessionId(config, id) : undefined;
     if (err instanceof SessionNotFoundError) {
       if (config) {
         recordApiObservation({

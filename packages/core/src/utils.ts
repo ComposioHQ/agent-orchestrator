@@ -3,7 +3,7 @@
  */
 
 import { open, stat } from "node:fs/promises";
-import type { OrchestratorConfig } from "./types.js";
+type ProjectWithPrefix = { sessionPrefix?: string };
 
 /**
  * POSIX-safe shell escaping: wraps value in single quotes,
@@ -138,14 +138,20 @@ export async function readLastJsonlEntry(
  * to by matching session prefixes.
  */
 export function resolveProjectIdForSessionId(
-  config: OrchestratorConfig,
+  config: { projects: Record<string, ProjectWithPrefix> },
   sessionId: string,
 ): string | undefined {
+  let bestMatch: { projectId: string; prefix: string } | null = null;
+
   for (const [projectId, project] of Object.entries(config.projects)) {
     const prefix = project.sessionPrefix;
+    if (!prefix) continue;
     if (sessionId === prefix || sessionId.startsWith(`${prefix}-`)) {
-      return projectId;
+      if (!bestMatch || prefix.length > bestMatch.prefix.length) {
+        bestMatch = { projectId, prefix };
+      }
     }
   }
-  return undefined;
+
+  return bestMatch?.projectId;
 }

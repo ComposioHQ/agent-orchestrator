@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   chmodSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -17,14 +18,17 @@ import {
   writeMetadata,
   readMetadata,
   readMetadataRaw,
+  readArchivedMetadataRaw,
   deleteMetadata,
   reserveSessionId,
   updateMetadata,
 } from "../metadata.js";
+import * as metadata from "../metadata.js";
 import { getSessionsDir, getProjectBaseDir, getWorktreesDir } from "../paths.js";
 import {
   SessionNotRestorableError,
   WorkspaceMissingError,
+  SessionNotFoundError,
   isIssueNotFoundError,
   type OrchestratorConfig,
   type PluginRegistry,
@@ -1652,6 +1656,38 @@ describe("get", () => {
     expect(await sm.get("nonexistent")).toBeNull();
   });
 
+  it("returns archived session by ID when includeArchived is enabled", async () => {
+    const managedWorktree = join(
+      getWorktreesDir(config.configPath, config.projects["my-app"]!.path),
+      "app-1",
+    );
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: managedWorktree,
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.kill("app-1");
+
+    const archiveDir = join(sessionsDir, "archive");
+    const archiveName = readdirSync(archiveDir).find((file) => file.startsWith("app-1_"));
+    if (!archiveName) throw new Error("expected archived metadata");
+    const archivedAt = new Date("2025-01-02T03:04:05.000Z");
+    utimesSync(join(archiveDir, archiveName), archivedAt, archivedAt);
+
+    await expect(sm.get("app-1")).resolves.toBeNull();
+    const session = await sm.get("app-1", { includeArchived: true });
+
+    expect(session).not.toBeNull();
+    expect(session?.id).toBe("app-1");
+    expect(session?.status).toBe("killed");
+    expect(session?.activity).toBe("exited");
+    expect(session?.lastActivityAt.toISOString()).toBe(archivedAt.toISOString());
+  });
+
   it("assigns owning project ID when loading legacy metadata without project", async () => {
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp",
@@ -1783,6 +1819,28 @@ describe("kill", () => {
     expect(readMetadata(sessionsDir, "app-1")).toBeNull(); // archived + deleted
   });
 
+  it("does not archive metadata when runtime destroy fails", async () => {
+    const managedWorktree = join(
+      getWorktreesDir(config.configPath, config.projects["my-app"]!.path),
+      "app-1",
+    );
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: managedWorktree,
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+    vi.mocked(mockRuntime.destroy).mockRejectedValueOnce(new Error("runtime destroy failed"));
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await expect(sm.kill("app-1")).rejects.toThrow("runtime destroy failed");
+
+    expect(readMetadata(sessionsDir, "app-1")).not.toBeNull();
+    expect(readArchivedMetadataRaw(sessionsDir, "app-1")).toBeNull();
+    expect(mockWorkspace.destroy).not.toHaveBeenCalled();
+  });
+
   it("does not destroy workspace paths outside managed roots", async () => {
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp/ws",
@@ -1852,10 +1910,11 @@ describe("kill", () => {
     await expect(sm.kill("nonexistent")).rejects.toThrow("not found");
   });
 
-  it("tolerates runtime destroy failure", async () => {
+  it("tolerates runtime destroy failures when the runtime is already gone", async () => {
     const failRuntime: Runtime = {
       ...mockRuntime,
       destroy: vi.fn().mockRejectedValue(new Error("already gone")),
+      isAlive: vi.fn().mockResolvedValue(false),
     };
     const registryWithFail: PluginRegistry = {
       ...mockRegistry,
@@ -1875,8 +1934,66 @@ describe("kill", () => {
     });
 
     const sm = createSessionManager({ config, registry: registryWithFail });
-    // Should not throw even though runtime.destroy fails
     await expect(sm.kill("app-1")).resolves.toBeUndefined();
+    expect(readMetadata(sessionsDir, "app-1")).toBeNull();
+    expect(readArchivedMetadataRaw(sessionsDir, "app-1")).toMatchObject({
+      status: "killed",
+    });
+  });
+
+  it("tolerates workspace destroy failures when the workspace is already gone", async () => {
+    const managedWorktree = join(
+      getWorktreesDir(config.configPath, config.projects["my-app"]!.path),
+      "app-1",
+    );
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: managedWorktree,
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+    vi.mocked(mockWorkspace.destroy).mockRejectedValueOnce(new Error("ENOENT: workspace not found"));
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await expect(sm.kill("app-1")).resolves.toBeUndefined();
+
+    expect(readMetadata(sessionsDir, "app-1")).toBeNull();
+    expect(readArchivedMetadataRaw(sessionsDir, "app-1")).toMatchObject({
+      status: "killed",
+    });
+  });
+
+  it("allows retrying kill after workspace destroy fails once", async () => {
+    const managedWorktree = join(
+      getWorktreesDir(config.configPath, config.projects["my-app"]!.path),
+      "app-1",
+    );
+    mkdirSync(managedWorktree, { recursive: true });
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: managedWorktree,
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+    vi.mocked(mockRuntime.destroy).mockResolvedValueOnce(undefined);
+    vi.mocked(mockWorkspace.destroy).mockRejectedValueOnce(new Error("workspace destroy failed"));
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await expect(sm.kill("app-1")).rejects.toThrow("workspace destroy failed");
+
+    expect(readMetadataRaw(sessionsDir, "app-1")).toMatchObject({
+      status: "killed",
+    });
+    expect(readMetadataRaw(sessionsDir, "app-1")?.["runtimeHandle"]).toBeUndefined();
+    expect(readArchivedMetadataRaw(sessionsDir, "app-1")).toBeNull();
+
+    await expect(sm.kill("app-1")).resolves.toBeUndefined();
+    expect(readMetadata(sessionsDir, "app-1")).toBeNull();
+    expect(readArchivedMetadataRaw(sessionsDir, "app-1")).toMatchObject({
+      status: "killed",
+    });
   });
 
   it("does not purge mapped OpenCode session on default kill", async () => {
@@ -4221,6 +4338,109 @@ describe("restore", () => {
     await expect(sm.restore("app-1")).rejects.toThrow(SessionNotRestorableError);
 
     expect(readMetadataRaw(sessionsDir, "app-1")).toBeNull();
+  });
+
+  it("destroys a restored workspace when archive restore fails after workspace restore", async () => {
+    const wsPath = join(
+      getWorktreesDir(config.configPath, config.projects["my-app"]!.path),
+      "ws-app-restore-fails-after-workspace",
+    );
+    const mockWorkspaceWithRestore: Workspace = {
+      ...mockWorkspace,
+      exists: vi.fn().mockResolvedValue(false),
+      restore: vi.fn().mockResolvedValue({
+        path: wsPath,
+        branch: "feat/TEST-1",
+        sessionId: "app-1",
+        projectId: "my-app",
+      }),
+      postCreate: vi.fn().mockRejectedValue(new Error("workspace post-create failed")),
+      destroy: vi.fn().mockResolvedValue(undefined),
+    };
+    const registryWithRestore = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, _name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspaceWithRestore;
+        return null;
+      }),
+    } satisfies PluginRegistry;
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/TEST-1",
+      status: "killed",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-old")),
+    });
+    deleteMetadata(sessionsDir, "app-1");
+
+    const sm = createSessionManager({ config, registry: registryWithRestore });
+    await expect(sm.restore("app-1")).rejects.toThrow(WorkspaceMissingError);
+
+    expect(mockWorkspaceWithRestore.destroy).toHaveBeenCalledWith(wsPath);
+    expect(readMetadataRaw(sessionsDir, "app-1")).toBeNull();
+  });
+
+  it("destroys the new runtime and leaves no active metadata when restore persistence fails", async () => {
+    const wsPath = join(tmpDir, "ws-app-restore-persistence-failure");
+    mkdirSync(wsPath, { recursive: true });
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/TEST-1",
+      status: "killed",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-old")),
+    });
+    deleteMetadata(sessionsDir, "app-1");
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    chmodSync(sessionsDir, 0o500);
+
+    try {
+      await expect(sm.restore("app-1")).rejects.toThrow();
+    } finally {
+      chmodSync(sessionsDir, 0o700);
+    }
+
+    expect(mockRuntime.create).toHaveBeenCalled();
+    expect(mockRuntime.destroy).toHaveBeenCalledWith(makeHandle("rt-1"));
+    expect(readMetadataRaw(sessionsDir, "app-1")).toBeNull();
+  });
+
+  it("preserves active metadata when active restore persistence fails", async () => {
+    const wsPath = join(tmpDir, "ws-app-active-restore-persistence-failure");
+    mkdirSync(wsPath, { recursive: true });
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/TEST-1",
+      status: "killed",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-old")),
+    });
+
+    const originalRaw = readMetadataRaw(sessionsDir, "app-1");
+    expect(originalRaw).not.toBeNull();
+
+    const updateMetadataSpy = vi
+      .spyOn(metadata, "updateMetadata")
+      .mockImplementationOnce(() => {
+        throw new Error("metadata write failed");
+      });
+
+    try {
+      const sm = createSessionManager({ config, registry: mockRegistry });
+      await expect(sm.restore("app-1")).rejects.toThrow("metadata write failed");
+    } finally {
+      updateMetadataSpy.mockRestore();
+    }
+
+    expect(mockRuntime.create).toHaveBeenCalled();
+    expect(mockRuntime.destroy).toHaveBeenCalledWith(makeHandle("rt-1"));
+    expect(readMetadataRaw(sessionsDir, "app-1")).toEqual(originalRaw);
   });
 
   it("re-discovers OpenCode mapping when stored mapping is invalid", async () => {
