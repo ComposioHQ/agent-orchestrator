@@ -251,8 +251,60 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       const scm = registry.get<SCM>("scm", pluginKey);
       if (!scm?.enrichSessionsPRBatch) continue;
 
+      const batchStartTime = Date.now();
       try {
-        const enrichmentData = await scm.enrichSessionsPRBatch(pluginPRs);
+        const enrichmentData = await scm.enrichSessionsPRBatch(
+          pluginPRs,
+          {
+            recordSuccess(_data) {
+              const batchDuration = Date.now() - batchStartTime;
+              observer?.recordOperation({
+                metric: "graphql_batch",
+                operation: "batch_enrichment",
+                correlationId: createCorrelationId("graphql-batch"),
+                outcome: "success",
+                projectId: scopedProjectId,
+                durationMs: batchDuration,
+                data: {
+                  plugin: pluginKey,
+                  prCount: pluginPRs.length,
+                  prKeys: Array.from(enrichmentData.keys()),
+                },
+                level: "info",
+              });
+            },
+            recordFailure(data) {
+              const batchDuration = Date.now() - batchStartTime;
+              observer?.recordOperation({
+                metric: "graphql_batch",
+                operation: "batch_enrichment",
+                correlationId: createCorrelationId("graphql-batch"),
+                outcome: "failure",
+                reason: data.error,
+                level: "warn",
+                data: {
+                  plugin: pluginKey,
+                  prCount: pluginPRs.length,
+                  error: data.error,
+                  durationMs: batchDuration,
+                },
+              });
+            },
+            log(level, message) {
+              // Log to stderr for observability
+              process.stderr.write(
+                JSON.stringify({
+                  source: "ao-graphql-batch",
+                  level,
+                  message,
+                  plugin: pluginKey,
+                  timestamp: new Date().toISOString(),
+                }) + "\n"
+              );
+            },
+          },
+        );
+
         // Merge into cache
         for (const [key, data] of enrichmentData) {
           prEnrichmentCache.set(key, data);
