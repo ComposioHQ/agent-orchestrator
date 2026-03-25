@@ -1,12 +1,12 @@
-# Dependencies
-node_modules/
-.pnpm-store/
+# Dependencies (recursive — dockerignore needs **/ unlike gitignore)
+**/node_modules/
+**/.pnpm-store/
 
-# Build outputs
-dist/
-.next/
-dist-server/
-*.tsbuildinfo
+# Build outputs (recursive)
+**/dist/
+**/.next/
+**/dist-server/
+**/*.tsbuildinfo
 
 # Version control
 .git/
@@ -20,7 +20,7 @@ dist-server/
 *~
 
 # Test and coverage
-coverage/
+**/coverage/
 *.patch
 tests/
 
