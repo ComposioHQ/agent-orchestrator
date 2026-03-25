@@ -1,0 +1,25 @@
+packages/web/src/app/globals.css
+  bec464ad65aaf7f5 2127-2131
+packages/web/src/components/PullRequestsPage.tsx
+  bec464ad65aaf7f5 116
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.19",
+  "base_commit_sha": "fd742b595a3a581f581a1b13656009da70b72ceb",
+  "prompts": {
+    "bec464ad65aaf7f5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b50cadb2-57a8-409d-a538-9bdada365ccf",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 6,
+      "total_deletions": 1,
+      "accepted_lines": 6,
+      "overriden_lines": 0
+    }
+  }
+}
