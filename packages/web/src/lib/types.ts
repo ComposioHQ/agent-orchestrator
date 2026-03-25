@@ -147,6 +147,10 @@ export interface SSESnapshotEvent {
     activity: ActivityState | null;
     attentionLevel: AttentionLevel;
     lastActivityAt: string;
+    /** Current CI status from GitHub — included when cached PR data is available */
+    prCiStatus?: DashboardPR["ciStatus"] | null;
+    /** Current CI checks from GitHub — included when cached PR data is available */
+    prCiChecks?: DashboardPR["ciChecks"] | null;
   }>;
 }
 

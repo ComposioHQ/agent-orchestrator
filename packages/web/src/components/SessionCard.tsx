@@ -619,38 +619,28 @@ function getAlerts(session: DashboardSession): Alert[] {
 
   const alerts: Alert[] = [];
 
-  // Show CI failure alert when the session status authoritatively says CI is failing
-  // (updated in real-time via SSE) OR when enriched PR data confirms it.
-  // Checking both ensures the button persists even before PR enrichment data is fetched.
-  if (session.status === "ci_failed" || pr.ciStatus === CI_STATUS.FAILING) {
+  // Button visibility is driven solely by GitHub CI data (pr.ciStatus), not by
+  // session lifecycle status. pr.ciStatus is kept current via SSE snapshot patches
+  // (cache-only enrichment on every 5s poll), so the button reflects the actual
+  // GitHub state without waiting for the 15s+ stale full-refresh cycle.
+  if (pr.ciStatus === CI_STATUS.FAILING) {
     const failedCheck = pr.ciChecks.find((c) => c.status === "failed");
     const failCount = pr.ciChecks.filter((c) => c.status === "failed").length;
     if (failCount === 0) {
-      if (session.status === "ci_failed") {
-        // Session status confirms CI is failing — show actionable button even
-        // without specific check details (enrichment may not have run yet).
-        alerts.push({
-          key: "ci-fail",
-          label: "CI failing",
-          className: "",
-          color: "var(--color-alert-ci)",
-          borderColor: "var(--color-alert-ci)",
-          url: pr.url + "/checks",
-          actionLabel: "ask to fix",
-          actionMessage: `Please fix the failing CI checks on ${pr.url}`,
-          actionClassName: "bg-[var(--color-alert-ci-bg)] text-white hover:brightness-110",
-        });
-      } else {
-        // pr.ciStatus says failing but no failed checks found — likely an API
-        // inconsistency; show informational alert without an action button.
-        alerts.push({
-          key: "ci-unknown",
-          label: "CI unknown",
-          className: "",
-          color: "var(--color-alert-ci-unknown)",
-          url: pr.url + "/checks",
-        });
-      }
+      // GitHub reports CI as failing but individual check details aren't available
+      // (API inconsistency or enrichment lag). Still offer the action button since
+      // pr.ciStatus is the authoritative GitHub signal that CI is red.
+      alerts.push({
+        key: "ci-fail",
+        label: "CI failing",
+        className: "",
+        color: "var(--color-alert-ci)",
+        borderColor: "var(--color-alert-ci)",
+        url: pr.url + "/checks",
+        actionLabel: "ask to fix",
+        actionMessage: `Please fix the failing CI checks on ${pr.url}`,
+        actionClassName: "bg-[var(--color-alert-ci-bg)] text-white hover:brightness-110",
+      });
     } else {
       alerts.push({
         key: "ci-fail",
