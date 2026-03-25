@@ -282,7 +282,7 @@ const AGENT_INSTALL_OPTIONS: AgentInstallOption[] = [
   {
     id: "aider",
     label: "Aider",
-    cmd: "pip",
+    cmd: "pipx",
     args: ["install", "aider-chat"],
   },
   {
