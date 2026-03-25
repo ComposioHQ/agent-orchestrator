@@ -1,15 +1,12 @@
 import type { Command } from "commander";
 import chalk from "chalk";
-import { findConfigFile, loadConfig } from "@composio/ao-core";
-import type { Notifier, OrchestratorConfig } from "@composio/ao-core";
+import { findConfigFile, loadConfig, type Notifier, type OrchestratorConfig } from "@composio/ao-core";
 import { runRepoScript } from "../lib/script-runner.js";
 import { probeGateway, validateToken } from "../lib/openclaw-probe.js";
 
 // ---------------------------------------------------------------------------
 // Helpers — match the PASS / WARN / FAIL style of ao-doctor.sh
 // ---------------------------------------------------------------------------
-
-let tsFailures = 0;
 
 function pass(msg: string): void {
   console.log(`${chalk.green("PASS")} ${msg}`);
@@ -19,16 +16,28 @@ function warn(msg: string): void {
   console.log(`${chalk.yellow("WARN")} ${msg}`);
 }
 
-function fail(msg: string): void {
-  tsFailures++;
-  console.log(`${chalk.red("FAIL")} ${msg}`);
+/** Returns a fail() recorder and a count() getter — local per invocation, no shared state. */
+function makeFailCounter(): { fail: (msg: string) => void; count: () => number } {
+  let n = 0;
+  return {
+    fail(msg: string): void {
+      n++;
+      console.log(`${chalk.red("FAIL")} ${msg}`);
+    },
+    count(): number {
+      return n;
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
 // Notifier connectivity checks (Gap 2)
 // ---------------------------------------------------------------------------
 
-async function checkOpenClawNotifier(config: OrchestratorConfig): Promise<void> {
+async function checkOpenClawNotifier(
+  config: OrchestratorConfig,
+  fail: (msg: string) => void,
+): Promise<void> {
   const openclawConfig = config.notifiers?.["openclaw"];
   if (!openclawConfig || openclawConfig.plugin !== "openclaw") {
     warn("OpenClaw notifier is not configured. Fix: run ao setup openclaw");
@@ -71,7 +80,10 @@ async function checkOpenClawNotifier(config: OrchestratorConfig): Promise<void> 
   pass("OpenClaw token is valid");
 }
 
-async function checkNotifierConnectivity(config: OrchestratorConfig): Promise<void> {
+async function checkNotifierConnectivity(
+  config: OrchestratorConfig,
+  fail: (msg: string) => void,
+): Promise<void> {
   console.log(""); // blank line before notifier section
   console.log("Notifier connectivity:");
 
@@ -83,7 +95,7 @@ async function checkNotifierConnectivity(config: OrchestratorConfig): Promise<vo
 
   // Check OpenClaw specifically (it's the only one we can probe without side effects)
   if (config.notifiers?.["openclaw"]) {
-    await checkOpenClawNotifier(config);
+    await checkOpenClawNotifier(config, fail);
   }
 
   // Report other configured notifiers as present (we can't health-check Slack/desktop/webhook without sending)
@@ -98,7 +110,10 @@ async function checkNotifierConnectivity(config: OrchestratorConfig): Promise<vo
 // Test-notify (Gap 3)
 // ---------------------------------------------------------------------------
 
-async function sendTestNotifications(config: OrchestratorConfig): Promise<void> {
+async function sendTestNotifications(
+  config: OrchestratorConfig,
+  fail: (msg: string) => void,
+): Promise<void> {
   const { createPluginRegistry } = await import("@composio/ao-core");
   const registry = createPluginRegistry();
   await registry.loadFromConfig(config);
@@ -155,14 +170,15 @@ export function registerDoctor(program: Command): void {
     .option("--fix", "Apply safe fixes for launcher and stale temp issues")
     .option("--test-notify", "Send a test notification through each configured notifier")
     .action(async (opts: { fix?: boolean; testNotify?: boolean }) => {
-      tsFailures = 0; // reset for each run
+      const { fail, count: failCount } = makeFailCounter();
+
       // 1. Run the existing shell-based checks
       const scriptArgs: string[] = [];
       if (opts.fix) {
         scriptArgs.push("--fix");
       }
 
-      let shellExitCode = 0;
+      let shellExitCode: number;
       try {
         shellExitCode = await runRepoScript("ao-doctor.sh", scriptArgs);
       } catch (err) {
@@ -175,11 +191,11 @@ export function registerDoctor(program: Command): void {
       if (configPath) {
         try {
           const config = loadConfig(configPath);
-          await checkNotifierConnectivity(config);
+          await checkNotifierConnectivity(config, fail);
 
           // 3. Send test notifications if requested
           if (opts.testNotify) {
-            await sendTestNotifications(config);
+            await sendTestNotifications(config, fail);
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
@@ -190,7 +206,7 @@ export function registerDoctor(program: Command): void {
       }
 
       // Exit non-zero if shell checks or notifier checks failed
-      if (shellExitCode !== 0 || tsFailures > 0) {
+      if (shellExitCode !== 0 || failCount() > 0) {
         process.exit(shellExitCode || 1);
       }
     });

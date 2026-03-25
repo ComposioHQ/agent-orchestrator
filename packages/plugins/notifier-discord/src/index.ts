@@ -98,8 +98,14 @@ async function postWithRetry(
   retryDelayMs: number,
 ): Promise<void> {
   let lastError: Error | undefined;
+  // When true, the next iteration skips the standard exponential backoff so we
+  // don't double-delay after already waiting for a 429 Retry-After.
+  let skipNextBackoff = false;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
+    const skipBackoff = skipNextBackoff;
+    skipNextBackoff = false;
+
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
     try {
@@ -112,12 +118,15 @@ async function postWithRetry(
 
       if (response.ok || response.status === 204) return;
 
-      // Handle rate limiting with Retry-After header
+      // Handle rate limiting with Retry-After header.
+      // Mark that the next attempt should skip exponential backoff since we
+      // already waited the server-specified delay.
       if (response.status === 429) {
         const retryAfter = response.headers.get("Retry-After");
         if (retryAfter && attempt < retries) {
           const waitMs = (parseFloat(retryAfter) || 1) * 1000;
           await new Promise((resolve) => setTimeout(resolve, waitMs));
+          skipNextBackoff = true;
           continue;
         }
       }
@@ -135,7 +144,7 @@ async function postWithRetry(
       clearTimeout(timer);
     }
 
-    if (attempt < retries) {
+    if (!skipBackoff && attempt < retries) {
       const delay = retryDelayMs * 2 ** attempt;
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
@@ -189,17 +198,17 @@ export function create(config?: Record<string, unknown>): Notifier {
     },
 
     async notifyWithActions(event: OrchestratorEvent, actions: NotifyAction[]): Promise<void> {
-      if (!webhookUrl) return;
+      if (!effectiveUrl) return;
       const payload = buildPayload([buildEmbed(event, actions)]);
-      await postWithRetry(effectiveUrl!, payload, retries, retryDelayMs);
+      await postWithRetry(effectiveUrl, payload, retries, retryDelayMs);
     },
 
     async post(message: string, _context?: NotifyContext): Promise<string | null> {
-      if (!webhookUrl) return null;
+      if (!effectiveUrl) return null;
       const payload: Record<string, unknown> = { username, content: message };
       if (avatarUrl) payload.avatar_url = avatarUrl;
       // thread_id is already passed as a URL query param via effectiveUrl
-      await postWithRetry(effectiveUrl!, payload, retries, retryDelayMs);
+      await postWithRetry(effectiveUrl, payload, retries, retryDelayMs);
       return null;
     },
   };

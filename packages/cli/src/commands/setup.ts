@@ -13,7 +13,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import chalk from "chalk";
 import type { Command } from "commander";
-import { parse as yamlParse, stringify as yamlStringify, parseDocument } from "yaml";
+import { parse as yamlParse, parseDocument } from "yaml";
 import { findConfigFile } from "@composio/ao-core";
 import {
   probeGateway,
@@ -227,15 +227,17 @@ function writeOpenClawConfig(
 
   // Use parseDocument to preserve YAML comments during round-trip
   const doc = parseDocument(rawYaml);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const rawConfig = (doc.toJS() as Record<string, any>) ?? {};
 
-  // Add notifiers.openclaw block — write actual token, not a placeholder
-  // (AO does not expand env placeholders in YAML at runtime)
+  // Add notifiers.openclaw block — write the env-var placeholder so the raw
+  // token is never committed to version control. ao setup openclaw exports the
+  // real value to the shell profile; runtime reads it via the env var.
   if (!rawConfig.notifiers) rawConfig.notifiers = {};
   rawConfig.notifiers.openclaw = {
     plugin: "openclaw",
     url: resolved.url,
-    token: resolved.token,
+    token: "$" + "{OPENCLAW_HOOKS_TOKEN}", // env-var placeholder, not a JS template
     retries: 3,
     retryDelayMs: 1000,
     wakeMode: "now",

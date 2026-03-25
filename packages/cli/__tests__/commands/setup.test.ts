@@ -115,14 +115,15 @@ describe("setup openclaw command", () => {
         "--non-interactive",
       ]);
 
-      expect(mockWriteFileSync).toHaveBeenCalledOnce();
+      // Code writes YAML config + shell profile export — at least one write
+      expect(mockWriteFileSync).toHaveBeenCalled();
       const writtenYaml = mockWriteFileSync.mock.calls[0][1] as string;
       expect(writtenYaml).toContain("openclaw");
       expect(writtenYaml).toContain("plugin: openclaw");
       expect(writtenYaml).toContain("http://127.0.0.1:18789/hooks/agent");
     });
 
-    it("reads token from OPENCLAW_HOOKS_TOKEN env var", async () => {
+    it("reads token from OPENCLAW_HOOKS_TOKEN env var and skips validation", async () => {
       process.env["OPENCLAW_HOOKS_TOKEN"] = "env-token";
       const program = createProgram();
 
@@ -132,14 +133,12 @@ describe("setup openclaw command", () => {
         "--non-interactive",
       ]);
 
-      expect(mockValidateToken).toHaveBeenCalledWith(
-        "http://127.0.0.1:18789/hooks/agent",
-        "env-token",
-      );
-      expect(mockWriteFileSync).toHaveBeenCalledOnce();
+      // Non-interactive mode skips pre-write validation
+      expect(mockValidateToken).not.toHaveBeenCalled();
+      expect(mockWriteFileSync).toHaveBeenCalled();
     });
 
-    it("reads URL from OPENCLAW_GATEWAY_URL env var", async () => {
+    it("reads URL from OPENCLAW_GATEWAY_URL env var and skips validation", async () => {
       process.env["OPENCLAW_GATEWAY_URL"] = "http://remote:18789";
       const program = createProgram();
 
@@ -149,14 +148,12 @@ describe("setup openclaw command", () => {
         "--non-interactive",
       ]);
 
-      expect(mockValidateToken).toHaveBeenCalledWith(
-        "http://remote:18789/hooks/agent",
-        "tok",
-      );
+      // Non-interactive mode skips pre-write validation
+      expect(mockValidateToken).not.toHaveBeenCalled();
+      expect(mockWriteFileSync).toHaveBeenCalled();
     });
 
-    it("validates token against gateway before saving", async () => {
-      mockValidateToken.mockResolvedValue({ valid: true });
+    it("skips token validation and writes config in non-interactive mode", async () => {
       const program = createProgram();
 
       await program.parseAsync([
@@ -166,11 +163,10 @@ describe("setup openclaw command", () => {
         "--non-interactive",
       ]);
 
-      expect(mockValidateToken).toHaveBeenCalledWith(
-        "http://127.0.0.1:18789/hooks/agent",
-        "good-token",
-      );
-      expect(mockWriteFileSync).toHaveBeenCalledOnce();
+      // Non-interactive setup skips pre-write validation (gateway may not have
+      // the token yet on a fresh install — user restarts gateway after setup)
+      expect(mockValidateToken).not.toHaveBeenCalled();
+      expect(mockWriteFileSync).toHaveBeenCalled();
     });
   });
 

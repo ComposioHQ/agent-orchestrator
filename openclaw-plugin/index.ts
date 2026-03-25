@@ -586,8 +586,8 @@ export default function (api: any) {
         }
       };
 
-      setTimeout(() => checkStatus("Progress check (3 min)"), 3 * 60_000);
-      setTimeout(() => checkStatus("Status update (8 min)"), 8 * 60_000);
+      batchSpawnFollowUpTimeouts.push(setTimeout(() => checkStatus("Progress check (3 min)"), 3 * 60_000));
+      batchSpawnFollowUpTimeouts.push(setTimeout(() => checkStatus("Status update (8 min)"), 8 * 60_000));
 
       api.logger.info("[ao-batch] Scheduled auto follow-ups at 3min and 8min");
 
@@ -894,6 +894,7 @@ export default function (api: any) {
   let healthInterval: ReturnType<typeof setInterval> | null = null;
   let boardScanInterval: ReturnType<typeof setInterval> | null = null;
   let boardScanInitialTimeout: ReturnType<typeof setTimeout> | null = null;
+  const batchSpawnFollowUpTimeouts: ReturnType<typeof setTimeout>[] = [];
   let lastKnownIssueIds: Set<number> = new Set();
   let isFirstBoardScan = true;
 
@@ -916,6 +917,10 @@ export default function (api: any) {
       if (healthInterval) {
         clearInterval(healthInterval);
         healthInterval = null;
+      }
+      // Clear any pending batch-spawn follow-up timeouts
+      for (const t of batchSpawnFollowUpTimeouts.splice(0)) {
+        clearTimeout(t);
       }
     },
   });
