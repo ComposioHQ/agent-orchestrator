@@ -72,7 +72,7 @@ async function acquireLock(timeoutMs = 5000): Promise<() => void> {
   }
 }
 
-export function readState(): RunningState | null {
+function readState(): RunningState | null {
   try {
     const raw = readFileSync(STATE_FILE, "utf-8");
     const state = JSON.parse(raw) as RunningState;
