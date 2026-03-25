@@ -172,4 +172,48 @@ describe("notifier-openclaw", () => {
     await expect(notifier.notify(makeEvent())).rejects.toThrow("OpenClaw webhook failed (401)");
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it("includes channel and to in payload when configured", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const notifier = create({
+      token: "tok",
+      channel: "discord",
+      to: "channel:1486249369291460650",
+    });
+    await notifier.notify(makeEvent());
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.channel).toBe("discord");
+    expect(body.to).toBe("channel:1486249369291460650");
+  });
+
+  it("omits channel and to from payload when not configured", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const notifier = create({ token: "tok" });
+    await notifier.notify(makeEvent());
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body).not.toHaveProperty("channel");
+    expect(body).not.toHaveProperty("to");
+  });
+
+  it("includes channel and to in post payload", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const notifier = create({
+      token: "tok",
+      channel: "telegram",
+      to: "chat:99999",
+    });
+    await notifier.post!("hello", { sessionId: "s1" });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.channel).toBe("telegram");
+    expect(body.to).toBe("chat:99999");
+  });
 });
