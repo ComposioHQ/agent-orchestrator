@@ -853,21 +853,34 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     // This covers lifecycle restarts where metadata already says "mergeable",
     // so the transition-based reaction would otherwise never fire again.
     if (session.pr && newStatus === "mergeable") {
-      const reactionConfig =
-        getReactionConfigForSession(session, "approved-and-green") ??
-        getReactionConfigForSession(session, "mergeable");
-      const transitionHandledMergeReady =
-        transitionReaction?.key === "approved-and-green" && transitionReaction.result?.success;
-      if (transitionHandledMergeReady) {
-        mergeReadyReactionFired.set(session.id, true);
-      }
+      const mergeReadyReaction =
+        getReactionConfigForSession(session, "approved-and-green") != null
+          ? {
+              key: "approved-and-green" as const,
+              config: getReactionConfigForSession(session, "approved-and-green")!,
+            }
+          : getReactionConfigForSession(session, "mergeable") != null
+            ? {
+                key: "mergeable" as const,
+                config: getReactionConfigForSession(session, "mergeable")!,
+              }
+            : null;
+
+      const transitionAttemptedMergeReady =
+        transitionReaction?.key === "approved-and-green" || transitionReaction?.key === "mergeable";
       const alreadyFired = mergeReadyReactionFired.get(session.id) === true;
-      if (reactionConfig && reactionConfig.auto !== false && !alreadyFired) {
+
+      if (
+        mergeReadyReaction &&
+        mergeReadyReaction.config.auto !== false &&
+        !alreadyFired &&
+        !transitionAttemptedMergeReady
+      ) {
         const result = await executeReaction(
           session.id,
           session.projectId,
-          "approved-and-green",
-          reactionConfig,
+          mergeReadyReaction.key,
+          mergeReadyReaction.config,
         );
         if (result.success) {
           mergeReadyReactionFired.set(session.id, true);
