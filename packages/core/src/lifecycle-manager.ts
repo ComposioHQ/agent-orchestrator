@@ -364,6 +364,20 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     return session.status;
   }
 
+  /** Fallback messages for send-to-agent reactions that omit a message field. */
+  const SEND_TO_AGENT_FALLBACKS: Record<string, string> = {
+    "ci-failed":
+      "CI is failing on your PR. Run `gh pr checks` to see the failures, fix them, and push.",
+    "changes-requested":
+      "There are review comments on your PR. Check with `gh pr view --comments` and `gh api` for inline comments. Address each one, push fixes, and reply.",
+    "bugbot-comments":
+      "Automated review comments found on your PR. Fix the issues flagged by the bot.",
+    "merge-conflicts":
+      "Your branch has merge conflicts. Rebase on the default branch and resolve them.",
+    "agent-idle":
+      "You appear to be idle. If your task is not complete, continue working — write the code, commit, push, and create a PR. If you are blocked, explain what is blocking you.",
+  };
+
   /** Execute a reaction for a session. */
   async function executeReaction(
     sessionId: SessionId,
@@ -424,19 +438,31 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     switch (action) {
       case "send-to-agent": {
-        if (reactionConfig.message) {
+        const message = reactionConfig.message ?? SEND_TO_AGENT_FALLBACKS[reactionKey];
+        if (message) {
           try {
-            await sessionManager.send(sessionId, reactionConfig.message);
+            await sessionManager.send(sessionId, message);
 
             return {
               reactionType: reactionKey,
               success: true,
               action: "send-to-agent",
-              message: reactionConfig.message,
+              message,
               escalated: false,
             };
           } catch {
             // Send failed — allow retry on next poll cycle (don't escalate immediately)
+            observer.recordOperation({
+              metric: "lifecycle_poll",
+              operation: "reaction.execute",
+              outcome: "failure",
+              correlationId: createCorrelationId("reaction"),
+              projectId,
+              sessionId,
+              reason: "send-to-agent delivery failed",
+              data: { reactionKey },
+              level: "warn",
+            });
             return {
               reactionType: reactionKey,
               success: false,
@@ -445,6 +471,18 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             };
           }
         }
+        // No message and no fallback — log and return failure
+        observer.recordOperation({
+          metric: "lifecycle_poll",
+          operation: "reaction.execute",
+          outcome: "failure",
+          correlationId: createCorrelationId("reaction"),
+          projectId,
+          sessionId,
+          reason: "send-to-agent reaction has no message and no fallback",
+          data: { reactionKey },
+          level: "warn",
+        });
         break;
       }
 
@@ -760,11 +798,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
                 reactionConfig,
               );
               transitionReaction = { key: reactionKey, result: reactionResult };
-              // Reaction is handling this event — suppress immediate human notification.
-              // "send-to-agent" retries + escalates on its own; "notify"/"auto-merge"
-              // already call notifyHuman internally. Notifying here would bypass the
-              // delayed escalation behaviour configured via retries/escalateAfter.
-              reactionHandledNotify = true;
+              // Suppress immediate human notification only when the reaction succeeded.
+              // On failure (e.g. send-to-agent with no reachable agent), fall through
+              // to notify humans so the event isn't silently lost.
+              // "notify"/"auto-merge" always return success:true and call notifyHuman
+              // internally, so they're unaffected by this change.
+              reactionHandledNotify = reactionResult.success;
             }
           }
         }
