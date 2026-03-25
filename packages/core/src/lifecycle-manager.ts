@@ -37,6 +37,7 @@ import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
 import { createCorrelationId, createProjectObserver } from "./observability.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
+import { DEFAULT_SEND_TO_AGENT_MESSAGES } from "./config.js";
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
@@ -364,20 +365,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     return session.status;
   }
 
-  /** Fallback messages for send-to-agent reactions that omit a message field. */
-  const SEND_TO_AGENT_FALLBACKS: Record<string, string> = {
-    "ci-failed":
-      "CI is failing on your PR. Run `gh pr checks` to see the failures, fix them, and push.",
-    "changes-requested":
-      "There are review comments on your PR. Check with `gh pr view --comments` and `gh api` for inline comments. Address each one, push fixes, and reply.",
-    "bugbot-comments":
-      "Automated review comments found on your PR. Fix the issues flagged by the bot.",
-    "merge-conflicts":
-      "Your branch has merge conflicts. Rebase on the default branch and resolve them.",
-    "agent-idle":
-      "You appear to be idle. If your task is not complete, continue working — write the code, commit, push, and create a PR. If you are blocked, explain what is blocking you.",
-  };
-
   /** Execute a reaction for a session. */
   async function executeReaction(
     sessionId: SessionId,
@@ -438,7 +425,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     switch (action) {
       case "send-to-agent": {
-        const message = reactionConfig.message ?? SEND_TO_AGENT_FALLBACKS[reactionKey];
+        const message = reactionConfig.message ?? DEFAULT_SEND_TO_AGENT_MESSAGES[reactionKey];
         if (message) {
           try {
             await sessionManager.send(sessionId, message);
