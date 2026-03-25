@@ -213,6 +213,78 @@ describe("sessionToDashboard", () => {
 
     expect(dashboard.pr).toBeNull();
   });
+
+  it("should expose empty notificationState when no notifier metadata exists", () => {
+    const coreSession = createCoreSession();
+    const dashboard = sessionToDashboard(coreSession);
+
+    expect(dashboard.notificationState).toEqual({
+      status: "ok",
+      failingNotifiers: [],
+      notifiers: [],
+    });
+  });
+
+  it("should derive notificationState from flat notifier metadata", () => {
+    const coreSession = createCoreSession({
+      metadata: {
+        "notifier.openclaw.status": "warn",
+        "notifier.openclaw.consecutiveFailures": "2",
+        "notifier.openclaw.lastFailureAt": "2026-03-24T10:00:00.000Z",
+        "notifier.openclaw.lastFailureReason": "401 Unauthorized",
+        "notifier.openclaw.lastEventType": "merge.completed",
+        "notifier.openclaw.lastPriority": "action",
+        "notifier.desktop.status": "ok",
+        "notifier.desktop.consecutiveFailures": "0",
+        "notifier.desktop.lastSuccessAt": "2026-03-24T10:05:00.000Z",
+      },
+    });
+
+    const dashboard = sessionToDashboard(coreSession);
+
+    expect(dashboard.notificationState).toEqual({
+      status: "warn",
+      failingNotifiers: ["openclaw"],
+      notifiers: [
+        {
+          name: "desktop",
+          status: "ok",
+          consecutiveFailures: 0,
+          lastFailureAt: null,
+          lastFailureReason: null,
+          lastSuccessAt: "2026-03-24T10:05:00.000Z",
+          lastEventType: null,
+          lastPriority: null,
+        },
+        {
+          name: "openclaw",
+          status: "warn",
+          consecutiveFailures: 2,
+          lastFailureAt: "2026-03-24T10:00:00.000Z",
+          lastFailureReason: "401 Unauthorized",
+          lastSuccessAt: null,
+          lastEventType: "merge.completed",
+          lastPriority: "action",
+        },
+      ],
+    });
+  });
+
+  it("should ignore unknown notifier metadata fields without creating a notifier entry", () => {
+    const coreSession = createCoreSession({
+      metadata: {
+        "notifier.openclaw.lastAttemptAt": "2026-03-24T10:00:00.000Z",
+      },
+    });
+
+    const dashboard = sessionToDashboard(coreSession);
+
+    expect(dashboard.notificationState).toEqual({
+      status: "ok",
+      failingNotifiers: [],
+      notifiers: [],
+    });
+  });
 });
 
 describe("resolveProject", () => {
@@ -405,6 +477,7 @@ describe("enrichSessionPR", () => {
       createdAt: new Date().toISOString(),
       lastActivityAt: new Date().toISOString(),
       pr: null,
+      notificationState: { status: "ok", failingNotifiers: [], notifiers: [] },
       metadata: {},
     };
     const pr = createPRInfo();

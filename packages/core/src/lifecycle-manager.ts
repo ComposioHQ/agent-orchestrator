@@ -528,6 +528,67 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     session.metadata = cleaned;
   }
 
+  function notifierMetadataKey(notifierName: string, field: string): string {
+    return `notifier.${notifierName}.${field}`;
+  }
+
+  function recordNotifierOutcome(
+    projectId: string,
+    session: Session | null,
+    notifierName: string,
+    event: OrchestratorEvent,
+    priority: EventPriority,
+    outcome: "success" | "failure",
+    error?: unknown,
+  ): void {
+    const correlationId = createCorrelationId("notifier");
+    const timestamp = new Date().toISOString();
+    const reason =
+      outcome === "failure"
+        ? error instanceof Error
+          ? error.message
+          : String(error)
+        : undefined;
+
+    observer.recordOperation({
+      metric: "notification",
+      operation: "notifier.notify",
+      outcome,
+      correlationId,
+      projectId,
+      sessionId: event.sessionId,
+      reason,
+      data: {
+        notifier: notifierName,
+        eventType: event.type,
+        priority,
+      },
+      level: outcome === "failure" ? "error" : "info",
+    });
+
+    if (!session) {
+      return;
+    }
+
+    const currentFailures = Number.parseInt(
+      session.metadata[notifierMetadataKey(notifierName, "consecutiveFailures")] ?? "0",
+      10,
+    );
+
+    updateSessionMetadata(session, {
+      [notifierMetadataKey(notifierName, "status")]: outcome === "failure" ? "warn" : "ok",
+      [notifierMetadataKey(notifierName, "lastEventType")]: event.type,
+      [notifierMetadataKey(notifierName, "lastPriority")]: priority,
+      [notifierMetadataKey(notifierName, "consecutiveFailures")]:
+        outcome === "failure" ? String(currentFailures + 1) : "0",
+      [notifierMetadataKey(notifierName, "lastFailureAt")]: outcome === "failure" ? timestamp : "",
+      [notifierMetadataKey(notifierName, "lastFailureReason")]: outcome === "failure" ? reason! : "",
+      ...(outcome === "success"
+        ? { [notifierMetadataKey(notifierName, "lastSuccessAt")]: timestamp }
+        : {}),
+    });
+  }
+
   function makeFingerprint(ids: string[]): string {
     return [...ids].sort().join(",");
   }
@@ -690,12 +751,18 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     for (const name of notifierNames) {
       const notifier = registry.get<Notifier>("notifier", name);
-      if (notifier) {
-        try {
-          await notifier.notify(eventWithPriority);
-        } catch {
-          // Notifier failed — not much we can do
-        }
+      if (!notifier) {
+        // Known limitation: missing/unloaded configured notifiers are still silent.
+        // Track separately rather than widening this PR's notifier outcome scope.
+        continue;
+      }
+      try {
+        await notifier.notify(eventWithPriority);
+        const session = await sessionManager.get(event.sessionId).catch(() => null);
+        recordNotifierOutcome(event.projectId, session, name, eventWithPriority, priority, "success");
+      } catch (error) {
+        const session = await sessionManager.get(event.sessionId).catch(() => null);
+        recordNotifierOutcome(event.projectId, session, name, eventWithPriority, priority, "failure", error);
       }
     }
   }

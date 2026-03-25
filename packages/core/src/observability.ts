@@ -20,6 +20,7 @@ export type ObservabilityMetricName =
   | "cleanup"
   | "kill"
   | "lifecycle_poll"
+  | "notification"
   | "restore"
   | "send"
   | "spawn"
@@ -375,7 +376,7 @@ export function createProjectObserver(
             .sort((a, b) => compareIsoDesc(a.timestamp, b.timestamp))
             .slice(0, TRACE_LIMIT);
 
-          if (input.sessionId) {
+          if (input.sessionId && operation.startsWith("session.")) {
             snapshot.sessions[input.sessionId] = {
               sessionId: input.sessionId,
               projectId: input.projectId,

@@ -79,6 +79,18 @@ describe("observability snapshot", () => {
       level: "error",
     });
 
+    observer.recordOperation({
+      metric: "notification",
+      operation: "notifier.notify",
+      outcome: "failure",
+      correlationId: "corr-2b",
+      projectId: "my-app",
+      sessionId: "app-1",
+      reason: "OpenClaw unavailable",
+      data: { notifier: "openclaw", eventType: "merge.completed", priority: "action" },
+      level: "error",
+    });
+
     observer.setHealth({
       surface: "lifecycle.worker",
       status: "warn",
@@ -95,8 +107,18 @@ describe("observability snapshot", () => {
     expect(project.metrics["spawn"]?.total).toBe(1);
     expect(project.metrics["spawn"]?.success).toBe(1);
     expect(project.metrics["send"]?.failure).toBe(1);
+    expect(project.metrics["notification"]?.failure).toBe(1);
     expect(project.sessions["app-1"]?.operation).toBe("session.send");
     expect(project.recentTraces.some((trace) => trace.operation === "session.spawn")).toBe(true);
+    expect(
+      project.recentTraces.some(
+        (trace) =>
+          trace.operation === "notifier.notify" &&
+          trace.sessionId === "app-1" &&
+          trace.reason === "OpenClaw unavailable" &&
+          trace.data?.["notifier"] === "openclaw",
+      ),
+    ).toBe(true);
     expect(project.health["lifecycle.worker"]?.status).toBe("warn");
     expect(summary.overallStatus).toBe("warn");
   });
