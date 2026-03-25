@@ -114,14 +114,18 @@ export function registerLifecycleWorker(program: Command): void {
         shutdown(1);
       });
 
+      // Capture the dashboard parent PID at startup so we don't accidentally
+      // kill a different AO instance that overwrote running.json later.
+      const startupState = readState();
+      const dashboardPid = startupState?.pid ?? null;
+
       lifecycle = await getLifecycleManager(config, projectId, {
         onAllSessionsKilled: () => {
           // Runtime server died — kill the dashboard parent process so it
           // doesn't hold the port as an orphan.
-          const state = readState();
-          if (state && isProcessAlive(state.pid)) {
+          if (dashboardPid !== null && isProcessAlive(dashboardPid)) {
             try {
-              process.kill(state.pid, "SIGTERM");
+              process.kill(dashboardPid, "SIGTERM");
             } catch {
               // Already dead
             }
