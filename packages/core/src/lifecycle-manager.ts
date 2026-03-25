@@ -818,8 +818,9 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       // Poll all sessions concurrently
       const checkResults = await Promise.allSettled(sessionsToCheck.map((s) => checkSession(s)));
 
-      // Detect runtime server death: all active sessions killed in a single cycle
-      if (onAllSessionsKilled && sessionsToCheck.length > 0) {
+      // Detect runtime server death: all active sessions killed in a single cycle.
+      // Require > 1 session to avoid false positives from a single agent crash.
+      if (onAllSessionsKilled && sessionsToCheck.length > 1) {
         const killedThisCycle = checkResults.filter(
           (r) => r.status === "fulfilled" && r.value === true,
         ).length;

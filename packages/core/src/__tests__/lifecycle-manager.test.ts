@@ -1564,4 +1564,37 @@ describe("runtime server death detection", () => {
 
     expect(onAllSessionsKilled).not.toHaveBeenCalled();
   });
+
+  it("does not call onAllSessionsKilled when a single session dies", async () => {
+    vi.mocked(mockRuntime.isAlive).mockRejectedValue(new Error("no server running"));
+
+    const session = makeSession({ id: "app-1", status: "working" });
+    vi.mocked(mockSessionManager.list).mockResolvedValue([session]);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+    });
+
+    const onAllSessionsKilled = vi.fn();
+
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+      projectId: "my-app",
+      onAllSessionsKilled,
+    });
+
+    lm.start(999_999);
+    // Wait for the poll to process
+    await new Promise((r) => setTimeout(r, 200));
+    lm.stop();
+
+    // Single session death should NOT trigger server crash detection
+    expect(onAllSessionsKilled).not.toHaveBeenCalled();
+    expect(lm.getStates().get("app-1")).toBe("killed");
+  });
 });
