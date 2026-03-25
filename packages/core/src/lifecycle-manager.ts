@@ -854,12 +854,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     // so the transition-based reaction would otherwise never fire again.
     if (session.pr && newStatus === "mergeable") {
       const mergeReadyReaction =
-        getReactionConfigForSession(session, "approved-and-green") != null
+        getReactionConfigForSession(session, "approved-and-green") !== null
           ? {
               key: "approved-and-green" as const,
               config: getReactionConfigForSession(session, "approved-and-green")!,
             }
-          : getReactionConfigForSession(session, "mergeable") != null
+          : getReactionConfigForSession(session, "mergeable") !== null
             ? {
                 key: "mergeable" as const,
                 config: getReactionConfigForSession(session, "mergeable")!,
