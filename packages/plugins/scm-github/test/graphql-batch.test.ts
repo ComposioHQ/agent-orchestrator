@@ -1,5 +1,10 @@
 /**
  * Unit tests for GraphQL batch PR enrichment.
+ *
+ * Note: The GraphQL batch query was optimized to use only the top-level
+ * statusCheckRollup.state field instead of fetching individual contexts.
+ * This reduces GraphQL API cost from ~50 points to ~10 points per PR while
+ * providing the same semantic information for CI status determination.
  */
 
 import { describe, it, expect } from "vitest";
