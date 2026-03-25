@@ -7,7 +7,7 @@ import {
   getLifecycleWorkerStatus,
   writeLifecycleWorkerPid,
 } from "../lib/lifecycle-service.js";
-import { readState, isProcessAlive } from "../lib/running-state.js";
+import { isProcessAlive } from "../lib/running-state.js";
 
 function parseInterval(value: string): number {
   const parsed = Number.parseInt(value, 10);
@@ -114,10 +114,11 @@ export function registerLifecycleWorker(program: Command): void {
         shutdown(1);
       });
 
-      // Capture the dashboard parent PID at startup so we don't accidentally
-      // kill a different AO instance that overwrote running.json later.
-      const startupState = readState();
-      const dashboardPid = startupState?.pid ?? null;
+      // Read the parent (ao start) PID from env — set by ensureLifecycleWorker().
+      // This is more reliable than reading running.json which may not exist yet
+      // at worker startup (register() runs after runStartup() returns).
+      const rawParentPid = process.env["AO_PARENT_PID"];
+      const dashboardPid = rawParentPid ? Number.parseInt(rawParentPid, 10) : null;
 
       lifecycle = await getLifecycleManager(config, projectId, {
         onAllSessionsKilled: () => {

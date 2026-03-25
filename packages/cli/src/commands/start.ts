@@ -47,7 +47,7 @@ import {
 } from "../lib/web-dir.js";
 import { cleanNextCache } from "../lib/dashboard-rebuild.js";
 import { preflight } from "../lib/preflight.js";
-import { register, unregister, isAlreadyRunning, getRunning, waitForExit, readState, isProcessAlive } from "../lib/running-state.js";
+import { register, unregister, isAlreadyRunning, getRunning, waitForExit } from "../lib/running-state.js";
 import { isHumanCaller } from "../lib/caller-context.js";
 import { detectEnvironment } from "../lib/detect-env.js";
 import { detectAgentRuntime } from "../lib/detect-agent.js";
@@ -517,18 +517,16 @@ async function runStartup(
   // Start dashboard (unless --no-dashboard)
   if (opts?.dashboard !== false) {
     if (!(await isPortAvailable(port))) {
-      // Check if the port is held by an orphaned dashboard from a crashed AO instance
-      const staleState = readState();
-      if (staleState && staleState.port === port && !isProcessAlive(staleState.pid)) {
-        console.log(chalk.yellow(`Cleaning up orphaned dashboard on port ${port}...`));
-        try {
-          await stopDashboard(port);
-          await unregister();
-          // Wait briefly for port to free up
-          await new Promise((r) => setTimeout(r, 500));
-        } catch {
-          // Best effort — fall through to port scan
-        }
+      // Port is busy — attempt to stop an orphaned dashboard from a previous
+      // crashed AO instance. This uses lsof to find and kill processes on the
+      // port. Safe here because the user explicitly chose this port for AO.
+      console.log(chalk.yellow(`Port ${port} is busy — attempting cleanup...`));
+      try {
+        await stopDashboard(port);
+        // Wait briefly for port to free up
+        await new Promise((r) => setTimeout(r, 500));
+      } catch {
+        // Best effort — fall through to port scan
       }
     }
 
