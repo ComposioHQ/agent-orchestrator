@@ -162,6 +162,7 @@ export function registerSpawn(program: Command): void {
     .argument("[first]", "Issue identifier (project is auto-detected)")
     .argument("[second]", "", /* hidden second arg to catch old two-arg usage */)
     .option("--open", "Open session in terminal tab")
+    .option("--project <id>", "Override project ID (default: auto-detected)")
     .option("--agent <name>", "Override the agent plugin (e.g. codex, claude-code)")
     .option("--claim-pr <pr>", "Immediately claim an existing PR for the spawned session")
     .option("--assign-on-github", "Assign the claimed PR to the authenticated GitHub user")
@@ -173,6 +174,7 @@ export function registerSpawn(program: Command): void {
         second: string | undefined,
         opts: {
           open?: boolean;
+          project?: string;
           agent?: string;
           claimPr?: string;
           assignOnGithub?: boolean;
@@ -199,14 +201,20 @@ export function registerSpawn(program: Command): void {
 
         if (first) {
           issueId = first;
-          try {
-            projectId = autoDetectProject(config);
-          } catch (err) {
-            console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+        }
+
+        // --project flag takes highest priority over auto-detection
+        if (opts.project) {
+          if (!config.projects[opts.project]) {
+            console.error(
+              chalk.red(
+                `Unknown project: ${opts.project}\nAvailable: ${Object.keys(config.projects).join(", ")}`,
+              ),
+            );
             process.exit(1);
           }
+          projectId = opts.project;
         } else {
-          // No args: auto-detect project, no issue
           try {
             projectId = autoDetectProject(config);
           } catch (err) {
@@ -296,24 +304,29 @@ export function registerBatchSpawn(program: Command): void {
     .description("Spawn sessions for multiple issues with duplicate detection")
     .argument("<issues...>", "Issue identifiers (project is auto-detected)")
     .option("--open", "Open sessions in terminal tabs")
-    .action(async (issues: string[], opts: { open?: boolean }) => {
+    .option("--project <id>", "Override project ID (default: auto-detected)")
+    .action(async (issues: string[], opts: { open?: boolean; project?: string }) => {
       const config = loadConfig();
       let projectId: string;
 
-      try {
-        projectId = autoDetectProject(config);
-      } catch (err) {
-        console.error(chalk.red(err instanceof Error ? err.message : String(err)));
-        process.exit(1);
-      }
-
-      if (!config.projects[projectId]) {
-        console.error(
-          chalk.red(
-            `Unknown project: ${projectId}\nAvailable: ${Object.keys(config.projects).join(", ")}`,
-          ),
-        );
-        process.exit(1);
+      // --project flag takes highest priority over auto-detection
+      if (opts.project) {
+        if (!config.projects[opts.project]) {
+          console.error(
+            chalk.red(
+              `Unknown project: ${opts.project}\nAvailable: ${Object.keys(config.projects).join(", ")}`,
+            ),
+          );
+          process.exit(1);
+        }
+        projectId = opts.project;
+      } else {
+        try {
+          projectId = autoDetectProject(config);
+        } catch (err) {
+          console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+          process.exit(1);
+        }
       }
 
       console.log(banner("BATCH SESSION SPAWNER"));

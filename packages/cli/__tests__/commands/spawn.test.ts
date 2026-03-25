@@ -478,6 +478,123 @@ describe("spawn command", () => {
   });
 });
 
+describe("spawn --project flag", () => {
+  it("uses --project flag to override auto-detection", async () => {
+    // Add a second project so auto-detection would fail without --project
+    (mockConfigRef.current as Record<string, unknown>).projects = {
+      "my-app": {
+        name: "My App",
+        repo: "org/my-app",
+        path: join(tmpDir, "main-repo"),
+        defaultBranch: "main",
+        sessionPrefix: "app",
+      },
+      "other-app": {
+        name: "Other App",
+        repo: "org/other-app",
+        path: join(tmpDir, "other-repo"),
+        defaultBranch: "main",
+        sessionPrefix: "other",
+      },
+    };
+
+    const fakeSession: Session = {
+      id: "other-1",
+      projectId: "other-app",
+      status: "spawning",
+      activity: null,
+      branch: "feat/INT-200",
+      issueId: "INT-200",
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "hash-other-1", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+
+    await program.parseAsync(["node", "test", "spawn", "--project", "other-app", "INT-200"]);
+
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith({
+      projectId: "other-app",
+      issueId: "INT-200",
+    });
+  });
+
+  it("errors with clear message when --project ID does not exist in config", async () => {
+    await expect(
+      program.parseAsync(["node", "test", "spawn", "--project", "nonexistent"]),
+    ).rejects.toThrow("process.exit(1)");
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => String(c[0]))
+      .join("\n");
+    expect(errors).toContain("Unknown project: nonexistent");
+    expect(errors).toContain("my-app");
+    expect(mockSessionManager.spawn).not.toHaveBeenCalled();
+  });
+
+  it("--project flag takes priority over AO_PROJECT_ID env var", async () => {
+    // Add a second project
+    (mockConfigRef.current as Record<string, unknown>).projects = {
+      "my-app": {
+        name: "My App",
+        repo: "org/my-app",
+        path: join(tmpDir, "main-repo"),
+        defaultBranch: "main",
+        sessionPrefix: "app",
+      },
+      "other-app": {
+        name: "Other App",
+        repo: "org/other-app",
+        path: join(tmpDir, "other-repo"),
+        defaultBranch: "main",
+        sessionPrefix: "other",
+      },
+    };
+
+    const originalEnv = process.env.AO_PROJECT_ID;
+    process.env.AO_PROJECT_ID = "my-app";
+
+    const fakeSession: Session = {
+      id: "other-1",
+      projectId: "other-app",
+      status: "spawning",
+      activity: null,
+      branch: null,
+      issueId: null,
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "hash-other-1", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+
+    try {
+      await program.parseAsync(["node", "test", "spawn", "--project", "other-app"]);
+    } finally {
+      if (originalEnv === undefined) {
+        delete process.env.AO_PROJECT_ID;
+      } else {
+        process.env.AO_PROJECT_ID = originalEnv;
+      }
+    }
+
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith({
+      projectId: "other-app",
+      issueId: undefined,
+    });
+  });
+});
+
 describe("spawn pre-flight checks", () => {
   it("fails with clear error when tmux is not installed (default runtime)", async () => {
     mockExec.mockRejectedValue(new Error("ENOENT"));
