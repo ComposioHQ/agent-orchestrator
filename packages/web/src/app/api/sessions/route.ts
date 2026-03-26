@@ -66,6 +66,7 @@ export async function GET(request: Request) {
         {
           orchestratorId,
           orchestrators,
+          sessions: [],
         },
         { status: 200 },
         correlationId,
