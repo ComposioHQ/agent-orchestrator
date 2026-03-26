@@ -17,7 +17,6 @@ import { AttentionZone } from "./AttentionZone";
 import { PRTableRow } from "./PRStatus";
 import { DynamicFavicon } from "./DynamicFavicon";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
-import { ProjectSidebar } from "./ProjectSidebar";
 import { ThemeToggle } from "./ThemeToggle";
 import type { ProjectInfo } from "@/lib/project-name";
 import { EmptyState } from "./Skeleton";
@@ -69,9 +68,7 @@ export function Dashboard({
     useState<DashboardOrchestratorLink[]>(orchestratorLinks);
   const [spawningProjectIds, setSpawningProjectIds] = useState<string[]>([]);
   const [spawnErrors, setSpawnErrors] = useState<Record<string, string>>({});
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const showSidebar = projects.length > 1;
-  const allProjectsView = showSidebar && projectId === undefined;
+  const allProjectsView = projects.length > 1 && projectId === undefined;
 
   const displaySessions = useMemo(() => {
     if (allProjectsView || !activeSessionId) return sessions;
@@ -258,18 +255,7 @@ export function Dashboard({
   }, [globalPause?.pausedUntil, globalPause?.reason, globalPause?.sourceSessionId]);
 
   return (
-    <div className="dashboard-shell flex h-screen">
-      {showSidebar && (
-        <ProjectSidebar
-          projects={projects}
-          sessions={sessions}
-          activeProjectId={projectId}
-          activeSessionId={activeSessionId}
-          collapsed={sidebarCollapsed}
-          onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
-        />
-      )}
-      <div className="dashboard-main flex-1 overflow-y-auto px-4 py-4 md:px-7 md:py-6">
+    <div className="dashboard-main h-screen overflow-y-auto px-4 py-4 md:px-7 md:py-6">
         <DynamicFavicon sessions={sessions} projectName={projectName} />
         <section className="dashboard-hero mb-5">
           <div className="dashboard-hero__backdrop" />
@@ -448,7 +434,6 @@ export function Dashboard({
             </div>
           </div>
         )}
-      </div>
     </div>
   );
 }

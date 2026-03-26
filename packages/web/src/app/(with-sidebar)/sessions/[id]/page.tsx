@@ -11,14 +11,12 @@ function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + "..." : s;
 }
 
-/** Build a descriptive tab title from session data. */
 function buildSessionTitle(session: DashboardSession): string {
   const id = session.id;
   const emoji = session.activity ? (activityIcon[session.activity] ?? "") : "";
   const isOrchestrator = isOrchestratorSession(session);
 
   let detail: string;
-
   if (isOrchestrator) {
     detail = "Orchestrator Terminal";
   } else if (session.pr) {
@@ -52,7 +50,6 @@ export default function SessionPage() {
   const sessionProjectId = session?.projectId ?? null;
   const sessionIsOrchestrator = session ? isOrchestratorSession(session) : false;
 
-  // Update document title based on session data
   useEffect(() => {
     if (session) {
       document.title = buildSessionTitle(session);
@@ -61,7 +58,6 @@ export default function SessionPage() {
     }
   }, [session, id]);
 
-  // Fetch session data (memoized to avoid recreating on every render)
   const fetchSession = useCallback(async () => {
     try {
       const res = await fetch(`/api/sessions/${encodeURIComponent(id)}`);
@@ -108,26 +104,25 @@ export default function SessionPage() {
     }
   }, [sessionIsOrchestrator, sessionProjectId]);
 
-  // Initial fetch — session first, zone counts after (avoids blocking on slow /api/sessions)
   useEffect(() => {
-    fetchSession();
-    // Delay zone counts so the heavy /api/sessions call doesn't contend with session load
-    const t = setTimeout(fetchZoneCounts, 2000);
+    void fetchSession();
+    const t = setTimeout(() => {
+      void fetchZoneCounts();
+    }, 2000);
     return () => clearTimeout(t);
   }, [fetchSession, fetchZoneCounts]);
 
-  // Poll every 5s
   useEffect(() => {
     const interval = setInterval(() => {
-      fetchSession();
-      fetchZoneCounts();
+      void fetchSession();
+      void fetchZoneCounts();
     }, 5000);
     return () => clearInterval(interval);
   }, [fetchSession, fetchZoneCounts]);
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[var(--color-bg-base)]">
+      <div className="flex h-full items-center justify-center bg-[var(--color-bg-base)]">
         <div className="text-[13px] text-[var(--color-text-tertiary)]">Loading session…</div>
       </div>
     );
@@ -135,7 +130,7 @@ export default function SessionPage() {
 
   if (error || !session) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[var(--color-bg-base)]">
+      <div className="flex h-full flex-col items-center justify-center gap-4 bg-[var(--color-bg-base)]">
         <div className="text-[13px] text-[var(--color-status-error)]">
           {error ?? "Session not found"}
         </div>

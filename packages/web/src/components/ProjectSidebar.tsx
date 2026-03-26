@@ -99,6 +99,15 @@ function ProjectSidebarInner({
 }: ProjectSidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
+  const routeSessionId = useMemo(() => {
+    const matchShort = pathname.match(/^\/s\/([^/]+)$/);
+    if (matchShort?.[1]) return decodeURIComponent(matchShort[1]);
+    const matchLong = pathname.match(/^\/sessions\/([^/]+)$/);
+    if (matchLong?.[1]) return decodeURIComponent(matchLong[1]);
+    return undefined;
+  }, [pathname]);
+  const effectiveActiveSessionId = routeSessionId ?? activeSessionId;
+  const shellPath = pathname.startsWith("/s/") || pathname.startsWith("/sessions/") ? "/" : pathname;
 
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(
     () => new Set(activeProjectId && activeProjectId !== "all" ? [activeProjectId] : []),
@@ -124,7 +133,7 @@ function ProjectSidebarInner({
 
   const handleProjectHeaderClick = (projectId: string) => {
     toggleExpand(projectId);
-    router.push(pathname + `?project=${encodeURIComponent(projectId)}`);
+    router.push(`${shellPath}?project=${encodeURIComponent(projectId)}`);
   };
 
   const sessionsByProject = useMemo(() => {
@@ -157,34 +166,63 @@ function ProjectSidebarInner({
   if (collapsed) {
     return (
       <aside className="project-sidebar project-sidebar--collapsed flex h-full w-[56px] flex-col items-center py-3">
-        <div className="flex flex-1 flex-col items-center gap-2">
+        <div className="flex flex-1 flex-col items-center gap-3 overflow-y-auto">
           {projects.map((project) => {
             const entry = sessionsByProject.map.get(project.id);
             const health = entry ? computeProjectHealth(entry.all) : ("gray" as ProjectHealth);
             const isActive = activeProjectId === project.id;
             const initial = project.name.charAt(0).toUpperCase();
+            const workerSessions = entry?.workers.filter((s) => getAttentionLevel(s) !== "done") ?? [];
             return (
-              <button
-                key={project.id}
-                type="button"
-                onClick={() => router.push(pathname + `?project=${encodeURIComponent(project.id)}`)}
-                className={cn(
-                  "project-sidebar__collapsed-project",
-                  isActive && "project-sidebar__collapsed-project--active",
-                )}
-                title={project.name}
-              >
-                <span className="project-sidebar__avatar">{initial}</span>
-                {health !== "gray" && (
-                  <span
-                    className={cn(
-                      "project-sidebar__health-indicator",
-                      health === "red" && "animate-[activity-pulse_2s_ease-in-out_infinite]",
+              <div key={project.id} className="flex flex-col items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => router.push(`${shellPath}?project=${encodeURIComponent(project.id)}`)}
+                  className={cn(
+                    "project-sidebar__collapsed-project",
+                    isActive && "project-sidebar__collapsed-project--active",
+                  )}
+                  title={project.name}
+                >
+                  <span className="project-sidebar__avatar">{initial}</span>
+                  {health !== "gray" && (
+                    <span
+                      className={cn(
+                        "project-sidebar__health-indicator",
+                        health === "red" && "animate-[activity-pulse_2s_ease-in-out_infinite]",
+                      )}
+                      style={{ background: healthDotColor[health] }}
+                    />
+                  )}
+                </button>
+                {workerSessions.length > 0 && (
+                  <div className="project-sidebar__collapsed-sessions">
+                    {workerSessions.slice(0, 5).map((session) => {
+                      const level = getAttentionLevel(session);
+                      const isSessionActive = effectiveActiveSessionId === session.id;
+                      return (
+                        <button
+                          key={session.id}
+                          type="button"
+                          onClick={() => router.push(`/sessions/${encodeURIComponent(session.id)}?project=${encodeURIComponent(project.id)}`)}
+                          className={cn(
+                            "project-sidebar__collapsed-session-dot",
+                            isSessionActive && "project-sidebar__collapsed-session-dot--active",
+                            level === "respond" && "animate-[activity-pulse_2s_ease-in-out_infinite]",
+                          )}
+                          style={{ background: sessionDotColor[level] }}
+                          title={`${getSessionTitle(session)} (${sessionToneLabel[level]})`}
+                        />
+                      );
+                    })}
+                    {workerSessions.length > 5 && (
+                      <span className="project-sidebar__collapsed-more" title={`+${workerSessions.length - 5} more`}>
+                        +{workerSessions.length - 5}
+                      </span>
                     )}
-                    style={{ background: healthDotColor[health] }}
-                  />
+                  </div>
                 )}
-              </button>
+              </div>
             );
           })}
         </div>
@@ -248,7 +286,7 @@ function ProjectSidebarInner({
 
       <nav className="flex-1 overflow-y-auto px-2 pb-3">
         <button
-          onClick={() => router.push(pathname + "?project=all")}
+          onClick={() => router.push(`${shellPath}?project=all`)}
           className={cn(
             "project-sidebar__item mb-1 flex w-full items-center gap-2 px-2.5 py-[9px] text-left text-[12px] font-medium transition-colors",
             activeProjectId === undefined || activeProjectId === "all"
@@ -315,7 +353,7 @@ function ProjectSidebarInner({
                 <div className="project-sidebar__children ml-3 py-0.5">
                   {workerSessions.filter((s) => getAttentionLevel(s) !== "done").map((session) => {
                     const level = getAttentionLevel(session);
-                    const isSessionActive = activeSessionId === session.id;
+                    const isSessionActive = effectiveActiveSessionId === session.id;
                     const title = getSessionTitle(session);
                     return (
                       <div
@@ -323,14 +361,12 @@ function ProjectSidebarInner({
                         role="button"
                         tabIndex={0}
                         onClick={() =>
-                          router.push(
-                            `${pathname}?project=${encodeURIComponent(project.id)}&session=${encodeURIComponent(session.id)}`,
-                          )
+                          router.push(`/sessions/${encodeURIComponent(session.id)}?project=${encodeURIComponent(project.id)}`)
                         }
                         onKeyDown={(e) => {
                           if (e.key === "Enter" || e.key === " ") {
                             router.push(
-                              `${pathname}?project=${encodeURIComponent(project.id)}&session=${encodeURIComponent(session.id)}`,
+                              `/sessions/${encodeURIComponent(session.id)}?project=${encodeURIComponent(project.id)}`,
                             );
                           }
                         }}

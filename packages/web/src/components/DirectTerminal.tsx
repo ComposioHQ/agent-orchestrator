@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useMemo } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
 import { cn } from "@/lib/cn";
+import { MobileTerminalKeys } from "./MobileTerminalKeys";
 
 // Import xterm CSS (must be imported in client component)
 import "xterm/css/xterm.css";
@@ -164,6 +165,12 @@ export function DirectTerminal({
   const [error, setError] = useState<string | null>(null);
   const [reloading, setReloading] = useState(false);
   const [reloadError, setReloadError] = useState<string | null>(null);
+  const [followOutput, setFollowOutput] = useState(true);
+  const followOutputRef = useRef(true);
+
+  useEffect(() => {
+    followOutputRef.current = followOutput;
+  }, [followOutput]);
 
   // Update URL when fullscreen changes
   useEffect(() => {
@@ -308,6 +315,11 @@ export function DirectTerminal({
         // Open terminal in DOM
         terminal.open(terminalRef.current);
         terminalInstance.current = terminal;
+        const viewport = terminal.element?.querySelector(".xterm-viewport") as HTMLElement | null;
+        if (viewport) {
+          viewport.style.touchAction = "pan-y";
+          viewport.style.setProperty("-webkit-overflow-scrolling", "touch");
+        }
 
         // Fit terminal to container
         fit.fit();
@@ -381,6 +393,18 @@ export function DirectTerminal({
           return true;
         });
 
+        const handleViewportScroll = () => {
+          if (!viewport) return;
+          const nearBottom =
+            viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 24;
+          if (nearBottom) {
+            setFollowOutput(true);
+          } else {
+            setFollowOutput(false);
+          }
+        };
+        viewport?.addEventListener("scroll", handleViewportScroll, { passive: true });
+
         // Handle window resize (works with whatever ws is current)
         const handleResize = () => {
           const currentWs = ws.current;
@@ -442,6 +466,9 @@ export function DirectTerminal({
               }
             } else {
               terminal.write(data);
+              if (followOutputRef.current && viewport) {
+                viewport.scrollTop = viewport.scrollHeight;
+              }
             }
           };
 
@@ -482,6 +509,7 @@ export function DirectTerminal({
           selectionDisposable.dispose();
           if (safetyTimer) clearTimeout(safetyTimer);
           window.removeEventListener("resize", handleResize);
+          viewport?.removeEventListener("scroll", handleViewportScroll);
           inputDisposable?.dispose();
           inputDisposable = null;
           if (reconnectTimerRef.current) {
@@ -741,14 +769,38 @@ export function DirectTerminal({
         </button>
       </div>
       {/* Terminal area */}
-      <div
-        ref={terminalRef}
-        className={cn("w-full p-1.5")}
-        style={{
-          overflow: "hidden",
-          display: "flex",
-          flexDirection: "column",
-          height: fullscreen ? "calc(100vh - 37px)" : height,
+      <div className="relative">
+        {!followOutput ? (
+          <button
+            type="button"
+            onClick={() => {
+              const viewport = terminalInstance.current?.element?.querySelector(
+                ".xterm-viewport",
+              ) as HTMLElement | null;
+              if (viewport) viewport.scrollTop = viewport.scrollHeight;
+              setFollowOutput(true);
+            }}
+            className="absolute bottom-2 right-2 z-20 border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] px-3 py-2 text-[12px] text-[var(--color-text-primary)] shadow-sm"
+          >
+            Jump to latest ↓
+          </button>
+        ) : null}
+        <div
+          ref={terminalRef}
+          className={cn("w-full p-1.5")}
+          style={{
+            overflow: "hidden",
+            display: "flex",
+            flexDirection: "column",
+            height: fullscreen ? "calc(100vh - 37px)" : height,
+          }}
+        />
+      </div>
+      <MobileTerminalKeys
+        onSend={(data) => {
+          if (ws.current?.readyState === WebSocket.OPEN) {
+            ws.current.send(data);
+          }
         }}
       />
     </div>

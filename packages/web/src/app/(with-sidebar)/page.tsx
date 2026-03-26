@@ -59,7 +59,13 @@ export default async function Home(props: { searchParams: Promise<{ project?: st
     pageData.orchestrators = listDashboardOrchestrators(visibleSessions, config.projects);
 
     const coreSessions = filterWorkerSessions(allSessions, projectFilter, config.projects);
-    pageData.sessions = coreSessions.map(sessionToDashboard);
+    const prAwareSessions = coreSessions as Array<
+      (typeof coreSessions)[number] & {
+        pr?: { owner: string; repo: string; number: number };
+        status?: string;
+      }
+    >;
+    pageData.sessions = prAwareSessions.map(sessionToDashboard);
 
     const metaTimeout = new Promise<void>((resolve) => setTimeout(resolve, 3_000));
     await Promise.race([
@@ -68,7 +74,7 @@ export default async function Home(props: { searchParams: Promise<{ project?: st
     ]);
 
     const terminalStatuses = new Set(["merged", "killed", "cleanup", "done", "terminated"]);
-    const enrichPromises = coreSessions.map((core, i) => {
+    const enrichPromises = prAwareSessions.map((core, i) => {
       if (!core.pr) return Promise.resolve();
 
       const cacheKey = prCacheKey(core.pr.owner, core.pr.repo, core.pr.number);
