@@ -155,8 +155,7 @@ vi.mock("@anthropic-ai/sdk", () => {
 import Anthropic from "@anthropic-ai/sdk";
 
 function getCreateMock() {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (Anthropic as any).prototype.messages.create as ReturnType<typeof vi.fn>;
+  return (Anthropic as unknown as { prototype: { messages: { create: ReturnType<typeof vi.fn> } } }).prototype.messages.create;
 }
 
 const TEST_CONFIG: DecomposerConfig = {
