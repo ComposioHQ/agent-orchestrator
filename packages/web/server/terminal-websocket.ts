@@ -190,15 +190,20 @@ async function getOrSpawnTtyd(sessionId: string, tmuxSessionName: string): Promi
   }
 
   // Use a promise-based mutex to ensure atomic port allocation and spawn.
-  // We await the previous allocation cycle before starting the next one.
-  const instance = await (portAllocationLock = portAllocationLock.then(async () => {
+  // We capture the previous lock and ensure we wait for it to settle (even if it failed)
+  // before starting this allocation cycle.
+  const previousLock = portAllocationLock;
+  const allocationTask = (async () => {
+    // Wait for previous allocation to finish (ignore its error to avoid breaking the chain)
+    await previousLock.catch(() => {});
+
     // Re-check existence inside lock to prevent double-spawning on concurrent requests for same session
     const lockedExisting = instances.get(sessionId);
     if (lockedExisting) return lockedExisting;
 
     // Allocate port: prefer pools, but ALWAYS check availability
     let port: number = -1;
-    
+
     // 1. Try recycled ports first
     while (availablePorts.size > 0) {
       const p = availablePorts.values().next().value as number;
@@ -242,26 +247,22 @@ async function getOrSpawnTtyd(sessionId: string, tmuxSessionName: string): Promi
 
     // Use user-facing sessionId for base-path (matches URL the dashboard uses)
     // Use tmuxSessionName for tmux attach (may be hash-prefixed)
-    const proc = spawn(
-      "ttyd",
-      [
-        "--writable",
-        "--port",
-        String(port),
-        "--base-path",
-        `/${sessionId}`,
-        TMUX,
-        "attach-session",
-        "-t",
-        tmuxSessionName,
-      ],
-      {
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
+    const proc = spawn("ttyd", [
+      "--writable",
+      "--port",
+      String(port),
+      "--base-path",
+      `/${sessionId}`,
+      TMUX,
+      "attach-session",
+      "-t",
+      tmuxSessionName,
+    ], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
 
     const newInstance: TtydInstance = { sessionId, port, process: proc };
-    
+
     // Set up listeners BEFORE returning, while still inside the lock
     proc.stdout?.on("data", (data: Buffer) => {
       console.log(`[Terminal] ttyd ${sessionId}: ${data.toString().trim()}`);
@@ -325,12 +326,13 @@ async function getOrSpawnTtyd(sessionId: string, tmuxSessionName: string): Promi
     });
 
     return newInstance;
-  }).catch((err) => {
-     // Ensure lock is unblocked even if allocation fails
-     throw err;
-  }));
+  })();
 
-  return instance;
+  // Update the lock pointer to this latest task so next callers queue behind it
+  portAllocationLock = allocationTask;
+
+  // Await and return the result for the current caller
+  return await allocationTask;
 }
 
 // Simple HTTP API for the dashboard to request terminal URLs
