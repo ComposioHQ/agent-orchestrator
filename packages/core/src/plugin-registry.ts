@@ -139,7 +139,6 @@ export function createPluginRegistry(): PluginRegistry {
 
         // Resolve ~ to home directory, reusing the shared expandHome utility
         const resolvedPath = resolve(expandHome(entry.path));
-
         const entryPoint = `${resolvedPath}/dist/index.js`;
 
         try {
@@ -147,7 +146,7 @@ export function createPluginRegistry(): PluginRegistry {
           const mod = (await doImport(entryPoint)) as PluginModule;
           if (mod.manifest && typeof mod.create === "function") {
             this.register(mod);
-            console.log(`[plugin-registry] Loaded external plugin: ${mod.manifest.name} (${entryPoint})`);
+            console.log(`[plugin-registry] Loaded external plugin: ${mod.manifest.name} (${mod.manifest.slot}) from ${entryPoint}`);
           } else {
             console.warn(`[plugin-registry] Skipped ${entryPoint}: missing manifest or create()`);
           }
