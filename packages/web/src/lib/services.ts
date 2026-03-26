@@ -4,10 +4,9 @@
  * Lazily initializes config, plugin registry, and session manager.
  * Cached in globalThis to survive Next.js HMR reloads in development.
  *
- * NOTE: Plugins are explicitly imported here because Next.js webpack
- * cannot resolve dynamic `import(variable)` expressions used by the
- * core plugin registry's loadBuiltins(). Static imports let webpack
- * bundle them correctly.
+ * NOTE: Most plugins use static imports so Next.js webpack can resolve them.
+ * Optional agent plugins (cursor, amp) use literal dynamic `import()` with
+ * try/catch so startup mirrors core `loadBuiltins()` when a package is missing.
  */
 
 import {
@@ -29,6 +28,7 @@ import {
   type Issue,
   type Session,
   type DecomposerConfig,
+  type PluginModule,
   DEFAULT_DECOMPOSER_CONFIG,
   isOrchestratorSession,
   TERMINAL_STATUSES,
@@ -72,6 +72,28 @@ export function getServices(): Promise<Services> {
   return globalForServices._aoServicesInit;
 }
 
+/** Register optional agent plugins — literal `import()` paths so webpack can resolve each package. */
+async function registerOptionalAgentPlugins(registry: PluginRegistry): Promise<void> {
+  try {
+    const rawCursor = await import("@composio/ao-plugin-agent-cursor");
+    const cursorMod = (rawCursor.default ?? rawCursor) as PluginModule;
+    if (cursorMod.manifest && typeof cursorMod.create === "function") {
+      registry.register(cursorMod);
+    }
+  } catch {
+    // Plugin not installed or failed to load — skip (mirrors core loadBuiltins)
+  }
+  try {
+    const rawAmp = await import("@composio/ao-plugin-agent-amp");
+    const ampMod = (rawAmp.default ?? rawAmp) as PluginModule;
+    if (ampMod.manifest && typeof ampMod.create === "function") {
+      registry.register(ampMod);
+    }
+  } catch {
+    // Plugin not installed or failed to load — skip (mirrors core loadBuiltins)
+  }
+}
+
 async function initServices(): Promise<Services> {
   const config = loadConfig();
   const registry = createPluginRegistry();
@@ -80,6 +102,7 @@ async function initServices(): Promise<Services> {
   registry.register(pluginRuntimeTmux);
   registry.register(pluginAgentClaudeCode);
   registry.register(pluginAgentOpencode);
+  await registerOptionalAgentPlugins(registry);
   registry.register(pluginWorkspaceWorktree);
   registry.register(pluginScmGithub);
   registry.register(pluginTrackerGithub);

@@ -145,7 +145,7 @@ If a config already exists, the new project is appended. If not, one is created 
 - **Git remote** — parses `owner/repo` from origin
 - **Default branch** — checks symbolic-ref, GitHub API, then common names (main/master)
 - **Project type** — language, framework, test runner, package manager
-- **Agent runtime** — which AI agents are installed (Claude Code, Codex, Aider, OpenCode)
+- **Agent runtime** — which AI agents are installed (Claude Code, Codex, Aider, OpenCode, Cursor, Amp)
 - **Free port** — if configured port is busy, auto-finds the next available
 - **tmux** — warns if not installed
 - **GitHub CLI** — checks `gh auth status`
@@ -193,7 +193,7 @@ Agent Orchestrator has 8 plugin slots. All are swappable:
 | Slot          | Purpose              | Default       | Alternatives                                    |
 | ------------- | -------------------- | ------------- | ----------------------------------------------- |
 | **Runtime**   | How sessions run     | `tmux`        | `process`, `docker`, `kubernetes`, `ssh`, `e2b` |
-| **Agent**     | AI coding assistant  | `claude-code` | `codex`, `aider`, `goose`, custom               |
+| **Agent**     | AI coding assistant  | `claude-code` | `codex`, `aider`, `opencode`, `cursor`, `amp`, `goose`, custom |
 | **Workspace** | Workspace isolation  | `worktree`    | `clone`, `copy`                                 |
 | **Tracker**   | Issue tracking       | `github`      | `linear`, `jira`, custom                        |
 | **SCM**       | Source control       | `github`      | GitLab, Bitbucket (future)                      |

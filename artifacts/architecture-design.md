@@ -48,7 +48,7 @@ Human only intervenes when notified. Everything else is handled.
 | **Project**      | A configured repository to work on         | `my-app`, `backend-api`          |
 | **Session**      | A running agent instance working on a task | `my-app-1`, `my-app-2`           |
 | **Runtime**      | Where/how the session executes             | tmux, docker, k8s, process       |
-| **Agent**        | The AI coding tool being used              | claude-code, codex, aider        |
+| **Agent**        | The AI coding tool being used              | claude-code, codex, aider, opencode, cursor, amp |
 | **Workspace**    | Isolated code copy for a session           | git worktree, clone, volume      |
 | **Tracker**      | Issue/task tracking system                 | github, linear, jira             |
 | **SCM**          | Source code management platform            | github, gitlab, bitbucket        |
