@@ -15,6 +15,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, request } from "node:http";
+import { createServer as createTcpServer } from "node:net";
 import { createCorrelationId } from "@composio/ao-core";
 import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
 import { createObserverContext, inferProjectId } from "./terminal-observability.js";
@@ -150,12 +151,26 @@ function waitForTtyd(port: number, sessionId: string, timeoutMs = 3000): Promise
 }
 
 /**
+ * Check if a port is available by attempting to listen on it.
+ */
+async function isPortFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = createTcpServer();
+    server.once("error", () => resolve(false));
+    server.once("listening", () => {
+      server.close(() => resolve(true));
+    });
+    server.listen(port);
+  });
+}
+
+/**
  * Spawn or reuse a ttyd instance for a tmux session.
  *
  * @param sessionId - User-facing session ID (used for base-path and URL)
  * @param tmuxSessionName - Actual tmux session name (may be hash-prefixed)
  */
-function getOrSpawnTtyd(sessionId: string, tmuxSessionName: string): TtydInstance {
+async function getOrSpawnTtyd(sessionId: string, tmuxSessionName: string): Promise<TtydInstance> {
   const existing = instances.get(sessionId);
   if (existing) {
     metrics.totalReused += 1;
@@ -169,17 +184,24 @@ function getOrSpawnTtyd(sessionId: string, tmuxSessionName: string): TtydInstanc
   }
 
   // Allocate port: reuse from pool if available, otherwise increment
-  let port: number;
+  let port: number = -1;
   if (availablePorts.size > 0) {
     // Reuse a recycled port
     port = availablePorts.values().next().value as number;
     availablePorts.delete(port);
   } else {
-    // Allocate new port
-    if (nextPort >= MAX_PORT) {
-      throw new Error(`Port exhaustion: reached maximum of ${MAX_PORT - 7800} terminal instances`);
+    // Allocate new port by scanning for the first free one
+    for (let p = nextPort; p < MAX_PORT; p++) {
+      if (await isPortFree(p)) {
+        port = p;
+        nextPort = p + 1;
+        break;
+      }
     }
-    port = nextPort++;
+  }
+
+  if (port === -1) {
+    throw new Error(`Port exhaustion: could not find a free port in range ${nextPort}-${MAX_PORT}`);
   }
 
   console.log(`[Terminal] Spawning ttyd for ${tmuxSessionName} on port ${port}`);
@@ -364,7 +386,7 @@ const server = createServer(async (req, res) => {
 
     // Spawn ttyd and wait for it to be ready (catch port exhaustion and startup failures)
     try {
-      const instance = getOrSpawnTtyd(sessionId, tmuxSessionId);
+      const instance = await getOrSpawnTtyd(sessionId, tmuxSessionId);
       await waitForTtyd(instance.port, sessionId);
 
       // Use the request host to construct the terminal URL (supports remote access)
