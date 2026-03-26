@@ -106,6 +106,14 @@ const prMetadataCache = new Map<
 >();
 
 /**
+ * Cache for full PR enrichment data.
+ * Stores the complete PREnrichmentData object for each PR.
+ * Used when ETag guard indicates no refresh is needed.
+ * Key: "${owner}/${repo}#${number}"
+ */
+const prEnrichmentDataCache = new Map<string, PREnrichmentData>();
+
+/**
  * Update PR metadata cache with latest enrichment data.
  * Called after successful GraphQL batch enrichment.
  */
@@ -118,6 +126,8 @@ function updatePRMetadataCache(
     headSha,
     ciStatus: enrichment.ciStatus,
   });
+  // Also cache the full enrichment data for ETag guard bypass
+  prEnrichmentDataCache.set(prKey, enrichment);
 }
 
 /**
@@ -182,7 +192,8 @@ export async function shouldRefreshPREnrichment(
   // Guard 2: Check commit status ETag for PRs with pending CI
   // We need to fetch head SHA for these PRs - use a lightweight REST call
   for (const { key: prKey } of pendingCIPRs) {
-    const [owner, repo, number] = prKey.split("/");
+    const [ownerRepo, number] = prKey.split("#");
+    const [owner, repo] = ownerRepo.split("/");
 
     // Get head SHA from PR metadata cache or fetch via REST
     const cached = prMetadataCache.get(prKey);
@@ -216,6 +227,13 @@ export function getPRMetadataCache(): Map<
 }
 
 /**
+ * Get cached PR enrichment data for testing.
+ */
+export function getPREnrichmentDataCache(): Map<string, PREnrichmentData> {
+  return new Map(prEnrichmentDataCache);
+}
+
+/**
  * Set PR metadata for testing.
  */
 export function setPRMetadata(
@@ -230,6 +248,7 @@ export function setPRMetadata(
  */
 export function clearPRMetadataCache(): void {
   prMetadataCache.clear();
+  prEnrichmentDataCache.clear();
 }
 
 /**
@@ -721,9 +740,17 @@ export async function enrichSessionsPRBatch(
 
   if (!guardResult.shouldRefresh) {
     // No changes detected - skip expensive GraphQL queries
+    // Return cached enrichment data instead of empty map
+    for (const pr of prs) {
+      const prKey = `${pr.owner}/${pr.repo}#${pr.number}`;
+      const cachedData = prEnrichmentDataCache.get(prKey);
+      if (cachedData) {
+        result.set(prKey, cachedData);
+      }
+    }
     observer?.log(
       "info",
-      `[ETag Guard] Skipping GraphQL batch - no changes detected. Reasons: ${guardResult.details.join(", ")}`,
+      `[ETag Guard] Skipping GraphQL batch - no changes detected. Returning ${result.size} cached PR enrichments. Reasons: ${guardResult.details.join(", ")}`,
     );
     return result;
   }
