@@ -445,6 +445,7 @@ a:hover {
 
 .xterm .xterm-viewport {
   overflow-y: overlay !important;
+  touch-action: pan-y;
 }
 
 .xterm .xterm-viewport::-webkit-scrollbar {
@@ -485,6 +486,55 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:hover {
 }
 html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   background: rgba(0, 0, 0, 0.4);
+}
+
+@media (max-width: 900px) {
+  .xterm .xterm-viewport {
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+  }
+}
+
+.mobile-terminal-keys {
+  position: fixed;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 94%, transparent);
+  border-top: 1px solid var(--color-border-default);
+}
+
+.mobile-terminal-keys__row {
+  display: grid;
+  grid-template-columns: minmax(52px, auto) minmax(52px, auto) 1fr minmax(66px, auto);
+  gap: 6px;
+}
+
+.mobile-terminal-keys__row button,
+.mobile-terminal-keys__arrows button {
+  min-height: 44px;
+  border: 1px solid var(--color-border-default);
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mobile-terminal-keys__arrows {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(44px, 1fr));
+  gap: 6px;
+}
+
+.mobile-terminal-keys__mod-active {
+  border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border-default)) !important;
+  background: color-mix(in srgb, var(--color-accent) 14%, var(--color-bg-surface)) !important;
+  color: var(--color-accent) !important;
 }
 
 /* ── Animations ──────────────────────────────────────────────────────── */
@@ -1618,6 +1668,43 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   border-radius: 50%;
   border: 1.5px solid var(--color-bg-surface);
   box-sizing: content-box;
+}
+
+.project-sidebar__collapsed-sessions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 0;
+}
+
+.project-sidebar__collapsed-session-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease;
+}
+
+.project-sidebar__collapsed-session-dot:hover {
+  transform: scale(1.3);
+  box-shadow: 0 0 0 2px var(--color-bg-elevated);
+}
+
+.project-sidebar__collapsed-session-dot--active {
+  box-shadow: 0 0 0 2px var(--color-accent);
+  transform: scale(1.2);
+}
+
+.project-sidebar__collapsed-more {
+  font-size: 8px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  line-height: 1;
+  margin-top: 1px;
 }
 
 /* ── Kanban board ────────────────────────────────────────────────────── */
