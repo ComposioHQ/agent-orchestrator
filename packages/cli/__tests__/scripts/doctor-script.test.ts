@@ -29,6 +29,7 @@ function createFakeBinary(binDir: string, name: string, body: string): void {
 function createHealthyRepo(tempRoot: string): string {
   const fakeRepo = join(tempRoot, "repo");
   mkdirSync(join(fakeRepo, "node_modules"), { recursive: true });
+  mkdirSync(join(fakeRepo, "packages", "ao"), { recursive: true });
   mkdirSync(join(fakeRepo, "packages", "core", "dist"), { recursive: true });
   mkdirSync(join(fakeRepo, "packages", "cli", "dist"), { recursive: true });
   mkdirSync(join(fakeRepo, "packages", "agent-orchestrator", "bin"), { recursive: true });
@@ -98,7 +99,7 @@ describe("scripts/ao-doctor.sh", () => {
     const result = spawnSync("bash", [scriptPath], {
       env: {
         ...process.env,
-        PATH: `${binDir}:${process.env.PATH || ""}`,
+        PATH: `${binDir}:/bin:/usr/bin`,
         AO_REPO_ROOT: fakeRepo,
         AO_CONFIG_PATH: configPath,
       },
@@ -149,7 +150,7 @@ describe("scripts/ao-doctor.sh", () => {
     const result = spawnSync("bash", [scriptPath, "--fix"], {
       env: {
         ...process.env,
-        PATH: `${binDir}:${process.env.PATH || ""}`,
+        PATH: `${binDir}:/bin:/usr/bin`,
         AO_REPO_ROOT: fakeRepo,
         AO_CONFIG_PATH: configPath,
         AO_DOCTOR_TMP_ROOT: tmpRoot,
