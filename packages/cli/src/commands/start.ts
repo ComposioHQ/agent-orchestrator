@@ -168,28 +168,6 @@ async function askYesNo(
   }
 }
 
-function gitInstallAttempts(): InstallAttempt[] {
-  if (process.platform === "darwin") {
-    return [{ cmd: "brew", args: ["install", "git"], label: "brew install git" }];
-  }
-  if (process.platform === "linux") {
-    return [
-      { cmd: "sudo", args: ["apt-get", "install", "-y", "git"], label: "sudo apt-get install -y git" },
-      { cmd: "sudo", args: ["dnf", "install", "-y", "git"], label: "sudo dnf install -y git" },
-    ];
-  }
-  if (process.platform === "win32") {
-    return [
-      {
-        cmd: "winget",
-        args: ["install", "--id", "Git.Git", "-e", "--source", "winget"],
-        label: "winget install --id Git.Git -e --source winget",
-      },
-    ];
-  }
-  return [];
-}
-
 function gitInstallHints(): string[] {
   if (process.platform === "darwin") return ["brew install git"];
   if (process.platform === "win32") return ["winget install --id Git.Git -e --source winget"];
@@ -242,18 +220,6 @@ async function ensureGit(context: string): Promise<void> {
   if (hasGit) return;
 
   console.log(chalk.yellow(`⚠ Git is required for ${context}.`));
-  const shouldInstall = await askYesNo("Install Git now?", true, false);
-  if (shouldInstall) {
-    const installed = await tryInstallWithAttempts(
-      gitInstallAttempts(),
-      async () => (await execSilent("git", ["--version"])) !== null,
-    );
-    if (installed) {
-      console.log(chalk.green("  ✓ Git installed successfully"));
-      return;
-    }
-  }
-
   console.error(chalk.red("\n✗ Git is required but is not installed.\n"));
   console.log(chalk.bold("  Install Git manually, then re-run ao start:\n"));
   for (const hint of gitInstallHints()) {
@@ -718,23 +684,9 @@ async function startDashboard(
 }
 
 /**
- * Ensure tmux is available — auto-install if missing, exit with clear
- * instructions if that fails. Called from runStartup() so ALL ao start
+ * Ensure tmux is available. Called from runStartup() so ALL ao start
  * paths (normal, URL, retry with existing config) are covered.
  */
-function tmuxInstallAttempts(): InstallAttempt[] {
-  if (process.platform === "darwin") {
-    return [{ cmd: "brew", args: ["install", "tmux"], label: "brew install tmux" }];
-  }
-  if (process.platform === "linux") {
-    return [
-      { cmd: "sudo", args: ["apt-get", "install", "-y", "tmux"], label: "sudo apt-get install -y tmux" },
-      { cmd: "sudo", args: ["dnf", "install", "-y", "tmux"], label: "sudo dnf install -y tmux" },
-    ];
-  }
-  return [];
-}
-
 function tmuxInstallHints(): string[] {
   if (process.platform === "darwin") return ["brew install tmux"];
   if (process.platform === "win32") return [
@@ -752,18 +704,6 @@ async function ensureTmux(): Promise<void> {
   if (hasTmux) return;
 
   console.log(chalk.yellow("⚠ tmux is required for runtime \"tmux\"."));
-  const shouldInstall = await askYesNo("Install tmux now?", true, false);
-  if (shouldInstall) {
-    const installed = await tryInstallWithAttempts(
-      tmuxInstallAttempts(),
-      async () => (await execSilent("tmux", ["-V"])) !== null,
-    );
-    if (installed) {
-      console.log(chalk.green("  ✓ tmux installed successfully"));
-      return;
-    }
-  }
-
   console.error(chalk.red("\n✗ tmux is required but is not installed.\n"));
   console.log(chalk.bold("  Install tmux manually, then re-run ao start:\n"));
   for (const hint of tmuxInstallHints()) {
