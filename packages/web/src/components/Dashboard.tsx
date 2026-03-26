@@ -91,12 +91,6 @@ export function Dashboard({
     [displaySessions, showKilled],
   );
 
-  useEffect(() => {
-    if (!sheetState || sheetState.mode !== "confirm-kill" || !sheetSession) return;
-    if (getAttentionLevel(sheetSession) !== "done") return;
-    setSheetState(null);
-  }, [sheetSession, sheetState]);
-
   const grouped = useMemo(() => {
     const zones: Record<AttentionLevel, DashboardSession[]> = {
       merge: [],
@@ -180,18 +174,25 @@ export function Dashboard({
   }, [activeOrchestrators, allProjectsView, projects, sessionsByProject, showKilled]);
 
   const handleSend = useCallback(async (sessionId: string, message: string) => {
-    const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/send`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message }),
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      console.error(`Failed to send message to ${sessionId}:`, text);
-      showToast(`Send failed: ${text}`, "error");
-      throw new Error(text || `Failed to send message to ${sessionId}`);
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message }),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        console.error(`Failed to send message to ${sessionId}:`, text);
+        throw new Error(text || `Failed to send message to ${sessionId}`);
+      }
+    } catch (error) {
+      if (error instanceof Error) {
+        throw error;
+      }
+      console.error(`Network error sending message to ${sessionId}:`, error);
+      throw new Error("Network error while sending message");
     }
-  }, [showToast]);
+  }, []);
 
   const handleKill = useCallback(async (sessionId: string) => {
     if (!confirm(`Kill session ${sessionId}?`)) return;
