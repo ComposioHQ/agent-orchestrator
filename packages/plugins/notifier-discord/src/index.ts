@@ -117,14 +117,19 @@ async function postWithRetry(
 
       // Handle rate limiting: wait then retry without burning an error retry slot.
       // Use Retry-After if present, otherwise fall back to retryDelayMs.
-      // rateLimitRetries caps total 429 waits to prevent infinite loops.
-      if (response.status === 429 && rateLimitRetries < retries) {
-        const retryAfter = response.headers.get("Retry-After");
-        const waitMs = retryAfter ? (parseFloat(retryAfter) || 1) * 1000 : retryDelayMs;
-        await new Promise((resolve) => setTimeout(resolve, waitMs));
-        rateLimitRetries++;
-        attempt--; // undo the for-loop increment so error budget is preserved
-        continue;
+      if (response.status === 429) {
+        if (rateLimitRetries < retries) {
+          const retryAfter = response.headers.get("Retry-After");
+          const waitMs = retryAfter ? (parseFloat(retryAfter) || 1) * 1000 : retryDelayMs;
+          await new Promise((resolve) => setTimeout(resolve, waitMs));
+          rateLimitRetries++;
+          attempt--; // undo the for-loop increment so error budget is preserved
+          continue;
+        }
+        // Rate-limit budget exhausted — fail immediately rather than falling through
+        // to the error retry path (which would compound the two counters).
+        const body = await response.text().catch(() => "");
+        throw new Error(`Discord webhook rate-limited (HTTP 429)${body ? `: ${body.trim()}` : ""}`);
       }
 
       const body = await response.text();
