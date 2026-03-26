@@ -98,6 +98,9 @@ async function postWithRetry(
   retryDelayMs: number,
 ): Promise<void> {
   let lastError: Error | undefined;
+  // Separate counter for 429 Retry-After waits so they don't consume the error
+  // retry budget — a server-mandated wait shouldn't cost a retry slot.
+  let rateLimitRetries = 0;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     const controller = new AbortController();
@@ -112,15 +115,16 @@ async function postWithRetry(
 
       if (response.ok || response.status === 204) return;
 
-      // Handle rate limiting with Retry-After header.
-      // Mark that the next attempt should skip exponential backoff since we
-      // already waited the server-specified delay.
+      // Handle rate limiting: wait the server-specified delay then retry without
+      // burning an error retry slot (rateLimitRetries caps total 429 waits).
       if (response.status === 429) {
         const retryAfter = response.headers.get("Retry-After");
-        if (retryAfter && attempt < retries) {
+        if (retryAfter && rateLimitRetries < retries) {
           const waitMs = (parseFloat(retryAfter) || 1) * 1000;
           await new Promise((resolve) => setTimeout(resolve, waitMs));
-          continue; // already waited Retry-After; skip exponential backoff naturally
+          rateLimitRetries++;
+          attempt--; // undo the for-loop increment so error budget is preserved
+          continue;
         }
       }
 
