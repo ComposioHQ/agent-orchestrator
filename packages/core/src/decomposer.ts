@@ -125,7 +125,8 @@ async function classifyTask(
     messages: [{ role: "user", content: `Task hierarchy:\n${context}` }],
   });
 
-  const text = res.content[0].type === "text" ? res.content[0].text.trim().toLowerCase() : "";
+  const block = res.content[0];
+  const text = block?.type === "text" ? block.text.trim().toLowerCase() : "";
   return text === "composite" ? "composite" : "atomic";
 }
 
@@ -143,13 +144,19 @@ async function decomposeTask(
     messages: [{ role: "user", content: `Task hierarchy:\n${context}` }],
   });
 
-  const text = res.content[0].type === "text" ? res.content[0].text.trim() : "[]";
+  const block = res.content[0];
+  const text = block?.type === "text" ? block.text.trim() : "";
   const jsonMatch = text.match(/\[[\s\S]*\]/);
   if (!jsonMatch) {
     throw new Error(`Decomposition failed — no JSON array in response: ${text}`);
   }
 
-  const subtasks = JSON.parse(jsonMatch[0]) as string[];
+  let subtasks: string[];
+  try {
+    subtasks = JSON.parse(jsonMatch[0]) as string[];
+  } catch {
+    throw new Error(`Decomposition failed — invalid JSON in response: ${jsonMatch[0]}`);
+  }
   if (!Array.isArray(subtasks) || subtasks.length < 2) {
     throw new Error(`Decomposition produced ${subtasks.length} subtasks — need at least 2`);
   }
