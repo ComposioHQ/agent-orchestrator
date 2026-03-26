@@ -312,15 +312,23 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     if (session.pr && scm) {
       try {
         const prState = await scm.getPRState(session.pr);
+        const ciStatus = await scm.getCISummary(session.pr);
+        const reviewDecision = await scm.getReviewDecision(session.pr);
+        const sessionsDir = getSessionsDir(config.configPath, project.path);
+
+        // Persist SCM metadata on every poll to ensure Dashboard/CLI stay fresh
+        updateMetadata(sessionsDir, session.id, {
+          scm_pr_state: prState,
+          scm_ci_status: ciStatus,
+          scm_review_decision: reviewDecision,
+          scm_last_poll: Date.now().toString(),
+        });
+
         if (prState === PR_STATE.MERGED) return "merged";
         if (prState === PR_STATE.CLOSED) return "killed";
-
-        // Check CI
-        const ciStatus = await scm.getCISummary(session.pr);
         if (ciStatus === CI_STATUS.FAILING) return "ci_failed";
 
         // Check reviews
-        const reviewDecision = await scm.getReviewDecision(session.pr);
         if (reviewDecision === "changes_requested") return "changes_requested";
         if (reviewDecision === "approved" || reviewDecision === "none") {
           // Check merge readiness — treat "none" (no reviewers required)

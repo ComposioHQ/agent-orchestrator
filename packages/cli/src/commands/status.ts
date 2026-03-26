@@ -97,7 +97,15 @@ async function gatherSessionInfo(
   if (branch && !suppressPROwnership) {
     try {
       const project = projectConfig.projects[session.projectId];
-      if (project) {
+      const lastPoll = session.metadata["scm_last_poll"]
+        ? parseInt(session.metadata["scm_last_poll"], 10)
+        : 0;
+      const isFresh = Date.now() - lastPoll < 300_000;
+
+      if (isFresh && session.metadata["scm_pr_state"]) {
+        ciStatus = (session.metadata["scm_ci_status"] as CIStatus) || null;
+        reviewDecision = (session.metadata["scm_review_decision"] as ReviewDecision) || null;
+      } else if (project) {
         const prInfo: PRInfo | null = await scm.detectPR(session, project);
         if (prInfo) {
           prNumber = prInfo.number;
