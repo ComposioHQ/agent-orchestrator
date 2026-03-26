@@ -38,6 +38,28 @@ import { getSessionsDir } from "./paths.js";
 import { createCorrelationId, createProjectObserver } from "./observability.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
 
+/**
+ * Fallback messages for send-to-agent reactions when no static message is configured.
+ * Only includes reaction keys whose default action in applyDefaultReactions() (config.ts)
+ * is "send-to-agent". If a user overrides one of these without a message field, the
+ * shallow config merge drops the default message — this map ensures the agent still
+ * receives useful instructions.
+ *
+ * Keep in sync with applyDefaultReactions() in config.ts.
+ */
+const REACTION_FALLBACK_MESSAGES: Record<string, string> = {
+  "ci-failed":
+    "CI is failing on your PR. Run `gh pr checks` to see the failures, fix them, and push.",
+  "changes-requested":
+    "There are review comments on your PR. Check with `gh pr view --comments` and `gh api` for inline comments. Address each one, push fixes, and reply.",
+  "bugbot-comments":
+    "Automated review comments found on your PR. Fix the issues flagged by the bot.",
+  "merge-conflicts":
+    "Your branch has merge conflicts. Rebase on the default branch and resolve them.",
+  "agent-idle":
+    "You appear to be idle. If your task is not complete, continue working — write the code, commit, push, and create a PR. If you are blocked, explain what is blocking you.",
+};
+
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
   const match = str.match(/^(\d+)(s|m|h)$/);
@@ -424,18 +446,30 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     switch (action) {
       case "send-to-agent": {
-        if (reactionConfig.message) {
+        const message = reactionConfig.message ?? REACTION_FALLBACK_MESSAGES[reactionKey];
+        if (message) {
           try {
-            await sessionManager.send(sessionId, reactionConfig.message);
+            await sessionManager.send(sessionId, message);
 
             return {
               reactionType: reactionKey,
               success: true,
               action: "send-to-agent",
-              message: reactionConfig.message,
+              message,
               escalated: false,
             };
           } catch {
+            observer.recordOperation({
+              metric: "lifecycle_poll",
+              operation: "reaction.execute",
+              outcome: "failure",
+              correlationId: createCorrelationId("reaction"),
+              projectId,
+              sessionId,
+              data: { reactionKey, action: "send-to-agent", reason: "send-failed" },
+              level: "warn",
+            });
+
             // Send failed — allow retry on next poll cycle (don't escalate immediately)
             return {
               reactionType: reactionKey,
@@ -445,6 +479,18 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             };
           }
         }
+
+        // No message and no fallback — log and report failure
+        observer.recordOperation({
+          metric: "lifecycle_poll",
+          operation: "reaction.execute",
+          outcome: "failure",
+          correlationId: createCorrelationId("reaction"),
+          projectId,
+          sessionId,
+          data: { reactionKey, action: "send-to-agent", reason: "no-message" },
+          level: "warn",
+        });
         break;
       }
 
@@ -760,11 +806,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
                 reactionConfig,
               );
               transitionReaction = { key: reactionKey, result: reactionResult };
-              // Reaction is handling this event — suppress immediate human notification.
-              // "send-to-agent" retries + escalates on its own; "notify"/"auto-merge"
-              // already call notifyHuman internally. Notifying here would bypass the
-              // delayed escalation behaviour configured via retries/escalateAfter.
-              reactionHandledNotify = true;
+              // Suppress immediate human notification only when the reaction succeeded.
+              // "notify"/"auto-merge" always return success (they call notifyHuman internally).
+              // "send-to-agent" returns success only when a message was actually delivered.
+              // When send-to-agent fails (e.g. no message configured), the human notification
+              // fallback MUST fire — otherwise both agent and human are left in the dark.
+              reactionHandledNotify = reactionResult.success;
             }
           }
         }
