@@ -37,6 +37,7 @@ import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
 import { createCorrelationId, createProjectObserver } from "./observability.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
+import { DEFAULT_SEND_TO_AGENT_MESSAGES } from "./config.js";
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
@@ -424,19 +425,31 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     switch (action) {
       case "send-to-agent": {
-        if (reactionConfig.message) {
+        const message = reactionConfig.message ?? DEFAULT_SEND_TO_AGENT_MESSAGES[reactionKey];
+        if (message) {
           try {
-            await sessionManager.send(sessionId, reactionConfig.message);
+            await sessionManager.send(sessionId, message);
 
             return {
               reactionType: reactionKey,
               success: true,
               action: "send-to-agent",
-              message: reactionConfig.message,
+              message,
               escalated: false,
             };
           } catch {
             // Send failed — allow retry on next poll cycle (don't escalate immediately)
+            observer.recordOperation({
+              metric: "lifecycle_poll",
+              operation: "reaction.execute",
+              outcome: "failure",
+              correlationId: createCorrelationId("reaction"),
+              projectId,
+              sessionId,
+              reason: "send-to-agent delivery failed",
+              data: { reactionKey },
+              level: "warn",
+            });
             return {
               reactionType: reactionKey,
               success: false,
@@ -445,6 +458,18 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             };
           }
         }
+        // No message and no fallback — log and return failure
+        observer.recordOperation({
+          metric: "lifecycle_poll",
+          operation: "reaction.execute",
+          outcome: "failure",
+          correlationId: createCorrelationId("reaction"),
+          projectId,
+          sessionId,
+          reason: "send-to-agent reaction has no message and no fallback",
+          data: { reactionKey },
+          level: "warn",
+        });
         break;
       }
 
@@ -760,11 +785,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
                 reactionConfig,
               );
               transitionReaction = { key: reactionKey, result: reactionResult };
-              // Reaction is handling this event — suppress immediate human notification.
-              // "send-to-agent" retries + escalates on its own; "notify"/"auto-merge"
-              // already call notifyHuman internally. Notifying here would bypass the
-              // delayed escalation behaviour configured via retries/escalateAfter.
-              reactionHandledNotify = true;
+              // Suppress immediate human notification only when the reaction succeeded.
+              // On failure (e.g. send-to-agent with no reachable agent), fall through
+              // to notify humans so the event isn't silently lost.
+              // "notify"/"auto-merge" always return success:true and call notifyHuman
+              // internally, so they're unaffected by this change.
+              reactionHandledNotify = reactionResult.success;
             }
           }
         }
