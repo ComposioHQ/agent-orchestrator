@@ -1388,7 +1388,7 @@ describe("list", () => {
     expect(sessions[0].activity).toBe("active");
   });
 
-  it.each(["claude-code", "codex", "aider", "opencode"])(
+  it.each(["claude-code", "codex", "aider", "cursor", "opencode"])(
     "uses tmuxName fallback handle for %s activity detection when runtimeHandle is missing",
     async (agentName: string) => {
       const expectedTmuxName = "hash-app-1";

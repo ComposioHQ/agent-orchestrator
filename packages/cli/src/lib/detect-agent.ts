@@ -17,29 +17,37 @@ const AGENT_PLUGINS: Array<{ name: string; pkg: string }> = [
   { name: "claude-code", pkg: "@composio/ao-plugin-agent-claude-code" },
   { name: "aider", pkg: "@composio/ao-plugin-agent-aider" },
   { name: "codex", pkg: "@composio/ao-plugin-agent-codex" },
+  { name: "cursor", pkg: "@composio/ao-plugin-agent-cursor" },
   { name: "opencode", pkg: "@composio/ao-plugin-agent-opencode" },
 ];
+
+type AgentPluginLoader = (pkg: string) => Promise<PluginModule | null>;
+
+async function importAgentPlugin(pkg: string): Promise<PluginModule | null> {
+  try {
+    const raw = await import(pkg);
+    return (raw.detect ? raw : raw.default) as PluginModule;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Discover which agent runtimes are available on this system.
  * Imports each agent plugin and calls its detect() method.
  */
-export async function detectAvailableAgents(): Promise<DetectedAgent[]> {
+export async function detectAvailableAgents(
+  loadPlugin: AgentPluginLoader = importAgentPlugin,
+): Promise<DetectedAgent[]> {
   const available: DetectedAgent[] = [];
 
   for (const { name, pkg } of AGENT_PLUGINS) {
-    try {
-      const raw = await import(pkg);
-      // Handle both named export and default export shapes
-      const mod = (raw.detect ? raw : raw.default) as PluginModule;
-      if (typeof mod?.detect === "function" && mod.detect()) {
-        available.push({
-          name,
-          displayName: mod.manifest?.displayName ?? name,
-        });
-      }
-    } catch {
-      // Plugin not installed or import failed — skip
+    const mod = await loadPlugin(pkg);
+    if (typeof mod?.detect === "function" && mod.detect()) {
+      available.push({
+        name,
+        displayName: mod.manifest?.displayName ?? name,
+      });
     }
   }
 

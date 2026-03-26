@@ -23,7 +23,7 @@ Every abstraction is a swappable plugin. All interfaces are defined in [`package
 | Slot      | Interface   | Default       | Alternatives                             |
 | --------- | ----------- | ------------- | ---------------------------------------- |
 | Runtime   | `Runtime`   | `tmux`        | `process`, `docker`, `k8s`, `ssh`, `e2b` |
-| Agent     | `Agent`     | `claude-code` | `codex`, `aider`, `opencode`             |
+| Agent     | `Agent`     | `claude-code` | `codex`, `aider`, `cursor`, `opencode`   |
 | Workspace | `Workspace` | `worktree`    | `clone`                                  |
 | Tracker   | `Tracker`   | `github`      | `linear`                                 |
 | SCM       | `SCM`       | `github`      | —                                        |
@@ -107,7 +107,7 @@ agent-orchestrator/
 │   ├── web/               # Next.js dashboard
 │   ├── plugins/           # All plugin packages
 │   │   ├── runtime-*/     # Runtime plugins (tmux, docker, k8s)
-│   │   ├── agent-*/       # Agent adapters (claude-code, codex, aider)
+│   │   ├── agent-*/       # Agent adapters (claude-code, codex, aider, cursor)
 │   │   ├── workspace-*/   # Workspace providers (worktree, clone)
 │   │   ├── tracker-*/     # Issue trackers (github, linear)
 │   │   ├── scm-github/    # SCM adapter

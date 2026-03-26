@@ -298,6 +298,12 @@ const AGENT_INSTALL_OPTIONS: AgentInstallOption[] = [
     args: ["install", "-g", "@openai/codex"],
   },
   {
+    id: "cursor",
+    label: "Cursor Agent",
+    cmd: "bash",
+    args: ["-lc", "curl https://cursor.com/install -fsS | bash"],
+  },
+  {
     id: "aider",
     label: "Aider",
     cmd: "pipx",
