@@ -1,0 +1,29 @@
+packages/web/src/lib/portfolio-services.ts
+  b945b56b3bf3a862 1-9,25-43,46,49-105,107
+packages/web/src/app/page.tsx
+  b945b56b3bf3a862 7,49
+packages/web/src/app/api/sessions/route.ts
+  b945b56b3bf3a862 3,40
+packages/core/src/portfolio-session-service.ts
+  b945b56b3bf3a862 4-5,8-9,12,15,47-52,54-61,63-71,77-94,97-102,115,133-141,144-159,162
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.19",
+  "base_commit_sha": "564f68ab09a655afce1cc3faf00dfaddb6192bb6",
+  "prompts": {
+    "b945b56b3bf3a862": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "940d4999-ee58-42e1-928c-a4e11c58cd61",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 174,
+      "total_deletions": 30,
+      "accepted_lines": 174,
+      "overriden_lines": 0
+    }
+  }
+}
