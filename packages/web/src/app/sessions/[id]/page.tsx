@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import { isOrchestratorSession } from "@composio/ao-core/types";
 import { SessionDetail } from "@/components/SessionDetail";
@@ -46,6 +46,7 @@ export default function SessionPage() {
   const id = params.id as string;
 
   const [session, setSession] = useState<DashboardSession | null>(null);
+  const sessionRef = useRef<DashboardSession | null>(null);
   const [zoneCounts, setZoneCounts] = useState<ZoneCounts | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -72,11 +73,16 @@ export default function SessionPage() {
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as DashboardSession;
+      sessionRef.current = data;
       setSession(data);
       setError(null);
     } catch (err) {
       console.error("Failed to fetch session:", err);
-      setError("Failed to load session");
+      // Only show error if we don't already have session data from Phase 1 (meta).
+      // When Phase 1 succeeded, keep showing the existing session instead of an error.
+      if (!sessionRef.current) {
+        setError("Failed to load session");
+      }
     } finally {
       setLoading(false);
     }
@@ -108,13 +114,33 @@ export default function SessionPage() {
     }
   }, [sessionIsOrchestrator, sessionProjectId]);
 
-  // Initial fetch — session first, zone counts after (avoids blocking on slow /api/sessions)
+  // Two-phase initial fetch:
+  // 1. Fast /meta endpoint for instant tab title (local metadata only, <50ms)
+  // 2. Full enriched session data for PR/CI details
   useEffect(() => {
+    // Phase 1: instant meta (sets title immediately)
+    void (async () => {
+      try {
+        const res = await fetch(`/api/sessions/${encodeURIComponent(id)}/meta`);
+        if (res.ok) {
+          const meta = (await res.json()) as DashboardSession;
+          setSession((prev) => {
+            if (!prev) sessionRef.current = meta;
+            return prev ?? meta;
+          });
+          setLoading(false);
+        }
+      } catch {
+        // Non-critical — full fetch will handle errors
+      }
+    })();
+
+    // Phase 2: full enriched data (may take seconds due to GitHub API)
     fetchSession();
     // Delay zone counts so the heavy /api/sessions call doesn't contend with session load
     const t = setTimeout(fetchZoneCounts, 2000);
     return () => clearTimeout(t);
-  }, [fetchSession, fetchZoneCounts]);
+  }, [fetchSession, fetchZoneCounts, id]);
 
   // Poll every 5s
   useEffect(() => {
