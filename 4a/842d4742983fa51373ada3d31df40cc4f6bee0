@@ -1,0 +1,29 @@
+scripts/ao-doctor.sh
+  558d4dd7ff6a0112 200-201,207,212
+packages/integration-tests/src/agent-claude-code.integration.test.ts
+  558d4dd7ff6a0112 142
+scripts/ao-update.sh
+  558d4dd7ff6a0112 119,126
+scripts/setup.sh
+  558d4dd7ff6a0112 139,146
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.19",
+  "base_commit_sha": "4a842d4742983fa51373ada3d31df40cc4f6bee0",
+  "prompts": {
+    "558d4dd7ff6a0112": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d28a4-db36-7b62-96e8-a92d68a16d84",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 9,
+      "total_deletions": 8,
+      "accepted_lines": 9,
+      "overriden_lines": 0
+    }
+  }
+}
