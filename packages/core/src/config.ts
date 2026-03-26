@@ -471,7 +471,8 @@ export function loadConfig(configPath?: string): OrchestratorConfig {
   }
 
   const raw = readFileSync(path, "utf-8");
-  const parsed = parseYaml(raw);
+  const substituted = raw.replace(/\$\{([^}]+)\}/g, (_, key) => process.env[key] ?? `\${${key}}`);
+  const parsed = parseYaml(substituted);
   const config = validateConfig(parsed);
 
   // Set the config path in the config object for hash generation
@@ -492,7 +493,8 @@ export function loadConfigWithPath(configPath?: string): {
   }
 
   const raw = readFileSync(path, "utf-8");
-  const parsed = parseYaml(raw);
+  const substituted = raw.replace(/\$\{([^}]+)\}/g, (_, key) => process.env[key] ?? `\${${key}}`);
+  const parsed = parseYaml(substituted);
   const config = validateConfig(parsed);
 
   // Set the config path in the config object for hash generation

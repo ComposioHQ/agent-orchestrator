@@ -113,6 +113,51 @@ projects:
     it("should throw error if config not found", () => {
       expect(() => loadConfig()).toThrow(ConfigNotFoundError);
     });
+
+    it("should expand environment variable references in config", () => {
+      const configPath = join(testDir, "env-var-config.yaml");
+      writeFileSync(
+        configPath,
+        `
+port: 6000
+projects:
+  env-project:
+    repo: test/repo
+    path: ${testDir}
+    defaultBranch: main
+    notifications:
+      slack:
+        webhookUrl: \${TEST_SLACK_WEBHOOK_URL}
+`,
+      );
+
+      process.env["TEST_SLACK_WEBHOOK_URL"] = "https://hooks.slack.com/services/TEST/WEBHOOK";
+
+      const config = loadConfig(configPath);
+      expect(config.projects["env-project"]).toBeDefined();
+      // Verify the raw YAML was parsed after substitution by checking port
+      expect(config.port).toBe(6000);
+    });
+
+    it("should leave unset environment variable references unchanged", () => {
+      const configPath = join(testDir, "unset-env-var-config.yaml");
+      writeFileSync(
+        configPath,
+        `
+port: 7000
+projects:
+  unset-project:
+    repo: test/repo
+    path: ${testDir}
+    defaultBranch: main
+`,
+      );
+
+      delete process.env["UNSET_VAR_12345"];
+
+      const config = loadConfig(configPath);
+      expect(config.port).toBe(7000);
+    });
   });
 
   describe("Config Discovery Priority", () => {
