@@ -174,7 +174,7 @@ describe("resolveAgentSelection", () => {
         role: "worker",
         project: makeProject({
           agentConfig: { maxTokens: 4096 },
-          worker: { agentConfig: {} },
+          worker: { agentConfig: { maxTokens: undefined } },
         }),
         defaults: baseDefaults,
       });
