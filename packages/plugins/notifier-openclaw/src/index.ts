@@ -103,6 +103,7 @@ async function postWithRetry(
           `Can't reach OpenClaw gateway at ${url}.\n` +
             `  Is OpenClaw running? Check: openclaw status\n` +
             `  Wrong URL? Run: ao setup openclaw`,
+          { cause: err },
         );
       }
 

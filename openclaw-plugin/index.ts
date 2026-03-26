@@ -31,6 +31,49 @@ interface PluginConfig {
   boardScanIntervalMs?: number;
 }
 
+/** Minimal shape of the OpenClaw plugin API passed to the default export. */
+interface PluginApi {
+  pluginConfig?: PluginConfig;
+  logger: { info: (msg: string) => void; warn: (msg: string) => void };
+  on?: (name: string, handler: (event: PluginEvent) => Promise<void>, opts?: { priority: number }) => void;
+  registerHook?: (name: string, handler: (event: PluginEvent) => Promise<void>, opts?: { priority: number }) => void;
+  registerCommand?: (cmd: CommandRegistration) => void;
+  registerTool?: (tool: Record<string, unknown>) => void;
+  registerService?: (svc: Record<string, unknown>) => void;
+  runtime?: {
+    sendMessageToDefaultSession?: (message: string) => void;
+  };
+}
+
+interface CommandRegistration {
+  name: string;
+  description: string;
+  acceptsArgs: boolean;
+  requireAuth: boolean;
+  handler: (ctx: CommandContext) => Promise<CommandResult>;
+}
+
+interface CommandResult {
+  text: string;
+}
+
+interface PluginEvent {
+  sessionKey?: string;
+  sessionId?: string;
+  channelId?: string;
+  message?: { text?: string; content?: string };
+  text?: string;
+  content?: string;
+  appendSystemContext?: (text: string) => void;
+  prependContext?: (text: string) => void;
+  context?: Record<string, unknown>;
+  messages?: Array<{ role: string; content: string }>;
+}
+
+interface CommandContext {
+  args?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -258,7 +301,7 @@ export function parseStringArraySetting(output: string): string[] | null {
 
   try {
     const parsed = JSON.parse(trimmed);
-    if (parsed == null) return [];
+    if (parsed === null || parsed === undefined) return [];
     if (Array.isArray(parsed)) {
       return parsed.filter((value): value is string => typeof value === "string");
     }
@@ -499,8 +542,8 @@ function isWorkRelated(message: string): boolean {
 // Plugin entry point
 // ---------------------------------------------------------------------------
 
-export default function (api: any) {
-  const config: PluginConfig = (api.pluginConfig as PluginConfig) || {};
+export default function (api: PluginApi) {
+  const config: PluginConfig = api.pluginConfig || {};
 
   // =========================================================================
   // HOOKS — intercept work-related messages and inject live data
@@ -565,12 +608,12 @@ export default function (api: any) {
     }
   }
 
-  function getSessionKey(event: any): string {
+  function getSessionKey(event: PluginEvent): string {
     return event?.sessionKey || event?.sessionId || event?.channelId || "default";
   }
 
   // Hook 1: message_received — detect work-related inbound messages
-  const onMessageReceived = async (event: any) => {
+  const onMessageReceived = async (event: PluginEvent) => {
     const message =
       event?.message?.text || event?.message?.content || event?.text || event?.content || "";
 
@@ -582,7 +625,7 @@ export default function (api: any) {
   };
 
   // Hook 2: before_prompt_build — inject AO routing context + live data
-  const onBeforePromptBuild = async (event: any) => {
+  const onBeforePromptBuild = async (event: PluginEvent) => {
     const key = getSessionKey(event);
 
     // Inform the model that AO is available and what it offers.
@@ -621,7 +664,7 @@ export default function (api: any) {
   };
 
   // Register hooks using the correct OpenClaw event names
-  const register = (name: string, handler: (event: any) => Promise<void>) => {
+  const register = (name: string, handler: (event: PluginEvent) => Promise<void>) => {
     try {
       if (typeof api.on === "function") {
         api.on(name, handler, { priority: 10 });
@@ -648,7 +691,7 @@ export default function (api: any) {
       "Agent Orchestrator — /ao sessions | status | spawn | issues | batch-spawn | retry | kill | doctor",
     acceptsArgs: true,
     requireAuth: true,
-    handler: async (ctx: any) => {
+    handler: async (ctx: CommandContext) => {
       const raw = (ctx.args || "").trim();
       const parts = raw.split(/\s+/);
       const subcommand = parts[0]?.toLowerCase() || "help";
