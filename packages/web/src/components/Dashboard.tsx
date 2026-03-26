@@ -262,13 +262,23 @@ function DashboardInner({
       });
       if (!res.ok) {
         const text = await res.text();
-        console.error(`Failed to send message to ${sessionId}:`, text);
-        showToast(`Send failed: ${text}`, "error");
-        return;
+        const messageText = text || "Unknown error";
+        console.error(`Failed to send message to ${sessionId}:`, messageText);
+        showToast(`Send failed: ${messageText}`, "error");
+        const errorWithToast = new Error(messageText);
+        (errorWithToast as Error & { toastShown?: boolean }).toastShown = true;
+        throw errorWithToast;
       }
     } catch (error) {
-      console.error(`Network error sending message to ${sessionId}:`, error);
-      showToast("Network error while sending message", "error");
+      const toastShown =
+        error instanceof Error &&
+        "toastShown" in error &&
+        (error as Error & { toastShown?: boolean }).toastShown;
+      if (!toastShown) {
+        console.error(`Network error sending message to ${sessionId}:`, error);
+        showToast("Network error while sending message", "error");
+      }
+      throw error;
     }
   }, [showToast]);
 
