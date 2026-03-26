@@ -1,0 +1,310 @@
+/* Workspace IDE Layout Styles */
+
+@import "highlight.js/styles/github-dark.css";
+
+.workspace-container {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100vh;
+  background: var(--color-bg);
+  color: var(--color-text-primary);
+}
+
+.workspace-panes {
+  /* Grid layout set via inline styles */
+}
+
+.workspace-pane-header {
+  /* Set via inline styles */
+}
+
+.workspace-separator {
+  /* Set via inline styles */
+}
+
+.workspace-collapsed-strip {
+  /* Set via inline styles */
+}
+
+.workspace-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 16px;
+  color: var(--color-text-secondary);
+}
+
+.workspace-empty-icon {
+  font-size: 48px;
+  opacity: 0.5;
+}
+
+.workspace-empty-state p {
+  font-size: 14px;
+  margin: 0;
+}
+
+.workspace-code-viewer {
+  margin: 0;
+  padding: 12px;
+  font-family: "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow: auto;
+  height: 100%;
+  background: var(--color-bg);
+}
+
+.workspace-code-line {
+  display: flex;
+  gap: 12px;
+}
+
+.workspace-code-gutter {
+  color: var(--color-text-tertiary);
+  user-select: none;
+  text-align: right;
+  min-width: 40px;
+}
+
+.workspace-code-content {
+  flex: 1;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  color: var(--color-text-primary);
+}
+
+.workspace-file-tree {
+  overflow: auto;
+  padding: 8px 0;
+  height: 100%;
+}
+
+.workspace-file-tree-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.15s;
+}
+
+.workspace-file-tree-item:hover {
+  background-color: var(--color-bg-hover);
+}
+
+.workspace-file-tree-item.selected {
+  background-color: var(--color-bg-selected);
+  color: var(--color-accent);
+}
+
+.workspace-file-tree-item-icon {
+  font-size: 14px;
+  min-width: 16px;
+  text-align: center;
+}
+
+.workspace-file-tree-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-file-tree-item-status {
+  font-size: 8px;
+  font-weight: bold;
+  padding: 0 4px;
+  border-radius: 2px;
+}
+
+.workspace-file-tree-item-status.added {
+  color: #3fb950;
+}
+
+.workspace-file-tree-item-status.modified {
+  color: #d29922;
+}
+
+.workspace-file-tree-item-status.deleted {
+  color: #f85149;
+}
+
+.workspace-file-tree-folder {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  gap: 4px;
+}
+
+.workspace-file-tree-folder-toggle {
+  min-width: 12px;
+  text-align: center;
+  font-size: 10px;
+  transition: transform 0.15s;
+}
+
+.workspace-file-tree-folder-toggle.expanded {
+  transform: rotate(90deg);
+}
+
+.workspace-file-tree-children {
+  margin-left: 16px;
+}
+
+.workspace-markdown-preview {
+  overflow: auto;
+  padding: 24px;
+  height: 100%;
+  color: var(--color-text-primary);
+}
+
+.workspace-markdown-preview h1,
+.workspace-markdown-preview h2,
+.workspace-markdown-preview h3,
+.workspace-markdown-preview h4,
+.workspace-markdown-preview h5,
+.workspace-markdown-preview h6 {
+  margin-top: 24px;
+  margin-bottom: 12px;
+  color: var(--color-text-primary);
+}
+
+.workspace-markdown-preview h1 {
+  font-size: 28px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  padding-bottom: 12px;
+}
+
+.workspace-markdown-preview h2 {
+  font-size: 24px;
+}
+
+.workspace-markdown-preview h3 {
+  font-size: 20px;
+}
+
+.workspace-markdown-preview p {
+  margin: 12px 0;
+  line-height: 1.6;
+}
+
+.workspace-markdown-preview code {
+  background: var(--color-bg-surface);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: "Courier New", monospace;
+  font-size: 12px;
+  color: var(--color-accent);
+}
+
+.workspace-markdown-preview pre {
+  background: var(--color-bg-surface);
+  padding: 12px;
+  border-radius: 6px;
+  overflow: auto;
+  margin: 12px 0;
+  line-height: 1.4;
+}
+
+.workspace-markdown-preview pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  color: inherit;
+}
+
+.workspace-markdown-preview blockquote {
+  margin: 12px 0;
+  padding-left: 12px;
+  border-left: 3px solid var(--color-border-subtle);
+  color: var(--color-text-secondary);
+}
+
+.workspace-markdown-preview ul,
+.workspace-markdown-preview ol {
+  margin: 12px 0;
+  padding-left: 24px;
+}
+
+.workspace-markdown-preview li {
+  margin: 4px 0;
+}
+
+.workspace-markdown-preview table {
+  border-collapse: collapse;
+  margin: 12px 0;
+  width: 100%;
+  border: 1px solid var(--color-border-subtle);
+}
+
+.workspace-markdown-preview table th,
+.workspace-markdown-preview table td {
+  border: 1px solid var(--color-border-subtle);
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.workspace-markdown-preview table th {
+  background-color: var(--color-bg-surface);
+  font-weight: 600;
+}
+
+.workspace-markdown-preview a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+.workspace-markdown-preview a:hover {
+  text-decoration: underline;
+}
+
+.workspace-terminal-pane {
+  overflow: hidden;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.hljs {
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  padding: 0;
+}
+
+.hljs-string {
+  color: #a5d6ff;
+}
+
+.hljs-number {
+  color: #79c0ff;
+}
+
+.hljs-literal {
+  color: #79c0ff;
+}
+
+.hljs-attr {
+  color: #79c0ff;
+}
+
+.hljs-function {
+  color: #d2a8ff;
+}
+
+.hljs-title {
+  color: #d2a8ff;
+}
+
+.hljs-comment {
+  color: #8b949e;
+}
+
+.hljs-variable {
+  color: #a5d6ff;
+}

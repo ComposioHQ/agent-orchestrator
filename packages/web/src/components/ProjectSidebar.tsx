@@ -383,6 +383,14 @@ function ProjectSidebarInner({
                           {sessionToneLabel[level]}
                         </span>
                         <a
+                          href={`/sessions/${encodeURIComponent(session.id)}/workspace`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
+                          title="Open workspace IDE"
+                        >
+                          💻
+                        </a>
+                        <a
                           href={`/sessions/${encodeURIComponent(session.id)}`}
                           onClick={(e) => e.stopPropagation()}
                           className="project-sidebar__session-id shrink-0 font-mono text-[9px] hover:underline"
