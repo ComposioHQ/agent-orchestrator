@@ -115,17 +115,16 @@ async function postWithRetry(
 
       if (response.ok || response.status === 204) return;
 
-      // Handle rate limiting: wait the server-specified delay then retry without
-      // burning an error retry slot (rateLimitRetries caps total 429 waits).
-      if (response.status === 429) {
+      // Handle rate limiting: wait then retry without burning an error retry slot.
+      // Use Retry-After if present, otherwise fall back to retryDelayMs.
+      // rateLimitRetries caps total 429 waits to prevent infinite loops.
+      if (response.status === 429 && rateLimitRetries < retries) {
         const retryAfter = response.headers.get("Retry-After");
-        if (retryAfter && rateLimitRetries < retries) {
-          const waitMs = (parseFloat(retryAfter) || 1) * 1000;
-          await new Promise((resolve) => setTimeout(resolve, waitMs));
-          rateLimitRetries++;
-          attempt--; // undo the for-loop increment so error budget is preserved
-          continue;
-        }
+        const waitMs = retryAfter ? (parseFloat(retryAfter) || 1) * 1000 : retryDelayMs;
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+        rateLimitRetries++;
+        attempt--; // undo the for-loop increment so error budget is preserved
+        continue;
       }
 
       const body = await response.text();
