@@ -21,6 +21,7 @@ interface SessionCardProps {
   onKill?: (sessionId: string) => void;
   onMerge?: (prNumber: number) => void;
   onRestore?: (sessionId: string) => void;
+  onRequestReview?: (prNumber: number) => void;
 }
 
 /**
@@ -91,7 +92,7 @@ function getDoneStatusInfo(session: DashboardSession): {
   };
 }
 
-function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: SessionCardProps) {
+function SessionCardView({ session, onSend, onKill, onMerge, onRestore, onRequestReview }: SessionCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [sendingAction, setSendingAction] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -113,6 +114,15 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
 
   const rateLimited = pr ? isPRRateLimited(pr) : false;
   const alerts = getAlerts(session);
+
+  // Wire "needs review" alert to direct API call instead of agent messaging
+  const reviewAlert = alerts.find((a) => a.key === "review");
+  if (reviewAlert && pr && onRequestReview) {
+    reviewAlert.actionLabel = "request review";
+    reviewAlert.onAction = () => onRequestReview(pr.number);
+    delete reviewAlert.actionMessage;
+  }
+
   const isReadyToMerge = !rateLimited && pr?.mergeability.mergeable && pr.state === "open";
   const isTerminal =
     TERMINAL_STATUSES.has(session.status) ||
@@ -498,7 +508,14 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        handleAction(alert.key, alert.actionMessage ?? "");
+                        if (alert.onAction) {
+                          setSendingAction(alert.key);
+                          alert.onAction();
+                          if (timerRef.current) clearTimeout(timerRef.current);
+                          timerRef.current = setTimeout(() => setSendingAction(null), 2000);
+                        } else {
+                          handleAction(alert.key, alert.actionMessage ?? "");
+                        }
                       }}
                       disabled={sendingAction === alert.key}
                       className={cn(
@@ -593,7 +610,8 @@ function areSessionCardPropsEqual(prev: SessionCardProps, next: SessionCardProps
     prev.onSend === next.onSend &&
     prev.onKill === next.onKill &&
     prev.onMerge === next.onMerge &&
-    prev.onRestore === next.onRestore
+    prev.onRestore === next.onRestore &&
+    prev.onRequestReview === next.onRequestReview
   );
 }
 
@@ -610,6 +628,8 @@ interface Alert {
   actionLabel?: string;
   actionMessage?: string;
   actionClassName?: string;
+  /** Direct action handler — bypasses agent messaging when set */
+  onAction?: () => void;
 }
 
 function getAlerts(session: DashboardSession): Alert[] {

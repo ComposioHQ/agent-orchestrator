@@ -11,6 +11,7 @@ interface AttentionZoneProps {
   onKill?: (sessionId: string) => void;
   onMerge?: (prNumber: number) => void;
   onRestore?: (sessionId: string) => void;
+  onRequestReview?: (prNumber: number) => void;
 }
 
 const zoneConfig: Record<
@@ -64,6 +65,7 @@ function AttentionZoneView({
   onKill,
   onMerge,
   onRestore,
+  onRequestReview,
 }: AttentionZoneProps) {
   const config = zoneConfig[level];
 
@@ -89,6 +91,7 @@ function AttentionZoneView({
                 onKill={onKill}
                 onMerge={onMerge}
                 onRestore={onRestore}
+                onRequestReview={onRequestReview}
               />
             ))}
           </div>
@@ -109,6 +112,7 @@ function areAttentionZonePropsEqual(prev: AttentionZoneProps, next: AttentionZon
     prev.onKill === next.onKill &&
     prev.onMerge === next.onMerge &&
     prev.onRestore === next.onRestore &&
+    prev.onRequestReview === next.onRequestReview &&
     prev.sessions.length === next.sessions.length &&
     prev.sessions.every((session, index) => session === next.sessions[index])
   );

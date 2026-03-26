@@ -566,6 +566,9 @@ export interface SCM {
   /** Close a PR without merging */
   closePR(pr: PRInfo): Promise<void>;
 
+  /** Request reviewers on a PR */
+  requestReviewers?(pr: PRInfo, reviewers: string[]): Promise<void>;
+
   // --- CI Tracking ---
 
   /** Get individual CI check statuses */
@@ -975,6 +978,9 @@ export interface ProjectConfig {
   orchestrator?: RoleAgentConfig;
 
   worker?: RoleAgentConfig;
+
+  /** GitHub usernames or team slugs to request as PR reviewers */
+  defaultReviewers?: string[];
 
   /** Per-project reaction overrides */
   reactions?: Record<string, Partial<ReactionConfig>>;

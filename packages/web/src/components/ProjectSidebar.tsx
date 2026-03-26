@@ -156,8 +156,12 @@ function ProjectSidebarInner({
 
   if (collapsed) {
     return (
-      <aside className="project-sidebar project-sidebar--collapsed flex h-full w-[56px] flex-col items-center py-3">
-        <div className="flex flex-1 flex-col items-center gap-2">
+      <aside className="project-sidebar project-sidebar--collapsed flex h-full w-[64px] flex-col items-center py-3">
+        <div className="project-sidebar__collapsed-header" aria-hidden="true">
+          <span className="project-sidebar__collapsed-eyebrow">AO</span>
+          <span className="project-sidebar__collapsed-label">Projects</span>
+        </div>
+        <div className="project-sidebar__collapsed-stack flex flex-1 flex-col items-center gap-2">
           {projects.map((project) => {
             const entry = sessionsByProject.map.get(project.id);
             const health = entry ? computeProjectHealth(entry.all) : ("gray" as ProjectHealth);
@@ -168,12 +172,15 @@ function ProjectSidebarInner({
                 key={project.id}
                 type="button"
                 onClick={() => router.push(pathname + `?project=${encodeURIComponent(project.id)}`)}
+                aria-label={project.name}
+                data-health={health}
                 className={cn(
                   "project-sidebar__collapsed-project",
                   isActive && "project-sidebar__collapsed-project--active",
                 )}
                 title={project.name}
               >
+                <span className="project-sidebar__collapsed-project-rim" aria-hidden="true" />
                 <span className="project-sidebar__avatar">{initial}</span>
                 {health !== "gray" && (
                   <span
@@ -283,6 +290,7 @@ function ProjectSidebarInner({
               {/* Project header */}
               <button
                 onClick={() => handleProjectHeaderClick(project.id)}
+                data-health={health}
                 className={cn(
                   "project-sidebar__item flex w-full items-center gap-2 px-2.5 py-[9px] text-left text-[12px] font-medium transition-colors",
                   isActive

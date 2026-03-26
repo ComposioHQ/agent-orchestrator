@@ -638,6 +638,17 @@ function createGitHubSCM(): SCM {
       await gh(["pr", "close", String(pr.number), "--repo", repoFlag(pr)]);
     },
 
+    async requestReviewers(pr: PRInfo, reviewers: string[]): Promise<void> {
+      await gh([
+        "pr",
+        "edit",
+        String(pr.number),
+        "--repo",
+        repoFlag(pr),
+        ...reviewers.flatMap((r) => ["--add-reviewer", r]),
+      ]);
+    },
+
     async getCIChecks(pr: PRInfo): Promise<CICheck[]> {
       try {
         const raw = await gh([

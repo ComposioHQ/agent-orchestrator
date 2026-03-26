@@ -69,7 +69,10 @@ export function Dashboard({
     useState<DashboardOrchestratorLink[]>(orchestratorLinks);
   const [spawningProjectIds, setSpawningProjectIds] = useState<string[]>([]);
   const [spawnErrors, setSpawnErrors] = useState<Record<string, string>>({});
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.innerWidth < 768;
+  });
   const showSidebar = projects.length > 1;
   const allProjectsView = showSidebar && projectId === undefined;
 
@@ -174,6 +177,13 @@ export function Dashboard({
     const res = await fetch(`/api/prs/${prNumber}/merge`, { method: "POST" });
     if (!res.ok) {
       console.error(`Failed to merge PR #${prNumber}:`, await res.text());
+    }
+  }, []);
+
+  const handleRequestReview = useCallback(async (prNumber: number) => {
+    const res = await fetch(`/api/prs/${prNumber}/request-review`, { method: "POST" });
+    if (!res.ok) {
+      console.error(`Failed to request review for PR #${prNumber}:`, await res.text());
     }
   }, []);
 
@@ -402,6 +412,7 @@ export function Dashboard({
                   onKill={handleKill}
                   onMerge={handleMerge}
                   onRestore={handleRestore}
+                  onRequestReview={handleRequestReview}
                 />
               ))}
             </div>

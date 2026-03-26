@@ -270,13 +270,23 @@ export async function enrichSessionPR(
   return true;
 }
 
-/** Enrich a DashboardSession's issue label using the tracker plugin. */
+/** Enrich a DashboardSession's issue URL and label using the tracker plugin. */
 export function enrichSessionIssue(
   dashboard: DashboardSession,
   tracker: Tracker,
   project: ProjectConfig,
 ): void {
   if (!dashboard.issueUrl) return;
+
+  // issueUrl may be a raw identifier (e.g. "#42") rather than a full URL.
+  // Resolve it to a proper URL using the tracker plugin.
+  if (!dashboard.issueUrl.startsWith("http")) {
+    try {
+      dashboard.issueUrl = tracker.issueUrl(dashboard.issueUrl, project);
+    } catch {
+      // If resolution fails, keep the original value
+    }
+  }
 
   // Use tracker plugin to extract human-readable label from URL
   if (tracker.issueLabel) {

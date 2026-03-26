@@ -1336,29 +1336,110 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   border-right: 1px solid var(--color-border-subtle);
   background: linear-gradient(
     180deg,
-    color-mix(in srgb, var(--color-bg-elevated) 92%, black 8%) 0%,
-    color-mix(in srgb, var(--color-bg-base) 90%, black 10%) 100%
+    color-mix(in srgb, var(--color-bg-elevated) 94%, black 6%) 0%,
+    color-mix(in srgb, var(--color-bg-base) 88%, black 12%) 100%
   );
+  box-shadow:
+    inset -1px 0 0 color-mix(in srgb, white 3%, transparent),
+    12px 0 28px rgba(0, 0, 0, 0.04);
 }
 
 .project-sidebar--collapsed {
   align-items: center;
+  position: relative;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-accent) 5%, transparent) 0%,
+      transparent 16%
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-bg-elevated) 96%, black 4%) 0%,
+      color-mix(in srgb, var(--color-bg-base) 90%, black 10%) 100%
+    );
+}
+
+.project-sidebar--collapsed::before {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 50%;
+  width: 1px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-accent) 18%, transparent) 0%,
+    color-mix(in srgb, var(--color-border-subtle) 85%, transparent) 18%,
+    color-mix(in srgb, var(--color-border-subtle) 55%, transparent) 82%,
+    transparent 100%
+  );
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.project-sidebar__collapsed-stack {
+  position: relative;
+  z-index: 1;
+}
+
+.project-sidebar__collapsed-header {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+}
+
+.project-sidebar__collapsed-header::after {
+  content: "";
+  width: 18px;
+  height: 1px;
+  background: color-mix(in srgb, var(--color-border-default) 72%, transparent);
+}
+
+.project-sidebar__collapsed-eyebrow {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+}
+
+.project-sidebar__collapsed-label {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
 }
 
 .project-sidebar__header {
   border-bottom: 1px solid var(--color-border-subtle);
-  background: linear-gradient(
+  background:
+    radial-gradient(
+      circle at top left,
+      color-mix(in srgb, var(--color-accent) 10%, transparent) 0%,
+      transparent 42%
+    ),
+    linear-gradient(
     180deg,
-    color-mix(in srgb, var(--color-accent) 4%, transparent) 0%,
-    transparent 100%
-  );
+      color-mix(in srgb, var(--color-accent) 6%, transparent) 0%,
+      transparent 100%
+    );
 }
 
 .project-sidebar__eyebrow {
   font-size: 10px;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--color-accent);
+  opacity: 0.92;
 }
 
 .project-sidebar__title-row {
@@ -1370,10 +1451,10 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 .project-sidebar__title {
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.1;
   letter-spacing: -0.02em;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--color-text-primary);
 }
 
@@ -1382,111 +1463,146 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   max-width: 18ch;
   font-size: 10px;
   line-height: 1.4;
-  color: var(--color-text-muted);
+  color: color-mix(in srgb, var(--color-text-muted) 88%, var(--color-text-secondary));
 }
 
 .project-sidebar__badge {
   display: inline-flex;
-  min-width: 22px;
-  height: 22px;
+  min-width: 26px;
+  height: 26px;
   align-items: center;
   justify-content: center;
   border: 1px solid var(--color-border-default);
-  background: color-mix(in srgb, var(--color-bg-base) 42%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-bg-base) 30%, var(--color-bg-elevated)),
+    color-mix(in srgb, var(--color-bg-base) 72%, transparent)
+  );
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--color-text-primary);
   font-variant-numeric: tabular-nums;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 6%, transparent),
+    0 4px 10px rgba(0, 0, 0, 0.04);
 }
 
 .project-sidebar__summary {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-  margin-top: 10px;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 .project-sidebar__metric {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 6px 6px 5px;
-  border: 1px solid var(--color-border-subtle);
-  background: color-mix(in srgb, var(--color-bg-base) 40%, transparent);
+  gap: 3px;
+  padding: 7px 7px 6px;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 80%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-bg-elevated) 82%, transparent),
+    color-mix(in srgb, var(--color-bg-base) 58%, transparent)
+  );
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 5%, transparent);
 }
 
 .project-sidebar__metric-value {
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1;
   letter-spacing: -0.03em;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--color-text-primary);
   font-variant-numeric: tabular-nums;
 }
 
 .project-sidebar__metric-label {
   font-size: 9px;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--color-text-muted);
 }
 
 .project-sidebar__divider {
-  border-top: 1px solid var(--color-border-subtle);
+  border-top: 1px solid color-mix(in srgb, var(--color-border-default) 55%, transparent);
 }
 
 .project-sidebar__item {
   position: relative;
   border: 1px solid transparent;
-  background: transparent;
+  background: linear-gradient(90deg, transparent, transparent);
+  overflow: hidden;
 }
 
 .project-sidebar__item:hover {
-  background: var(--color-hover-overlay);
-  border-color: var(--color-border-subtle);
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-hover-overlay) 96%, transparent),
+    transparent 100%
+  );
+  border-color: color-mix(in srgb, var(--color-border-default) 72%, transparent);
 }
 
 .project-sidebar__item--active {
-  border-color: color-mix(in srgb, var(--color-accent) 24%, var(--color-border-default));
+  border-color: color-mix(in srgb, var(--color-accent) 34%, var(--color-border-default));
   background: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--color-accent) 16%, transparent),
+    color-mix(in srgb, var(--color-accent) 18%, transparent),
     transparent 90%
   );
+  box-shadow:
+    inset 3px 0 0 var(--color-accent),
+    inset 0 1px 0 color-mix(in srgb, white 4%, transparent);
+}
+
+.project-sidebar__item[data-health="red"] {
+  border-left-color: color-mix(in srgb, var(--color-status-error) 44%, transparent);
+}
+
+.project-sidebar__item[data-health="yellow"] {
+  border-left-color: color-mix(in srgb, var(--color-status-attention) 40%, transparent);
+}
+
+.project-sidebar__item[data-health="green"] {
+  border-left-color: color-mix(in srgb, var(--color-status-ready) 36%, transparent);
 }
 
 .project-sidebar__count {
-  border: 1px solid var(--color-border-subtle);
-  background: color-mix(in srgb, var(--color-bg-base) 40%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 68%, transparent);
+  background: color-mix(in srgb, var(--color-bg-base) 34%, var(--color-bg-elevated));
+  font-weight: 700;
 }
 
 .project-sidebar__children {
   position: relative;
-  margin-top: 4px;
-  border-left: 1px solid color-mix(in srgb, var(--color-border-subtle) 82%, transparent);
+  margin-top: 6px;
+  margin-left: 8px;
+  border-left: 1px solid color-mix(in srgb, var(--color-border-default) 50%, transparent);
+  padding-left: 4px;
 }
 
 .project-sidebar__session {
   position: relative;
-  margin: 2px 0 2px 8px;
+  margin: 4px 0 4px 8px;
   border: 1px solid transparent;
-  background: transparent;
+  background: linear-gradient(90deg, transparent, transparent);
 }
 
 .project-sidebar__session:hover {
-  border-color: var(--color-border-subtle);
+  border-color: color-mix(in srgb, var(--color-border-default) 68%, transparent);
   background: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--color-hover-overlay) 90%, transparent),
+    color-mix(in srgb, var(--color-hover-overlay) 96%, transparent),
     transparent 100%
   );
 }
 
 .project-sidebar__session--active {
-  border-color: color-mix(in srgb, var(--color-accent) 18%, var(--color-border-subtle));
+  border-color: color-mix(in srgb, var(--color-accent) 22%, var(--color-border-subtle));
   background: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--color-accent) 12%, transparent),
+    color-mix(in srgb, var(--color-accent) 14%, transparent),
     transparent 88%
   );
   box-shadow: inset 2px 0 0 var(--color-accent);
@@ -1499,20 +1615,20 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   top: 50%;
   width: 8px;
   height: 1px;
-  background: var(--color-border-subtle);
+  background: color-mix(in srgb, var(--color-border-default) 68%, transparent);
   transform: translateY(-50%);
 }
 
 .project-sidebar__session-tone {
   flex-shrink: 0;
   padding: 2px 6px;
-  border: 1px solid var(--color-border-subtle);
-  background: color-mix(in srgb, var(--color-bg-base) 40%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 60%, transparent);
+  background: color-mix(in srgb, var(--color-bg-base) 30%, var(--color-bg-elevated));
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--color-text-muted);
+  color: color-mix(in srgb, var(--color-text-muted) 82%, var(--color-text-secondary));
 }
 
 .project-sidebar__session-id {
@@ -1541,8 +1657,12 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   justify-content: center;
   gap: 8px;
   width: 100%;
-  border: 1px solid var(--color-border-subtle);
-  background: color-mix(in srgb, var(--color-bg-base) 40%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 68%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-bg-elevated) 82%, transparent),
+    color-mix(in srgb, var(--color-bg-base) 56%, transparent)
+  );
   color: var(--color-text-secondary);
   font-size: 11px;
   font-weight: 600;
@@ -1564,44 +1684,91 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .project-sidebar__collapse-btn:hover,
 .project-sidebar__collapsed-toggle:hover {
   border-color: var(--color-border-default);
-  background: var(--color-hover-overlay);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-hover-overlay) 92%, var(--color-bg-elevated)),
+    color-mix(in srgb, var(--color-hover-overlay) 42%, transparent)
+  );
   color: var(--color-text-primary);
 }
 
 .project-sidebar__collapsed-project {
   position: relative;
   display: inline-flex;
-  width: 36px;
-  height: 36px;
+  width: 42px;
+  height: 46px;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 8px;
-  background: var(--color-bg-surface);
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 68%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-bg-elevated) 92%, transparent),
+    color-mix(in srgb, var(--color-bg-base) 68%, transparent)
+  );
   cursor: pointer;
+  overflow: hidden;
   transition:
     border-color 0.15s ease,
     background 0.15s ease,
-    box-shadow 0.15s ease;
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 8%, transparent),
+    0 10px 18px rgba(0, 0, 0, 0.05);
+}
+
+.project-sidebar__collapsed-project-rim {
+  position: absolute;
+  inset: 0;
+  border-left: 3px solid transparent;
+  opacity: 0.9;
+}
+
+.project-sidebar__collapsed-project[data-health="red"] .project-sidebar__collapsed-project-rim {
+  border-left-color: var(--color-status-error);
+}
+
+.project-sidebar__collapsed-project[data-health="yellow"] .project-sidebar__collapsed-project-rim {
+  border-left-color: var(--color-status-attention);
+}
+
+.project-sidebar__collapsed-project[data-health="green"] .project-sidebar__collapsed-project-rim {
+  border-left-color: var(--color-status-ready);
 }
 
 .project-sidebar__collapsed-project:hover {
   border-color: var(--color-border-default);
-  background: var(--color-bg-elevated);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-hover-overlay) 86%, var(--color-bg-elevated)),
+    color-mix(in srgb, var(--color-hover-overlay) 22%, transparent)
+  );
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 8%, transparent),
+    0 12px 22px rgba(0, 0, 0, 0.08);
+  transform: translateY(-1px);
 }
 
 .project-sidebar__collapsed-project--active {
-  border-color: color-mix(in srgb, var(--color-accent) 35%, var(--color-border-default));
-  background: color-mix(in srgb, var(--color-accent) 8%, var(--color-bg-elevated));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border-default));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-accent) 14%, var(--color-bg-elevated)),
+    color-mix(in srgb, var(--color-accent) 8%, var(--color-bg-base))
+  );
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 8%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--color-accent) 18%, transparent),
+    0 14px 24px rgba(57, 74, 181, 0.14);
 }
 
 .project-sidebar__avatar {
-  font-size: 13px;
-  font-weight: 600;
+  position: relative;
+  z-index: 1;
+  font-size: 16px;
+  font-weight: 700;
   line-height: 1;
-  color: var(--color-text-secondary);
+  color: color-mix(in srgb, var(--color-text-secondary) 88%, var(--color-text-primary));
   user-select: none;
 }
 
@@ -1611,13 +1778,14 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 
 .project-sidebar__health-indicator {
   position: absolute;
-  top: -2px;
-  right: -2px;
-  width: 7px;
-  height: 7px;
+  top: 7px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  border: 1.5px solid var(--color-bg-surface);
+  border: 2px solid color-mix(in srgb, var(--color-bg-elevated) 92%, white 8%);
   box-sizing: content-box;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.85);
 }
 
 /* ── Kanban board ────────────────────────────────────────────────────── */
