@@ -1,0 +1,33 @@
+packages/web/src/app/icon-512/route.tsx
+  4538a92217143cac 3,7
+packages/web/src/app/icon-192/route.tsx
+  4538a92217143cac 3,7
+packages/web/src/app/icon.tsx
+  4538a92217143cac 3,9
+packages/web/src/components/Dashboard.tsx
+  4538a92217143cac 139-144
+packages/web/src/lib/icon-renderer.tsx
+  4538a92217143cac 12-15
+packages/web/src/app/apple-icon.tsx
+  4538a92217143cac 3,9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.19",
+  "base_commit_sha": "82a93a0a2b477b03420981fb6752ae7c999ca628",
+  "prompts": {
+    "4538a92217143cac": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d2511-0727-7641-bd0f-24c5e7c118af",
+        "model": "gpt-5.2-codex"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 18,
+      "total_deletions": 8,
+      "accepted_lines": 18,
+      "overriden_lines": 0
+    }
+  }
+}
