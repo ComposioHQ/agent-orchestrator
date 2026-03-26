@@ -31,9 +31,12 @@ jobs:
             | tar -xz -C /usr/local/bin gitleaks
 
       - name: Run Gitleaks
-        run: gitleaks detect --source . --verbose --log-opts="$LOG_OPTS"
-        env:
-          LOG_OPTS: ${{ github.event_name == 'pull_request' && format('--since-commit={0}', github.event.pull_request.base.sha) || '' }}
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            gitleaks detect --source . --verbose --log-opts "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          else
+            gitleaks detect --source . --verbose
+          fi
 
   dependency-review:
     name: Dependency Review
