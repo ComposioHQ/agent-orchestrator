@@ -97,13 +97,25 @@ export default function SessionDetailScreen({ route, navigation }: Props) {
     );
   }, [killSession, sessionId, refresh]);
 
-  const handleRestore = useCallback(async () => {
-    try {
-      await restoreSession(sessionId);
-      refresh();
-    } catch (err) {
-      Alert.alert("Error", err instanceof Error ? err.message : "Failed to restore session");
-    }
+  const handleRestore = useCallback(() => {
+    Alert.alert(
+      "Restore Session",
+      "This will restore the session and make it active again. Are you sure?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Restore",
+          onPress: async () => {
+            try {
+              await restoreSession(sessionId);
+              refresh();
+            } catch (err) {
+              Alert.alert("Error", err instanceof Error ? err.message : "Failed to restore session");
+            }
+          },
+        },
+      ],
+    );
   }, [restoreSession, sessionId, refresh]);
 
   const handleOpenTerminal = useCallback(() => {

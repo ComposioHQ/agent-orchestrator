@@ -1,7 +1,8 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { IBM_Plex_Sans, IBM_Plex_Mono, JetBrains_Mono } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import { getProjectName } from "@/lib/project-name";
+import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar";
 import "./globals.css";
 
 const ibmPlexSans = IBM_Plex_Sans({
@@ -25,6 +26,16 @@ const jetbrainsMono = JetBrains_Mono({
   weight: ["400", "500"],
 });
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: dark)", color: "#0a0d12" },
+  ],
+};
+
 export async function generateMetadata(): Promise<Metadata> {
   const projectName = getProjectName();
   return {
@@ -33,6 +44,11 @@ export async function generateMetadata(): Promise<Metadata> {
       default: `ao | ${projectName}`,
     },
     description: "Dashboard for managing parallel AI coding agents",
+    appleWebApp: {
+      capable: true,
+      statusBarStyle: "black-translucent",
+      title: `ao | ${projectName}`,
+    },
   };
 }
 
@@ -43,6 +59,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
           {children}
         </ThemeProvider>
+        <ServiceWorkerRegistrar />
       </body>
     </html>
   );

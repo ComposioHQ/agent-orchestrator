@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import { isOrchestratorSession } from "@composio/ao-core/types";
 import { SessionDetail } from "@/components/SessionDetail";
@@ -41,16 +41,26 @@ interface ZoneCounts {
   done: number;
 }
 
+interface ProjectSessionsBody {
+  sessions?: DashboardSession[];
+  orchestratorId?: string | null;
+  orchestrators?: Array<{ id: string; projectId: string; projectName: string }>;
+}
+
 export default function SessionPage() {
   const params = useParams();
   const id = params.id as string;
 
   const [session, setSession] = useState<DashboardSession | null>(null);
   const [zoneCounts, setZoneCounts] = useState<ZoneCounts | null>(null);
+  const [projectOrchestratorId, setProjectOrchestratorId] = useState<string | null | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const sessionProjectId = session?.projectId ?? null;
   const sessionIsOrchestrator = session ? isOrchestratorSession(session) : false;
+  const sessionProjectIdRef = useRef<string | null>(null);
+  const sessionIsOrchestratorRef = useRef(false);
+  const resolvedProjectSessionsKeyRef = useRef<string | null>(null);
 
   // Update document title based on session data
   useEffect(() => {
@@ -60,6 +70,14 @@ export default function SessionPage() {
       document.title = `${id} | Session Detail`;
     }
   }, [session, id]);
+
+  useEffect(() => {
+    sessionProjectIdRef.current = sessionProjectId;
+  }, [sessionProjectId]);
+
+  useEffect(() => {
+    sessionIsOrchestratorRef.current = sessionIsOrchestrator;
+  }, [sessionIsOrchestrator]);
 
   // Fetch session data (memoized to avoid recreating on every render)
   const fetchSession = useCallback(async () => {
@@ -82,13 +100,31 @@ export default function SessionPage() {
     }
   }, [id]);
 
-  const fetchZoneCounts = useCallback(async () => {
-    if (!sessionIsOrchestrator || !sessionProjectId) return;
+  const fetchProjectSessions = useCallback(async () => {
+    const projectId = sessionProjectIdRef.current;
+    if (!projectId) return;
+    const isOrchestrator = sessionIsOrchestratorRef.current;
+    const projectSessionsKey = `${projectId}:${isOrchestrator ? "orchestrator" : "worker"}`;
+    if (!isOrchestrator && resolvedProjectSessionsKeyRef.current === projectSessionsKey) return;
     try {
-      const res = await fetch(`/api/sessions?project=${encodeURIComponent(sessionProjectId)}`);
+      const query = isOrchestrator
+        ? `/api/sessions?project=${encodeURIComponent(projectId)}`
+        : `/api/sessions?project=${encodeURIComponent(projectId)}&orchestratorOnly=true`;
+      const res = await fetch(query);
       if (!res.ok) return;
-      const body = (await res.json()) as { sessions: DashboardSession[] };
+      const body = (await res.json()) as ProjectSessionsBody;
       const sessions = body.sessions ?? [];
+      const orchestratorId =
+        body.orchestratorId ??
+        body.orchestrators?.find((orchestrator) => orchestrator.projectId === projectId)?.id ??
+        null;
+      setProjectOrchestratorId((current) => (current === orchestratorId ? current : orchestratorId));
+
+      if (!isOrchestrator) {
+        resolvedProjectSessionsKeyRef.current = projectSessionsKey;
+        return;
+      }
+
       const counts: ZoneCounts = {
         merge: 0,
         respond: 0,
@@ -106,24 +142,30 @@ export default function SessionPage() {
     } catch {
       // non-critical - status strip just won't show
     }
-  }, [sessionIsOrchestrator, sessionProjectId]);
+  }, []);
+
+  useEffect(() => {
+    if (!sessionIsOrchestrator) {
+      setZoneCounts(null);
+    }
+  }, [sessionIsOrchestrator]);
 
   // Initial fetch — session first, zone counts after (avoids blocking on slow /api/sessions)
   useEffect(() => {
     fetchSession();
     // Delay zone counts so the heavy /api/sessions call doesn't contend with session load
-    const t = setTimeout(fetchZoneCounts, 2000);
+    const t = setTimeout(fetchProjectSessions, 2000);
     return () => clearTimeout(t);
-  }, [fetchSession, fetchZoneCounts]);
+  }, [fetchSession, fetchProjectSessions]);
 
   // Poll every 5s
   useEffect(() => {
     const interval = setInterval(() => {
       fetchSession();
-      fetchZoneCounts();
+      fetchProjectSessions();
     }, 5000);
     return () => clearInterval(interval);
-  }, [fetchSession, fetchZoneCounts]);
+  }, [fetchSession, fetchProjectSessions]);
 
   if (loading) {
     return (
@@ -151,6 +193,7 @@ export default function SessionPage() {
       session={session}
       isOrchestrator={sessionIsOrchestrator}
       orchestratorZones={zoneCounts ?? undefined}
+      projectOrchestratorId={projectOrchestratorId}
     />
   );
 }

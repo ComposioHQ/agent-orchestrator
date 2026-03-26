@@ -58,6 +58,35 @@ describe("Dashboard project overview cards", () => {
     expect(screen.getAllByRole("button", { name: "Spawn Orchestrator" })).toHaveLength(2);
   });
 
+  it("shows a desktop PRs link for project-scoped dashboards", () => {
+    render(
+      <Dashboard
+        initialSessions={[makeSession({ projectId: "my-app" })]}
+        projectId="my-app"
+        projectName="My App"
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "PRs" })).toHaveAttribute(
+      "href",
+      "/prs?project=my-app",
+    );
+  });
+
+  it("shows a desktop PRs link for all-projects dashboards", () => {
+    render(
+      <Dashboard
+        initialSessions={[makeSession({ projectId: "my-app" })]}
+        projects={[
+          { id: "my-app", name: "My App" },
+          { id: "docs-app", name: "Docs App" },
+        ]}
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "PRs" })).toHaveAttribute("href", "/prs?project=all");
+  });
+
   it("updates the card after spawning an orchestrator", async () => {
     let resolveSpawn: ((value: Response) => void) | null = null;
     vi.mocked(fetch).mockImplementationOnce(

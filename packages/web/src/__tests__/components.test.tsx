@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { CIBadge, CICheckList } from "@/components/CIBadge";
 import { PRStatus } from "@/components/PRStatus";
 import { SessionCard } from "@/components/SessionCard";
@@ -425,6 +425,138 @@ describe("SessionCard", () => {
     const session = makeSession({ pr: null });
     render(<SessionCard session={session} />);
     expect(screen.getByRole("button", { name: /terminate session/i })).toBeInTheDocument();
+  });
+
+  it("prevents duplicate quick-reply preset sends while a send is in flight", async () => {
+    let resolveSend: (() => void) | null = null;
+    const onSend = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSend = resolve;
+        }),
+    );
+    const session = makeSession({
+      id: "respond-1",
+      status: "needs_input",
+      activity: "waiting_input",
+      summary: "Need approval to proceed",
+    });
+
+    render(<SessionCard session={session} onSend={onSend} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onSend).toHaveBeenCalledWith("respond-1", "continue");
+    expect(screen.getByRole("button", { name: "Sending..." })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Abort" })).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: /type a reply to the agent/i })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Abort" }));
+    expect(onSend).toHaveBeenCalledTimes(1);
+
+    resolveSend?.();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Sent" })).toBeInTheDocument();
+    });
+  });
+
+  it("prevents duplicate enter submits and only clears the textarea after send settles", async () => {
+    let resolveSend: (() => void) | null = null;
+    const onSend = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSend = resolve;
+        }),
+    );
+    const session = makeSession({
+      id: "respond-2",
+      status: "needs_input",
+      activity: "waiting_input",
+      summary: "Need approval to proceed",
+    });
+
+    render(<SessionCard session={session} onSend={onSend} />);
+
+    const input = screen.getByRole("textbox", { name: /type a reply to the agent/i });
+    fireEvent.change(input, { target: { value: "please continue" } });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onSend).toHaveBeenCalledWith("respond-2", "please continue");
+    expect(screen.getByRole("textbox", { name: /type a reply to the agent/i })).toBeDisabled();
+    expect(screen.getByDisplayValue("please continue")).toBeInTheDocument();
+
+    fireEvent.keyDown(screen.getByRole("textbox", { name: /type a reply to the agent/i }), {
+      key: "Enter",
+      code: "Enter",
+    });
+    expect(onSend).toHaveBeenCalledTimes(1);
+
+    resolveSend?.();
+
+    await waitFor(() => {
+      expect(screen.getByRole("textbox", { name: /type a reply to the agent/i })).toHaveValue("");
+    });
+  });
+
+  it("does not show sent state or clear reply text when quick reply send fails", async () => {
+    const onSend = vi.fn(() => Promise.reject(new Error("network failed")));
+    const session = makeSession({
+      id: "respond-3",
+      status: "needs_input",
+      activity: "waiting_input",
+      summary: "Need approval to proceed",
+    });
+
+    render(<SessionCard session={session} onSend={onSend} />);
+
+    const input = screen.getByRole("textbox", { name: /type a reply to the agent/i });
+    fireEvent.change(input, { target: { value: "please continue" } });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledTimes(1);
+    });
+
+    expect(screen.queryByRole("button", { name: "Sent" })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: /type a reply to the agent/i })).toHaveValue(
+      "please continue",
+    );
+    expect(screen.getByRole("textbox", { name: /type a reply to the agent/i })).not.toBeDisabled();
+  });
+
+  it("shows a temporary failed state when an alert action send is rejected", async () => {
+    const onSend = vi.fn(() => Promise.reject(new Error("network failed")));
+    const pr = makePR({
+      state: "open",
+      ciStatus: "failing",
+      ciChecks: [{ name: "test", status: "failed" }],
+      reviewDecision: "approved",
+      mergeability: {
+        mergeable: false,
+        ciPassing: false,
+        approved: true,
+        noConflicts: true,
+        blockers: [],
+      },
+    });
+    const session = makeSession({ activity: "idle", pr });
+
+    render(<SessionCard session={session} onSend={onSend} />);
+
+    const actionButton = screen.getByRole("button", { name: "ask to fix" });
+    fireEvent.click(actionButton);
+
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledTimes(1);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "failed" })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: "sent!" })).not.toBeInTheDocument();
   });
 });
 

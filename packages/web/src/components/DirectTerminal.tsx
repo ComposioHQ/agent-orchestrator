@@ -142,7 +142,7 @@ export function DirectTerminal({
   sessionId,
   startFullscreen = false,
   variant = "agent",
-  height = "max(440px, calc(100vh - 440px))",
+  height = "max(440px, calc(100dvh - 440px))",
   isOpenCodeSession = false,
   reloadCommand,
 }: DirectTerminalProps) {
@@ -748,7 +748,7 @@ export function DirectTerminal({
           overflow: "hidden",
           display: "flex",
           flexDirection: "column",
-          height: fullscreen ? "calc(100vh - 37px)" : height,
+          height: fullscreen ? "calc(100dvh - 37px)" : height,
         }}
       />
     </div>

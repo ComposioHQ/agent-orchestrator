@@ -7,7 +7,9 @@ import { makeSession } from "../../__tests__/helpers";
 describe("useSessionEvents", () => {
   let eventSourceMock: {
     onmessage: ((event: MessageEvent) => void) | null;
+    onopen: (() => void) | null;
     onerror: (() => void) | null;
+    readyState: number;
     close: () => void;
   };
   let eventSourceInstances: (typeof eventSourceMock)[];
@@ -17,7 +19,9 @@ describe("useSessionEvents", () => {
     const eventSourceConstructor = vi.fn(() => {
       const instance = {
         onmessage: null as ((event: MessageEvent) => void) | null,
+        onopen: null as (() => void) | null,
         onerror: null as (() => void) | null,
+        readyState: 0,
         close: vi.fn(),
       };
       eventSourceInstances.push(instance);
@@ -371,6 +375,46 @@ describe("useSessionEvents", () => {
   });
 
   describe("session state updates", () => {
+    it("falls back to disconnected after a prolonged EventSource outage", async () => {
+      vi.useFakeTimers();
+      const sessions = makeSessions(1);
+
+      const { result } = renderHook(() => useSessionEvents(sessions, null));
+
+      expect(result.current.connectionStatus).toBe("connected");
+
+      await act(async () => {
+        eventSourceMock.readyState = EventSource.CONNECTING;
+        eventSourceMock.onerror?.();
+      });
+
+      expect(result.current.connectionStatus).toBe("reconnecting");
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4000);
+      });
+
+      expect(result.current.connectionStatus).toBe("disconnected");
+    });
+
+    it("clears the disconnect timer when EventSource reconnects", async () => {
+      vi.useFakeTimers();
+      const sessions = makeSessions(1);
+
+      const { result } = renderHook(() => useSessionEvents(sessions, null));
+
+      await act(async () => {
+        eventSourceMock.readyState = EventSource.CONNECTING;
+        eventSourceMock.onerror?.();
+        await vi.advanceTimersByTimeAsync(2000);
+        eventSourceMock.readyState = EventSource.OPEN;
+        eventSourceMock.onopen?.();
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+
+      expect(result.current.connectionStatus).toBe("connected");
+    });
+
     it("applies snapshot patches to sessions", async () => {
       const sessions = makeSessions(2);
 
