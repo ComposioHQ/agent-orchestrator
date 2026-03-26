@@ -790,7 +790,7 @@ function createGitHubSCM(): SCM {
                     comments(first: 1) {
                       nodes {
                         id
-                        author { login }
+                        author { __typename login }
                         body
                         path
                         line
@@ -815,7 +815,7 @@ function createGitHubSCM(): SCM {
                     comments: {
                       nodes: Array<{
                         id: string;
-                        author: { login: string } | null;
+                        author: { __typename: string; login: string } | null;
                         body: string;
                         path: string | null;
                         line: number | null;
@@ -838,7 +838,9 @@ function createGitHubSCM(): SCM {
             const c = t.comments.nodes[0];
             if (!c) return false; // skip threads with no comments
             const author = c.author?.login ?? "";
-            return !BOT_AUTHORS.has(author);
+            const isBot =
+              c.author?.__typename === "Bot" || BOT_AUTHORS.has(author);
+            return !isBot;
           })
           .map((t) => {
             const c = t.comments.nodes[0];
