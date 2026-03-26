@@ -50,7 +50,7 @@ import { preflight } from "../lib/preflight.js";
 import { register, unregister, isAlreadyRunning, getRunning, waitForExit } from "../lib/running-state.js";
 import { isHumanCaller } from "../lib/caller-context.js";
 import { detectEnvironment } from "../lib/detect-env.js";
-import { detectAvailableAgents, type DetectedAgent } from "../lib/detect-agent.js";
+import { detectAgentRuntime, detectAvailableAgents, type DetectedAgent } from "../lib/detect-agent.js";
 import { detectDefaultBranch } from "../lib/git-utils.js";
 import {
   detectProjectType,
@@ -353,39 +353,6 @@ async function promptInstallAgentRuntime(available: DetectedAgent[]): Promise<De
   }
 }
 
-async function selectAgentRuntimeFromDetected(available: DetectedAgent[]): Promise<string> {
-  if (available.length === 0) {
-    return "claude-code";
-  }
-
-  if (available.length === 1) {
-    return available[0].name;
-  }
-
-  if (!isHumanCaller()) {
-    return available.find((a) => a.name === "claude-code")?.name ?? available[0].name;
-  }
-
-  const { createInterface } = await import("node:readline/promises");
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    console.log("\n  Multiple agent runtimes detected:\n");
-    available.forEach((a, i) => {
-      console.log(`  ${i + 1}. ${a.displayName} (${a.name})`);
-    });
-    console.log();
-
-    const answer = await rl.question(`  Choose default agent [1-${available.length}]: `);
-    const idx = Number.parseInt(answer.trim(), 10) - 1;
-    if (idx >= 0 && idx < available.length) {
-      return available[idx].name;
-    }
-    return available[0].name;
-  } finally {
-    rl.close();
-  }
-}
-
 /**
  * Clone a repo with authentication support.
  *
@@ -539,7 +506,7 @@ async function autoCreateConfig(workingDir: string): Promise<OrchestratorConfig>
   // Detect available agent runtimes via plugin registry
   let detectedAgents = await detectAvailableAgents();
   detectedAgents = await promptInstallAgentRuntime(detectedAgents);
-  const agent = await selectAgentRuntimeFromDetected(detectedAgents);
+  const agent = await detectAgentRuntime(detectedAgents);
   console.log(chalk.green(`  ✓ Agent runtime: ${agent}`));
 
   const port = await findFreePort(DEFAULT_PORT);
