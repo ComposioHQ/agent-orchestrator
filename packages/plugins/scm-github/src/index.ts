@@ -787,7 +787,7 @@ function createGitHubSCM(): SCM {
                 reviewThreads(first: 100) {
                   nodes {
                     isResolved
-                    comments(first: 1) {
+                    comments(last: 1) {
                       nodes {
                         id
                         author { login }
@@ -835,13 +835,13 @@ function createGitHubSCM(): SCM {
         return threads
           .filter((t) => {
             if (t.isResolved) return false; // only pending (unresolved) threads
-            const c = t.comments.nodes[0];
+            const c = t.comments.nodes[t.comments.nodes.length - 1];
             if (!c) return false; // skip threads with no comments
             const author = c.author?.login ?? "";
             return !BOT_AUTHORS.has(author);
           })
           .map((t) => {
-            const c = t.comments.nodes[0];
+            const c = t.comments.nodes[t.comments.nodes.length - 1];
             return {
               id: c.id,
               author: c.author?.login ?? "unknown",

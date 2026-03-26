@@ -139,14 +139,14 @@ async function gatherSessionInfo(
 
 // Column widths for the table
 const COL = {
-  session: 14,
-  branch: 24,
-  pr: 6,
-  ci: 6,
-  review: 6,
-  threads: 4,
-  activity: 9,
-  age: 8,
+  session: 16,
+  branch: 26,
+  pr: 8,
+  ci: 8,
+  review: 8,
+  threads: 6,
+  activity: 12,
+  age: 10,
 };
 
 function printTableHeader(): void {
