@@ -692,6 +692,12 @@ function createClaudeCodeAgent(): Agent {
       // Unset CLAUDECODE to avoid nested agent conflicts
       env["CLAUDECODE"] = "";
 
+      // Force color output even when stdout is piped (not a TTY).
+      // Without this, Claude CLI detects no TTY and disables colors,
+      // making its output look different from running Claude directly.
+      env["FORCE_COLOR"] = "1";
+      env["TERM"] = "xterm-256color";
+
       // Set session info for introspection
       env["AO_SESSION_ID"] = config.sessionId;
 
