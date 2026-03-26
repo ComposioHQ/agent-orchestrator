@@ -528,6 +528,11 @@ async function runStartup(
     }
     const webDir = findWebDir(); // throws with install-specific guidance if not found
     await preflight.checkBuilt(webDir);
+    await preflight.checkTtyd();
+    await preflight.checkGit();
+    if (config.defaults.runtime === "tmux" || project.runtime === "tmux") {
+      await preflight.checkTmux();
+    }
 
     if (opts?.rebuild) {
       await cleanNextCache(webDir);

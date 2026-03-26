@@ -73,9 +73,37 @@ async function checkGhAuth(): Promise<void> {
   }
 }
 
+/**
+ * Check that git is installed.
+ * Throws if not installed.
+ */
+async function checkGit(): Promise<void> {
+  try {
+    await exec("git", ["--version"]);
+  } catch {
+    throw new Error("git is not installed. Install it: brew install git");
+  }
+}
+
+/**
+ * Check that ttyd is installed.
+ * Throws if not installed.
+ */
+async function checkTtyd(): Promise<void> {
+  try {
+    await exec("ttyd", ["--version"]);
+  } catch {
+    throw new Error(
+      "ttyd is not installed. Required for terminal sessions. Install it: brew install ttyd",
+    );
+  }
+}
+
 export const preflight = {
   checkPort,
   checkBuilt,
   checkTmux,
   checkGhAuth,
+  checkGit,
+  checkTtyd,
 };

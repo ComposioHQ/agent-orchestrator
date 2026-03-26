@@ -72,9 +72,17 @@ async function runSpawnPreflight(
 ): Promise<void> {
   const project = config.projects[projectId];
   const runtime = project?.runtime ?? config.defaults.runtime;
+
+  // 1. Mandatory binaries for all spawns
+  await preflight.checkGit();
+  await preflight.checkTtyd();
+
+  // 2. Runtime-specific checks
   if (runtime === "tmux") {
     await preflight.checkTmux();
   }
+
+  // 3. Optional SCM/Tracker checks
   const needsGitHubAuth =
     project?.tracker?.plugin === "github" ||
     (options?.claimPr && project?.scm?.plugin === "github");
