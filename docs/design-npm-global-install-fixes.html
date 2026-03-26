@@ -672,13 +672,13 @@ const nodeModules = resolve(webDir, "node_modules", "@composio", "ao-core");</co
     Install logic lives in two layers, each with a clear responsibility:
   </p>
   <ul>
-    <li><strong><code>preflight.checkTmux()</code></strong> &mdash; low-level check + auto-install. Logs each attempt
-      (<code>"Attempting: brew install tmux"</code>) before running. Used by preflight checks and
-      non-interactive contexts.</li>
+    <li><strong><code>preflight.checkTmux()</code></strong> &mdash; low-level check-only guard used by
+      <code>ao spawn</code> preflight. It validates <code>tmux -V</code> and throws platform-specific
+      manual install instructions when missing (no install attempts).</li>
     <li><strong><code>ensureTmux()</code> in start.ts</strong> &mdash; interactive wrapper. Uses <code>askYesNo()</code>
       to get user consent before running <code>tryInstallWithAttempts()</code> with
       <code>tmuxInstallAttempts()</code>. Matches the existing <code>ensureGit()</code> pattern.
-      No silent <code>sudo</code> &mdash; the user sees what will run and approves it.</li>
+      Non-interactive callers default to skip install and print manual hints.</li>
   </ul>
 
   <pre><code>// start.ts — interactive install with user consent
@@ -687,7 +687,7 @@ async function ensureTmux(): Promise&lt;void&gt; {
   if (hasTmux) return;
 
   console.log("⚠ tmux is required for runtime \"tmux\".");
-  const shouldInstall = await askYesNo("Install tmux now?", true);
+  const shouldInstall = await askYesNo("Install tmux now?", true, false);
   if (shouldInstall) {
     const installed = await tryInstallWithAttempts(
       tmuxInstallAttempts(),
@@ -794,7 +794,7 @@ async function ensureTmux(): Promise&lt;void&gt; {
     <li><strong>Always asks first</strong> &mdash; uses <code>askYesNo()</code> before running any install command. No silent <code>sudo</code> or background package manager invocations.</li>
     <li><strong>Logs each command</strong> &mdash; shows <code>"Running: brew install tmux"</code> (via <code>tryInstallWithAttempts()</code>) so the user knows exactly what's executing.</li>
     <li><strong>Blocks on required failures</strong> &mdash; for tmux and git, prints platform-specific manual install instructions and exits rather than silently degrading the experience.</li>
-    <li><strong>Non-interactive fallback</strong> &mdash; when not a TTY (CI, piped scripts, agent callers), <code>canPromptForInstall()</code> returns false and <code>askYesNo()</code> returns its default without prompting. Required tools default to <code>true</code> (attempt install), optional tools default to <code>false</code> (skip).</li>
+    <li><strong>Non-interactive fallback</strong> &mdash; when not a TTY (CI, piped scripts, agent callers), <code>canPromptForInstall()</code> returns false and <code>askYesNo()</code> returns its non-interactive default without prompting. Required and optional tools both default to <code>false</code> (skip), then print manual instructions when required tools are missing.</li>
     <li><strong>Consistent pattern</strong> &mdash; all prerequisite helpers (<code>ensureTmux()</code>, <code>ensureGit()</code>, <code>promptInstallAgentRuntime()</code>) follow the same structure: detect &rarr; prompt &rarr; install &rarr; verify &rarr; block or skip.</li>
   </ul>
 
@@ -891,8 +891,9 @@ function launch(): ChildProcess {
   <h2>7. Files Changed</h2>
 
   <ul class="files-changed">
-    <li>packages/cli/src/lib/preflight.ts &mdash; walk-up resolver, auto-install tmux, platform messages</li>
+    <li>packages/cli/src/lib/preflight.ts &mdash; walk-up resolver, check-only tmux preflight + platform messages</li>
     <li>packages/cli/src/commands/start.ts &mdash; centralized <code>ensureTmux()</code> gate + interactive install prompts for git/tmux/agent runtimes (+ optional gh)</li>
+    <li>packages/cli/src/lib/detect-agent.ts &mdash; shared runtime selection with optional pre-detected list (avoids redundant plugin scan)</li>
     <li class="new">packages/ao/bin/postinstall.js &mdash; node-pty spawn-helper chmod</li>
     <li>packages/ao/package.json &mdash; postinstall script registration</li>
     <li>packages/web/server/start-all.ts &mdash; restart logic with slot-based bookkeeping</li>
@@ -946,17 +947,17 @@ function launch(): ChildProcess {
       <tr>
         <td>macOS (Intel + Apple Silicon)</td>
         <td><span class="badge badge-fixed">Works</span></td>
-        <td><span class="badge badge-fixed">Auto-installs via brew</span><br>Clear error if brew missing</td>
+        <td><span class="badge badge-fixed">Interactive prompt + brew install</span><br>Clear error if brew missing or declined</td>
       </tr>
       <tr>
         <td>Linux x64</td>
         <td><span class="badge badge-fixed">Works</span></td>
-        <td><span class="badge badge-fixed">Auto-installs via apt/dnf</span><br>Clear error if sudo unavailable</td>
+        <td><span class="badge badge-fixed">Interactive prompt + apt/dnf install</span><br>Clear error if sudo unavailable or declined</td>
       </tr>
       <tr>
         <td>Linux arm64 (Graviton)</td>
         <td><span class="badge badge-fixed">Works</span><br>Direct terminal unavailable (no node-pty prebuild)</td>
-        <td><span class="badge badge-fixed">Auto-installs via apt/dnf</span><br>Clear error if sudo unavailable</td>
+        <td><span class="badge badge-fixed">Interactive prompt + apt/dnf install</span><br>Clear error if sudo unavailable or declined</td>
       </tr>
       <tr>
         <td>Windows</td>
@@ -967,9 +968,9 @@ function launch(): ChildProcess {
   </table>
 
   <p>
-    <strong>Key improvement:</strong> Most platforms get tmux auto-installed. When auto-install
-    fails, the user gets a one-line command to copy-paste, then <code>ao start</code> again.
-    No degraded modes, no confusing config state.
+    <strong>Key improvement:</strong> Missing prerequisites are handled with explicit user consent in
+    <code>ao start</code>. If install is declined or fails, the CLI prints one-line commands to run
+    manually, then exits clearly.
   </p>
 
   <hr class="section-divider">
@@ -1023,12 +1024,12 @@ function launch(): ChildProcess {
         <td>ao-core found but <code>dist/index.js</code> missing shows build hint</td>
       </tr>
       <tr>
-        <td>tmux auto-install success</td>
-        <td>When tmux -V fails initially but install succeeds, checkTmux passes</td>
+        <td>tmux interactive install success</td>
+        <td>When tmux -V fails initially and user-approved install succeeds, <code>ensureTmux()</code> passes</td>
       </tr>
       <tr>
-        <td>tmux auto-install failure</td>
-        <td>When all install attempts fail, throws with platform-specific instructions</td>
+        <td>tmux interactive install declined/failure</td>
+        <td>When user declines or install attempts fail, prints platform-specific instructions and exits</td>
       </tr>
     </tbody>
   </table>
@@ -1039,9 +1040,9 @@ function launch(): ChildProcess {
   <h2>11. Design Decisions</h2>
 
   <div class="callout callout-decision">
-    <strong>Auto-install tmux, then block with clear instructions on failure.</strong>
-    We try brew (macOS) and apt/dnf (Linux) automatically. If auto-install fails, we exit
-    with a clear one-line install command rather than falling back to <code>runtime: "process"</code>.
+    <strong>Prompted tmux install in <code>ao start</code>, then block with clear instructions on failure.</strong>
+    We ask first, then try brew (macOS) and apt/dnf (Linux) only after consent. If install is
+    declined or fails, we exit with a clear one-line install command rather than falling back to <code>runtime: "process"</code>.
     The process runtime lacks session attach, terminal panel, and <code>ao send</code> &mdash;
     a degraded first impression is worse than asking the user to run one command.
   </div>
