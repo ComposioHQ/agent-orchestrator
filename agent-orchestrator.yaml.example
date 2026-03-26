@@ -24,7 +24,7 @@ defaults:
   # worker:
   #   agent: codex
   workspace: worktree     # worktree | clone | copy
-  notifiers: [desktop]    # desktop | slack | discord | webhook | email
+  notifiers: [desktop]    # desktop | slack | discord | webhook | email | openclaw
 
 # Projects — at minimum, specify repo and path
 projects:
@@ -99,6 +99,14 @@ projects:
 #     plugin: slack
 #     webhook: ${SLACK_WEBHOOK_URL}
 #     channel: "#agent-updates"
+#
+#   openclaw:
+#     plugin: openclaw
+#     url: http://127.0.0.1:18789/hooks/agent
+#     token: ${OPENCLAW_HOOKS_TOKEN}
+#     retries: 3
+#     retryDelayMs: 1000
+#     wakeMode: now
 
 # Notification routing by priority
 # notificationRouting:
