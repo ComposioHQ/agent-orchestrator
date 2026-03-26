@@ -9,6 +9,7 @@ import {
   readMetadataRaw,
 } from "../../metadata.js";
 import {
+  isIssueNotFoundError,
   type OrchestratorConfig,
   type PluginRegistry,
   type Runtime,
@@ -16,7 +17,7 @@ import {
   type Workspace,
   type SCM,
 } from "../../types.js";
-import { setupTestContext, teardownTestContext, makeHandle, type TestContext } from "../test-utils.js";
+import { setupTestContext, teardownTestContext, makeHandle, type TestContext } from "./test-utils.js";
 
 let ctx: TestContext;
 let sessionsDir: string;
@@ -480,5 +481,83 @@ describe("claimPR", () => {
 
     const oldOwner = readMetadataRaw(sessionsDir, "app-owner");
     expect(oldOwner!["pr"] ?? "").toBe("");
+  });
+});
+
+describe("PluginRegistry.loadBuiltins importFn", () => {
+  it("should use provided importFn instead of built-in import", async () => {
+    const { createPluginRegistry: createReg } = await import("../../plugin-registry.js");
+    const registry = createReg();
+    const importedPackages: string[] = [];
+
+    const fakeImportFn = async (pkg: string): Promise<unknown> => {
+      importedPackages.push(pkg);
+      // Return a valid plugin module for runtime-tmux
+      if (pkg === "@composio/ao-plugin-runtime-tmux") {
+        return {
+          manifest: { name: "tmux", slot: "runtime", description: "test", version: "0.0.0" },
+          create: () => ({ name: "tmux" }),
+        };
+      }
+      // Throw for everything else to simulate not-installed
+      throw new Error(`Module not found: ${pkg}`);
+    };
+
+    await registry.loadBuiltins(undefined, fakeImportFn);
+
+    // importFn should have been called for all builtin plugins
+    expect(importedPackages.length).toBeGreaterThan(0);
+    expect(importedPackages).toContain("@composio/ao-plugin-runtime-tmux");
+
+    // The tmux plugin should be registered
+    const tmux = registry.get("runtime", "tmux");
+    expect(tmux).not.toBeNull();
+  });
+
+  it("should pass importFn through loadFromConfig to loadBuiltins", async () => {
+    const { createPluginRegistry: createReg } = await import("../../plugin-registry.js");
+    const registry = createReg();
+    const importedPackages: string[] = [];
+
+    const fakeImportFn = async (pkg: string): Promise<unknown> => {
+      importedPackages.push(pkg);
+      throw new Error(`Not found: ${pkg}`);
+    };
+
+    await registry.loadFromConfig(config, fakeImportFn);
+
+    // Should have attempted to import builtin plugins via the provided importFn
+    expect(importedPackages.length).toBeGreaterThan(0);
+    expect(importedPackages).toContain("@composio/ao-plugin-runtime-tmux");
+  });
+});
+
+describe("isIssueNotFoundError", () => {
+  it("matches 'Issue X not found'", () => {
+    expect(isIssueNotFoundError(new Error("Issue INT-9999 not found"))).toBe(true);
+  });
+
+  it("matches 'could not resolve to an Issue'", () => {
+    expect(isIssueNotFoundError(new Error("Could not resolve to an Issue"))).toBe(true);
+  });
+
+  it("matches 'no issue with identifier'", () => {
+    expect(isIssueNotFoundError(new Error("No issue with identifier ABC-123"))).toBe(true);
+  });
+
+  it("matches 'invalid issue format'", () => {
+    expect(isIssueNotFoundError(new Error("Invalid issue format: fix login bug"))).toBe(true);
+  });
+
+  it("does not match unrelated errors", () => {
+    expect(isIssueNotFoundError(new Error("Unauthorized"))).toBe(false);
+    expect(isIssueNotFoundError(new Error("Network timeout"))).toBe(false);
+    expect(isIssueNotFoundError(new Error("API key not found"))).toBe(false);
+  });
+
+  it("returns false for non-error values", () => {
+    expect(isIssueNotFoundError(null)).toBe(false);
+    expect(isIssueNotFoundError(undefined)).toBe(false);
+    expect(isIssueNotFoundError("string")).toBe(false);
   });
 });

@@ -18,7 +18,7 @@ import type {
   RuntimeHandle,
   Session,
 } from "../../types.js";
-import { setupTestContext, teardownTestContext, makeHandle, type TestContext } from "../test-utils.js";
+import { setupTestContext, teardownTestContext, makeHandle, type TestContext } from "./test-utils.js";
 import { installMockOpencode } from "./opencode-helpers.js";
 
 let ctx: TestContext;
