@@ -130,7 +130,7 @@ describe("buildPrompt", () => {
     expect(result).not.toContain("## Project Rules");
   });
 
-  it("appends userPrompt last", () => {
+  it("renders userPrompt as Session Focus before Project Context and project rules", () => {
     project.agentRules = "Project rule.";
     const result = buildPrompt({
       project,
@@ -142,11 +142,17 @@ describe("buildPrompt", () => {
     expect(result).not.toBeNull();
     const promptStr = result!;
 
-    // User prompt should come after project rules
+    const sessionFocusIdx = promptStr.indexOf("## Session Focus");
+    const projectContextIdx = promptStr.indexOf("## Project Context");
     const rulesIdx = promptStr.indexOf("Project rule.");
     const userIdx = promptStr.indexOf("Focus on the API layer only.");
-    expect(rulesIdx).toBeLessThan(userIdx);
-    expect(promptStr).toContain("## Additional Instructions");
+
+    expect(sessionFocusIdx).toBeGreaterThan(-1);
+    expect(projectContextIdx).toBeGreaterThan(-1);
+    expect(sessionFocusIdx).toBeLessThan(projectContextIdx);
+    expect(projectContextIdx).toBeLessThan(rulesIdx);
+    expect(userIdx).toBeGreaterThan(sessionFocusIdx);
+    expect(promptStr).toContain("## Session Focus");
   });
 
   it("builds prompt from rules alone (no issue)", () => {
@@ -212,6 +218,15 @@ describe("BASE_AGENT_PROMPT", () => {
 
   it("covers key topics", () => {
     expect(BASE_AGENT_PROMPT).toContain("Session Lifecycle");
+    expect(BASE_AGENT_PROMPT).toContain("default mode is PLANNING");
+    expect(BASE_AGENT_PROMPT).toContain("Only implement code when the user explicitly requests");
+    expect(BASE_AGENT_PROMPT).toContain("If no task or issue is specified");
+    expect(BASE_AGENT_PROMPT).toContain("wait for instructions");
+    expect(BASE_AGENT_PROMPT).toContain("Planning workflow");
+    expect(BASE_AGENT_PROMPT).toContain(".feature-plans/pending/");
+    expect(BASE_AGENT_PROMPT).toContain(".feature-plans/wip/");
+    expect(BASE_AGENT_PROMPT).toContain(".feature-plans/done/");
+    expect(BASE_AGENT_PROMPT).toContain("Do not start implementation until the user approves");
     expect(BASE_AGENT_PROMPT).toContain("Git Workflow");
     expect(BASE_AGENT_PROMPT).toContain("PR Best Practices");
     expect(BASE_AGENT_PROMPT).toContain("ao session claim-pr");
