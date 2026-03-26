@@ -35,6 +35,11 @@ export function PRStatus({ pr }: PRStatusProps) {
           +{pr.additions} -{pr.deletions} {sizeLabel}
         </span>
       )}
+      {rateLimited && (
+        <span className="inline-flex items-center rounded-full bg-[rgba(210,153,34,0.1)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-accent-yellow)]">
+          stale
+        </span>
+      )}
 
       {/* Merged badge */}
       {pr.state === "merged" && (

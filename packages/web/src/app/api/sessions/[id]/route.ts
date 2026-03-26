@@ -1,5 +1,6 @@
 import { type NextRequest } from "next/server";
 import { getServices, getSCM } from "@/lib/services";
+import { resolveSessionsDir } from "@/lib/session-metadata";
 import {
   sessionToDashboard,
   resolveProject,
@@ -25,18 +26,22 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     // Enrich metadata (issue labels, agent summaries, issue titles)
     await enrichSessionsMetadata([coreSession], [dashboardSession], config, registry);
 
-    // Enrich PR — serve cache immediately, refresh in background if stale
+    // Enrich PR — always fetch fresh data for the detail endpoint (no cache)
     if (coreSession.pr) {
       const project = resolveProject(coreSession, config.projects);
       const scm = getSCM(registry, project);
-      if (scm) {
-        const cached = await enrichSessionPR(dashboardSession, scm, coreSession.pr, {
-          cacheOnly: true,
+      if (scm && project) {
+        const sessionsDir = resolveSessionsDir(config.configPath, project.path);
+        await enrichSessionPR(dashboardSession, scm, coreSession.pr, {
+          bypassCache: true,
+          metadata: sessionsDir
+            ? {
+                sessionsDir,
+                sessionId: coreSession.id,
+                currentStatus: coreSession.status,
+              }
+            : undefined,
         });
-        if (!cached) {
-          // Nothing cached yet — block once to populate, then future calls use cache
-          await enrichSessionPR(dashboardSession, scm, coreSession.pr);
-        }
       }
     }
 

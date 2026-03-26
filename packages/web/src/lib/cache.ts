@@ -10,7 +10,9 @@ interface CacheEntry<T> {
   expiresAt: number;
 }
 
-const DEFAULT_TTL_MS = 5 * 60_000; // 5 minutes
+export const PR_CACHE_TTL_SUCCESS_MS = 5 * 60_000; // 5 minutes
+export const PR_CACHE_TTL_RATE_LIMIT_MS = 30_000; // 30 seconds
+const DEFAULT_TTL_MS = PR_CACHE_TTL_SUCCESS_MS;
 
 /**
  * Simple TTL cache backed by a Map.
