@@ -1115,6 +1115,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       },
     };
 
+    // Compute dashboard URL if a base is configured (or infer localhost)
+    try {
+      const base = config.dashboardBaseUrl ?? `http://localhost:${config.port ?? 3000}`;
+      session.dashboardUrl = `${base.replace(/\/$/, "")}/sessions/${sessionId}`;
+    } catch {
+      session.dashboardUrl = null;
+    }
+
     try {
       writeMetadata(sessionsDir, sessionId, {
         worktree: workspacePath,
@@ -1394,6 +1402,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         ...(reusableOpenCodeSessionId ? { opencodeSessionId: reusableOpenCodeSessionId } : {}),
       },
     };
+
+    // Attach dashboard URL to orchestrator session as well
+    try {
+      const base = config.dashboardBaseUrl ?? `http://localhost:${config.port ?? 3000}`;
+      session.dashboardUrl = `${base.replace(/\/$/, "")}/sessions/${session.id}`;
+    } catch {
+      session.dashboardUrl = null;
+    }
 
     try {
       writeMetadata(sessionsDir, sessionId, {

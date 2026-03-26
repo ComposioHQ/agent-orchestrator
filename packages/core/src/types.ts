@@ -165,6 +165,9 @@ export interface Session {
   /** Last activity timestamp */
   lastActivityAt: Date;
 
+  /** Optional URL to the dashboard session page (if known) */
+  dashboardUrl?: string | null;
+
   /** When this session was last restored (undefined if never restored) */
   restoredAt?: Date;
 
@@ -912,6 +915,8 @@ export interface OrchestratorConfig {
 
   /** Default reaction configs */
   reactions: Record<string, ReactionConfig>;
+  /** Optional publicly reachable base URL for the dashboard (e.g. https://ao.example.com) */
+  dashboardBaseUrl?: string;
 }
 
 export interface DefaultPlugins {
