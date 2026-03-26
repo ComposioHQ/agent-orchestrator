@@ -98,14 +98,11 @@ async function postWithRetry(
   retryDelayMs: number,
 ): Promise<void> {
   let lastError: Error | undefined;
-  // When true, the next iteration skips the standard exponential backoff so we
-  // don't double-delay after already waiting for a 429 Retry-After.
-  let skipNextBackoff = false;
+  // Separate counter for 429 Retry-After waits so they don't consume the error
+  // retry budget — a server-mandated wait shouldn't cost a retry slot.
+  let rateLimitRetries = 0;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
-    const skipBackoff = skipNextBackoff;
-    skipNextBackoff = false;
-
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
     try {
@@ -118,17 +115,22 @@ async function postWithRetry(
 
       if (response.ok || response.status === 204) return;
 
-      // Handle rate limiting with Retry-After header.
-      // Mark that the next attempt should skip exponential backoff since we
-      // already waited the server-specified delay.
+      // Handle rate limiting: wait then retry without burning an error retry slot.
+      // Use Retry-After if present, otherwise fall back to retryDelayMs.
       if (response.status === 429) {
-        const retryAfter = response.headers.get("Retry-After");
-        if (retryAfter && attempt < retries) {
-          const waitMs = (parseFloat(retryAfter) || 1) * 1000;
+        if (rateLimitRetries < retries) {
+          const retryAfter = response.headers.get("Retry-After");
+          const waitMs = retryAfter ? (parseFloat(retryAfter) || 1) * 1000 : retryDelayMs;
           await new Promise((resolve) => setTimeout(resolve, waitMs));
-          skipNextBackoff = true;
+          rateLimitRetries++;
+          attempt--; // undo the for-loop increment so error budget is preserved
           continue;
         }
+        // Rate-limit budget exhausted — fail immediately rather than falling through
+        // to the error retry path (which would compound the two counters).
+        const body = await response.text().catch(() => "");
+        lastError = new Error(`Discord webhook rate-limited (HTTP 429)${body ? `: ${body.trim()}` : ""}`);
+        throw lastError;
       }
 
       const body = await response.text();
@@ -144,7 +146,7 @@ async function postWithRetry(
       clearTimeout(timer);
     }
 
-    if (!skipBackoff && attempt < retries) {
+    if (attempt < retries) {
       const delay = retryDelayMs * 2 ** attempt;
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
