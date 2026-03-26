@@ -255,12 +255,14 @@ function writeOpenClawConfig(
   // Add "openclaw" to notificationRouting so notifications actually fire
   // (AO prefers per-priority routing over defaults.notifiers)
   if (!rawConfig.notificationRouting) {
-    // Initialize with default routing that includes openclaw
+    // Seed from existing defaults.notifiers so we don't silently drop notifiers
+    // (e.g. desktop) that the user already had for all priorities.
+    const base = [...new Set([...(rawConfig.defaults.notifiers as string[]), "openclaw"])];
     rawConfig.notificationRouting = {
-      urgent: ["desktop", "openclaw"],
-      action: ["desktop", "openclaw"],
-      warning: ["openclaw"],
-      info: ["openclaw"],
+      urgent: [...base],
+      action: [...base],
+      warning: [...base],
+      info: [...base],
     };
   } else if (typeof rawConfig.notificationRouting === "object") {
     for (const priority of Object.keys(rawConfig.notificationRouting)) {
