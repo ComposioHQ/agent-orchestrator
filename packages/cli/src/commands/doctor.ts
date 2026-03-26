@@ -191,20 +191,22 @@ export function registerDoctor(program: Command): void {
       // 2. Run TypeScript-based notifier checks if a config file exists
       const configPath = findConfigFile();
       if (configPath) {
+        let config: ReturnType<typeof loadConfig> | undefined;
         try {
-          const config = loadConfig(configPath);
+          config = loadConfig(configPath);
           await checkNotifierConnectivity(config, fail);
-
-          // 3. Send test notifications if requested
-          if (opts.testNotify) {
-            await sendTestNotifications(config, fail);
-          }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          if (opts.testNotify) {
-            fail(`Notifier checks failed: ${message}`);
-          } else {
-            warn(`Notifier checks failed: ${message}`);
+          warn(`Notifier connectivity check failed: ${message}`);
+        }
+
+        // 3. Send test notifications if requested (separate catch for accurate errors)
+        if (opts.testNotify && config) {
+          try {
+            await sendTestNotifications(config, fail);
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            fail(`Sending test notifications failed: ${message}`);
           }
         }
       } else if (opts.testNotify) {
