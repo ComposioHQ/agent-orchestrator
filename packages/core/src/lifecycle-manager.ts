@@ -815,9 +815,9 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       const sessionsToCheck = sessions.filter((s) => {
         if (s.status !== "merged" && s.status !== "killed") return true;
         const tracked = states.get(s.id);
-        // Check for state transition OR open PR that still needs monitoring
+        // Check for state transition OR killed session with PR that still needs monitoring
         const hasTransition = tracked !== undefined && tracked !== s.status;
-        const hasOpenPR = s.pr !== null;
+        const hasOpenPR = s.status === "killed" && s.pr !== null;
         return hasTransition || hasOpenPR;
       });
 
@@ -839,8 +839,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         }
       }
 
-      // Check if all sessions are complete (trigger reaction only once)
-      const activeSessions = sessions.filter((s) => s.status !== "merged" && s.status !== "killed");
+      // Check if all sessions are complete (trigger reaction only once).
+      // Use tracked status instead of session.status, because session.status may be
+      // overridden by enrichSessionWithRuntimeState (which marks dead runtimes as
+      // "killed" regardless of the actual PR-based status we're tracking).
+      const activeSessions = sessions.filter((s) => {
+        const tracked = states.get(s.id);
+        const status = tracked ?? s.status;
+        return status !== "merged" && status !== "killed";
+      });
       if (sessions.length > 0 && activeSessions.length === 0 && !allCompleteEmitted) {
         allCompleteEmitted = true;
 
