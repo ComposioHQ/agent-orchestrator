@@ -528,6 +528,8 @@ async function runStartup(
     }
     const webDir = findWebDir(); // throws with install-specific guidance if not found
     await preflight.checkBuilt(webDir);
+    await preflight.checkTtyd();
+    await preflight.checkGit();
 
     if (opts?.rebuild) {
       await cleanNextCache(webDir);
