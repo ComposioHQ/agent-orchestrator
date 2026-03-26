@@ -6,8 +6,10 @@ import type {
   OrchestratorConfig,
   PluginRegistry,
   SessionManager,
+  Runtime,
   Agent,
   ActivityState,
+  SCM,
 } from "../types.js";
 import {
   createTestEnvironment,
@@ -211,8 +213,8 @@ describe("check (single session)", () => {
     });
 
     const lm = setupCheck("app-1", {
-      session: makeSession({ status: "working", metadata: { agent: "mock-agent" } }),
-      metaOverrides: { agent: "mock-agent" },
+      session: makeSession({ status: "working", metadata: { agent: "opencode" } }),
+      metaOverrides: { agent: "opencode" },
     });
 
     await lm.check("app-1");
@@ -234,8 +236,8 @@ describe("check (single session)", () => {
     });
 
     const lm = setupCheck("app-1", {
-      session: makeSession({ status: "working", metadata: { agent: "mock-agent" } }),
-      metaOverrides: { agent: "mock-agent" },
+      session: makeSession({ status: "working", metadata: { agent: "opencode" } }),
+      metaOverrides: { agent: "opencode" },
     });
 
     await lm.check("app-1");
@@ -274,9 +276,9 @@ describe("check (single session)", () => {
         status: "working",
         branch: "feat/test",
         pr: null,
-        metadata: { agent: "mock-agent" },
+        metadata: { agent: "opencode" },
       }),
-      metaOverrides: { branch: "feat/test", agent: "mock-agent" },
+      metaOverrides: { branch: "feat/test", agent: "opencode" },
       registry,
     });
 
