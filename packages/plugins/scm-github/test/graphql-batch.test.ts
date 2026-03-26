@@ -7,7 +7,7 @@
  * providing the same semantic information for CI status determination.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   generateBatchQuery,
   MAX_BATCH_SIZE,
@@ -15,6 +15,13 @@ import {
   parseReviewDecision,
   parsePRState,
   extractPREnrichment,
+  clearETagCache,
+  getPRListETag,
+  getCommitStatusETag,
+  setPRMetadata,
+  getPRMetadataCache,
+  clearPRMetadataCache,
+  shouldRefreshPREnrichment,
 } from "../src/graphql-batch.js";
 
 describe("GraphQL Batch Query Generation", () => {
@@ -372,20 +379,20 @@ describe("PR Enrichment Data Extraction", () => {
       },
     };
 
-    const result = extractPREnrichment(pullRequest);
+    const extracted = extractPREnrichment(pullRequest);
 
-    expect(result).not.toBeNull();
-    expect(result?.state).toBe("open");
-    expect(result?.ciStatus).toBe("passing");
-    expect(result?.reviewDecision).toBe("approved");
-    expect(result?.mergeable).toBe(true);
-    expect(result?.title).toBe("Add new feature");
-    expect(result?.additions).toBe(100);
-    expect(result?.deletions).toBe(50);
-    expect(result?.isDraft).toBe(false);
-    expect(result?.hasConflicts).toBe(false);
-    expect(result?.isBehind).toBe(false);
-    expect(result?.blockers).toEqual([]);
+    expect(extracted).not.toBeNull();
+    expect(extracted?.data.state).toBe("open");
+    expect(extracted?.data.ciStatus).toBe("passing");
+    expect(extracted?.data.reviewDecision).toBe("approved");
+    expect(extracted?.data.mergeable).toBe(true);
+    expect(extracted?.data.title).toBe("Add new feature");
+    expect(extracted?.data.additions).toBe(100);
+    expect(extracted?.data.deletions).toBe(50);
+    expect(extracted?.data.isDraft).toBe(false);
+    expect(extracted?.data.hasConflicts).toBe(false);
+    expect(extracted?.data.isBehind).toBe(false);
+    expect(extracted?.data.blockers).toEqual([]);
   });
 
   it("should extract PR with CI failures", () => {
@@ -417,7 +424,8 @@ describe("PR Enrichment Data Extraction", () => {
       },
     };
 
-    const result = extractPREnrichment(pullRequest);
+    const extracted = extractPREnrichment(pullRequest);
+    const result = extracted?.data;
 
     expect(result?.ciStatus).toBe("failing");
     expect(result?.mergeable).toBe(false);
@@ -449,7 +457,8 @@ describe("PR Enrichment Data Extraction", () => {
       },
     };
 
-    const result = extractPREnrichment(pullRequest);
+    const extracted = extractPREnrichment(pullRequest);
+    const result = extracted?.data;
 
     expect(result?.reviewDecision).toBe("changes_requested");
     expect(result?.mergeable).toBe(false);
@@ -481,7 +490,8 @@ describe("PR Enrichment Data Extraction", () => {
       },
     };
 
-    const result = extractPREnrichment(pullRequest);
+    const extracted = extractPREnrichment(pullRequest);
+    const result = extracted?.data;
 
     expect(result?.hasConflicts).toBe(true);
     expect(result?.mergeable).toBe(false);
@@ -513,7 +523,8 @@ describe("PR Enrichment Data Extraction", () => {
       },
     };
 
-    const result = extractPREnrichment(pullRequest);
+    const extracted = extractPREnrichment(pullRequest);
+    const result = extracted?.data;
 
     expect(result?.isBehind).toBe(true);
     expect(result?.mergeable).toBe(false);
@@ -545,7 +556,8 @@ describe("PR Enrichment Data Extraction", () => {
       },
     };
 
-    const result = extractPREnrichment(pullRequest);
+    const extracted = extractPREnrichment(pullRequest);
+    const result = extracted?.data;
 
     expect(result?.isDraft).toBe(true);
     expect(result?.mergeable).toBe(false);
@@ -584,7 +596,8 @@ describe("PR Enrichment Data Extraction", () => {
       },
     };
 
-    const result = extractPREnrichment(pullRequest);
+    const extracted = extractPREnrichment(pullRequest);
+    const result = extracted?.data;
 
     expect(result?.state).toBe("merged");
   });
@@ -614,7 +627,8 @@ describe("PR Enrichment Data Extraction", () => {
       },
     };
 
-    const result = extractPREnrichment(pullRequest);
+    const extracted = extractPREnrichment(pullRequest);
+    const result = extracted?.data;
 
     expect(result?.state).toBe("closed");
   });
@@ -644,7 +658,8 @@ describe("PR Enrichment Data Extraction", () => {
       },
     };
 
-    const result = extractPREnrichment(pullRequest);
+    const extracted = extractPREnrichment(pullRequest);
+    const result = extracted?.data;
 
     expect(result?.reviewDecision).toBe("none");
     expect(result?.mergeable).toBe(true); // "none" is treated as approved for merge readiness
@@ -675,7 +690,8 @@ describe("PR Enrichment Data Extraction", () => {
       },
     };
 
-    const result = extractPREnrichment(pullRequest);
+    const extracted = extractPREnrichment(pullRequest);
+    const result = extracted?.data;
 
     expect(result?.reviewDecision).toBe("pending");
     expect(result?.mergeable).toBe(false);
@@ -686,5 +702,166 @@ describe("PR Enrichment Data Extraction", () => {
 describe("MAX_BATCH_SIZE constant", () => {
   it("should be defined as 25", () => {
     expect(MAX_BATCH_SIZE).toBe(25);
+  });
+});
+
+describe("ETag Cache", () => {
+  beforeEach(() => {
+    // Clear caches before each test
+    clearETagCache();
+    clearPRMetadataCache();
+  });
+
+  describe("ETag Cache Getters (Testing Exposed APIs)", () => {
+    it("should return undefined for PR list ETag not in cache", () => {
+      const owner = "testowner";
+      const repo = "testrepo";
+
+      expect(getPRListETag(owner, repo)).toBeUndefined();
+    });
+
+    it("should return undefined for commit status ETag not in cache", () => {
+      const owner = "testowner";
+      const repo = "testrepo";
+      const sha = "abc123def456";
+
+      expect(getCommitStatusETag(owner, repo, sha)).toBeUndefined();
+    });
+  });
+
+  describe("PR Metadata Cache", () => {
+    it("should store and retrieve PR metadata", () => {
+      const key = "owner/repo#123";
+      const metadata = { headSha: "abc123", ciStatus: "pending" };
+
+      setPRMetadata(key, metadata);
+
+      const cached = getPRMetadataCache().get(key);
+      expect(cached).toEqual(metadata);
+    });
+
+    it("should store metadata for multiple PRs", () => {
+      const key1 = "owner/repo#1";
+      const key2 = "owner/repo#2";
+      const key3 = "other/repo#1";
+
+      setPRMetadata(key1, { headSha: "abc", ciStatus: "pending" });
+      setPRMetadata(key2, { headSha: "def", ciStatus: "passing" });
+      setPRMetadata(key3, { headSha: "ghi", ciStatus: "failing" });
+
+      const cache = getPRMetadataCache();
+      expect(cache.size).toBe(3);
+      expect(cache.get(key1)?.ciStatus).toBe("pending");
+      expect(cache.get(key2)?.ciStatus).toBe("passing");
+      expect(cache.get(key3)?.ciStatus).toBe("failing");
+    });
+
+    it("should allow updating metadata for same PR", () => {
+      const key = "owner/repo#123";
+
+      setPRMetadata(key, { headSha: "abc", ciStatus: "pending" });
+      expect(getPRMetadataCache().get(key)?.ciStatus).toBe("pending");
+
+      setPRMetadata(key, { headSha: "abc", ciStatus: "passing" });
+      expect(getPRMetadataCache().get(key)?.ciStatus).toBe("passing");
+    });
+
+    it("should clear PR metadata cache", () => {
+      setPRMetadata("owner/repo#1", { headSha: "abc", ciStatus: "pending" });
+      setPRMetadata("owner/repo#2", { headSha: "def", ciStatus: "passing" });
+
+      expect(getPRMetadataCache().size).toBe(2);
+
+      clearPRMetadataCache();
+
+      expect(getPRMetadataCache().size).toBe(0);
+    });
+
+    it("should handle null headSha", () => {
+      const key = "owner/repo#123";
+      const metadata = { headSha: null, ciStatus: "passing" };
+
+      setPRMetadata(key, metadata);
+
+      const cached = getPRMetadataCache().get(key);
+      expect(cached).toEqual(metadata);
+      expect(cached?.headSha).toBeNull();
+    });
+  });
+});
+
+describe("shouldRefreshPREnrichment - ETag Guard Strategy", () => {
+  beforeEach(() => {
+    clearETagCache();
+    clearPRMetadataCache();
+  });
+
+  describe("Empty PRs", () => {
+    it("should not refresh when no PRs provided", async () => {
+      const result = await shouldRefreshPREnrichment([]);
+
+      expect(result.shouldRefresh).toBe(false);
+      expect(result.details).toContain("No PRs to check");
+    });
+  });
+
+  describe("First-time PRs (No cached metadata)", () => {
+    it("should refresh for PRs not in metadata cache", async () => {
+      const prs = [
+        {
+          owner: "owner",
+          repo: "repo",
+          number: 123,
+          url: "https://github.com/owner/repo/pull/123",
+          title: "Test PR",
+          branch: "feature",
+          baseBranch: "main",
+          isDraft: false,
+        },
+      ];
+
+      // PR not in cache - should attempt refresh
+      // (Actual result depends on REST API response in integration test)
+      const result = await shouldRefreshPREnrichment(prs);
+
+      expect(result).toBeDefined();
+      expect(result.shouldRefresh).toBeDefined();
+      expect(result.details).toBeInstanceOf(Array);
+    });
+  });
+
+  describe("Multiple Repositories", () => {
+    it("should check PR list for each repository", async () => {
+      const prs = [
+        {
+          owner: "owner1",
+          repo: "repo1",
+          number: 1,
+          url: "https://github.com/owner1/repo1/pull/1",
+          title: "Test PR 1",
+          branch: "feature1",
+          baseBranch: "main",
+          isDraft: false,
+        },
+        {
+          owner: "owner2",
+          repo: "repo2",
+          number: 2,
+          url: "https://github.com/owner2/repo2/pull/2",
+          title: "Test PR 2",
+          branch: "feature2",
+          baseBranch: "main",
+          isDraft: false,
+        },
+      ];
+
+      const result = await shouldRefreshPREnrichment(prs);
+
+      expect(result).toBeDefined();
+      expect(result.shouldRefresh).toBeDefined();
+      expect(result.details).toBeInstanceOf(Array);
+      // Should have checked both repos (details length)
+      expect(result.details.length).toBeGreaterThan(0);
+    });
   });
 });

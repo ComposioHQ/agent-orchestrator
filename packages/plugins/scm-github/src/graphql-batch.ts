@@ -19,6 +19,217 @@ import type {
 const execFileAsync = promisify(execFile);
 
 /**
+ * ETag cache for REST API endpoints.
+ * Used to avoid expensive GraphQL queries when nothing has changed.
+ *
+ * Keys:
+ * - PR list: "prList:{owner}/{repo}"
+ * - Commit status: "commit:{owner}/{repo}#{sha}"
+ */
+interface ETagCache {
+  prList: Map<string, string>; // Key: "owner/repo", Value: ETag
+  commitStatus: Map<string, string>; // Key: "owner/repo#sha", Value: ETag
+}
+
+/**
+ * Global ETag cache instance.
+ * This is shared across all batch enrichment calls within the process lifecycle.
+ * The cache persists between polling cycles to avoid redundant REST/GraphQL calls.
+ */
+const etagCache: ETagCache = {
+  prList: new Map(),
+  commitStatus: new Map(),
+};
+
+/**
+ * Result of checking if PR data has changed via ETag guards.
+ */
+interface ETagGuardResult {
+  shouldRefresh: boolean;
+  details: string[];
+}
+
+/**
+ * Clear all ETag cache entries.
+ * Useful for testing or when forcing a refresh.
+ */
+export function clearETagCache(): void {
+  etagCache.prList.clear();
+  etagCache.commitStatus.clear();
+}
+
+/**
+ * Get PR list ETag for a repository.
+ */
+export function getPRListETag(owner: string, repo: string): string | undefined {
+  return etagCache.prList.get(`${owner}/${repo}`);
+}
+
+/**
+ * Get commit status ETag for a specific commit.
+ */
+export function getCommitStatusETag(
+  owner: string,
+  repo: string,
+  sha: string,
+): string | undefined {
+  return etagCache.commitStatus.get(`${owner}/${repo}#${sha}`);
+}
+
+/**
+ * Set PR list ETag for a repository.
+ */
+function setPRListETag(owner: string, repo: string, etag: string): void {
+  etagCache.prList.set(`${owner}/${repo}`, etag);
+}
+
+/**
+ * Set commit status ETag for a specific commit.
+ */
+function setCommitStatusETag(
+  owner: string,
+  repo: string,
+  sha: string,
+  etag: string,
+): void {
+  etagCache.commitStatus.set(`${owner}/${repo}#${sha}`, etag);
+}
+
+/**
+ * Cache for PR metadata needed for ETag guard decisions.
+ * Stores head SHA and CI status for each PR.
+ * Key: "${owner}/${repo}#${number}"
+ */
+const prMetadataCache = new Map<
+  string,
+  { headSha: string | null; ciStatus: CIStatus }
+>();
+
+/**
+ * Update PR metadata cache with latest enrichment data.
+ * Called after successful GraphQL batch enrichment.
+ */
+function updatePRMetadataCache(
+  prKey: string,
+  enrichment: PREnrichmentData,
+  headSha?: string,
+): void {
+  prMetadataCache.set(prKey, {
+    headSha: headSha ?? null,
+    ciStatus: enrichment.ciStatus,
+  });
+}
+
+/**
+ * 2-Guard ETag Strategy: Check if PR enrichment cache needs refreshing.
+ *
+ * Before running expensive GraphQL batch queries, use two lightweight REST API
+ * ETag checks to detect if anything actually changed:
+ *
+ * Guard 1: PR List ETag Check (per repo)
+ *   - Detects: New commits, PR title/body edits, labels changes, reviews, PR state changes
+ *   - Misses: CI status changes
+ *
+ * Guard 2: Commit Status ETag Check (per PR with pending CI)
+ *   - Only checks PRs with ciStatus === "pending"
+ *   - Detects: CI check starts, passes, fails, or external status updates
+ *
+ * @param prs - PRs to check
+ * @returns true if GraphQL batch should run, false if nothing changed
+ */
+export async function shouldRefreshPREnrichment(
+  prs: PRInfo[],
+): Promise<ETagGuardResult> {
+  const details: string[] = [];
+  let shouldRefresh = false;
+
+  if (prs.length === 0) {
+    return { shouldRefresh: false, details: ["No PRs to check"] };
+  }
+
+  // Group PRs by repository for Guard 1 (PR list check)
+  const repos = new Map<string, PRInfo[]>();
+  const pendingCIPRs: Array<{ pr: PRInfo; key: string }> = [];
+
+  for (const pr of prs) {
+    const repoKey = `${pr.owner}/${pr.repo}`;
+    if (!repos.has(repoKey)) {
+      repos.set(repoKey, []);
+    }
+    repos.get(repoKey)!.push(pr);
+
+    // Collect PRs with pending CI for Guard 2
+    const prKey = `${repoKey}#${pr.number}`;
+    const cached = prMetadataCache.get(prKey);
+    if (cached && cached.ciStatus === "pending") {
+      pendingCIPRs.push({ pr, key: prKey });
+    }
+  }
+
+  // Guard 1: Check PR list ETag for each repository
+  for (const [repoKey] of repos) {
+    const [owner, repo] = repoKey.split("/");
+    const prListChanged = await checkPRListETag(owner, repo);
+    if (prListChanged) {
+      shouldRefresh = true;
+      details.push(`PR list changed for ${repoKey} (Guard 1)`);
+    }
+  }
+
+  // Guard 2: Check commit status ETag for PRs with pending CI
+  // We need to fetch head SHA for these PRs - use a lightweight REST call
+  for (const { pr, key } of pendingCIPRs) {
+    const [owner, repo, number] = key.split("/");
+
+    // Get head SHA from PR metadata cache or fetch via REST
+    const cached = prMetadataCache.get(key);
+    const headSha = cached?.headSha;
+
+    if (!headSha) {
+      // First time seeing this PR - need to refresh
+      shouldRefresh = true;
+      details.push(`First time seeing PR #${number} (Guard 2: no cached head SHA)`);
+      continue;
+    }
+
+    const statusChanged = await checkCommitStatusETag(owner, repo, headSha);
+    if (statusChanged) {
+      shouldRefresh = true;
+      details.push(`CI status changed for ${owner}/${repo}#${number} (Guard 2)`);
+    }
+  }
+
+  return { shouldRefresh, details };
+}
+
+/**
+ * Get cached PR metadata for testing.
+ */
+export function getPRMetadataCache(): Map<
+  string,
+  { headSha: string | null; ciStatus: CIStatus }
+> {
+  return new Map(prMetadataCache);
+}
+
+/**
+ * Set PR metadata for testing.
+ */
+export function setPRMetadata(
+  key: string,
+  metadata: { headSha: string | null; ciStatus: CIStatus },
+): void {
+  prMetadataCache.set(key, metadata);
+}
+
+/**
+ * Clear PR metadata cache for testing.
+ */
+export function clearPRMetadataCache(): void {
+  prMetadataCache.clear();
+}
+
+/**
  * Interface for recording GraphQL batch observability operations.
  * Allows the caller to provide an observer that records to
  * observability system instead of using console.log.
@@ -71,8 +282,124 @@ async function verifyGhCLI(): Promise<void> {
 export const MAX_BATCH_SIZE = 25;
 
 /**
+ * Guard 1: PR List ETag Check (per repo)
+ *
+ * Detects if PR metadata has changed in a repository using REST ETag.
+ *
+ * - Endpoint: GET /repos/{owner}/{repo}/pulls?state=open&sort=updated&direction=desc
+ * - Detects: New commits, PR title/body edits, label changes, reviews, PR state changes
+ * - Misses: CI status changes (handled by Guard 2)
+ *
+ * @returns true if PR list has changed (200 OK), false if unchanged (304 Not Modified)
+ */
+async function checkPRListETag(
+  owner: string,
+  repo: string,
+): Promise<boolean> {
+  const repoKey = `${owner}/${repo}`;
+  const cachedETag = etagCache.prList.get(repoKey);
+
+  // Build gh CLI args for REST API call
+  const url = `repos/${repoKey}/pulls?state=open&sort=updated&direction=desc&per_page=1`;
+  const args = ["api", "--method", "GET", url, "-i"]; // -i includes headers
+
+  // Add If-None-Match header if we have a cached ETag
+  if (cachedETag) {
+    args.push("-H", `If-None-Match: ${cachedETag}`);
+  }
+
+  try {
+    const { stdout } = await execFileAsync("gh", args, { timeout: 10_000 });
+    const output = stdout.trim();
+
+    // Check for HTTP 304 Not Modified response
+    if (output.includes("HTTP/1.1 304") || output.includes("HTTP/2 304")) {
+      // No changes detected - cost: 0 GraphQL points
+      return false;
+    }
+
+    // Extract new ETag from response headers
+    // ETag header format: "etag": "W/"abc123..." or "etag": "abc123..."
+    const etagMatch = output.match(/etag:\s*"([^"]+)"/i);
+    if (etagMatch) {
+      const newETag = etagMatch[1];
+      setPRListETag(owner, repo, newETag);
+    }
+
+    // PR list changed - cost: 1 REST point
+    return true;
+  } catch (err) {
+    // On error, assume change to ensure we don't miss anything
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    // Log but don't throw - allow GraphQL batch to proceed
+    // eslint-disable-next-line no-console -- Observability logging for ETag errors
+    console.warn(`[ETag Guard 1] PR list check failed for ${repoKey}: ${errorMsg}`);
+    return true; // Assume changed to be safe
+  }
+}
+
+/**
+ * Guard 2: Commit Status ETag Check (per PR with pending CI)
+ *
+ * Detects if CI status has changed for a specific commit using REST ETag.
+ *
+ * - Endpoint: GET /repos/{owner}/{repo}/commits/{head_sha}/status
+ * - Detects: CI check starts, passes, fails, or external status updates
+ * - Only checked for PRs with ciStatus === "pending" to minimize calls
+ *
+ * @returns true if CI status has changed (200 OK), false if unchanged (304 Not Modified)
+ */
+async function checkCommitStatusETag(
+  owner: string,
+  repo: string,
+  sha: string,
+): Promise<boolean> {
+  const commitKey = `${owner}/${repo}#${sha}`;
+  const cachedETag = etagCache.commitStatus.get(commitKey);
+
+  // Build gh CLI args for REST API call
+  const url = `repos/${owner}/${repo}/commits/${sha}/status`;
+  const args = ["api", "--method", "GET", url, "-i"]; // -i includes headers
+
+  // Add If-None-Match header if we have a cached ETag
+  if (cachedETag) {
+    args.push("-H", `If-None-Match: ${cachedETag}`);
+  }
+
+  try {
+    const { stdout } = await execFileAsync("gh", args, { timeout: 10_000 });
+    const output = stdout.trim();
+
+    // Check for HTTP 304 Not Modified response
+    if (output.includes("HTTP/1.1 304") || output.includes("HTTP/2 304")) {
+      // No CI changes detected - cost: 0 GraphQL points
+      return false;
+    }
+
+    // Extract new ETag from response headers
+    const etagMatch = output.match(/etag:\s*"([^"]+)"/i);
+    if (etagMatch) {
+      const newETag = etagMatch[1];
+      setCommitStatusETag(owner, repo, sha, newETag);
+    }
+
+    // CI status changed - cost: 1 REST point
+    return true;
+  } catch (err) {
+    // On error, assume change to ensure we don't miss anything
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    // eslint-disable-next-line no-console -- Observability logging for ETag errors
+    console.warn(
+      `[ETag Guard 2] Commit status check failed for ${commitKey}: ${errorMsg}`,
+    );
+    return true; // Assume changed to be safe
+  }
+}
+
+/**
  * GraphQL fields to fetch for each PR.
  * This includes all data needed for orchestrator status detection.
+ * Includes head SHA for ETag Guard 2 (commit status checks).
  */
 const PR_FIELDS = `
   title
@@ -83,6 +410,8 @@ const PR_FIELDS = `
   mergeable
   mergeStateStatus
   reviewDecision
+  headRefName
+  headRefOid
   reviews(last: 5) {
     nodes {
       author { login }
@@ -257,8 +586,12 @@ function parsePRState(state: unknown): PRState {
 
 /**
  * Extract enrichment data from a single PR result.
+ *
+ * Returns the enrichment data along with the head SHA for ETag caching.
  */
-function extractPREnrichment(pullRequest: unknown): PREnrichmentData | null {
+function extractPREnrichment(
+  pullRequest: unknown,
+): { data: PREnrichmentData; headSha: string | null } | null {
   if (!pullRequest || typeof pullRequest !== "object") {
     return null;
   }
@@ -282,6 +615,14 @@ function extractPREnrichment(pullRequest: unknown): PREnrichmentData | null {
   const additions = typeof pr["additions"] === "number" ? pr["additions"] : 0;
   const deletions = typeof pr["deletions"] === "number" ? pr["deletions"] : 0;
   const isDraft = pr["isDraft"] === true;
+
+  // Extract head SHA for ETag Guard 2
+  const headSha =
+    typeof pr["headRefOid"] === "string"
+      ? pr["headRefOid"]
+      : typeof pr["headSha"] === "string"
+        ? pr["headSha"]
+        : null;
 
   // Extract merge info
   const mergeable = pr["mergeable"];
@@ -326,7 +667,7 @@ function extractPREnrichment(pullRequest: unknown): PREnrichmentData | null {
     !isBehind &&
     !isDraft;
 
-  return {
+  const data: PREnrichmentData = {
     state,
     ciStatus,
     reviewDecision,
@@ -339,12 +680,27 @@ function extractPREnrichment(pullRequest: unknown): PREnrichmentData | null {
     isBehind,
     blockers,
   };
+
+  return { data, headSha };
 }
 
 /**
- * Main batch enrichment function.
+ * Main batch enrichment function with 2-Guard ETag Strategy.
  *
- * Fetches data for multiple PRs in one or more GraphQL queries.
+ * Before running expensive GraphQL batch queries, uses two lightweight REST API
+ * ETag checks to detect if anything actually changed:
+ *
+ * 1. Guard 1: PR List ETag Check (per repo)
+ *    - Detects PR metadata changes (commits, reviews, labels, state)
+ *    - Cost: 1 REST point if changed, 0 if unchanged (304)
+ *
+ * 2. Guard 2: Commit Status ETag Check (per PR with pending CI)
+ *    - Detects CI status changes for PRs with pending CI
+ *    - Cost: 1 REST point if changed, 0 if unchanged (304)
+ *
+ * If guards indicate no changes, skips GraphQL entirely (saves ~50 points per batch).
+ * If any guard detects a change, runs GraphQL batch queries.
+ *
  * Returns a Map keyed by "${owner}/${repo}#${number}" for efficient lookup.
  */
 export async function enrichSessionsPRBatch(
@@ -357,13 +713,30 @@ export async function enrichSessionsPRBatch(
     return result;
   }
 
-  // Split into batches if we have too many PRs
+  // Step 1: Check if we need to refresh using 2-Guard ETag Strategy
+  const guardResult = await shouldRefreshPREnrichment(prs);
+
+  if (!guardResult.shouldRefresh) {
+    // No changes detected - skip expensive GraphQL queries
+    observer?.log(
+      "info",
+      `[ETag Guard] Skipping GraphQL batch - no changes detected. Reasons: ${guardResult.details.join(", ")}`,
+    );
+    return result;
+  }
+
+  observer?.log(
+    "info",
+    `[ETag Guard] Changes detected, running GraphQL batch. Reasons: ${guardResult.details.join(", ")}`,
+  );
+
+  // Step 2: Split into batches if we have too many PRs
   const batches: PRInfo[][] = [];
   for (let i = 0; i < prs.length; i += MAX_BATCH_SIZE) {
     batches.push(prs.slice(i, i + MAX_BATCH_SIZE));
   }
 
-  // Execute each batch
+  // Step 3: Execute each batch
   for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
     const batch = batches[batchIndex];
     const prCountBefore = result.size;
@@ -381,9 +754,12 @@ export async function enrichSessionsPRBatch(
         const repositoryData = data[alias] as { pullRequest?: unknown } | undefined;
 
         if (repositoryData?.pullRequest) {
-          const enrichment = extractPREnrichment(repositoryData.pullRequest);
-          if (enrichment) {
+          const extracted = extractPREnrichment(repositoryData.pullRequest);
+          if (extracted) {
+            const { data: enrichment, headSha } = extracted;
             result.set(prKey, enrichment);
+            // Update PR metadata cache for future ETag checks
+            updatePRMetadataCache(prKey, enrichment, headSha);
           }
         } else {
           // PR not found (deleted/closed/permission issue)
@@ -439,4 +815,16 @@ export async function enrichSessionsPRBatch(
 }
 
 // Export internal functions for testing
-export { parseCIState, parseReviewDecision, parsePRState, extractPREnrichment };
+export {
+  parseCIState,
+  parseReviewDecision,
+  parsePRState,
+  extractPREnrichment,
+  checkPRListETag,
+  checkCommitStatusETag,
+  // shouldRefreshPREnrichment is already exported as async function
+  updatePRMetadataCache,
+};
+
+// Export types for testing
+export type { ETagCache, ETagGuardResult };
