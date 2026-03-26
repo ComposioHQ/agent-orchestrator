@@ -129,7 +129,8 @@ async function postWithRetry(
         // Rate-limit budget exhausted — fail immediately rather than falling through
         // to the error retry path (which would compound the two counters).
         const body = await response.text().catch(() => "");
-        throw new Error(`Discord webhook rate-limited (HTTP 429)${body ? `: ${body.trim()}` : ""}`);
+        lastError = new Error(`Discord webhook rate-limited (HTTP 429)${body ? `: ${body.trim()}` : ""}`);
+        throw lastError;
       }
 
       const body = await response.text();
