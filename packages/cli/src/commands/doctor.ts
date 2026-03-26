@@ -199,7 +199,11 @@ export function registerDoctor(program: Command): void {
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          warn(`Notifier checks failed: ${message}`);
+          if (opts.testNotify) {
+            fail(`Notifier checks failed: ${message}`);
+          } else {
+            warn(`Notifier checks failed: ${message}`);
+          }
         }
       } else if (opts.testNotify) {
         fail("No config file found. Cannot test notifiers without agent-orchestrator.yaml");
