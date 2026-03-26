@@ -14,7 +14,7 @@ import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 import { stat, access } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { constants } from "node:fs";
+import { accessSync, constants } from "node:fs";
 import { homedir } from "node:os";
 
 const execFileAsync = promisify(execFile);
@@ -108,6 +108,14 @@ function buildCursorInvocation(binary: string): string[] {
   return [shellEscape(binary)];
 }
 
+function buildCursorVersionArgs(binary: string): string[] {
+  const binaryName = basename(binary);
+  if (binaryName === "cursor") {
+    return ["agent", "--version"];
+  }
+  return ["--version"];
+}
+
 function buildInitialPrompt(config: AgentLaunchConfig): string | undefined {
   if (config.systemPromptFile) {
     if (config.prompt) {
@@ -140,6 +148,44 @@ function buildInitialPrompt(config: AgentLaunchConfig): string | undefined {
  * Prefer the dedicated `cursor-agent` binary, but fall back to the
  * `cursor agent` wrapper when that's all the user has installed.
  */
+function getCursorBinaryCandidates(): string[] {
+  const home = homedir();
+  return [
+    "/usr/local/bin/cursor-agent",
+    "/opt/homebrew/bin/cursor-agent",
+    join(home, ".local", "bin", "cursor-agent"),
+    "/usr/local/bin/cursor",
+    "/opt/homebrew/bin/cursor",
+    join(home, ".local", "bin", "cursor"),
+    "/Applications/Cursor.app/Contents/Resources/app/bin/cursor",
+  ];
+}
+
+export function resolveCursorBinarySync(): string {
+  for (const candidate of ["cursor-agent", "cursor"]) {
+    try {
+      const resolved = execFileSync("which", [candidate], {
+        timeout: 10_000,
+        encoding: "utf8",
+      }).trim();
+      if (resolved) return resolved;
+    } catch {
+      // Not found via which
+    }
+  }
+
+  for (const candidate of getCursorBinaryCandidates()) {
+    try {
+      accessSync(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      // Not found at this location
+    }
+  }
+
+  return "cursor-agent";
+}
+
 export async function resolveCursorBinary(): Promise<string> {
   // 1. Try PATH resolution first
   for (const candidate of ["cursor-agent", "cursor"]) {
@@ -155,18 +201,7 @@ export async function resolveCursorBinary(): Promise<string> {
   }
 
   // 2. Check common install locations
-  const home = homedir();
-  const candidates = [
-    "/usr/local/bin/cursor-agent",
-    "/opt/homebrew/bin/cursor-agent",
-    join(home, ".local", "bin", "cursor-agent"),
-    "/usr/local/bin/cursor",
-    "/opt/homebrew/bin/cursor",
-    join(home, ".local", "bin", "cursor"),
-    "/Applications/Cursor.app/Contents/Resources/app/bin/cursor",
-  ];
-
-  for (const candidate of candidates) {
+  for (const candidate of getCursorBinaryCandidates()) {
     try {
       await stat(candidate);
       return candidate;
@@ -197,14 +232,20 @@ export const manifest = {
 
 function createCursorAgent(): Agent {
   let resolvedBinary: string | null = null;
-  let resolvingBinary: Promise<string> | null = null;
+
+  function getResolvedBinary(): string {
+    if (!resolvedBinary) {
+      resolvedBinary = resolveCursorBinarySync();
+    }
+    return resolvedBinary;
+  }
 
   return {
     name: "cursor",
     processName: "cursor-agent",
 
     getLaunchCommand(config: AgentLaunchConfig): string {
-      const binary = resolvedBinary ?? "cursor-agent";
+      const binary = getResolvedBinary();
       const parts: string[] = [
         ...buildCursorInvocation(binary),
         "--workspace",
@@ -358,16 +399,7 @@ function createCursorAgent(): Agent {
     },
 
     async postLaunchSetup(_session: Session): Promise<void> {
-      if (!resolvedBinary) {
-        if (!resolvingBinary) {
-          resolvingBinary = resolveCursorBinary();
-        }
-        try {
-          resolvedBinary = await resolvingBinary;
-        } finally {
-          resolvingBinary = null;
-        }
-      }
+      resolvedBinary = getResolvedBinary();
     },
   };
 }
@@ -382,15 +414,11 @@ export function create(): Agent {
 
 export function detect(): boolean {
   try {
-    execFileSync("cursor-agent", ["--version"], { stdio: "ignore" });
+    const binary = resolveCursorBinarySync();
+    execFileSync(binary, buildCursorVersionArgs(binary), { stdio: "ignore" });
     return true;
   } catch {
-    try {
-      execFileSync("cursor", ["agent", "--version"], { stdio: "ignore" });
-      return true;
-    } catch {
-      return false;
-    }
+    return false;
   }
 }
 

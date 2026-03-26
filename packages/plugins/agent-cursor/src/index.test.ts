@@ -8,14 +8,24 @@ const { mockExecFileAsync } = vi.hoisted(() => ({
   mockExecFileAsync: vi.fn(),
 }));
 
+const { mockExecFileSync, mockAccessSync } = vi.hoisted(() => ({
+  mockExecFileSync: vi.fn(),
+  mockAccessSync: vi.fn(),
+}));
+
 vi.mock("node:child_process", () => {
   const fn = Object.assign((..._args: unknown[]) => {}, {
     [Symbol.for("nodejs.util.promisify.custom")]: mockExecFileAsync,
   });
-  return { execFile: fn };
+  return { execFile: fn, execFileSync: mockExecFileSync };
 });
 
-import { create, manifest, default as defaultExport } from "./index.js";
+vi.mock("node:fs", async () => {
+  const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+  return { ...actual, accessSync: mockAccessSync };
+});
+
+import { create, manifest, detect, default as defaultExport } from "./index.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -86,6 +96,12 @@ function mockTmuxWithProcess(processName: string, found = true) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockExecFileSync.mockImplementation(() => {
+    throw new Error("missing");
+  });
+  mockAccessSync.mockImplementation(() => {
+    throw new Error("missing");
+  });
 });
 
 // =========================================================================
@@ -217,6 +233,24 @@ describe("getLaunchCommand", () => {
       makeLaunchConfig({ permissions: "auto-edit" }),
     );
     expect(cmd).toContain("--force");
+  });
+
+  it("uses the cursor wrapper when cursor-agent is unavailable", () => {
+    const wrapperAgent = create();
+
+    mockExecFileSync.mockImplementation((cmd: string, args?: string[]) => {
+      if (cmd === "which" && args?.[0] === "cursor-agent") {
+        throw new Error("missing");
+      }
+      if (cmd === "which" && args?.[0] === "cursor") {
+        return "/usr/local/bin/cursor\n";
+      }
+      throw new Error(`unexpected sync command: ${cmd} ${(args ?? []).join(" ")}`);
+    });
+
+    expect(wrapperAgent.getLaunchCommand(makeLaunchConfig())).toBe(
+      "'/usr/local/bin/cursor' agent --workspace '/workspace/repo'",
+    );
   });
 });
 
@@ -422,5 +456,35 @@ describe("getSessionInfo", () => {
     expect(
       await agent.getSessionInfo(makeSession({ workspacePath: "/some/path" })),
     ).toBeNull();
+  });
+});
+
+// =========================================================================
+// detect
+// =========================================================================
+describe("detect", () => {
+  it("returns true when only the Cursor app bundle binary is available", () => {
+    mockExecFileSync.mockImplementation((cmd: string, args?: string[]) => {
+      if (cmd === "which" && (args?.[0] === "cursor-agent" || args?.[0] === "cursor")) {
+        throw new Error("missing");
+      }
+      if (
+        cmd === "/Applications/Cursor.app/Contents/Resources/app/bin/cursor" &&
+        args?.[0] === "agent" &&
+        args?.[1] === "--version"
+      ) {
+        return "2026.03.25-933d5a6";
+      }
+      throw new Error(`unexpected sync command: ${cmd} ${(args ?? []).join(" ")}`);
+    });
+
+    mockAccessSync.mockImplementation((path: string) => {
+      if (path === "/Applications/Cursor.app/Contents/Resources/app/bin/cursor") {
+        return;
+      }
+      throw new Error("missing");
+    });
+
+    expect(detect()).toBe(true);
   });
 });
