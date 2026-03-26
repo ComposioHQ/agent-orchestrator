@@ -8,7 +8,7 @@ OpenClaw notifier plugin for AO escalation events.
 ao setup openclaw
 ```
 
-This interactive wizard auto-detects your OpenClaw gateway, validates the connection, and writes the config. For non-interactive use (e.g., from an OpenClaw agent):
+This interactive wizard auto-detects your OpenClaw gateway, validates the connection, and writes the config. For non-interactive use (e.g., in CI/CD pipelines or automation scripts):
 
 ```bash
 ao setup openclaw --url http://127.0.0.1:18789/hooks/agent --token YOUR_TOKEN --non-interactive

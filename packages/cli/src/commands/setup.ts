@@ -27,7 +27,10 @@ import {
 // ---------------------------------------------------------------------------
 
 export class SetupAbortedError extends Error {
-  constructor(message: string, public readonly exitCode: number = 1) {
+  constructor(
+    message: string,
+    public readonly exitCode: number = 1,
+  ) {
     super(message);
     this.name = "SetupAbortedError";
   }
@@ -42,6 +45,11 @@ interface SetupOptions {
 interface ResolvedConfig {
   url: string;
   token: string;
+}
+
+function normalizeOpenClawHooksUrl(url: string): string {
+  const normalized = url.trim().replace(/\/+$/, "");
+  return normalized.endsWith(HOOKS_PATH) ? normalized : `${normalized}${HOOKS_PATH}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -85,10 +93,7 @@ async function interactiveSetup(existingUrl?: string): Promise<ResolvedConfig> {
   }
 
   // Normalize: ensure URL ends with /hooks/agent
-  let url = urlInput as string;
-  if (!url.endsWith(HOOKS_PATH)) {
-    url = url.replace(/\/+$/, "") + HOOKS_PATH;
-  }
+  const url = normalizeOpenClawHooksUrl(urlInput as string);
 
   // --- Step 2: Token ---------------------------------------------------------
   const envToken = process.env["OPENCLAW_HOOKS_TOKEN"];
@@ -177,30 +182,23 @@ async function interactiveSetup(existingUrl?: string): Promise<ResolvedConfig> {
 // ---------------------------------------------------------------------------
 
 async function nonInteractiveSetup(opts: SetupOptions): Promise<ResolvedConfig> {
-  let url =
-    opts.url ??
-    (process.env["OPENCLAW_GATEWAY_URL"]
-      ? `${process.env["OPENCLAW_GATEWAY_URL"]}${HOOKS_PATH}`
-      : undefined);
+  const rawUrl = opts.url ?? process.env["OPENCLAW_GATEWAY_URL"];
   const token = opts.token ?? process.env["OPENCLAW_HOOKS_TOKEN"];
 
-  if (!url) {
+  if (!rawUrl) {
     throw new SetupAbortedError(
       "Error: --url is required in non-interactive mode.\n" +
-      "  Example: ao setup openclaw --url http://127.0.0.1:18789/hooks/agent --token YOUR_TOKEN --non-interactive",
+        "  Example: ao setup openclaw --url http://127.0.0.1:18789/hooks/agent --token YOUR_TOKEN --non-interactive",
     );
   }
 
+  let url = rawUrl;
   if (!url.startsWith("http://") && !url.startsWith("https://")) {
-    throw new SetupAbortedError(
-      "Error: --url must start with http:// or https://",
-    );
+    throw new SetupAbortedError("Error: --url must start with http:// or https://");
   }
 
   // Normalize: ensure URL ends with /hooks/agent
-  if (!url.endsWith(HOOKS_PATH)) {
-    url = url.replace(/\/+$/, "") + HOOKS_PATH;
-  }
+  url = normalizeOpenClawHooksUrl(url);
 
   const resolvedToken = token ?? randomBytes(32).toString("base64url");
   if (!token) {
@@ -230,9 +228,10 @@ function writeOpenClawConfig(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const rawConfig = (doc.toJS() as Record<string, any>) ?? {};
 
-  // Add notifiers.openclaw block — write the env-var placeholder so the raw
-  // token is never committed to version control. ao setup openclaw exports the
-  // real value to the shell profile; runtime reads it via the env var.
+  // Write the env-var placeholder so the raw token is never committed to
+  // version control. ao setup openclaw exports the real value to the shell
+  // profile; the notifier plugin resolves it at runtime (env var → openclaw.json
+  // fallback for daemon contexts where the shell profile isn't sourced).
   if (!rawConfig.notifiers) rawConfig.notifiers = {};
   rawConfig.notifiers.openclaw = {
     plugin: "openclaw",
@@ -303,14 +302,22 @@ function writeOpenClawJsonConfig(token: string): boolean {
     }
 
     // Merge the hooks block (preserve other existing keys in hooks if any)
-    const existingHooks =
-      (config.hooks as Record<string, unknown> | undefined) ?? {};
+    const existingHooks = (config.hooks as Record<string, unknown> | undefined) ?? {};
+    const existingPrefixes = Array.isArray(existingHooks.allowedSessionKeyPrefixes)
+      ? existingHooks.allowedSessionKeyPrefixes.filter(
+          (prefix): prefix is string => typeof prefix === "string",
+        )
+      : [];
+    const allowedSessionKeyPrefixes = existingPrefixes.includes("hook:")
+      ? existingPrefixes
+      : [...existingPrefixes, "hook:"];
+
     config.hooks = {
       ...existingHooks,
       enabled: true,
       token,
       allowRequestSessionKey: true,
-      allowedSessionKeyPrefixes: ["hook:"],
+      allowedSessionKeyPrefixes,
     };
 
     writeFileSync(openclawJsonPath, JSON.stringify(config, null, 2) + "\n");
@@ -337,15 +344,15 @@ function writeShellExport(token: string): string | undefined {
     const safeToken = token.replace(/'/g, "'\\''");
     const exportLine = `export OPENCLAW_HOOKS_TOKEN='${safeToken}'`;
 
-    // Check if it already exists
+    // Check if it already exists (use the same regex for detection and replacement
+    // to avoid silent no-ops when the line is commented, lacks the export prefix,
+    // or has leading whitespace)
+    const existingExportRegex = /^\s*(?:export\s+)?OPENCLAW_HOOKS_TOKEN=.*$/m;
     if (existsSync(profilePath)) {
       const content = readFileSync(profilePath, "utf-8");
-      if (content.includes("OPENCLAW_HOOKS_TOKEN=")) {
+      if (existingExportRegex.test(content)) {
         // Replace the existing line
-        const updated = content.replace(
-          /^export OPENCLAW_HOOKS_TOKEN=.*$/m,
-          exportLine,
-        );
+        const updated = content.replace(existingExportRegex, exportLine);
         writeFileSync(profilePath, updated);
         return profilePath;
       }
@@ -353,11 +360,9 @@ function writeShellExport(token: string): string | undefined {
 
     // Append
     const prefix = existsSync(profilePath) ? "\n" : "";
-    writeFileSync(
-      profilePath,
-      `${prefix}# Added by ao setup openclaw\n${exportLine}\n`,
-      { flag: "a" },
-    );
+    writeFileSync(profilePath, `${prefix}# Added by ao setup openclaw\n${exportLine}\n`, {
+      flag: "a",
+    });
     return profilePath;
   } catch {
     return undefined;
@@ -372,7 +377,9 @@ function printOpenClawInstructions(
   if (openclawConfigWritten) {
     // Both configs written automatically
     if (nonInteractive) {
-      console.log(chalk.green("✓ Both configs written (agent-orchestrator.yaml + ~/.openclaw/openclaw.json)"));
+      console.log(
+        chalk.green("✓ Both configs written (agent-orchestrator.yaml + ~/.openclaw/openclaw.json)"),
+      );
       if (shellProfilePath) {
         console.log(chalk.green(`✓ OPENCLAW_HOOKS_TOKEN exported in ${shellProfilePath}`));
       }
@@ -391,7 +398,7 @@ function printOpenClawInstructions(
     const instructions = `
 ${chalk.bold("OpenClaw-side config required")}
 
-Add this to your OpenClaw config (${chalk.dim("~/.openclaw/openclaw.json")}):
+AO config was written successfully. Add this to your OpenClaw config (${chalk.dim("~/.openclaw/openclaw.json")}):
 
   ${chalk.cyan(`{
     "hooks": {
@@ -401,21 +408,15 @@ Add this to your OpenClaw config (${chalk.dim("~/.openclaw/openclaw.json")}):
       "allowedSessionKeyPrefixes": ["hook:"]
     }
   }`)}
-
-Then set the token as an environment variable for AO:
-
-  ${chalk.cyan('export OPENCLAW_HOOKS_TOKEN="<your-token>"')}
-
-Add it to your shell profile (~/.zshrc or ~/.bashrc) to persist.`;
+`;
 
     if (nonInteractive) {
       console.log("\nOpenClaw-side config required:");
-      console.log('Add to ~/.openclaw/openclaw.json:');
-      console.log('  hooks.enabled: true');
+      console.log("AO config was written successfully. Add to ~/.openclaw/openclaw.json:");
+      console.log("  hooks.enabled: true");
       console.log('  hooks.token: "<your-token>"');
-      console.log('  hooks.allowRequestSessionKey: true');
+      console.log("  hooks.allowRequestSessionKey: true");
       console.log('  hooks.allowedSessionKeyPrefixes: ["hook:"]');
-      console.log('\nSet env var: export OPENCLAW_HOOKS_TOKEN="<your-token>"');
     } else {
       console.log(instructions);
     }
@@ -427,16 +428,14 @@ Add it to your shell profile (~/.zshrc or ~/.bashrc) to persist.`;
 // ---------------------------------------------------------------------------
 
 export function registerSetup(program: Command): void {
-  const setup = program
-    .command("setup")
-    .description("Set up integrations with external services");
+  const setup = program.command("setup").description("Set up integrations with external services");
 
   setup
     .command("openclaw")
     .description("Connect AO notifications to an OpenClaw gateway")
     .option("--url <url>", "OpenClaw webhook URL (e.g. http://127.0.0.1:18789/hooks/agent)")
     .option("--token <token>", "OpenClaw hooks auth token")
-    .option("--non-interactive", "Skip prompts — requires --url and --token (or env vars)")
+    .option("--non-interactive", "Skip prompts — requires --url (token auto-generated if not provided)")
     .action(async (opts: SetupOptions) => {
       try {
         await runSetupAction(opts);
@@ -451,79 +450,79 @@ export function registerSetup(program: Command): void {
 }
 
 async function runSetupAction(opts: SetupOptions): Promise<void> {
-      const nonInteractive = opts.nonInteractive || !process.stdin.isTTY;
+  const nonInteractive = opts.nonInteractive || !process.stdin.isTTY;
 
-      // --- Find existing config ------------------------------------------------
-      let configPath: string | undefined;
-      try {
-        const found = findConfigFile();
-        configPath = found ?? undefined;
-      } catch {
-        // no config found
-      }
+  // --- Find existing config ------------------------------------------------
+  let configPath: string | undefined;
+  try {
+    const found = findConfigFile();
+    configPath = found ?? undefined;
+  } catch {
+    // no config found
+  }
 
-      if (!configPath) {
-        throw new SetupAbortedError(
-          "No agent-orchestrator.yaml found. Run 'ao start' first to create one.",
-        );
-      }
+  if (!configPath) {
+    throw new SetupAbortedError(
+      "No agent-orchestrator.yaml found. Run 'ao start' first to create one.",
+    );
+  }
 
-      // --- Check for existing openclaw config ----------------------------------
-      const rawYaml = readFileSync(configPath, "utf-8");
-      const rawConfig = yamlParse(rawYaml) ?? {};
-      const existingOpenClaw = rawConfig?.notifiers?.openclaw;
-      const existingUrl = existingOpenClaw?.url as string | undefined;
+  // --- Check for existing openclaw config ----------------------------------
+  const rawYaml = readFileSync(configPath, "utf-8");
+  const rawConfig = yamlParse(rawYaml) ?? {};
+  const existingOpenClaw = rawConfig?.notifiers?.openclaw;
+  const existingUrl = existingOpenClaw?.url as string | undefined;
 
-      if (existingOpenClaw && !nonInteractive) {
-        const clack = await import("@clack/prompts");
-        const reconfigure = await clack.confirm({
-          message: "OpenClaw is already configured. Reconfigure?",
-          initialValue: false,
-        });
+  if (existingOpenClaw && !nonInteractive) {
+    const clack = await import("@clack/prompts");
+    const reconfigure = await clack.confirm({
+      message: "OpenClaw is already configured. Reconfigure?",
+      initialValue: false,
+    });
 
-        if (clack.isCancel(reconfigure) || !reconfigure) {
-          console.log(chalk.dim("Keeping existing config."));
-          return;
-        }
-      }
+    if (clack.isCancel(reconfigure) || !reconfigure) {
+      console.log(chalk.dim("Keeping existing config."));
+      return;
+    }
+  }
 
-      // --- Run setup -----------------------------------------------------------
-      let resolved: ResolvedConfig;
+  // --- Run setup -----------------------------------------------------------
+  let resolved: ResolvedConfig;
 
-      if (nonInteractive) {
-        resolved = await nonInteractiveSetup(opts);
-      } else {
-        resolved = await interactiveSetup(existingUrl);
-      }
+  if (nonInteractive) {
+    resolved = await nonInteractiveSetup(opts);
+  } else {
+    resolved = await interactiveSetup(existingUrl);
+  }
 
-      // --- Write AO config -----------------------------------------------------
-      writeOpenClawConfig(configPath, resolved, nonInteractive);
+  // --- Write AO config -----------------------------------------------------
+  writeOpenClawConfig(configPath, resolved, nonInteractive);
 
-      // --- Write OpenClaw config -----------------------------------------------
-      const openclawConfigWritten = writeOpenClawJsonConfig(resolved.token);
-      if (openclawConfigWritten && nonInteractive) {
-        console.log(chalk.green("✓ Wrote hooks config to ~/.openclaw/openclaw.json"));
-      }
+  // --- Write OpenClaw config -----------------------------------------------
+  const openclawConfigWritten = writeOpenClawJsonConfig(resolved.token);
+  if (openclawConfigWritten && nonInteractive) {
+    console.log(chalk.green("✓ Wrote hooks config to ~/.openclaw/openclaw.json"));
+  }
 
-      // --- Write shell export --------------------------------------------------
-      const shellProfilePath = writeShellExport(resolved.token);
-      if (shellProfilePath && nonInteractive) {
-        console.log(chalk.green(`✓ Exported OPENCLAW_HOOKS_TOKEN in ${shellProfilePath}`));
-      }
+  // --- Write shell export --------------------------------------------------
+  const shellProfilePath = writeShellExport(resolved.token);
+  if (shellProfilePath && nonInteractive) {
+    console.log(chalk.green(`✓ Exported OPENCLAW_HOOKS_TOKEN in ${shellProfilePath}`));
+  }
 
-      // --- Print instructions --------------------------------------------------
-      printOpenClawInstructions(nonInteractive, openclawConfigWritten, shellProfilePath);
+  // --- Print instructions --------------------------------------------------
+  printOpenClawInstructions(nonInteractive, openclawConfigWritten, shellProfilePath);
 
-      // --- Done ----------------------------------------------------------------
-      if (!nonInteractive) {
-        const clack = await import("@clack/prompts");
-        clack.outro(
-          `${chalk.green("Setup complete!")} AO will send notifications to OpenClaw.\n` +
-          chalk.dim("  Run 'ao doctor' to verify the full setup.\n") +
-          chalk.dim("  Restart AO with 'ao stop && ao start' to activate."),
-        );
-      } else {
-        console.log(chalk.green("\n✓ OpenClaw setup complete."));
-        console.log(chalk.dim("Restart AO to activate: ao stop && ao start"));
-      }
+  // --- Done ----------------------------------------------------------------
+  if (!nonInteractive) {
+    const clack = await import("@clack/prompts");
+    clack.outro(
+      `${chalk.green("Setup complete!")} AO will send notifications to OpenClaw.\n` +
+        chalk.dim("  Run 'ao doctor' to verify the full setup.\n") +
+        chalk.dim("  Restart AO with 'ao stop && ao start' to activate."),
+    );
+  } else {
+    console.log(chalk.green("\n✓ OpenClaw setup complete."));
+    console.log(chalk.dim("Restart AO to activate: ao stop && ao start"));
+  }
 }

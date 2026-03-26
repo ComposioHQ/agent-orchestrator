@@ -195,7 +195,7 @@ describe("notifier-discord", () => {
   });
 
   it("handles 204 No Content as success", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 204 });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 204 });
     vi.stubGlobal("fetch", fetchMock);
 
     const notifier = create({ webhookUrl: "https://discord.com/api/webhooks/123/abc" });

@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import {
   type EventPriority,
   type Notifier,
@@ -7,6 +10,25 @@ import {
   type PluginModule,
 } from "@composio/ao-core";
 import { isRetryableHttpStatus, normalizeRetryConfig, validateUrl } from "@composio/ao-core/utils";
+
+/**
+ * Read the hooks token from ~/.openclaw/openclaw.json as a fallback for
+ * daemon contexts where the shell profile (and OPENCLAW_HOOKS_TOKEN) isn't
+ * sourced. This file is written by `ao setup openclaw` and lives outside
+ * the project directory so it's never committed to version control.
+ */
+function readTokenFromOpenClawConfig(): string | undefined {
+  try {
+    const configPath = join(homedir(), ".openclaw", "openclaw.json");
+    if (!existsSync(configPath)) return undefined;
+    const raw = readFileSync(configPath, "utf-8");
+    const config = JSON.parse(raw) as Record<string, unknown>;
+    const token = (config.hooks as Record<string, unknown> | undefined)?.token;
+    return typeof token === "string" && token ? token : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export const manifest = {
   name: "openclaw",
@@ -55,8 +77,8 @@ async function postWithRetry(
       if (response.status === 401 || response.status === 403) {
         lastError = new Error(
           `OpenClaw rejected the auth token (HTTP ${response.status}).\n` +
-          `  Check that hooks.token in your OpenClaw config matches OPENCLAW_HOOKS_TOKEN.\n` +
-          `  Reconfigure: ao setup openclaw`,
+            `  Check that hooks.token in your OpenClaw config matches the token configured for AO.\n` +
+            `  Reconfigure: ao setup openclaw`,
         );
         throw lastError;
       }
@@ -79,8 +101,8 @@ async function postWithRetry(
       if (lastError.message.includes("ECONNREFUSED")) {
         throw new Error(
           `Can't reach OpenClaw gateway at ${url}.\n` +
-          `  Is OpenClaw running? Check: openclaw status\n` +
-          `  Wrong URL? Run: ao setup openclaw`,
+            `  Is OpenClaw running? Check: openclaw status\n` +
+            `  Wrong URL? Run: ao setup openclaw`,
         );
       }
 
@@ -133,13 +155,26 @@ function formatActionsLine(actions: NotifyAction[]): string {
   return `Actions available: ${labels}`;
 }
 
+/**
+ * Resolve a token value that may be a `${ENV_VAR}` placeholder (as written
+ * into agent-orchestrator.yaml by `ao setup openclaw`) or a literal string.
+ * Returns undefined for empty/unresolvable values so callers can chain `??`.
+ */
+function resolveEnvVarToken(raw: unknown): string | undefined {
+  if (typeof raw !== "string" || !raw) return undefined;
+  const match = raw.match(/^\$\{([^}]+)\}$/);
+  if (match) return process.env[match[1]] || undefined;
+  return raw;
+}
+
 export function create(config?: Record<string, unknown>): Notifier {
   const url =
     (typeof config?.url === "string" ? config.url : undefined) ??
     "http://127.0.0.1:18789/hooks/agent";
   const token =
-    (typeof config?.token === "string" ? config.token : undefined) ??
-    process.env.OPENCLAW_HOOKS_TOKEN;
+    resolveEnvVarToken(config?.token) ??
+    process.env.OPENCLAW_HOOKS_TOKEN ??
+    readTokenFromOpenClawConfig();
   const senderName = typeof config?.name === "string" ? config.name : "AO";
   const sessionKeyPrefix =
     typeof config?.sessionKeyPrefix === "string" ? config.sessionKeyPrefix : "hook:ao:";
@@ -153,8 +188,8 @@ export function create(config?: Record<string, unknown>): Notifier {
   if (!token) {
     console.warn(
       "[notifier-openclaw] No token configured.\n" +
-      "  Set OPENCLAW_HOOKS_TOKEN env var, or add token to your notifier config.\n" +
-      "  Run: ao setup openclaw",
+        "  Set OPENCLAW_HOOKS_TOKEN env var, or add token to your notifier config.\n" +
+        "  Run: ao setup openclaw",
     );
   }
 

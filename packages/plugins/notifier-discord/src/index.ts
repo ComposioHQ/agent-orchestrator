@@ -179,7 +179,7 @@ export function create(config?: Record<string, unknown>): Notifier {
 
   // Discord requires thread_id as a URL query param, not in the JSON body
   const effectiveUrl = webhookUrl && threadId
-    ? `${webhookUrl}${webhookUrl.includes("?") ? "&" : "?"}thread_id=${threadId}`
+    ? `${webhookUrl}${webhookUrl.includes("?") ? "&" : "?"}thread_id=${encodeURIComponent(threadId)}`
     : webhookUrl;
 
   function buildPayload(embeds: DiscordEmbed[]): Record<string, unknown> {

@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Command } from "commander";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks — must be defined before any imports that use them
@@ -9,9 +11,11 @@ const { mockFindConfigFile } = vi.hoisted(() => ({
   mockFindConfigFile: vi.fn(),
 }));
 
-const { mockReadFileSync, mockWriteFileSync } = vi.hoisted(() => ({
+const { mockReadFileSync, mockWriteFileSync, mockExistsSync, mockMkdirSync } = vi.hoisted(() => ({
   mockReadFileSync: vi.fn(),
   mockWriteFileSync: vi.fn(),
+  mockExistsSync: vi.fn(),
+  mockMkdirSync: vi.fn(),
 }));
 
 const { mockProbeGateway, mockValidateToken } = vi.hoisted(() => ({
@@ -29,7 +33,8 @@ vi.mock("node:fs", async (importOriginal) => {
     ...actual,
     readFileSync: (...args: unknown[]) => mockReadFileSync(...args),
     writeFileSync: (...args: unknown[]) => mockWriteFileSync(...args),
-    existsSync: () => true,
+    existsSync: (...args: unknown[]) => mockExistsSync(...args),
+    mkdirSync: (...args: unknown[]) => mockMkdirSync(...args),
   };
 });
 
@@ -93,6 +98,8 @@ describe("setup openclaw command", () => {
     mockFindConfigFile.mockReturnValue("/tmp/agent-orchestrator.yaml");
     mockReadFileSync.mockReturnValue(MINIMAL_CONFIG);
     mockWriteFileSync.mockImplementation(() => {});
+    mockExistsSync.mockReturnValue(false);
+    mockMkdirSync.mockImplementation(() => undefined);
     mockValidateToken.mockResolvedValue({ valid: true });
     mockProbeGateway.mockResolvedValue({ reachable: false });
 
@@ -109,9 +116,14 @@ describe("setup openclaw command", () => {
       const program = createProgram();
 
       await program.parseAsync([
-        "node", "test", "setup", "openclaw",
-        "--url", "http://127.0.0.1:18789/hooks/agent",
-        "--token", "test-token",
+        "node",
+        "test",
+        "setup",
+        "openclaw",
+        "--url",
+        "http://127.0.0.1:18789/hooks/agent",
+        "--token",
+        "test-token",
         "--non-interactive",
       ]);
 
@@ -128,8 +140,12 @@ describe("setup openclaw command", () => {
       const program = createProgram();
 
       await program.parseAsync([
-        "node", "test", "setup", "openclaw",
-        "--url", "http://127.0.0.1:18789/hooks/agent",
+        "node",
+        "test",
+        "setup",
+        "openclaw",
+        "--url",
+        "http://127.0.0.1:18789/hooks/agent",
         "--non-interactive",
       ]);
 
@@ -143,8 +159,12 @@ describe("setup openclaw command", () => {
       const program = createProgram();
 
       await program.parseAsync([
-        "node", "test", "setup", "openclaw",
-        "--token", "tok",
+        "node",
+        "test",
+        "setup",
+        "openclaw",
+        "--token",
+        "tok",
         "--non-interactive",
       ]);
 
@@ -153,13 +173,37 @@ describe("setup openclaw command", () => {
       expect(mockWriteFileSync).toHaveBeenCalled();
     });
 
+    it("normalizes OPENCLAW_GATEWAY_URL without double-appending hooks path", async () => {
+      process.env["OPENCLAW_GATEWAY_URL"] = "http://remote:18789/hooks/agent";
+      const program = createProgram();
+
+      await program.parseAsync([
+        "node",
+        "test",
+        "setup",
+        "openclaw",
+        "--token",
+        "tok",
+        "--non-interactive",
+      ]);
+
+      const writtenYaml = mockWriteFileSync.mock.calls[0][1] as string;
+      expect(writtenYaml).toContain("url: http://remote:18789/hooks/agent");
+      expect(writtenYaml).not.toContain("/hooks/agent/hooks/agent");
+    });
+
     it("skips token validation and writes config in non-interactive mode", async () => {
       const program = createProgram();
 
       await program.parseAsync([
-        "node", "test", "setup", "openclaw",
-        "--url", "http://127.0.0.1:18789/hooks/agent",
-        "--token", "good-token",
+        "node",
+        "test",
+        "setup",
+        "openclaw",
+        "--url",
+        "http://127.0.0.1:18789/hooks/agent",
+        "--token",
+        "good-token",
         "--non-interactive",
       ]);
 
@@ -175,9 +219,14 @@ describe("setup openclaw command", () => {
       const program = createProgram();
 
       await program.parseAsync([
-        "node", "test", "setup", "openclaw",
-        "--url", "http://127.0.0.1:18789/hooks/agent",
-        "--token", "tok",
+        "node",
+        "test",
+        "setup",
+        "openclaw",
+        "--url",
+        "http://127.0.0.1:18789/hooks/agent",
+        "--token",
+        "tok",
         "--non-interactive",
       ]);
 
@@ -192,28 +241,37 @@ describe("setup openclaw command", () => {
       const program = createProgram();
 
       await program.parseAsync([
-        "node", "test", "setup", "openclaw",
-        "--url", "http://127.0.0.1:18789/hooks/agent",
-        "--token", "tok",
+        "node",
+        "test",
+        "setup",
+        "openclaw",
+        "--url",
+        "http://127.0.0.1:18789/hooks/agent",
+        "--token",
+        "tok",
         "--non-interactive",
       ]);
 
       const writtenYaml = mockWriteFileSync.mock.calls[0][1] as string;
-      const matches = writtenYaml.match(/openclaw/g);
       // "openclaw" appears in: defaults.notifiers list, notifiers.openclaw key,
-      // plugin: openclaw, and the token ref. Should not have extra duplicates.
-      // Count just in defaults section
-      const defaultsSection = writtenYaml.split("notifiers:")[0] + writtenYaml.split("notifiers:")[1];
-      expect(defaultsSection).toBeDefined();
+      // plugin: openclaw, and the token ref. Verify it appears as a list item exactly once
+      // (i.e. no duplication in defaults.notifiers).
+      const listItemMatches = writtenYaml.match(/^\s+- openclaw$/gm);
+      expect(listItemMatches).toHaveLength(1);
     });
 
     it("writes correct notifier block structure", async () => {
       const program = createProgram();
 
       await program.parseAsync([
-        "node", "test", "setup", "openclaw",
-        "--url", "http://custom:9999/hooks/agent",
-        "--token", "tok",
+        "node",
+        "test",
+        "setup",
+        "openclaw",
+        "--url",
+        "http://custom:9999/hooks/agent",
+        "--token",
+        "tok",
         "--non-interactive",
       ]);
 
@@ -226,13 +284,76 @@ describe("setup openclaw command", () => {
       expect(writtenYaml).toContain("wakeMode: now");
     });
 
+    it("merges existing allowedSessionKeyPrefixes in openclaw.json", async () => {
+      const openclawConfigPath = join(homedir(), ".openclaw", "openclaw.json");
+
+      mockExistsSync.mockImplementation((path: string) => path === openclawConfigPath);
+      mockReadFileSync.mockImplementation((path: string) => {
+        if (path === "/tmp/agent-orchestrator.yaml") {
+          return MINIMAL_CONFIG;
+        }
+        if (path === openclawConfigPath) {
+          return JSON.stringify({
+            hooks: {
+              enabled: false,
+              token: "old-token",
+              allowRequestSessionKey: false,
+              allowedSessionKeyPrefixes: ["legacy:", "hook:"],
+            },
+            otherConfig: true,
+          });
+        }
+        return "";
+      });
+
+      const program = createProgram();
+
+      await program.parseAsync([
+        "node",
+        "test",
+        "setup",
+        "openclaw",
+        "--url",
+        "http://127.0.0.1:18789/hooks/agent",
+        "--token",
+        "new-token",
+        "--non-interactive",
+      ]);
+
+      const openclawWrite = mockWriteFileSync.mock.calls.find(
+        ([path]) => path === openclawConfigPath,
+      );
+      expect(openclawWrite).toBeDefined();
+
+      const writtenJson = JSON.parse(openclawWrite![1] as string) as {
+        hooks: {
+          token: string;
+          enabled: boolean;
+          allowRequestSessionKey: boolean;
+          allowedSessionKeyPrefixes: string[];
+        };
+        otherConfig: boolean;
+      };
+
+      expect(writtenJson.otherConfig).toBe(true);
+      expect(writtenJson.hooks.token).toBe("new-token");
+      expect(writtenJson.hooks.enabled).toBe(true);
+      expect(writtenJson.hooks.allowRequestSessionKey).toBe(true);
+      expect(writtenJson.hooks.allowedSessionKeyPrefixes).toEqual(["legacy:", "hook:"]);
+    });
+
     it("preserves existing projects in config", async () => {
       const program = createProgram();
 
       await program.parseAsync([
-        "node", "test", "setup", "openclaw",
-        "--url", "http://127.0.0.1:18789/hooks/agent",
-        "--token", "tok",
+        "node",
+        "test",
+        "setup",
+        "openclaw",
+        "--url",
+        "http://127.0.0.1:18789/hooks/agent",
+        "--token",
+        "tok",
         "--non-interactive",
       ]);
 
@@ -246,9 +367,14 @@ describe("setup openclaw command", () => {
       const program = createProgram();
 
       await program.parseAsync([
-        "node", "test", "setup", "openclaw",
-        "--url", "http://127.0.0.1:18789/hooks/agent",
-        "--token", "tok",
+        "node",
+        "test",
+        "setup",
+        "openclaw",
+        "--url",
+        "http://127.0.0.1:18789/hooks/agent",
+        "--token",
+        "tok",
         "--non-interactive",
       ]);
 
@@ -267,9 +393,14 @@ describe("setup openclaw command", () => {
 
       await expect(
         program.parseAsync([
-          "node", "test", "setup", "openclaw",
-          "--url", "http://127.0.0.1:18789/hooks/agent",
-          "--token", "tok",
+          "node",
+          "test",
+          "setup",
+          "openclaw",
+          "--url",
+          "http://127.0.0.1:18789/hooks/agent",
+          "--token",
+          "tok",
           "--non-interactive",
         ]),
       ).rejects.toThrow("process.exit");
@@ -283,9 +414,14 @@ describe("setup openclaw command", () => {
       const program = createProgram();
 
       await program.parseAsync([
-        "node", "test", "setup", "openclaw",
-        "--url", "http://127.0.0.1:18789/hooks/agent",
-        "--token", "bad-token",
+        "node",
+        "test",
+        "setup",
+        "openclaw",
+        "--url",
+        "http://127.0.0.1:18789/hooks/agent",
+        "--token",
+        "bad-token",
         "--non-interactive",
       ]);
 
@@ -302,8 +438,12 @@ describe("setup openclaw command", () => {
 
       await expect(
         program.parseAsync([
-          "node", "test", "setup", "openclaw",
-          "--token", "tok",
+          "node",
+          "test",
+          "setup",
+          "openclaw",
+          "--token",
+          "tok",
           "--non-interactive",
         ]),
       ).rejects.toThrow("process.exit");
@@ -316,8 +456,12 @@ describe("setup openclaw command", () => {
       const program = createProgram();
 
       await program.parseAsync([
-        "node", "test", "setup", "openclaw",
-        "--url", "http://127.0.0.1:18789/hooks/agent",
+        "node",
+        "test",
+        "setup",
+        "openclaw",
+        "--url",
+        "http://127.0.0.1:18789/hooks/agent",
         "--non-interactive",
       ]);
 

@@ -52,6 +52,21 @@ openclaw config set tools.allow '["group:plugins"]'
 openclaw config set plugins.allow '["agent-orchestrator"]'
 ```
 
+### Required: Disable Conflicting Built-in Skills
+
+**Without these, the bot may ignore AO and write code directly.** Run once after setup:
+
+```bash
+# Prevent the bot from writing code directly — it should delegate to AO instead
+openclaw config set tools.deny '["exec", "write", "str_replace_based_edit_tool", "create_file", "str_replace_editor"]'
+
+# Disable the built-in coding skill (it tells the bot to use Codex/Claude Code directly, overriding AO)
+openclaw config set skills.entries.coding-agent.enabled false
+
+# Disable the built-in GitHub issues skill (it spawns OpenClaw sub-agents, bypassing AO)
+openclaw config set skills.entries.gh-issues.enabled false
+```
+
 ### Optional Settings
 
 ```bash
