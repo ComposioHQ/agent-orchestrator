@@ -606,6 +606,72 @@ describe("start command — URL argument", () => {
   });
 });
 
+describe("start command — non-interactive install safety", () => {
+  function hasPrivilegedInstallAttempt(): boolean {
+    return mockExec.mock.calls.some((call) => {
+      const cmd = String(call[0]);
+      const args = Array.isArray(call[1]) ? (call[1] as string[]) : [];
+      const joined = `${cmd} ${args.join(" ")}`;
+      return joined.includes(" install ") && (cmd === "sudo" || cmd === "brew" || cmd === "winget");
+    });
+  }
+
+  it("does not auto-install tmux when missing in non-interactive mode", async () => {
+    const { isHumanCaller } = await import("../../src/lib/caller-context.js");
+    vi.mocked(isHumanCaller).mockReturnValue(false);
+
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockExecSilent.mockImplementation(async (cmd: string, args: string[] = []) => {
+      if (cmd === "git" && args[0] === "--version") return "git version 2.43.0";
+      if (cmd === "tmux" && args[0] === "-V") return null;
+      if (cmd === "gh" && args[0] === "--version") return null;
+      if (cmd === "gh" && args[0] === "auth" && args[1] === "status") return null;
+      return null;
+    });
+
+    await expect(
+      program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]),
+    ).rejects.toThrow("process.exit(1)");
+
+    expect(hasPrivilegedInstallAttempt()).toBe(false);
+    expect(mockExec.mock.calls.some((call) => String(call[0]) === "tmux")).toBe(false);
+  });
+
+  it("does not auto-install git when missing in non-interactive URL start", async () => {
+    const { isHumanCaller } = await import("../../src/lib/caller-context.js");
+    vi.mocked(isHumanCaller).mockReturnValue(false);
+
+    mockCwd(tmpDir);
+    mockExecSilent.mockImplementation(async (cmd: string, args: string[] = []) => {
+      if (cmd === "git" && args[0] === "--version") return null;
+      if (cmd === "tmux" && args[0] === "-V") return "tmux 3.4";
+      if (cmd === "gh" && args[0] === "--version") return null;
+      if (cmd === "gh" && args[0] === "auth" && args[1] === "status") return null;
+      return null;
+    });
+
+    await expect(
+      program.parseAsync([
+        "node",
+        "test",
+        "start",
+        "https://github.com/owner/nonexistent",
+        "--no-dashboard",
+        "--no-orchestrator",
+      ]),
+    ).rejects.toThrow("process.exit(1)");
+
+    expect(hasPrivilegedInstallAttempt()).toBe(false);
+    expect(
+      mockExec.mock.calls.some((call) => {
+        const cmd = String(call[0]);
+        const args = Array.isArray(call[1]) ? (call[1] as string[]) : [];
+        return cmd === "git" && args[0] === "clone";
+      }),
+    ).toBe(false);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // waitForPortAndOpen — port polling logic
 // ---------------------------------------------------------------------------

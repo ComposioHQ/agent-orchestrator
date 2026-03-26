@@ -148,8 +148,12 @@ function canPromptForInstall(): boolean {
   return isHumanCaller() && IS_TTY;
 }
 
-async function askYesNo(question: string, defaultYes = true): Promise<boolean> {
-  if (!canPromptForInstall()) return defaultYes;
+async function askYesNo(
+  question: string,
+  defaultYes = true,
+  nonInteractiveDefault = defaultYes,
+): Promise<boolean> {
+  if (!canPromptForInstall()) return nonInteractiveDefault;
 
   const { createInterface } = await import("node:readline/promises");
   const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -238,7 +242,7 @@ async function ensureGit(context: string): Promise<void> {
   if (hasGit) return;
 
   console.log(chalk.yellow(`⚠ Git is required for ${context}.`));
-  const shouldInstall = await askYesNo("Install Git now?", true);
+  const shouldInstall = await askYesNo("Install Git now?", true, false);
   if (shouldInstall) {
     const installed = await tryInstallWithAttempts(
       gitInstallAttempts(),
@@ -748,7 +752,7 @@ async function ensureTmux(): Promise<void> {
   if (hasTmux) return;
 
   console.log(chalk.yellow("⚠ tmux is required for runtime \"tmux\"."));
-  const shouldInstall = await askYesNo("Install tmux now?", true);
+  const shouldInstall = await askYesNo("Install tmux now?", true, false);
   if (shouldInstall) {
     const installed = await tryInstallWithAttempts(
       tmuxInstallAttempts(),
