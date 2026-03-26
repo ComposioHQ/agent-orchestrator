@@ -186,9 +186,12 @@ export function Dashboard({
       body: JSON.stringify({ message }),
     });
     if (!res.ok) {
-      console.error(`Failed to send message to ${sessionId}:`, await res.text());
+      const text = await res.text();
+      console.error(`Failed to send message to ${sessionId}:`, text);
+      showToast(`Send failed: ${text}`, "error");
+      throw new Error(text || `Failed to send message to ${sessionId}`);
     }
-  }, []);
+  }, [showToast]);
 
   const handleKill = useCallback(async (sessionId: string) => {
     if (!confirm(`Kill session ${sessionId}?`)) return;
