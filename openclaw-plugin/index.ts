@@ -58,6 +58,11 @@ function tryRun(
   }
 }
 
+/** Strip leading dashes from LLM-supplied args to prevent CLI flag injection. */
+function sanitizeCliArg(arg: string): string {
+  return arg.replace(/^-+/, "");
+}
+
 function tryRunAo(config: PluginConfig, args: string[], timeoutMs?: number) {
   // AO requires cwd to be the repo root where agent-orchestrator.yaml lives
   const cwd = config.aoCwd || process.cwd();
@@ -906,14 +911,14 @@ export default function (api: any) {
     ) {
       const args = ["spawn"];
       if (params.issue) {
-        args.push(params.issue);
+        args.push(sanitizeCliArg(params.issue));
       } else {
         // Freeform spawn — ao CLI supports bare `ao spawn` which creates
         // a session without an issue. Use ao_send afterward to describe the task.
         api.logger.info("[ao_spawn] Spawning without issue — freeform session");
       }
-      if (params.agent) args.push("--agent", params.agent);
-      if (params.claimPr) args.push("--claim-pr", params.claimPr);
+      if (params.agent) args.push("--agent", sanitizeCliArg(params.agent));
+      if (params.claimPr) args.push("--claim-pr", sanitizeCliArg(params.claimPr));
       if (params.decompose) args.push("--decompose");
       const result = await spawnWithRetry(config, args);
       if (!result.ok) {
@@ -948,7 +953,7 @@ export default function (api: any) {
       required: ["issues"],
     },
     async execute(_toolCallId: string, params: { issues: string[] }) {
-      const result = tryRunAo(config, ["batch-spawn", ...params.issues], 60_000);
+      const result = tryRunAo(config, ["batch-spawn", ...params.issues.map(sanitizeCliArg)], 60_000);
 
       if (!result.ok) {
         return {
@@ -1004,7 +1009,7 @@ export default function (api: any) {
       required: ["sessionId", "message"],
     },
     async execute(_toolCallId: string, params: { sessionId: string; message: string }) {
-      const result = tryRunAo(config, ["send", params.sessionId, params.message]);
+      const result = tryRunAo(config, ["send", sanitizeCliArg(params.sessionId), params.message]);
       if (!result.ok) {
         return {
           content: [{ type: "text", text: `Failed to send: ${result.error}` }],
@@ -1029,7 +1034,7 @@ export default function (api: any) {
       required: ["sessionId"],
     },
     async execute(_toolCallId: string, params: { sessionId: string }) {
-      const result = tryRunAo(config, ["session", "kill", params.sessionId]);
+      const result = tryRunAo(config, ["session", "kill", sanitizeCliArg(params.sessionId)]);
       if (!result.ok) {
         return {
           content: [{ type: "text", text: `Failed to kill: ${result.error}` }],
@@ -1076,7 +1081,7 @@ export default function (api: any) {
     },
     async execute(_toolCallId: string, params: { project?: string; dryRun?: boolean }) {
       const args = ["review-check"];
-      if (params.project) args.push(params.project);
+      if (params.project) args.push(sanitizeCliArg(params.project));
       if (params.dryRun) args.push("--dry-run");
       const result = tryRunAo(config, args, 30_000);
       if (!result.ok) {
@@ -1165,7 +1170,7 @@ export default function (api: any) {
     },
     async execute(_toolCallId: string, params: { project?: string; dryRun?: boolean }) {
       const args = ["session", "cleanup"];
-      if (params.project) args.push("-p", params.project);
+      if (params.project) args.push("-p", sanitizeCliArg(params.project));
       if (params.dryRun) args.push("--dry-run");
       const result = tryRunAo(config, args, 30_000);
       if (!result.ok) {
@@ -1191,7 +1196,7 @@ export default function (api: any) {
       required: ["sessionId"],
     },
     async execute(_toolCallId: string, params: { sessionId: string }) {
-      const result = tryRunAo(config, ["session", "restore", params.sessionId], 30_000);
+      const result = tryRunAo(config, ["session", "restore", sanitizeCliArg(params.sessionId)], 30_000);
       if (!result.ok) {
         return {
           content: [{ type: "text", text: `Restore failed: ${result.error}` }],
@@ -1396,6 +1401,11 @@ export default function (api: any) {
       if (boardScanInterval) {
         clearInterval(boardScanInterval);
         boardScanInterval = null;
+      }
+      // Clear batch-spawn follow-up timeouts here too — they may outlive the health
+      // service if healthPollIntervalMs <= 0 (health service never starts/stops)
+      for (const t of batchSpawnFollowUpTimeouts.splice(0)) {
+        clearTimeout(t);
       }
     },
   });

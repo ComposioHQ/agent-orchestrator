@@ -47,9 +47,11 @@ async function checkOpenClawNotifier(
   const url =
     (typeof openclawConfig["url"] === "string" ? openclawConfig["url"] : undefined) ??
     "http://127.0.0.1:18789";
-  const token =
-    (typeof openclawConfig["token"] === "string" ? openclawConfig["token"] : undefined) ??
-    process.env["OPENCLAW_HOOKS_TOKEN"];
+  // Resolve ${ENV_VAR} placeholders written by `ao setup openclaw` — the config
+  // stores the literal string "${OPENCLAW_HOOKS_TOKEN}" which is truthy but wrong.
+  const rawToken = typeof openclawConfig["token"] === "string" ? openclawConfig["token"] : undefined;
+  const envVarMatch = rawToken?.match(/^\$\{([^}]+)\}$/);
+  const token = (envVarMatch ? process.env[envVarMatch[1]] : rawToken) ?? process.env["OPENCLAW_HOOKS_TOKEN"];
 
   // Step 1: Probe gateway reachability
   const probe = await probeGateway(url);

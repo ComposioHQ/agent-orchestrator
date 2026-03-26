@@ -347,7 +347,8 @@ function writeShellExport(token: string): string | undefined {
     // Check if it already exists (use the same regex for detection and replacement
     // to avoid silent no-ops when the line is commented, lacks the export prefix,
     // or has leading whitespace)
-    const existingExportRegex = /^\s*(?:export\s+)?OPENCLAW_HOOKS_TOKEN=.*$/m;
+    // Negative lookahead excludes commented lines (e.g. # export OPENCLAW_HOOKS_TOKEN=...)
+    const existingExportRegex = /^(?!\s*#)\s*(?:export\s+)?OPENCLAW_HOOKS_TOKEN=.*$/m;
     if (existsSync(profilePath)) {
       const content = readFileSync(profilePath, "utf-8");
       if (existingExportRegex.test(content)) {
