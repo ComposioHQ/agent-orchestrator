@@ -90,6 +90,7 @@ export function createMockPlugins(): MockPlugins {
     name: "mock-ws",
     create: vi.fn(),
     destroy: vi.fn(),
+    list: vi.fn().mockResolvedValue([]),
   };
 
   return { runtime, agent, workspace };
