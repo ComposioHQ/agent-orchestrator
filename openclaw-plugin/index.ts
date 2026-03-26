@@ -1,18 +1,23 @@
 /**
  * OpenClaw Plugin: Agent Orchestrator v0.3.0
  *
- * Key design: the plugin INJECTS live repo data into the AI's context
- * via hooks — the AI never needs to "decide" to call tools for work questions.
- * This eliminates the #1 friction point where the AI answers from stale memory.
+ * Open-source, pluggable agentic coding orchestrator. Manages durable coding
+ * agents (Claude Code, Codex, OpenCode) and wires up feedback loops so PR
+ * reviews and CI failures automatically route to the right agent.
  *
  * Provides:
- * - Hook: intercepts work-related messages and pre-fetches live data
+ * - Hook: injects live repo data into AI context for work-related messages
  * - Slash command: /ao (with subcommands)
- * - Agent tools: ao_sessions, ao_issues, ao_spawn, ao_batch_spawn, ao_send, ao_kill, ao_doctor
+ * - 14 agent tools: ao_sessions, ao_session_list, ao_status, ao_issues,
+ *   ao_spawn, ao_batch_spawn, ao_send, ao_kill, ao_doctor, ao_review_check,
+ *   ao_verify, ao_session_cleanup, ao_session_restore, ao_session_claim_pr
  * - Background services: health monitoring + issue board scanner + auto follow-up
  */
 
 import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -53,6 +58,11 @@ function tryRun(
   }
 }
 
+/** Strip leading dashes from LLM-supplied args to prevent CLI flag injection. */
+function sanitizeCliArg(arg: string): string {
+  return arg.replace(/^-+/, "");
+}
+
 function tryRunAo(config: PluginConfig, args: string[], timeoutMs?: number) {
   // AO requires cwd to be the repo root where agent-orchestrator.yaml lives
   const cwd = config.aoCwd || process.cwd();
@@ -77,32 +87,337 @@ interface GitHubIssue {
   assignees: Array<{ login: string }>;
   createdAt: string;
   url: string;
+  repository?: string;
 }
 
-function fetchIssues(config: PluginConfig, repo?: string): GitHubIssue[] {
-  const args = ["issue", "list"];
-  if (repo) args.push("-R", repo);
-  args.push("--state", "open", "--json", "number,title,labels,state,assignees,createdAt,url", "--limit", "30");
-  const result = tryRunGh(
-    config,
-    args,
-    15_000,
-  );
-  if (!result.ok) return [];
+interface FetchIssuesSuccess {
+  ok: true;
+  issues: GitHubIssue[];
+  scannedRepos: string[];
+  warnings: string[];
+}
+
+interface FetchIssuesFailure {
+  ok: false;
+  error: string;
+}
+
+type FetchIssuesResult = FetchIssuesSuccess | FetchIssuesFailure;
+
+interface FetchIssuesOptions {
+  repo?: string;
+  labels?: string;
+}
+
+interface FetchIssuesDeps {
+  getConfiguredRepos: (config: PluginConfig) => string[];
+  runGh: typeof tryRunGh;
+}
+
+function resolveAoConfigPath(config: PluginConfig): string | null {
+  const candidates: string[] = [];
+  const envPath = process.env.AO_CONFIG_PATH;
+  if (envPath) candidates.push(resolve(envPath));
+
+  let currentDir = resolve(config.aoCwd || process.cwd());
+  while (true) {
+    candidates.push(
+      join(currentDir, "agent-orchestrator.yaml"),
+      join(currentDir, "agent-orchestrator.yml"),
+    );
+    const parentDir = dirname(currentDir);
+    if (parentDir === currentDir) break;
+    currentDir = parentDir;
+  }
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+
+  return null;
+}
+
+function stripYamlInlineComment(value: string): string {
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+
+  for (let i = 0; i < value.length; i++) {
+    const char = value[i];
+    if (char === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
+      continue;
+    }
+    if (char === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote;
+      continue;
+    }
+    if (char === "#" && !inSingleQuote && !inDoubleQuote) {
+      return value.slice(0, i).trim();
+    }
+  }
+
+  return value.trim();
+}
+
+function normalizeYamlScalar(value: string): string {
+  const stripped = stripYamlInlineComment(value);
+  if (!stripped) return "";
+
+  if (
+    (stripped.startsWith('"') && stripped.endsWith('"')) ||
+    (stripped.startsWith("'") && stripped.endsWith("'"))
+  ) {
+    return stripped.slice(1, -1).trim();
+  }
+
+  return stripped;
+}
+
+export function extractConfiguredReposFromYaml(rawYaml: string): string[] {
+  const repos = new Set<string>();
+  const lines = rawYaml.split(/\r?\n/);
+  let inProjects = false;
+  // Detected at runtime from the first project entry line — not hardcoded.
+  let projectKeyIndent: number | null = null;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+
+    const indent = line.match(/^ */)?.[0].length ?? 0;
+
+    if (!inProjects) {
+      if (trimmed === "projects:" && indent === 0) {
+        inProjects = true;
+      }
+      continue;
+    }
+
+    // Any top-level key after projects: ends the block.
+    if (indent === 0) break;
+
+    // Detect the indentation level of project name keys from the first entry.
+    // Strip inline comments before checking — `my-app: # comment` is a valid key.
+    if (projectKeyIndent === null) {
+      if (trimmed.replace(/\s*#.*$/, "").endsWith(":")) projectKeyIndent = indent;
+      continue;
+    }
+
+    // Lines at the project-key indent are project names — skip them.
+    if (indent === projectKeyIndent) continue;
+
+    // Lines indented deeper than the project key are project properties.
+    if (indent > projectKeyIndent) {
+      const match = trimmed.match(/^repo:\s*(.+)$/);
+      if (!match) continue;
+      const repo = normalizeYamlScalar(match[1]);
+      if (repo) repos.add(repo);
+    }
+  }
+
+  return [...repos];
+}
+
+function getConfiguredRepos(config: PluginConfig): string[] {
+  const configPath = resolveAoConfigPath(config);
+  if (!configPath) return [];
+
   try {
-    return JSON.parse(result.output) as GitHubIssue[];
+    const rawYaml = readFileSync(configPath, "utf-8");
+    return extractConfiguredReposFromYaml(rawYaml);
   } catch {
     return [];
   }
 }
 
+function getIssueRepository(issue: GitHubIssue): string | null {
+  if (issue.repository) return issue.repository;
+  const match = issue.url.match(/github\.com\/([^/]+\/[^/]+)\/issues\//);
+  return match?.[1] ?? null;
+}
+
+function getIssueIdentity(issue: GitHubIssue): string {
+  return issue.url || `${getIssueRepository(issue) ?? "default"}#${issue.number}`;
+}
+
+function formatIssueWarnings(warnings: string[]): string {
+  return warnings.map((warning) => `- ${warning}`).join("\n");
+}
+
+export function mergeStringLists(existing: string[], required: string[]): string[] {
+  const merged = [...existing];
+  for (const value of required) {
+    if (!merged.includes(value)) merged.push(value);
+  }
+  return merged;
+}
+
+export function parseStringArraySetting(output: string): string[] | null {
+  const trimmed = output.trim();
+  if (!trimmed) return [];
+  if (trimmed === "null" || trimmed === "undefined") return [];
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed == null) return [];
+    if (Array.isArray(parsed)) {
+      return parsed.filter((value): value is string => typeof value === "string");
+    }
+    if (typeof parsed === "string") {
+      return parsed ? [parsed] : [];
+    }
+  } catch {
+    // Fall through to plain-text parsing
+  }
+
+  if (trimmed.includes("\n")) {
+    return trimmed
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+  }
+
+  if (trimmed.includes(",")) {
+    return trimmed
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+  }
+
+  return [trimmed];
+}
+
+function getNestedValue(root: unknown, path: string[]): unknown {
+  let current = root;
+  for (const segment of path) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) {
+      return undefined;
+    }
+    current = (current as Record<string, unknown>)[segment];
+  }
+  return current;
+}
+
+function readOpenClawConfig(): Record<string, unknown> | null {
+  try {
+    const configPath = join(homedir(), ".openclaw", "openclaw.json");
+    if (!existsSync(configPath)) return {};
+    return JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function readOpenClawStringArraySetting(setting: string, path: string[]): string[] {
+  const cliResult = tryRun("openclaw", ["config", "get", setting], 5_000);
+  if (cliResult.ok) {
+    const parsed = parseStringArraySetting(cliResult.output);
+    if (parsed) return parsed;
+  }
+
+  const openClawConfig = readOpenClawConfig();
+  if (!openClawConfig) return [];
+
+  const nestedValue = getNestedValue(openClawConfig, path);
+  if (Array.isArray(nestedValue)) {
+    return nestedValue.filter((value): value is string => typeof value === "string");
+  }
+  if (typeof nestedValue === "string" && nestedValue) {
+    return [nestedValue];
+  }
+
+  return [];
+}
+
+export function fetchIssues(
+  config: PluginConfig,
+  options: FetchIssuesOptions = {},
+  deps: FetchIssuesDeps = {
+    getConfiguredRepos,
+    runGh: tryRunGh,
+  },
+): FetchIssuesResult {
+  const repos = options.repo ? [options.repo] : deps.getConfiguredRepos(config);
+  const targets = repos.length > 0 ? repos : [undefined];
+  const issues: GitHubIssue[] = [];
+  const warnings: string[] = [];
+  const scannedRepos: string[] = [];
+
+  for (const targetRepo of targets) {
+    const args = ["issue", "list"];
+    const repoLabel = targetRepo ?? "default repo";
+    if (targetRepo) args.push("-R", targetRepo);
+    if (options.labels) args.push("--label", options.labels);
+    args.push(
+      "--state",
+      "open",
+      "--json",
+      "number,title,labels,state,assignees,createdAt,url",
+      "--limit",
+      "30",
+    );
+
+    const result = deps.runGh(config, args, 15_000);
+    if (!result.ok) {
+      warnings.push(`${repoLabel}: ${result.error}`);
+      continue;
+    }
+
+    try {
+      const parsed = JSON.parse(result.output) as GitHubIssue[];
+      for (const issue of parsed) {
+        issue.repository = targetRepo ?? getIssueRepository(issue) ?? undefined;
+        issues.push(issue);
+      }
+      if (targetRepo) scannedRepos.push(targetRepo);
+    } catch {
+      warnings.push(`${repoLabel}: failed to parse GitHub CLI output`);
+    }
+  }
+
+  const dedupedIssues = issues
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .filter(
+      (issue, index, allIssues) =>
+        allIssues.findIndex(
+          (candidate) => getIssueIdentity(candidate) === getIssueIdentity(issue),
+        ) === index,
+    );
+  const inferredRepos = dedupedIssues
+    .map((issue) => getIssueRepository(issue))
+    .filter((repo): repo is string => Boolean(repo));
+
+  if (warnings.length > 0 && dedupedIssues.length === 0) {
+    return {
+      ok: false,
+      error: `GitHub issue query failed:\n${formatIssueWarnings(warnings)}`,
+    };
+  }
+
+  return {
+    ok: true,
+    issues: dedupedIssues,
+    scannedRepos: [
+      ...new Set(
+        scannedRepos.length > 0 ? scannedRepos : inferredRepos.length > 0 ? inferredRepos : repos,
+      ),
+    ],
+    warnings,
+  };
+}
+
 function formatIssueList(issues: GitHubIssue[]): string {
   if (issues.length === 0) return "No open issues found.";
+  const repoLabels = new Set(issues.map((issue) => getIssueRepository(issue)).filter(Boolean));
+  const includeRepository = repoLabels.size > 1;
   return issues
     .map((issue, i) => {
       const labels = issue.labels.map((l) => l.name).join(", ");
       const labelStr = labels ? ` [${labels}]` : "";
-      return `${i + 1}. #${issue.number} — ${issue.title}${labelStr}`;
+      const repoPrefix = includeRepository
+        ? `${getIssueRepository(issue) ?? issue.repository ?? "unknown"}#${issue.number}`
+        : `#${issue.number}`;
+      return `${i + 1}. ${repoPrefix} — ${issue.title}${labelStr}`;
     })
     .join("\n");
 }
@@ -140,17 +455,40 @@ async function spawnWithRetry(
 // ---------------------------------------------------------------------------
 
 const WORK_TRIGGERS = [
-  "what needs", "what should i", "what do i need",
-  "start working", "morning", "let's go", "lets go",
-  "what's going on", "whats going on", "status update",
-  "check my repos", "check my issues", "check issues",
-  "any issues", "what's on the board", "whats on the board",
-  "what can i work on", "what to work on", "work on today",
-  "what's open", "whats open", "open issues",
-  "scan my repos", "scan repos", "scan issues",
-  "engineering update", "dev update", "project update",
-  "anything to do", "what's pending", "whats pending",
-  "ready to work", "what's the plan", "whats the plan",
+  "what needs",
+  "what should i",
+  "what do i need",
+  "start working",
+  "morning",
+  "let's go",
+  "lets go",
+  "what's going on",
+  "whats going on",
+  "status update",
+  "check my repos",
+  "check my issues",
+  "check issues",
+  "any issues",
+  "what's on the board",
+  "whats on the board",
+  "what can i work on",
+  "what to work on",
+  "work on today",
+  "what's open",
+  "whats open",
+  "open issues",
+  "scan my repos",
+  "scan repos",
+  "scan issues",
+  "engineering update",
+  "dev update",
+  "project update",
+  "anything to do",
+  "what's pending",
+  "whats pending",
+  "ready to work",
+  "what's the plan",
+  "whats the plan",
 ];
 
 function isWorkRelated(message: string): boolean {
@@ -177,13 +515,22 @@ export default function (api: any) {
   /** Build a live-data context block from AO + GitHub */
   function buildLiveContext(): string | null {
     try {
-      const issues = fetchIssues(config);
+      const issuesResult = fetchIssues(config);
       const sessionsResult = tryRunAo(config, ["status"], 10_000);
 
-      const issuesSummary =
-        issues.length > 0
-          ? `Open issues (${issues.length}):\n${formatIssueList(issues)}`
-          : "No open issues across your repos.";
+      const issuesSummary = !issuesResult.ok
+        ? issuesResult.error
+        : issuesResult.issues.length > 0
+          ? [
+              `Open issues (${issuesResult.issues.length}${issuesResult.scannedRepos.length > 1 ? ` across ${issuesResult.scannedRepos.length} repos` : ""}):`,
+              formatIssueList(issuesResult.issues),
+              issuesResult.warnings.length > 0
+                ? `GitHub warnings:\n${formatIssueWarnings(issuesResult.warnings)}`
+                : null,
+            ]
+              .filter(Boolean)
+              .join("\n")
+          : `No open issues found${issuesResult.scannedRepos.length > 1 ? ` across ${issuesResult.scannedRepos.length} repos` : ""}.`;
 
       const sessionsSummary = sessionsResult.ok
         ? `Active sessions:\n${sessionsResult.output}`
@@ -208,8 +555,16 @@ export default function (api: any) {
   }
 
   // Track pending work-related messages per session/channel to avoid
-  // cross-conversation interference
-  const pendingWorkSessions = new Set<string>();
+  // cross-conversation interference. Uses Map with timestamps for TTL cleanup.
+  const pendingWorkSessions = new Map<string, number>();
+  const PENDING_TTL_MS = 60_000; // 60s — if prompt build doesn't fire, clean up
+
+  function cleanStalePending() {
+    const now = Date.now();
+    for (const [key, ts] of pendingWorkSessions) {
+      if (now - ts > PENDING_TTL_MS) pendingWorkSessions.delete(key);
+    }
+  }
 
   function getSessionKey(event: any): string {
     return event?.sessionKey || event?.sessionId || event?.channelId || "default";
@@ -218,42 +573,52 @@ export default function (api: any) {
   // Hook 1: message_received — detect work-related inbound messages
   const onMessageReceived = async (event: any) => {
     const message =
-      event?.message?.text ||
-      event?.message?.content ||
-      event?.text ||
-      event?.content ||
-      "";
+      event?.message?.text || event?.message?.content || event?.text || event?.content || "";
 
     if (isWorkRelated(message)) {
-      pendingWorkSessions.add(getSessionKey(event));
+      cleanStalePending();
+      pendingWorkSessions.set(getSessionKey(event), Date.now());
       api.logger.info("[ao-hook] Work-related message detected, will inject context");
     }
   };
 
-  // Hook 2: before_prompt_build — inject live data into the AI's system context
+  // Hook 2: before_prompt_build — inject AO routing context + live data
   const onBeforePromptBuild = async (event: any) => {
     const key = getSessionKey(event);
-    if (!pendingWorkSessions.has(key)) return;
-    pendingWorkSessions.delete(key);
 
-    api.logger.info("[ao-hook] Injecting live data into prompt context...");
-    const context = buildLiveContext();
-    if (!context) return;
+    // Inform the model that AO is available and what it offers.
+    // Not a command — just context so the model can make an informed choice.
+    const routingContext = [
+      "[Agent Orchestrator] This project has AO installed — an open-source orchestrator " +
+        "for durable coding agents (Claude Code, Codex, OpenCode). ao_spawn creates an " +
+        "isolated git worktree, starts an agent, and wires up feedback loops so PR reviews " +
+        "and CI failures automatically route to the right agent.",
+    ];
+
+    // If this is a work-related message, also inject live repo data
+    if (pendingWorkSessions.has(key)) {
+      pendingWorkSessions.delete(key);
+      api.logger.info("[ao-hook] Injecting live data into prompt context...");
+      const context = buildLiveContext();
+      if (context) routingContext.push(context);
+    }
+
+    const fullContext = routingContext.join("\n\n");
 
     // OpenClaw before_prompt_build supports these injection points:
     if (typeof event.appendSystemContext === "function") {
-      event.appendSystemContext(context);
+      event.appendSystemContext(fullContext);
     } else if (typeof event.prependContext === "function") {
-      event.prependContext(context);
+      event.prependContext(fullContext);
     } else if (event.context && typeof event.context === "object") {
       // Fallback: write to context object directly
-      event.context.aoLiveData = context;
+      event.context.aoLiveData = fullContext;
     } else if (event.messages && Array.isArray(event.messages)) {
       // Last resort: push a system message
-      event.messages.push({ role: "system", content: context });
+      event.messages.push({ role: "system", content: fullContext });
     }
 
-    api.logger.info("[ao-hook] Injected live data into prompt context");
+    api.logger.info("[ao-hook] Injected AO context into prompt");
   };
 
   // Register hooks using the correct OpenClaw event names
@@ -290,6 +655,11 @@ export default function (api: any) {
       const subcommand = parts[0]?.toLowerCase() || "help";
       const rest = parts.slice(1).join(" ").trim();
 
+      // Sanitize user input: strip leading dashes to prevent flag injection
+      const sanitizeArg = (arg: string): string => arg.replace(/^-+/, "");
+      const isValidIssueId = (s: string): boolean => /^#?\d+$/.test(s.trim());
+      const isValidSessionId = (s: string): boolean => /^[\w-]+$/.test(s.trim());
+
       switch (subcommand) {
         case "sessions": {
           const result = tryRunAo(config, ["status"]);
@@ -306,35 +676,58 @@ export default function (api: any) {
 
         case "spawn": {
           if (!rest) return { text: "Usage: /ao spawn <issue-number>" };
-          const result = await spawnWithRetry(config, ["spawn", rest.split(/\s+/)[0]]);
+          const issueArg = sanitizeArg(rest.split(/\s+/)[0]);
+          if (!isValidIssueId(issueArg))
+            return {
+              text: `Invalid issue identifier: ${issueArg}. Expected a number like 42 or #42.`,
+            };
+          const result = await spawnWithRetry(config, ["spawn", issueArg]);
           if (!result.ok) return { text: `Failed to spawn:\n${result.error}` };
           return { text: result.output };
         }
 
         case "issues": {
-          const issues = fetchIssues(config, rest || undefined);
-          return { text: formatIssueList(issues) };
+          const issuesResult = fetchIssues(config, { repo: rest || undefined });
+          if (!issuesResult.ok) return { text: issuesResult.error };
+
+          const lines = [formatIssueList(issuesResult.issues)];
+          if (issuesResult.warnings.length > 0) {
+            lines.push("");
+            lines.push("GitHub warnings:");
+            lines.push(formatIssueWarnings(issuesResult.warnings));
+          }
+
+          return { text: lines.join("\n") };
         }
 
         case "batch-spawn": {
           if (!rest) return { text: "Usage: /ao batch-spawn <issue1> <issue2> ..." };
-          const result = tryRunAo(config, ["batch-spawn", ...rest.split(/\s+/)], 60_000);
+          const issueArgs = rest.split(/\s+/).map(sanitizeArg);
+          if (!issueArgs.every(isValidIssueId))
+            return { text: `Invalid issue identifiers. Expected numbers like: 42 43 44` };
+          const result = tryRunAo(config, ["batch-spawn", ...issueArgs], 60_000);
           if (!result.ok) return { text: `Failed to batch-spawn:\n${result.error}` };
           return { text: result.output };
         }
 
         case "retry": {
           if (!rest) return { text: "Usage: /ao retry <session-id>" };
-          const result = tryRunAo(config, ["send", rest, "Please retry the failed task."]);
+          const sessionId = sanitizeArg(rest.trim());
+          if (!isValidSessionId(sessionId))
+            return { text: `Invalid session ID: ${rest}. Expected format like ao-42.` };
+          const result = tryRunAo(config, ["send", sessionId, "Please retry the failed task."]);
           if (!result.ok) return { text: `Failed to send retry:\n${result.error}` };
-          return { text: `Retry sent to session ${rest}.` };
+          return { text: `Retry sent to session ${sessionId}.` };
         }
 
         case "kill": {
           if (!rest) return { text: "Usage: /ao kill <session-id>" };
-          const result = tryRunAo(config, ["session", "kill", rest]);
+          const sessionId = sanitizeArg(rest.trim());
+          if (!isValidSessionId(sessionId))
+            return { text: `Invalid session ID: ${rest}. Expected format like ao-42.` };
+          const result = tryRunAo(config, ["session", "kill", sessionId]);
           if (!result.ok) return { text: `Failed to kill session:\n${result.error}` };
-          return { text: `Session ${rest} killed.` };
+          return { text: `Session ${sessionId} killed.` };
         }
 
         case "doctor": {
@@ -361,14 +754,31 @@ export default function (api: any) {
           else steps.push("❌ Failed to set tools.profile");
 
           // 2. Allow plugin tools
-          if (runSetup("openclaw", ["config", "set", "tools.allow", '["group:plugins"]']))
-            steps.push("✅ tools.allow → group:plugins");
-          else steps.push("❌ Failed to set tools.allow");
+          const mergedToolsAllow = mergeStringLists(
+            readOpenClawStringArraySetting("tools.allow", ["tools", "allow"]),
+            ["group:plugins"],
+          );
+          if (
+            runSetup("openclaw", ["config", "set", "tools.allow", JSON.stringify(mergedToolsAllow)])
+          ) {
+            steps.push(`✅ tools.allow → ${mergedToolsAllow.join(", ")}`);
+          } else steps.push("❌ Failed to set tools.allow");
 
           // 3. Trust the plugin
-          if (runSetup("openclaw", ["config", "set", "plugins.allow", '["agent-orchestrator"]']))
-            steps.push("✅ plugins.allow → agent-orchestrator");
-          else steps.push("❌ Failed to set plugins.allow");
+          const mergedPluginsAllow = mergeStringLists(
+            readOpenClawStringArraySetting("plugins.allow", ["plugins", "allow"]),
+            ["agent-orchestrator"],
+          );
+          if (
+            runSetup("openclaw", [
+              "config",
+              "set",
+              "plugins.allow",
+              JSON.stringify(mergedPluginsAllow),
+            ])
+          ) {
+            steps.push(`✅ plugins.allow → ${mergedPluginsAllow.join(", ")}`);
+          } else steps.push("❌ Failed to set plugins.allow");
 
           // 4. Group chat settings
           if (runSetup("openclaw", ["config", "set", "messages.groupChat.historyLimit", "100"]))
@@ -378,6 +788,12 @@ export default function (api: any) {
           steps.push("");
           steps.push("⚡ Restart the gateway to apply: pm2 restart openclaw-gateway");
           steps.push("Then verify with: /ao doctor");
+          steps.push("");
+          steps.push("⚠️  Action required — run these once to avoid conflicts:");
+          steps.push("   openclaw config set skills.entries.coding-agent.enabled false");
+          steps.push("   openclaw config set skills.entries.gh-issues.enabled false");
+          steps.push('   openclaw config set tools.deny \'["exec","write","str_replace_based_edit_tool","create_file","str_replace_editor"]\'');
+          steps.push("Without these, the bot may code directly instead of delegating to AO.");
 
           return { text: `AO Plugin Setup\n\n${steps.join("\n")}` };
         }
@@ -387,7 +803,7 @@ export default function (api: any) {
             text: [
               "Agent Orchestrator commands:",
               "  /ao sessions              — list all sessions",
-              "  /ao status <id>           — session details",
+              "  /ao status                — all sessions overview",
               "  /ao issues [owner/repo]   — list open issues",
               "  /ao spawn <issue>         — spawn agent on issue",
               "  /ao batch-spawn <i1> <i2> — spawn multiple agents",
@@ -408,9 +824,8 @@ export default function (api: any) {
   api.registerTool({
     name: "ao_sessions",
     description:
-      "REQUIRED: Call this whenever the user asks about work status, progress, what's running, " +
-      "or how things are going. Returns LIVE session data from Agent Orchestrator. " +
-      "Do NOT answer session/status questions from memory — this tool has real-time data.",
+      "Returns live session data from Agent Orchestrator — what agents are running, " +
+      "their status, branches, and progress. Use when the user asks about status or progress.",
     parameters: { type: "object", properties: {}, required: [] },
     async execute() {
       const result = tryRunAo(config, ["status"]);
@@ -429,9 +844,8 @@ export default function (api: any) {
   api.registerTool({
     name: "ao_issues",
     description:
-      "REQUIRED: Call this whenever the user asks about work, tasks, issues, what to do, " +
-      "what needs attention, or anything about their GitHub repos. Returns LIVE issue data. " +
-      "Your memory about their repos is STALE — always call this tool first for any work-related question.",
+      "Returns live GitHub issue data — open issues, labels, assignees, and priorities. " +
+      "Use when the user asks about work, tasks, issues, or what needs attention.",
     parameters: {
       type: "object",
       properties: {
@@ -447,48 +861,65 @@ export default function (api: any) {
       required: [],
     },
     async execute(_toolCallId: string, params: { repo?: string; labels?: string }) {
-      const ghArgs = ["issue", "list"];
-      if (params.repo) ghArgs.push("-R", params.repo);
-      if (params.labels) ghArgs.push("--label", params.labels);
-      ghArgs.push("--state", "open", "--json", "number,title,labels,state,assignees,createdAt,url", "--limit", "30");
-      const result = tryRunGh(
-        config,
-        ghArgs,
-        15_000,
-      );
+      const result = fetchIssues(config, params);
       if (!result.ok) {
         return {
-          content: [{ type: "text", text: `Failed to fetch issues: ${result.error}` }],
+          content: [{ type: "text", text: result.error }],
           isError: true,
         };
       }
-      return { content: [{ type: "text", text: result.output }] };
+
+      const lines = [formatIssueList(result.issues)];
+      if (result.warnings.length > 0) {
+        lines.push("");
+        lines.push("GitHub warnings:");
+        lines.push(formatIssueWarnings(result.warnings));
+      }
+
+      return { content: [{ type: "text", text: lines.join("\n") }] };
     },
   });
 
   api.registerTool({
     name: "ao_spawn",
     description:
-      "Spawn a new Agent Orchestrator session on a GitHub issue. " +
-      "Use when the user asks to start an agent or work on an issue. " +
-      "Retries silently on transient failures.",
+      "Spawn a durable coding agent (Claude Code, Codex, or OpenCode) on a task. " +
+      "Creates an isolated git worktree, starts the agent, and wires up feedback " +
+      "loops — CI failures and PR reviews automatically route back to the agent. " +
+      "Works with issue numbers (#42) or without for freeform tasks.",
     parameters: {
       type: "object",
       properties: {
-        issue: { type: "string", description: "Issue identifier (e.g. #42)" },
+        issue: {
+          type: "string",
+          description:
+            "Issue identifier (e.g. #42). Optional — omit for freeform tasks, then use ao_send to describe the work.",
+        },
         agent: { type: "string", description: "Override agent plugin (e.g. codex, claude-code)" },
-        claimPr: { type: "string", description: "Immediately claim an existing PR number for the session" },
-        decompose: { type: "boolean", description: "Decompose issue into subtasks before spawning" },
+        claimPr: {
+          type: "string",
+          description: "Immediately claim an existing PR number for the session",
+        },
+        decompose: {
+          type: "boolean",
+          description: "Decompose issue into subtasks before spawning",
+        },
       },
-      required: ["issue"],
     },
     async execute(
       _toolCallId: string,
-      params: { issue: string; agent?: string; claimPr?: string; decompose?: boolean },
+      params: { issue?: string; agent?: string; claimPr?: string; decompose?: boolean },
     ) {
-      const args = ["spawn", params.issue];
-      if (params.agent) args.push("--agent", params.agent);
-      if (params.claimPr) args.push("--claim-pr", params.claimPr);
+      const args = ["spawn"];
+      if (params.issue) {
+        args.push(sanitizeCliArg(params.issue));
+      } else {
+        // Freeform spawn — ao CLI supports bare `ao spawn` which creates
+        // a session without an issue. Use ao_send afterward to describe the task.
+        api.logger.info("[ao_spawn] Spawning without issue — freeform session");
+      }
+      if (params.agent) args.push("--agent", sanitizeCliArg(params.agent));
+      if (params.claimPr) args.push("--claim-pr", sanitizeCliArg(params.claimPr));
       if (params.decompose) args.push("--decompose");
       const result = await spawnWithRetry(config, args);
       if (!result.ok) {
@@ -497,16 +928,20 @@ export default function (api: any) {
           isError: true,
         };
       }
-      return { content: [{ type: "text", text: result.output }] };
+      const spawnOutput = params.issue
+        ? result.output
+        : result.output +
+          "\n\nNote: This is a freeform session (no issue). Use ao_send to describe the task to the agent.";
+      return { content: [{ type: "text", text: spawnOutput }] };
     },
   });
 
   api.registerTool({
     name: "ao_batch_spawn",
     description:
-      "Spawn agents for multiple GitHub issues at once. " +
-      "IMPORTANT: Always show the user the list and get their approval BEFORE calling this. " +
-      "After spawning, tell the user you'll check back with status in a few minutes.",
+      "Spawn durable coding agents for multiple GitHub issues in parallel. " +
+      "Always confirm the list with the user before calling this. " +
+      "Each agent gets its own isolated worktree with CI and PR review feedback loops.",
     parameters: {
       type: "object",
       properties: {
@@ -519,7 +954,7 @@ export default function (api: any) {
       required: ["issues"],
     },
     async execute(_toolCallId: string, params: { issues: string[] }) {
-      const result = tryRunAo(config, ["batch-spawn", ...params.issues], 60_000);
+      const result = tryRunAo(config, ["batch-spawn", ...params.issues.map(sanitizeCliArg)], 60_000);
 
       if (!result.ok) {
         return {
@@ -541,8 +976,12 @@ export default function (api: any) {
         }
       };
 
-      setTimeout(() => checkStatus("Progress check (3 min)"), 3 * 60_000);
-      setTimeout(() => checkStatus("Status update (8 min)"), 8 * 60_000);
+      batchSpawnFollowUpTimeouts.push(
+        setTimeout(() => checkStatus("Progress check (3 min)"), 3 * 60_000),
+      );
+      batchSpawnFollowUpTimeouts.push(
+        setTimeout(() => checkStatus("Status update (8 min)"), 8 * 60_000),
+      );
 
       api.logger.info("[ao-batch] Scheduled auto follow-ups at 3min and 8min");
 
@@ -571,7 +1010,7 @@ export default function (api: any) {
       required: ["sessionId", "message"],
     },
     async execute(_toolCallId: string, params: { sessionId: string; message: string }) {
-      const result = tryRunAo(config, ["send", params.sessionId, params.message]);
+      const result = tryRunAo(config, ["send", sanitizeCliArg(params.sessionId), params.message]);
       if (!result.ok) {
         return {
           content: [{ type: "text", text: `Failed to send: ${result.error}` }],
@@ -596,7 +1035,7 @@ export default function (api: any) {
       required: ["sessionId"],
     },
     async execute(_toolCallId: string, params: { sessionId: string }) {
-      const result = tryRunAo(config, ["session", "kill", params.sessionId]);
+      const result = tryRunAo(config, ["session", "kill", sanitizeCliArg(params.sessionId)]);
       if (!result.ok) {
         return {
           content: [{ type: "text", text: `Failed to kill: ${result.error}` }],
@@ -643,7 +1082,7 @@ export default function (api: any) {
     },
     async execute(_toolCallId: string, params: { project?: string; dryRun?: boolean }) {
       const args = ["review-check"];
-      if (params.project) args.push(params.project);
+      if (params.project) args.push(sanitizeCliArg(params.project));
       if (params.dryRun) args.push("--dry-run");
       const result = tryRunAo(config, args, 30_000);
       if (!result.ok) {
@@ -652,7 +1091,9 @@ export default function (api: any) {
           isError: true,
         };
       }
-      return { content: [{ type: "text", text: result.output || "No review comments to address." }] };
+      return {
+        content: [{ type: "text", text: result.output || "No review comments to address." }],
+      };
     },
   });
 
@@ -675,7 +1116,13 @@ export default function (api: any) {
     },
     async execute(
       _toolCallId: string,
-      params: { issue?: string; project?: string; fail?: boolean; comment?: string; list?: boolean },
+      params: {
+        issue?: string;
+        project?: string;
+        fail?: boolean;
+        comment?: string;
+        list?: boolean;
+      },
     ) {
       const args = ["verify"];
       if (params.list) {
@@ -684,7 +1131,12 @@ export default function (api: any) {
       } else {
         if (!params.issue) {
           return {
-            content: [{ type: "text", text: "Need an issue number. Use list: true to see unverified issues." }],
+            content: [
+              {
+                type: "text",
+                text: "Need an issue number. Use list: true to see unverified issues.",
+              },
+            ],
             isError: true,
           };
         }
@@ -719,7 +1171,7 @@ export default function (api: any) {
     },
     async execute(_toolCallId: string, params: { project?: string; dryRun?: boolean }) {
       const args = ["session", "cleanup"];
-      if (params.project) args.push("-p", params.project);
+      if (params.project) args.push("-p", sanitizeCliArg(params.project));
       if (params.dryRun) args.push("--dry-run");
       const result = tryRunAo(config, args, 30_000);
       if (!result.ok) {
@@ -745,7 +1197,7 @@ export default function (api: any) {
       required: ["sessionId"],
     },
     async execute(_toolCallId: string, params: { sessionId: string }) {
-      const result = tryRunAo(config, ["session", "restore", params.sessionId], 30_000);
+      const result = tryRunAo(config, ["session", "restore", sanitizeCliArg(params.sessionId)], 30_000);
       if (!result.ok) {
         return {
           content: [{ type: "text", text: `Restore failed: ${result.error}` }],
@@ -766,7 +1218,10 @@ export default function (api: any) {
       properties: {
         pr: { type: "string", description: "Pull request number or URL" },
         sessionId: { type: "string", description: "Session name (optional)" },
-        assignOnGithub: { type: "boolean", description: "Assign the PR to the authenticated GitHub user" },
+        assignOnGithub: {
+          type: "boolean",
+          description: "Assign the PR to the authenticated GitHub user",
+        },
       },
       required: ["pr"],
     },
@@ -848,7 +1303,9 @@ export default function (api: any) {
 
   let healthInterval: ReturnType<typeof setInterval> | null = null;
   let boardScanInterval: ReturnType<typeof setInterval> | null = null;
-  let lastKnownIssueIds: Set<number> = new Set();
+  let boardScanInitialTimeout: ReturnType<typeof setTimeout> | null = null;
+  const batchSpawnFollowUpTimeouts: ReturnType<typeof setTimeout>[] = [];
+  let lastKnownIssueIds: Set<string> = new Set();
   let isFirstBoardScan = true;
 
   // --- Health monitor ---
@@ -871,6 +1328,10 @@ export default function (api: any) {
         clearInterval(healthInterval);
         healthInterval = null;
       }
+      // Clear any pending batch-spawn follow-up timeouts
+      for (const t of batchSpawnFollowUpTimeouts.splice(0)) {
+        clearTimeout(t);
+      }
     },
   });
 
@@ -885,8 +1346,19 @@ export default function (api: any) {
 
       const scan = () => {
         try {
-          const issues = fetchIssues(config);
-          const currentIds = new Set(issues.map((i) => i.number));
+          const issuesResult = fetchIssues(config);
+          if (!issuesResult.ok) {
+            api.logger.warn(`[ao-board-scanner] ${issuesResult.error}`);
+            return;
+          }
+
+          if (issuesResult.warnings.length > 0) {
+            api.logger.warn(
+              `[ao-board-scanner] Partial GitHub failures:\n${formatIssueWarnings(issuesResult.warnings)}`,
+            );
+          }
+
+          const currentIds = new Set(issuesResult.issues.map((issue) => getIssueIdentity(issue)));
 
           if (isFirstBoardScan) {
             lastKnownIssueIds = currentIds;
@@ -895,15 +1367,12 @@ export default function (api: any) {
             return;
           }
 
-          const newIssues = issues.filter((i) => !lastKnownIssueIds.has(i.number));
+          const newIssues = issuesResult.issues.filter(
+            (issue) => !lastKnownIssueIds.has(getIssueIdentity(issue)),
+          );
 
           if (newIssues.length > 0) {
-            const summary = newIssues
-              .map((i) => {
-                const labels = i.labels.map((l) => l.name).join(", ");
-                return `#${i.number} — ${i.title}${labels ? ` [${labels}]` : ""}`;
-              })
-              .join("\n");
+            const summary = formatIssueList(newIssues);
 
             api.logger.info(`[ao-board-scanner] ${newIssues.length} new issue(s)`);
 
@@ -922,13 +1391,22 @@ export default function (api: any) {
         }
       };
 
-      setTimeout(scan, 10_000);
+      boardScanInitialTimeout = setTimeout(scan, 10_000);
       boardScanInterval = setInterval(scan, scanMs);
     },
     stop: async () => {
+      if (boardScanInitialTimeout) {
+        clearTimeout(boardScanInitialTimeout);
+        boardScanInitialTimeout = null;
+      }
       if (boardScanInterval) {
         clearInterval(boardScanInterval);
         boardScanInterval = null;
+      }
+      // Clear batch-spawn follow-up timeouts here too — they may outlive the health
+      // service if healthPollIntervalMs <= 0 (health service never starts/stops)
+      for (const t of batchSpawnFollowUpTimeouts.splice(0)) {
+        clearTimeout(t);
       }
     },
   });

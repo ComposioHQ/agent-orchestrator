@@ -112,13 +112,15 @@ async function postWithRetry(
 
       if (response.ok || response.status === 204) return;
 
-      // Handle rate limiting with Retry-After header
+      // Handle rate limiting with Retry-After header.
+      // Mark that the next attempt should skip exponential backoff since we
+      // already waited the server-specified delay.
       if (response.status === 429) {
         const retryAfter = response.headers.get("Retry-After");
         if (retryAfter && attempt < retries) {
           const waitMs = (parseFloat(retryAfter) || 1) * 1000;
           await new Promise((resolve) => setTimeout(resolve, waitMs));
-          continue;
+          continue; // already waited Retry-After; skip exponential backoff naturally
         }
       }
 
@@ -170,7 +172,7 @@ export function create(config?: Record<string, unknown>): Notifier {
 
   // Discord requires thread_id as a URL query param, not in the JSON body
   const effectiveUrl = webhookUrl && threadId
-    ? `${webhookUrl}${webhookUrl.includes("?") ? "&" : "?"}thread_id=${threadId}`
+    ? `${webhookUrl}${webhookUrl.includes("?") ? "&" : "?"}thread_id=${encodeURIComponent(threadId)}`
     : webhookUrl;
 
   function buildPayload(embeds: DiscordEmbed[]): Record<string, unknown> {
@@ -189,17 +191,17 @@ export function create(config?: Record<string, unknown>): Notifier {
     },
 
     async notifyWithActions(event: OrchestratorEvent, actions: NotifyAction[]): Promise<void> {
-      if (!webhookUrl) return;
+      if (!effectiveUrl) return;
       const payload = buildPayload([buildEmbed(event, actions)]);
-      await postWithRetry(effectiveUrl!, payload, retries, retryDelayMs);
+      await postWithRetry(effectiveUrl, payload, retries, retryDelayMs);
     },
 
     async post(message: string, _context?: NotifyContext): Promise<string | null> {
-      if (!webhookUrl) return null;
+      if (!effectiveUrl) return null;
       const payload: Record<string, unknown> = { username, content: message };
       if (avatarUrl) payload.avatar_url = avatarUrl;
-      if (threadId) payload.thread_id = threadId;
-      await postWithRetry(effectiveUrl!, payload, retries, retryDelayMs);
+      // thread_id is already passed as a URL query param via effectiveUrl
+      await postWithRetry(effectiveUrl, payload, retries, retryDelayMs);
       return null;
     },
   };
