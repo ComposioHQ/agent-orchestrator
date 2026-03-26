@@ -24,11 +24,16 @@ jobs:
         with:
           fetch-depth: 0 # Full history for comprehensive scan
 
+      - name: Install Gitleaks
+        run: |
+          GITLEAKS_VERSION="8.24.3"
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+
       - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        run: gitleaks detect --source . --verbose --log-opts="$LOG_OPTS"
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+          LOG_OPTS: ${{ github.event_name == 'pull_request' && format('--since-commit={0}', github.event.pull_request.base.sha) || '' }}
 
   dependency-review:
     name: Dependency Review
