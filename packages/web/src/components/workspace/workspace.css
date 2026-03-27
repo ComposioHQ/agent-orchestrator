@@ -8,10 +8,17 @@
   display: flex;
   flex-direction: column;
   width: 100%;
-  height: 100vh;
+  height: 100dvh;
+  height: 100vh; /* fallback for older browsers */
   background: var(--color-bg);
   color: var(--color-text-primary);
   overflow: hidden;
+}
+
+@supports (height: 100dvh) {
+  .workspace-container {
+    height: 100dvh;
+  }
 }
 
 /* ── Pane headers ──────────────────────────────────────── */
@@ -32,6 +39,24 @@
   flex-shrink: 0;
 }
 
+.workspace-pane-header-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 3px;
+  color: var(--color-text-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  transition: color 0.15s, background 0.15s;
+}
+
+.workspace-pane-header-btn:hover {
+  color: var(--color-text-primary);
+  background: var(--color-hover-overlay);
+}
+
 /* ── Separator ─────────────────────────────────────────── */
 
 .workspace-separator {
@@ -40,10 +65,121 @@
   background: var(--color-border-subtle);
   transition: background 0.15s;
   flex-shrink: 0;
+  touch-action: none;
 }
 
 .workspace-separator:hover {
   background: var(--color-accent);
+}
+
+.workspace-separator--horizontal {
+  width: auto;
+  height: 4px;
+  cursor: row-resize;
+}
+
+/* ── Compact Top Bar ──────────────────────────────────── */
+
+.compact-top-bar {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-surface);
+  gap: 12px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.compact-top-bar__left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.compact-top-bar__info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.compact-top-bar__row1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.compact-top-bar__row2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.compact-top-bar__branch {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  font-family: monospace;
+  white-space: nowrap;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.compact-top-bar__pr-info {
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.compact-top-bar__ci {
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.compact-top-bar__sidebar-toggle {
+  display: flex;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  color: var(--color-text-secondary);
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+
+  .compact-top-bar__info {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+    overflow: hidden;
+  }
+
+  .compact-top-bar__row2 {
+    font-size: 9px;
+    gap: 6px;
+    max-width: 100%;
+    overflow: hidden;
+  }
+
+  .compact-top-bar__branch {
+    font-size: 9px;
+    max-width: 120px;
+  }
+
+  .compact-top-bar__pr-info,
+  .compact-top-bar__ci {
+    display: none;
+  }
 }
 
 /* ── Empty / error states ──────────────────────────────── */
@@ -150,8 +286,6 @@
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   font-size: 13px;
   line-height: 20px;
-  overflow: auto;
-  height: 100%;
   background: var(--color-bg);
 }
 
@@ -190,25 +324,35 @@
   flex: 1;
 }
 
-/* Override DirectTerminal's max-height inside workspace */
-.workspace-terminal-pane .direct-terminal-container {
+/* Terminal content wrapper — fills remaining space after pane header */
+.workspace-terminal-content {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Prevent .xterm from inflating beyond its container via content width */
+.workspace-terminal-content .xterm {
+  overflow: hidden;
+  max-width: 100%;
+}
+
+/* Override DirectTerminal styles inside workspace */
+.workspace-terminal-content .direct-terminal-container,
+.workspace-terminal-content > div {
   max-height: none !important;
   height: 100% !important;
 }
 
-.workspace-terminal-pane > div {
-  flex: 1;
-  min-height: 0;
-  height: 100% !important;
-  max-height: none !important;
+/* Remove DirectTerminal's border inside workspace — the pane provides boundaries */
+.workspace-terminal-content > div {
+  border: none !important;
 }
 
 /* ── Markdown Preview — VSCode-like colors ─────────────── */
 
 .workspace-markdown-preview {
-  overflow: auto;
   padding: 24px 32px;
-  height: 100%;
   color: #d4d4d4;
   font-size: 14px;
   line-height: 1.6;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams } from "next/navigation";
 import { type DashboardSession } from "@/lib/types";
 import { WorkspaceLayout } from "@/components/workspace/WorkspaceLayout";
 import { FileTree } from "@/components/workspace/FileTree";
@@ -11,9 +11,7 @@ import { isOrchestratorSession } from "@composio/ao-core/types";
 
 export default function WorkspacePage() {
   const params = useParams();
-  const searchParams = useSearchParams();
   const id = params.id as string;
-  const selectedFile = searchParams.get("file");
 
   const [session, setSession] = useState<DashboardSession | null>(null);
   const [loading, setLoading] = useState(true);
@@ -75,18 +73,19 @@ export default function WorkspacePage() {
   return (
     <WorkspaceLayout session={session}>
       {{
-        fileTree: (
+        fileTree: (file) => (
           <FileTree
             sessionId={id}
-            selectedFile={selectedFile}
+            selectedFile={file}
           />
         ),
-        preview: <FilePreview sessionId={id} selectedFile={selectedFile} />,
+        preview: (file) => <FilePreview sessionId={id} selectedFile={file} />,
         terminal: (
           <DirectTerminal
             sessionId={id}
             variant={isOrchestrator ? "orchestrator" : "agent"}
             height="100%"
+            headerLabel="TERMINAL"
             isOpenCodeSession={session.metadata["agent"] === "opencode"}
             reloadCommand={
               session.metadata["agent"] === "opencode" && session.metadata["opencodeSessionId"]

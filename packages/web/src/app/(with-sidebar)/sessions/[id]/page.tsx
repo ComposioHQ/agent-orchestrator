@@ -47,7 +47,6 @@ export default function SessionPage() {
   const params = useParams();
   const searchParams = useSearchParams();
   const id = params.id as string;
-  const selectedFile = searchParams.get("file");
   const useClassicView = searchParams.get("view") === "classic";
 
   const [session, setSession] = useState<DashboardSession | null>(null);
@@ -153,8 +152,8 @@ export default function SessionPage() {
     return (
       <WorkspaceLayout session={session}>
         {{
-          fileTree: <FileTree sessionId={id} selectedFile={selectedFile} />,
-          preview: <FilePreview sessionId={id} selectedFile={selectedFile} />,
+          fileTree: (file) => <FileTree sessionId={id} selectedFile={file} />,
+          preview: (file) => <FilePreview sessionId={id} selectedFile={file} />,
           terminal: (
             <DirectTerminal
               sessionId={id}

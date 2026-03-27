@@ -7,6 +7,7 @@ const STORAGE_KEY_PREFIX = "ao:workspace:panes:";
 interface PaneSizesState {
   sizes: number[];
   collapsed: boolean[];
+  verticalLayout?: boolean;
 }
 
 export function usePaneSizes(sessionId: string, defaultSizes: number[]) {
@@ -66,11 +67,29 @@ export function usePaneSizes(sessionId: string, defaultSizes: number[]) {
     [sessionId]
   );
 
+  const setVerticalLayout = useCallback(
+    (vertical: boolean) => {
+      setState((prev) => {
+        const updated = { ...prev, verticalLayout: vertical };
+        const storageKey = STORAGE_KEY_PREFIX + sessionId;
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(updated));
+        } catch (e) {
+          console.error("Failed to save pane state to localStorage:", e);
+        }
+        return updated;
+      });
+    },
+    [sessionId]
+  );
+
   return {
     sizes: state.sizes,
     collapsed: state.collapsed,
+    verticalLayout: state.verticalLayout ?? false,
     setSizes,
     toggleCollapsed,
+    setVerticalLayout,
     isHydrated,
   };
 }

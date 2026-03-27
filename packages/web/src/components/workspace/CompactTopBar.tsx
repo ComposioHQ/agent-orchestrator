@@ -5,6 +5,11 @@ import { useRouter } from "next/navigation";
 
 interface CompactTopBarProps {
   session: DashboardSession;
+  collapsed: boolean[];
+  toggleCollapsed: (index: number) => void;
+  verticalLayout: boolean;
+  onToggleVertical: () => void;
+  onToggleSidebar?: () => void;
 }
 
 const activityMeta: Record<string, { label: string; color: string }> = {
@@ -16,26 +21,28 @@ const activityMeta: Record<string, { label: string; color: string }> = {
   exited: { label: "Exited", color: "var(--color-status-error)" },
 };
 
-export function CompactTopBar({ session }: CompactTopBarProps) {
+export function CompactTopBar({ session, collapsed, toggleCollapsed, verticalLayout, onToggleVertical, onToggleSidebar }: CompactTopBarProps) {
   const router = useRouter();
   const meta = (session.activity && activityMeta[session.activity]) || { label: session.activity ?? "unknown", color: "var(--color-text-secondary)" };
 
   return (
-    <div
-      style={{
-        height: "40px",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        paddingLeft: "12px",
-        paddingRight: "12px",
-        borderBottom: "1px solid var(--color-border-subtle)",
-        background: "var(--color-bg-surface)",
-        gap: "12px",
-        overflow: "hidden",
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: "8px", flex: 1, minWidth: 0 }}>
+    <div className="compact-top-bar">
+      <div className="compact-top-bar__left">
+        {/* Sidebar toggle — collapses/expands on desktop, opens overlay on mobile */}
+        {onToggleSidebar && (
+          <button
+            onClick={onToggleSidebar}
+            className="compact-top-bar__sidebar-toggle"
+            title="Toggle sidebar"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+              <line x1="2" y1="4" x2="14" y2="4" />
+              <line x1="2" y1="8" x2="14" y2="8" />
+              <line x1="2" y1="12" x2="14" y2="12" />
+            </svg>
+          </button>
+        )}
+
         <button
           onClick={() => router.back()}
           style={{
@@ -53,127 +60,159 @@ export function CompactTopBar({ session }: CompactTopBarProps) {
           ←
         </button>
 
-        <span
-          style={{
-            fontSize: "12px",
-            fontWeight: 600,
-            color: "var(--color-text-primary)",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {session.id}
-        </span>
-
-        <span style={{ color: "var(--color-border-subtle)" }}>·</span>
-
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "4px",
-            color: "var(--color-text-secondary)",
-            fontSize: "11px",
-          }}
-        >
-          <span style={{ color: meta.color, fontSize: "8px" }}>●</span>
-          <span>{meta.label}</span>
-        </div>
-
-        {session.branch && (
-          <>
-            <span style={{ color: "var(--color-border-subtle)" }}>·</span>
+        <div className="compact-top-bar__info">
+          <div className="compact-top-bar__row1">
             <span
               style={{
-                fontSize: "11px",
+                fontSize: "12px",
+                fontWeight: 600,
+                color: "var(--color-text-primary)",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {session.id}
+            </span>
+
+            <span style={{ color: "var(--color-border-subtle)" }}>·</span>
+
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "4px",
                 color: "var(--color-text-secondary)",
-                fontFamily: "monospace",
-                whiteSpace: "nowrap",
-                cursor: "pointer",
-              }}
-              onClick={() => {
-                if (session.branch) {
-                  navigator.clipboard.writeText(session.branch);
-                }
-              }}
-              title="Click to copy"
-            >
-              {session.branch}
-            </span>
-          </>
-        )}
-
-        {session.pr && (
-          <>
-            <span style={{ color: "var(--color-border-subtle)" }}>·</span>
-            <a
-              href={session.pr.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{
                 fontSize: "11px",
-                color: "var(--color-accent)",
-                textDecoration: "none",
-                whiteSpace: "nowrap",
               }}
             >
-              PR #{session.pr.number}
-            </a>
-            {session.pr.additions !== undefined && session.pr.deletions !== undefined && (
-              <span style={{ fontSize: "11px", color: "var(--color-text-secondary)", whiteSpace: "nowrap" }}>
-                +{session.pr.additions} -{session.pr.deletions}
-              </span>
-            )}
-          </>
-        )}
+              <span style={{ color: meta.color, fontSize: "8px" }}>●</span>
+              <span>{meta.label}</span>
+            </div>
+          </div>
 
-        {session.pr?.ciStatus && (
-          <>
-            <span style={{ color: "var(--color-border-subtle)" }}>·</span>
-            <span
-              style={{
-                fontSize: "11px",
-                color:
-                  session.pr.ciStatus === "passing"
-                    ? "var(--color-status-ready)"
-                    : session.pr.ciStatus === "failing"
-                      ? "var(--color-status-error)"
-                      : "var(--color-status-idle)",
-                whiteSpace: "nowrap",
-              }}
-            >
-              CI {session.pr.ciStatus === "passing" ? "✓" : session.pr.ciStatus === "failing" ? "✗" : "◌"}
-            </span>
-          </>
-        )}
+          {/* Branch, PR, CI — wraps to row 2 on mobile */}
+          {(session.branch || session.pr) && (
+            <div className="compact-top-bar__row2">
+              {session.branch && (
+                <span
+                  className="compact-top-bar__branch"
+                  onClick={() => {
+                    if (session.branch) {
+                      navigator.clipboard.writeText(session.branch);
+                    }
+                  }}
+                  title="Click to copy"
+                >
+                  {session.branch}
+                </span>
+              )}
+
+              {session.pr && (
+                <>
+                  <span className="compact-top-bar__pr-info">
+                    <a
+                      href={session.pr.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        color: "var(--color-accent)",
+                        textDecoration: "none",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      PR #{session.pr.number}
+                    </a>
+                    {session.pr.additions !== undefined && session.pr.deletions !== undefined && (
+                      <span style={{ color: "var(--color-text-secondary)", whiteSpace: "nowrap" }}>
+                        {" "}+{session.pr.additions} -{session.pr.deletions}
+                      </span>
+                    )}
+                  </span>
+
+                  {session.pr.ciStatus && (
+                    <span
+                      className="compact-top-bar__ci"
+                      style={{
+                        color:
+                          session.pr.ciStatus === "passing"
+                            ? "var(--color-status-ready)"
+                            : session.pr.ciStatus === "failing"
+                              ? "var(--color-status-error)"
+                              : "var(--color-status-idle)",
+                      }}
+                    >
+                      CI {session.pr.ciStatus === "passing" ? "✓" : session.pr.ciStatus === "failing" ? "✗" : "◌"}
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "2px" }}>
+        {[
+          { idx: 0, icon: "📁", label: "Files" },
+          { idx: 1, icon: "📄", label: "Preview" },
+          { idx: 2, icon: "▶", label: "Terminal" },
+        ].map(({ idx, icon, label }) => {
+          const active = !collapsed[idx];
+          return (
+            <button
+              key={idx}
+              onClick={() => toggleCollapsed(idx)}
+              title={active ? `Hide ${label}` : `Show ${label}`}
+              style={{
+                background: "none",
+                border: "none",
+                borderBottom: active ? "2px solid var(--color-accent)" : "2px solid transparent",
+                cursor: "pointer",
+                fontSize: "14px",
+                padding: "6px 8px 4px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: active ? "var(--color-text-primary)" : "var(--color-text-tertiary)",
+                opacity: active ? 1 : 0.5,
+                transition: "all 0.15s",
+                marginBottom: "-1px",
+              }}
+            >
+              {icon}
+            </button>
+          );
+        })}
+        <div style={{ width: "1px", height: "16px", background: "var(--color-border-subtle)", margin: "0 4px" }} />
         <button
-          onClick={() => window.open(`/sessions/${session.id}`, "_blank")}
+          onClick={onToggleVertical}
+          title={verticalLayout ? "Horizontal layout" : "Vertical layout"}
           style={{
             background: "none",
             border: "none",
+            borderBottom: "2px solid transparent",
             cursor: "pointer",
-            fontSize: "14px",
+            padding: "6px 8px 4px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
             color: "var(--color-text-secondary)",
-            padding: "4px",
+            transition: "all 0.15s",
+            marginBottom: "-1px",
           }}
-          title="Open in new tab"
         >
-          🔗
-        </button>
-        <button
-          style={{
-            background: "none",
-            border: "none",
-            cursor: "pointer",
-            fontSize: "14px",
-            color: "var(--color-text-secondary)",
-            padding: "4px",
-          }}
-          title="Settings"
-        >
-          ⚙
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+            {verticalLayout ? (
+              <>
+                <rect x="1" y="1" width="14" height="14" rx="1.5" />
+                <line x1="8" y1="1" x2="8" y2="15" />
+              </>
+            ) : (
+              <>
+                <rect x="1" y="1" width="14" height="14" rx="1.5" />
+                <line x1="1" y1="8" x2="15" y2="8" />
+              </>
+            )}
+          </svg>
         </button>
       </div>
     </div>

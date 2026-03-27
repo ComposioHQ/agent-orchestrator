@@ -392,7 +392,7 @@ body {
   font-family: var(--font-sans);
   background: var(--color-bg-base);
   color: var(--color-text-primary);
-  min-height: 100vh;
+  min-height: 100dvh;
   letter-spacing: -0.011em;
 }
 
@@ -446,6 +446,12 @@ a:hover {
 .xterm .xterm-viewport {
   overflow-y: overlay !important;
   touch-action: pan-y;
+}
+
+/* Prevent browser from consuming touch gestures on the canvas —
+   we handle touch scrolling ourselves via JS on the parent container */
+.xterm .xterm-screen {
+  touch-action: none;
 }
 
 .xterm .xterm-viewport::-webkit-scrollbar {
@@ -1521,9 +1527,15 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   margin: 2px 0 2px 8px;
   border: 1px solid transparent;
   background: transparent;
+  opacity: 0.55;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    opacity 0.15s ease;
 }
 
 .project-sidebar__session:hover {
+  opacity: 0.85;
   border-color: var(--color-border-subtle);
   background: linear-gradient(
     90deg,
@@ -1533,13 +1545,14 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 }
 
 .project-sidebar__session--active {
-  border-color: color-mix(in srgb, var(--color-accent) 18%, var(--color-border-subtle));
+  opacity: 1;
+  border-color: color-mix(in srgb, var(--color-accent) 28%, var(--color-border-subtle));
   background: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--color-accent) 12%, transparent),
-    transparent 88%
+    color-mix(in srgb, var(--color-accent) 18%, transparent),
+    transparent 85%
   );
-  box-shadow: inset 2px 0 0 var(--color-accent);
+  box-shadow: inset 3px 0 0 var(--color-accent);
 }
 
 .project-sidebar__session::before {
@@ -1678,25 +1691,62 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   padding: 2px 0;
 }
 
-.project-sidebar__collapsed-session-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  border: none;
+.project-sidebar__collapsed-session-btn {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  width: 36px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1.5px solid color-mix(in srgb, var(--color-border-subtle) 60%, transparent);
+  background: var(--color-bg-base);
   cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  opacity: 0.5;
   transition:
-    transform 0.12s ease,
-    box-shadow 0.12s ease;
+    background 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    opacity 0.15s ease;
 }
 
-.project-sidebar__collapsed-session-dot:hover {
-  transform: scale(1.3);
-  box-shadow: 0 0 0 2px var(--color-bg-elevated);
+.project-sidebar__collapsed-session-btn:hover {
+  opacity: 0.85;
+  background: var(--color-bg-elevated);
+  border-color: var(--color-border-default);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
 }
 
-.project-sidebar__collapsed-session-dot--active {
-  box-shadow: 0 0 0 2px var(--color-accent);
-  transform: scale(1.2);
+.project-sidebar__collapsed-session-btn--active {
+  opacity: 1;
+  border-width: 2px;
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 14%, var(--color-bg-surface));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 25%, transparent);
+}
+
+.project-sidebar__session-abbr-first {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--color-text-tertiary);
+  line-height: 1;
+}
+
+.project-sidebar__collapsed-session-btn--active .project-sidebar__session-abbr-first {
+  color: var(--color-accent);
+}
+
+.project-sidebar__session-abbr-rest {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+
+.project-sidebar__collapsed-session-btn--active .project-sidebar__session-abbr-rest {
+  color: color-mix(in srgb, var(--color-accent) 70%, var(--color-text-tertiary));
 }
 
 .project-sidebar__collapsed-more {
@@ -1959,5 +2009,39 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 
   .session-card--merge-frame {
     min-height: 244px;
+  }
+}
+
+/* ── Mobile sidebar ─────────────────────────────────────────────────── */
+
+.dashboard-sidebar-desktop {
+  display: contents;
+}
+
+.dashboard-sidebar-overlay {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .dashboard-sidebar-desktop {
+    display: none;
+  }
+
+  .dashboard-sidebar-overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    background: rgba(0, 0, 0, 0.5);
+  }
+
+  .dashboard-sidebar-mobile {
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 260px;
+    z-index: 51;
+    overflow-y: auto;
   }
 }

@@ -1,10 +1,62 @@
 "use client";
 
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
 import { cn } from "@/lib/cn";
-import { MobileTerminalKeys } from "./MobileTerminalKeys";
+
+function isTouchDevice(): boolean {
+  if (typeof window === "undefined") return false;
+  return "ontouchstart" in window || navigator.maxTouchPoints > 0;
+}
+
+const SCROLLBAR_WIDTH = 5; // matches .xterm-viewport::-webkit-scrollbar { width: 5px }
+const FONT_SIZE_KEY = "ao:web:terminal-font-size";
+const FONT_SIZE_MIN = 9;
+const FONT_SIZE_MAX = 18;
+const FONT_SIZE_DEFAULT = 13;
+
+function getStoredFontSize(): number {
+  if (typeof window === "undefined") return FONT_SIZE_DEFAULT;
+  const stored = localStorage.getItem(FONT_SIZE_KEY);
+  if (!stored) return FONT_SIZE_DEFAULT;
+  const n = parseInt(stored, 10);
+  return Number.isFinite(n) && n >= FONT_SIZE_MIN && n <= FONT_SIZE_MAX ? n : FONT_SIZE_DEFAULT;
+}
+
+/** Wrapper around FitAddon.fit() that verifies the measurement using
+ *  getBoundingClientRect (immune to content-inflated getComputedStyle).
+ *  Falls back to FitAddon first, then corrects if cols/rows are wrong. */
+function fitTerminal(
+  fit: FitAddonType,
+  terminal: TerminalType,
+  containerEl: HTMLElement,
+) {
+  fit.fit();
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const core = (terminal as any)._core;
+  const cellWidth: number | undefined = core?._renderService?.dimensions?.css?.cell?.width;
+  const cellHeight: number | undefined = core?._renderService?.dimensions?.css?.cell?.height;
+  if (!cellWidth || !cellHeight) return;
+
+  const rect = containerEl.getBoundingClientRect();
+  const xtermEl = terminal.element;
+  if (!xtermEl) return;
+
+  const style = window.getComputedStyle(xtermEl);
+  const paddingX = parseInt(style.paddingLeft || "0") + parseInt(style.paddingRight || "0");
+  const paddingY = parseInt(style.paddingTop || "0") + parseInt(style.paddingBottom || "0");
+  const sbWidth = terminal.options.scrollback === 0 ? 0 : SCROLLBAR_WIDTH;
+
+  const correctCols = Math.max(2, Math.floor((rect.width - paddingX - sbWidth) / cellWidth));
+  const correctRows = Math.max(1, Math.floor((rect.height - paddingY) / cellHeight));
+
+  if (terminal.cols !== correctCols || terminal.rows !== correctRows) {
+    core._renderService?.clear();
+    terminal.resize(correctCols, correctRows);
+  }
+}
 
 // Import xterm CSS (must be imported in client component)
 import "xterm/css/xterm.css";
@@ -23,6 +75,9 @@ interface DirectTerminalProps {
   height?: string;
   isOpenCodeSession?: boolean;
   reloadCommand?: string;
+  /** When set, renders a pane-header-style label at the start of the chrome bar,
+   *  merging the label bar and chrome bar into a single row. */
+  headerLabel?: string;
 }
 
 interface DirectTerminalLocation {
@@ -146,6 +201,7 @@ export function DirectTerminal({
   height = "max(440px, calc(100vh - 440px))",
   isOpenCodeSession = false,
   reloadCommand,
+  headerLabel,
 }: DirectTerminalProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -167,10 +223,108 @@ export function DirectTerminal({
   const [reloadError, setReloadError] = useState<string | null>(null);
   const [followOutput, setFollowOutput] = useState(true);
   const followOutputRef = useRef(true);
+  const [fontSize, setFontSize] = useState(FONT_SIZE_DEFAULT);
+  const [showFontSettings, setShowFontSettings] = useState(false);
+  const fontSettingsRef = useRef<HTMLDivElement>(null);
+
+  // Hydrate font size from localStorage
+  useEffect(() => {
+    setFontSize(getStoredFontSize());
+  }, []);
+
+  // Close font settings popover on outside click
+  useEffect(() => {
+    if (!showFontSettings) return;
+    function handleClick(e: MouseEvent) {
+      if (fontSettingsRef.current && !fontSettingsRef.current.contains(e.target as Node)) {
+        setShowFontSettings(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [showFontSettings]);
+
+  const handleFontSizeChange = useCallback((newSize: number) => {
+    const clamped = Math.max(FONT_SIZE_MIN, Math.min(FONT_SIZE_MAX, newSize));
+    setFontSize(clamped);
+    localStorage.setItem(FONT_SIZE_KEY, String(clamped));
+    const terminal = terminalInstance.current;
+    const fit = fitAddon.current;
+    if (terminal) {
+      terminal.options.fontSize = clamped;
+      if (fit && terminalRef.current) {
+        fitTerminal(fit, terminal, terminalRef.current);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     followOutputRef.current = followOutput;
   }, [followOutput]);
+
+  // Touch scroll: attach to terminalRef (parent of .xterm) so xterm can't
+  // kill the gesture. CSS `touch-action: none` on .xterm-screen prevents
+  // the browser from consuming the touch sequence.
+  useEffect(() => {
+    const container = terminalRef.current;
+    if (!container || !isTouchDevice()) return;
+
+    let startY = 0;
+    let startX = 0;
+    let accumulator = 0;
+    let decided = false;
+    let isVertical = false;
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 1) return;
+      startY = e.touches[0].clientY;
+      startX = e.touches[0].clientX;
+      accumulator = 0;
+      decided = false;
+      isVertical = false;
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length !== 1) return;
+      const terminal = terminalInstance.current;
+      if (!terminal) return;
+
+      const currentY = e.touches[0].clientY;
+      const currentX = e.touches[0].clientX;
+
+      if (!decided) {
+        const dx = Math.abs(currentX - startX);
+        const dy = Math.abs(currentY - startY);
+        if (dy < 5 && dx < 5) return;
+        decided = true;
+        isVertical = dy > dx;
+      }
+
+      if (!isVertical) return;
+
+      const deltaY = startY - currentY;
+      startY = currentY;
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const cellHeight = (terminal as any)._core?._renderService?.dimensions?.css?.cell?.height || 15;
+      accumulator += deltaY / cellHeight;
+
+      const lines = Math.trunc(accumulator);
+      if (lines !== 0) {
+        terminal.scrollLines(lines);
+        accumulator -= lines;
+      }
+      e.preventDefault();
+    };
+
+    container.addEventListener("touchstart", onTouchStart, { passive: true });
+    container.addEventListener("touchmove", onTouchMove, { passive: false });
+
+    return () => {
+      container.removeEventListener("touchstart", onTouchStart);
+      container.removeEventListener("touchmove", onTouchMove);
+    };
+  }, []);
 
   // Update URL when fullscreen changes
   useEffect(() => {
@@ -255,7 +409,7 @@ export function DirectTerminal({
         // Initialize xterm.js Terminal
         const terminal = new Terminal({
           cursorBlink: true,
-          fontSize: 13,
+          fontSize: getStoredFontSize(),
           fontFamily:
             'var(--font-jetbrains-mono), "JetBrains Mono", "SF Mono", Menlo, Monaco, "Courier New", monospace',
           theme: activeTheme,
@@ -321,8 +475,18 @@ export function DirectTerminal({
           viewport.style.setProperty("-webkit-overflow-scrolling", "touch");
         }
 
+        // Touch scrolling is handled via a transparent overlay div (see render).
+        // xterm's own pointer handlers kill touch gestures after 1 event,
+        // so event listeners on xterm elements don't work reliably.
+
         // Fit terminal to container
-        fit.fit();
+        fitTerminal(fit, terminal, terminalRef.current);
+        // Re-verify after layout settles (grid may not be final yet)
+        requestAnimationFrame(() => {
+          if (mounted && terminalRef.current) {
+            fitTerminal(fit, terminal, terminalRef.current);
+          }
+        });
 
         // WebSocket URL (stable across reconnects)
         // When accessed via reverse proxy (HTTPS on standard port), use path-based
@@ -408,19 +572,32 @@ export function DirectTerminal({
         // Handle window resize (works with whatever ws is current)
         const handleResize = () => {
           const currentWs = ws.current;
-          if (fit && currentWs?.readyState === WebSocket.OPEN) {
-            fit.fit();
-            currentWs.send(
-              JSON.stringify({
-                type: "resize",
-                cols: terminal.cols,
-                rows: terminal.rows,
-              }),
-            );
+          if (fit && terminalRef.current) {
+            fitTerminal(fit, terminal, terminalRef.current);
+            if (currentWs?.readyState === WebSocket.OPEN) {
+              currentWs.send(
+                JSON.stringify({
+                  type: "resize",
+                  cols: terminal.cols,
+                  rows: terminal.rows,
+                }),
+              );
+            }
           }
         };
 
         window.addEventListener("resize", handleResize);
+
+        // Watch for container size changes (e.g. resizable pane dividers)
+        let resizeObserver: ResizeObserver | undefined;
+        let resizeRafId = 0;
+        if (terminalRef.current) {
+          resizeObserver = new ResizeObserver(() => {
+            cancelAnimationFrame(resizeRafId);
+            resizeRafId = requestAnimationFrame(() => handleResize());
+          });
+          resizeObserver.observe(terminalRef.current);
+        }
 
         // Terminal input → current WebSocket
         inputDisposable = terminal.onData((data) => {
@@ -509,6 +686,8 @@ export function DirectTerminal({
           selectionDisposable.dispose();
           if (safetyTimer) clearTimeout(safetyTimer);
           window.removeEventListener("resize", handleResize);
+          cancelAnimationFrame(resizeRafId);
+          resizeObserver?.disconnect();
           viewport?.removeEventListener("scroll", handleViewportScroll);
           inputDisposable?.dispose();
           inputDisposable = null;
@@ -580,7 +759,7 @@ export function DirectTerminal({
 
       // Container is at target size, now resize terminal
       terminal.refresh(0, terminal.rows - 1);
-      fit.fit();
+      if (container) fitTerminal(fit, terminal, container);
       terminal.refresh(0, terminal.rows - 1);
 
       // Send new size to server (use ws.current in case WebSocket reconnected)
@@ -660,13 +839,23 @@ export function DirectTerminal({
   return (
     <div
       className={cn(
-        "overflow-hidden border border-[var(--color-border-default)]",
+        "flex flex-col overflow-hidden",
+        !headerLabel && "border border-[var(--color-border-default)]",
         resolvedTheme === "light" ? "bg-[#fafafa]" : "bg-[#0a0a0f]",
         fullscreen && "fixed inset-0 z-50 rounded-none border-0",
       )}
+      style={{ height: fullscreen ? "100vh" : height }}
     >
       {/* Terminal chrome bar */}
-      <div className="flex items-center gap-2 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] px-3 py-2">
+      <div className={cn(
+        "flex items-center gap-2 border-b border-[var(--color-border-subtle)] px-3",
+        headerLabel ? "bg-[var(--color-bg-surface)] py-0" : "bg-[var(--color-bg-elevated)] py-2",
+      )} style={headerLabel ? { minHeight: "32px" } : undefined}>
+        {headerLabel && (
+          <span style={{ fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--color-text-tertiary)" }}>
+            {headerLabel}
+          </span>
+        )}
         <div className={cn("h-2 w-2 shrink-0 rounded-full", statusDotClass)} />
         <span className="font-[var(--font-mono)] text-[11px]" style={{ color: accentColor }}>
           {sessionId}
@@ -692,7 +881,7 @@ export function DirectTerminal({
             disabled={reloading || status !== "connected"}
             title="Restart OpenCode session (/exit then resume mapped session)"
             aria-label="Restart OpenCode session"
-            className="ml-auto flex items-center gap-1 px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)] disabled:cursor-not-allowed disabled:opacity-70"
+            className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)] disabled:cursor-not-allowed disabled:opacity-70"
           >
             {reloading ? (
               <>
@@ -732,12 +921,41 @@ export function DirectTerminal({
             {reloadError}
           </span>
         ) : null}
+        {/* Spacer to push settings & fullscreen to far right */}
+        <div className="flex-1" />
+        {/* Font size settings */}
+        <div ref={fontSettingsRef} className="relative">
+          <button
+            onClick={() => setShowFontSettings(!showFontSettings)}
+            className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]"
+            title="Terminal font size"
+          >
+            <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <path d="M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+          </button>
+          {showFontSettings && (
+            <div className="absolute right-0 top-full z-50 mt-1 flex items-center gap-2 rounded border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] px-3 py-2 shadow-lg">
+              <span className="whitespace-nowrap text-[10px] font-medium text-[var(--color-text-tertiary)]">Font</span>
+              <input
+                type="range"
+                min={FONT_SIZE_MIN}
+                max={FONT_SIZE_MAX}
+                step={1}
+                value={fontSize}
+                onChange={(e) => handleFontSizeChange(parseInt(e.target.value, 10))}
+                className="h-1 w-24 cursor-pointer accent-[var(--color-accent)]"
+              />
+              <span className="min-w-[2ch] text-center font-mono text-[11px] font-semibold text-[var(--color-text-secondary)]">
+                {fontSize}
+              </span>
+            </div>
+          )}
+        </div>
         <button
           onClick={() => setFullscreen(!fullscreen)}
-          className={cn(
-            "flex items-center gap-1 px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]",
-            !isOpenCodeSession && "ml-auto",
-          )}
+          className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]"
         >
           {fullscreen ? (
             <>
@@ -769,7 +987,7 @@ export function DirectTerminal({
         </button>
       </div>
       {/* Terminal area */}
-      <div className="relative">
+      <div className="relative flex-1" style={{ minHeight: 0 }}>
         {!followOutput ? (
           <button
             type="button"
@@ -787,22 +1005,15 @@ export function DirectTerminal({
         ) : null}
         <div
           ref={terminalRef}
-          className={cn("w-full p-1.5")}
+          className={cn("w-full")}
           style={{
             overflow: "hidden",
             display: "flex",
             flexDirection: "column",
-            height: fullscreen ? "calc(100vh - 37px)" : height,
+            height: "100%",
           }}
         />
       </div>
-      <MobileTerminalKeys
-        onSend={(data) => {
-          if (ws.current?.readyState === WebSocket.OPEN) {
-            ws.current.send(data);
-          }
-        }}
-      />
     </div>
   );
 }
