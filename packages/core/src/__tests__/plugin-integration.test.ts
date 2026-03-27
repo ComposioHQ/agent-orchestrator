@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -36,7 +36,7 @@ import { createPluginRegistry } from "../plugin-registry.js";
 import { createSessionManager } from "../session-manager.js";
 import { createLifecycleManager } from "../lifecycle-manager.js";
 import { writeMetadata } from "../metadata.js";
-import { getSessionsDir } from "../paths.js";
+import { getSessionsDir, getProjectBaseDir } from "../paths.js";
 import trackerGithub from "@composio/ao-plugin-tracker-github";
 import scmGithub from "@composio/ao-plugin-scm-github";
 import { createMockPlugins, makeHandle, makeSession as makeSessionBase, makePR, type TestEnvironment } from "./test-utils.js";
@@ -144,6 +144,7 @@ beforeEach(() => {
       info: [],
     },
     reactions: {},
+    readyThresholdMs: 300_000,
   };
 
   env.config = config;
@@ -151,6 +152,10 @@ beforeEach(() => {
   mkdirSync(env.sessionsDir, { recursive: true });
 
   env.cleanup = () => {
+    const projectBaseDir = getProjectBaseDir(env.configPath, project.path);
+    if (existsSync(projectBaseDir)) {
+      rmSync(projectBaseDir, { recursive: true, force: true });
+    }
     rmSync(env.tmpDir, { recursive: true, force: true });
   };
 });

@@ -1084,7 +1084,9 @@ describe("spawn", () => {
       expect(opencodeAgent.getLaunchCommand).toHaveBeenCalledWith(
         expect.objectContaining({
           sessionId: "app-orchestrator",
-          projectConfig: expect.not.objectContaining({ opencodeSessionId: expect.any(String) }),
+          projectConfig: expect.objectContaining({
+            agentConfig: expect.not.objectContaining({ opencodeSessionId: expect.any(String) }),
+          }),
         }),
       );
 

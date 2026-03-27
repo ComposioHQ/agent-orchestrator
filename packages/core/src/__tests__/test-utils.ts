@@ -149,33 +149,33 @@ export interface RegistryPlugins {
   notifier?: Notifier;
 }
 
-export function createMockRegistry(plugins: RegistryPlugins): PluginRegistry {
+export function createMockRegistry(plugins: RegistryPlugins, options: { strict?: boolean } = {}): PluginRegistry {
   return {
     register: vi.fn(),
     get: vi.fn().mockImplementation((slot: string, name?: string) => {
       // Check for exact name match first
       if (slot === "runtime") {
         if (!name || name === plugins.runtime.name) return plugins.runtime;
+        if (!options.strict) return plugins.runtime;
       }
       if (slot === "agent") {
         if (!name || name === plugins.agent.name) return plugins.agent;
+        if (!options.strict) return plugins.agent;
       }
       if (slot === "workspace" && plugins.workspace) {
         if (!name || name === plugins.workspace.name) return plugins.workspace;
+        if (!options.strict) return plugins.workspace;
       }
       if (slot === "scm" && plugins.scm) {
         if (!name || name === plugins.scm.name) return plugins.scm;
+        if (!options.strict) return plugins.scm;
       }
       if (slot === "notifier" && plugins.notifier) {
         if (!name || name === plugins.notifier.name) return plugins.notifier;
+        if (!options.strict) return plugins.notifier;
       }
 
-      // Fallback: return the plugin for any name in the slot (backwards compat)
-      if (slot === "runtime") return plugins.runtime;
-      if (slot === "agent") return plugins.agent;
-      if (slot === "workspace") return plugins.workspace ?? null;
-      if (slot === "scm") return plugins.scm ?? null;
-      if (slot === "notifier") return plugins.notifier ?? null;
+
 
       return null;
     }),
