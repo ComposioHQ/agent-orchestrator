@@ -259,6 +259,48 @@ describe("loadBuiltins", () => {
     });
   });
 
+  it("does not pass external-intended config to builtin when entry declares a package", async () => {
+    const registry = createPluginRegistry();
+    const fakeDiscord = makePlugin("notifier", "discord");
+    const config = makeOrchestratorConfig({
+      notifiers: {
+        discord: {
+          plugin: "discord",
+          package: "@acme/ao-plugin-notifier-discord",
+          webhookUrl: "https://discord.com/api/webhooks/test",
+        },
+      },
+    });
+
+    await registry.loadBuiltins(config, async (pkg: string) => {
+      if (pkg === "@composio/ao-plugin-notifier-discord") return fakeDiscord;
+      throw new Error(`Not found: ${pkg}`);
+    });
+
+    expect(fakeDiscord.create).toHaveBeenCalledWith(undefined);
+  });
+
+  it("does not pass external-intended config to builtin when entry declares a path", async () => {
+    const registry = createPluginRegistry();
+    const fakeDiscord = makePlugin("notifier", "discord");
+    const config = makeOrchestratorConfig({
+      notifiers: {
+        discord: {
+          plugin: "discord",
+          path: "./plugins/discord.js",
+          webhookUrl: "https://discord.com/api/webhooks/test",
+        },
+      },
+    });
+
+    await registry.loadBuiltins(config, async (pkg: string) => {
+      if (pkg === "@composio/ao-plugin-notifier-discord") return fakeDiscord;
+      throw new Error(`Not found: ${pkg}`);
+    });
+
+    expect(fakeDiscord.create).toHaveBeenCalledWith(undefined);
+  });
+
   it("does not match notifier key when explicit plugin points to another notifier", async () => {
     const registry = createPluginRegistry();
     const fakeOpenClaw = makePlugin("notifier", "openclaw");

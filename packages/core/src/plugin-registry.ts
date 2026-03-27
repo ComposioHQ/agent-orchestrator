@@ -64,6 +64,25 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
 ];
 
 // =============================================================================
+// Shared plugin-metadata stripping
+// =============================================================================
+
+/** Keys that are plugin infrastructure metadata, not plugin-specific configuration */
+const PLUGIN_META_KEYS = new Set(["plugin", "package", "path"]);
+
+function stripPluginMeta(cfg: Record<string, unknown>): Record<string, unknown> | undefined {
+  const rest: Record<string, unknown> = {};
+  let hasKeys = false;
+  for (const [k, v] of Object.entries(cfg)) {
+    if (!PLUGIN_META_KEYS.has(k)) {
+      rest[k] = v;
+      hasKeys = true;
+    }
+  }
+  return hasKeys ? rest : undefined;
+}
+
+// =============================================================================
 // External plugin declaration collection
 // =============================================================================
 
@@ -133,16 +152,7 @@ function collectExternalDeclarations(config: OrchestratorConfig): ExternalPlugin
   function extractNotifierConfig(
     cfg: Record<string, unknown>,
   ): Record<string, unknown> | undefined {
-    const keysToStrip = new Set(["plugin", "package", "path"]);
-    const rest: Record<string, unknown> = {};
-    let hasKeys = false;
-    for (const [k, v] of Object.entries(cfg)) {
-      if (!keysToStrip.has(k)) {
-        rest[k] = v;
-        hasKeys = true;
-      }
-    }
-    return hasKeys ? rest : undefined;
+    return stripPluginMeta(cfg);
   }
 
   // Collect from project tracker/scm configs.
@@ -213,7 +223,7 @@ function validateManifestMatch(
 // Built-in plugin config extraction
 // =============================================================================
 
-/** Extract plugin-specific config from orchestrator config */
+/** Extract plugin-specific config from orchestrator config for builtins */
 function extractPluginConfig(
   slot: PluginSlot,
   name: string,
@@ -224,12 +234,14 @@ function extractPluginConfig(
   if (slot === "notifier") {
     for (const [notifierName, notifierConfig] of Object.entries(config.notifiers ?? {})) {
       if (!notifierConfig || typeof notifierConfig !== "object") continue;
-      const configuredPlugin = (notifierConfig as Record<string, unknown>)["plugin"];
+      const nc = notifierConfig as Record<string, unknown>;
+      const configuredPlugin = nc["plugin"];
       const hasExplicitPlugin = typeof configuredPlugin === "string" && configuredPlugin.length > 0;
       const matches = hasExplicitPlugin ? configuredPlugin === name : notifierName === name;
       if (matches) {
-        const { plugin: _plugin, ...rest } = notifierConfig as Record<string, unknown>;
-        return rest;
+        // Entry declares an external source — config is for the external plugin, not this builtin
+        if (nc["package"] || nc["path"]) continue;
+        return stripPluginMeta(nc);
       }
     }
   }
@@ -327,6 +339,7 @@ export function createPluginRegistry(): PluginRegistry {
             `Failed to load external ${decl.slot} plugin "${decl.name}" from ${kind} "${source}": ${
               err instanceof Error ? err.message : String(err)
             }`,
+            { cause: err },
           );
         }
 
