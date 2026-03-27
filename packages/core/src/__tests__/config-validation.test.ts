@@ -479,6 +479,34 @@ describe("Config Schema Validation", () => {
     expect(config.projects.proj1.agentConfig?.permissions).toBe("suggest");
     expect(config.projects.proj1.worker?.agentConfig?.permissions).toBeUndefined();
   });
+
+  it("rejects notifier names containing dots", () => {
+    expect(() =>
+      validateConfig({
+        defaults: {
+          notifiers: ["team.slack"],
+        },
+        notifiers: {
+          "team.slack": {
+            plugin: "desktop",
+          },
+        },
+        notificationRouting: {
+          urgent: ["team.slack"],
+          action: ["team.slack"],
+          warning: [],
+          info: [],
+        },
+        projects: {
+          proj1: {
+            path: "/repos/test",
+            repo: "org/test",
+            defaultBranch: "main",
+          },
+        },
+      }),
+    ).toThrow(/notifier names.*dot/i);
+  });
 });
 
 describe("Config Defaults", () => {

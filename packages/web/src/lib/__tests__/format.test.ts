@@ -26,6 +26,7 @@ function makeSession(overrides?: Partial<DashboardSession>): DashboardSession {
     createdAt: new Date().toISOString(),
     lastActivityAt: new Date().toISOString(),
     pr: null,
+    notificationState: { status: "ok", failingNotifiers: [], notifiers: [] },
     metadata: {},
     ...overrides,
   };

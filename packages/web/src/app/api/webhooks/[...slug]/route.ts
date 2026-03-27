@@ -99,6 +99,10 @@ export async function POST(request: Request): Promise<Response> {
       );
     }
 
+    if (lifecycleErrors.length > 0) {
+      console.error("[webhook] lifecycle checks failed:", lifecycleErrors);
+    }
+
     return NextResponse.json(
       {
         ok: true,
