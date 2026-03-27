@@ -19,8 +19,8 @@ import { access, mkdir, open, readFile, readdir, rename, stat, writeFile } from 
 import { createHash, randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import { createRequire } from "node:module";
 import { createInterface } from "node:readline";
-import { DatabaseSync } from "node:sqlite";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -530,10 +530,22 @@ function parseCursorMeta(metaHex: string): CursorStoreMeta | null {
   }
 }
 
-function readStoreData(storeDbPath: string): CursorStoreData | null {
-  let db: DatabaseSync | null = null;
+export function readStoreData(storeDbPath: string): CursorStoreData | null {
+  let DatabaseSyncClass: typeof import("node:sqlite").DatabaseSync;
   try {
-    db = new DatabaseSync(storeDbPath, { readOnly: true });
+    // node:sqlite is experimental (Node >= 22.5). Use dynamic require
+    // so the plugin still works without it — we just skip store metadata.
+    const require = createRequire(import.meta.url);
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require("node:sqlite") as typeof import("node:sqlite");
+    DatabaseSyncClass = mod.DatabaseSync;
+  } catch {
+    // node:sqlite not available — gracefully degrade
+    return null;
+  }
+  let db: InstanceType<typeof DatabaseSyncClass> | null = null;
+  try {
+    db = new DatabaseSyncClass(storeDbPath, { readOnly: true });
 
     const metaRow = db
       .prepare("SELECT value FROM meta WHERE key = '0' OR key = 0 LIMIT 1")
