@@ -15,8 +15,25 @@ import type {
   PRState,
   ReviewDecision,
 } from "@composio/ao-core";
+import { LRUCache } from "./lru-cache.js";
 
-const execFileAsync = promisify(execFile);
+let execFileAsync = promisify(execFile);
+
+/**
+ * Set execFileAsync for testing.
+ * Allows mocking the underlying execFile in unit tests.
+ */
+export function setExecFileAsync(fn: typeof execFileAsync): void {
+  execFileAsync = fn;
+}
+
+/**
+ * Configuration constants for cache sizing.
+ * LRU cache automatically evicts oldest entries when these limits are reached.
+ */
+const MAX_PR_LIST_ETAGS = 100;  // Number of repos to cache
+const MAX_COMMIT_STATUS_ETAGS = 500;  // Number of commits to cache
+const MAX_PR_METADATA = 200;  // Number of PRs to cache full data
 
 /**
  * ETag cache for REST API endpoints.
@@ -27,18 +44,20 @@ const execFileAsync = promisify(execFile);
  * - Commit status: "commit:{owner}/{repo}#{sha}"
  */
 interface ETagCache {
-  prList: Map<string, string>; // Key: "owner/repo", Value: ETag
-  commitStatus: Map<string, string>; // Key: "owner/repo#sha", Value: ETag
+  prList: LRUCache<string, string>; // Key: "owner/repo", Value: ETag
+  commitStatus: LRUCache<string, string>; // Key: "owner/repo#sha", Value: ETag
 }
 
 /**
  * Global ETag cache instance.
  * This is shared across all batch enrichment calls within the process lifecycle.
  * The cache persists between polling cycles to avoid redundant REST/GraphQL calls.
+ *
+ * Uses LRU eviction to ensure bounded memory usage.
  */
 const etagCache: ETagCache = {
-  prList: new Map(),
-  commitStatus: new Map(),
+  prList: new LRUCache(MAX_PR_LIST_ETAGS),
+  commitStatus: new LRUCache(MAX_COMMIT_STATUS_ETAGS),
 };
 
 /**
@@ -99,19 +118,23 @@ function setCommitStatusETag(
  * Cache for PR metadata needed for ETag guard decisions.
  * Stores head SHA and CI status for each PR.
  * Key: "${owner}/${repo}#${number}"
+ *
+ * Uses LRU eviction to ensure bounded memory usage.
  */
-const prMetadataCache = new Map<
+const prMetadataCache = new LRUCache<
   string,
   { headSha: string | null; ciStatus: CIStatus }
->();
+>(MAX_PR_METADATA);
 
 /**
  * Cache for full PR enrichment data.
  * Stores the complete PREnrichmentData object for each PR.
  * Used when ETag guard indicates no refresh is needed.
  * Key: "${owner}/${repo}#${number}"
+ *
+ * Uses LRU eviction to ensure bounded memory usage.
  */
-const prEnrichmentDataCache = new Map<string, PREnrichmentData>();
+const prEnrichmentDataCache = new LRUCache<string, PREnrichmentData>(MAX_PR_METADATA);
 
 /**
  * Update PR metadata cache with latest enrichment data.
@@ -140,9 +163,10 @@ function updatePRMetadataCache(
  *   - Detects: New commits, PR title/body edits, labels changes, reviews, PR state changes
  *   - Misses: CI status changes
  *
- * Guard 2: Commit Status ETag Check (per PR with pending CI)
- *   - Only checks PRs with ciStatus === "pending"
+ * Guard 2: Commit Status ETag Check (per PR with cached metadata)
+ *   - Checks ALL PRs with cached metadata and head SHA
  *   - Detects: CI check starts, passes, fails, or external status updates
+ *   - Critical for catching CI transitions (failing -> passing, passing -> failing, etc.)
  *
  * @param prs - PRs to check
  * @returns true if GraphQL batch should run, false if nothing changed
@@ -159,7 +183,6 @@ export async function shouldRefreshPREnrichment(
 
   // Group PRs by repository for Guard 1 (PR list check)
   const repos = new Map<string, PRInfo[]>();
-  const pendingCIPRs: Array<{ pr: PRInfo; key: string }> = [];
 
   for (const pr of prs) {
     const repoKey = `${pr.owner}/${pr.repo}`;
@@ -169,13 +192,6 @@ export async function shouldRefreshPREnrichment(
     const repoPrs = repos.get(repoKey);
     if (repoPrs) {
       repoPrs.push(pr);
-    }
-
-    // Collect PRs with pending CI for Guard 2
-    const prKey = `${repoKey}#${pr.number}`;
-    const cached = prMetadataCache.get(prKey);
-    if (cached && cached.ciStatus === "pending") {
-      pendingCIPRs.push({ pr, key: prKey });
     }
   }
 
@@ -189,27 +205,36 @@ export async function shouldRefreshPREnrichment(
     }
   }
 
-  // Guard 2: Check commit status ETag for PRs with pending CI
-  // We need to fetch head SHA for these PRs - use a lightweight REST call
-  for (const { key: prKey } of pendingCIPRs) {
-    const [ownerRepo, number] = prKey.split("#");
-    const [owner, repo] = ownerRepo.split("/");
-
-    // Get head SHA from PR metadata cache or fetch via REST
+  // Guard 2: Check commit status ETag for all PRs with cached metadata
+  // We check ALL PRs (not just pending) to catch CI status transitions:
+  // - failing -> passing (PR becomes merge-ready)
+  // - passing -> failing (PR becomes unmergeable)
+  // - pending -> passing/failing (CI completes)
+  // - passing -> pending (new CI run starts)
+  for (const pr of prs) {
+    const prKey = `${pr.owner}/${pr.repo}#${pr.number}`;
     const cached = prMetadataCache.get(prKey);
-    const headSha = cached?.headSha;
 
-    if (!headSha) {
-      // First time seeing this PR - need to refresh
+    // Only check if we have cached data with a head SHA
+    if (!cached || !cached.headSha) {
+      // First time seeing this PR or no head SHA cached - need to refresh
       shouldRefresh = true;
-      details.push(`First time seeing PR #${number} (Guard 2: no cached head SHA)`);
+      details.push(
+        `First time seeing PR #${pr.number} or no cached head SHA (Guard 2)`,
+      );
       continue;
     }
 
-    const statusChanged = await checkCommitStatusETag(owner, repo, headSha);
+    const statusChanged = await checkCommitStatusETag(
+      pr.owner,
+      pr.repo,
+      cached.headSha,
+    );
     if (statusChanged) {
       shouldRefresh = true;
-      details.push(`CI status changed for ${owner}/${repo}#${number} (Guard 2)`);
+      details.push(
+        `CI status changed for ${pr.owner}/${pr.repo}#${pr.number} (Guard 2)`,
+      );
     }
   }
 
@@ -223,14 +248,14 @@ export function getPRMetadataCache(): Map<
   string,
   { headSha: string | null; ciStatus: CIStatus }
 > {
-  return new Map(prMetadataCache);
+  return prMetadataCache.toMap();
 }
 
 /**
  * Get cached PR enrichment data for testing.
  */
 export function getPREnrichmentDataCache(): Map<string, PREnrichmentData> {
-  return new Map(prEnrichmentDataCache);
+  return prEnrichmentDataCache.toMap();
 }
 
 /**

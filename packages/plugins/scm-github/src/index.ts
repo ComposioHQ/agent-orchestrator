@@ -28,7 +28,9 @@ import {
   type MergeReadiness,
   type PREnrichmentData,
 } from "@composio/ao-core";
-import { enrichSessionsPRBatch } from "./graphql-batch.js";
+import {
+  enrichSessionsPRBatch as enrichSessionsPRBatchImpl,
+} from "./graphql-batch.js";
 import {
   getWebhookHeader,
   parseWebhookBranchRef,
@@ -1033,7 +1035,7 @@ function createGitHubSCM(): SCM {
      * This reduces API calls from N×3 to 1 (or a few if batching needed).
      */
     async enrichSessionsPRBatch(prs: PRInfo[]): Promise<Map<string, PREnrichmentData>> {
-      return enrichSessionsPRBatch(prs);
+      return enrichSessionsPRBatchImpl(prs);
     },
   };
 }
