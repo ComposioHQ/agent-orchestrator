@@ -75,7 +75,12 @@ export default function WorkspacePage() {
   return (
     <WorkspaceLayout session={session}>
       {{
-        fileTree: <FileTree sessionId={id} selectedFile={selectedFile} />,
+        fileTree: (
+          <FileTree
+            sessionId={id}
+            selectedFile={selectedFile}
+          />
+        ),
         preview: <FilePreview sessionId={id} selectedFile={selectedFile} />,
         terminal: (
           <DirectTerminal

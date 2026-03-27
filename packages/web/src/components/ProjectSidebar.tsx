@@ -248,16 +248,32 @@ function ProjectSidebarInner({
   }
 
   return (
-    <aside className="project-sidebar flex h-full w-[244px] flex-col">
-      <div className="project-sidebar__header px-4 pb-3 pt-4">
-        <div className="project-sidebar__eyebrow">Portfolio</div>
-        <div className="project-sidebar__title-row">
-          <div>
-            <h2 className="project-sidebar__title">Projects</h2>
-            <p className="project-sidebar__subtitle">Live project overview.</p>
-          </div>
-          <div className="project-sidebar__badge">{projects.length}</div>
-        </div>
+   <aside className="project-sidebar flex h-full w-[244px] flex-col">
+     <div className="flex items-center justify-between border-b border-[var(--color-border-subtle)] px-3 py-1.5">
+       <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--color-text-tertiary)]">
+         Projects
+       </span>
+       <button type="button" onClick={onToggleCollapsed} className="project-sidebar__collapse-btn" style={{ padding: "2px 4px" }}>
+         <svg
+           fill="none"
+           stroke="currentColor"
+           strokeWidth="1.8"
+           viewBox="0 0 24 24"
+           className="h-3.5 w-3.5"
+         >
+           <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
+           <path d="M9 4.5v15M15 10l-3 2 3 2" />
+         </svg>
+       </button>
+     </div>
+     <div className="project-sidebar__header px-4 pb-3 pt-3">
+       <div className="project-sidebar__title-row">
+         <div>
+           <h2 className="project-sidebar__title">Portfolio</h2>
+           <p className="project-sidebar__subtitle">Live project overview.</p>
+         </div>
+         <div className="project-sidebar__badge">{projects.length}</div>
+       </div>
         <div className="project-sidebar__summary">
           <div className="project-sidebar__metric">
             <span className="project-sidebar__metric-value">{totalWorkerSessions}</span>
@@ -407,21 +423,7 @@ function ProjectSidebarInner({
           );
         })}
       </nav>
-      <div className="border-t border-[var(--color-border-subtle)] p-2">
-        <button type="button" onClick={onToggleCollapsed} className="project-sidebar__collapse-btn">
-          <svg
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            viewBox="0 0 24 24"
-            className="h-3.5 w-3.5"
-          >
-            <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
-            <path d="M9 4.5v15M15 10l-3 2 3 2" />
-          </svg>
-          Hide sidebar
-        </button>
-      </div>
+      {/* sidebar toggle moved to top bar */}
     </aside>
   );
 }
