@@ -7,9 +7,7 @@
  * providing the same semantic information for CI status determination.
  */
 
-import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
-import { promisify } from "node:util";
-import { execFile } from "node:child_process";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // Import from graphql-batch.js
 import {
