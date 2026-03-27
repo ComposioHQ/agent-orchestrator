@@ -104,17 +104,23 @@ export function createMockPlugins(): MockPlugins {
 export function createMockSCM(overrides: Partial<SCM> = {}): SCM {
   return {
     name: "github",
-    detectPR: vi.fn(),
+    detectPR: vi.fn().mockResolvedValue(null),
     getPRState: vi.fn().mockResolvedValue("open"),
-    mergePR: vi.fn(),
-    closePR: vi.fn(),
-    getCIChecks: vi.fn(),
+    mergePR: vi.fn().mockResolvedValue(undefined),
+    closePR: vi.fn().mockResolvedValue(undefined),
+    getCIChecks: vi.fn().mockResolvedValue([]),
     getCISummary: vi.fn().mockResolvedValue("passing"),
-    getReviews: vi.fn(),
+    getReviews: vi.fn().mockResolvedValue([]),
     getReviewDecision: vi.fn().mockResolvedValue("none"),
-    getPendingComments: vi.fn(),
-    getAutomatedComments: vi.fn(),
-    getMergeability: vi.fn(),
+    getPendingComments: vi.fn().mockResolvedValue([]),
+    getAutomatedComments: vi.fn().mockResolvedValue([]),
+    getMergeability: vi.fn().mockResolvedValue({
+      mergeable: false,
+      ciPassing: true,
+      approved: false,
+      noConflicts: true,
+      blockers: [],
+    }),
     ...overrides,
   };
 }
