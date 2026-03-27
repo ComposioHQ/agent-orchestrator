@@ -1,5 +1,5 @@
 {
-  "name": "openclaw-agent-orchestrator",
+  "name": "composio-ao-plugin",
   "version": "0.3.1",
   "description": "OpenClaw plugin for Agent Orchestrator — AI tools, slash commands, hooks, and health monitoring for managing parallel coding agents from OpenClaw",
   "license": "MIT",
@@ -10,7 +10,10 @@
   "type": "module",
   "main": "index.ts",
   "openclaw": {
-    "extensions": ["./index.ts"]
+    "extensions": ["./index.ts"],
+    "compat": {
+      "pluginApi": "1"
+    }
   },
   "files": [
     "index.ts",
