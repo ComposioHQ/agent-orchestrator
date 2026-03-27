@@ -400,7 +400,7 @@ export function fetchIssues(
       "30",
     );
 
-    const result = deps.runGh(config, args, 15_000);
+    const result = deps.runGh(config, args, 30_000);
     if (!result.ok) {
       warnings.push(`${repoLabel}: ${result.error}`);
       continue;
@@ -705,14 +705,14 @@ export default function (api: PluginApi) {
 
       switch (subcommand) {
         case "sessions": {
-          const result = tryRunAo(config, ["status"]);
+          const result = tryRunAo(config, ["status"], 30_000);
           if (!result.ok) return { text: `Failed to get sessions:\n${result.error}` };
           return { text: result.output || "No active sessions." };
         }
 
         case "status": {
           // `ao status` shows all sessions; no per-session lookup available
-          const result = tryRunAo(config, ["status"]);
+          const result = tryRunAo(config, ["status"], 30_000);
           if (!result.ok) return { text: `Failed:\n${result.error}` };
           return { text: result.output };
         }
@@ -758,7 +758,7 @@ export default function (api: PluginApi) {
           const sessionId = sanitizeArg(rest.trim());
           if (!isValidSessionId(sessionId))
             return { text: `Invalid session ID: ${rest}. Expected format like ao-42.` };
-          const result = tryRunAo(config, ["send", sessionId, "Please retry the failed task."]);
+          const result = tryRunAo(config, ["send", sessionId, "Please retry the failed task."], 30_000);
           if (!result.ok) return { text: `Failed to send retry:\n${result.error}` };
           return { text: `Retry sent to session ${sessionId}.` };
         }
@@ -768,7 +768,7 @@ export default function (api: PluginApi) {
           const sessionId = sanitizeArg(rest.trim());
           if (!isValidSessionId(sessionId))
             return { text: `Invalid session ID: ${rest}. Expected format like ao-42.` };
-          const result = tryRunAo(config, ["session", "kill", sessionId]);
+          const result = tryRunAo(config, ["session", "kill", sessionId], 30_000);
           if (!result.ok) return { text: `Failed to kill session:\n${result.error}` };
           return { text: `Session ${sessionId} killed.` };
         }
@@ -871,7 +871,7 @@ export default function (api: PluginApi) {
       "their status, branches, and progress. Use when the user asks about status or progress.",
     parameters: { type: "object", properties: {}, required: [] },
     async execute() {
-      const result = tryRunAo(config, ["status"]);
+      const result = tryRunAo(config, ["status"], 30_000);
       if (!result.ok) {
         return {
           content: [{ type: "text", text: `Failed to get sessions: ${result.error}` }],
@@ -1053,7 +1053,7 @@ export default function (api: PluginApi) {
       required: ["sessionId", "message"],
     },
     async execute(_toolCallId: string, params: { sessionId: string; message: string }) {
-      const result = tryRunAo(config, ["send", sanitizeCliArg(params.sessionId), params.message]);
+      const result = tryRunAo(config, ["send", sanitizeCliArg(params.sessionId), params.message], 30_000);
       if (!result.ok) {
         return {
           content: [{ type: "text", text: `Failed to send: ${result.error}` }],
@@ -1078,7 +1078,7 @@ export default function (api: PluginApi) {
       required: ["sessionId"],
     },
     async execute(_toolCallId: string, params: { sessionId: string }) {
-      const result = tryRunAo(config, ["session", "kill", sanitizeCliArg(params.sessionId)]);
+      const result = tryRunAo(config, ["session", "kill", sanitizeCliArg(params.sessionId)], 30_000);
       if (!result.ok) {
         return {
           content: [{ type: "text", text: `Failed to kill: ${result.error}` }],
