@@ -43,6 +43,18 @@ describe("generateOrchestratorPrompt", () => {
     expect(prompt).toContain("do not edit repository files or implement fixes");
   });
 
+  it("mandates ao send and bans raw tmux access", () => {
+    const prompt = generateOrchestratorPrompt({
+      config,
+      projectId: "my-app",
+      project: config.projects["my-app"]!,
+    });
+
+    expect(prompt).toContain("Always use `ao send`");
+    expect(prompt).toContain("never use raw `tmux send-keys`");
+    expect(prompt).toContain("ao send --no-wait");
+  });
+
   it("pushes implementation and PR claiming into worker sessions", () => {
     const prompt = generateOrchestratorPrompt({
       config,
