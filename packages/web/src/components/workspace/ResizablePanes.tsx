@@ -17,6 +17,7 @@ interface ResizablePanesProps {
   setSizes: (sizes: number[]) => void;
   toggleCollapsed: (index: number) => void;
   children: ReactNode[];
+  showToggleButton?: boolean;
 }
 
 const PANE_DEFAULTS: Record<string, PaneConfig> = {
@@ -50,6 +51,7 @@ export function ResizablePanes({
   setSizes,
   toggleCollapsed,
   children,
+  showToggleButton = false,
 }: ResizablePanesProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -121,20 +123,41 @@ export function ResizablePanes({
             <div
               className="workspace-collapsed-strip"
               style={{
-                width: "32px",
+                width: "40px",
                 display: "flex",
                 flexDirection: "column",
                 alignItems: "center",
-                paddingTop: "8px",
-                gap: "8px",
-                cursor: "pointer",
+                paddingTop: "12px",
+                paddingBottom: "12px",
+                gap: "12px",
                 background: "var(--color-bg-surface)",
-                borderRight: "1px solid var(--color-border-subtle)",
+                borderRight: idx < panes.length - 1 ? "1px solid var(--color-border-subtle)" : "none",
               }}
-              onClick={() => toggleCollapsed(idx)}
+              title={`Show ${pane.label}`}
             >
-              <span style={{ fontSize: "16px" }}>{pane.icon}</span>
-              <span style={{ fontSize: "10px", writingMode: "vertical-rl", transform: "rotate(180deg)" }}>»</span>
+              <button
+                onClick={() => toggleCollapsed(idx)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  fontSize: "20px",
+                  padding: "4px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "var(--color-text-secondary)",
+                  transition: "color 0.2s",
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLElement).style.color = "var(--color-text-primary)";
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLElement).style.color = "var(--color-text-secondary)";
+                }}
+              >
+                {pane.icon}
+              </button>
             </div>
           ) : (
             <div
@@ -148,13 +171,14 @@ export function ResizablePanes({
               <div
                 className="workspace-pane-header"
                 style={{
-                  height: "24px",
+                  minHeight: "32px",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "space-between",
-                  padding: "0 8px",
-                  fontSize: "10px",
-                  fontWeight: 700,
+                  paddingLeft: "12px",
+                  paddingRight: "8px",
+                  fontSize: "11px",
+                  fontWeight: 600,
                   textTransform: "uppercase",
                   letterSpacing: "0.08em",
                   color: "var(--color-text-tertiary)",
@@ -163,19 +187,32 @@ export function ResizablePanes({
                   gap: "8px",
                 }}
               >
-                <span>{pane.label}</span>
+                <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                  <span>{pane.icon}</span>
+                  <span>{pane.label}</span>
+                </span>
                 <button
                   onClick={() => toggleCollapsed(idx)}
                   style={{
                     background: "none",
                     border: "none",
                     cursor: "pointer",
-                    color: "inherit",
-                    fontSize: "10px",
-                    padding: "0 4px",
+                    color: "var(--color-text-secondary)",
+                    fontSize: "14px",
+                    padding: "4px 6px",
+                    display: "flex",
+                    alignItems: "center",
+                    transition: "color 0.2s",
                   }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLElement).style.color = "var(--color-text-primary)";
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLElement).style.color = "var(--color-text-secondary)";
+                  }}
+                  title={`Hide ${pane.label}`}
                 >
-                  «
+                  {idx === 0 ? "«" : "»"}
                 </button>
               </div>
               <div
@@ -184,6 +221,7 @@ export function ResizablePanes({
                   overflow: "hidden",
                   display: "flex",
                   flexDirection: "column",
+                  minHeight: 0,
                 }}
               >
                 {children[idx]}

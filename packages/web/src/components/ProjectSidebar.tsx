@@ -383,12 +383,12 @@ function ProjectSidebarInner({
                           {sessionToneLabel[level]}
                         </span>
                         <a
-                          href={`/sessions/${encodeURIComponent(session.id)}/workspace`}
+                          href={`/sessions/${encodeURIComponent(session.id)}?view=classic`}
                           onClick={(e) => e.stopPropagation()}
                           className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
-                          title="Open workspace IDE"
+                          title="Classic view"
                         >
-                          💻
+                          📋
                         </a>
                         <a
                           href={`/sessions/${encodeURIComponent(session.id)}`}

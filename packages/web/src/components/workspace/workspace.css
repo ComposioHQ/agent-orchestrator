@@ -87,11 +87,13 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 12px;
+  padding: 6px 8px;
   font-size: 12px;
   cursor: pointer;
   user-select: none;
   transition: background-color 0.15s;
+  min-height: 28px;
+  height: auto;
 }
 
 .workspace-file-tree-item:hover {
@@ -107,13 +109,16 @@
   font-size: 14px;
   min-width: 16px;
   text-align: center;
+  flex-shrink: 0;
 }
 
 .workspace-file-tree-item-name {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: inherit;
 }
 
 .workspace-file-tree-item-status {
@@ -159,7 +164,7 @@
 
 .workspace-markdown-preview {
   overflow: auto;
-  padding: 24px;
+  padding: 16px;
   height: 100%;
   color: var(--color-text-primary);
 }
@@ -170,15 +175,16 @@
 .workspace-markdown-preview h4,
 .workspace-markdown-preview h5,
 .workspace-markdown-preview h6 {
-  margin-top: 24px;
-  margin-bottom: 12px;
+  margin-top: 20px;
+  margin-bottom: 10px;
   color: var(--color-text-primary);
+  font-weight: 600;
 }
 
 .workspace-markdown-preview h1 {
   font-size: 28px;
   border-bottom: 1px solid var(--color-border-subtle);
-  padding-bottom: 12px;
+  padding-bottom: 8px;
 }
 
 .workspace-markdown-preview h2 {
@@ -189,9 +195,14 @@
   font-size: 20px;
 }
 
+.workspace-markdown-preview h4 {
+  font-size: 16px;
+}
+
 .workspace-markdown-preview p {
-  margin: 12px 0;
+  margin: 10px 0;
   line-height: 1.6;
+  color: var(--color-text-primary);
 }
 
 .workspace-markdown-preview code {
@@ -199,7 +210,7 @@
   padding: 2px 6px;
   border-radius: 3px;
   font-family: "Courier New", monospace;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--color-accent);
 }
 
@@ -210,6 +221,7 @@
   overflow: auto;
   margin: 12px 0;
   line-height: 1.4;
+  font-size: 12px;
 }
 
 .workspace-markdown-preview pre code {
@@ -217,6 +229,7 @@
   padding: 0;
   border-radius: 0;
   color: inherit;
+  font-family: "Courier New", monospace;
 }
 
 .workspace-markdown-preview blockquote {
@@ -267,8 +280,10 @@
 .workspace-terminal-pane {
   overflow: hidden;
   height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  flex: 1;
 }
 
 .hljs {

@@ -329,14 +329,6 @@ export function SessionDetail({
               activityColor={activity.color}
               branch={session.branch}
               pr={pr}
-              rightSlot={
-                <a
-                  href={`/sessions/${encodeURIComponent(session.id)}/workspace`}
-                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded text-sm font-medium bg-[var(--color-bg-selected)] text-[var(--color-accent)] hover:bg-[var(--color-bg-hover)] transition-colors"
-                >
-                  💻 Workspace IDE
-                </a>
-              }
             />
           )}
 

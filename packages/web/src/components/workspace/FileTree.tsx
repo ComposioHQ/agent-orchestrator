@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useFileTree } from "./useFileTree";
 import type { FileNode } from "@/app/api/sessions/[id]/files/route";
@@ -12,6 +12,8 @@ interface FileTreeItemProps {
   selectedFile: string | null;
   gitStatus: Record<string, GitStatus>;
   depth: number;
+  expandedFolders: Set<string>;
+  onToggleFolder: (path: string) => void;
   onSelectFile: (path: string) => void;
 }
 
@@ -19,11 +21,11 @@ function getGitStatusColor(status: GitStatus): string {
   switch (status) {
     case "A":
     case "?":
-      return "#3fb950"; // green
+      return "#3fb950";
     case "M":
-      return "#d29922"; // yellow
+      return "#d29922";
     case "D":
-      return "#f85149"; // red
+      return "#f85149";
     default:
       return "transparent";
   }
@@ -51,9 +53,10 @@ function FileTreeNode({
   selectedFile,
   gitStatus,
   depth,
+  expandedFolders,
+  onToggleFolder,
   onSelectFile,
 }: FileTreeItemProps) {
-  const [expanded, setExpanded] = useState(true);
   const status = gitStatus[node.path];
 
   if (node.type === "file") {
@@ -62,7 +65,7 @@ function FileTreeNode({
       <div
         className={`workspace-file-tree-item ${isSelected ? "selected" : ""}`}
         style={{
-          marginLeft: `${depth * 16}px`,
+          paddingLeft: `${8 + depth * 16}px`,
           backgroundColor: isSelected ? "var(--color-bg-selected)" : "transparent",
           color: isSelected ? "var(--color-accent)" : "var(--color-text-primary)",
         }}
@@ -85,6 +88,7 @@ function FileTreeNode({
   }
 
   // Directory
+  const isExpanded = expandedFolders.has(node.path);
   const hasModifiedChildren = node.children?.some((child) => {
     const childStatus = gitStatus[child.path];
     return childStatus && childStatus !== "?";
@@ -102,12 +106,12 @@ function FileTreeNode({
       <div
         className="workspace-file-tree-item"
         style={{
-          marginLeft: `${depth * 16}px`,
+          paddingLeft: `${8 + depth * 16}px`,
         }}
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => onToggleFolder(node.path)}
       >
         <span
-          className={`workspace-file-tree-folder-toggle ${expanded ? "expanded" : ""}`}
+          className={`workspace-file-tree-folder-toggle ${isExpanded ? "expanded" : ""}`}
           style={{ color: dirColor }}
         >
           ▶
@@ -117,7 +121,7 @@ function FileTreeNode({
           {node.name}
         </span>
       </div>
-      {expanded && node.children && (
+      {isExpanded && node.children && (
         <div className="workspace-file-tree-children">
           {node.children.map((child) => (
             <FileTreeNode
@@ -126,6 +130,8 @@ function FileTreeNode({
               selectedFile={selectedFile}
               gitStatus={gitStatus}
               depth={depth + 1}
+              expandedFolders={expandedFolders}
+              onToggleFolder={onToggleFolder}
               onSelectFile={onSelectFile}
             />
           ))}
@@ -138,20 +144,39 @@ function FileTreeNode({
 interface FileTreeProps {
   sessionId: string;
   selectedFile: string | null;
+  onFileSelected?: () => void;
 }
 
-export function FileTree({ sessionId, selectedFile }: FileTreeProps) {
+export function FileTree({ sessionId, selectedFile, onFileSelected }: FileTreeProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { tree, gitStatus, loading, error } = useFileTree(sessionId);
+
+  // Compute which folders should be expanded based on selected file
+  const expandedFolders = useMemo(() => {
+    const folders = new Set<string>();
+    if (!selectedFile) return folders;
+
+    // Open all parent directories of the selected file
+    const parts = selectedFile.split("/");
+    for (let i = 0; i < parts.length - 1; i++) {
+      folders.add(parts.slice(0, i + 1).join("/"));
+    }
+    return folders;
+  }, [selectedFile]);
+
+  const handleToggleFolder = useCallback((path: string) => {
+    // This is just for UI - the expandedFolders state is derived from selectedFile
+  }, []);
 
   const handleSelectFile = useCallback(
     (path: string) => {
       const params = new URLSearchParams(searchParams);
       params.set("file", path);
-      router.push(`/sessions/${sessionId}/workspace?${params.toString()}`);
+      router.push(`/sessions/${sessionId}?${params.toString()}`);
+      onFileSelected?.();
     },
-    [router, sessionId, searchParams]
+    [router, sessionId, searchParams, onFileSelected]
   );
 
   if (error) {
@@ -187,6 +212,8 @@ export function FileTree({ sessionId, selectedFile }: FileTreeProps) {
           selectedFile={selectedFile}
           gitStatus={gitStatus}
           depth={0}
+          expandedFolders={expandedFolders}
+          onToggleFolder={handleToggleFolder}
           onSelectFile={handleSelectFile}
         />
       ))}
