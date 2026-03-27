@@ -23,6 +23,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     const dashboardSession = sessionToDashboard(coreSession, {
       dashboardBaseUrl: config.dashboardBaseUrl,
       port: config.port,
+      origin: _request.nextUrl.origin,
     });
 
     // Enrich metadata (issue labels, agent summaries, issue titles)

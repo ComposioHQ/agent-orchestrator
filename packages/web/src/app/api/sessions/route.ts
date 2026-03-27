@@ -82,6 +82,7 @@ export async function GET(request: Request) {
       sessionToDashboard(session, {
         dashboardBaseUrl: config.dashboardBaseUrl,
         port: config.port,
+        origin: request.nextUrl.origin,
       }),
     );
 

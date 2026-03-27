@@ -48,6 +48,7 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
         session: sessionToDashboard(restored, {
           dashboardBaseUrl: config.dashboardBaseUrl,
           port: config.port,
+          origin: _request.nextUrl.origin,
         }),
       },
       { status: 200 },

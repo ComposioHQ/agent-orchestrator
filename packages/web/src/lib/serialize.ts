@@ -48,20 +48,24 @@ export function resolveProject(
 /** Convert a core Session to a DashboardSession (without PR/issue enrichment). */
 export function sessionToDashboard(
   session: Session,
-  config?: { dashboardBaseUrl?: string; port?: number },
+  config?: { dashboardBaseUrl?: string; port?: number; origin?: string },
 ): DashboardSession {
   const agentSummary = session.agentInfo?.summary;
   const summary = agentSummary ?? session.metadata["summary"] ?? null;
 
-  // Construct dashboard URL if base URL is configured
+  // Construct dashboard URL based on configuration or fall back to a relative path
   let dashboardUrl: string | undefined;
   if (config?.dashboardBaseUrl) {
     // Remove trailing slash from base URL and prepend
     const baseUrl = config.dashboardBaseUrl.replace(/\/$/, "");
     dashboardUrl = `${baseUrl}/sessions/${session.id}`;
-  } else if (config?.port) {
-    // Fallback: use port from config (localhost only)
-    dashboardUrl = `http://localhost:${config.port}/sessions/${session.id}`;
+  } else if (config?.origin) {
+    // Use caller-provided origin (e.g. request origin) for absolute URLs
+    const origin = config.origin.replace(/\/$/, "");
+    dashboardUrl = `${origin}/sessions/${session.id}`;
+  } else {
+    // Fallback: use a relative URL to avoid leaking an incorrect absolute host
+    dashboardUrl = `/sessions/${session.id}`;
   }
 
   return {

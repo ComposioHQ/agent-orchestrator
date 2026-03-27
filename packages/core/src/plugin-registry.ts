@@ -70,14 +70,20 @@ function extractPluginConfig(
       const matches = hasExplicitPlugin ? configuredPlugin === name : notifierName === name;
       if (matches) {
         const { plugin: _plugin, ...rest } = notifierConfig as Record<string, unknown>;
-        // Include dashboard configuration for notifiers that need to construct dashboard URLs
-        if (config.dashboardBaseUrl) {
-          (rest as Record<string, unknown>).dashboardBaseUrl = config.dashboardBaseUrl;
+        const restConfig = rest as Record<string, unknown>;
+        // Include dashboard configuration for notifiers that need to construct dashboard URLs,
+        // but allow per-notifier overrides to take precedence.
+        if (config.dashboardBaseUrl !== undefined && config.dashboardBaseUrl !== null) {
+          if (restConfig["dashboardBaseUrl"] == null) {
+            restConfig["dashboardBaseUrl"] = config.dashboardBaseUrl;
+          }
         }
-        if (config.port) {
-          (rest as Record<string, unknown>).dashboardPort = config.port;
+        if (config.port !== undefined && config.port !== null) {
+          if (restConfig["dashboardPort"] == null) {
+            restConfig["dashboardPort"] = config.port;
+          }
         }
-        return rest;
+        return restConfig;
       }
     }
   }

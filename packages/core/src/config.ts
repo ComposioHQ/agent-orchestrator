@@ -183,6 +183,7 @@ const DefaultPluginsSchema = z.object({
 
 const OrchestratorConfigSchema = z.object({
   port: z.number().default(3000),
+  dashboardBaseUrl: z.string().url().optional(),
   terminalPort: z.number().optional(),
   directTerminalPort: z.number().optional(),
   readyThresholdMs: z.number().nonnegative().default(300_000),

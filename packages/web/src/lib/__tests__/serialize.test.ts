@@ -213,6 +213,61 @@ describe("sessionToDashboard", () => {
 
     expect(dashboard.pr).toBeNull();
   });
+
+  describe("dashboardUrl", () => {
+    it("should construct dashboardUrl when dashboardBaseUrl is provided", () => {
+      const coreSession = createCoreSession({ id: "session-123" });
+      const dashboard = sessionToDashboard(coreSession, {
+        dashboardBaseUrl: "http://91.107.194.138:3000",
+      });
+
+      expect(dashboard.dashboardUrl).toBe("http://91.107.194.138:3000/sessions/session-123");
+    });
+
+    it("should construct dashboardUrl with origin when dashboardBaseUrl is not provided", () => {
+      const coreSession = createCoreSession({ id: "session-456" });
+      const dashboard = sessionToDashboard(coreSession, {
+        origin: "https://example.com",
+      });
+
+      expect(dashboard.dashboardUrl).toBe("https://example.com/sessions/session-456");
+    });
+
+    it("should construct relative dashboardUrl when neither dashboardBaseUrl nor origin is provided", () => {
+      const coreSession = createCoreSession({ id: "session-789" });
+      const dashboard = sessionToDashboard(coreSession);
+
+      expect(dashboard.dashboardUrl).toBe("/sessions/session-789");
+    });
+
+    it("should prefer dashboardBaseUrl over origin", () => {
+      const coreSession = createCoreSession({ id: "session-000" });
+      const dashboard = sessionToDashboard(coreSession, {
+        dashboardBaseUrl: "http://dashboard.example.com",
+        origin: "https://request.example.com",
+      });
+
+      expect(dashboard.dashboardUrl).toBe("http://dashboard.example.com/sessions/session-000");
+    });
+
+    it("should remove trailing slash from dashboardBaseUrl", () => {
+      const coreSession = createCoreSession({ id: "session-111" });
+      const dashboard = sessionToDashboard(coreSession, {
+        dashboardBaseUrl: "http://example.com:3000/",
+      });
+
+      expect(dashboard.dashboardUrl).toBe("http://example.com:3000/sessions/session-111");
+    });
+
+    it("should remove trailing slash from origin", () => {
+      const coreSession = createCoreSession({ id: "session-222" });
+      const dashboard = sessionToDashboard(coreSession, {
+        origin: "https://example.com/",
+      });
+
+      expect(dashboard.dashboardUrl).toBe("https://example.com/sessions/session-222");
+    });
+  });
 });
 
 describe("resolveProject", () => {
