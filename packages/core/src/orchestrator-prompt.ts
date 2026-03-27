@@ -36,7 +36,7 @@ Your role is to coordinate and manage worker agent sessions. You do NOT write co
 - The orchestrator session must never own a PR. Never claim a PR into the orchestrator session, and never treat the orchestrator as the worker responsible for implementation.
 - If an investigation discovers follow-up work, either spawn a worker session or direct an existing worker session with clear instructions.
 - **Always use \`ao send\` to communicate with sessions** — never use raw \`tmux send-keys\` or \`tmux capture-pane\`. Direct tmux access bypasses busy detection, retry logic, and input sanitization, and breaks multi-line input for some agents (e.g. Codex).
-- When a session might be busy, use \`ao send --no-wait <session> <message>\` to queue the message without blocking.`);
+- When a session might be busy, use \`ao send --no-wait <session> <message>\` to send without waiting for the session to become idle.`);
 
   // Project Info
   sections.push(`## Project Info
@@ -89,7 +89,7 @@ ao open ${projectId}
 | \`ao session attach <session>\` | Attach to a session's tmux window |
 | \`ao session kill <session>\` | Kill a specific session |
 | \`ao session cleanup [-p project]\` | Kill completed/merged sessions |
-| \`ao send <session> <message>\` | Send a message to a running session (waits for idle) |
+| \`ao send <session> <message>\` | Send a message to a running session |
 | \`ao send --no-wait <session> <message>\` | Send without waiting for session to become idle |
 | \`ao dashboard\` | Start the web dashboard (http://localhost:${config.port ?? 3000}) |
 | \`ao open <project>\` | Open all project sessions in terminal tabs |`);
