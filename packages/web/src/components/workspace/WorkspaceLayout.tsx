@@ -5,7 +5,7 @@ import { CompactTopBar } from "./CompactTopBar";
 import { ResizablePanes } from "./ResizablePanes";
 import { usePaneSizes } from "./usePaneSizes";
 import "./workspace.css";
-import React, { type ReactNode, useState, useEffect } from "react";
+import { type ReactNode, useState, useEffect } from "react";
 
 interface WorkspaceLayoutProps {
   session: DashboardSession;
@@ -40,10 +40,6 @@ export function WorkspaceLayout({ session, children }: WorkspaceLayoutProps) {
     { id: "preview", label: "PREVIEW", icon: "📄", defaultPercent: 40, minPercent: 15 },
     { id: "terminal", label: "TERMINAL", icon: "▶", defaultPercent: 40, minPercent: 15 },
   ];
-
-  const handleFileSelected = () => {
-    if (isMobile) setSidebarOpen(false);
-  };
 
   const handlePreviewClick = () => {
     if (isMobile && sidebarOpen) setSidebarOpen(false);
@@ -97,12 +93,10 @@ export function WorkspaceLayout({ session, children }: WorkspaceLayoutProps) {
             collapsed={collapsed}
             setSizes={setSizes}
             toggleCollapsed={toggleCollapsed}
-            showToggleButton={true}
+            _showToggleButton={true}
           >
             <div className="workspace-file-tree">
-              {React.cloneElement(children.fileTree as React.ReactElement, {
-                onFileSelected: handleFileSelected,
-              })}
+              {children.fileTree}
             </div>
             <div className="workspace-preview-pane" onClick={handlePreviewClick}>
               {children.preview}

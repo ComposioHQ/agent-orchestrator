@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useFileTree } from "./useFileTree";
 import type { FileNode } from "@/app/api/sessions/[id]/files/route";
@@ -165,7 +165,7 @@ export function FileTree({ sessionId, selectedFile, onFileSelected }: FileTreePr
     return folders;
   }, [selectedFile]);
 
-  const handleToggleFolder = useCallback((path: string) => {
+  const handleToggleFolder = useCallback((_path: string) => {
     // This is just for UI - the expandedFolders state is derived from selectedFile
   }, []);
 

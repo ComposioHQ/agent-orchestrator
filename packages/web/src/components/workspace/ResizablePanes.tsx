@@ -17,7 +17,7 @@ interface ResizablePanesProps {
   setSizes: (sizes: number[]) => void;
   toggleCollapsed: (index: number) => void;
   children: ReactNode[];
-  showToggleButton?: boolean;
+  _showToggleButton?: boolean;
 }
 
 const PANE_DEFAULTS: Record<string, PaneConfig> = {
@@ -51,7 +51,7 @@ export function ResizablePanes({
   setSizes,
   toggleCollapsed,
   children,
-  showToggleButton = false,
+  _showToggleButton = false,
 }: ResizablePanesProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
