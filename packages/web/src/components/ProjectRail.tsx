@@ -61,7 +61,7 @@ function ProjectRailContent({ projects, compact = false }: { projects: Portfolio
       <nav className="flex-1 overflow-y-auto px-2 py-3" aria-label="Project navigation">
         <a
           href="/"
-          className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-[12px] font-medium text-[var(--color-accent)] transition-colors hover:bg-[var(--color-bg-elevated)] hover:no-underline"
+          className="flex min-h-[44px] w-full items-center gap-2 rounded-xl px-3 py-3 text-left text-[12px] font-medium text-[var(--color-accent)] transition-colors hover:bg-[var(--color-bg-elevated)] hover:no-underline"
         >
           <svg
             className="h-3.5 w-3.5 shrink-0 opacity-60"
@@ -90,7 +90,7 @@ function ProjectRailContent({ projects, compact = false }: { projects: Portfolio
               <a
                 key={project.id}
                 href={`/projects/${encodeURIComponent(project.id)}`}
-                className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-[12px] font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text-primary)] hover:no-underline"
+                className="flex min-h-[44px] items-center gap-2 rounded-xl px-3 py-3 text-[12px] font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text-primary)] hover:no-underline"
               >
                 <span
                   className={cn(
