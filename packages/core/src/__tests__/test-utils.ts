@@ -68,8 +68,8 @@ export interface MockPlugins {
 export function createMockPlugins(): MockPlugins {
   const runtime: Runtime = {
     name: "mock",
-    create: vi.fn(),
-    destroy: vi.fn(),
+    create: vi.fn().mockResolvedValue({ id: "rt-1", runtimeName: "mock", data: {} }),
+    destroy: vi.fn().mockResolvedValue(undefined),
     sendMessage: vi.fn().mockResolvedValue(undefined),
     getOutput: vi.fn().mockResolvedValue("$ some terminal output\n"),
     isAlive: vi.fn().mockResolvedValue(true),
@@ -78,8 +78,8 @@ export function createMockPlugins(): MockPlugins {
   const agent: Agent = {
     name: "mock-agent",
     processName: "mock",
-    getLaunchCommand: vi.fn(),
-    getEnvironment: vi.fn(),
+    getLaunchCommand: vi.fn().mockReturnValue("mock-launch"),
+    getEnvironment: vi.fn().mockReturnValue({}),
     detectActivity: vi.fn().mockReturnValue("active" as ActivityState),
     getActivityState: vi.fn().mockResolvedValue({ state: "active" as ActivityState }),
     isProcessRunning: vi.fn().mockResolvedValue(true),
@@ -88,8 +88,14 @@ export function createMockPlugins(): MockPlugins {
 
   const workspace: Workspace = {
     name: "mock-ws",
-    create: vi.fn(),
-    destroy: vi.fn(),
+    create: vi.fn().mockResolvedValue({
+      path: "/tmp/ws",
+      branch: "feat/test",
+      sessionId: "app-1",
+      projectId: "my-app",
+    }),
+    destroy: vi.fn().mockResolvedValue(undefined),
+    list: vi.fn().mockResolvedValue([]),
   };
 
   return { runtime, agent, workspace };
@@ -97,7 +103,7 @@ export function createMockPlugins(): MockPlugins {
 
 export function createMockSCM(overrides: Partial<SCM> = {}): SCM {
   return {
-    name: "mock-scm",
+    name: "github",
     detectPR: vi.fn(),
     getPRState: vi.fn().mockResolvedValue("open"),
     mergePR: vi.fn(),
@@ -115,7 +121,7 @@ export function createMockSCM(overrides: Partial<SCM> = {}): SCM {
 
 export function createMockNotifier(): Notifier {
   return {
-    name: "mock-notifier",
+    name: "desktop",
     notify: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -135,10 +141,20 @@ export function createMockRegistry(plugins: RegistryPlugins): PluginRegistry {
   return {
     register: vi.fn(),
     get: vi.fn().mockImplementation((slot: string, name?: string) => {
-      if (slot === "runtime") return plugins.runtime;
-      if (slot === "agent") return plugins.agent;
-      if (slot === "scm") return plugins.scm ?? null;
-      if (slot === "notifier" && name === "desktop") return plugins.notifier ?? null;
+      if (slot === "runtime") {
+        return !name || name === plugins.runtime.name ? plugins.runtime : null;
+      }
+      if (slot === "agent") {
+        return !name || name === plugins.agent.name ? plugins.agent : null;
+      }
+      if (slot === "scm") {
+        if (!plugins.scm) return null;
+        return !name || name === plugins.scm.name ? plugins.scm : null;
+      }
+      if (slot === "notifier") {
+        if (!plugins.notifier) return null;
+        return !name || name === plugins.notifier.name ? plugins.notifier : null;
+      }
       return null;
     }),
     list: vi.fn().mockReturnValue([]),
@@ -216,14 +232,21 @@ export function createTestEnvironment(): TestEnvironment {
 
 export function createMockSessionManager(): SessionManager {
   return {
-    spawn: vi.fn(),
-    spawnOrchestrator: vi.fn(),
-    restore: vi.fn(),
+    spawn: vi.fn().mockResolvedValue(makeSession()),
+    spawnOrchestrator: vi.fn().mockResolvedValue(makeSession({ id: "app-orchestrator", metadata: { role: "orchestrator" } })),
+    restore: vi.fn().mockResolvedValue(makeSession()),
     list: vi.fn().mockResolvedValue([]),
     get: vi.fn().mockResolvedValue(null),
     kill: vi.fn().mockResolvedValue(undefined),
-    cleanup: vi.fn(),
+    cleanup: vi.fn().mockResolvedValue({ killed: [], skipped: [], errors: [] }),
     send: vi.fn().mockResolvedValue(undefined),
-    claimPR: vi.fn(),
+    claimPR: vi.fn().mockResolvedValue({
+      sessionId: "app-1",
+      projectId: "my-app",
+      pr: makePR(),
+      branchChanged: false,
+      githubAssigned: true,
+      takenOverFrom: [],
+    }),
   } as SessionManager;
 }
