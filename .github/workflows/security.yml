@@ -56,7 +56,7 @@ jobs:
             git fetch origin ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} --depth=1
             gitleaks detect --source . --verbose --log-opts "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
           else
-            gitleaks detect --source . --verbose
+            gitleaks detect --source . --verbose --log-opts "-n 10"
           fi
 
   dependency-review:
