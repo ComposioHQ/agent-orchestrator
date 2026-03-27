@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 export const dynamic = "force-dynamic";
 
-import { redirect } from "next/navigation";
-import { loadConfig, resolveProjectConfig } from "@composio/ao-core";
+import { resolveProjectConfig } from "@composio/ao-core";
 import { PortfolioPage } from "@/components/PortfolioPage";
 import { getPortfolioServices, getCachedPortfolioSessions } from "@/lib/portfolio-services";
 import { sessionToDashboard, enrichSessionPR } from "@/lib/serialize";
@@ -23,32 +22,10 @@ export default async function Home() {
   let actionItems: PortfolioActionItem[] = [];
   let projectSummaries: PortfolioProjectSummary[] = [];
 
-  // --- Single-project redirect (runs before the heavy portfolio build) ---
   try {
     const { portfolio } = getPortfolioServices();
-
-    // Single-project optimization: skip portfolio view, go straight to project dashboard
-    if (portfolio.length === 1) {
-      redirect(`/projects/${encodeURIComponent(portfolio[0].id)}`);
-    }
-
-    // If portfolio is empty, try loading config directly and redirect to first project
-    if (portfolio.length === 0) {
-      try {
-        const config = loadConfig();
-        const firstKey = Object.keys(config.projects)[0];
-        if (firstKey) {
-          redirect(`/projects/${encodeURIComponent(firstKey)}`);
-        }
-      } catch {
-        // No config available — fall through to empty portfolio
-      }
-    }
-
-    // --- Multi-project: build portfolio data ---
     const portfolioSessions = await getCachedPortfolioSessions();
 
-    // Build action items
     for (const ps of portfolioSessions) {
       const dashSession = sessionToDashboard(ps.session);
       const level = getAttentionLevel(dashSession);
@@ -61,18 +38,16 @@ export default async function Home() {
       });
     }
 
-    // Sort by triage rank, then recency
     actionItems.sort((a, b) => {
       if (a.triageRank !== b.triageRank) return a.triageRank - b.triageRank;
       return new Date(b.session.lastActivityAt).getTime() - new Date(a.session.lastActivityAt).getTime();
     });
 
-    // Enrich PR data for portfolio sessions (needed for accurate attention levels)
     const { registry } = await getServices().catch(() => ({ registry: null }));
     if (registry) {
       const enrichPromises: Promise<void>[] = [];
       for (const item of actionItems) {
-        const ps = portfolioSessions.find(s => s.session.id === item.session.id);
+        const ps = portfolioSessions.find((session) => session.session.id === item.session.id);
         if (!ps || !ps.session.pr) continue;
 
         const resolved = resolveProjectConfig(ps.project);
@@ -89,23 +64,27 @@ export default async function Home() {
       const enrichTimeout = new Promise<void>((resolve) => setTimeout(resolve, 4_000));
       await Promise.race([Promise.allSettled(enrichPromises), enrichTimeout]);
 
-      // Recompute attention levels after enrichment
       for (const item of actionItems) {
         item.attentionLevel = getAttentionLevel(item.session);
         item.triageRank = getTriageRank(item.attentionLevel);
       }
 
-      // Re-sort after recomputed levels
       actionItems.sort((a, b) => {
         if (a.triageRank !== b.triageRank) return a.triageRank - b.triageRank;
         return new Date(b.session.lastActivityAt).getTime() - new Date(a.session.lastActivityAt).getTime();
       });
     }
 
-    // Build project summaries
-    const attentionLevels: AttentionLevel[] = ["merge", "respond", "review", "pending", "working", "done"];
+    const attentionLevels: AttentionLevel[] = [
+      "merge",
+      "respond",
+      "review",
+      "pending",
+      "working",
+      "done",
+    ];
     for (const project of portfolio) {
-      const projectItems = actionItems.filter(item => item.projectId === project.id);
+      const projectItems = actionItems.filter((item) => item.projectId === project.id);
       const counts = {} as Record<AttentionLevel, number>;
       for (const level of attentionLevels) counts[level] = 0;
       for (const item of projectItems) counts[item.attentionLevel]++;
@@ -114,29 +93,15 @@ export default async function Home() {
         id: project.id,
         name: project.name,
         sessionCount: projectItems.length,
-        activeCount: projectItems.filter(i => i.attentionLevel !== "done").length,
+        activeCount: projectItems.filter((item) => item.attentionLevel !== "done").length,
         attentionCounts: counts,
         degraded: project.degraded,
+        degradedReason: project.degradedReason,
       });
     }
-  } catch (err: unknown) {
-    // Re-throw Next.js redirect — redirect() works by throwing a sentinel error
-    if (
-      err != null &&
-      typeof err === "object" &&
-      "digest" in err &&
-      typeof (err as Record<string, unknown>).digest === "string" &&
-      ((err as Record<string, unknown>).digest as string).startsWith("NEXT_REDIRECT")
-    ) {
-      throw err;
-    }
-    // Portfolio services unavailable — render empty state
+  } catch {
+    // Portfolio services unavailable — render empty state.
   }
 
-  return (
-    <PortfolioPage
-      actionItems={actionItems}
-      projectSummaries={projectSummaries}
-    />
-  );
+  return <PortfolioPage actionItems={actionItems} projectSummaries={projectSummaries} />;
 }

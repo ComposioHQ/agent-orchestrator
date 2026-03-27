@@ -90,6 +90,7 @@ async function handlePortfolioScope(correlationId: string, startedAt: number) {
     id: p.id,
     name: p.name,
     degraded: p.degraded,
+    degradedReason: p.degradedReason,
   }));
 
   return jsonWithCorrelation(

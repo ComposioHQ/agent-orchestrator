@@ -34,7 +34,7 @@ function buildActionItems(sessions: DashboardSession[], projectMap: Map<string, 
 
 function buildProjectSummaries(
   actionItems: PortfolioActionItem[],
-  projects: Array<{ id: string; name: string; degraded?: boolean }>,
+  projects: Array<{ id: string; name: string; degraded?: boolean; degradedReason?: string }>,
 ): PortfolioProjectSummary[] {
   return projects.map((project) => {
     const projectItems = actionItems.filter((item) => item.projectId === project.id);
@@ -49,6 +49,7 @@ function buildProjectSummaries(
       activeCount: projectItems.filter((i) => i.attentionLevel !== "done").length,
       attentionCounts: counts,
       degraded: project.degraded,
+      degradedReason: project.degradedReason,
     };
   });
 }
@@ -76,7 +77,12 @@ export function usePortfolioEvents(
       const body = (await res.json()) as {
         sessions?: DashboardSession[];
         actionItems?: PortfolioActionItem[];
-        projectSummaries?: Array<{ id: string; name: string; degraded?: boolean }>;
+        projectSummaries?: Array<{
+          id: string;
+          name: string;
+          degraded?: boolean;
+          degradedReason?: string;
+        }>;
       };
 
       // If the API returns pre-built actionItems, use them directly (includes PR enrichment)

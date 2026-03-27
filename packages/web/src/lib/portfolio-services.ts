@@ -11,6 +11,8 @@ import {
   getPortfolio,
   listPortfolioSessions,
   getPortfolioSessionCounts,
+  loadConfig,
+  generateSessionPrefix,
   type PortfolioProject,
   type PortfolioPreferences,
   type PortfolioSession,
@@ -44,7 +46,28 @@ function isCacheFresh(): boolean {
 }
 
 function refreshCache(): CachedPortfolio {
-  const portfolio = getPortfolio();
+  let portfolio = getPortfolio();
+  if (portfolio.length === 0) {
+    try {
+      const config = loadConfig();
+      portfolio = Object.entries(config.projects).map(([id, project]) => ({
+        id,
+        name: project.name ?? id,
+        configPath: config.configPath,
+        configProjectKey: id,
+        repoPath: project.path,
+        repo: project.repo,
+        defaultBranch: project.defaultBranch,
+        sessionPrefix: project.sessionPrefix ?? generateSessionPrefix(id),
+        source: "config" as const,
+        enabled: true,
+        pinned: false,
+        lastSeenAt: new Date().toISOString(),
+      }));
+    } catch {
+      // No local config available — keep the portfolio empty.
+    }
+  }
   const preferences = loadPreferences();
   const cached: CachedPortfolio = {
     services: { portfolio, preferences },
