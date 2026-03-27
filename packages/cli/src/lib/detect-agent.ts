@@ -17,6 +17,7 @@ const AGENT_PLUGINS: Array<{ name: string; pkg: string }> = [
   { name: "claude-code", pkg: "@composio/ao-plugin-agent-claude-code" },
   { name: "aider", pkg: "@composio/ao-plugin-agent-aider" },
   { name: "codex", pkg: "@composio/ao-plugin-agent-codex" },
+  { name: "acpx", pkg: "@composio/ao-plugin-agent-acpx" },
   { name: "opencode", pkg: "@composio/ao-plugin-agent-opencode" },
 ];
 

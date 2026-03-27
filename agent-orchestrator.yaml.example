@@ -18,7 +18,7 @@ port: 3000
 # Default plugins (these are the defaults — you can omit this section)
 defaults:
   runtime: tmux           # tmux | process | docker | kubernetes | ssh | e2b
-  agent: claude-code      # claude-code | codex | aider | goose | custom
+  agent: claude-code      # claude-code | codex | aider | acpx | goose | custom
   # orchestrator:
   #   agent: claude-code
   # worker:
@@ -62,6 +62,7 @@ projects:
     # agentConfig:
     #   permissions: skip    # --dangerously-skip-permissions
     #   model: opus
+    #   acpxAgent: pi        # when agent: acpx (currently only "pi" is supported)
 
     # Optional role-specific agent overrides
     # orchestrator:

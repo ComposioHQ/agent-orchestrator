@@ -6,6 +6,7 @@ const {
   mockCreateSessionManager,
   mockRegistry,
   tmuxPlugin,
+  acpxPlugin,
   claudePlugin,
   opencodePlugin,
   worktreePlugin,
@@ -30,6 +31,7 @@ const {
     mockCreateSessionManager,
     mockRegistry,
     tmuxPlugin: { manifest: { name: "tmux" } },
+    acpxPlugin: { manifest: { name: "acpx" } },
     claudePlugin: { manifest: { name: "claude-code" } },
     opencodePlugin: { manifest: { name: "opencode" } },
     worktreePlugin: { manifest: { name: "worktree" } },
@@ -58,6 +60,7 @@ vi.mock("@composio/ao-core", () => ({
 }));
 
 vi.mock("@composio/ao-plugin-runtime-tmux", () => ({ default: tmuxPlugin }));
+vi.mock("@composio/ao-plugin-agent-acpx", () => ({ default: acpxPlugin }));
 vi.mock("@composio/ao-plugin-agent-claude-code", () => ({ default: claudePlugin }));
 vi.mock("@composio/ao-plugin-agent-opencode", () => ({ default: opencodePlugin }));
 vi.mock("@composio/ao-plugin-workspace-worktree", () => ({ default: worktreePlugin }));
@@ -97,6 +100,14 @@ describe("services", () => {
     await getServices();
 
     expect(mockRegister).toHaveBeenCalledWith(opencodePlugin);
+  });
+
+  it("registers the ACPX agent plugin with web services", async () => {
+    const { getServices } = await import("../lib/services");
+
+    await getServices();
+
+    expect(mockRegister).toHaveBeenCalledWith(acpxPlugin);
   });
 
   it("caches initialized services across repeated calls", async () => {

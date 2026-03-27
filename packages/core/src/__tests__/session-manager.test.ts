@@ -1221,6 +1221,49 @@ describe("spawn", () => {
     expect(mockRuntime.sendMessage).toHaveBeenCalled();
     vi.useRealTimers();
   });
+
+  it("forwards acpxAgent through project agentConfig to the selected agent", async () => {
+    const acpxAgent = {
+      ...mockAgent,
+      name: "acpx",
+    };
+    const registryWithAcpx: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return acpxAgent;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+    const configWithAcpx: OrchestratorConfig = {
+      ...config,
+      defaults: {
+        ...config.defaults,
+        agent: "acpx",
+      },
+      projects: {
+        ...config.projects,
+        "my-app": {
+          ...config.projects["my-app"],
+          agentConfig: {
+            acpxAgent: "pi",
+          },
+        },
+      },
+    };
+
+    const sm = createSessionManager({ config: configWithAcpx, registry: registryWithAcpx });
+    await sm.spawn({ projectId: "my-app", prompt: "Dispatch through ACPX" });
+
+    expect(acpxAgent.getLaunchCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectConfig: expect.objectContaining({
+          agentConfig: expect.objectContaining({ acpxAgent: "pi" }),
+        }),
+      }),
+    );
+  });
 });
 
 describe("list", () => {
