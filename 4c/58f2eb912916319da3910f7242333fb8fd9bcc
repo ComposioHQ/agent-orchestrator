@@ -1,0 +1,23 @@
+packages/web/src/components/ProjectRail.tsx
+  ebc7410ddadc5393 64,93
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.19",
+  "base_commit_sha": "4c58f2eb912916319da3910f7242333fb8fd9bcc",
+  "prompts": {
+    "ebc7410ddadc5393": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fe304f09-f348-4a90-b4b1-232ed88be8df",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 2,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    }
+  }
+}
