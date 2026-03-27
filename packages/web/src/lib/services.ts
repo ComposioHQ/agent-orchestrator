@@ -85,6 +85,13 @@ async function initServices(): Promise<Services> {
   registry.register(pluginTrackerGithub);
   registry.register(pluginTrackerLinear);
 
+  // Load external plugins declared via package/path in config.
+  // Use webpackIgnore so external plugins are resolved by Node.js at runtime
+  // instead of being statically analyzed/bundled by Next.
+  const nodeImport = (specifier: string): Promise<unknown> =>
+    import(/* webpackIgnore: true */ specifier);
+  await registry.loadExternals(config, nodeImport);
+
   const sessionManager = createSessionManager({ config, registry });
 
   // Start the lifecycle manager — polls sessions every 30s, triggers reactions
