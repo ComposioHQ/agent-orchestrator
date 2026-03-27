@@ -71,6 +71,10 @@ describe("getAgentByName", () => {
     expect(getAgentByName("opencode").name).toBe("opencode");
   });
 
+  it("returns agent for cursor", () => {
+    expect(getAgentByName("cursor").name).toBe("cursor");
+  });
+
   it("throws on unknown name", () => {
     expect(() => getAgentByName("unknown")).toThrow("Unknown agent plugin: unknown");
   });
