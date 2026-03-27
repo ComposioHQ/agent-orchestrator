@@ -1,0 +1,460 @@
+/* Workspace IDE Layout Styles */
+
+@import "highlight.js/styles/github-dark.css";
+@import "./compact-top-bar.css";
+
+/* ── Container ─────────────────────────────────────────── */
+
+.workspace-container {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100dvh;
+  height: 100vh; /* fallback for older browsers */
+  background: var(--color-bg);
+  color: var(--color-text-primary);
+  overflow: hidden;
+}
+
+@supports (height: 100dvh) {
+  .workspace-container {
+    height: 100dvh;
+  }
+}
+
+/* ── Pane headers ──────────────────────────────────────── */
+
+.workspace-pane-header {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px 0 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-tertiary);
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-surface);
+  flex-shrink: 0;
+}
+
+.workspace-pane-header-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 3px;
+  color: var(--color-text-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  transition: color 0.15s, background 0.15s;
+}
+
+.workspace-pane-header-btn:hover {
+  color: var(--color-text-primary);
+  background: var(--color-hover-overlay);
+}
+
+/* ── Separator ─────────────────────────────────────────── */
+
+.workspace-separator {
+  width: 4px;
+  cursor: col-resize;
+  background: var(--color-border-subtle);
+  transition: background 0.15s;
+  flex-shrink: 0;
+  touch-action: none;
+}
+
+.workspace-separator:hover {
+  background: var(--color-accent);
+}
+
+.workspace-separator--horizontal {
+  width: auto;
+  height: 4px;
+  cursor: row-resize;
+}
+
+/* ── Empty / error states ──────────────────────────────── */
+
+.workspace-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 16px;
+  color: var(--color-text-secondary);
+}
+
+.workspace-empty-icon {
+  font-size: 48px;
+  opacity: 0.5;
+}
+
+.workspace-empty-state p {
+  font-size: 14px;
+  margin: 0;
+}
+
+/* ── File Tree ─────────────────────────────────────────── */
+
+.workspace-file-tree-list {
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px 0;
+  height: 100%;
+}
+
+.workspace-file-tree-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 13px;
+  line-height: 22px;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.1s;
+  white-space: nowrap;
+}
+
+.workspace-file-tree-item:hover {
+  background-color: rgba(255, 255, 255, 0.04);
+}
+
+.workspace-file-tree-item--selected {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+.workspace-file-tree-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 9px;
+  flex-shrink: 0;
+  transition: transform 0.15s;
+  color: var(--color-text-tertiary);
+}
+
+.workspace-file-tree-chevron--open {
+  transform: rotate(90deg);
+}
+
+.workspace-file-tree-icon {
+  font-size: 14px;
+  width: 18px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.workspace-file-tree-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-primary);
+}
+
+.workspace-file-tree-item--selected .workspace-file-tree-name {
+  color: var(--color-accent);
+}
+
+.workspace-file-tree-badge {
+  font-size: 10px;
+  font-weight: 600;
+  flex-shrink: 0;
+  margin-left: auto;
+  padding-right: 8px;
+}
+
+/* ── Code Viewer (non-markdown files) ──────────────────── */
+
+.workspace-code-viewer {
+  margin: 0;
+  padding: 12px 0;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 20px;
+  background: var(--color-bg);
+}
+
+.workspace-code-line {
+  display: flex;
+  padding: 0 16px;
+}
+
+.workspace-code-line:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.workspace-code-gutter {
+  color: var(--color-text-tertiary);
+  user-select: none;
+  text-align: right;
+  min-width: 40px;
+  padding-right: 16px;
+  flex-shrink: 0;
+}
+
+.workspace-code-content {
+  flex: 1;
+  white-space: pre;
+  color: var(--color-text-primary);
+}
+
+/* ── Terminal Pane ─────────────────────────────────────── */
+
+.workspace-terminal-pane {
+  overflow: hidden;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+/* Terminal content wrapper — fills remaining space after pane header */
+.workspace-terminal-content {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Prevent .xterm from inflating beyond its container via content width */
+.workspace-terminal-content .xterm {
+  overflow: hidden;
+  max-width: 100%;
+}
+
+/* Override DirectTerminal styles inside workspace */
+.workspace-terminal-content .direct-terminal-container,
+.workspace-terminal-content > div {
+  max-height: none !important;
+  height: 100% !important;
+}
+
+/* Remove DirectTerminal's border inside workspace — the pane provides boundaries */
+.workspace-terminal-content > div {
+  border: none !important;
+}
+
+/* ── Markdown Preview — VSCode-like colors ─────────────── */
+
+.workspace-markdown-preview {
+  padding: 24px 32px;
+  color: #d4d4d4;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* Headings */
+.workspace-markdown-preview h1 {
+  font-size: 28px;
+  font-weight: 600;
+  color: #e2e2e2;
+  margin: 24px 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.workspace-markdown-preview h2 {
+  font-size: 22px;
+  font-weight: 600;
+  color: #4fc1ff;
+  margin: 20px 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.workspace-markdown-preview h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: #dcdcaa;
+  margin: 16px 0 8px;
+}
+
+.workspace-markdown-preview h4 {
+  font-size: 15px;
+  font-weight: 600;
+  color: #9cdcfe;
+  margin: 14px 0 6px;
+}
+
+.workspace-markdown-preview h5,
+.workspace-markdown-preview h6 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #c586c0;
+  margin: 12px 0 6px;
+}
+
+/* Paragraphs */
+.workspace-markdown-preview p {
+  margin: 10px 0;
+  line-height: 1.7;
+  color: #d4d4d4;
+}
+
+/* Links */
+.workspace-markdown-preview a {
+  color: #3794ff;
+  text-decoration: none;
+}
+
+.workspace-markdown-preview a:hover {
+  text-decoration: underline;
+}
+
+/* Bold & italic */
+.workspace-markdown-preview strong {
+  color: #e2e2e2;
+  font-weight: 600;
+}
+
+.workspace-markdown-preview em {
+  color: #c586c0;
+  font-style: italic;
+}
+
+/* Inline code */
+.workspace-markdown-preview code {
+  background: rgba(110, 118, 129, 0.25);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  color: #ce9178;
+}
+
+/* Code blocks */
+.workspace-markdown-preview pre {
+  background: #1e1e1e;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 16px;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 14px 0;
+  line-height: 1.5;
+  font-size: 13px;
+}
+
+.workspace-markdown-preview pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  color: #d4d4d4;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* Blockquotes */
+.workspace-markdown-preview blockquote {
+  margin: 12px 0;
+  padding: 8px 16px;
+  border-left: 3px solid #3794ff;
+  background: rgba(55, 148, 255, 0.06);
+  color: #b0b0b0;
+}
+
+.workspace-markdown-preview blockquote p {
+  color: #b0b0b0;
+}
+
+/* Lists */
+.workspace-markdown-preview ul,
+.workspace-markdown-preview ol {
+  margin: 10px 0;
+  padding-left: 24px;
+}
+
+.workspace-markdown-preview li {
+  margin: 4px 0;
+  color: #d4d4d4;
+}
+
+.workspace-markdown-preview li::marker {
+  color: #6a9955;
+}
+
+/* Task lists (checkboxes) */
+.workspace-markdown-preview input[type="checkbox"] {
+  margin-right: 6px;
+  accent-color: #3794ff;
+}
+
+/* Tables */
+.workspace-markdown-preview table {
+  border-collapse: collapse;
+  margin: 14px 0;
+  width: 100%;
+  font-size: 13px;
+}
+
+.workspace-markdown-preview table th {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 600;
+  color: #4fc1ff;
+}
+
+.workspace-markdown-preview table td {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 8px 12px;
+  color: #d4d4d4;
+}
+
+.workspace-markdown-preview table tr:hover td {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* Horizontal rule */
+.workspace-markdown-preview hr {
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  margin: 24px 0;
+}
+
+/* Images */
+.workspace-markdown-preview img {
+  max-width: 100%;
+  border-radius: 4px;
+}
+
+/* ── highlight.js overrides for code blocks ────────────── */
+
+.workspace-markdown-preview .hljs {
+  background: transparent;
+  padding: 0;
+}
+
+.hljs-keyword { color: #569cd6; }
+.hljs-string { color: #ce9178; }
+.hljs-number { color: #b5cea8; }
+.hljs-literal { color: #569cd6; }
+.hljs-built_in { color: #4ec9b0; }
+.hljs-function { color: #dcdcaa; }
+.hljs-title { color: #dcdcaa; }
+.hljs-title.function_ { color: #dcdcaa; }
+.hljs-params { color: #9cdcfe; }
+.hljs-comment { color: #6a9955; font-style: italic; }
+.hljs-doctag { color: #608b4e; }
+.hljs-meta { color: #569cd6; }
+.hljs-attr { color: #9cdcfe; }
+.hljs-variable { color: #9cdcfe; }
+.hljs-variable.language_ { color: #569cd6; }
+.hljs-type { color: #4ec9b0; }
+.hljs-property { color: #9cdcfe; }
+.hljs-regexp { color: #d16969; }
+.hljs-symbol { color: #b5cea8; }
+.hljs-template-variable { color: #9cdcfe; }
+.hljs-addition { color: #b5cea8; background: rgba(181, 206, 168, 0.1); }
+.hljs-deletion { color: #ce9178; background: rgba(206, 145, 120, 0.1); }

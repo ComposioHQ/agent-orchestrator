@@ -1,9 +1,13 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { isOrchestratorSession } from "@composio/ao-core/types";
 import { SessionDetail } from "@/components/SessionDetail";
+import { WorkspaceLayout } from "@/components/workspace/WorkspaceLayout";
+import { FileTree } from "@/components/workspace/FileTree";
+import { FilePreview } from "@/components/workspace/FilePreview";
+import { DirectTerminal } from "@/components/DirectTerminal";
 import { type DashboardSession, getAttentionLevel, type AttentionLevel } from "@/lib/types";
 import { activityIcon } from "@/lib/activity-icons";
 
@@ -41,7 +45,9 @@ interface ZoneCounts {
 
 export default function SessionPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const id = params.id as string;
+  const useClassicView = searchParams.get("view") === "classic";
 
   const [session, setSession] = useState<DashboardSession | null>(null);
   const [zoneCounts, setZoneCounts] = useState<ZoneCounts | null>(null);
@@ -141,6 +147,32 @@ export default function SessionPage() {
     );
   }
 
+  // Use workspace layout by default, unless classic view is requested
+  if (!useClassicView) {
+    return (
+      <WorkspaceLayout session={session}>
+        {{
+          fileTree: (file) => <FileTree sessionId={id} selectedFile={file} />,
+          preview: (file) => <FilePreview sessionId={id} selectedFile={file} />,
+          terminal: (
+            <DirectTerminal
+              sessionId={id}
+              variant={sessionIsOrchestrator ? "orchestrator" : "agent"}
+              height="100%"
+              isOpenCodeSession={session.metadata["agent"] === "opencode"}
+              reloadCommand={
+                session.metadata["agent"] === "opencode" && session.metadata["opencodeSessionId"]
+                  ? `/exit\nopencode --session ${session.metadata["opencodeSessionId"]}\n`
+                  : undefined
+              }
+            />
+          ),
+        }}
+      </WorkspaceLayout>
+    );
+  }
+
+  // Classic view for backwards compatibility
   return (
     <SessionDetail
       session={session}

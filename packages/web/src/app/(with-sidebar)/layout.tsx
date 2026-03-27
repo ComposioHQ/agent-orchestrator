@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { ProjectSidebar } from "@/components/ProjectSidebar";
+import { SidebarContext } from "@/components/workspace/SidebarContext";
 import type { DashboardSession } from "@/lib/types";
 import type { ProjectInfo } from "@/lib/project-name";
 
@@ -17,11 +18,17 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
     if (typeof window === "undefined") return false;
     return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "1";
   });
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, sidebarCollapsed ? "1" : "0");
   }, [sidebarCollapsed]);
+
+  // Close mobile sidebar on navigation
+  useEffect(() => {
+    setMobileSidebarOpen(false);
+  }, [pathname]);
 
   useEffect(() => {
     let cancelled = false;
@@ -76,17 +83,56 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
     return sessions.find((session) => session.id === routeSessionId)?.projectId;
   }, [routeSessionId, searchParams, sessions]);
 
+  const _toggleMobileSidebar = useCallback(() => {
+    setMobileSidebarOpen((v) => !v);
+  }, []);
+
+  const toggleSidebar = useCallback(() => {
+    const isMobile = typeof window !== "undefined" && window.innerWidth <= 640;
+    if (isMobile) {
+      setMobileSidebarOpen((v) => !v);
+    } else {
+      setSidebarCollapsed((v) => !v);
+    }
+  }, []);
+
+  const sidebarContextValue = useMemo(() => ({
+    onToggleSidebar: toggleSidebar,
+  }), [toggleSidebar]);
+
   return (
-    <div className="dashboard-shell flex h-screen">
-      <ProjectSidebar
-        projects={projects}
-        sessions={sessions}
-        activeProjectId={activeProjectId}
-        activeSessionId={activeSessionId}
-        collapsed={sidebarCollapsed}
-        onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
-      />
-      <div className="min-w-0 flex-1">{children}</div>
-    </div>
+    <SidebarContext.Provider value={sidebarContextValue}>
+      <div className="dashboard-shell flex" style={{ height: "100dvh" }}>
+        {/* Desktop sidebar — hidden on mobile via CSS */}
+        <div className="dashboard-sidebar-desktop">
+          <ProjectSidebar
+            projects={projects}
+            sessions={sessions}
+            activeProjectId={activeProjectId}
+            activeSessionId={activeSessionId}
+            collapsed={sidebarCollapsed}
+            onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
+          />
+        </div>
+
+        {/* Mobile sidebar overlay */}
+        {mobileSidebarOpen && (
+          <div className="dashboard-sidebar-overlay" onClick={() => setMobileSidebarOpen(false)}>
+            <div className="dashboard-sidebar-mobile" onClick={(e) => e.stopPropagation()}>
+              <ProjectSidebar
+                projects={projects}
+                sessions={sessions}
+                activeProjectId={activeProjectId}
+                activeSessionId={activeSessionId}
+                collapsed={false}
+                onToggleCollapsed={() => setMobileSidebarOpen(false)}
+              />
+            </div>
+          </div>
+        )}
+
+        <div className="min-w-0 flex-1">{children}</div>
+      </div>
+    </SidebarContext.Provider>
   );
 }

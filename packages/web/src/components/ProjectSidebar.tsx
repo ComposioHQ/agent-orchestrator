@@ -95,7 +95,7 @@ function ProjectSidebarInner({
   activeProjectId,
   activeSessionId,
   collapsed = false,
-  onToggleCollapsed,
+  onToggleCollapsed: _onToggleCollapsed,
 }: ProjectSidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -200,19 +200,24 @@ function ProjectSidebarInner({
                     {workerSessions.slice(0, 5).map((session) => {
                       const level = getAttentionLevel(session);
                       const isSessionActive = effectiveActiveSessionId === session.id;
+                      const title = getSessionTitle(session);
+                      const abbr = title.slice(0, 3).toUpperCase();
                       return (
                         <button
                           key={session.id}
                           type="button"
                           onClick={() => router.push(`/sessions/${encodeURIComponent(session.id)}?project=${encodeURIComponent(project.id)}`)}
                           className={cn(
-                            "project-sidebar__collapsed-session-dot",
-                            isSessionActive && "project-sidebar__collapsed-session-dot--active",
+                            "project-sidebar__collapsed-session-btn",
+                            isSessionActive && "project-sidebar__collapsed-session-btn--active",
                             level === "respond" && "animate-[activity-pulse_2s_ease-in-out_infinite]",
                           )}
-                          style={{ background: sessionDotColor[level] }}
-                          title={`${getSessionTitle(session)} (${sessionToneLabel[level]})`}
-                        />
+                          style={{ borderColor: sessionDotColor[level] }}
+                          title={`${title} (${sessionToneLabel[level]})`}
+                        >
+                          <span className="project-sidebar__session-abbr-first">{abbr[0]}</span>
+                          <span className="project-sidebar__session-abbr-rest">{abbr.slice(1)}</span>
+                        </button>
                       );
                     })}
                     {workerSessions.length > 5 && (
@@ -226,38 +231,25 @@ function ProjectSidebarInner({
             );
           })}
         </div>
-        <button
-          type="button"
-          onClick={onToggleCollapsed}
-          className="project-sidebar__collapsed-toggle mt-auto"
-          aria-label="Show project sidebar"
-        >
-          <svg
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            viewBox="0 0 24 24"
-            className="h-4 w-4"
-          >
-            <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
-            <path d="M9 4.5v15M12 10l3 2-3 2" />
-          </svg>
-        </button>
       </aside>
     );
   }
 
   return (
-    <aside className="project-sidebar flex h-full w-[244px] flex-col">
-      <div className="project-sidebar__header px-4 pb-3 pt-4">
-        <div className="project-sidebar__eyebrow">Portfolio</div>
-        <div className="project-sidebar__title-row">
-          <div>
-            <h2 className="project-sidebar__title">Projects</h2>
-            <p className="project-sidebar__subtitle">Live project overview.</p>
-          </div>
-          <div className="project-sidebar__badge">{projects.length}</div>
-        </div>
+   <aside className="project-sidebar flex h-full w-[244px] flex-col">
+     <div className="flex items-center border-b border-[var(--color-border-subtle)] px-3 py-1.5">
+       <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--color-text-tertiary)]">
+         Projects
+       </span>
+     </div>
+     <div className="project-sidebar__header px-4 pb-3 pt-3">
+       <div className="project-sidebar__title-row">
+         <div>
+           <h2 className="project-sidebar__title">Portfolio</h2>
+           <p className="project-sidebar__subtitle">Live project overview.</p>
+         </div>
+         <div className="project-sidebar__badge">{projects.length}</div>
+       </div>
         <div className="project-sidebar__summary">
           <div className="project-sidebar__metric">
             <span className="project-sidebar__metric-value">{totalWorkerSessions}</span>
@@ -383,6 +375,14 @@ function ProjectSidebarInner({
                           {sessionToneLabel[level]}
                         </span>
                         <a
+                          href={`/sessions/${encodeURIComponent(session.id)}?view=classic`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
+                          title="Classic view"
+                        >
+                          📋
+                        </a>
+                        <a
                           href={`/sessions/${encodeURIComponent(session.id)}`}
                           onClick={(e) => e.stopPropagation()}
                           className="project-sidebar__session-id shrink-0 font-mono text-[9px] hover:underline"
@@ -399,21 +399,7 @@ function ProjectSidebarInner({
           );
         })}
       </nav>
-      <div className="border-t border-[var(--color-border-subtle)] p-2">
-        <button type="button" onClick={onToggleCollapsed} className="project-sidebar__collapse-btn">
-          <svg
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            viewBox="0 0 24 24"
-            className="h-3.5 w-3.5"
-          >
-            <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
-            <path d="M9 4.5v15M15 10l-3 2 3 2" />
-          </svg>
-          Hide sidebar
-        </button>
-      </div>
+      {/* sidebar toggle moved to top bar */}
     </aside>
   );
 }
