@@ -22,32 +22,38 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: ${{ github.event_name == 'pull_request' && 2 || 0 }} # Shallow fetch for PRs, full history for push/schedule
+          fetch-depth: 0 # Full history to ensure base/head SHAs are available for PR scans
 
       - name: Install Gitleaks
         run: |
           set -euo pipefail
           GITLEAKS_VERSION="8.24.3"
           GITLEAKS_BASE_URL="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
-          
-          # Download gitleaks archive
-          curl -sSfL "${GITLEAKS_BASE_URL}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o gitleaks.tar.gz
-          
-          # Download the combined checksums file and extract the relevant line
+          ARCHIVE_NAME="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+
+          # Download gitleaks archive using the release filename so checksum verification works
+          curl -sSfL "${GITLEAKS_BASE_URL}/${ARCHIVE_NAME}" -o "${ARCHIVE_NAME}"
+
+          # Download the combined checksums file
           curl -sSfL "${GITLEAKS_BASE_URL}/gitleaks_${GITLEAKS_VERSION}_checksums.txt" -o gitleaks_checksums.txt
-          
-          # Verify checksum (grep the specific file's hash from the combined file)
-          grep "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" gitleaks_checksums.txt | sha256sum -c -
-          
-          # Extract the verified binary to /usr/local/bin
-          tar -xzf gitleaks.tar.gz -C /usr/local/bin gitleaks
-          
+
+          # Verify checksum (sha256sum -c expects the filename in the checksums file to match the local file)
+          grep "${ARCHIVE_NAME}" gitleaks_checksums.txt | sha256sum -c -
+
+          # Extract the verified binary to a user-writable directory and add it to PATH
+          INSTALL_DIR="${RUNNER_TEMP}/gitleaks-bin"
+          mkdir -p "${INSTALL_DIR}"
+          tar -xzf "${ARCHIVE_NAME}" -C "${INSTALL_DIR}" gitleaks
+          echo "${INSTALL_DIR}" >> "${GITHUB_PATH}"
+
           # Clean up
-          rm -f gitleaks.tar.gz gitleaks_checksums.txt
+          rm -f "${ARCHIVE_NAME}" gitleaks_checksums.txt
 
       - name: Run Gitleaks
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # Ensure the base and head SHAs exist locally when checkout uses the PR merge ref
+            git fetch origin ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} --depth=1
             gitleaks detect --source . --verbose --log-opts "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
           else
             gitleaks detect --source . --verbose
