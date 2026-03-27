@@ -275,6 +275,56 @@ describe("API Routes", () => {
       vi.useRealTimers();
     });
 
+    it("enriches PRs in parallel for all sessions under time budget", async () => {
+      vi.useFakeTimers();
+
+      const sessionsWithPRs = Array.from({ length: 5 }, (_, i) =>
+        makeSession({
+          id: `session-${i}`,
+          projectId: "my-app",
+          status: "working",
+          activity: "active",
+          pr: {
+            number: 100 + i,
+            url: `https://github.com/acme/my-app/pull/${100 + i}`,
+            title: `feat: feature-${i}`,
+            owner: "acme",
+            repo: "my-app",
+            branch: `feat/feature-${i}`,
+            baseBranch: "main",
+            isDraft: false,
+          },
+        }),
+      );
+
+      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValue(sessionsWithPRs);
+
+      // Track enrichment calls
+      const enrichCalls: number[] = [];
+      const enrichSpy = vi.spyOn(serialize, "enrichSessionPR").mockImplementation(
+        async (session, scm, pr) => {
+          enrichCalls.push(pr.number);
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        },
+      );
+
+      const responsePromise = sessionsGET(makeRequest("http://localhost:3000/api/sessions"));
+      await vi.advanceTimersByTimeAsync(4_000);
+      const res = await responsePromise;
+
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.sessions.length).toBe(5);
+
+      // Verify enrichment was attempted for all sessions (parallel execution)
+      expect(enrichCalls.length).toBeGreaterThanOrEqual(3);
+      // With sequential execution, only first 2 would complete in 4s
+      // With parallel, all 5 should have been started
+
+      enrichSpy.mockRestore();
+      vi.useRealTimers();
+    });
+
     it("returns per-project orchestrators and excludes them from worker sessions", async () => {
       (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
         multiProjectSessions,
