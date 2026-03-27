@@ -1,0 +1,54 @@
+packages/web/src/components/PortfolioPage.tsx
+  b6a43520b76df0b6 3,5-10,18-135,137-139,141-145,147-149,151-153,155-249,252,255-256,259-290,292-296,298-365,367-376,379-398,400-440
+packages/web/src/app/api/sessions/route.ts
+  b6a43520b76df0b6 93
+packages/web/src/lib/portfolio-services.ts
+  b6a43520b76df0b6 14-15,49-70
+packages/web/src/app/page.test.tsx
+  b6a43520b76df0b6 1-44
+packages/web/src/components/ProjectRail.tsx
+  b6a43520b76df0b6 3,8-9,12,14-35,38-58,61-114,116-132,134-145,147-148,150-158,160-181
+packages/web/src/lib/types.ts
+  b6a43520b76df0b6 283
+DESIGN.md
+  ebc7410ddadc5393 1-214
+packages/web/src/app/page.tsx
+  b6a43520b76df0b6 4,50,78-85,87,96,99,102-103,106
+packages/web/src/hooks/usePortfolioEvents.ts
+  b6a43520b76df0b6 37,52,80-85
+packages/web/src/components/__tests__/PortfolioPage.test.tsx
+  b6a43520b76df0b6 1-146
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.19",
+  "base_commit_sha": "fd2265fca8e9a824ae910b28b522b4ae7c7b96f5",
+  "prompts": {
+    "b6a43520b76df0b6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d29d2-2390-7c71-8b08-cf3994745cb1",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 821,
+      "total_deletions": 159,
+      "accepted_lines": 821,
+      "overriden_lines": 0
+    },
+    "ebc7410ddadc5393": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fe304f09-f348-4a90-b4b1-232ed88be8df",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 214,
+      "total_deletions": 0,
+      "accepted_lines": 214,
+      "overriden_lines": 0
+    }
+  }
+}
