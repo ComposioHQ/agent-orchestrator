@@ -1154,8 +1154,8 @@ describe("shouldRefreshPREnrichment - ETag Guard Strategy", () => {
           stderr: "",
         });
 
-      const result2 = await shouldRefreshPREnrichment(prs);
-      expect(result2.shouldRefresh).toBe(false);
+      const result3 = await shouldRefreshPREnrichment(prs);
+      expect(result3.shouldRefresh).toBe(false);
 
       // Verify the second poll included If-None-Match headers
       // Get all call arguments and find those with -H flag
