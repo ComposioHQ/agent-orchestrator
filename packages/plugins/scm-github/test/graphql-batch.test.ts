@@ -1162,7 +1162,8 @@ describe("shouldRefreshPREnrichment - ETag Guard Strategy", () => {
       // Verify the second poll included If-None-Match headers
       // Get all call arguments and find those with -H flag
       const allCalls = mockExecFileImpl.mock.calls;
-      const secondPollCalls = allCalls.slice(1); // Skip first poll calls
+      // Second poll has 2 calls: Guard 1 (index 1) and Guard 2 (index 2)
+      const secondPollCalls = allCalls.slice(1, 3);
       const callsWithHeader = secondPollCalls.filter((call) =>
         Array.isArray(call) && call.includes("-H")
       );
