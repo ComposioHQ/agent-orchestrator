@@ -196,46 +196,56 @@ export async function shouldRefreshPREnrichment(
   }
 
   // Guard 1: Check PR list ETag for each repository
+  let guard1DetectedChanges = false;
   for (const [repoKey] of repos) {
     const [owner, repo] = repoKey.split("/");
     const prListChanged = await checkPRListETag(owner, repo);
     if (prListChanged) {
+      guard1DetectedChanges = true;
       shouldRefresh = true;
       details.push(`PR list changed for ${repoKey} (Guard 1)`);
     }
   }
 
-  // Guard 2: Check commit status ETag only for PRs with cached metadata
+  // Guard 2: Check commit status ETag only when Guard 1 didn't detect changes
   // We check ALL PRs (not just pending) to catch CI status transitions:
   // - failing -> passing (PR becomes merge-ready)
   // - passing -> failing (PR becomes unmergeable)
   // - pending -> passing/failing (CI completes)
   // - passing -> pending (new CI run starts)
   //
-  // Note: We skip Guard 2 for PRs with no cached metadata. If Guard 1 detected
-  // changes, those PRs will be refreshed as part of the batch query. If Guard 1
-  // didn't detect changes, there's no need to refresh PRs with no cached data.
-  for (const pr of prs) {
-    const prKey = `${pr.owner}/${pr.repo}#${pr.number}`;
-    const cached = prMetadataCache.get(prKey);
+  // Guard 2 is only needed when Guard 1 returns 304 (no PR list changes).
+  // If Guard 1 detected changes, we're going to refresh all PRs anyway.
+  if (!guard1DetectedChanges) {
+    for (const pr of prs) {
+      const prKey = `${pr.owner}/${pr.repo}#${pr.number}`;
+      const cached = prMetadataCache.get(prKey);
 
-    // Only check commit status ETag if we have cached data with a head SHA
-    if (!cached || !cached.headSha) {
-      // No cached metadata - skip Guard 2. This PR will be handled by Guard 1
-      // if the PR list changed, otherwise there's nothing to check.
-      continue;
-    }
+      // Check for incomplete cache (cached but no headSha)
+      if (cached && cached.headSha === null) {
+        shouldRefresh = true;
+        details.push(`First time seeing PR #${pr.number} (Guard 2: no cached head SHA)`);
+        continue;
+      }
 
-    const statusChanged = await checkCommitStatusETag(
-      pr.owner,
-      pr.repo,
-      cached.headSha,
-    );
-    if (statusChanged) {
-      shouldRefresh = true;
-      details.push(
-        `CI status changed for ${pr.owner}/${pr.repo}#${pr.number} (Guard 2)`,
+      // Only check commit status ETag if we have cached data with a head SHA
+      if (!cached || !cached.headSha) {
+        // No cached metadata - skip Guard 2. Since Guard 1 didn't detect changes
+        // and we have no cached data, there's nothing to check.
+        continue;
+      }
+
+      const statusChanged = await checkCommitStatusETag(
+        pr.owner,
+        pr.repo,
+        cached.headSha,
       );
+      if (statusChanged) {
+        shouldRefresh = true;
+        details.push(
+          `CI status changed for ${pr.owner}/${pr.repo}#${pr.number} (Guard 2)`,
+        );
+      }
     }
   }
 
