@@ -205,23 +205,24 @@ export async function shouldRefreshPREnrichment(
     }
   }
 
-  // Guard 2: Check commit status ETag for all PRs with cached metadata
+  // Guard 2: Check commit status ETag only for PRs with cached metadata
   // We check ALL PRs (not just pending) to catch CI status transitions:
   // - failing -> passing (PR becomes merge-ready)
   // - passing -> failing (PR becomes unmergeable)
   // - pending -> passing/failing (CI completes)
   // - passing -> pending (new CI run starts)
+  //
+  // Note: We skip Guard 2 for PRs with no cached metadata. If Guard 1 detected
+  // changes, those PRs will be refreshed as part of the batch query. If Guard 1
+  // didn't detect changes, there's no need to refresh PRs with no cached data.
   for (const pr of prs) {
     const prKey = `${pr.owner}/${pr.repo}#${pr.number}`;
     const cached = prMetadataCache.get(prKey);
 
-    // Only check if we have cached data with a head SHA
+    // Only check commit status ETag if we have cached data with a head SHA
     if (!cached || !cached.headSha) {
-      // First time seeing this PR or no head SHA cached - need to refresh
-      shouldRefresh = true;
-      details.push(
-        `First time seeing PR #${pr.number} or no cached head SHA (Guard 2)`,
-      );
+      // No cached metadata - skip Guard 2. This PR will be handled by Guard 1
+      // if the PR list changed, otherwise there's nothing to check.
       continue;
     }
 
