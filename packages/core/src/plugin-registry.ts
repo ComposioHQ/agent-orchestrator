@@ -78,7 +78,7 @@ interface ExternalPluginDeclaration {
 
 /** Check whether a plugin config object declares an external source */
 function hasExternalSource(cfg: { package?: string; path?: string }): boolean {
-  return typeof cfg.package === "string" || typeof cfg.path === "string";
+  return !!cfg.package || !!cfg.path;
 }
 
 /**
@@ -101,8 +101,8 @@ function collectExternalDeclarations(config: OrchestratorConfig): ExternalPlugin
     projectId?: string,
   ): void {
     const key = `${slot}:${name}`;
-    const sourceType = source.package ? "package" : "path";
-    const sourceValue = (source.package ?? source.path)!;
+    const sourceType: "package" | "path" = source.package ? "package" : "path";
+    const sourceValue = source.package || source.path!;
 
     const existing = seen.get(key);
     if (existing) {

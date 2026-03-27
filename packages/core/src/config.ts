@@ -64,8 +64,8 @@ const ReactionConfigSchema = z.object({
 const TrackerConfigSchema = z
   .object({
     plugin: z.string(),
-    package: z.string().optional(),
-    path: z.string().optional(),
+    package: z.string().min(1).optional(),
+    path: z.string().min(1).optional(),
   })
   .passthrough()
   .refine((val) => !(val.package && val.path), {
@@ -75,8 +75,8 @@ const TrackerConfigSchema = z
 const SCMConfigSchema = z
   .object({
     plugin: z.string(),
-    package: z.string().optional(),
-    path: z.string().optional(),
+    package: z.string().min(1).optional(),
+    path: z.string().min(1).optional(),
     webhook: z
       .object({
         enabled: z.boolean().default(true),
@@ -97,8 +97,8 @@ const SCMConfigSchema = z
 const NotifierConfigSchema = z
   .object({
     plugin: z.string(),
-    package: z.string().optional(),
-    path: z.string().optional(),
+    package: z.string().min(1).optional(),
+    path: z.string().min(1).optional(),
   })
   .passthrough()
   .refine((val) => !(val.package && val.path), {
