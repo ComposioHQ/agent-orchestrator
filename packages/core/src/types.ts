@@ -1013,12 +1013,20 @@ export interface ProjectConfig {
 
 export interface TrackerConfig {
   plugin: string;
+  /** npm package name for an external tracker plugin */
+  package?: string;
+  /** Local file path for an external tracker plugin (resolved relative to config file) */
+  path?: string;
   /** Plugin-specific config (e.g. teamId for Linear) */
   [key: string]: unknown;
 }
 
 export interface SCMConfig {
   plugin: string;
+  /** npm package name for an external SCM plugin */
+  package?: string;
+  /** Local file path for an external SCM plugin (resolved relative to config file) */
+  path?: string;
   webhook?: SCMWebhookConfig;
   [key: string]: unknown;
 }
@@ -1035,6 +1043,10 @@ export interface SCMWebhookConfig {
 
 export interface NotifierConfig {
   plugin: string;
+  /** npm package name for an external notifier plugin */
+  package?: string;
+  /** Local file path for an external notifier plugin (resolved relative to config file) */
+  path?: string;
   [key: string]: unknown;
 }
 
@@ -1246,6 +1258,12 @@ export interface PluginRegistry {
 
   /** Load plugins from config (npm packages, local paths) */
   loadFromConfig(
+    config: OrchestratorConfig,
+    importFn?: (pkg: string) => Promise<unknown>,
+  ): Promise<void>;
+
+  /** Load only external plugins declared via package/path in config (skips builtins) */
+  loadExternals(
     config: OrchestratorConfig,
     importFn?: (pkg: string) => Promise<unknown>,
   ): Promise<void>;
