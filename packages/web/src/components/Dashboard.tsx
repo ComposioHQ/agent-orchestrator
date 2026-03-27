@@ -20,6 +20,7 @@ import { useSessionEvents } from "@/hooks/useSessionEvents";
 import { ThemeToggle } from "./ThemeToggle";
 import type { ProjectInfo } from "@/lib/project-name";
 import { EmptyState } from "./Skeleton";
+import { DashboardCompactTopBar } from "./DashboardCompactTopBar";
 
 interface DashboardProps {
   initialSessions: DashboardSession[];
@@ -255,32 +256,19 @@ export function Dashboard({
   }, [globalPause?.pausedUntil, globalPause?.reason, globalPause?.sourceSessionId]);
 
   return (
-    <div className="dashboard-main h-screen overflow-y-auto px-4 py-4 md:px-7 md:py-6">
+    <div className="dashboard-main h-screen overflow-y-auto">
         <DynamicFavicon sessions={sessions} projectName={projectName} />
-        <section className="dashboard-hero mb-5">
-          <div className="dashboard-hero__backdrop" />
-          <div className="dashboard-hero__content">
-            <div className="dashboard-hero__primary">
-              <div className="dashboard-hero__heading">
-                <div>
-                  <h1 className="dashboard-title">{projectName ?? "Orchestrator"}</h1>
-                  <p className="dashboard-subtitle">
-                    Live sessions, review pressure, and merge readiness.
-                  </p>
-                </div>
-              </div>
-              <StatusCards stats={liveStats} />
-            </div>
+        <DashboardCompactTopBar
+          title={projectName ?? "Orchestrator"}
+          subtitle="Live sessions, review pressure, and merge readiness."
+          projects={projects}
+        >
+          <StatusCards stats={liveStats} />
+          {!allProjectsView && <OrchestratorControl orchestrators={activeOrchestrators} />}
+          <ThemeToggle />
+        </DashboardCompactTopBar>
 
-            <div className="dashboard-hero__meta">
-              <div className="flex items-center gap-3">
-                {!allProjectsView && <OrchestratorControl orchestrators={activeOrchestrators} />}
-                <ThemeToggle />
-              </div>
-            </div>
-          </div>
-        </section>
-
+        <div className="px-4 pb-4 pt-5 md:px-7 md:pb-6 md:pt-6">
         {globalPause && !globalPauseDismissed && (
           <div className="dashboard-alert mb-6 flex items-center gap-2.5 border border-[color-mix(in_srgb,var(--color-status-error)_25%,transparent)] bg-[var(--color-tint-red)] px-3.5 py-2.5 text-[11px] text-[var(--color-status-error)]">
             <svg
@@ -434,6 +422,7 @@ export function Dashboard({
             </div>
           </div>
         )}
+        </div>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 /* Workspace IDE Layout Styles */
 
 @import "highlight.js/styles/github-dark.css";
+@import "./compact-top-bar.css";
 
 /* ── Container ─────────────────────────────────────────── */
 
@@ -76,110 +77,6 @@
   width: auto;
   height: 4px;
   cursor: row-resize;
-}
-
-/* ── Compact Top Bar ──────────────────────────────────── */
-
-.compact-top-bar {
-  height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--color-border-subtle);
-  background: var(--color-bg-surface);
-  gap: 12px;
-  overflow: hidden;
-  flex-shrink: 0;
-}
-
-.compact-top-bar__left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1;
-  min-width: 0;
-}
-
-.compact-top-bar__info {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  flex: 1;
-}
-
-.compact-top-bar__row1 {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  white-space: nowrap;
-}
-
-.compact-top-bar__row2 {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 11px;
-}
-
-.compact-top-bar__branch {
-  font-size: 11px;
-  color: var(--color-text-secondary);
-  font-family: monospace;
-  white-space: nowrap;
-  cursor: pointer;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.compact-top-bar__pr-info {
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-.compact-top-bar__ci {
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-.compact-top-bar__sidebar-toggle {
-  display: flex;
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 4px;
-  color: var(--color-text-secondary);
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-@media (max-width: 640px) {
-
-  .compact-top-bar__info {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0;
-    overflow: hidden;
-  }
-
-  .compact-top-bar__row2 {
-    font-size: 9px;
-    gap: 6px;
-    max-width: 100%;
-    overflow: hidden;
-  }
-
-  .compact-top-bar__branch {
-    font-size: 9px;
-    max-width: 120px;
-  }
-
-  .compact-top-bar__pr-info,
-  .compact-top-bar__ci {
-    display: none;
-  }
 }
 
 /* ── Empty / error states ──────────────────────────────── */
