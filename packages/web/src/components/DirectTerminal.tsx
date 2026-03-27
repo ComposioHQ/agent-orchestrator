@@ -59,10 +59,10 @@ function fitTerminal(
 }
 
 // Import xterm CSS (must be imported in client component)
-import "xterm/css/xterm.css";
+import "@xterm/xterm/css/xterm.css";
 
 // Dynamically import xterm types for TypeScript
-import type { ITheme, Terminal as TerminalType } from "xterm";
+import type { ITheme, Terminal as TerminalType } from "@xterm/xterm";
 import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 
 interface DirectTerminalProps {
@@ -395,7 +395,7 @@ export function DirectTerminal({
     const MAX_RECONNECT_DELAY = 15_000;
 
     Promise.all([
-      import("xterm").then((mod) => mod.Terminal),
+      import("@xterm/xterm").then((mod) => mod.Terminal),
       import("@xterm/addon-fit").then((mod) => mod.FitAddon),
       import("@xterm/addon-web-links").then((mod) => mod.WebLinksAddon),
       document.fonts.ready,
@@ -410,15 +410,12 @@ export function DirectTerminal({
         const terminal = new Terminal({
           cursorBlink: true,
           fontSize: getStoredFontSize(),
-          fontFamily:
-            'var(--font-jetbrains-mono), "JetBrains Mono", "SF Mono", Menlo, Monaco, "Courier New", monospace',
           theme: activeTheme,
           // Light mode needs an explicit contrast floor because agent UIs often emit
           // dim/faint ANSI sequences that become unreadable on a near-white background.
           minimumContrastRatio: isDark ? 1 : 7,
           scrollback: 10000,
           allowProposedApi: true,
-          fastScrollModifier: "alt",
           fastScrollSensitivity: 3,
           scrollSensitivity: 1,
         });

@@ -598,7 +598,7 @@ function TerminalTestPageContent() {
         {/* Footer */}
         <div className="mt-8 border-t border-[var(--color-border-default)] pt-4 text-center text-xs text-[var(--color-text-secondary)]">
           <p>Investigation: Feb 15-16, 2026 • Duration: 12+ hours • Status: ✅ Resolved</p>
-          <p className="mt-1">Node 20.20.0 • node-pty 1.1.0 • xterm.js 5.3.0</p>
+          <p className="mt-1">Node 20.20.0 • node-pty 1.1.0 • @xterm/xterm 6.0.0</p>
         </div>
       </div>
     </div>

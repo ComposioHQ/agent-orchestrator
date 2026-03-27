@@ -43,7 +43,7 @@ describe("cleanNextCache", () => {
     mkdirSync(webDir, { recursive: true });
     mkdirSync(join(webDir, ".next", "server", "vendor-chunks"), { recursive: true });
     writeFileSync(
-      join(webDir, ".next", "server", "vendor-chunks", "xterm@5.3.0.js"),
+      join(webDir, ".next", "server", "vendor-chunks", "@xterm+xterm@6.0.0.js"),
       "module.exports = {}",
     );
 
@@ -149,7 +149,7 @@ describe("looksLikeStaleBuild pattern matching", () => {
   it("detects vendor-chunks module not found (the actual bug)", () => {
     // This is the exact error from the bug report
     const stderr =
-      "Error: Cannot find module '/path/to/.next/server/vendor-chunks/xterm@5.3.0.js'";
+      "Error: Cannot find module '/path/to/.next/server/vendor-chunks/@xterm+xterm@6.0.0.js'";
     expect(looksLikeStaleBuild(stderr)).toBe(true);
   });
 
