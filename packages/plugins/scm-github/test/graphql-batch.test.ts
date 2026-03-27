@@ -1164,8 +1164,9 @@ describe("shouldRefreshPREnrichment - ETag Guard Strategy", () => {
       const allCalls = mockExecFileImpl.mock.calls;
       // Second poll has 2 calls: Guard 1 (index 1) and Guard 2 (index 2)
       const secondPollCalls = allCalls.slice(1, 3);
+      // Mock call format: [file, args, options], so check call[1] for args
       const callsWithHeader = secondPollCalls.filter((call) =>
-        Array.isArray(call) && call.includes("-H")
+        Array.isArray(call) && call[1] && call[1].includes("-H")
       );
       expect(callsWithHeader).toHaveLength(2); // Both Guard 1 and Guard 2
     });
