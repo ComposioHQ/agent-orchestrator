@@ -97,15 +97,17 @@ export function getCommitStatusETag(
 
 /**
  * Set PR list ETag for a repository.
+ * Exported for testing.
  */
-function setPRListETag(owner: string, repo: string, etag: string): void {
+export function setPRListETag(owner: string, repo: string, etag: string): void {
   etagCache.prList.set(`${owner}/${repo}`, etag);
 }
 
 /**
  * Set commit status ETag for a specific commit.
+ * Exported for testing.
  */
-function setCommitStatusETag(
+export function setCommitStatusETag(
   owner: string,
   repo: string,
   sha: string,

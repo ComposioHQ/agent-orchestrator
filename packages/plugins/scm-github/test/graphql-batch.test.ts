@@ -20,6 +20,8 @@ import {
   clearETagCache,
   getPRListETag,
   getCommitStatusETag,
+  setPRListETag,
+  setCommitStatusETag,
   setPRMetadata,
   getPRMetadataCache,
   clearPRMetadataCache,
@@ -1121,8 +1123,10 @@ describe("shouldRefreshPREnrichment - ETag Guard Strategy", () => {
       const result1 = await shouldRefreshPREnrichment(prs);
       expect(result1.shouldRefresh).toBe(true);
 
-      // Cache metadata after first poll so Guard 2 has data for second poll
+      // Cache metadata and ETags after first poll so Guard 2 has data for second poll
       setPRMetadata("owner/repo#123", { headSha: "abc123", ciStatus: "passing" });
+      setPRListETag("owner", "repo", "cached-etag");
+      setCommitStatusETag("owner", "repo", "abc123", "commit-status-etag");
 
       // Second call - should use cached ETag in If-None-Match headers (Guard 1 + Guard 2)
       mockExecFileImpl
