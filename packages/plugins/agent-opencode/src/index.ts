@@ -64,8 +64,8 @@ function parseSessionList(raw: string): OpenCodeSessionListEntry[] {
 
 /**
  * Parse JSON stream lines from `opencode run --format json` output.
- * Each line is a JSON object. Different OpenCode versions emit either
- * `session_id` or `sessionID`, so accept both.
+ * Each line is a JSON object. We look for objects containing a session_id field.
+ * The step_start event typically contains the session_id.
  */
 function buildSessionIdCaptureScript(): string {
   const script = `
@@ -81,9 +81,8 @@ process.stdin.on('data', chunk => {
     if (!trimmed) continue;
     try {
       const obj = JSON.parse(trimmed);
-      const candidate = obj?.session_id ?? obj?.sessionID;
-      if (typeof candidate === 'string' && /^ses_[A-Za-z0-9_-]+$/.test(candidate)) {
-        captured = candidate;
+      if (obj && typeof obj.session_id === 'string' && /^ses_[A-Za-z0-9_-]+$/.test(obj.session_id)) {
+        captured = obj.session_id;
       }
     } catch {}
   }
@@ -91,9 +90,8 @@ process.stdin.on('data', chunk => {
   if (buffer.trim()) {
     try {
       const obj = JSON.parse(buffer.trim());
-      const candidate = obj?.session_id ?? obj?.sessionID;
-      if (typeof candidate === 'string' && /^ses_[A-Za-z0-9_-]+$/.test(candidate)) {
-        captured = candidate;
+      if (obj && typeof obj.session_id === 'string' && /^ses_[A-Za-z0-9_-]+$/.test(obj.session_id)) {
+        captured = obj.session_id;
       }
     } catch {}
   }
