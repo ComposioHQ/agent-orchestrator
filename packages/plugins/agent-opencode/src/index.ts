@@ -64,8 +64,8 @@ function parseSessionList(raw: string): OpenCodeSessionListEntry[] {
 
 /**
  * Parse JSON stream lines from `opencode run --format json` output.
- * Each line is a JSON object. We look for objects containing a session_id field.
- * The step_start event typically contains the session_id.
+ * Each line is a JSON object. Different OpenCode versions emit either
+ * `session_id` or `sessionID`, so accept both.
  */
 function buildSessionIdCaptureScript(): string {
   const script = `
@@ -81,8 +81,9 @@ process.stdin.on('data', chunk => {
     if (!trimmed) continue;
     try {
       const obj = JSON.parse(trimmed);
-      if (obj && typeof obj.session_id === 'string' && /^ses_[A-Za-z0-9_-]+$/.test(obj.session_id)) {
-        captured = obj.session_id;
+      const candidate = obj?.session_id ?? obj?.sessionID;
+      if (typeof candidate === 'string' && /^ses_[A-Za-z0-9_-]+$/.test(candidate)) {
+        captured = candidate;
       }
     } catch {}
   }
@@ -90,8 +91,9 @@ process.stdin.on('data', chunk => {
   if (buffer.trim()) {
     try {
       const obj = JSON.parse(buffer.trim());
-      if (obj && typeof obj.session_id === 'string' && /^ses_[A-Za-z0-9_-]+$/.test(obj.session_id)) {
-        captured = obj.session_id;
+      const candidate = obj?.session_id ?? obj?.sessionID;
+      if (typeof candidate === 'string' && /^ses_[A-Za-z0-9_-]+$/.test(candidate)) {
+        captured = candidate;
       }
     } catch {}
   }
@@ -204,7 +206,12 @@ function createOpenCodeAgent(): Agent {
         ];
         const captureScript = buildSessionIdCaptureScript();
         const fallbackScript = buildSessionLookupScript();
-        const runCommand = ["opencode", "run", ...runOptions, "--command", "true"].join(" ");
+        const runCommand = [
+          "opencode",
+          "run",
+          ...runOptions,
+          shellEscape("Create a session and reply with exactly: READY"),
+        ].join(" ");
         const resumeOptions = [...(promptValue ? ["--prompt", promptValue] : []), ...sharedOptions];
         const resumeOptionsSuffix = resumeOptions.length > 0 ? ` ${resumeOptions.join(" ")}` : "";
         const missingSessionError = shellEscape(

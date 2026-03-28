@@ -148,6 +148,48 @@ describe("runtime.create()", () => {
     );
   });
 
+  it("uses a temp launch script for long launch commands", async () => {
+    const runtime = create();
+    const longCommand = "x".repeat(250);
+
+    mockTmuxSuccess();
+    mockTmuxSuccess();
+    mockTmuxSuccess();
+
+    await runtime.create({
+      sessionId: "launch-long",
+      workspacePath: "/tmp/ws",
+      launchCommand: longCommand,
+      environment: {},
+    });
+
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining("ao-launch-test-uuid-1234.sh"),
+      expect.stringContaining(longCommand),
+      { encoding: "utf-8", mode: 0o700 },
+    );
+
+    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
+      2,
+      "tmux",
+      [
+        "send-keys",
+        "-t",
+        "launch-long",
+        "-l",
+        expect.stringContaining("bash "),
+      ],
+      expectedTmuxOptions,
+    );
+
+    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
+      3,
+      "tmux",
+      ["send-keys", "-t", "launch-long", "Enter"],
+      expectedTmuxOptions,
+    );
+  });
+
   it("cleans up session if send-keys fails", async () => {
     const runtime = create();
 
