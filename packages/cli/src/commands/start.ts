@@ -73,6 +73,7 @@ const IS_TTY = Boolean(process.stdin.isTTY && process.stdout.isTTY);
 async function resolveProject(
   config: OrchestratorConfig,
   projectArg?: string,
+  action = "start",
 ): Promise<{ projectId: string; project: ProjectConfig }> {
   const projectIds = Object.keys(config.projects);
 
@@ -108,21 +109,24 @@ async function resolveProject(
 
   // No match — prompt if interactive, otherwise error
   if (isHumanCaller()) {
-    console.log(chalk.yellow("\nMultiple projects configured. Which one would you like to start/stop?\n"));
+    console.log(chalk.yellow(`\nMultiple projects configured. Which one would you like to ${action}?\n`));
     projectIds.forEach((id, i) => console.log(`  ${i + 1}. ${config.projects[id].name ?? id} (${id})`));
 
     const { createInterface } = await import("node:readline/promises");
     const rl = createInterface({ input: process.stdin, output: process.stdout });
-    const choice = await rl.question(`\n  Choose project [1-${projectIds.length}]: `);
-    rl.close();
+    try {
+      const choice = await rl.question(`\n  Choose project [1-${projectIds.length}]: `);
 
-    const idx = Number.parseInt(choice.trim(), 10);
-    if (!Number.isFinite(idx) || idx < 1 || idx > projectIds.length) {
-      throw new Error("Please enter a valid number from the list");
+      const idx = Number.parseInt(choice.trim(), 10);
+      if (!Number.isFinite(idx) || idx < 1 || idx > projectIds.length) {
+        throw new Error("Please enter a valid number from the list");
+      }
+
+      const projectId = projectIds[idx - 1];
+      return { projectId, project: config.projects[projectId] };
+    } finally {
+      rl.close();
     }
-
-    const projectId = projectIds[idx - 1];
-    return { projectId, project: config.projects[projectId] };
   } else {
     throw new Error(
       `Multiple projects configured. Specify which one to start:\n  ${projectIds.map((id) => `ao start ${id}`).join("\n  ")}`,
@@ -1234,7 +1238,7 @@ export function registerStop(program: Command): void {
           }
 
           const config = loadConfig();
-          const { projectId: _projectId, project } = await resolveProject(config, projectArg);
+          const { projectId: _projectId, project } = await resolveProject(config, projectArg, "stop");
           const sessionId = `${project.sessionPrefix}-orchestrator`;
           const port = config.port ?? 3000;
 
