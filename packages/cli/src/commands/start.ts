@@ -106,22 +106,28 @@ async function resolveProject(
     }
   }
 
-  // No match — prompt user to choose
-  console.log(chalk.yellow("\nMultiple projects configured. Which one would you like to start?\n"));
-  projectIds.forEach((id, i) => console.log(`  ${i + 1}. ${config.projects[id].name ?? id} (${id})`));
+  // No match — prompt if interactive, otherwise error
+  if (isHumanCaller()) {
+    console.log(chalk.yellow("\nMultiple projects configured. Which one would you like to start/stop?\n"));
+    projectIds.forEach((id, i) => console.log(`  ${i + 1}. ${config.projects[id].name ?? id} (${id})`));
 
-  const { createInterface } = await import("node:readline/promises");
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const choice = await rl.question(`\n  Choose project [1-${projectIds.length}]: `);
-  rl.close();
+    const { createInterface } = await import("node:readline/promises");
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const choice = await rl.question(`\n  Choose project [1-${projectIds.length}]: `);
+    rl.close();
 
-  const idx = Number.parseInt(choice.trim(), 10);
-  if (!Number.isFinite(idx) || idx < 1 || idx > projectIds.length) {
-    throw new Error("Please enter a valid number from the list");
+    const idx = Number.parseInt(choice.trim(), 10);
+    if (!Number.isFinite(idx) || idx < 1 || idx > projectIds.length) {
+      throw new Error("Please enter a valid number from the list");
+    }
+
+    const projectId = projectIds[idx - 1];
+    return { projectId, project: config.projects[projectId] };
+  } else {
+    throw new Error(
+      `Multiple projects configured. Specify which one to start:\n  ${projectIds.map((id) => `ao start ${id}`).join("\n  ")}`,
+    );
   }
-
-  const projectId = projectIds[idx - 1];
-  return { projectId, project: config.projects[projectId] };
 }
 
 /**
