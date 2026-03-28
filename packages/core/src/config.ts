@@ -81,6 +81,7 @@ const SCMConfigSchema = z
         maxBodyBytes: z.number().int().positive().optional(),
       })
       .optional(),
+    apiStrategy: z.enum(["graphql-batch", "rest-parallel"]).default("graphql-batch"),
   })
   .passthrough();
 

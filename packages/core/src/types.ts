@@ -603,10 +603,15 @@ export interface SCM {
    * for each PR.
    *
    * @param prs - Array of PR information to fetch data for
+   * @param project - Optional project config for reading project-specific settings
    * @param observer - Optional observer for batch operation metrics
    * @returns Map keyed by "${owner}/${repo}#${number}" containing enrichment data
    */
-  enrichSessionsPRBatch?(prs: PRInfo[], observer?: BatchObserver): Promise<Map<string, PREnrichmentData>>;
+  enrichSessionsPRBatch?(
+    prs: PRInfo[],
+    project?: ProjectConfig,
+    observer?: BatchObserver,
+  ): Promise<Map<string, PREnrichmentData>>;
 }
 
 // --- PR Types ---

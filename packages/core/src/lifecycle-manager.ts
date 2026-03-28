@@ -226,8 +226,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     if (uniquePRs.length === 0) return;
 
-    // Group by SCM plugin and batch fetch for each group
-    const prsByPlugin = new Map<string, typeof uniquePRs>();
+    // Group by SCM plugin and project to pass project-specific config
+    const prsByPluginAndProject = new Map<string, Map<string, typeof uniquePRs>>();
     for (const pr of uniquePRs) {
       // Find the project for this PR
       const project = Object.values(config.projects).find((p) => {
@@ -237,26 +237,34 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       if (!project?.scm) continue;
 
       const pluginKey = project.scm.plugin;
-      if (!prsByPlugin.has(pluginKey)) {
-        prsByPlugin.set(pluginKey, []);
+      const projectId = Object.entries(config.projects).find(([_, p]) => p === project)?.[0] ?? "";
+      if (!projectId) continue;
+
+      if (!prsByPluginAndProject.has(pluginKey)) {
+        prsByPluginAndProject.set(pluginKey, new Map());
       }
-      const pluginPRs = prsByPlugin.get(pluginKey);
-      if (pluginPRs) {
-        pluginPRs.push(pr);
+      const projectMap = prsByPluginAndProject.get(pluginKey)!;
+      if (!projectMap.has(projectId)) {
+        projectMap.set(projectId, []);
       }
+      const projectPRs = projectMap.get(projectId)!;
+      projectPRs.push(pr);
     }
 
-    // Fetch enrichment data for each plugin's PRs
-    for (const [pluginKey, pluginPRs] of prsByPlugin) {
+    // Fetch enrichment data for each plugin+project combination
+    for (const [pluginKey, projectMap] of prsByPluginAndProject) {
       const scm = registry.get<SCM>("scm", pluginKey);
       if (!scm?.enrichSessionsPRBatch) continue;
 
-      const batchStartTime = Date.now();
-      try {
-        const enrichmentData = await scm.enrichSessionsPRBatch(
-          pluginPRs,
-          {
-            recordSuccess(_data) {
+      for (const [projectId, pluginPRs] of projectMap) {
+        const project = config.projects[projectId];
+        const batchStartTime = Date.now();
+        try {
+          const enrichmentData = await scm.enrichSessionsPRBatch(
+            pluginPRs,
+            project,
+            {
+              recordSuccess(_data) {
               const batchDuration = Date.now() - batchStartTime;
               observer?.recordOperation({
                 metric: "graphql_batch",
@@ -322,6 +330,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           level: "warn",
           data: { plugin: pluginKey, prCount: pluginPRs.length },
         });
+      }
       }
     }
   }

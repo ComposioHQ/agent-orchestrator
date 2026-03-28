@@ -29,8 +29,11 @@ import {
   type PREnrichmentData,
 } from "@composio/ao-core";
 import {
-  enrichSessionsPRBatch as enrichSessionsPRBatchImpl,
+  enrichSessionsPRBatch as enrichUsingGraphQL,
 } from "./graphql-batch.js";
+import {
+  enrichSessionsPRBatch as enrichUsingREST,
+} from "./rest-parallel.js";
 import {
   getWebhookHeader,
   parseWebhookBranchRef,
@@ -39,6 +42,18 @@ import {
 } from "@composio/ao-core/scm-webhook-utils";
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * GitHub plugin configuration options.
+ */
+export interface GitHubSCMConfig {
+  /**
+   * API strategy for batch PR enrichment.
+   * - "graphql-batch": Use GraphQL batching (default)
+   * - "rest-parallel": Use parallel REST API calls
+   */
+  apiStrategy?: "graphql-batch" | "rest-parallel";
+}
 
 /** Known bot logins that produce automated review comments */
 const BOT_AUTHORS = new Set([
@@ -449,7 +464,8 @@ function parseDate(val: string | undefined | null): Date {
 // SCM implementation
 // ---------------------------------------------------------------------------
 
-function createGitHubSCM(): SCM {
+function createGitHubSCM(config?: GitHubSCMConfig): SCM {
+  const apiStrategy = config?.apiStrategy ?? "graphql-batch";
   return {
     name: "github",
 
@@ -1025,17 +1041,42 @@ function createGitHubSCM(): SCM {
     },
 
     /**
-     * Batch fetch PR data for multiple PRs using GraphQL.
+     * Batch fetch PR data for multiple PRs.
      * This is an optimization for the orchestrator polling loop.
      *
-     * Instead of making 3 separate API calls for each PR (getPRState,
-     * getCISummary, getReviewDecision), we fetch all data for all PRs
-     * in one GraphQL query using aliases.
+     * Uses either GraphQL batching or parallel REST API calls based on
+     * the configured apiStrategy:
      *
-     * This reduces API calls from N×3 to 1 (or a few if batching needed).
+     * - "graphql-batch": Fetches all data in ~1 GraphQL query per 25 PRs
+     * - "rest-parallel": Makes parallel REST API calls (3 per PR, batched by concurrency limit)
+     *
+     * Both approaches use the same 2-Guard ETag strategy to avoid unnecessary
+     * API calls when nothing has changed.
      */
-    async enrichSessionsPRBatch(prs: PRInfo[]): Promise<Map<string, PREnrichmentData>> {
-      return enrichSessionsPRBatchImpl(prs);
+    async enrichSessionsPRBatch(
+      prs: PRInfo[],
+      project: ProjectConfig | undefined,
+      observer?: {
+        recordSuccess(data: {
+          batchIndex: number;
+          totalBatches: number;
+          prCount: number;
+          durationMs: number;
+        }): void;
+        recordFailure(data: {
+          batchIndex: number;
+          totalBatches: number;
+          prCount: number;
+          error: string;
+          durationMs: number;
+        }): void;
+        log(level: "info" | "warn" | "error", message: string): void;
+      },
+    ): Promise<Map<string, PREnrichmentData>> {
+      if (apiStrategy === "rest-parallel") {
+        return enrichUsingREST(prs, observer);
+      }
+      return enrichUsingGraphQL(prs, observer);
     },
   };
 }
@@ -1051,8 +1092,14 @@ export const manifest = {
   version: "0.1.0",
 };
 
-export function create(): SCM {
-  return createGitHubSCM();
+export function create(config?: Record<string, unknown>): SCM {
+  // Validate and cast config
+  const ghConfig: GitHubSCMConfig = {};
+  if (config?.apiStrategy &&
+      (config.apiStrategy === "graphql-batch" || config.apiStrategy === "rest-parallel")) {
+    ghConfig.apiStrategy = config.apiStrategy as "graphql-batch" | "rest-parallel";
+  }
+  return createGitHubSCM(ghConfig);
 }
 
 export default { manifest, create } satisfies PluginModule<SCM>;
