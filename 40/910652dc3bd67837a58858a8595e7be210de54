@@ -1,0 +1,49 @@
+packages/web/src/components/PortfolioPage.tsx
+  371e1ae483b2c003 30-31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.20",
+  "base_commit_sha": "40910652dc3bd67837a58858a8595e7be210de54",
+  "prompts": {
+    "371e1ae483b2c003": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ddcd4dce-1cfb-4810-9cc4-38d9af812654",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 3,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    },
+    "6fb113398908e521": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "20e73692-fa79-4137-b532-142ef380fc19",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 26,
+      "overriden_lines": 0
+    },
+    "89bf4b2ea3948392": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "507957f8-cc69-42e2-93d0-99db538de09b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 134,
+      "overriden_lines": 0
+    }
+  }
+}
