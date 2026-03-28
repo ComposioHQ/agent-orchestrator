@@ -1,0 +1,38 @@
+DESIGN.md
+  b04c3dc6b2376a79 1-157
+.gitignore
+  2821e9aabdde5355 67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.22",
+  "base_commit_sha": "d87d79b970c359d1f8704b49b227c522573ee5bd",
+  "prompts": {
+    "2821e9aabdde5355": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d358c-daf0-73f0-a510-2d8622d6c93b",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 0,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    },
+    "b04c3dc6b2376a79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "47171029-25fa-4631-b451-6fd1bd86a271",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 157,
+      "total_deletions": 0,
+      "accepted_lines": 157,
+      "overriden_lines": 0
+    }
+  }
+}
