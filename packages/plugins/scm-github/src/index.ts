@@ -37,7 +37,7 @@ import {
 const execFileAsync = promisify(execFile);
 
 /** Known bot logins that produce automated review comments */
-const BOT_AUTHORS = new Set([
+const DEFAULT_BOT_AUTHORS = [
   "cursor[bot]",
   "github-actions[bot]",
   "codecov[bot]",
@@ -48,7 +48,18 @@ const BOT_AUTHORS = new Set([
   "deepsource-autofix[bot]",
   "snyk-bot",
   "lgtm-com[bot]",
-]);
+  "claude",
+];
+
+function buildBotAuthors(additional?: string[]): Set<string> {
+  const authors = new Set(DEFAULT_BOT_AUTHORS);
+  if (additional) {
+    for (const author of additional) {
+      authors.add(author);
+    }
+  }
+  return authors;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -445,7 +456,12 @@ function parseDate(val: string | undefined | null): Date {
 // SCM implementation
 // ---------------------------------------------------------------------------
 
-function createGitHubSCM(): SCM {
+function createGitHubSCM(config?: Record<string, unknown>): SCM {
+  const additionalBotAuthors = Array.isArray(config?.additionalBotAuthors)
+    ? (config.additionalBotAuthors as string[]).filter((a) => typeof a === "string")
+    : undefined;
+  const botAuthors = buildBotAuthors(additionalBotAuthors);
+
   return {
     name: "github",
 
@@ -838,7 +854,7 @@ function createGitHubSCM(): SCM {
             const c = t.comments.nodes[0];
             if (!c) return false; // skip threads with no comments
             const author = c.author?.login ?? "";
-            return !BOT_AUTHORS.has(author);
+            return !botAuthors.has(author);
           })
           .map((t) => {
             const c = t.comments.nodes[0];
@@ -861,7 +877,9 @@ function createGitHubSCM(): SCM {
     async getAutomatedComments(pr: PRInfo): Promise<AutomatedComment[]> {
       try {
         const perPage = 100;
-        const comments: Array<{
+
+        // Fetch line-level PR review comments
+        const prComments: Array<{
           id: number;
           user: { login: string };
           body: string;
@@ -890,48 +908,100 @@ function createGitHubSCM(): SCM {
             html_url: string;
           }> = JSON.parse(raw);
 
-          if (pageComments.length === 0) {
-            break;
-          }
+          if (pageComments.length === 0) break;
+          prComments.push(...pageComments);
+          if (pageComments.length < perPage) break;
+        }
 
-          comments.push(...pageComments);
-          if (pageComments.length < perPage) {
-            break;
+        // Fetch issue-level comments (top-level PR comments posted via issues API)
+        const issueComments: Array<{
+          id: number;
+          user: { login: string };
+          body: string;
+          created_at: string;
+          html_url: string;
+        }> = [];
+
+        for (let page = 1; ; page++) {
+          const raw = await gh([
+            "api",
+            "--method",
+            "GET",
+            `repos/${repoFlag(pr)}/issues/${pr.number}/comments?per_page=${perPage}&page=${page}`,
+          ]);
+          const pageComments: Array<{
+            id: number;
+            user: { login: string };
+            body: string;
+            created_at: string;
+            html_url: string;
+          }> = JSON.parse(raw);
+
+          if (pageComments.length === 0) break;
+          issueComments.push(...pageComments);
+          if (pageComments.length < perPage) break;
+        }
+
+        // Helper to infer severity from comment body
+        function inferSeverity(body: string): AutomatedComment["severity"] {
+          const bodyLower = body.toLowerCase();
+          if (
+            bodyLower.includes("error") ||
+            bodyLower.includes("bug") ||
+            bodyLower.includes("critical") ||
+            bodyLower.includes("potential issue")
+          ) {
+            return "error";
+          }
+          if (
+            bodyLower.includes("warning") ||
+            bodyLower.includes("suggest") ||
+            bodyLower.includes("consider")
+          ) {
+            return "warning";
+          }
+          return "info";
+        }
+
+        // Map PR review comments (have path/line info)
+        const fromPR: AutomatedComment[] = prComments
+          .filter((c) => botAuthors.has(c.user?.login ?? ""))
+          .map((c) => ({
+            id: String(c.id),
+            botName: c.user?.login ?? "unknown",
+            body: c.body,
+            path: c.path || undefined,
+            line: c.line ?? c.original_line ?? undefined,
+            severity: inferSeverity(c.body),
+            createdAt: parseDate(c.created_at),
+            url: c.html_url,
+          }));
+
+        // Map issue comments (no path/line — these are top-level PR comments)
+        const fromIssues: AutomatedComment[] = issueComments
+          .filter((c) => botAuthors.has(c.user?.login ?? ""))
+          .map((c) => ({
+            id: String(c.id),
+            botName: c.user?.login ?? "unknown",
+            body: c.body,
+            path: undefined,
+            line: undefined,
+            severity: inferSeverity(c.body),
+            createdAt: parseDate(c.created_at),
+            url: c.html_url,
+          }));
+
+        // Merge and deduplicate by id
+        const seen = new Set<string>();
+        const result: AutomatedComment[] = [];
+        for (const comment of [...fromPR, ...fromIssues]) {
+          if (!seen.has(comment.id)) {
+            seen.add(comment.id);
+            result.push(comment);
           }
         }
 
-        return comments
-          .filter((c) => BOT_AUTHORS.has(c.user?.login ?? ""))
-          .map((c) => {
-            // Determine severity from body content
-            let severity: AutomatedComment["severity"] = "info";
-            const bodyLower = c.body.toLowerCase();
-            if (
-              bodyLower.includes("error") ||
-              bodyLower.includes("bug") ||
-              bodyLower.includes("critical") ||
-              bodyLower.includes("potential issue")
-            ) {
-              severity = "error";
-            } else if (
-              bodyLower.includes("warning") ||
-              bodyLower.includes("suggest") ||
-              bodyLower.includes("consider")
-            ) {
-              severity = "warning";
-            }
-
-            return {
-              id: String(c.id),
-              botName: c.user?.login ?? "unknown",
-              body: c.body,
-              path: c.path || undefined,
-              line: c.line ?? c.original_line ?? undefined,
-              severity,
-              createdAt: parseDate(c.created_at),
-              url: c.html_url,
-            };
-          });
+        return result;
       } catch (err) {
         throw new Error("Failed to fetch automated comments", { cause: err });
       }
@@ -1033,8 +1103,8 @@ export const manifest = {
   version: "0.1.0",
 };
 
-export function create(): SCM {
-  return createGitHubSCM();
+export function create(config?: Record<string, unknown>): SCM {
+  return createGitHubSCM(config);
 }
 
 export default { manifest, create } satisfies PluginModule<SCM>;

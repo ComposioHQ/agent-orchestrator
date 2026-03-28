@@ -75,6 +75,30 @@ function extractPluginConfig(
     }
   }
 
+  // SCM plugins can receive additionalBotAuthors from project scm config.
+  // Merge additionalBotAuthors from all projects that use this SCM plugin.
+  if (slot === "scm") {
+    const merged: string[] = [];
+    for (const project of Object.values(config.projects ?? {})) {
+      const scm = project.scm;
+      if (!scm) continue;
+      // Match by explicit plugin field or by plugin name matching the SCM name
+      const pluginName = typeof scm.plugin === "string" ? scm.plugin : undefined;
+      if (pluginName && pluginName !== name) continue;
+      const additional = scm["additionalBotAuthors"];
+      if (Array.isArray(additional)) {
+        for (const author of additional) {
+          if (typeof author === "string" && !merged.includes(author)) {
+            merged.push(author);
+          }
+        }
+      }
+    }
+    if (merged.length > 0) {
+      return { additionalBotAuthors: merged };
+    }
+  }
+
   return undefined;
 }
 
