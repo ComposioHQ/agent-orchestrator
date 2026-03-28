@@ -4,8 +4,9 @@ import type { Session, RuntimeHandle, AgentLaunchConfig } from "@composio/ao-cor
 // ---------------------------------------------------------------------------
 // Hoisted mocks
 // ---------------------------------------------------------------------------
-const { mockExecFileAsync } = vi.hoisted(() => ({
+const { mockExecFileAsync, mockReadFile } = vi.hoisted(() => ({
   mockExecFileAsync: vi.fn(),
+  mockReadFile: vi.fn(),
 }));
 
 vi.mock("node:child_process", () => {
@@ -13,6 +14,14 @@ vi.mock("node:child_process", () => {
     [Symbol.for("nodejs.util.promisify.custom")]: mockExecFileAsync,
   });
   return { execFile: fn };
+});
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...actual,
+    readFile: mockReadFile,
+  };
 });
 
 import { create, manifest, default as defaultExport } from "./index.js";
@@ -269,6 +278,38 @@ describe("detectActivity", () => {
   it("returns active for non-empty terminal output", () => {
     expect(agent.detectActivity("aider is processing files\n")).toBe("active");
   });
+
+  it("returns ready when aider prompt is shown", () => {
+    expect(agent.detectActivity("some output\naider > ")).toBe("ready");
+  });
+
+  it("returns ready for bare > prompt", () => {
+    expect(agent.detectActivity("some output\n> ")).toBe("ready");
+  });
+
+  it("returns waiting_input for Y/N confirmation", () => {
+    expect(agent.detectActivity("Allow edits to src/index.ts?\n(Y)es/(N)o")).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for add-to-chat prompt", () => {
+    expect(agent.detectActivity("Add src/utils.ts to the chat?\n")).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for create new file prompt", () => {
+    expect(agent.detectActivity("Create new file src/new.ts?\n")).toBe("waiting_input");
+  });
+
+  it("returns blocked for error lines", () => {
+    expect(agent.detectActivity("Error: file not found\n")).toBe("blocked");
+  });
+
+  it("returns blocked for API errors", () => {
+    expect(agent.detectActivity("Processing...\nAPI Error: rate limited\n")).toBe("blocked");
+  });
+
+  it("returns blocked for rate limit messages", () => {
+    expect(agent.detectActivity("Waiting...\nrate limit exceeded\n")).toBe("blocked");
+  });
 });
 
 // =========================================================================
@@ -277,8 +318,66 @@ describe("detectActivity", () => {
 describe("getSessionInfo", () => {
   const agent = create();
 
-  it("always returns null (not implemented)", async () => {
-    expect(await agent.getSessionInfo(makeSession())).toBeNull();
-    expect(await agent.getSessionInfo(makeSession({ workspacePath: "/some/path" }))).toBeNull();
+  it("returns null when workspacePath is missing", async () => {
+    const result = await agent.getSessionInfo(makeSession({ workspacePath: null }));
+    expect(result).toBeNull();
+  });
+
+  it("returns null summary when chat history file does not exist", async () => {
+    mockReadFile.mockRejectedValue(new Error("ENOENT"));
+    const result = await agent.getSessionInfo(makeSession());
+    expect(result).not.toBeNull();
+    expect(result!.summary).toBeNull();
+    expect(result!.summaryIsFallback).toBe(false);
+    expect(result!.agentSessionId).toBeNull();
+  });
+
+  it("extracts summary from last assistant message", async () => {
+    mockReadFile.mockResolvedValue(
+      "#### user\nFix the login bug\n\n#### assistant\nI'll fix the authentication issue in login.ts by updating the token validation logic.\n",
+    );
+    const result = await agent.getSessionInfo(makeSession());
+    expect(result!.summary).toBe(
+      "I'll fix the authentication issue in login.ts by updating the token validation logic.",
+    );
+    expect(result!.summaryIsFallback).toBe(false);
+  });
+
+  it("falls back to first user message when no assistant response", async () => {
+    mockReadFile.mockResolvedValue("#### user\nPlease refactor the database module\n");
+    const result = await agent.getSessionInfo(makeSession());
+    expect(result!.summary).toBe("Please refactor the database module");
+    expect(result!.summaryIsFallback).toBe(true);
+  });
+
+  it("returns null summary for empty chat history", async () => {
+    mockReadFile.mockResolvedValue("");
+    const result = await agent.getSessionInfo(makeSession());
+    expect(result!.summary).toBeNull();
+  });
+
+  it("handles multiple assistant messages (uses last one)", async () => {
+    mockReadFile.mockResolvedValue(
+      "#### user\nFirst task\n\n#### assistant\nDone with first task.\n\n#### user\nSecond task\n\n#### assistant\nCompleted the refactoring of utils.ts.\n",
+    );
+    const result = await agent.getSessionInfo(makeSession());
+    expect(result!.summary).toBe("Completed the refactoring of utils.ts.");
+    expect(result!.summaryIsFallback).toBe(false);
+  });
+
+  it("skips code blocks in assistant messages", async () => {
+    mockReadFile.mockResolvedValue(
+      "#### user\nFix it\n\n#### assistant\n```python\ndef fix():\n  pass\n```\nHere is the fix for the issue.\n",
+    );
+    const result = await agent.getSessionInfo(makeSession());
+    expect(result!.summary).toBe("Here is the fix for the issue.");
+    expect(result!.summaryIsFallback).toBe(false);
+  });
+
+  it("truncates long summaries to 120 characters", async () => {
+    const longMessage = "A".repeat(200);
+    mockReadFile.mockResolvedValue(`#### user\nDo something\n\n#### assistant\n${longMessage}\n`);
+    const result = await agent.getSessionInfo(makeSession());
+    expect(result!.summary!.length).toBe(120);
   });
 });
