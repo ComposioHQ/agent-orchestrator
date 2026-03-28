@@ -1,7 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Session, RuntimeHandle, AgentLaunchConfig } from "@composio/ao-core";
 
+const { mockAppendActivityEntry, mockReadLastActivityEntry } = vi.hoisted(() => ({
+  mockAppendActivityEntry: vi.fn().mockResolvedValue(undefined),
+  mockReadLastActivityEntry: vi.fn().mockResolvedValue(null),
+}));
+
 const mockExecFileAsync = vi.fn();
+
+vi.mock("@composio/ao-core", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...actual,
+    appendActivityEntry: mockAppendActivityEntry,
+    readLastActivityEntry: mockReadLastActivityEntry,
+  };
+});
+
 vi.mock("node:child_process", () => ({
   execFile: (...args: unknown[]) => {
     const callback = args[args.length - 1];
@@ -513,6 +528,27 @@ describe("detectActivity — terminal output classification", () => {
     expect(agent.detectActivity("   \n  ")).toBe("idle");
   });
 
+  it("returns idle when prompt char visible", () => {
+    expect(agent.detectActivity("some output\n> ")).toBe("idle");
+    expect(agent.detectActivity("some output\n$ ")).toBe("idle");
+  });
+
+  it("returns waiting_input for Y/N confirmation", () => {
+    expect(agent.detectActivity("Apply changes?\n(Y)es/(N)o")).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for approval required", () => {
+    expect(agent.detectActivity("output\napproval required for this action")).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for proceed prompt", () => {
+    expect(agent.detectActivity("Do you want to proceed?")).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for allow prompt", () => {
+    expect(agent.detectActivity("Allow file creation?")).toBe("waiting_input");
+  });
+
   it("returns active for non-empty terminal output", () => {
     expect(agent.detectActivity("opencode is working\n")).toBe("active");
   });
@@ -647,9 +683,150 @@ describe("getActivityState", () => {
 describe("getSessionInfo", () => {
   const agent = create();
 
-  it("always returns null (not implemented)", async () => {
-    expect(await agent.getSessionInfo(makeSession())).toBeNull();
-    expect(await agent.getSessionInfo(makeSession({ workspacePath: "/some/path" }))).toBeNull();
+  function mockOpencodeSessionRows(rows: Array<Record<string, unknown>>) {
+    mockExecFileAsync.mockImplementation((cmd: string) => {
+      if (cmd === "opencode") {
+        return Promise.resolve({ stdout: JSON.stringify(rows), stderr: "" });
+      }
+      return Promise.reject(new Error("unexpected"));
+    });
+  }
+
+  it("returns session info when matching session found by metadata ID", async () => {
+    mockOpencodeSessionRows([
+      { id: "ses_abc123", title: "AO:test-1", updated: new Date().toISOString() },
+    ]);
+
+    const info = await agent.getSessionInfo(
+      makeSession({ metadata: { opencodeSessionId: "ses_abc123" } }),
+    );
+    expect(info).not.toBeNull();
+    expect(info!.agentSessionId).toBe("ses_abc123");
+    expect(info!.summary).toBe("AO:test-1");
+    expect(info!.summaryIsFallback).toBe(true);
+  });
+
+  it("returns session info when matching session found by title", async () => {
+    mockOpencodeSessionRows([
+      { id: "ses_xyz789", title: "AO:test-1", updated: new Date().toISOString() },
+    ]);
+
+    const info = await agent.getSessionInfo(makeSession({ metadata: {} }));
+    expect(info).not.toBeNull();
+    expect(info!.agentSessionId).toBe("ses_xyz789");
+  });
+
+  it("returns null when no matching session", async () => {
+    mockOpencodeSessionRows([
+      { id: "ses_other", title: "AO:different", updated: new Date().toISOString() },
+    ]);
+
+    const info = await agent.getSessionInfo(makeSession({ metadata: {} }));
+    expect(info).toBeNull();
+  });
+
+  it("returns null when opencode command fails", async () => {
+    mockExecFileAsync.mockRejectedValue(new Error("opencode not found"));
+    const info = await agent.getSessionInfo(makeSession());
+    expect(info).toBeNull();
+  });
+});
+
+// =========================================================================
+// getRestoreCommand
+// =========================================================================
+describe("getRestoreCommand", () => {
+  const agent = create();
+
+  it("returns restore command from metadata session ID", async () => {
+    const cmd = await agent.getRestoreCommand!(
+      makeSession({ metadata: { opencodeSessionId: "ses_abc123" } }),
+      { name: "proj", repo: "o/r", path: "/p", defaultBranch: "main", sessionPrefix: "p" },
+    );
+    expect(cmd).toBe("opencode --session 'ses_abc123'");
+  });
+
+  it("includes model flag from project config", async () => {
+    const cmd = await agent.getRestoreCommand!(
+      makeSession({ metadata: { opencodeSessionId: "ses_abc123" } }),
+      {
+        name: "proj",
+        repo: "o/r",
+        path: "/p",
+        defaultBranch: "main",
+        sessionPrefix: "p",
+        agentConfig: { model: "claude-sonnet-4-5-20250929" },
+      },
+    );
+    expect(cmd).toContain("--model 'claude-sonnet-4-5-20250929'");
+  });
+
+  it("returns null when no session ID found", async () => {
+    mockExecFileAsync.mockRejectedValue(new Error("opencode not found"));
+    const cmd = await agent.getRestoreCommand!(
+      makeSession({ metadata: {} }),
+      { name: "proj", repo: "o/r", path: "/p", defaultBranch: "main", sessionPrefix: "p" },
+    );
+    expect(cmd).toBeNull();
+  });
+
+  it("falls back to title-based lookup", async () => {
+    mockExecFileAsync.mockImplementation((cmd: string) => {
+      if (cmd === "opencode") {
+        return Promise.resolve({
+          stdout: JSON.stringify([{ id: "ses_found", title: "AO:test-1" }]),
+          stderr: "",
+        });
+      }
+      return Promise.reject(new Error("unexpected"));
+    });
+
+    const cmd = await agent.getRestoreCommand!(
+      makeSession({ metadata: {} }),
+      { name: "proj", repo: "o/r", path: "/p", defaultBranch: "main", sessionPrefix: "p" },
+    );
+    expect(cmd).toBe("opencode --session 'ses_found'");
+  });
+});
+
+// =========================================================================
+// setupWorkspaceHooks + postLaunchSetup
+// =========================================================================
+describe("setupWorkspaceHooks", () => {
+  const agent = create();
+
+  it("is defined (delegates to shared setupPathWrapperWorkspace)", () => {
+    expect(agent.setupWorkspaceHooks).toBeDefined();
+    expect(typeof agent.setupWorkspaceHooks).toBe("function");
+  });
+});
+
+describe("postLaunchSetup", () => {
+  const agent = create();
+
+  it("is defined", () => {
+    expect(agent.postLaunchSetup).toBeDefined();
+  });
+
+  it("does nothing when workspacePath is null", async () => {
+    await agent.postLaunchSetup!(makeSession({ workspacePath: null }));
+  });
+});
+
+// =========================================================================
+// getEnvironment — PATH wrapping
+// =========================================================================
+describe("getEnvironment PATH", () => {
+  const agent = create();
+
+  it("prepends ~/.ao/bin to PATH", () => {
+    const env = agent.getEnvironment(makeLaunchConfig());
+    expect(env["PATH"]).toMatch(/\.ao\/bin/);
+  });
+
+  it("sets GH_PATH", () => {
+    const env = agent.getEnvironment(makeLaunchConfig());
+    expect(env["GH_PATH"]).toBe("/usr/local/bin/gh");
   });
 });
 
@@ -756,5 +933,103 @@ describe("invalid session ID rejection", () => {
 
       expect(cmd).toContain(`--session '${validId}'`);
     }
+  });
+});
+
+// =========================================================================
+// recordActivity
+// =========================================================================
+describe("recordActivity", () => {
+  const agent = create();
+
+  it("is defined", () => {
+    expect(agent.recordActivity).toBeDefined();
+  });
+
+  it("does nothing when workspacePath is null", async () => {
+    await agent.recordActivity!(makeSession({ workspacePath: null }), "some output");
+    expect(mockAppendActivityEntry).not.toHaveBeenCalled();
+  });
+
+  it("appends activity entry for active state", async () => {
+    await agent.recordActivity!(makeSession(), "opencode is working");
+    expect(mockAppendActivityEntry).toHaveBeenCalledWith(
+      "/workspace/test",
+      "active",
+      "terminal",
+      undefined,
+    );
+  });
+
+  it("appends activity entry with trigger for waiting_input", async () => {
+    await agent.recordActivity!(makeSession(), "Apply changes?\n(Y)es/(N)o");
+    expect(mockAppendActivityEntry).toHaveBeenCalledWith(
+      "/workspace/test",
+      "waiting_input",
+      "terminal",
+      expect.stringContaining("(Y)es/(N)o"),
+    );
+  });
+});
+
+// =========================================================================
+// getActivityState — reads from activity JSONL
+// =========================================================================
+describe("getActivityState with activity JSONL", () => {
+  const agent = create();
+
+  it("returns waiting_input from activity JSONL", async () => {
+    mockTmuxWithProcess("opencode");
+    mockReadLastActivityEntry.mockResolvedValueOnce({
+      entry: { ts: new Date().toISOString(), state: "waiting_input", source: "terminal" },
+      modifiedAt: new Date(),
+    });
+
+    const result = await agent.getActivityState(
+      makeSession({ runtimeHandle: makeTmuxHandle() }),
+    );
+    expect(result?.state).toBe("waiting_input");
+  });
+
+  it("returns blocked from activity JSONL", async () => {
+    mockTmuxWithProcess("opencode");
+    mockReadLastActivityEntry.mockResolvedValueOnce({
+      entry: { ts: new Date().toISOString(), state: "blocked", source: "terminal" },
+      modifiedAt: new Date(),
+    });
+
+    const result = await agent.getActivityState(
+      makeSession({ runtimeHandle: makeTmuxHandle() }),
+    );
+    expect(result?.state).toBe("blocked");
+  });
+
+  it("falls back to opencode API when activity JSONL is empty", async () => {
+    mockReadLastActivityEntry.mockResolvedValueOnce(null);
+    // Mock opencode session list returning recent activity
+    mockExecFileAsync.mockImplementation((cmd: string) => {
+      if (cmd === "tmux") return Promise.resolve({ stdout: "/dev/ttys003\n", stderr: "" });
+      if (cmd === "ps") {
+        return Promise.resolve({
+          stdout: "  PID TT       ARGS\n  789 ttys003  opencode\n",
+          stderr: "",
+        });
+      }
+      if (cmd === "opencode") {
+        return Promise.resolve({
+          stdout: JSON.stringify([
+            { id: "ses_abc123", title: "AO:test-1", updated: new Date(Date.now() - 5_000).toISOString() },
+          ]),
+          stderr: "",
+        });
+      }
+      return Promise.reject(new Error("unexpected"));
+    });
+
+    const result = await agent.getActivityState(
+      makeSession({ runtimeHandle: makeTmuxHandle(), metadata: { opencodeSessionId: "ses_abc123" } }),
+      60_000,
+    );
+    expect(result?.state).toBe("active");
   });
 });
