@@ -1,20 +1,9 @@
 import chalk from "chalk";
 import type { Command } from "commander";
 import { loadConfig } from "@composio/ao-core";
-import { exec } from "../lib/shell.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 import { formatAttachCommand } from "../lib/attach.js";
-
-async function openInTerminal(sessionName: string, newWindow?: boolean): Promise<boolean> {
-  try {
-    const args = newWindow ? ["--new-window", sessionName] : [sessionName];
-    await exec("open-iterm-tab", args);
-    return true;
-  } catch {
-    // Fall back to tmux attach hint
-    return false;
-  }
-}
+import { openInIterm } from "../lib/open-iterm.js";
 
 export function registerOpen(program: Command): void {
   program
@@ -57,15 +46,21 @@ export function registerOpen(program: Command): void {
         const runtimeName = session.runtimeHandle?.runtimeName ?? config.defaults.runtime;
         const targetName = session.runtimeHandle?.id ?? session.id;
         const attachInfo = await sm.getAttachInfo(session.id).catch(() => null);
-        const attachCommand = formatAttachCommand(attachInfo, `tmux attach -t ${targetName}`);
-        const opened =
-          runtimeName === "tmux" ? await openInTerminal(targetName, opts.newWindow) : false;
+        const attachCommand = formatAttachCommand(
+          attachInfo,
+          runtimeName === "tmux" ? `tmux attach -t ${targetName}` : "(attach command unavailable)",
+        );
+        const opened = await openInIterm({
+          tabTitle: targetName,
+          tmuxTarget: targetName,
+          runtimeName,
+          attachInfo,
+          newWindow: opts.newWindow,
+        });
         if (opened) {
           console.log(chalk.green(`  Opened: ${session.id}`));
         } else {
-          console.log(
-            `  ${chalk.yellow(session.id)} — attach with: ${chalk.dim(attachCommand)}`,
-          );
+          console.log(`  ${chalk.yellow(session.id)} — attach with: ${chalk.dim(attachCommand)}`);
         }
       }
       console.log();

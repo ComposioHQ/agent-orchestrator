@@ -1,29 +1,99 @@
 #!/bin/bash
-# Usage: ~/open-iterm-tab <session-name>
-# Opens a tmux session in iTerm2 - reuses existing tab if found, otherwise opens new
-# Sets both the profile name (for detection) and tab title (for visual display)
+# Usage:
+#   open-iterm-tab [--new-window] <tmux-session-name>
+#   open-iterm-tab [--new-window] --title <tab-title> --command <attach-command>
 
-SESSION="$1"
-if [ -z "$SESSION" ]; then
-    echo "Usage: ~/open-iterm-tab <session-name>"
+set -euo pipefail
+
+usage() {
+    cat <<'EOF'
+Usage:
+  open-iterm-tab [--new-window] <tmux-session-name>
+  open-iterm-tab [--new-window] --title <tab-title> --command <attach-command>
+EOF
+}
+
+escape_osascript() {
+    local value="${1//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    printf '%s' "$value"
+}
+
+shell_escape_single_quotes() {
+    printf "%s" "$1" | sed "s/'/'\\\\''/g"
+}
+
+NEW_WINDOW=0
+TITLE=""
+COMMAND=""
+SESSION=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --new-window)
+            NEW_WINDOW=1
+            shift
+            ;;
+        --title)
+            if [[ $# -lt 2 ]]; then
+                usage
+                exit 1
+            fi
+            TITLE="$2"
+            shift 2
+            ;;
+        --command)
+            if [[ $# -lt 2 ]]; then
+                usage
+                exit 1
+            fi
+            COMMAND="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -*)
+            echo "Unknown option: $1"
+            usage
+            exit 1
+            ;;
+        *)
+            if [[ -n "$SESSION" || -n "$TITLE" || -n "$COMMAND" ]]; then
+                usage
+                exit 1
+            fi
+            SESSION="$1"
+            shift
+            ;;
+    esac
+done
+
+if [[ -n "$SESSION" ]]; then
+    TITLE="$SESSION"
+    SESSION_SHELL_SAFE=$(shell_escape_single_quotes "$SESSION")
+    COMMAND="tmux attach -t '$SESSION_SHELL_SAFE'"
+elif [[ -z "$TITLE" || -z "$COMMAND" ]]; then
+    usage
     exit 1
 fi
 
-# Verify tmux session exists
-if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+if [[ -n "$SESSION" ]] && ! tmux has-session -t "$SESSION" 2>/dev/null; then
     echo "Error: tmux session '$SESSION' does not exist"
     exit 1
 fi
 
-# Check if there's already an iTerm2 tab with this session's profile name
-result=$(osascript -e "
+if [[ "$NEW_WINDOW" -eq 0 ]]; then
+    ESCAPED_TITLE=$(escape_osascript "$TITLE")
+    result=$(osascript -e "
 tell application \"iTerm2\"
     activate
     repeat with aWindow in windows
         repeat with aTab in tabs of aWindow
             repeat with aSession in sessions of aTab
                 try
-                    if profile name of aSession is equal to \"$SESSION\" then
+                    if name of aSession is equal to \"$ESCAPED_TITLE\" then
                         select aWindow
                         select aTab
                         return \"EXISTING\"
@@ -36,23 +106,38 @@ tell application \"iTerm2\"
 end tell
 " 2>&1)
 
-if [ "$result" = "EXISTING" ]; then
-    echo "✓ Switched to existing tab for $SESSION"
+    if [[ "$result" == "EXISTING" ]]; then
+        echo "✓ Switched to existing tab for $TITLE"
+        exit 0
+    fi
+fi
+
+TITLE_SHELL_SAFE=$(shell_escape_single_quotes "$TITLE")
+COMMAND_TO_WRITE="printf '\\\\033]0;$TITLE_SHELL_SAFE\\\\007' && $COMMAND"
+ESCAPED_TITLE=$(escape_osascript "$TITLE")
+ESCAPED_COMMAND=$(escape_osascript "$COMMAND_TO_WRITE")
+
+if [[ "$NEW_WINDOW" -eq 1 ]]; then
+    CREATE_TARGET='create window with default profile'
 else
-    echo "Opening new tab for $SESSION..."
-    osascript -e "
-    tell application \"iTerm2\"
-        activate
+    CREATE_TARGET='if (count of windows) is 0 then
+        create window with default profile
+    else
         tell current window
             create tab with default profile
-            tell current session
-                -- Set profile name for programmatic detection
-                set name to \"$SESSION\"
-                -- Set visible tab title via escape code, then attach to tmux
-                write text \"printf '\\\\033]0;$SESSION\\\\007' && tmux attach -t $SESSION\"
-            end tell
         end tell
-    end tell
-    " 2>&1
-    echo "✓ Opened $SESSION in new iTerm2 tab"
+    end if'
 fi
+
+echo "Opening new tab for $TITLE..."
+osascript -e "
+tell application \"iTerm2\"
+    activate
+    $CREATE_TARGET
+    tell current session of current window
+        set name to \"$ESCAPED_TITLE\"
+        write text \"$ESCAPED_COMMAND\"
+    end tell
+end tell
+" 2>&1
+echo "✓ Opened $TITLE in new iTerm2 tab"
