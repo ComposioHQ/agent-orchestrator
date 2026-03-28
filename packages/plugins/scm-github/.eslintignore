@@ -1,0 +1,3 @@
+# Disable no-console warnings for rest-parallel.ts
+# Console usage in BatchObserverImpl is intentional logging
+rest-parallel.ts
