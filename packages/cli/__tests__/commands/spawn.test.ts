@@ -309,6 +309,47 @@ describe("spawn command", () => {
     expect(output).toContain("8474d6f29887-app-7");
   });
 
+  it("opens docker sessions with runtime attach info when --open is used", async () => {
+    const fakeSession: Session = {
+      id: "app-7",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: "feat/fix",
+      issueId: null,
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: {
+        id: "container-7",
+        runtimeName: "docker",
+        data: { tmuxSessionName: "tmux-7" },
+      },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+    mockSessionManager.getAttachInfo.mockResolvedValue({
+      type: "docker",
+      target: "container-7",
+      command: "docker exec -it container-7 tmux attach -t tmux-7",
+      program: "docker",
+      args: ["exec", "-it", "container-7", "tmux", "attach", "-t", "tmux-7"],
+      requiresPty: true,
+    });
+
+    await program.parseAsync(["node", "test", "spawn", "--open"]);
+
+    expect(mockExec).toHaveBeenCalledWith("open-iterm-tab", [
+      "--title",
+      "container-7",
+      "--command",
+      "docker exec -it container-7 tmux attach -t tmux-7",
+    ]);
+  });
+
   it("passes --agent flag to sessionManager.spawn()", async () => {
     const fakeSession: Session = {
       id: "app-1",

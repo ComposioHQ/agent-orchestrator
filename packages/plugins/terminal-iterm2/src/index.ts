@@ -17,6 +17,12 @@ export const manifest = {
 // Re-export for backwards compatibility
 export { escapeAppleScript } from "@composio/ao-core";
 
+export interface ITerm2OpenSpec {
+  sessionName: string;
+  attachCommand: string;
+  newWindow?: boolean;
+}
+
 /**
  * Run an AppleScript snippet and return stdout.
  */
@@ -95,16 +101,19 @@ end tell`;
  * Open a new iTerm2 tab and attach to the given tmux session.
  * Creates a new window if no window is open.
  */
-async function openNewTab(sessionName: string): Promise<void> {
+async function openNewTab(
+  sessionName: string,
+  attachCommand: string,
+  newWindow?: boolean,
+): Promise<void> {
   const safe = escapeAppleScript(sessionName);
-  // Double-escape for the write text command: shell-escape first, then AppleScript-escape
-  // the whole shell command so it's safe inside the AppleScript double-quoted string.
-  const shellSafe = shellEscape(sessionName);
-  const shellInAppleScript = escapeAppleScript(shellSafe);
+  const commandInAppleScript = escapeAppleScript(
+    `printf '\\\\033]0;${shellEscape(sessionName)}\\\\007' && ${attachCommand}`,
+  );
   const script = `
 tell application "iTerm2"
     activate
-    if (count of windows) is 0 then
+    if ${newWindow ? "true" : "(count of windows) is 0"} then
         create window with default profile
     else
         tell current window
@@ -113,20 +122,56 @@ tell application "iTerm2"
     end if
     tell current session of current window
         set name to "${safe}"
-        write text "printf '\\\\033]0;${shellInAppleScript}\\\\007' && tmux attach -t '${shellInAppleScript}'"
+        write text "${commandInAppleScript}"
     end tell
 end tell`;
 
   await runAppleScript(script);
 }
 
-function getSessionName(session: Session): string {
-  // Use the runtime handle id if available (tmux session name), otherwise session id
-  return session.runtimeHandle?.id ?? session.id;
+function getDockerTmuxSessionName(session: Session): string {
+  const handle = session.runtimeHandle;
+  const tmuxSessionName = handle?.data["tmuxSessionName"];
+  return typeof tmuxSessionName === "string" && tmuxSessionName.length > 0
+    ? tmuxSessionName
+    : session.id;
+}
+
+function buildTmuxAttachCommand(attachTarget: string): string {
+  const handleName = shellEscape(attachTarget);
+  return `tmux attach -t '${handleName}'`;
+}
+
+function getOpenSpec(session: Session): { sessionName: string; attachCommand: string } {
+  if (session.runtimeHandle?.runtimeName === "docker") {
+    const containerName = session.runtimeHandle.id;
+    const tmuxSessionName = getDockerTmuxSessionName(session);
+    const safeContainerName = shellEscape(containerName);
+    const safeTmuxSessionName = shellEscape(tmuxSessionName);
+    return {
+      sessionName: containerName,
+      attachCommand: `docker exec -it '${safeContainerName}' tmux attach -t '${safeTmuxSessionName}'`,
+    };
+  }
+
+  const sessionName = session.runtimeHandle?.id ?? session.id;
+  return {
+    sessionName,
+    attachCommand: buildTmuxAttachCommand(sessionName),
+  };
 }
 
 function isMacOS(): boolean {
   return platform() === "darwin";
+}
+
+export async function openCommandInITerm2(spec: ITerm2OpenSpec): Promise<boolean> {
+  if (!isMacOS()) return false;
+  const found = await findAndSelectExistingTab(spec.sessionName);
+  if (!found) {
+    await openNewTab(spec.sessionName, spec.attachCommand, spec.newWindow);
+  }
+  return true;
 }
 
 export function create(): Terminal {
@@ -139,24 +184,17 @@ export function create(): Terminal {
         console.warn("[terminal-iterm2] iTerm2 is only available on macOS");
         return;
       }
-      const sessionName = getSessionName(session);
+      const spec = getOpenSpec(session);
 
-      // Try to find and select an existing tab first
-      const found = await findAndSelectExistingTab(sessionName);
-      if (!found) {
-        await openNewTab(sessionName);
-      }
+      await openCommandInITerm2(spec);
     },
 
     async openAll(sessions: Session[]): Promise<void> {
       if (!isMacOS() || sessions.length === 0) return;
 
       for (const session of sessions) {
-        const sessionName = getSessionName(session);
-        const found = await findAndSelectExistingTab(sessionName);
-        if (!found) {
-          await openNewTab(sessionName);
-        }
+        const spec = getOpenSpec(session);
+        await openCommandInITerm2(spec);
         // Small delay between tab operations to avoid AppleScript race conditions
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
@@ -164,7 +202,7 @@ export function create(): Terminal {
 
     async isSessionOpen(session: Session): Promise<boolean> {
       if (!isMacOS()) return false;
-      const sessionName = getSessionName(session);
+      const sessionName = getOpenSpec(session).sessionName;
       try {
         // Query-only check — does NOT select/focus the tab
         return await hasExistingTab(sessionName);

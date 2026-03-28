@@ -20,6 +20,7 @@ import { ensureLifecycleWorker } from "../lib/lifecycle-service.js";
 import { preflight } from "../lib/preflight.js";
 import { findProjectForDirectory } from "../lib/project-resolution.js";
 import { formatAttachCommand } from "../lib/attach.js";
+import { openInIterm } from "../lib/open-iterm.js";
 import {
   appendStringOption,
   resolveRuntimeOverride,
@@ -155,18 +156,25 @@ async function spawnSession(
     }
     const tmuxTarget = session.runtimeHandle?.id ?? session.id;
     const attachInfo = await sm.getAttachInfo(session.id).catch(() => null);
+    const runtimeName = session.runtimeHandle?.runtimeName ?? config.defaults.runtime;
     console.log(
-      `  Attach:   ${chalk.dim(formatAttachCommand(attachInfo, `tmux attach -t ${tmuxTarget}`))}`,
+      `  Attach:   ${chalk.dim(
+        formatAttachCommand(
+          attachInfo,
+          runtimeName === "tmux" ? `tmux attach -t ${tmuxTarget}` : "(attach command unavailable)",
+        ),
+      )}`,
     );
     console.log();
 
     // Open terminal tab if requested
-    if (openTab && (attachInfo?.type ?? session.runtimeHandle?.runtimeName) === "tmux") {
-      try {
-        await exec("open-iterm-tab", [tmuxTarget]);
-      } catch {
-        // Terminal plugin not available
-      }
+    if (openTab) {
+      await openInIterm({
+        tabTitle: tmuxTarget,
+        tmuxTarget,
+        runtimeName,
+        attachInfo,
+      });
     }
 
     // Output for scripting
@@ -485,14 +493,14 @@ export function registerBatchSpawn(program: Command): void {
               console.log(chalk.green(`  Created ${session.id} for ${issue}`));
 
               if (opts.open) {
-                try {
-                  if ((session.runtimeHandle?.runtimeName ?? config.defaults.runtime) === "tmux") {
-                    const tmuxTarget = session.runtimeHandle?.id ?? session.id;
-                    await exec("open-iterm-tab", [tmuxTarget]);
-                  }
-                } catch {
-                  // best effort
-                }
+                const tmuxTarget = session.runtimeHandle?.id ?? session.id;
+                const attachInfo = await sm.getAttachInfo(session.id).catch(() => null);
+                await openInIterm({
+                  tabTitle: tmuxTarget,
+                  tmuxTarget,
+                  runtimeName: session.runtimeHandle?.runtimeName ?? config.defaults.runtime,
+                  attachInfo,
+                });
               }
             } catch (err) {
               failed.push({

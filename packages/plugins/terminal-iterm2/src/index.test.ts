@@ -120,6 +120,27 @@ describe("terminal-iterm2", () => {
       expect(newTabScript).not.toContain("app-1");
     });
 
+    it("builds a docker attach command when the session runtime is docker", async () => {
+      simulateOsascript("NOT_FOUND\n");
+      const terminal = create();
+      await terminal.openSession(
+        makeSession({
+          id: "app-1",
+          runtimeHandle: {
+            id: "container-42",
+            runtimeName: "docker",
+            data: { tmuxSessionName: "docker-tmux-42" },
+          },
+        }),
+      );
+
+      const newTabScript = mockExecFile.mock.calls[1][1][1] as string;
+      expect(newTabScript).toContain("container-42");
+      expect(newTabScript).toContain(
+        "docker exec -it 'container-42' tmux attach -t 'docker-tmux-42'",
+      );
+    });
+
     it("reuses existing tab when found", async () => {
       simulateOsascript("FOUND\n");
       const terminal = create();
@@ -174,6 +195,24 @@ describe("terminal-iterm2", () => {
       expect(openScript).toContain("create tab with default profile");
       expect(openScript).toContain('set name to "app-7"');
       expect(openScript).toContain("tmux attach -t 'app-7'");
+    });
+
+    it("openNewTab creates tab and attaches to docker-backed tmux sessions", async () => {
+      simulateOsascript("NOT_FOUND\n");
+      const terminal = create();
+      await terminal.openSession(
+        makeSession({
+          id: "app-7",
+          runtimeHandle: {
+            id: "container-7",
+            runtimeName: "docker",
+            data: { tmuxSessionName: "tmux-7" },
+          },
+        }),
+      );
+
+      const openScript = mockExecFile.mock.calls[1][1][1] as string;
+      expect(openScript).toContain("docker exec -it 'container-7' tmux attach -t 'tmux-7'");
     });
 
     it("shell-escapes session names with single quotes in tmux command", async () => {
