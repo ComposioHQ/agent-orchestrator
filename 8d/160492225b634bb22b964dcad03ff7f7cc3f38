@@ -1,0 +1,25 @@
+packages/web/src/app/globals.css
+  b04c3dc6b2376a79 64,85,218
+packages/web/src/components/ActivityDot.tsx
+  b04c3dc6b2376a79 9-10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.22",
+  "base_commit_sha": "8d160492225b634bb22b964dcad03ff7f7cc3f38",
+  "prompts": {
+    "b04c3dc6b2376a79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "47171029-25fa-4631-b451-6fd1bd86a271",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 5,
+      "total_deletions": 5,
+      "accepted_lines": 5,
+      "overriden_lines": 0
+    }
+  }
+}
