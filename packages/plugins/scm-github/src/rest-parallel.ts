@@ -8,6 +8,9 @@
  * This reduces GitHub API calls from N×6 to ~N×2 per polling cycle.
  */
 
+/* eslint-disable no-console -- console usage is intentional for logging in BatchObserverImpl */
+
+
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import {
