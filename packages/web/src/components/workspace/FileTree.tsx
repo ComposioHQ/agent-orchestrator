@@ -4,6 +4,9 @@ import { useState, useCallback, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useFileTree } from "./useFileTree";
 import type { FileNode } from "@/app/api/sessions/[id]/files/route";
+import { filterTreeToChanged } from "./fileTreeFilter";
+
+export { filterTreeToChanged } from "./fileTreeFilter";
 
 type GitStatus = "M" | "A" | "D" | "?" | "R";
 
@@ -139,9 +142,10 @@ interface FileTreeProps {
   sessionId: string;
   selectedFile: string | null;
   onFileSelected?: () => void;
+  showChangedOnly?: boolean;
 }
 
-export function FileTree({ sessionId, selectedFile, onFileSelected }: FileTreeProps) {
+export function FileTree({ sessionId, selectedFile, onFileSelected, showChangedOnly }: FileTreeProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { tree, gitStatus, loading, error } = useFileTree(sessionId);
@@ -204,17 +208,19 @@ export function FileTree({ sessionId, selectedFile, onFileSelected }: FileTreePr
     );
   }
 
-  if (tree.length === 0) {
+  const displayTree = showChangedOnly ? filterTreeToChanged(tree, gitStatus) : tree;
+
+  if (displayTree.length === 0) {
     return (
       <div style={{ padding: "12px", color: "var(--color-text-secondary)", fontSize: "12px" }}>
-        No files found
+        {showChangedOnly ? "No changed files" : "No files found"}
       </div>
     );
   }
 
   return (
     <div className="workspace-file-tree-list">
-      {tree.map((node) => (
+      {displayTree.map((node) => (
         <FileTreeNode
           key={node.path}
           node={node}

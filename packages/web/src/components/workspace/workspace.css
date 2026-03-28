@@ -175,6 +175,46 @@
   padding-right: 8px;
 }
 
+.workspace-file-tree-settings-popover {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  min-width: 200px;
+  padding: 10px 12px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-default);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  z-index: 50;
+}
+
+.workspace-file-tree-settings-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-tertiary);
+  margin-bottom: 8px;
+}
+
+.workspace-file-tree-settings-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.workspace-file-tree-settings-row input {
+  flex-shrink: 0;
+}
+
 /* ── Code Viewer (non-markdown files) ──────────────────── */
 
 .workspace-code-viewer {
@@ -208,6 +248,11 @@
   flex: 1;
   white-space: pre;
   color: var(--color-text-primary);
+}
+
+.workspace-code-content .hljs {
+  background: transparent;
+  padding: 0;
 }
 
 /* ── Terminal Pane ─────────────────────────────────────── */
@@ -458,3 +503,68 @@
 .hljs-template-variable { color: #9cdcfe; }
 .hljs-addition { color: #b5cea8; background: rgba(181, 206, 168, 0.1); }
 .hljs-deletion { color: #ce9178; background: rgba(206, 145, 120, 0.1); }
+
+/* ── Diff Viewer ───────────────────────────────────────── */
+
+.workspace-diff-viewer {
+  margin: 0;
+  padding: 0;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 20px;
+  background: var(--color-bg);
+}
+
+.workspace-diff-hunk-header {
+  padding: 4px 16px;
+  background: rgba(56, 139, 253, 0.1);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  border-top: 1px solid var(--color-border-subtle);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.workspace-diff-line {
+  display: flex;
+  padding: 0 16px 0 0;
+}
+
+.workspace-diff-line--added {
+  background: rgba(63, 185, 80, 0.15);
+}
+
+.workspace-diff-line--removed {
+  background: rgba(248, 81, 73, 0.15);
+}
+
+.workspace-diff-gutter {
+  color: var(--color-text-tertiary);
+  user-select: none;
+  text-align: right;
+  min-width: 40px;
+  padding: 0 4px;
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.workspace-diff-marker {
+  user-select: none;
+  min-width: 16px;
+  text-align: center;
+  flex-shrink: 0;
+  padding: 0 2px;
+}
+
+.workspace-diff-line--added .workspace-diff-marker { color: #3fb950; }
+.workspace-diff-line--removed .workspace-diff-marker { color: #f85149; }
+
+.workspace-diff-content {
+  flex: 1;
+  white-space: pre;
+}
+
+/* Active state for changed-files toggle */
+.workspace-pane-header-btn--active {
+  color: var(--color-accent) !important;
+  background: rgba(56, 139, 253, 0.15);
+}
