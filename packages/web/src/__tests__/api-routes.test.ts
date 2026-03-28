@@ -546,6 +546,7 @@ describe("API Routes", () => {
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(data.ok).toBe(true);
+      expect(data.success).toBe(true);
       expect(data.message).toBe("Fix the tests");
     });
 
@@ -607,7 +608,10 @@ describe("API Routes", () => {
       const res = await messagePOST(req, { params: Promise.resolve({ id: "backend-3" }) });
       expect(res.status).toBe(200);
       const data = await res.json();
+      expect(data.ok).toBe(true);
       expect(data.success).toBe(true);
+      expect(data.sessionId).toBe("backend-3");
+      expect(data.message).toBe("Fix the tests");
     });
 
     it("returns 404 for unknown session", async () => {

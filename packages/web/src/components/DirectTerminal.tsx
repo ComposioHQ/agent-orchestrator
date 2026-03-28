@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useMemo } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
 import { cn } from "@/lib/cn";
+import { sendSessionMessage } from "@/lib/session-message-client";
 
 // Import xterm CSS (must be imported in client component)
 import "xterm/css/xterm.css";
@@ -203,14 +204,7 @@ export function DirectTerminal({
         commandToSend = `/exit\nopencode --session ${remapData.opencodeSessionId}\n`;
       }
 
-      const sendRes = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/send`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: commandToSend }),
-      });
-      if (!sendRes.ok) {
-        throw new Error(`Failed to send reload command: ${sendRes.status}`);
-      }
+      await sendSessionMessage(sessionId, commandToSend);
     } catch (err) {
       setReloadError(err instanceof Error ? err.message : "Failed to reload OpenCode session");
     } finally {
