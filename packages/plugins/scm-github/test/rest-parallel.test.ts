@@ -60,7 +60,6 @@ vi.mock("../src/rest-parallel.js", async (importOriginal) => {
 
   return {
     ...mod,
-    shouldRefreshPREnrichment: (mod as { shouldRefreshPREnrichment?: typeof import("../src/rest-parallel.js")["shouldRefreshPREnrichment"] }).shouldRefreshPREnrichment,
     enrichSessionsPRBatch: mod.enrichSessionsPRBatch,
   };
 });
