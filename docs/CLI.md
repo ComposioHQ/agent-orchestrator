@@ -48,5 +48,13 @@ ao config-help                         # Show full config schema reference
 ao start --runtime docker --runtime-image ghcr.io/composio/ao:latest
 ao start --runtime docker --runtime-memory 4g --runtime-cpus 2 --runtime-read-only
 ao spawn 123 --runtime docker --runtime-network bridge --runtime-cap-drop ALL
+ao spawn 123 --runtime docker --runtime-read-only --runtime-tmpfs /tmp --runtime-cap-drop ALL --runtime-cap-drop NET_RAW
 ao spawn 123 --runtime docker --runtime-config '{"limits":{"memory":"4g"}}'
 ```
+
+Runtime override rules:
+
+- Command-line runtime overrides merge on top of the project's configured `runtimeConfig`.
+- `--runtime-config` is merged first, then explicit flags such as `--runtime-memory` or `--runtime-read-only` win for the same keys.
+- `--runtime-cap-drop` and `--runtime-tmpfs` are repeatable.
+- Runtime-aware attach surfaces (`ao session attach`, `ao open`, and the web dashboard terminal) use `docker exec ... tmux attach` for Docker sessions.
