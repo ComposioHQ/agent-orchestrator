@@ -38,7 +38,7 @@ describe("Dashboard project overview cards", () => {
     expect(screen.getAllByText("Docs App").length).toBeGreaterThan(0);
     expect(screen.getByRole("link", { name: "orchestrator" })).toHaveAttribute(
       "href",
-      "/sessions/my-app-orchestrator",
+      "/projects/my-app/sessions/my-app-orchestrator",
     );
     expect(screen.getByRole("button", { name: "Spawn Orchestrator" })).toBeInTheDocument();
     expect(screen.getAllByText("No running orchestrator")).toHaveLength(1);
@@ -133,7 +133,7 @@ describe("Dashboard project overview cards", () => {
     await waitFor(() => {
       const links = screen.getAllByRole("link", { name: "orchestrator" });
       expect(links).toHaveLength(1);
-      expect(links[0]).toHaveAttribute("href", "/sessions/docs-orchestrator");
+      expect(links[0]).toHaveAttribute("href", "/projects/docs-app/sessions/docs-orchestrator");
     });
 
     expect(screen.queryByText("Spawning...")).not.toBeInTheDocument();
