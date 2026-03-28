@@ -11,7 +11,6 @@ import {
   fetchCIData,
   enrichSessionsPRBatch,
   PARALLEL_CONCURRENCY,
-  PR_METADATA_CACHE_SIZE,
   ENRICHMENT_CACHE_SIZE,
 } from "../src/rest-parallel.js";
 
@@ -258,10 +257,6 @@ describe("CI Data Fetching", () => {
 describe("Constants", () => {
   it("should export parallel concurrency constant", () => {
     expect(PARALLEL_CONCURRENCY).toBe(10);
-  });
-
-  it("should export PR metadata cache size constant", () => {
-    expect(PR_METADATA_CACHE_SIZE).toBe(100);
   });
 
   it("should export enrichment cache size constant", () => {

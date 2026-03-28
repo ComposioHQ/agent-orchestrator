@@ -31,7 +31,6 @@ const execFileAsync = promisify(execFile);
 // =============================================================================
 
 const PARALLEL_CONCURRENCY = 10;
-const PR_METADATA_CACHE_SIZE = 100;
 const ENRICHMENT_CACHE_SIZE = 200;
 
 // =============================================================================
@@ -262,12 +261,13 @@ async function checkPRListETag(
 
   try {
     const { stdout } = await execFileAsync("gh", args, {
-      maxBuffer: 1024,
+      maxBuffer: 10 * 1024,
       timeout: 30_000,
     });
 
     // Parse ETag from response headers (includes full HTTP headers with --include)
-    const etagMatch = stdout.match(/ETag:\s*"([^"]+)"/i);
+    // Handles both strong ETags: "abc123" and weak ETags: W/"abc123"
+    const etagMatch = stdout.match(/ETag:\s*(?:W\/)?"([^"]+)"/i);
     const newEtag = etagMatch ? etagMatch[1] : undefined;
 
     if (newEtag) {
@@ -315,12 +315,13 @@ async function checkCommitStatusETag(pr: PRInfo, etagCache: ETagCache): Promise<
 
   try {
     const { stdout } = await execFileAsync("gh", args, {
-      maxBuffer: 1024,
+      maxBuffer: 10 * 1024,
       timeout: 30_000,
     });
 
     // Parse ETag from response headers (includes full HTTP headers with --include)
-    const etagMatch = stdout.match(/ETag:\s*"([^"]+)"/i);
+    // Handles both strong ETags: "abc123" and weak ETags: W/"abc123"
+    const etagMatch = stdout.match(/ETag:\s*(?:W\/)?"([^"]+)"/i);
     const newEtag = etagMatch ? etagMatch[1] : undefined;
 
     if (newEtag) {
@@ -799,6 +800,5 @@ export {
   LRUCache,
   ETagCache,
   PARALLEL_CONCURRENCY,
-  PR_METADATA_CACHE_SIZE,
   ENRICHMENT_CACHE_SIZE,
 };
