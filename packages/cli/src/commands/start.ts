@@ -945,6 +945,15 @@ async function runStartup(
       }
       process.exit(code ?? 0);
     });
+
+    // Propagate termination signals to the dashboard child so it doesn't
+    // become an orphan when the user presses Ctrl+C or the parent is killed.
+    const killDashboard = (): void => {
+      try { dashboardProcess?.kill("SIGTERM"); } catch { /* already dead */ }
+    };
+    process.on("SIGINT", killDashboard);
+    process.on("SIGTERM", killDashboard);
+    process.on("exit", killDashboard);
   }
 
   return port;
@@ -953,27 +962,44 @@ async function runStartup(
 /**
  * Stop dashboard server.
  * Uses lsof to find the process listening on the port, then kills it.
+ * If nothing is found on the given port, scans the port range
+ * [port+1 .. port+MAX_PORT_SCAN] to catch orphaned processes that were
+ * started on a reassigned port (e.g. when the original port was busy).
  * Best effort — if it fails, just warn the user.
  */
 async function stopDashboard(port: number): Promise<void> {
-  try {
-    // Find PIDs listening on the port (can be multiple: parent + children)
-    const { stdout } = await exec("lsof", ["-ti", `:${port}`]);
-    const pids = stdout
-      .trim()
-      .split("\n")
-      .filter((p) => p.length > 0);
-
-    if (pids.length > 0) {
-      // Kill all processes (pass PIDs as separate arguments)
+  // Try to kill by port. Returns true if a process was found and killed.
+  async function killOnPort(p: number): Promise<boolean> {
+    try {
+      const { stdout } = await exec("lsof", ["-ti", `:${p}`]);
+      const pids = stdout
+        .trim()
+        .split("\n")
+        .filter((line) => line.length > 0);
+      if (pids.length === 0) return false;
       await exec("kill", pids);
-      console.log(chalk.green("Dashboard stopped"));
-    } else {
-      console.log(chalk.yellow(`Dashboard not running on port ${port}`));
+      return true;
+    } catch {
+      return false;
     }
-  } catch {
-    console.log(chalk.yellow("Could not stop dashboard (may not be running)"));
   }
+
+  // 1. Try the expected port first.
+  if (await killOnPort(port)) {
+    console.log(chalk.green("Dashboard stopped"));
+    return;
+  }
+
+  // 2. Fallback: scan the port range to find an orphaned dashboard that was
+  //    auto-reassigned to a different port at startup.
+  for (let p = port + 1; p <= port + MAX_PORT_SCAN; p++) {
+    if (await killOnPort(p)) {
+      console.log(chalk.green(`Dashboard stopped (was on port ${p})`));
+      return;
+    }
+  }
+
+  console.log(chalk.yellow("Could not stop dashboard (may not be running)"));
 }
 
 // =============================================================================
