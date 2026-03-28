@@ -1,6 +1,6 @@
 {
   "name": "@composio/ao-plugin-agent-claude-code",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Agent plugin: Claude Code",
   "license": "MIT",
   "type": "module",

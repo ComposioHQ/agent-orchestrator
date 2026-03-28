@@ -1,13 +1,14 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
+import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
 import { type DashboardSession, type DashboardPR, isPRMergeReady } from "@/lib/types";
 import { CI_STATUS } from "@composio/ao-core/types";
 import { cn } from "@/lib/cn";
 import { CICheckList } from "./CIBadge";
 import { DirectTerminal } from "./DirectTerminal";
-import { ActivityDot } from "./ActivityDot";
+import { MobileBottomNav } from "./MobileBottomNav";
 
 interface OrchestratorZones {
   merge: number;
@@ -22,6 +23,7 @@ interface SessionDetailProps {
   session: DashboardSession;
   isOrchestrator?: boolean;
   orchestratorZones?: OrchestratorZones;
+  projectOrchestratorId?: string | null;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -35,26 +37,8 @@ const activityMeta: Record<string, { label: string; color: string }> = {
   exited: { label: "Exited", color: "var(--color-status-error)" },
 };
 
-function humanizeStatus(status: string): string {
-  return status
-    .replace(/_/g, " ")
-    .replace(/\bci\b/gi, "CI")
-    .replace(/\bpr\b/gi, "PR")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-function relativeTime(iso: string): string {
-  const ms = new Date(iso).getTime();
-  if (!iso || isNaN(ms)) return "unknown";
-  const diff = Date.now() - ms;
-  const seconds = Math.floor(diff / 1000);
-  if (seconds < 60) return "just now";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+function getSessionHeadline(session: DashboardSession): string {
+  return session.issueTitle ?? session.summary ?? session.id;
 }
 
 function cleanBugbotComment(body: string): { title: string; description: string } {
@@ -75,8 +59,125 @@ function buildGitHubBranchUrl(pr: DashboardPR): string {
   return `https://github.com/${pr.owner}/${pr.repo}/tree/${pr.branch}`;
 }
 
-function buildGitHubRepoUrl(pr: DashboardPR): string {
-  return `https://github.com/${pr.owner}/${pr.repo}`;
+function activityStateClass(activityLabel: string): string {
+  const normalized = activityLabel.toLowerCase();
+  if (normalized === "active") return "session-detail-status-pill--active";
+  if (normalized === "ready") return "session-detail-status-pill--ready";
+  if (normalized === "idle") return "session-detail-status-pill--idle";
+  if (normalized === "waiting for input") return "session-detail-status-pill--waiting";
+  if (normalized === "blocked" || normalized === "exited") {
+    return "session-detail-status-pill--error";
+  }
+  return "session-detail-status-pill--neutral";
+}
+
+function SessionTopStrip({
+  headline,
+  activityLabel,
+  activityColor,
+  branch,
+  pr,
+  isOrchestrator = false,
+  crumbHref,
+  crumbLabel,
+  mobileSimple = false,
+  rightSlot,
+}: {
+  headline: string;
+  activityLabel: string;
+  activityColor: string;
+  branch: string | null;
+  pr: DashboardPR | null;
+  isOrchestrator?: boolean;
+  crumbHref: string;
+  crumbLabel: string;
+  mobileSimple?: boolean;
+  rightSlot?: ReactNode;
+}) {
+  return (
+    <section className={`session-page-header${mobileSimple ? " session-page-header--mobile" : ""}`}>
+      <div className="session-page-header__crumbs">
+        <a
+          href={crumbHref}
+          className="flex items-center gap-1 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-text-primary)] hover:no-underline"
+        >
+          <svg
+            className="h-3 w-3 opacity-60"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            viewBox="0 0 24 24"
+          >
+            <path d="M15 18l-6-6 6-6" />
+          </svg>
+          {crumbLabel}
+        </a>
+        <span className="text-[var(--color-border-strong)]">/</span>
+        {!mobileSimple ? (
+          <span className="font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]">
+            {headline}
+          </span>
+        ) : null}
+        {isOrchestrator && !mobileSimple ? (
+          <span className="session-page-header__mode">orchestrator</span>
+        ) : null}
+      </div>
+      <div className="session-page-header__main">
+        <div className="session-page-header__identity">
+          <h1 className="truncate text-[17px] font-semibold tracking-[-0.03em] text-[var(--color-text-primary)]">
+            {headline}
+          </h1>
+          <div className="session-page-header__meta">
+            <div
+              className={cn(
+                "session-detail-status-pill flex items-center gap-1.5 border px-2.5 py-1",
+                activityStateClass(activityLabel),
+              )}
+              style={{
+                background: `color-mix(in srgb, ${activityColor} 12%, transparent)`,
+                border: `1px solid color-mix(in srgb, ${activityColor} 20%, transparent)`,
+              }}
+            >
+              <span
+                className="session-detail-status-pill__dot h-1.5 w-1.5 shrink-0"
+                style={{ background: activityColor }}
+              />
+              <span className="text-[11px] font-semibold" style={{ color: activityColor }}>
+                {activityLabel}
+              </span>
+            </div>
+            {branch ? (
+              pr ? (
+                <a
+                  href={buildGitHubBranchUrl(pr)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="session-detail-link-pill session-detail-link-pill--link font-[var(--font-mono)] text-[10px] hover:no-underline"
+                >
+                  {branch}
+                </a>
+              ) : (
+                <span className="session-detail-link-pill font-[var(--font-mono)] text-[10px]">
+                  {branch}
+                </span>
+              )
+            ) : null}
+            {pr ? (
+              <a
+                href={pr.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="session-detail-link-pill session-detail-link-pill--link session-detail-link-pill--accent hover:no-underline"
+              >
+                PR #{pr.number}
+              </a>
+            ) : null}
+          </div>
+        </div>
+        {rightSlot ? <div className="session-page-header__side">{rightSlot}</div> : null}
+      </div>
+    </section>
+  );
 }
 
 async function askAgentToFix(
@@ -106,9 +207,23 @@ async function askAgentToFix(
 function OrchestratorStatusStrip({
   zones,
   createdAt,
+  headline,
+  activityLabel,
+  activityColor,
+  branch,
+  pr,
+  crumbHref,
+  crumbLabel,
 }: {
   zones: OrchestratorZones;
   createdAt: string;
+  headline: string;
+  activityLabel: string;
+  activityColor: string;
+  branch: string | null;
+  pr: DashboardPR | null;
+  crumbHref: string;
+  crumbLabel: string;
 }) {
   const [uptime, setUptime] = useState<string>("");
 
@@ -137,52 +252,63 @@ function OrchestratorStatusStrip({
     zones.merge + zones.respond + zones.review + zones.working + zones.pending + zones.done;
 
   return (
-    <div
-      className="border-b border-[var(--color-border-subtle)] px-8 py-4"
-      style={{
-        background: "linear-gradient(to bottom, rgba(88,166,255,0.04) 0%, transparent 100%)",
-      }}
-    >
-      <div className="mx-auto flex max-w-[900px] items-center gap-3 flex-wrap">
-        {/* Total count */}
-        <div className="flex items-baseline gap-1.5 mr-2">
-          <span className="text-[22px] font-bold leading-none tabular-nums text-[var(--color-text-primary)]">
-            {total}
-          </span>
-          <span className="text-[11px] text-[var(--color-text-tertiary)]">agents</span>
-        </div>
-
-        <div className="h-5 w-px bg-[var(--color-border-subtle)] mr-1" />
-
-        {/* Per-zone pills */}
-        {stats.length > 0 ? (
-          stats.map((s) => (
-            <div
-              key={s.label}
-              className="flex items-center gap-1.5 rounded-full px-2.5 py-1"
-              style={{ background: s.bg }}
-            >
-              <span
-                className="text-[15px] font-bold leading-none tabular-nums"
-                style={{ color: s.color }}
-              >
-                {s.value}
+    <div className="mx-auto max-w-[1180px] px-5 pt-5 lg:px-8">
+      <SessionTopStrip
+        headline={headline}
+        activityLabel={activityLabel}
+        activityColor={activityColor}
+        branch={branch}
+        pr={pr}
+        isOrchestrator
+        crumbHref={crumbHref}
+        crumbLabel={crumbLabel}
+        rightSlot={
+          <div className="flex flex-wrap items-center gap-3 lg:justify-end">
+            <div className="flex items-baseline gap-1.5 mr-2">
+              <span className="text-[22px] font-bold leading-none tabular-nums text-[var(--color-text-primary)]">
+                {total}
               </span>
-              <span className="text-[10px] font-medium" style={{ color: s.color, opacity: 0.8 }}>
-                {s.label}
-              </span>
+              <span className="text-[11px] text-[var(--color-text-tertiary)]">agents</span>
             </div>
-          ))
-        ) : (
-          <span className="text-[12px] text-[var(--color-text-tertiary)]">no active agents</span>
-        )}
 
-        {uptime && (
-          <span className="ml-auto font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]">
-            up {uptime}
-          </span>
-        )}
-      </div>
+            <div className="h-5 w-px bg-[var(--color-border-subtle)] mr-1" />
+
+            {/* Per-zone pills */}
+            {stats.length > 0 ? (
+              stats.map((s) => (
+                <div
+                  key={s.label}
+                  className="flex items-center gap-1.5 px-2.5 py-1"
+                  style={{ background: s.bg }}
+                >
+                  <span
+                    className="text-[15px] font-bold leading-none tabular-nums"
+                    style={{ color: s.color }}
+                  >
+                    {s.value}
+                  </span>
+                  <span
+                    className="text-[10px] font-medium"
+                    style={{ color: s.color, opacity: 0.8 }}
+                  >
+                    {s.label}
+                  </span>
+                </div>
+              ))
+            ) : (
+              <span className="text-[12px] text-[var(--color-text-tertiary)]">
+                no active agents
+              </span>
+            )}
+
+            {uptime && (
+              <span className="ml-auto font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]">
+                up {uptime}
+              </span>
+            )}
+          </div>
+        }
+      />
     </div>
   );
 }
@@ -193,19 +319,22 @@ export function SessionDetail({
   session,
   isOrchestrator = false,
   orchestratorZones,
+  projectOrchestratorId = null,
 }: SessionDetailProps) {
   const searchParams = useSearchParams();
+  const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
   const startFullscreen = searchParams.get("fullscreen") === "true";
   const pr = session.pr;
   const activity = (session.activity && activityMeta[session.activity]) ?? {
     label: session.activity ?? "unknown",
     color: "var(--color-text-muted)",
   };
+  const headline = getSessionHeadline(session);
 
   const accentColor = "var(--color-accent)";
   const terminalVariant = isOrchestrator ? "orchestrator" : "agent";
 
-  const terminalHeight = isOrchestrator ? "calc(100vh - 240px)" : "max(440px, calc(100vh - 440px))";
+  const terminalHeight = isOrchestrator ? "clamp(560px, 76vh, 920px)" : "clamp(520px, 72vh, 860px)";
   const isOpenCodeSession = session.metadata["agent"] === "opencode";
   const opencodeSessionId =
     typeof session.metadata["opencodeSessionId"] === "string" &&
@@ -215,238 +344,93 @@ export function SessionDetail({
   const reloadCommand = opencodeSessionId
     ? `/exit\nopencode --session ${opencodeSessionId}\n`
     : undefined;
+  const dashboardHref = session.projectId ? `/?project=${encodeURIComponent(session.projectId)}` : "/";
+  const prsHref = session.projectId ? `/prs?project=${encodeURIComponent(session.projectId)}` : "/prs";
+  const crumbHref = dashboardHref;
+  const crumbLabel = isOrchestrator ? "Orchestrator" : "Dashboard";
+  const orchestratorHref = useMemo(() => {
+    if (isOrchestrator) return `/sessions/${encodeURIComponent(session.id)}`;
+    if (!projectOrchestratorId) return null;
+    return `/sessions/${encodeURIComponent(projectOrchestratorId)}`;
+  }, [isOrchestrator, projectOrchestratorId, session.id]);
 
   return (
-    <div className="min-h-screen bg-[var(--color-bg-base)]">
-      {/* Nav bar — glass effect */}
-      <nav className="nav-glass sticky top-0 z-10 border-b border-[var(--color-border-subtle)]">
-        <div className="mx-auto flex max-w-[900px] items-center gap-2 px-8 py-2.5">
-          <a
-            href="/"
-            className="flex items-center gap-1 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-text-primary)] hover:no-underline"
-          >
-            <svg
-              className="h-3 w-3 opacity-60"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              viewBox="0 0 24 24"
-            >
-              <path d="M15 18l-6-6 6-6" />
-            </svg>
-            Orchestrator
-          </a>
-          <span className="text-[var(--color-border-strong)]">/</span>
-          <span className="font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]">
-            {session.id}
-          </span>
-          {isOrchestrator && (
-            <span
-              className="ml-1 rounded px-2 py-0.5 text-[10px] font-semibold tracking-[0.05em]"
-              style={{
-                color: accentColor,
-                background: `color-mix(in srgb, ${accentColor} 10%, transparent)`,
-                border: `1px solid color-mix(in srgb, ${accentColor} 20%, transparent)`,
-              }}
-            >
-              orchestrator
-            </span>
-          )}
-        </div>
-      </nav>
-
-      {/* Orchestrator status strip */}
-      {isOrchestrator && orchestratorZones && (
-        <OrchestratorStatusStrip zones={orchestratorZones} createdAt={session.createdAt} />
+    <div className="session-detail-page min-h-screen bg-[var(--color-bg-base)]">
+      {isOrchestrator && orchestratorZones && !isMobile && (
+        <OrchestratorStatusStrip
+          zones={orchestratorZones}
+          createdAt={session.createdAt}
+          headline={headline}
+          activityLabel={activity.label}
+          activityColor={activity.color}
+          branch={session.branch}
+          pr={pr}
+          crumbHref={crumbHref}
+          crumbLabel={crumbLabel}
+        />
       )}
 
-      <div className="mx-auto max-w-[900px] px-8 py-6">
-        {/* ── Header card ─────────────────────────────────────────── */}
-        <div
-          className="detail-card mb-6 rounded-[8px] border border-[var(--color-border-default)] p-5"
-          style={{
-            borderLeft: isOrchestrator ? `3px solid ${accentColor}` : `3px solid ${activity.color}`,
-          }}
-        >
-          <div className="flex items-start gap-3">
-            <div className="flex-1 min-w-0">
-              <div className="flex flex-wrap items-center gap-2.5">
-                <h1 className="font-[var(--font-mono)] text-[17px] font-semibold tracking-[-0.01em] text-[var(--color-text-primary)]">
-                  {session.id}
-                </h1>
-                {/* Activity badge */}
-                <div
-                  className="flex items-center gap-1.5 rounded-full px-2.5 py-0.5"
-                  style={{
-                    background: `color-mix(in srgb, ${activity.color} 12%, transparent)`,
-                    border: `1px solid color-mix(in srgb, ${activity.color} 20%, transparent)`,
-                  }}
-                >
-                  <ActivityDot activity={session.activity} dotOnly size={6} />
-                  <span className="text-[11px] font-semibold" style={{ color: activity.color }}>
-                    {activity.label}
-                  </span>
-                </div>
-              </div>
-
-              {session.summary && (
-                <p className="mt-2 text-[13px] leading-relaxed text-[var(--color-text-secondary)]">
-                  {session.summary}
-                </p>
-              )}
-
-              {/* Meta chips */}
-              <div className="mt-3 flex flex-wrap items-center gap-1.5">
-                {session.projectId && (
-                  <>
-                    {pr ? (
-                      <a
-                        href={buildGitHubRepoUrl(pr)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.04)] px-2 py-0.5 text-[11px] text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-primary)] hover:no-underline"
-                      >
-                        {session.projectId}
-                      </a>
-                    ) : (
-                      <span className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.04)] px-2 py-0.5 text-[11px] text-[var(--color-text-secondary)]">
-                        {session.projectId}
-                      </span>
-                    )}
-                    <span className="text-[var(--color-text-tertiary)]">&middot;</span>
-                  </>
-                )}
-
-                {pr && (
-                  <>
-                    <a
-                      href={pr.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.04)] px-2 py-0.5 text-[11px] text-[var(--color-accent)] transition-colors hover:border-[var(--color-accent)] hover:no-underline"
-                    >
-                      PR #{pr.number}
-                    </a>
-                    {(session.branch || session.issueUrl) && (
-                      <span className="text-[var(--color-text-tertiary)]">&middot;</span>
-                    )}
-                  </>
-                )}
-
-                {session.branch && (
-                  <>
-                    {pr ? (
-                      <a
-                        href={buildGitHubBranchUrl(pr)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.04)] px-2 py-0.5 font-[var(--font-mono)] text-[10px] text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-primary)] hover:no-underline"
-                      >
-                        {session.branch}
-                      </a>
-                    ) : (
-                      <span className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.04)] px-2 py-0.5 font-[var(--font-mono)] text-[10px] text-[var(--color-text-secondary)]">
-                        {session.branch}
-                      </span>
-                    )}
-                    {session.issueUrl && (
-                      <span className="text-[var(--color-text-tertiary)]">&middot;</span>
-                    )}
-                  </>
-                )}
-
-                {session.issueUrl && (
-                  <a
-                    href={session.issueUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="rounded-[4px] border border-[var(--color-border-subtle)] bg-[rgba(255,255,255,0.04)] px-2 py-0.5 text-[11px] text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-primary)] hover:no-underline"
-                  >
-                    {session.issueLabel || session.issueUrl}
-                  </a>
-                )}
-              </div>
-
-              <ClientTimestamps
-                status={session.status}
-                createdAt={session.createdAt}
-                lastActivityAt={session.lastActivityAt}
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* ── PR Card ─────────────────────────────────────────────── */}
-        {pr && <PRCard pr={pr} sessionId={session.id} />}
-
-        {/* ── Terminal ─────────────────────────────────────────────── */}
-        <div className={pr ? "mt-6" : ""}>
-          <div className="mb-3 flex items-center gap-2">
-            <div
-              className="h-3 w-0.5 rounded-full"
-              style={{ background: isOrchestrator ? accentColor : activity.color, opacity: 0.7 }}
+      <div className="dashboard-main mx-auto max-w-[1180px] px-5 py-5 lg:px-8">
+        <main className="min-w-0">
+          {(!isOrchestrator || isMobile) && (
+            <SessionTopStrip
+              headline={headline}
+              activityLabel={activity.label}
+              activityColor={activity.color}
+              branch={session.branch}
+              pr={pr}
+              isOrchestrator={isOrchestrator}
+              crumbHref={crumbHref}
+              crumbLabel={crumbLabel}
+              mobileSimple={isMobile}
             />
-            <span className="text-[10px] font-bold uppercase tracking-[0.10em] text-[var(--color-text-tertiary)]">
-              Terminal
-            </span>
-          </div>
-          <DirectTerminal
-            sessionId={session.id}
-            startFullscreen={startFullscreen}
-            variant={terminalVariant}
-            height={terminalHeight}
-            isOpenCodeSession={isOpenCodeSession}
-            reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
-          />
-        </div>
+          )}
+
+          <section className="mt-5">
+            <div id="session-terminal-section" aria-hidden="true" />
+            <div className="mb-3 flex items-center gap-2">
+              <div
+                className="h-3 w-0.5"
+                style={{ background: isOrchestrator ? accentColor : activity.color, opacity: 0.75 }}
+              />
+              <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-[var(--color-text-tertiary)]">
+                Live Terminal
+              </span>
+            </div>
+            <DirectTerminal
+              sessionId={session.id}
+              startFullscreen={startFullscreen}
+              variant={terminalVariant}
+              height={terminalHeight}
+              isOpenCodeSession={isOpenCodeSession}
+              reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
+            />
+          </section>
+
+          {pr ? (
+            <section id="session-pr-section" className="mt-6">
+              <SessionDetailPRCard pr={pr} sessionId={session.id} />
+            </section>
+          ) : null}
+        </main>
       </div>
+      {isMobile ? (
+        <MobileBottomNav
+          ariaLabel="Session navigation"
+          activeTab={isOrchestrator ? "orchestrator" : undefined}
+          dashboardHref={dashboardHref}
+          prsHref={prsHref}
+          showOrchestrator={orchestratorHref !== null}
+          orchestratorHref={orchestratorHref}
+        />
+      ) : null}
     </div>
   );
 }
 
-// ── Client-side timestamps ────────────────────────────────────────────
+// ── Session detail PR card ────────────────────────────────────────────
 
-function ClientTimestamps({
-  status,
-  createdAt,
-  lastActivityAt,
-}: {
-  status: string;
-  createdAt: string;
-  lastActivityAt: string;
-}) {
-  const [created, setCreated] = useState<string | null>(null);
-  const [lastActive, setLastActive] = useState<string | null>(null);
-
-  useEffect(() => {
-    setCreated(relativeTime(createdAt));
-    setLastActive(relativeTime(lastActivityAt));
-  }, [createdAt, lastActivityAt]);
-
-  return (
-    <div className="mt-2.5 flex flex-wrap items-center gap-x-1.5 text-[11px] text-[var(--color-text-tertiary)]">
-      <span className="rounded-[3px] bg-[rgba(255,255,255,0.05)] px-1.5 py-0.5 text-[10px] font-medium">
-        {humanizeStatus(status)}
-      </span>
-      {created && (
-        <>
-          <span className="opacity-40">&middot;</span>
-          <span>created {created}</span>
-        </>
-      )}
-      {lastActive && (
-        <>
-          <span className="opacity-40">&middot;</span>
-          <span>active {lastActive}</span>
-        </>
-      )}
-    </div>
-  );
-}
-
-// ── PR Card ───────────────────────────────────────────────────────────
-
-function PRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
+function SessionDetailPRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
   const [sendingComments, setSendingComments] = useState<Set<string>>(new Set());
   const [sentComments, setSentComments] = useState<Set<string>>(new Set());
   const [errorComments, setErrorComments] = useState<Set<string>>(new Set());
@@ -527,7 +511,7 @@ function PRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
       : "var(--color-border-default)";
 
   return (
-    <div className="detail-card mb-6 overflow-hidden rounded-[8px] border" style={{ borderColor }}>
+    <div className="detail-card mb-6 overflow-hidden border" style={{ borderColor }}>
       {/* Title row */}
       <div className="border-b border-[var(--color-border-subtle)] px-5 py-3.5">
         <a
@@ -553,7 +537,7 @@ function PRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
             <>
               <span className="text-[var(--color-text-tertiary)]">&middot;</span>
               <span
-                className="rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                className="px-2 py-0.5 text-[10px] font-semibold"
                 style={{ color: "#a371f7", background: "rgba(163,113,247,0.12)" }}
               >
                 Merged
@@ -567,7 +551,7 @@ function PRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
       <div className="px-5 py-4">
         {/* Ready-to-merge banner */}
         {allGreen ? (
-          <div className="flex items-center gap-2 rounded-[5px] border border-[rgba(63,185,80,0.25)] bg-[rgba(63,185,80,0.07)] px-3.5 py-2.5">
+          <div className="flex items-center gap-2 border border-[rgba(63,185,80,0.25)] bg-[rgba(63,185,80,0.07)] px-3.5 py-2.5">
             <svg
               className="h-4 w-4 shrink-0 text-[var(--color-status-ready)]"
               fill="none"
@@ -601,7 +585,7 @@ function PRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
             <h4 className="mb-2.5 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--color-text-tertiary)]">
               Unresolved Comments
               <span
-                className="rounded-full px-1.5 py-0.5 text-[10px] font-bold normal-case tracking-normal"
+                className="px-1.5 py-0.5 text-[10px] font-bold normal-case tracking-normal"
                 style={{ color: "#f85149", background: "rgba(248,81,73,0.12)" }}
               >
                 {pr.unresolvedThreads}
@@ -612,7 +596,7 @@ function PRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
                 const { title, description } = cleanBugbotComment(c.body);
                 return (
                   <details key={c.url} className="group">
-                    <summary className="flex cursor-pointer list-none items-center gap-2 rounded-[5px] px-2 py-1.5 text-[12px] transition-colors hover:bg-[rgba(255,255,255,0.04)]">
+                    <summary className="flex cursor-pointer list-none items-center gap-2 px-2 py-1.5 text-[12px] transition-colors hover:bg-[rgba(255,255,255,0.04)]">
                       <svg
                         className="h-3 w-3 shrink-0 text-[var(--color-text-tertiary)] transition-transform group-open:rotate-90"
                         fill="none"
@@ -647,7 +631,7 @@ function PRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
                         onClick={() => handleAskAgentToFix(c)}
                         disabled={sendingComments.has(c.url)}
                         className={cn(
-                          "mt-1.5 rounded-[4px] px-3 py-1 text-[11px] font-semibold transition-all",
+                          "mt-1.5 px-3 py-1 text-[11px] font-semibold transition-all",
                           sentComments.has(c.url)
                             ? "bg-[var(--color-status-ready)] text-white"
                             : errorComments.has(c.url)

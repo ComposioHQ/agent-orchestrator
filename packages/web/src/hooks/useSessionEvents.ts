@@ -3,22 +3,32 @@
 import { useEffect, useReducer, useRef } from "react";
 import type { DashboardSession, GlobalPauseState, SSESnapshotEvent } from "@/lib/types";
 
+/** Debounce before fetching full session list after membership change. */
 const MEMBERSHIP_REFRESH_DELAY_MS = 120;
+/** Re-fetch full session list if no refresh has happened in this interval. */
 const STALE_REFRESH_INTERVAL_MS = 15000;
+/** Grace period before declaring "disconnected" (allows for transient reconnects). */
+const DISCONNECTED_GRACE_PERIOD_MS = 4000;
+
+type ConnectionStatus = "connected" | "reconnecting" | "disconnected";
 
 interface State {
   sessions: DashboardSession[];
   globalPause: GlobalPauseState | null;
+  connectionStatus: ConnectionStatus;
 }
 
 type Action =
   | { type: "reset"; sessions: DashboardSession[]; globalPause: GlobalPauseState | null }
-  | { type: "snapshot"; patches: SSESnapshotEvent["sessions"] };
+  | { type: "snapshot"; patches: SSESnapshotEvent["sessions"] }
+  | { type: "setConnection"; status: ConnectionStatus };
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
     case "reset":
-      return { sessions: action.sessions, globalPause: action.globalPause };
+      return { ...state, sessions: action.sessions, globalPause: action.globalPause };
+    case "setConnection":
+      return { ...state, connectionStatus: action.status };
     case "snapshot": {
       const patchMap = new Map(action.patches.map((p) => [p.id, p]));
       let changed = false;
@@ -62,12 +72,14 @@ export function useSessionEvents(
   const [state, dispatch] = useReducer(reducer, {
     sessions: initialSessions,
     globalPause: initialGlobalPause ?? null,
+    connectionStatus: "connected" as ConnectionStatus,
   });
   const sessionsRef = useRef(state.sessions);
   const refreshingRef = useRef(false);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingMembershipKeyRef = useRef<string | null>(null);
   const lastRefreshAtRef = useRef(Date.now());
+  const disconnectedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     sessionsRef.current = state.sessions;
@@ -87,6 +99,13 @@ export function useSessionEvents(
       if (refreshTimerRef.current) {
         clearTimeout(refreshTimerRef.current);
         refreshTimerRef.current = null;
+      }
+    };
+
+    const clearDisconnectedTimer = () => {
+      if (disconnectedTimerRef.current) {
+        clearTimeout(disconnectedTimerRef.current);
+        disconnectedTimerRef.current = null;
       }
     };
 
@@ -119,7 +138,10 @@ export function useSessionEvents(
               });
             },
           )
-          .catch(() => undefined)
+          .catch((err: unknown) => {
+            if (err instanceof DOMException && err.name === "AbortError") return;
+            console.warn("[useSessionEvents] refresh failed:", err);
+          })
           .finally(() => {
             if (activeRefreshController === refreshController) {
               activeRefreshController = null;
@@ -169,7 +191,31 @@ export function useSessionEvents(
       }
     };
 
-    es.onerror = () => undefined;
+    es.onopen = () => {
+      clearDisconnectedTimer();
+      if (!disposed) dispatch({ type: "setConnection", status: "connected" });
+    };
+
+    es.onerror = () => {
+      if (disposed) return;
+
+      if (es.readyState === EventSource.CLOSED) {
+        clearDisconnectedTimer();
+        dispatch({ type: "setConnection", status: "disconnected" });
+        return;
+      }
+
+      dispatch({ type: "setConnection", status: "reconnecting" });
+
+      if (disconnectedTimerRef.current === null) {
+        disconnectedTimerRef.current = setTimeout(() => {
+          disconnectedTimerRef.current = null;
+          if (!disposed && es.readyState !== EventSource.OPEN) {
+            dispatch({ type: "setConnection", status: "disconnected" });
+          }
+        }, DISCONNECTED_GRACE_PERIOD_MS);
+      }
+    };
 
     return () => {
       disposed = true;
@@ -178,6 +224,7 @@ export function useSessionEvents(
       refreshingRef.current = false;
       pendingMembershipKeyRef.current = null;
       clearRefreshTimer();
+      clearDisconnectedTimer();
       es.close();
     };
   }, [project]);

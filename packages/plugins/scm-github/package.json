@@ -1,6 +1,6 @@
 {
   "name": "@composio/ao-plugin-scm-github",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "SCM plugin: GitHub (PRs, CI, reviews)",
   "license": "MIT",
   "type": "module",

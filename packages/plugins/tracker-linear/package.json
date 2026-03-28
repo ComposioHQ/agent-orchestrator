@@ -1,6 +1,6 @@
 {
   "name": "@composio/ao-plugin-tracker-linear",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Tracker plugin: Linear",
   "license": "MIT",
   "type": "module",

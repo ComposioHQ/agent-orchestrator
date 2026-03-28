@@ -148,9 +148,15 @@ async function labelIssuesForVerification(
       continue;
     }
 
+    const issueId = session.issueId;
+    if (!issueId) {
+      processedIssues.add(key);
+      continue;
+    }
+
     try {
       await tracker.updateIssue(
-        session.issueId!,
+        issueId,
         {
           labels: ["merged-unverified"],
           removeLabels: ["agent:backlog", "agent:in-progress"],
@@ -223,7 +229,9 @@ export async function pollBacklog(): Promise<void> {
       (session) => !isOrchestratorSession(session) && !TERMINAL_STATUSES.has(session.status),
     );
     const activeIssueIds = new Set(
-      workerSessions.filter((s) => s.issueId).map((s) => s.issueId!.toLowerCase()),
+      workerSessions
+        .map((session) => session.issueId?.toLowerCase())
+        .filter((issueId): issueId is string => Boolean(issueId)),
     );
 
     // Auto-scaling: respect max concurrent agents

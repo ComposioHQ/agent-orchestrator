@@ -81,6 +81,7 @@ describe("plugin manifest & exports", () => {
       slot: "agent",
       description: "Agent plugin: OpenCode",
       version: "0.1.0",
+      displayName: "OpenCode",
     });
   });
 

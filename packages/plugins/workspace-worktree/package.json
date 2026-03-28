@@ -1,6 +1,6 @@
 {
   "name": "@composio/ao-plugin-workspace-worktree",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Workspace plugin: git worktrees",
   "license": "MIT",
   "type": "module",

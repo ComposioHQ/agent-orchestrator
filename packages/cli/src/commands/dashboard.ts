@@ -1,6 +1,4 @@
 import { spawn } from "node:child_process";
-import { resolve } from "node:path";
-import { existsSync } from "node:fs";
 import chalk from "chalk";
 import type { Command } from "commander";
 import { loadConfig } from "@composio/ao-core";
@@ -23,16 +21,7 @@ export function registerDashboard(program: Command): void {
         process.exit(1);
       }
 
-      const localWebDir = findWebDir();
-
-      if (!existsSync(resolve(localWebDir, "package.json"))) {
-        console.error(
-          chalk.red(
-            "Could not find @composio/ao-web package.\n" + "Ensure it is installed: pnpm install",
-          ),
-        );
-        process.exit(1);
-      }
+      const localWebDir = findWebDir(); // throws with install-specific guidance if not found
 
       if (opts.rebuild) {
         // Check if a dashboard is already running on this port.

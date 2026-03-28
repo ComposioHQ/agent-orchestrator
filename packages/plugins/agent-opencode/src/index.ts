@@ -12,7 +12,7 @@ import {
   type Session,
   type OpenCodeAgentConfig,
 } from "@composio/ao-core";
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -146,6 +146,7 @@ export const manifest = {
   slot: "agent" as const,
   description: "Agent plugin: OpenCode",
   version: "0.1.0",
+  displayName: "OpenCode",
 };
 
 // =============================================================================
@@ -358,4 +359,13 @@ export function create(): Agent {
   return createOpenCodeAgent();
 }
 
-export default { manifest, create } satisfies PluginModule<Agent>;
+export function detect(): boolean {
+  try {
+    execFileSync("opencode", ["version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export default { manifest, create, detect } satisfies PluginModule<Agent>;

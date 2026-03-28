@@ -102,4 +102,18 @@ export default tseslint.config(
       "no-console": "off", // Scripts use console for output
     },
   },
+
+  // ao bin scripts - Node.js environment (postinstall, etc.)
+  {
+    files: ["packages/ao/bin/**/*.js"],
+    languageOptions: {
+      globals: {
+        console: "readonly",
+        process: "readonly",
+      },
+    },
+    rules: {
+      "no-console": "off", // Bin scripts use console for install output
+    },
+  },
 );
