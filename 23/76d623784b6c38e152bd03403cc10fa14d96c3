@@ -1,0 +1,199 @@
+packages/web/src/lib/portfolio-page-data.ts
+  98faa5c7e76cecb1 1-80
+packages/web/src/hooks/useModal.ts
+  5b952606adad210b 1-36
+packages/web/src/app/api/projects/route.ts
+  086ef4d0c4e2df89 3-12,18-26,74-127,130-131
+packages/web/src/lib/api-errors.ts
+  5b952606adad210b 1-37
+packages/core/src/index.ts
+  086ef4d0c4e2df89 189
+  6fb113398908e521 144,162-175
+packages/web/src/components/ActionItemsList.tsx
+  5b952606adad210b 1-65
+packages/web/src/components/Modal.tsx
+  5b952606adad210b 1-121
+packages/web/src/components/Dashboard.tsx
+  a7091c28ff89402a 19
+  98faa5c7e76cecb1 99,469
+  7d6f26298e0dd815 25,715,752,846
+packages/web/src/components/InlineMessageInput.tsx
+  5b952606adad210b 1-99
+packages/core/src/__tests__/config-generator.test.ts
+  086ef4d0c4e2df89 20,511-574
+packages/core/src/config-generator.ts
+  086ef4d0c4e2df89 300-340
+packages/core/src/global-config.ts
+  6fb113398908e521 1-644
+packages/cli/src/commands/spawn.ts
+  6fb113398908e521 7,14-16,28-75,217,229,243-245,251,253,255-257,259-260,266-267
+packages/cli/src/commands/status.ts
+  6fb113398908e521 15-16,289-291,335-342
+packages/web/src/components/PullRequestsPage.tsx
+  a7091c28ff89402a 13
+packages/web/src/app/api/browse-directory/route.ts
+  086ef4d0c4e2df89 1-72
+packages/core/src/paths.ts
+  6fb113398908e521 12,18-24,27-33,39-53
+packages/core/__tests__/config.test.ts
+  6fb113398908e521 71-89
+packages/web/src/components/settings/AgentSettings.tsx
+  7d6f26298e0dd815 3-13,26,31,36
+  5b952606adad210b 1-2,14-25,27-30,32-35,37-63
+packages/web/src/components/ActionItemRow.tsx
+  5b952606adad210b 1-194
+packages/web/src/components/settings/PreferenceSettings.tsx
+  5b952606adad210b 1-146
+packages/web/src/lib/api-schemas.ts
+  7d6f26298e0dd815 11-25
+  5b952606adad210b 1-10,26-59
+packages/web/src/components/settings/ProjectSettings.tsx
+  5b952606adad210b 1-148
+packages/web/src/components/SubmitWorkModal.tsx
+  5b952606adad210b 1-139
+packages/web/src/hooks/useToast.ts
+  5b952606adad210b 1-53
+packages/web/src/components/UnifiedSidebar.tsx
+  a7091c28ff89402a 1000-1002
+  7d6f26298e0dd815 3,6,9,11-12,22-23,33-40,42-43,45-47,57-58,66-67,69,71-80,82-84,87-102,119,121-127,130-132,134-139,142-162,168,176-177,179,182,186,201,203-311,322,324,326-332,334-340,342-350,352,357,359,363-365,370-371,378-379,385-393,413,415-416,421-423,431-434,436-437,443,496,498-502,505-520,556-565,580-581,585,587,591-592,716,722,736,738,746-748,777-806,811-813,815-816,818-821,823-845,850-853,856-866,868-870,872-877,879,881-885,914-930,933-936,939-956,958,964-967,970-971,973-999,1003-1008,1012-1015,1017,1020-1033,1035-1041,1043-1047,1049,1053
+  086ef4d0c4e2df89 4,8,10,24-27,29-31,52,54,61,63,103-118,188-200,312-321,445-492,524-555,566-579,593-596,599,637-669,674-707,749-776,1056-1071
+  6b1728f76d6fbbf7 325,333,341,355,867,871,878,880,1072-1088
+  5b952606adad210b 1-2,7,13-21,28,32,41,44,48-51,53,55-56,59-60,62,64-65,68,70,81,85-86,163,169,174-175,180,351,353,358,361-362,384,439-442,444,504,521-523,582-584,586,588-590,597-598,600-636,670-672,708,710-715,717-720,723-725,731-733,735,737,739-745,1054-1055
+  98faa5c7e76cecb1 5,120,128-129,133,140-141,164-167,170-173,178,181,183-185,323,354,356,360,366-369,372-377,380-383,394-412,414,417-420,438,493-494,497,503,673,709,721,726-730,734,807-810,814,817,822,846-849,854-855,886-913,931-932,968-969,1034,1042
+  0f5884223d4665b0 187,202,424-430,435,495,937-938,957,959-963,972,1009-1011,1016,1018-1019,1048,1050-1052
+packages/web/src/components/DashboardShell.tsx
+  5b952606adad210b 1-2,10-11,13-14,17-18,25-29,38-44,46-47,49,53,64-65,83,122-123
+  7d6f26298e0dd815 3-4,6-9,12,15-16,19-24,30-37,45,48,54-63,66-77,82,84-121
+  086ef4d0c4e2df89 5,50-52,78-81
+packages/web/src/components/AddProjectModal.tsx
+  086ef4d0c4e2df89 3,12-25,27,32-57,59,61-69,73,78,83-85,88-92,95-97,109,126,132-133,135-168,172,177-178,181-186,188-190,192-199,202-267,269-288,291-396
+  5b952606adad210b 1-2,4-11,26,28-31,58,60,70-72,74-77,79-82,86-87,93-94,98-108,110-125,127-131,134,169-171,173-176,179-180,187,191,200-201,268,289-290,397-398
+packages/web/src/components/ToastContainer.tsx
+  5b952606adad210b 1-49
+packages/web/src/components/settings/IntegrationSettings.tsx
+  5b952606adad210b 1-83
+packages/web/src/app/projects/[projectId]/page.tsx
+  98faa5c7e76cecb1 4,6,20,38-69,149
+packages/web/src/app/page.tsx
+  7d6f26298e0dd815 14,21
+  98faa5c7e76cecb1 7
+packages/core/src/config.ts
+  6fb113398908e521 20,155-156,405-408,414-426,428-429,458-466
+packages/core/src/portfolio-registry.ts
+  086ef4d0c4e2df89 12,210-222
+packages/cli/src/commands/start.ts
+  6fb113398908e521 32-39,1077-1122,1141-1183
+packages/web/src/components/__tests__/Modal.test.tsx
+  5b952606adad210b 1-80
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.20",
+  "base_commit_sha": "2376d623784b6c38e152bd03403cc10fa14d96c3",
+  "prompts": {
+    "086ef4d0c4e2df89": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c33356ce-fbf9-446a-9888-3c7317320e36",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 890,
+      "total_deletions": 144,
+      "accepted_lines": 855,
+      "overriden_lines": 0
+    },
+    "0f5884223d4665b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce24d116-c050-49d7-a2ba-b2c5e1d06ed5",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 44,
+      "total_deletions": 71,
+      "accepted_lines": 30,
+      "overriden_lines": 0
+    },
+    "5b952606adad210b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "36da9609-c821-4d57-b6a3-22096179c056",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 1585,
+      "overriden_lines": 0
+    },
+    "6b1728f76d6fbbf7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2b3024e9-bc15-4ca2-ac3a-6da3d26f5837",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 25,
+      "total_deletions": 2,
+      "accepted_lines": 25,
+      "overriden_lines": 0
+    },
+    "6fb113398908e521": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "20e73692-fa79-4137-b532-142ef380fc19",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 932,
+      "total_deletions": 27,
+      "accepted_lines": 920,
+      "overriden_lines": 0
+    },
+    "7d6f26298e0dd815": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d2e13-6990-7d73-ac43-0382c00834d2",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 396,
+      "total_deletions": 231,
+      "accepted_lines": 635,
+      "overriden_lines": 0
+    },
+    "98faa5c7e76cecb1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "55d19e07-b5b1-49c9-9f93-291d4a2f040d",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 191,
+      "total_deletions": 176,
+      "accepted_lines": 543,
+      "overriden_lines": 0
+    },
+    "a7091c28ff89402a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9d25fbe4-22b6-4617-99ab-4e50093cc493",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 7,
+      "total_deletions": 15,
+      "accepted_lines": 5,
+      "overriden_lines": 0
+    }
+  }
+}
