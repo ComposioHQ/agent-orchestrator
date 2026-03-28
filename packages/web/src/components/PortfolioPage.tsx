@@ -86,7 +86,7 @@ function LauncherCard({
         {icon}
       </div>
       <div className="mt-auto">
-        <div className="text-[18px] font-medium tracking-[-0.04em] text-[var(--color-text-primary)]">
+        <div className="text-[var(--font-size-xl)] font-medium tracking-[-0.025em] text-[var(--color-text-primary)]">
           {label}
         </div>
         <p className="mt-2 text-[13px] leading-6 text-[var(--color-text-secondary)]">
