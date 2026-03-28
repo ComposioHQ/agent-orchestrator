@@ -26,7 +26,10 @@ import {
   type ReviewComment,
   type AutomatedComment,
   type MergeReadiness,
+  type BatchObserver,
+  type PREnrichmentData,
 } from "@composio/ao-core";
+import { enrichSessionsPRBatch as enrichSessionsPRBatchREST } from "./rest-parallel.js";
 import {
   getWebhookHeader,
   parseWebhookBranchRef,
@@ -49,6 +52,22 @@ const BOT_AUTHORS = new Set([
   "snyk-bot",
   "lgtm-com[bot]",
 ]);
+
+// ---------------------------------------------------------------------------
+// GitHub Plugin Config
+// ---------------------------------------------------------------------------
+
+/**
+ * GitHub SCM plugin configuration options.
+ */
+export interface GitHubSCMConfig {
+  /**
+   * API strategy to use for PR enrichment.
+   * - "graphql-batch": Use GraphQL batch queries (default)
+   * - "rest-parallel": Use REST API with 2-Guard ETag caching
+   */
+  apiStrategy?: "graphql-batch" | "rest-parallel";
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -99,6 +118,7 @@ function prInfoFromView(
     headRefName: string;
     baseRefName: string;
     isDraft: boolean;
+    headRefOid?: string;
   },
   projectRepo: string,
 ): PRInfo {
@@ -113,6 +133,7 @@ function prInfoFromView(
     branch: data.headRefName,
     baseBranch: data.baseRefName,
     isDraft: data.isDraft,
+    headRefOid: data.headRefOid,
   };
 }
 
@@ -445,7 +466,9 @@ function parseDate(val: string | undefined | null): Date {
 // SCM implementation
 // ---------------------------------------------------------------------------
 
-function createGitHubSCM(): SCM {
+function createGitHubSCM(config?: GitHubSCMConfig): SCM {
+  const apiStrategy = config?.apiStrategy || "graphql-batch";
+
   return {
     name: "github",
 
@@ -533,6 +556,7 @@ function createGitHubSCM(): SCM {
           headRefName: string;
           baseRefName: string;
           isDraft: boolean;
+          headRefOid?: string;
         }> = JSON.parse(raw);
 
         if (prs.length === 0) return null;
@@ -551,7 +575,7 @@ function createGitHubSCM(): SCM {
         "--repo",
         project.repo,
         "--json",
-        "number,url,title,headRefName,baseRefName,isDraft",
+        "number,url,title,headRefName,baseRefName,isDraft,headRefOid",
       ]);
 
       const data: {
@@ -561,6 +585,7 @@ function createGitHubSCM(): SCM {
         headRefName: string;
         baseRefName: string;
         isDraft: boolean;
+        headRefOid?: string;
       } = JSON.parse(raw);
 
       return prInfoFromView(data, project.repo);
@@ -1019,6 +1044,100 @@ function createGitHubSCM(): SCM {
         blockers,
       };
     },
+
+    // --- Batch Enrichment ---
+
+    /**
+     * Enrich multiple PRs in parallel using the configured API strategy.
+     * Falls back to individual queries if rest-parallel is not configured.
+     */
+    async enrichSessionsPRBatch(
+      prs: PRInfo[],
+      batchConfig?: { project?: ProjectConfig; observer?: BatchObserver },
+    ): Promise<Map<string, PREnrichmentData>> {
+      if (apiStrategy === "rest-parallel") {
+        // Use REST parallel with 2-Guard ETag strategy
+        return enrichSessionsPRBatchREST(prs, batchConfig);
+      }
+
+      // Fallback: Use individual queries (graphql-batch or default)
+      const result = new Map<string, PREnrichmentData>();
+      const observer = batchConfig?.observer;
+
+      for (const pr of prs) {
+        try {
+          const cacheKey = `${pr.owner}/${pr.repo}#${pr.number}`;
+
+          // Get PR state and summary
+          const summary = await this.getPRSummary?.(pr);
+          const state = summary?.state ?? "open";
+          const title = summary?.title ?? pr.title ?? "";
+          const additions = summary?.additions ?? 0;
+          const deletions = summary?.deletions ?? 0;
+
+          // Get CI checks and summary
+          const ciChecks = await this.getCIChecks(pr);
+          const ciStatus = await this.getCISummary(pr);
+
+          // Get review decision
+          const reviewDecision = await this.getReviewDecision(pr);
+
+          // Get mergeability
+          const mergeability = await this.getMergeability(pr);
+
+          // Get unresolved threads
+          const pendingComments = await this.getPendingComments(pr);
+          const unresolvedThreads = pendingComments.length;
+          const unresolvedComments = pendingComments.map((c) => ({
+            url: c.url,
+            path: c.path ?? "",
+            author: c.author,
+            body: c.body,
+          }));
+
+          const enrichment: PREnrichmentData = {
+            state,
+            title,
+            additions,
+            deletions,
+            ciStatus,
+            ciChecks,
+            reviewDecision,
+            mergeability,
+            unresolvedThreads,
+            unresolvedComments,
+          };
+
+          result.set(cacheKey, enrichment);
+          observer?.log(`Enriched ${cacheKey} using individual queries`);
+        } catch (err) {
+          const error = err instanceof Error ? err : new Error(String(err));
+          observer?.recordFailure(`enrichSessionsPRBatch#${pr.number}`, error, 0);
+          // Add partial data on error
+          const cacheKey = `${pr.owner}/${pr.repo}#${pr.number}`;
+          result.set(cacheKey, {
+            state: "open",
+            title: pr.title,
+            additions: 0,
+            deletions: 0,
+            ciStatus: "none",
+            ciChecks: [],
+            reviewDecision: "none",
+            mergeability: {
+              mergeable: false,
+              ciPassing: false,
+              approved: false,
+              noConflicts: true,
+              blockers: [error.message],
+            },
+            unresolvedThreads: 0,
+            unresolvedComments: [],
+          });
+        }
+      }
+
+      return result;
+    },
   };
 }
 
@@ -1033,8 +1152,9 @@ export const manifest = {
   version: "0.1.0",
 };
 
-export function create(): SCM {
-  return createGitHubSCM();
+export function create(config?: Record<string, unknown>): SCM {
+  const githubConfig = config as GitHubSCMConfig | undefined;
+  return createGitHubSCM(githubConfig);
 }
 
 export default { manifest, create } satisfies PluginModule<SCM>;
