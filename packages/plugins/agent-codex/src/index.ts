@@ -7,6 +7,8 @@ import {
   setupPathWrapperWorkspace,
   appendActivityEntry,
   readLastActivityEntry,
+  checkActivityLogState,
+  classifyTerminalActivity,
   PREFERRED_GH_PATH,
   type Agent,
   type AgentSessionInfo,
@@ -422,12 +424,8 @@ function createCodexAgent(): Agent {
       //    This catches waiting_input/blocked reliably via terminal parsing, regardless
       //    of whether Codex's native JSONL has those entry types.
       const activityResult = await readLastActivityEntry(session.workspacePath);
-      if (activityResult) {
-        const { entry: actEntry, modifiedAt: actModifiedAt } = activityResult;
-        if (actEntry.state === "waiting_input" || actEntry.state === "blocked") {
-          return { state: actEntry.state, timestamp: actModifiedAt };
-        }
-      }
+      const activityState = checkActivityLogState(activityResult, threshold);
+      if (activityState) return activityState;
 
       // 2. Try Codex's native JSONL for richer state detection
       const sessionFile = await findCodexSessionFileCached(session.workspacePath);
@@ -476,11 +474,10 @@ function createCodexAgent(): Agent {
 
     async recordActivity(session: Session, terminalOutput: string): Promise<void> {
       if (!session.workspacePath) return;
-      const state = this.detectActivity(terminalOutput);
-      const trigger =
-        state === "waiting_input" || state === "blocked"
-          ? terminalOutput.trim().split("\n").slice(-3).join("\n")
-          : undefined;
+      const { state, trigger } = classifyTerminalActivity(
+        terminalOutput,
+        (output) => this.detectActivity(output),
+      );
       await appendActivityEntry(session.workspacePath, state, "terminal", trigger);
     },
 

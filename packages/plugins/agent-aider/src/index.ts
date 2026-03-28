@@ -5,6 +5,8 @@ import {
   setupPathWrapperWorkspace,
   appendActivityEntry,
   readLastActivityEntry,
+  checkActivityLogState,
+  classifyTerminalActivity,
   PREFERRED_GH_PATH,
   DEFAULT_READY_THRESHOLD_MS,
   type Agent,
@@ -189,20 +191,8 @@ function createAiderAgent(): Agent {
       // 1. Check AO activity JSONL first (written by recordActivity from terminal output).
       //    This is the only source of waiting_input/blocked states for Aider.
       const activityResult = await readLastActivityEntry(session.workspacePath);
-      if (activityResult) {
-        const { entry, modifiedAt } = activityResult;
-
-        // waiting_input and blocked are always returned regardless of age
-        if (entry.state === "waiting_input" || entry.state === "blocked") {
-          return { state: entry.state, timestamp: modifiedAt };
-        }
-
-        const ageMs = Date.now() - modifiedAt.getTime();
-        if (ageMs <= threshold) {
-          // Fresh activity log — use its state
-          return { state: entry.state, timestamp: modifiedAt };
-        }
-      }
+      const activityState = checkActivityLogState(activityResult, threshold);
+      if (activityState) return activityState;
 
       // 2. Fallback: check for recent git commits (Aider auto-commits changes)
       const hasCommits = await hasRecentCommits(session.workspacePath);
@@ -225,12 +215,10 @@ function createAiderAgent(): Agent {
 
     async recordActivity(session: Session, terminalOutput: string): Promise<void> {
       if (!session.workspacePath) return;
-      const state = this.detectActivity(terminalOutput);
-      // Only record trigger text for actionable states (debugging aid)
-      const trigger =
-        state === "waiting_input" || state === "blocked"
-          ? terminalOutput.trim().split("\n").slice(-3).join("\n")
-          : undefined;
+      const { state, trigger } = classifyTerminalActivity(
+        terminalOutput,
+        (output) => this.detectActivity(output),
+      );
       await appendActivityEntry(session.workspacePath, state, "terminal", trigger);
     },
 

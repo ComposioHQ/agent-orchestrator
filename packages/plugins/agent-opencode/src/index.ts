@@ -4,6 +4,8 @@ import {
   buildAgentPath,
   appendActivityEntry,
   readLastActivityEntry,
+  checkActivityLogState,
+  classifyTerminalActivity,
   setupPathWrapperWorkspace,
   PREFERRED_GH_PATH,
   asValidOpenCodeSessionId,
@@ -315,19 +317,8 @@ function createOpenCodeAgent(): Agent {
       //    This is the only source of waiting_input/blocked states for OpenCode.
       if (session.workspacePath) {
         const activityResult = await readLastActivityEntry(session.workspacePath);
-        if (activityResult) {
-          const { entry, modifiedAt } = activityResult;
-
-          // waiting_input and blocked are always returned regardless of age
-          if (entry.state === "waiting_input" || entry.state === "blocked") {
-            return { state: entry.state, timestamp: modifiedAt };
-          }
-
-          const ageMs = Date.now() - modifiedAt.getTime();
-          if (ageMs <= threshold) {
-            return { state: entry.state, timestamp: modifiedAt };
-          }
-        }
+        const activityState = checkActivityLogState(activityResult, threshold);
+        if (activityState) return activityState;
       }
 
       // 2. Fallback: query OpenCode's session list API for timestamp-based detection
@@ -354,11 +345,10 @@ function createOpenCodeAgent(): Agent {
 
     async recordActivity(session: Session, terminalOutput: string): Promise<void> {
       if (!session.workspacePath) return;
-      const state = this.detectActivity(terminalOutput);
-      const trigger =
-        state === "waiting_input" || state === "blocked"
-          ? terminalOutput.trim().split("\n").slice(-3).join("\n")
-          : undefined;
+      const { state, trigger } = classifyTerminalActivity(
+        terminalOutput,
+        (output) => this.detectActivity(output),
+      );
       await appendActivityEntry(session.workspacePath, state, "terminal", trigger);
     },
 

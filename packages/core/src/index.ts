@@ -111,6 +111,9 @@ export {
   getActivityLogPath,
   appendActivityEntry,
   readLastActivityEntry,
+  checkActivityLogState,
+  classifyTerminalActivity,
+  ACTIVITY_INPUT_STALENESS_MS,
 } from "./activity-log.js";
 
 // Agent workspace hooks — shared PATH-wrapper setup for non-Claude agents

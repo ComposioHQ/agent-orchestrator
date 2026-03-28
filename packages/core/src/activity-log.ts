@@ -12,7 +12,15 @@
  */
 import { appendFile, mkdir } from "node:fs/promises";
 import { join, dirname } from "node:path";
-import type { ActivityState, ActivityLogEntry } from "./types.js";
+import type { ActivityState, ActivityLogEntry, ActivityDetection } from "./types.js";
+
+/**
+ * Maximum age (ms) for `waiting_input`/`blocked` entries before they're
+ * considered stale. If no new terminal output overwrites the entry within
+ * this window, the state falls through to downstream fallbacks instead of
+ * keeping the session stuck in `needs_input` on the dashboard forever.
+ */
+export const ACTIVITY_INPUT_STALENESS_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
  * Get the path to the activity JSONL log for a session.
@@ -88,4 +96,55 @@ export async function readLastActivityEntry(
   } catch {
     return null;
   }
+}
+
+/**
+ * Check the AO activity JSONL for the current state.
+ *
+ * Returns an `ActivityDetection` for `waiting_input`/`blocked` (with a staleness
+ * cap), fresh non-critical states within `thresholdMs`, or `null` if nothing
+ * useful was found. Callers should fall through to their own fallback signals
+ * when this returns `null`.
+ */
+export function checkActivityLogState(
+  activityResult: { entry: ActivityLogEntry; modifiedAt: Date } | null,
+  thresholdMs: number,
+): ActivityDetection | null {
+  if (!activityResult) return null;
+
+  const { entry, modifiedAt } = activityResult;
+  const ageMs = Date.now() - modifiedAt.getTime();
+
+  if (entry.state === "waiting_input" || entry.state === "blocked") {
+    if (ageMs <= ACTIVITY_INPUT_STALENESS_MS) {
+      return { state: entry.state, timestamp: modifiedAt };
+    }
+    // Stale — fall through so callers use other signals
+    return null;
+  }
+
+  if (ageMs <= thresholdMs) {
+    return { state: entry.state, timestamp: modifiedAt };
+  }
+
+  return null;
+}
+
+/**
+ * Build the arguments for `appendActivityEntry` from terminal output.
+ *
+ * Classifies terminal output via the provided `detectActivity` function and
+ * returns the state + trigger. Plugins call `appendActivityEntry` themselves
+ * (keeping it mockable in tests).
+ */
+export function classifyTerminalActivity(
+  terminalOutput: string,
+  detectActivity: (output: string) => ActivityState,
+): { state: ActivityState; trigger: string | undefined } {
+  const state = detectActivity(terminalOutput);
+  const trigger =
+    state === "waiting_input" || state === "blocked"
+      ? terminalOutput.trim().split("\n").slice(-3).join("\n")
+      : undefined;
+  return { state, trigger };
 }
