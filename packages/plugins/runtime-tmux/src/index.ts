@@ -5,13 +5,14 @@ import { randomUUID } from "node:crypto";
 import { writeFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type {
-  PluginModule,
-  Runtime,
-  RuntimeCreateConfig,
-  RuntimeHandle,
-  RuntimeMetrics,
-  AttachInfo,
+import {
+  type PluginModule,
+  type Runtime,
+  type RuntimeCreateConfig,
+  type RuntimeHandle,
+  type RuntimeMetrics,
+  type AttachInfo,
+  shellEscape,
 } from "@composio/ao-core";
 
 const execFileAsync = promisify(execFile);
@@ -33,10 +34,6 @@ function assertValidSessionId(id: string): void {
   }
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
 function writeLaunchScript(command: string): string {
   const scriptPath = join(tmpdir(), `ao-launch-${randomUUID()}.sh`);
   const content = `#!/usr/bin/env bash
@@ -44,7 +41,7 @@ rm -- "$0" 2>/dev/null || true
 ${command}
 `;
   writeFileSync(scriptPath, content, { encoding: "utf-8", mode: 0o700 });
-  const invocation = `bash ${shellQuote(scriptPath)}`;
+  const invocation = `bash ${shellEscape(scriptPath)}`;
   return invocation
 }
 
