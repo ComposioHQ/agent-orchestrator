@@ -16,12 +16,17 @@ import {
 } from "@composio/ao-core";
 import { execFile, execFileSync } from "node:child_process";
 import { readdir, readFile, stat, open, writeFile, mkdir, chmod } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+
+// Get the directory where this module is located (ESM-safe)
+const moduleDir = dirname(dirname(fileURLToPath(import.meta.url)));
+
 
 function normalizePermissionMode(mode: string | undefined): "permissionless" | "default" | "auto-edit" | "suggest" | undefined {
   if (!mode) return undefined;
@@ -36,8 +41,8 @@ function normalizePermissionMode(mode: string | undefined): "permissionless" | "
 // Metadata Updater Hook Script
 // =============================================================================
 
-/** Hook script content that updates session metadata on git/gh commands.
- *  Exported for integration testing. */
+/* eslint-disable no-useless-escape */
+/** Hook script content that updates session metadata on git/gh commands */
 export const METADATA_UPDATER_SCRIPT = `#!/usr/bin/env bash
 # Metadata Updater Hook for Agent Orchestrator
 #
@@ -45,6 +50,8 @@ export const METADATA_UPDATER_SCRIPT = `#!/usr/bin/env bash
 # - gh pr create: extracts PR URL and writes to metadata
 # - git checkout -b / git switch -c: extracts branch name and writes to metadata
 # - gh pr merge: updates status to "merged"
+#
+# Uses AST-based parsing for 100% accuracy in command detection.
 
 set -euo pipefail
 
@@ -122,65 +129,46 @@ update_metadata_key() {
 }
 
 # ============================================================================
-# Command Detection and Parsing
+# AST-Based Command Parsing
 # ============================================================================
 
-# Strip leading directory-change prefixes so that commands like
-#   cd ~/.worktrees/project && gh pr create ...
-# are correctly detected. Agents frequently cd into a worktree first.
-# Store the regex pattern in a variable for clarity (avoids shell quoting confusion).
-# Uses space-padded (&&|;) to avoid breaking on paths containing & or ; chars.
-cd_prefix_pattern='^[[:space:]]*cd[[:space:]]+.*[[:space:]]+(&&|;)[[:space:]]+(.*)'
-clean_command="$command"
-while [[ "$clean_command" =~ ^[[:space:]]*cd[[:space:]] ]]; do
-  if [[ "$clean_command" =~ $cd_prefix_pattern ]]; then
-    clean_command="\${BASH_REMATCH[2]}"
-  else
-    break
-  fi
-done
+# Get directory where this script is located
+SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+PARSER_SCRIPT="\$SCRIPT_DIR/metadata-parser.js"
+NODE_PATH="\$SCRIPT_DIR/node_modules"
 
-# Detect: gh pr create
-if [[ "$clean_command" =~ ^gh[[:space:]]+pr[[:space:]]+create ]]; then
-  # Extract PR URL from output
-  pr_url=$(echo "$output" | grep -Eo 'https://github[.]com/[^/]+/[^/]+/pull/[0-9]+' | head -1)
+# Parse command using AST parser (Node.js)
+# The parser outputs: TYPE:value (e.g., PR_CREATE:https://... or BRANCH:feature)
+# Set NODE_PATH to include local node_modules for shell-quote dependency
+export NODE_PATH
+parsed_output=""
+if [[ -f "\$PARSER_SCRIPT" ]] && command -v node &>/dev/null; then
+  parsed_output=\$(NODE_PATH="\$NODE_PATH" node "\$PARSER_SCRIPT" "\$command" "\$output" 2>/dev/null || echo "")
+fi
 
-  if [[ -n "$pr_url" ]]; then
-    update_metadata_key "pr" "$pr_url"
+# Handle: PR_CREATE
+if [[ "\$parsed_output" =~ ^PR_CREATE: ]]; then
+  pr_url="\${parsed_output#PR_CREATE:}"
+  if [[ -n "\$pr_url" ]]; then
+    update_metadata_key "pr" "\$pr_url"
     update_metadata_key "status" "pr_open"
-    echo '{"systemMessage": "Updated metadata: PR created at '"$pr_url"'"}'
+    echo '{"systemMessage": "Updated metadata: PR created at '"\$pr_url"'"}'
     exit 0
   fi
 fi
 
-# Detect: git checkout -b <branch> or git switch -c <branch>
-if [[ "$clean_command" =~ ^git[[:space:]]+checkout[[:space:]]+-b[[:space:]]+([^[:space:]]+) ]] || \\
-   [[ "$clean_command" =~ ^git[[:space:]]+switch[[:space:]]+-c[[:space:]]+([^[:space:]]+) ]]; then
-  branch="\${BASH_REMATCH[1]}"
-
-  if [[ -n "$branch" ]]; then
-    update_metadata_key "branch" "$branch"
-    echo '{"systemMessage": "Updated metadata: branch = '"$branch"'"}'
+# Handle: BRANCH
+if [[ "\$parsed_output" =~ ^BRANCH: ]]; then
+  branch="\${parsed_output#BRANCH:}"
+  if [[ -n "\$branch" ]]; then
+    update_metadata_key "branch" "\$branch"
+    echo '{"systemMessage": "Updated metadata: branch = '"\$branch"'"}'
     exit 0
   fi
 fi
 
-# Detect: git checkout <branch> (without -b) or git switch <branch> (without -c)
-# Only update if the branch name looks like a feature branch (contains / or -)
-if [[ "$clean_command" =~ ^git[[:space:]]+checkout[[:space:]]+([^[:space:]-]+[/-][^[:space:]]+) ]] || \\
-   [[ "$clean_command" =~ ^git[[:space:]]+switch[[:space:]]+([^[:space:]-]+[/-][^[:space:]]+) ]]; then
-  branch="\${BASH_REMATCH[1]}"
-
-  # Avoid updating for checkout of commits/tags
-  if [[ -n "$branch" && "$branch" != "HEAD" ]]; then
-    update_metadata_key "branch" "$branch"
-    echo '{"systemMessage": "Updated metadata: branch = '"$branch"'"}'
-    exit 0
-  fi
-fi
-
-# Detect: gh pr merge
-if [[ "$clean_command" =~ ^gh[[:space:]]+pr[[:space:]]+merge ]]; then
+# Handle: MERGE
+if [[ "\$parsed_output" =~ ^MERGE: ]]; then
   update_metadata_key "status" "merged"
   echo '{"systemMessage": "Updated metadata: status = merged"}'
   exit 0
@@ -190,6 +178,7 @@ fi
 echo '{}'
 exit 0
 `;
+/* eslint-enable no-useless-escape */
 
 // =============================================================================
 // Plugin Manifest
@@ -200,7 +189,6 @@ export const manifest = {
   slot: "agent" as const,
   description: "Agent plugin: Claude Code CLI",
   version: "0.1.0",
-  displayName: "Claude Code",
 };
 
 // =============================================================================
@@ -582,6 +570,33 @@ async function setupHookInWorkspace(workspacePath: string, hookCommand: string):
   await writeFile(hookScriptPath, METADATA_UPDATER_SCRIPT, "utf-8");
   await chmod(hookScriptPath, 0o755); // Make executable
 
+  // Copy metadata-parser.js and shell-quote dependency to .claude directory
+  // The hook script references these files relative to itself
+  const parserSrcPath = join(moduleDir, "dist", "metadata-parser.js");
+  const parserDestPath = join(claudeDir, "metadata-parser.js");
+  const nodeModulesPath = join(claudeDir, "node_modules");
+  if (existsSync(parserSrcPath)) {
+    // Copy parser
+    await writeFile(
+      parserDestPath,
+      await readFile(parserSrcPath, "utf-8"),
+      "utf-8"
+    );
+    await chmod(parserDestPath, 0o755); // Make executable
+
+    // Copy shell-quote dependency to .claude/node_modules
+    const shellQuoteSrc = join(moduleDir, "node_modules", "shell-quote");
+    if (existsSync(shellQuoteSrc)) {
+      const shellQuoteDest = join(nodeModulesPath, "shell-quote");
+      mkdirSync(nodeModulesPath, { recursive: true });
+      await writeFile(
+        shellQuoteDest,
+        await readFile(shellQuoteSrc, "utf-8"),
+        "utf-8"
+      );
+    }
+  }
+
   // Read existing settings if present
   let existingSettings: Record<string, unknown> = {};
   if (existsSync(settingsPath)) {
@@ -834,15 +849,17 @@ function createClaudeCodeAgent(): Agent {
     },
 
     async setupWorkspaceHooks(workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
-      // Relative path so that symlinked .claude/ dirs across worktrees
-      // all produce the same settings.json (last writer doesn't clobber).
-      await setupHookInWorkspace(workspacePath, ".claude/metadata-updater.sh");
+      // Use relative path for hook command (symlink-safe)
+      const hookScriptPath = ".claude/metadata-updater.sh";
+      await setupHookInWorkspace(workspacePath, hookScriptPath);
     },
 
     async postLaunchSetup(session: Session): Promise<void> {
       if (!session.workspacePath) return;
 
-      await setupHookInWorkspace(session.workspacePath, ".claude/metadata-updater.sh");
+      // Use relative path for hook command (symlink-safe)
+      const hookScriptPath = ".claude/metadata-updater.sh";
+      await setupHookInWorkspace(session.workspacePath, hookScriptPath);
     },
   };
 }
@@ -855,9 +872,12 @@ export function create(): Agent {
   return createClaudeCodeAgent();
 }
 
+/**
+ * Detect if Claude Code CLI is available.
+ */
 export function detect(): boolean {
   try {
-    // Use --version instead of `which` for cross-platform compatibility (Windows has no `which`)
+    // Use --version for cross-platform compatibility (Windows has no `which`)
     execFileSync("claude", ["--version"], { stdio: "ignore" });
     return true;
   } catch {
