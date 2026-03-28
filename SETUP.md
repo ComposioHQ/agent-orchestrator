@@ -224,6 +224,8 @@ projects:
 Supported Docker runtime keys in this branch:
 
 - `image`: container image to run
+- `shell`: shell used to bootstrap the keepalive process and launch command
+- `user`: explicit container user; defaults to host `uid:gid` when available
 - `limits.cpus`, `limits.memory`, `limits.gpus`: resource controls passed to `docker run`
 - `readOnlyRoot`: sets `--read-only`
 - `capDrop`: repeated `--cap-drop`
@@ -232,8 +234,13 @@ Supported Docker runtime keys in this branch:
 
 Notes:
 
+- Your image must include `/bin/sh` (or the configured `shell`), `tmux`, `git`, and the agent CLI you want AO to launch.
+- AO bind-mounts the workspace into the container at the same absolute path from the host.
+- CLI attach, `ao open`, and the web dashboard terminal attach to Docker sessions with `docker exec ... tmux attach`.
 - Prefer rootless Docker on Linux hosts.
 - Use pinned image tags for reproducibility.
+- Keep `tmpfs: [/tmp]` when using `readOnlyRoot`; AO uses `/tmp` inside the container for long or multiline prompt delivery.
+- `readOnlyRoot` only affects the container root filesystem. The bind-mounted workspace remains writable unless you mount it read-only yourself.
 - `ao doctor` now checks Docker availability, daemon access, configured image presence, Linux rootless hints, and GPU-runtime hints when `runtime: docker` is enabled.
 
 ### Plugin Slots

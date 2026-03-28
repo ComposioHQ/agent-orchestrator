@@ -49,6 +49,17 @@ Supported `runtimeConfig` keys:
 - `tmpfs`: forwarded as repeated `--tmpfs`
 - `limits.cpus`, `limits.memory`, `limits.gpus`: forwarded to `docker run`
 
+## Image requirements
+
+Your image needs the tools AO expects to drive an interactive session:
+
+- `/bin/sh` or the shell configured in `runtimeConfig.shell`
+- `tmux`
+- `git`
+- The agent CLI you plan to launch inside the container
+
+AO bind-mounts the project workspace into the container at the same absolute path from the host, so the Docker daemon must be able to access that host path.
+
 ## CLI overrides
 
 AO also supports one-off Docker overrides from the CLI:
@@ -58,8 +69,13 @@ ao start --runtime docker --runtime-image ghcr.io/composio/ao:latest
 ao spawn 123 --runtime docker --runtime-memory 4g --runtime-cpus 2 --runtime-read-only
 ```
 
+`--runtime-config` merges with the project's configured `runtimeConfig`, and explicit flags such as `--runtime-memory` or `--runtime-read-only` win for the same keys. `--runtime-cap-drop` and `--runtime-tmpfs` are repeatable.
+
 ## Notes
 
 - Prefer rootless Docker on Linux servers.
 - Use pinned image tags for reproducibility.
+- CLI attach, `ao open`, and the web dashboard terminal attach to Docker sessions with `docker exec ... tmux attach`.
+- Keep `tmpfs: [/tmp]` when using `readOnlyRoot`; AO uses `/tmp` inside the container for long or multiline prompt delivery.
+- `readOnlyRoot` hardens the container root filesystem, but the bind-mounted workspace remains writable unless you mount it read-only yourself.
 - Run `ao doctor` after changing Docker runtime config; it now validates Docker daemon access and required image configuration when `runtime: docker` is enabled.

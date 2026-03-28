@@ -167,11 +167,23 @@ ao spawn 123 --runtime docker --runtime-image ghcr.io/composio/ao:latest
 ao spawn 123 --runtime docker --runtime-memory 4g --runtime-cpus 2 --runtime-read-only
 ```
 
+Your Docker image must include the basics AO expects to drive an interactive agent session:
+
+- `/bin/sh` (or the shell you set in `runtimeConfig.shell`)
+- `tmux`
+- `git`
+- The agent CLI you plan to run inside the container (`claude`, `codex`, `aider`, etc.)
+
+AO bind-mounts the project workspace into the container at the same absolute host path. That keeps agent tooling and terminal attach behavior consistent, but it also means Docker must be able to access that host path.
+
+CLI attach, `ao open`, and the web dashboard terminal are runtime-aware. For Docker sessions they attach with `docker exec ... tmux attach`, not host tmux.
+
 Recommended for servers:
 
 - Prefer rootless Docker on Linux
 - Use a pinned image instead of `latest` for reproducibility
 - Add `readOnlyRoot`, `capDrop`, and explicit CPU/memory limits for multi-tenant hosts
+- Keep `tmpfs: [/tmp]` when using `readOnlyRoot`; AO uses `/tmp` inside the container to deliver long or multiline prompts safely
 - Use `ao doctor` after changing Docker runtime config; it now checks Docker daemon access and warns about missing image/rootless/GPU setup
 
 ## Plugin Architecture
