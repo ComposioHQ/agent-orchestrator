@@ -13,10 +13,48 @@ import { useSearchParams } from "next/navigation";
 interface WorkspaceLayoutProps {
   session: DashboardSession;
   children: {
-    fileTree: (selectedFile: string | null) => ReactNode;
-    preview: (selectedFile: string | null) => ReactNode;
+    fileTree: (
+      selectedFile: string | null,
+      opts: { showChangedOnly: boolean; onFileSelected: () => void },
+    ) => ReactNode;
+    preview: (selectedFile: string | null, opts: { diffMode: boolean }) => ReactNode;
     terminal: ReactNode;
   };
+}
+
+type FileSelectSource = "tree" | "quickopen" | "diff";
+
+interface FileTreeSettings {
+  autoCloseOnTreeSelect: boolean;
+  autoCloseOnQuickOpen: boolean;
+  autoCloseOnDiffSelect: boolean;
+}
+
+const FILE_TREE_SETTINGS_KEY = "workspace:file-tree-settings";
+const DEFAULT_SETTINGS: FileTreeSettings = {
+  autoCloseOnTreeSelect: false,
+  autoCloseOnQuickOpen: false,
+  autoCloseOnDiffSelect: false,
+};
+
+function loadFileTreeSettings(): FileTreeSettings {
+  if (typeof window === "undefined") return DEFAULT_SETTINGS;
+  try {
+    const raw = window.localStorage.getItem(FILE_TREE_SETTINGS_KEY);
+    if (!raw) return DEFAULT_SETTINGS;
+    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+  } catch {
+    return DEFAULT_SETTINGS;
+  }
+}
+
+function saveFileTreeSettings(settings: FileTreeSettings): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(FILE_TREE_SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    // ignore
+  }
 }
 
 export function WorkspaceLayout({ session, children }: WorkspaceLayoutProps) {
@@ -32,7 +70,42 @@ export function WorkspaceLayout({ session, children }: WorkspaceLayoutProps) {
   const urlFile = searchParams.get("file");
   const prevFileRef = useRef<string | null>(null);
   const [quickOpenVisible, setQuickOpenVisible] = useState(false);
+  const [showChangedOnly, setShowChangedOnly] = useState(false);
+  const [fileTreeSettings, setFileTreeSettings] = useState<FileTreeSettings>(DEFAULT_SETTINGS);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsBtnRef = useRef<HTMLButtonElement>(null);
+  const settingsPopoverRef = useRef<HTMLDivElement>(null);
+  const fileSelectSourceRef = useRef<FileSelectSource | null>(null);
   const sidebarCtx = useSidebarContext();
+
+  // Load settings from localStorage on mount
+  useEffect(() => {
+    setFileTreeSettings(loadFileTreeSettings());
+  }, []);
+
+  // Close settings popover when clicking outside
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (
+        settingsPopoverRef.current && !settingsPopoverRef.current.contains(target) &&
+        settingsBtnRef.current && !settingsBtnRef.current.contains(target)
+      ) {
+        setSettingsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [settingsOpen]);
+
+  const updateSetting = useCallback((key: keyof FileTreeSettings, value: boolean) => {
+    setFileTreeSettings((prev) => {
+      const next = { ...prev, [key]: value };
+      saveFileTreeSettings(next);
+      return next;
+    });
+  }, []);
 
   // Compute effective selected file: URL takes precedence, then storage
   const [restoredFile, setRestoredFile] = useState<string | null>(null);
@@ -53,6 +126,7 @@ export function WorkspaceLayout({ session, children }: WorkspaceLayoutProps) {
 
   // URL file always wins; fall back to restored file from storage
   const selectedFile = urlFile ?? restoredFile;
+  const diffMode = showChangedOnly && !!selectedFile;
 
   // CMD+P / Ctrl+P → open quick file search
   useEffect(() => {
@@ -66,13 +140,23 @@ export function WorkspaceLayout({ session, children }: WorkspaceLayoutProps) {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  // Auto-collapse file tree when a file is selected
+  // Auto-collapse file tree when a file is selected (respects per-source settings).
+  // Only clear fileSelectSourceRef after handling a transition so async URL updates still see the source.
   useEffect(() => {
-    if (selectedFile && selectedFile !== prevFileRef.current && !collapsed[0]) {
-      toggleCollapsed(0);
+    const prev = prevFileRef.current;
+    if (selectedFile && selectedFile !== prev && !collapsed[0]) {
+      const source = fileSelectSourceRef.current;
+      fileSelectSourceRef.current = null;
+      const shouldClose =
+        (source === "tree" && fileTreeSettings.autoCloseOnTreeSelect) ||
+        (source === "quickopen" && fileTreeSettings.autoCloseOnQuickOpen) ||
+        (source === "diff" && fileTreeSettings.autoCloseOnDiffSelect);
+      if (shouldClose) {
+        toggleCollapsed(0);
+      }
     }
     prevFileRef.current = selectedFile;
-  }, [selectedFile]); // intentionally exclude collapsed/toggleCollapsed to avoid loops
+  }, [selectedFile, fileTreeSettings, collapsed, toggleCollapsed]);
 
   // Restore preview scroll after file content loads
   useEffect(() => {
@@ -240,6 +324,22 @@ export function WorkspaceLayout({ session, children }: WorkspaceLayoutProps) {
     }
   }, [collapsed, toggleCollapsed]);
 
+  const onTreeFileSelected = useCallback(() => {
+    fileSelectSourceRef.current = showChangedOnly ? "diff" : "tree";
+    ensurePreviewVisible();
+  }, [showChangedOnly, ensurePreviewVisible]);
+
+  const onQuickOpenFileSelected = useCallback(() => {
+    fileSelectSourceRef.current = "quickopen";
+    ensurePreviewVisible();
+  }, [ensurePreviewVisible]);
+
+  useEffect(() => {
+    if (diffMode && selectedFile) {
+      ensurePreviewVisible();
+    }
+  }, [diffMode, selectedFile, ensurePreviewVisible]);
+
   const topBarProps = {
     session,
     collapsed,
@@ -266,8 +366,62 @@ export function WorkspaceLayout({ session, children }: WorkspaceLayoutProps) {
     <div style={{ display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
       <div className="workspace-pane-header">
         <span>FILES</span>
+        <div style={{ display: "flex", alignItems: "center", gap: "2px", marginLeft: "auto", position: "relative" }}>
+          <button
+            type="button"
+            ref={settingsBtnRef}
+            onClick={() => setSettingsOpen((v) => !v)}
+            title="File tree settings"
+            className={`workspace-pane-header-btn ${settingsOpen ? "workspace-pane-header-btn--active" : ""}`}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
+            </svg>
+          </button>
+          {settingsOpen && (
+            <div ref={settingsPopoverRef} className="workspace-file-tree-settings-popover">
+              <div className="workspace-file-tree-settings-title">Auto-close file tree</div>
+              {([
+                { key: "autoCloseOnTreeSelect" as const, label: "On file tree select" },
+                { key: "autoCloseOnQuickOpen" as const, label: "On quick open select" },
+                { key: "autoCloseOnDiffSelect" as const, label: "On git diff select" },
+              ]).map(({ key, label }) => (
+                <label key={key} className="workspace-file-tree-settings-row">
+                  <input
+                    type="checkbox"
+                    checked={fileTreeSettings[key]}
+                    onChange={(e) => updateSetting(key, e.target.checked)}
+                  />
+                  <span>{label}</span>
+                </label>
+              ))}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowChangedOnly((v) => !v)}
+            title={showChangedOnly ? "Show all files" : "Show changed files only"}
+            className={`workspace-pane-header-btn ${showChangedOnly ? "workspace-pane-header-btn--active" : ""}`}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden>
+              <text
+                x="12"
+                y="17"
+                textAnchor="middle"
+                fontSize="15"
+                fill="currentColor"
+                fontFamily="ui-sans-serif, system-ui, sans-serif"
+              >
+                Δ
+              </text>
+            </svg>
+          </button>
+        </div>
       </div>
-      <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>{children.fileTree(selectedFile)}</div>
+      <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
+        {children.fileTree(selectedFile, { showChangedOnly, onFileSelected: onTreeFileSelected })}
+      </div>
     </div>
   );
 
@@ -310,7 +464,7 @@ export function WorkspaceLayout({ session, children }: WorkspaceLayoutProps) {
         onScroll={handlePreviewScroll}
         style={{ flex: 1, overflow: "auto", minHeight: 0 }}
       >
-        {children.preview(selectedFile)}
+        {children.preview(selectedFile, { diffMode })}
       </div>
     </div>
   );
@@ -326,7 +480,7 @@ export function WorkspaceLayout({ session, children }: WorkspaceLayoutProps) {
       sessionId={session.id}
       open={quickOpenVisible}
       onClose={() => setQuickOpenVisible(false)}
-      onFileSelected={ensurePreviewVisible}
+      onFileSelected={onQuickOpenFileSelected}
     />
   );
 

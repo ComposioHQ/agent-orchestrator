@@ -4,22 +4,33 @@ import { useFileContent } from "./useFileContent";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
+import { highlightFileContentByLines, languageForFilePath } from "./codeHighlight";
 
 interface FilePreviewProps {
   sessionId: string;
   selectedFile: string | null;
 }
 
-function CodeViewer({ content }: { content: string; fileName: string }) {
+function CodeViewer({ content, fileName }: { content: string; fileName: string }) {
   const lines = content.split("\n");
   const gutterWidth = String(lines.length).length;
+
+  const lang = languageForFilePath(fileName);
+  const highlightedLines = lang ? highlightFileContentByLines(content, lang) : null;
 
   return (
     <pre className="workspace-code-viewer">
       {lines.map((line, i) => (
         <div key={i} className="workspace-code-line">
           <span className="workspace-code-gutter">{String(i + 1).padStart(gutterWidth)}</span>
-          <span className="workspace-code-content">{line}</span>
+          {highlightedLines ? (
+            <span
+              className="workspace-code-content"
+              dangerouslySetInnerHTML={{ __html: highlightedLines[i] ?? "" }}
+            />
+          ) : (
+            <span className="workspace-code-content">{line}</span>
+          )}
         </div>
       ))}
     </pre>

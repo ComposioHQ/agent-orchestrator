@@ -7,6 +7,7 @@ import { SessionDetail } from "@/components/SessionDetail";
 import { WorkspaceLayout } from "@/components/workspace/WorkspaceLayout";
 import { FileTree } from "@/components/workspace/FileTree";
 import { FilePreview } from "@/components/workspace/FilePreview";
+import { DiffViewer } from "@/components/workspace/DiffViewer";
 import { DirectTerminal } from "@/components/DirectTerminal";
 import { type DashboardSession, getAttentionLevel, type AttentionLevel } from "@/lib/types";
 import { activityIcon } from "@/lib/activity-icons";
@@ -152,8 +153,20 @@ export default function SessionPage() {
     return (
       <WorkspaceLayout session={session}>
         {{
-          fileTree: (file) => <FileTree sessionId={id} selectedFile={file} />,
-          preview: (file) => <FilePreview sessionId={id} selectedFile={file} />,
+          fileTree: (file, { showChangedOnly, onFileSelected }) => (
+            <FileTree
+              sessionId={id}
+              selectedFile={file}
+              showChangedOnly={showChangedOnly}
+              onFileSelected={onFileSelected}
+            />
+          ),
+          preview: (file, { diffMode }) =>
+            diffMode ? (
+              <DiffViewer sessionId={id} selectedFile={file} />
+            ) : (
+              <FilePreview sessionId={id} selectedFile={file} />
+            ),
           terminal: (
             <DirectTerminal
               sessionId={id}

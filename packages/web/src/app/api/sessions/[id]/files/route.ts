@@ -17,7 +17,9 @@ type GitStatus = "M" | "A" | "D" | "?" | "R";
 function getGitStatus(worktreePath: string): Record<string, GitStatus> {
   const result: Record<string, GitStatus> = {};
   try {
-    const output = execSync("git status --porcelain", {
+    // -uall: list every untracked file path (default mode collapses dirs to one line, e.g. ?? .foo/
+    // which would not match tree paths like .foo/bar.md — breaking badges and changed-files filter).
+    const output = execSync("git status --porcelain=v1 -uall", {
       cwd: worktreePath,
       encoding: "utf-8",
       timeout: 5000,
