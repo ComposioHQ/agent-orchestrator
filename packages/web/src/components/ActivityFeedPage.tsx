@@ -127,10 +127,10 @@ export function ActivityFeedPage({
           </div>
         ) : (
           <div className="flex min-h-[55vh] flex-col items-center justify-center px-6 text-center">
-            <div className="text-[20px] font-medium tracking-[-0.03em] text-[var(--color-text-primary)]">
+            <div className="text-[var(--font-size-xl)] font-medium tracking-[-0.025em] text-[var(--color-text-primary)]">
               {workspaceCount > 0 ? "No matching activity" : "No activity yet"}
             </div>
-            <p className="mt-3 max-w-[38ch] text-[14px] leading-6 text-[var(--color-text-secondary)]">
+            <p className="mt-3 max-w-[38ch] text-[var(--font-size-base)] leading-relaxed text-[var(--color-text-secondary)]">
               {workspaceCount > 0
                 ? "Try a different search or open a workspace from the sidebar to start new work."
                 : "Open, clone, or quick start a workspace from the sidebar to begin tracking activity here."}
