@@ -75,6 +75,13 @@ interface CommandContext {
 }
 
 // ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/** Default timeout for AO tools that query multiple sessions or GitHub. */
+const AO_TOOL_TIMEOUT_MS = 30_000;
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -400,7 +407,7 @@ export function fetchIssues(
       "30",
     );
 
-    const result = deps.runGh(config, args, 15_000);
+    const result = deps.runGh(config, args, AO_TOOL_TIMEOUT_MS);
     if (!result.ok) {
       warnings.push(`${repoLabel}: ${result.error}`);
       continue;
@@ -476,7 +483,7 @@ async function spawnWithRetry(
 ): Promise<{ ok: true; output: string } | { ok: false; error: string }> {
   let lastResult: { ok: true; output: string } | { ok: false; error: string } | undefined;
   for (let attempt = 0; attempt < maxRetries; attempt++) {
-    lastResult = tryRunAo(config, issueArgs, 30_000);
+    lastResult = tryRunAo(config, issueArgs, AO_TOOL_TIMEOUT_MS);
     if (lastResult.ok) return lastResult;
     // Only retry on transient errors, not config/auth errors
     if (
@@ -705,14 +712,14 @@ export default function (api: PluginApi) {
 
       switch (subcommand) {
         case "sessions": {
-          const result = tryRunAo(config, ["status"]);
+          const result = tryRunAo(config, ["status"], AO_TOOL_TIMEOUT_MS);
           if (!result.ok) return { text: `Failed to get sessions:\n${result.error}` };
           return { text: result.output || "No active sessions." };
         }
 
         case "status": {
           // `ao status` shows all sessions; no per-session lookup available
-          const result = tryRunAo(config, ["status"]);
+          const result = tryRunAo(config, ["status"], AO_TOOL_TIMEOUT_MS);
           if (!result.ok) return { text: `Failed:\n${result.error}` };
           return { text: result.output };
         }
@@ -758,7 +765,7 @@ export default function (api: PluginApi) {
           const sessionId = sanitizeArg(rest.trim());
           if (!isValidSessionId(sessionId))
             return { text: `Invalid session ID: ${rest}. Expected format like ao-42.` };
-          const result = tryRunAo(config, ["send", sessionId, "Please retry the failed task."]);
+          const result = tryRunAo(config, ["send", sessionId, "Please retry the failed task."], AO_TOOL_TIMEOUT_MS);
           if (!result.ok) return { text: `Failed to send retry:\n${result.error}` };
           return { text: `Retry sent to session ${sessionId}.` };
         }
@@ -768,13 +775,13 @@ export default function (api: PluginApi) {
           const sessionId = sanitizeArg(rest.trim());
           if (!isValidSessionId(sessionId))
             return { text: `Invalid session ID: ${rest}. Expected format like ao-42.` };
-          const result = tryRunAo(config, ["session", "kill", sessionId]);
+          const result = tryRunAo(config, ["session", "kill", sessionId], AO_TOOL_TIMEOUT_MS);
           if (!result.ok) return { text: `Failed to kill session:\n${result.error}` };
           return { text: `Session ${sessionId} killed.` };
         }
 
         case "doctor": {
-          const result = tryRunAo(config, ["doctor"], 30_000);
+          const result = tryRunAo(config, ["doctor"], AO_TOOL_TIMEOUT_MS);
           if (!result.ok) return { text: `Failed to run doctor:\n${result.error}` };
           return { text: result.output };
         }
@@ -871,7 +878,7 @@ export default function (api: PluginApi) {
       "their status, branches, and progress. Use when the user asks about status or progress.",
     parameters: { type: "object", properties: {}, required: [] },
     async execute() {
-      const result = tryRunAo(config, ["status"]);
+      const result = tryRunAo(config, ["status"], AO_TOOL_TIMEOUT_MS);
       if (!result.ok) {
         return {
           content: [{ type: "text", text: `Failed to get sessions: ${result.error}` }],
@@ -1053,7 +1060,7 @@ export default function (api: PluginApi) {
       required: ["sessionId", "message"],
     },
     async execute(_toolCallId: string, params: { sessionId: string; message: string }) {
-      const result = tryRunAo(config, ["send", sanitizeCliArg(params.sessionId), params.message]);
+      const result = tryRunAo(config, ["send", sanitizeCliArg(params.sessionId), params.message], AO_TOOL_TIMEOUT_MS);
       if (!result.ok) {
         return {
           content: [{ type: "text", text: `Failed to send: ${result.error}` }],
@@ -1078,7 +1085,7 @@ export default function (api: PluginApi) {
       required: ["sessionId"],
     },
     async execute(_toolCallId: string, params: { sessionId: string }) {
-      const result = tryRunAo(config, ["session", "kill", sanitizeCliArg(params.sessionId)]);
+      const result = tryRunAo(config, ["session", "kill", sanitizeCliArg(params.sessionId)], AO_TOOL_TIMEOUT_MS);
       if (!result.ok) {
         return {
           content: [{ type: "text", text: `Failed to kill: ${result.error}` }],
@@ -1098,7 +1105,7 @@ export default function (api: PluginApi) {
     description: "Run Agent Orchestrator health checks. Use when troubleshooting.",
     parameters: { type: "object", properties: {}, required: [] },
     async execute() {
-      const result = tryRunAo(config, ["doctor"], 30_000);
+      const result = tryRunAo(config, ["doctor"], AO_TOOL_TIMEOUT_MS);
       if (!result.ok) {
         return {
           content: [{ type: "text", text: `Doctor failed: ${result.error}` }],
@@ -1127,7 +1134,7 @@ export default function (api: PluginApi) {
       const args = ["review-check"];
       if (params.project) args.push(sanitizeCliArg(params.project));
       if (params.dryRun) args.push("--dry-run");
-      const result = tryRunAo(config, args, 30_000);
+      const result = tryRunAo(config, args, AO_TOOL_TIMEOUT_MS);
       if (!result.ok) {
         return {
           content: [{ type: "text", text: `Review check failed: ${result.error}` }],
@@ -1188,7 +1195,7 @@ export default function (api: PluginApi) {
         if (params.fail) args.push("--fail");
         if (params.comment) args.push("-c", params.comment);
       }
-      const result = tryRunAo(config, args, 15_000);
+      const result = tryRunAo(config, args, AO_TOOL_TIMEOUT_MS);
       if (!result.ok) {
         return {
           content: [{ type: "text", text: `Verify failed: ${result.error}` }],
@@ -1216,7 +1223,7 @@ export default function (api: PluginApi) {
       const args = ["session", "cleanup"];
       if (params.project) args.push("-p", sanitizeCliArg(params.project));
       if (params.dryRun) args.push("--dry-run");
-      const result = tryRunAo(config, args, 30_000);
+      const result = tryRunAo(config, args, AO_TOOL_TIMEOUT_MS);
       if (!result.ok) {
         return {
           content: [{ type: "text", text: `Cleanup failed: ${result.error}` }],
@@ -1240,7 +1247,7 @@ export default function (api: PluginApi) {
       required: ["sessionId"],
     },
     async execute(_toolCallId: string, params: { sessionId: string }) {
-      const result = tryRunAo(config, ["session", "restore", sanitizeCliArg(params.sessionId)], 30_000);
+      const result = tryRunAo(config, ["session", "restore", sanitizeCliArg(params.sessionId)], AO_TOOL_TIMEOUT_MS);
       if (!result.ok) {
         return {
           content: [{ type: "text", text: `Restore failed: ${result.error}` }],
@@ -1275,7 +1282,7 @@ export default function (api: PluginApi) {
       const args = ["session", "claim-pr", params.pr];
       if (params.sessionId) args.push(params.sessionId);
       if (params.assignOnGithub) args.push("--assign-on-github");
-      const result = tryRunAo(config, args, 15_000);
+      const result = tryRunAo(config, args, AO_TOOL_TIMEOUT_MS);
       if (!result.ok) {
         return {
           content: [{ type: "text", text: `Claim PR failed: ${result.error}` }],
@@ -1301,7 +1308,7 @@ export default function (api: PluginApi) {
     async execute(_toolCallId: string, params: { project?: string }) {
       const args = ["session", "ls"];
       if (params.project) args.push("-p", params.project);
-      const result = tryRunAo(config, args, 15_000);
+      const result = tryRunAo(config, args, AO_TOOL_TIMEOUT_MS);
       if (!result.ok) {
         return {
           content: [{ type: "text", text: `Session list failed: ${result.error}` }],
@@ -1329,7 +1336,7 @@ export default function (api: PluginApi) {
       const args = ["status"];
       if (params.project) args.push("-p", params.project);
       if (params.json) args.push("--json");
-      const result = tryRunAo(config, args, 15_000);
+      const result = tryRunAo(config, args, AO_TOOL_TIMEOUT_MS);
       if (!result.ok) {
         return {
           content: [{ type: "text", text: `Status failed: ${result.error}` }],
