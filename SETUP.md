@@ -235,6 +235,7 @@ Supported Docker runtime keys in this branch:
 Notes:
 
 - Your image must include `/bin/sh` (or the configured `shell`), `tmux`, `git`, and the agent CLI you want AO to launch.
+- Any credentials your agent CLI needs must be available inside the container, typically through environment variables.
 - AO bind-mounts the workspace into the container at the same absolute path from the host.
 - CLI attach, `ao open`, and the web dashboard terminal attach to Docker sessions with `docker exec ... tmux attach`.
 - Prefer rootless Docker on Linux hosts.
@@ -242,6 +243,22 @@ Notes:
 - Keep `tmpfs: [/tmp]` when using `readOnlyRoot`; AO uses `/tmp` inside the container for long or multiline prompt delivery.
 - `readOnlyRoot` only affects the container root filesystem. The bind-mounted workspace remains writable unless you mount it read-only yourself.
 - `ao doctor` now checks Docker availability, daemon access, configured image presence, Linux rootless hints, and GPU-runtime hints when `runtime: docker` is enabled.
+
+Minimal image pattern:
+
+```dockerfile
+FROM node:20-bookworm
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends git tmux \
+  && rm -rf /var/lib/apt/lists/*
+
+# Install the agent CLI used by this project.
+# RUN npm install -g @openai/codex
+# RUN npm install -g @anthropic-ai/claude-code
+
+WORKDIR /workspace
+```
 
 ### Plugin Slots
 

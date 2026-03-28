@@ -57,8 +57,25 @@ Your image needs the tools AO expects to drive an interactive session:
 - `tmux`
 - `git`
 - The agent CLI you plan to launch inside the container
+- Any credentials or auth environment variables that CLI needs inside the container
 
 AO bind-mounts the project workspace into the container at the same absolute path from the host, so the Docker daemon must be able to access that host path.
+
+Minimal image pattern:
+
+```dockerfile
+FROM node:20-bookworm
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends git tmux \
+  && rm -rf /var/lib/apt/lists/*
+
+# Install the agent CLI used by this project.
+# RUN npm install -g @openai/codex
+# RUN npm install -g @anthropic-ai/claude-code
+
+WORKDIR /workspace
+```
 
 ## CLI overrides
 

@@ -174,6 +174,7 @@ Your Docker image must include the basics AO expects to drive an interactive age
 - `tmux`
 - `git`
 - The agent CLI you plan to run inside the container (`claude`, `codex`, `aider`, etc.)
+- Any auth material that CLI expects, usually through environment variables in the container
 
 AO bind-mounts the project workspace into the container at the same absolute host path. That keeps agent tooling and terminal attach behavior consistent, but it also means Docker must be able to access that host path.
 
