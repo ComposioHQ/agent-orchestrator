@@ -38,7 +38,39 @@ interface DirectTerminalWsUrlOptions {
   directTerminalPort?: string;
 }
 
+interface RuntimeTerminalConfigResponse {
+  directTerminalPort?: unknown;
+  proxyWsPath?: unknown;
+}
+
+interface TerminalConnectionConfig {
+  directTerminalPort?: string;
+  proxyWsPath?: string;
+}
+
 type TerminalVariant = "agent" | "orchestrator";
+
+function normalizePortValue(value: unknown): string | undefined {
+  if (typeof value !== "string" && typeof value !== "number") return undefined;
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isInteger(parsed) || parsed <= 0 || parsed > 65535) return undefined;
+  return String(parsed);
+}
+
+function normalizePathValue(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("/")) return undefined;
+  return trimmed;
+}
+
+function parseRuntimeTerminalConfig(payload: unknown): TerminalConnectionConfig {
+  const response = (payload ?? {}) as RuntimeTerminalConfigResponse;
+  return {
+    directTerminalPort: normalizePortValue(response.directTerminalPort),
+    proxyWsPath: normalizePathValue(response.proxyWsPath),
+  };
+}
 
 export function buildTerminalThemes(variant: TerminalVariant): { dark: ITheme; light: ITheme } {
   const agentAccent = {
@@ -312,15 +344,9 @@ export function DirectTerminal({
         // Fit terminal to container
         fit.fit();
 
-        // WebSocket URL (stable across reconnects)
-        // When accessed via reverse proxy (HTTPS on standard port), use path-based
-        // WebSocket endpoint instead of direct port access.
-        const wsUrl = buildDirectTerminalWsUrl({
-          location: window.location,
-          sessionId,
-          proxyWsPath: process.env.NEXT_PUBLIC_TERMINAL_WS_PATH,
-          directTerminalPort: process.env.NEXT_PUBLIC_DIRECT_TERMINAL_PORT,
-        });
+        // Runtime WS config cache. We do not rely on build-time NEXT_PUBLIC_* here
+        // because `ao start` can choose terminal ports dynamically at runtime.
+        const runtimeConnectionConfig: TerminalConnectionConfig = {};
 
         // ── Preserve selection while terminal receives output ────────
         // xterm.js clears the selection on every terminal.write(). We
@@ -405,8 +431,44 @@ export function DirectTerminal({
           }
         });
 
-        function connectWebSocket() {
+        async function resolveConnectionConfig(): Promise<TerminalConnectionConfig> {
+          const fromBuild: TerminalConnectionConfig = {
+            proxyWsPath: normalizePathValue(process.env.NEXT_PUBLIC_TERMINAL_WS_PATH),
+            directTerminalPort: normalizePortValue(process.env.NEXT_PUBLIC_DIRECT_TERMINAL_PORT),
+          };
+
+          if (!fromBuild.proxyWsPath && !runtimeConnectionConfig.directTerminalPort) {
+            try {
+              const response = await fetch("/api/runtime/terminal", { cache: "no-store" });
+              if (response.ok) {
+                const runtimeConfig = parseRuntimeTerminalConfig(await response.json());
+                runtimeConnectionConfig.proxyWsPath = runtimeConfig.proxyWsPath;
+                runtimeConnectionConfig.directTerminalPort = runtimeConfig.directTerminalPort;
+              }
+            } catch {
+              // Runtime config endpoint is optional; fallback to build-time values.
+            }
+          }
+
+          return {
+            proxyWsPath: runtimeConnectionConfig.proxyWsPath ?? fromBuild.proxyWsPath,
+            directTerminalPort:
+              runtimeConnectionConfig.directTerminalPort ?? fromBuild.directTerminalPort,
+          };
+        }
+
+        async function connectWebSocket() {
           if (!mounted) return;
+
+          const config = await resolveConnectionConfig();
+          if (!mounted) return;
+
+          const wsUrl = buildDirectTerminalWsUrl({
+            location: window.location,
+            sessionId,
+            proxyWsPath: config.proxyWsPath,
+            directTerminalPort: config.directTerminalPort,
+          });
 
           console.log("[DirectTerminal] Connecting to:", wsUrl);
           const websocket = new WebSocket(wsUrl);
@@ -471,11 +533,13 @@ export function DirectTerminal({
             setStatus("connecting");
             setError(null);
 
-            reconnectTimerRef.current = setTimeout(connectWebSocket, delay);
+            reconnectTimerRef.current = setTimeout(() => {
+              void connectWebSocket();
+            }, delay);
           };
         }
 
-        connectWebSocket();
+        void connectWebSocket();
 
         // Store cleanup function to be called from useEffect cleanup
         cleanup = () => {

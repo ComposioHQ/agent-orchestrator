@@ -3,7 +3,6 @@ import { NextRequest } from "next/server";
 import {
   SessionNotFoundError,
   SessionNotRestorableError,
-  SessionNotFoundError,
   type Session,
   type SessionManager,
   type OrchestratorConfig,
@@ -205,6 +204,7 @@ import { POST as remapPOST } from "@/app/api/sessions/[id]/remap/route";
 import { POST as mergePOST } from "@/app/api/prs/[id]/merge/route";
 import { GET as eventsGET } from "@/app/api/events/route";
 import { GET as observabilityGET } from "@/app/api/observability/route";
+import { GET as runtimeTerminalGET } from "@/app/api/runtime/terminal/route";
 
 function makeRequest(url: string, init?: RequestInit): NextRequest {
   return new NextRequest(
@@ -392,6 +392,35 @@ describe("API Routes", () => {
     });
   });
 
+  describe("GET /api/runtime/terminal", () => {
+    it("returns runtime direct terminal port from server env", async () => {
+      const previousDirect = process.env.DIRECT_TERMINAL_PORT;
+      const previousTerminal = process.env.TERMINAL_PORT;
+
+      process.env.DIRECT_TERMINAL_PORT = "14803";
+      process.env.TERMINAL_PORT = "14802";
+
+      try {
+        const res = await runtimeTerminalGET();
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.directTerminalPort).toBe("14803");
+        expect(data.terminalPort).toBe("14802");
+      } finally {
+        if (previousDirect === undefined) {
+          delete process.env.DIRECT_TERMINAL_PORT;
+        } else {
+          process.env.DIRECT_TERMINAL_PORT = previousDirect;
+        }
+        if (previousTerminal === undefined) {
+          delete process.env.TERMINAL_PORT;
+        } else {
+          process.env.TERMINAL_PORT = previousTerminal;
+        }
+      }
+    });
+  });
+
   // ── POST /api/spawn ────────────────────────────────────────────────
 
   describe("POST /api/spawn", () => {
@@ -420,6 +449,20 @@ describe("API Routes", () => {
       expect(res.status).toBe(400);
       const data = await res.json();
       expect(data.error).toMatch(/projectId/);
+    });
+
+    it("returns 404 when projectId does not exist in config", async () => {
+      const req = makeRequest("/api/spawn", {
+        method: "POST",
+        body: JSON.stringify({ projectId: "mono-orchestrator" }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await spawnPOST(req);
+
+      expect(res.status).toBe(404);
+      const data = await res.json();
+      expect(data.error).toBe("Unknown project: mono-orchestrator");
+      expect(mockSessionManager.spawn).not.toHaveBeenCalled();
     });
 
     it("returns 400 with invalid JSON", async () => {

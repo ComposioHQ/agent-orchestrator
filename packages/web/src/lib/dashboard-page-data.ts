@@ -35,7 +35,12 @@ export const getDashboardProjectName = cache(function getDashboardProjectName(
 });
 
 export function resolveDashboardProjectFilter(project?: string): string {
-  return project ?? getPrimaryProjectId();
+  if (project === "all") return "all";
+  const projects = getAllProjects();
+  if (project && projects.some((entry) => entry.id === project)) {
+    return project;
+  }
+  return projects[0]?.id ?? getPrimaryProjectId();
 }
 
 export const getDashboardPageData = cache(async function getDashboardPageData(project?: string): Promise<DashboardPageData> {

@@ -27,8 +27,29 @@ export async function POST(request: NextRequest) {
 
   try {
     const { config, sessionManager } = await getServices();
+    const projectId = body.projectId as string;
+    if (!config.projects[projectId]) {
+      recordApiObservation({
+        config,
+        method: "POST",
+        path: "/api/spawn",
+        correlationId,
+        startedAt,
+        outcome: "failure",
+        statusCode: 404,
+        projectId,
+        reason: `Unknown project: ${projectId}`,
+        data: { issueId: body.issueId },
+      });
+      return jsonWithCorrelation(
+        { error: `Unknown project: ${projectId}` },
+        { status: 404 },
+        correlationId,
+      );
+    }
+
     const session = await sessionManager.spawn({
-      projectId: body.projectId as string,
+      projectId,
       issueId: (body.issueId as string) ?? undefined,
     });
 
