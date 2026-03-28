@@ -56,7 +56,7 @@ export function PortfolioPage({
           />
         </div>
 
-        <div className="mt-8 flex items-center gap-2 text-[12px] text-[var(--color-text-tertiary)]">
+        <div className="mt-8 flex items-center gap-2 text-[var(--font-size-sm)] text-[var(--color-text-tertiary)]">
           <FolderStatusIcon />
           <span>{workspaceLabel}</span>
         </div>
