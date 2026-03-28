@@ -1,0 +1,35 @@
+packages/web/src/lib/__tests__/serialize.test.ts
+  6fb113398908e521 248,253
+packages/web/src/components/__tests__/SessionDetail.mobile.test.tsx
+  6fb113398908e521 82
+packages/web/src/components/__tests__/Dashboard.mobile.test.tsx
+  6fb113398908e521 88,155
+packages/web/src/__tests__/components.test.tsx
+  6fb113398908e521 211
+packages/web/src/components/__tests__/Dashboard.projectOverview.test.tsx
+  6fb113398908e521 41,136
+packages/web/src/components/__tests__/PullRequestsPage.test.tsx
+  6fb113398908e521 69
+packages/web/src/app/sessions/[id]/page.test.tsx
+  6fb113398908e521 1,3-4,6-8,11,14-15,17-19,22-36,39-41,43-45,47-49,52-54,56,58-60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.20",
+  "base_commit_sha": "fe551c8510bdc24162556d96fcc4fda7a55a026e",
+  "prompts": {
+    "6fb113398908e521": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "20e73692-fa79-4137-b532-142ef380fc19",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 56,
+      "total_deletions": 166,
+      "accepted_lines": 56,
+      "overriden_lines": 0
+    }
+  }
+}
