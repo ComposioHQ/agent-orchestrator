@@ -226,8 +226,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     // Track activity state across steps so stuck detection can run after PR checks
     let detectedIdleTimestamp: Date | null = null;
 
-    // 1. Check if runtime is alive
-    if (session.runtimeHandle) {
+    // Skip runtime checks for already-killed sessions — we still need to poll
+    // for CI status, merge conflicts, and approval state.
+    const alreadyKilled = session.status === "killed";
+
+    // 1. Check if runtime is alive (skip if already killed)
+    if (!alreadyKilled && session.runtimeHandle) {
       const runtime = registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime);
       if (runtime) {
         const alive = await runtime.isAlive(session.runtimeHandle).catch(() => true);
@@ -236,7 +240,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
 
     // 2. Check agent activity — prefer JSONL-based detection (runtime-agnostic)
-    if (agent && session.runtimeHandle) {
+    // Skip for already-killed sessions to avoid unnecessary runtime checks
+    if (!alreadyKilled && agent && session.runtimeHandle) {
       try {
         // Try JSONL-based activity detection first (reads agent's session files directly)
         const activityState = await agent.getActivityState(session, config.readyThresholdMs);
@@ -804,11 +809,16 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
       // Include sessions that are active OR whose status changed from what we last saw
       // (e.g., list() detected a dead runtime and marked it "killed" — we need to
-      // process that transition even though the new status is terminal)
+      // process that transition even though the new status is terminal).
+      // Also keep killed sessions with an open PR — they still need monitoring for
+      // CI status, merge conflicts, and approval state.
       const sessionsToCheck = sessions.filter((s) => {
         if (s.status !== "merged" && s.status !== "killed") return true;
         const tracked = states.get(s.id);
-        return tracked !== undefined && tracked !== s.status;
+        // Check for state transition OR killed session with PR that still needs monitoring
+        const hasTransition = tracked !== undefined && tracked !== s.status;
+        const hasOpenPR = s.status === "killed" && s.pr !== null;
+        return hasTransition || hasOpenPR;
       });
 
       // Poll all sessions concurrently
@@ -829,8 +839,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         }
       }
 
-      // Check if all sessions are complete (trigger reaction only once)
-      const activeSessions = sessions.filter((s) => s.status !== "merged" && s.status !== "killed");
+      // Check if all sessions are complete (trigger reaction only once).
+      // Use tracked status instead of session.status, because session.status may be
+      // overridden by enrichSessionWithRuntimeState (which marks dead runtimes as
+      // "killed" regardless of the actual PR-based status we're tracking).
+      const activeSessions = sessions.filter((s) => {
+        const tracked = states.get(s.id);
+        const status = tracked ?? s.status;
+        return status !== "merged" && status !== "killed";
+      });
       if (sessions.length > 0 && activeSessions.length === 0 && !allCompleteEmitted) {
         allCompleteEmitted = true;
 

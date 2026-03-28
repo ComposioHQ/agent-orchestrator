@@ -507,6 +507,284 @@ describe("check (single session)", () => {
     await lm.check("app-1");
     expect(lm.getStates().get("app-1")).toBe("working");
   });
+
+  it("killed session with open PR transitions to ci_failed when CI fails", async () => {
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("failing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("none"),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    const session = makeSession({ status: "killed", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "killed",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    // Should transition from killed to ci_failed even though runtime is dead
+    expect(lm.getStates().get("app-1")).toBe("ci_failed");
+  });
+
+  it("killed session with open PR transitions to mergeable when approved and green", async () => {
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("passing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("approved"),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn().mockResolvedValue({
+        mergeable: true,
+        ciPassing: true,
+        approved: true,
+        noConflicts: true,
+        blockers: [],
+      }),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    const session = makeSession({ status: "killed", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "killed",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    // Should transition from killed to mergeable when approved and green
+    expect(lm.getStates().get("app-1")).toBe("mergeable");
+  });
+
+  it("killed session without PR stays killed and does not query SCM", async () => {
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn(),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn(),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    // Session with no PR
+    const session = makeSession({ status: "killed", pr: null });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "killed",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    // Should stay killed and not query SCM
+    expect(lm.getStates().get("app-1")).toBe("killed");
+    expect(mockSCM.getPRState).not.toHaveBeenCalled();
+  });
+});
+
+describe("pollAll filtering", () => {
+  it("includes killed sessions with open PR in polling set", async () => {
+    const mockSCM: SCM = {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("passing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("none"),
+      getPendingComments: vi.fn(),
+      getAutomatedComments: vi.fn(),
+      getMergeability: vi.fn(),
+    };
+
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    const killedSessionWithPR = makeSession({ id: "app-1", status: "killed", pr: makePR() });
+    const workingSession = makeSession({ id: "app-2", status: "working" });
+    vi.mocked(mockSessionManager.list).mockResolvedValue([killedSessionWithPR, workingSession]);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "killed",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    // First poll: should check the killed session with PR
+    await new Promise<void>((resolve) => {
+      lm.start(10);
+      setTimeout(() => {
+        lm.stop();
+        resolve();
+      }, 50);
+    });
+
+    // The killed session with PR should have been checked (getPRState called)
+    expect(mockSCM.getPRState).toHaveBeenCalled();
+  });
+
+  it("excludes merged sessions from polling set", async () => {
+    const mergedSession = makeSession({ id: "app-1", status: "merged", pr: makePR() });
+    vi.mocked(mockSessionManager.list).mockResolvedValue([mergedSession]);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "merged",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+    });
+
+    // Set tracked state to merged so we're past the transition
+    const privateLm = lm as any;
+    privateLm.states = new Map([["app-1", "merged"]]);
+
+    // First poll: should NOT check merged session even though it has a PR
+    await new Promise<void>((resolve) => {
+      lm.start(10);
+      setTimeout(() => {
+        lm.stop();
+        resolve();
+      }, 50);
+    });
+
+    // Merged session should NOT have been checked
+    expect(mockSessionManager.get).not.toHaveBeenCalled();
+  });
+
+  it("excludes killed sessions without PR from polling set", async () => {
+    const killedSessionNoPR = makeSession({ id: "app-1", status: "killed", pr: null });
+    vi.mocked(mockSessionManager.list).mockResolvedValue([killedSessionNoPR]);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "killed",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+    });
+
+    // Set tracked state to killed so we're past the transition
+    const privateLm = lm as any;
+    privateLm.states = new Map([["app-1", "killed"]]);
+
+    // First poll: should NOT check killed session without PR
+    await new Promise<void>((resolve) => {
+      lm.start(10);
+      setTimeout(() => {
+        lm.stop();
+        resolve();
+      }, 50);
+    });
+
+    // Killed session without PR should NOT have been checked
+    expect(mockSessionManager.get).not.toHaveBeenCalled();
+  });
 });
 
 describe("reactions", () => {
