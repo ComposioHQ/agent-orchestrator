@@ -129,7 +129,7 @@ async function resolveProject(
     }
   } else {
     throw new Error(
-      `Multiple projects configured. Specify which one to start:\n  ${projectIds.map((id) => `ao start ${id}`).join("\n  ")}`,
+      `Multiple projects configured. Specify which one to ${action}:\n  ${projectIds.map((id) => `ao ${action} ${id}`).join("\n  ")}`,
     );
   }
 }
