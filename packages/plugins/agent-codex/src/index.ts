@@ -402,13 +402,13 @@ async function sessionFileMatchesCwd(
   workspacePath: string,
 ): Promise<boolean> {
   try {
-    // Read only the first 4 KB — session_meta is always in the first few lines.
-    // Avoids loading large rollout files (100 MB+) into memory.
+    // Read up to 32 KB — session_meta is always the first line but can be 20 KB+
+    // when it includes base_instructions. Avoids loading large rollout files (100 MB+).
     const handle = await open(filePath, "r");
     let content: string;
     try {
-      const buffer = Buffer.allocUnsafe(4096);
-      const { bytesRead } = await handle.read(buffer, 0, 4096, 0);
+      const buffer = Buffer.allocUnsafe(32_768);
+      const { bytesRead } = await handle.read(buffer, 0, 32_768, 0);
       content = buffer.subarray(0, bytesRead).toString("utf-8");
     } finally {
       await handle.close();
@@ -424,12 +424,25 @@ async function sessionFileMatchesCwd(
           parsed !== null &&
           !Array.isArray(parsed) &&
           (parsed as CodexJsonlLine).type === "session_meta" &&
-          (parsed as CodexJsonlLine).cwd === workspacePath
+          // cwd lives at top level in older Codex versions, inside payload in newer ones
+          ((parsed as CodexJsonlLine).cwd === workspacePath ||
+            (parsed as Record<string, unknown>).payload != null &&
+            typeof (parsed as Record<string, unknown>).payload === "object" &&
+            ((parsed as Record<string, Record<string, unknown>>).payload.cwd === workspacePath))
         ) {
           return true;
         }
       } catch {
-        // Skip malformed lines
+        // JSON parse failed (truncated line or malformed) — try raw text match.
+        // The session_meta line always contains a "cwd":"<path>" field, so a
+        // substring check is a reliable fallback when the line exceeds our buffer.
+        if (
+          trimmed.includes('"type":"session_meta"') &&
+          trimmed.includes(`"cwd":"${workspacePath}"`)
+        ) {
+          return true;
+        }
+        // Skip truly malformed lines
       }
     }
   } catch {
