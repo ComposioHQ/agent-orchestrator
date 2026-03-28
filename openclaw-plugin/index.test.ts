@@ -5,6 +5,8 @@ import {
   fetchIssues,
   mergeStringLists,
   parseStringArraySetting,
+  getDashboardBaseUrl,
+  constructDashboardUrl,
 } from "./index.ts";
 
 function makeIssue(number: number, title: string, repo: string) {
@@ -121,4 +123,88 @@ test("allowlist helpers preserve existing entries while adding AO requirements",
     "custom:tools",
   ]);
   assert.deepEqual(parseStringArraySetting("null"), []);
+});
+
+test("getDashboardBaseUrl extracts dashboardBaseUrl from config", () => {
+  const mockConfigPath = "/tmp/test-ao-config.yaml";
+  const originalResolveAoConfigPath = (global as any).__resolveAoConfigPath;
+  const originalReadFileSync = (global as any).__readFileSync;
+
+  (global as any).__resolveAoConfigPath = () => mockConfigPath;
+  (global as any).__readFileSync = (path: string) => {
+    if (path === mockConfigPath) {
+      return "port: 3000\ndashboardBaseUrl: http://91.107.194.138:3000\n\nprojects:\n  test:\n    repo: test/repo";
+    }
+    throw new Error("Unexpected read");
+  };
+
+  try {
+    const config = { aoCwd: "/tmp" };
+    const result = getDashboardBaseUrl(config);
+    assert.equal(result, "http://91.107.194.138:3000");
+  } finally {
+    (global as any).__resolveAoConfigPath = originalResolveAoConfigPath;
+    (global as any).__readFileSync = originalReadFileSync;
+  }
+});
+
+test("getDashboardBaseUrl returns null when not configured", () => {
+  const mockConfigPath = "/tmp/test-ao-config.yaml";
+  const originalResolveAoConfigPath = (global as any).__resolveAoConfigPath;
+  const originalReadFileSync = (global as any).__readFileSync;
+
+  (global as any).__resolveAoConfigPath = () => mockConfigPath;
+  (global as any).__readFileSync = (path: string) => {
+    if (path === mockConfigPath) {
+      return "port: 3000\n\nprojects:\n  test:\n    repo: test/repo";
+    }
+    throw new Error("Unexpected read");
+  };
+
+  try {
+    const config = { aoCwd: "/tmp" };
+    const result = getDashboardBaseUrl(config);
+    assert.equal(result, null);
+  } finally {
+    (global as any).__resolveAoConfigPath = originalResolveAoConfigPath;
+    (global as any).__readFileSync = originalReadFileSync;
+  }
+});
+
+test("getDashboardBaseUrl handles quoted URLs", () => {
+  const mockConfigPath = "/tmp/test-ao-config.yaml";
+  const originalResolveAoConfigPath = (global as any).__resolveAoConfigPath;
+  const originalReadFileSync = (global as any).__readFileSync;
+
+  (global as any).__resolveAoConfigPath = () => mockConfigPath;
+  (global as any).__readFileSync = (path: string) => {
+    if (path === mockConfigPath) {
+      return 'dashboardBaseUrl: "http://example.com:3000"\n\nprojects:\n  test:\n    repo: test/repo';
+    }
+    throw new Error("Unexpected read");
+  };
+
+  try {
+    const config = { aoCwd: "/tmp" };
+    const result = getDashboardBaseUrl(config);
+    assert.equal(result, "http://example.com:3000");
+  } finally {
+    (global as any).__resolveAoConfigPath = originalResolveAoConfigPath;
+    (global as any).__readFileSync = originalReadFileSync;
+  }
+});
+
+test("constructDashboardUrl builds correct session URL", () => {
+  assert.equal(
+    constructDashboardUrl("ao-123", "http://example.com:3000"),
+    "http://example.com:3000/sessions/ao-123"
+  );
+  assert.equal(
+    constructDashboardUrl("my-session", "https://dashboard.example.com"),
+    "https://dashboard.example.com/sessions/my-session"
+  );
+  assert.equal(
+    constructDashboardUrl("session-1", "http://example.com:3000/"),
+    "http://example.com:3000/sessions/session-1"
+  );
 });
