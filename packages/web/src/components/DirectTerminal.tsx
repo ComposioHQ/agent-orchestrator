@@ -4,11 +4,7 @@ import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
 import { cn } from "@/lib/cn";
-
-function isTouchDevice(): boolean {
-  if (typeof window === "undefined") return false;
-  return "ontouchstart" in window || navigator.maxTouchPoints > 0;
-}
+import { attachTouchScroll } from "@/lib/terminal-touch-scroll";
 
 const SCROLLBAR_WIDTH = 5; // matches .xterm-viewport::-webkit-scrollbar { width: 5px }
 const FONT_SIZE_KEY = "ao:web:terminal-font-size";
@@ -262,70 +258,6 @@ export function DirectTerminal({
     followOutputRef.current = followOutput;
   }, [followOutput]);
 
-  // Touch scroll: attach to terminalRef (parent of .xterm) so xterm can't
-  // kill the gesture. CSS `touch-action: none` on .xterm-screen prevents
-  // the browser from consuming the touch sequence.
-  useEffect(() => {
-    const container = terminalRef.current;
-    if (!container || !isTouchDevice()) return;
-
-    let startY = 0;
-    let startX = 0;
-    let accumulator = 0;
-    let decided = false;
-    let isVertical = false;
-
-    const onTouchStart = (e: TouchEvent) => {
-      if (e.touches.length !== 1) return;
-      startY = e.touches[0].clientY;
-      startX = e.touches[0].clientX;
-      accumulator = 0;
-      decided = false;
-      isVertical = false;
-    };
-
-    const onTouchMove = (e: TouchEvent) => {
-      if (e.touches.length !== 1) return;
-      const terminal = terminalInstance.current;
-      if (!terminal) return;
-
-      const currentY = e.touches[0].clientY;
-      const currentX = e.touches[0].clientX;
-
-      if (!decided) {
-        const dx = Math.abs(currentX - startX);
-        const dy = Math.abs(currentY - startY);
-        if (dy < 5 && dx < 5) return;
-        decided = true;
-        isVertical = dy > dx;
-      }
-
-      if (!isVertical) return;
-
-      const deltaY = startY - currentY;
-      startY = currentY;
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const cellHeight = (terminal as any)._core?._renderService?.dimensions?.css?.cell?.height || 15;
-      accumulator += deltaY / cellHeight;
-
-      const lines = Math.trunc(accumulator);
-      if (lines !== 0) {
-        terminal.scrollLines(lines);
-        accumulator -= lines;
-      }
-      e.preventDefault();
-    };
-
-    container.addEventListener("touchstart", onTouchStart, { passive: true });
-    container.addEventListener("touchmove", onTouchMove, { passive: false });
-
-    return () => {
-      container.removeEventListener("touchstart", onTouchStart);
-      container.removeEventListener("touchmove", onTouchMove);
-    };
-  }, []);
-
   // Update URL when fullscreen changes
   useEffect(() => {
     const params = new URLSearchParams(searchParams.toString());
@@ -466,15 +398,8 @@ export function DirectTerminal({
         // Open terminal in DOM
         terminal.open(terminalRef.current);
         terminalInstance.current = terminal;
-        const viewport = terminal.element?.querySelector(".xterm-viewport") as HTMLElement | null;
-        if (viewport) {
-          viewport.style.touchAction = "pan-y";
-          viewport.style.setProperty("-webkit-overflow-scrolling", "touch");
-        }
 
-        // Touch scrolling is handled via a transparent overlay div (see render).
-        // xterm's own pointer handlers kill touch gestures after 1 event,
-        // so event listeners on xterm elements don't work reliably.
+        const viewport = terminal.element?.querySelector<HTMLElement>(".xterm-viewport") ?? null;
 
         // Fit terminal to container
         fitTerminal(fit, terminal, terminalRef.current);
@@ -484,6 +409,9 @@ export function DirectTerminal({
             fitTerminal(fit, terminal, terminalRef.current);
           }
         });
+
+        // Touch scroll (mobile) — uses modular helper from lib/terminal-touch-scroll
+        const removeTouchScroll = attachTouchScroll(terminal, () => ws.current);
 
         // WebSocket URL (stable across reconnects)
         // When accessed via reverse proxy (HTTPS on standard port), use path-based
@@ -680,6 +608,7 @@ export function DirectTerminal({
 
         // Store cleanup function to be called from useEffect cleanup
         cleanup = () => {
+          removeTouchScroll();
           selectionDisposable.dispose();
           if (safetyTimer) clearTimeout(safetyTimer);
           window.removeEventListener("resize", handleResize);

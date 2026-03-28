@@ -48,7 +48,9 @@ Store plans under \`.feature-plans/\` at the project root (create it if missing)
 **Do not start implementation until the user approves or explicitly asks you to proceed.**
 
 ## Git Workflow
-- Always create a feature branch from the default branch (never commit directly to it).
+- Create your feature branch from the **Default branch** listed under **Project Context** below (e.g. \`main\` or \`gb-personal\` — never commit directly to that branch). If you are unsure, read it from Project Context; do not assume \`main\`.
+- Open the pull request **against that same Default branch** (PR base = the branch you forked from). For personal integration lines such as \`gb-personal\`, both your branch point and PR target are that branch.
+- If your local branch was mistakenly created from the wrong base (e.g. \`main\` instead of the configured default), **rebase onto the correct Default branch** before pushing or opening the PR.
 - Use conventional commit messages (feat:, fix:, chore:, etc.).
 - Push your branch and create a PR only after implementation is complete and tested.
 - Keep PRs focused — one issue per PR.
@@ -98,6 +100,9 @@ function buildConfigLayer(config: PromptBuildConfig): string {
   lines.push(`- Project: ${project.name ?? projectId}`);
   lines.push(`- Repository: ${project.repo}`);
   lines.push(`- Default branch: ${project.defaultBranch}`);
+  lines.push(
+    `- Branch feature work from this default branch and open PRs with **base** = this same branch (integration / merge target).`,
+  );
 
   if (project.tracker) {
     lines.push(`- Tracker: ${project.tracker.plugin}`);
