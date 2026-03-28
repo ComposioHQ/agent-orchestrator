@@ -70,10 +70,11 @@ const IS_TTY = Boolean(process.stdin.isTTY && process.stdout.isTTY);
  * If projectArg is provided, use it. If only one project exists, use that.
  * Otherwise, error with helpful message.
  */
-function resolveProject(
+async function resolveProject(
   config: OrchestratorConfig,
   projectArg?: string,
-): { projectId: string; project: ProjectConfig } {
+  action = "start",
+): Promise<{ projectId: string; project: ProjectConfig }> {
   const projectIds = Object.keys(config.projects);
 
   if (projectIds.length === 0) {
@@ -106,10 +107,31 @@ function resolveProject(
     }
   }
 
-  // No match — error with helpful message
-  throw new Error(
-    `Multiple projects configured. Specify which one to start:\n  ${projectIds.map((id) => `ao start ${id}`).join("\n  ")}`,
-  );
+  // No match — prompt if interactive, otherwise error
+  if (isHumanCaller()) {
+    console.log(chalk.yellow(`\nMultiple projects configured. Which one would you like to ${action}?\n`));
+    projectIds.forEach((id, i) => console.log(`  ${i + 1}. ${config.projects[id].name ?? id} (${id})`));
+
+    const { createInterface } = await import("node:readline/promises");
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    try {
+      const choice = await rl.question(`\n  Choose project [1-${projectIds.length}]: `);
+
+      const idx = Number.parseInt(choice.trim(), 10);
+      if (!Number.isFinite(idx) || idx < 1 || idx > projectIds.length) {
+        throw new Error("Please enter a valid number from the list");
+      }
+
+      const projectId = projectIds[idx - 1];
+      return { projectId, project: config.projects[projectId] };
+    } finally {
+      rl.close();
+    }
+  } else {
+    throw new Error(
+      `Multiple projects configured. Specify which one to ${action}:\n  ${projectIds.map((id) => `ao ${action} ${id}`).join("\n  ")}`,
+    );
+  }
 }
 
 /**
@@ -120,10 +142,10 @@ function resolveProject(
  * Falls back to `resolveProject` (which handles single-project configs or
  * errors with a helpful message for ambiguous multi-project cases).
  */
-function resolveProjectByRepo(
+async function resolveProjectByRepo(
   config: OrchestratorConfig,
   parsed: ParsedRepoUrl,
-): { projectId: string; project: ProjectConfig } {
+): Promise<{ projectId: string; project: ProjectConfig }> {
   const projectIds = Object.keys(config.projects);
 
   // Try to match by repo field (e.g. "owner/repo")
@@ -135,7 +157,7 @@ function resolveProjectByRepo(
   }
 
   // No repo match — fall back to standard resolution (works for single-project)
-  return resolveProject(config);
+  return await resolveProject(config);
 }
 
 interface InstallAttempt {
@@ -1008,7 +1030,7 @@ export function registerStart(program: Command): void {
             console.log(chalk.bold.cyan("\n  Agent Orchestrator — Quick Start\n"));
             const result = await handleUrlStart(projectArg);
             config = result.config;
-            ({ projectId, project } = resolveProjectByRepo(config, result.parsed));
+            ({ projectId, project } = await resolveProjectByRepo(config, result.parsed));
           } else if (projectArg && isLocalPath(projectArg)) {
             // ── Path argument: add project if new, then start ──
             const resolvedPath = resolve(projectArg.replace(/^~/, process.env["HOME"] || ""));
@@ -1031,7 +1053,7 @@ export function registerStart(program: Command): void {
                 projectId = addedId;
                 project = config.projects[projectId];
               } else {
-                ({ projectId, project } = resolveProject(config));
+                ({ projectId, project } = await resolveProject(config));
               }
             } else {
               config = loadConfig(configPath);
@@ -1067,7 +1089,7 @@ export function registerStart(program: Command): void {
               }
             }
             config = loadedConfig;
-            ({ projectId, project } = resolveProject(config, projectArg));
+            ({ projectId, project } = await resolveProject(config, projectArg));
           }
 
           // ── Already-running detection (Step 9) ──
@@ -1216,7 +1238,7 @@ export function registerStop(program: Command): void {
           }
 
           const config = loadConfig();
-          const { projectId: _projectId, project } = resolveProject(config, projectArg);
+          const { projectId: _projectId, project } = await resolveProject(config, projectArg, "stop");
           const sessionId = `${project.sessionPrefix}-orchestrator`;
           const port = config.port ?? 3000;
 
