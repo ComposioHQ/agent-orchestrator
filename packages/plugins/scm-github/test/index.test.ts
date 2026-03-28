@@ -1071,9 +1071,26 @@ describe("scm-github plugin", () => {
   // ---- getMergeability ---------------------------------------------------
 
   describe("getMergeability", () => {
+    // Helper to mock batched PR view data (includes all fields in one call)
+    function mockBatchedPRView(overrides: {
+      state: string;
+      mergeable?: string;
+      reviewDecision?: string;
+      mergeStateStatus?: string;
+      isDraft?: boolean;
+    }) {
+      mockGh({
+        state: overrides.state,
+        mergeable: overrides.mergeable ?? "MERGEABLE",
+        reviewDecision: overrides.reviewDecision ?? "APPROVED",
+        mergeStateStatus: overrides.mergeStateStatus ?? "CLEAN",
+        isDraft: overrides.isDraft ?? false,
+      });
+    }
+
     it("returns clean result for merged PRs without querying mergeable status", async () => {
-      // getPRState call
-      mockGh({ state: "MERGED" });
+      // Single batched call returns state as MERGED
+      mockBatchedPRView({ state: "MERGED" });
 
       const result = await scm.getMergeability(pr);
       expect(result).toEqual({
@@ -1083,15 +1100,14 @@ describe("scm-github plugin", () => {
         noConflicts: true,
         blockers: [],
       });
-      // Should only call gh once (for getPRState), not for mergeable/CI
+      // Should only call gh once (for batched PR view), not for CI
       expect(ghMock).toHaveBeenCalledTimes(1);
     });
 
     it("still checks mergeability for closed PRs (not merged)", async () => {
-      // getPRState call
-      mockGh({ state: "CLOSED" });
-      // PR view (closed PRs still get checked)
-      mockGh({
+      // Batched PR view call
+      mockBatchedPRView({
+        state: "CLOSED",
         mergeable: "CONFLICTING",
         reviewDecision: "APPROVED",
         mergeStateStatus: "DIRTY",
@@ -1107,10 +1123,9 @@ describe("scm-github plugin", () => {
     });
 
     it("returns mergeable when everything is clear", async () => {
-      // getPRState call (for open PR)
-      mockGh({ state: "OPEN" });
-      // PR view
-      mockGh({
+      // Single batched PR view call
+      mockBatchedPRView({
+        state: "OPEN",
         mergeable: "MERGEABLE",
         reviewDecision: "APPROVED",
         mergeStateStatus: "CLEAN",
@@ -1130,8 +1145,8 @@ describe("scm-github plugin", () => {
     });
 
     it("reports CI failures as blockers", async () => {
-      mockGh({ state: "OPEN" }); // getPRState
-      mockGh({
+      mockBatchedPRView({
+        state: "OPEN",
         mergeable: "MERGEABLE",
         reviewDecision: "APPROVED",
         mergeStateStatus: "UNSTABLE",
@@ -1147,8 +1162,8 @@ describe("scm-github plugin", () => {
     });
 
     it("reports UNSTABLE merge state even when CI fetch fails", async () => {
-      mockGh({ state: "OPEN" }); // getPRState
-      mockGh({
+      mockBatchedPRView({
+        state: "OPEN",
         mergeable: "MERGEABLE",
         reviewDecision: "APPROVED",
         mergeStateStatus: "UNSTABLE",
@@ -1164,8 +1179,8 @@ describe("scm-github plugin", () => {
     });
 
     it("reports changes requested as blockers", async () => {
-      mockGh({ state: "OPEN" }); // getPRState
-      mockGh({
+      mockBatchedPRView({
+        state: "OPEN",
         mergeable: "MERGEABLE",
         reviewDecision: "CHANGES_REQUESTED",
         mergeStateStatus: "CLEAN",
@@ -1179,8 +1194,8 @@ describe("scm-github plugin", () => {
     });
 
     it("reports review required as blocker", async () => {
-      mockGh({ state: "OPEN" }); // getPRState
-      mockGh({
+      mockBatchedPRView({
+        state: "OPEN",
         mergeable: "MERGEABLE",
         reviewDecision: "REVIEW_REQUIRED",
         mergeStateStatus: "BLOCKED",
@@ -1193,8 +1208,8 @@ describe("scm-github plugin", () => {
     });
 
     it("reports merge conflicts as blockers", async () => {
-      mockGh({ state: "OPEN" }); // getPRState
-      mockGh({
+      mockBatchedPRView({
+        state: "OPEN",
         mergeable: "CONFLICTING",
         reviewDecision: "APPROVED",
         mergeStateStatus: "DIRTY",
@@ -1208,8 +1223,8 @@ describe("scm-github plugin", () => {
     });
 
     it("reports UNKNOWN mergeable as noConflicts false", async () => {
-      mockGh({ state: "OPEN" }); // getPRState
-      mockGh({
+      mockBatchedPRView({
+        state: "OPEN",
         mergeable: "UNKNOWN",
         reviewDecision: "APPROVED",
         mergeStateStatus: "CLEAN",
@@ -1224,11 +1239,11 @@ describe("scm-github plugin", () => {
     });
 
     it("reports draft status as blocker", async () => {
-      mockGh({ state: "OPEN" }); // getPRState
-      mockGh({
+      mockBatchedPRView({
+        state: "OPEN",
         mergeable: "MERGEABLE",
         reviewDecision: "APPROVED",
-        mergeStateStatus: "DRAFT",
+        mergeStateStatus: "CLEAN",
         isDraft: true,
       });
       mockGh([{ name: "build", state: "SUCCESS" }]);
@@ -1239,8 +1254,8 @@ describe("scm-github plugin", () => {
     });
 
     it("reports multiple blockers simultaneously", async () => {
-      mockGh({ state: "OPEN" }); // getPRState
-      mockGh({
+      mockBatchedPRView({
+        state: "OPEN",
         mergeable: "CONFLICTING",
         reviewDecision: "CHANGES_REQUESTED",
         mergeStateStatus: "DIRTY",
