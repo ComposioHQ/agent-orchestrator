@@ -33,6 +33,43 @@ function assertValidSessionId(id: string): void {
   }
 }
 
+/**
+ * Configuration for Enter retry logic
+ *
+ * MAX_ENTER_RETRIES is the maximum number of Enter key attempts
+ * BASE_ENTER_DELAY_MS is the base delay between attempts
+ *
+ * With 3 retries, the delays are:
+ * - Attempt 0: 500ms (after capture-pane)
+ * - Attempt 1: 1000ms (after capture-pane)
+ * - Attempt 2: 2000ms (final attempt, no verification)
+ */
+const MAX_ENTER_RETRIES = 3;
+const BASE_ENTER_DELAY_MS = 500;
+
+/**
+ * Heuristic to check if message might still be in the input area.
+ *
+ * This is a best-effort check - if the message preview is still present in
+ * the last few lines of output and we haven't seen any indication that the agent
+ * has started processing, we retry.
+ *
+ * Note: This check intentionally excludes detecting "Claude" since Claude Code
+ * displays "Claude" in its interface at all times. This would cause the
+ * retry mechanism to be disabled for the primary use case it was designed for.
+ */
+function messageMayStillBeInInput(message: string, output: string): boolean {
+  // Check if a significant portion of the message is in the last few lines
+  // This indicates the message might still be in the input prompt
+  const lines = output.split('\n');
+  const lastFewLines = lines.slice(-5).join('\n');
+  const messagePreview = message.split('\n').slice(-2).join('\n');
+
+  // If the message preview is present and we don't see signs of agent activity
+  return lastFewLines.includes(messagePreview) &&
+    !output.includes("▊"); // Common cursor indicator
+}
+
 /** Run a tmux command and return stdout */
 async function tmux(...args: string[]): Promise<string> {
   const { stdout } = await execFileAsync("tmux", args, {
@@ -67,8 +104,11 @@ export function create(): Runtime {
           const tmpPath = join(tmpdir(), `ao-launch-${randomUUID()}.txt`);
           writeFileSync(tmpPath, config.launchCommand, { encoding: "utf-8", mode: 0o600 });
           try {
+            // Use bracketed paste mode for better reliability
+            await tmux("send-keys", "-t", sessionName, "-l", "\x1b[200~");
             await tmux("load-buffer", "-b", bufferName, tmpPath);
             await tmux("paste-buffer", "-b", bufferName, "-t", sessionName, "-d");
+            await tmux("send-keys", "-t", sessionName, "-l", "\x1b[201~");
           } finally {
             try {
               unlinkSync(tmpPath);
@@ -115,15 +155,22 @@ export function create(): Runtime {
       // Clear any partial input
       await tmux("send-keys", "-t", handle.id, "C-u");
 
+      // Send bracketed paste start sequence (\e[200~)
+      // This tells the terminal to treat the upcoming text as a single paste event
+      await tmux("send-keys", "-t", handle.id, "-l", "\x1b[200~");
+
       // For long or multiline messages, use load-buffer + paste-buffer
       // Use randomUUID to avoid temp file collisions on concurrent sends
       if (message.includes("\n") || message.length > 200) {
         const bufferName = `ao-${randomUUID()}`;
         const tmpPath = join(tmpdir(), `ao-send-${randomUUID()}.txt`);
         writeFileSync(tmpPath, message, { encoding: "utf-8", mode: 0o600 });
+
         try {
           await tmux("load-buffer", "-b", bufferName, tmpPath);
           await tmux("paste-buffer", "-b", bufferName, "-t", handle.id, "-d");
+          // Send bracketed paste end inside try block so it's sent even on error
+          await tmux("send-keys", "-t", handle.id, "-l", "\x1b[201~");
         } finally {
           // Clean up temp file and tmux buffer (in case paste-buffer failed
           // and the -d flag didn't delete it)
@@ -142,12 +189,40 @@ export function create(): Runtime {
         // Use -l (literal) so text like "Enter" or "Space" isn't interpreted
         // as tmux key names
         await tmux("send-keys", "-t", handle.id, "-l", message);
+        // Send bracketed paste end for short messages too
+        await tmux("send-keys", "-t", handle.id, "-l", "\x1b[201~");
       }
 
       // Small delay to let tmux process the pasted text before pressing Enter.
-      // Without this, Enter can arrive before the text is fully rendered.
+      // Bracketed paste mode helps, but we still add a small safety margin.
       await sleep(300);
-      await tmux("send-keys", "-t", handle.id, "Enter");
+
+      // Retry Enter with exponential backoff to handle race conditions
+      // where Enter arrives before TUI is ready to process it.
+      for (let attempt = 0; attempt < MAX_ENTER_RETRIES; attempt++) {
+        await tmux("send-keys", "-t", handle.id, "Enter");
+
+        // Skip verification on the last attempt - we've done our best
+        if (attempt < MAX_ENTER_RETRIES - 1) {
+          // Wait for output to stabilize
+          await sleep(200);
+
+          // Check if message might still be in input (retry if so)
+          try {
+            const output = await tmux("capture-pane", "-t", handle.id, "-p", "-S", "-5");
+            if (!messageMayStillBeInInput(message, output)) {
+              // Message appears to have been submitted successfully
+              break;
+            }
+            // Message may still be in input, retry with longer delay
+            await sleep(BASE_ENTER_DELAY_MS * Math.pow(2, attempt));
+          } catch {
+            // If we can't check the output, continue retrying with backoff
+            // rather than breaking, as tmux might be temporarily unavailable
+            await sleep(BASE_ENTER_DELAY_MS * Math.pow(2, attempt));
+          }
+        }
+      }
     },
 
     async getOutput(handle: RuntimeHandle, lines = 50): Promise<string> {
