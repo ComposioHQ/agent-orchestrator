@@ -2,7 +2,12 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { isRetryableHttpStatus, normalizeRetryConfig, readLastJsonlEntry } from "../utils.js";
+import {
+  formatDuration,
+  isRetryableHttpStatus,
+  normalizeRetryConfig,
+  readLastJsonlEntry,
+} from "../utils.js";
 import { parsePrFromUrl } from "../utils/pr.js";
 
 describe("readLastJsonlEntry", () => {
@@ -137,5 +142,59 @@ describe("parsePrFromUrl", () => {
 
   it("returns null when the URL has no PR number", () => {
     expect(parsePrFromUrl("https://example.com/foo/bar/pull/not-a-number")).toBeNull();
+  });
+});
+
+describe("formatDuration", () => {
+  it("formats zero milliseconds as '0s'", () => {
+    expect(formatDuration(0)).toBe("0s");
+  });
+
+  it("formats negative values as '0s'", () => {
+    expect(formatDuration(-1000)).toBe("0s");
+    expect(formatDuration(-1)).toBe("0s");
+  });
+
+  it("formats seconds only", () => {
+    expect(formatDuration(1000)).toBe("1s");
+    expect(formatDuration(30_000)).toBe("30s");
+    expect(formatDuration(59_000)).toBe("59s");
+  });
+
+  it("rounds down partial seconds", () => {
+    expect(formatDuration(1500)).toBe("1s");
+    expect(formatDuration(1999)).toBe("1s");
+    expect(formatDuration(500)).toBe("0s");
+  });
+
+  it("formats minutes and seconds", () => {
+    expect(formatDuration(60_000)).toBe("1m");
+    expect(formatDuration(90_000)).toBe("1m 30s");
+    expect(formatDuration(125_000)).toBe("2m 5s");
+    expect(formatDuration(3_540_000)).toBe("59m");
+  });
+
+  it("formats hours, minutes, and seconds", () => {
+    expect(formatDuration(3_600_000)).toBe("1h");
+    expect(formatDuration(3_661_000)).toBe("1h 1m 1s");
+    expect(formatDuration(3_723_000)).toBe("1h 2m 3s");
+    expect(formatDuration(7_200_000)).toBe("2h");
+    expect(formatDuration(7_320_000)).toBe("2h 2m");
+    expect(formatDuration(7_325_000)).toBe("2h 2m 5s");
+  });
+
+  it("handles large durations", () => {
+    expect(formatDuration(86_400_000)).toBe("24h");
+    expect(formatDuration(90_061_000)).toBe("25h 1m 1s");
+  });
+
+  it("handles non-finite values as '0s'", () => {
+    expect(formatDuration(NaN)).toBe("0s");
+    expect(formatDuration(Infinity)).toBe("0s");
+    expect(formatDuration(-Infinity)).toBe("0s");
+  });
+
+  it("omits zero components in the middle", () => {
+    expect(formatDuration(3_603_000)).toBe("1h 3s");
   });
 });
