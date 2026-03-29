@@ -1218,6 +1218,9 @@ export function registerStart(program: Command): void {
             proj.worker = { ...(proj.worker ?? {}), agent: workerAgent };
             writeFileSync(config.configPath, yamlStringify(rawConfig, { indent: 2 }));
             console.log(chalk.dim(`  ✓ Saved to ${config.configPath}\n`));
+            
+            config = loadConfig(config.configPath);
+            project = config.projects[projectId];
           }
 
           const actualPort = await runStartup(config, projectId, project, opts);
