@@ -149,3 +149,38 @@ export function resolveProjectIdForSessionId(
   }
   return undefined;
 }
+
+/**
+ * Formats a duration in milliseconds to a human-readable string.
+ * Shows up to two units for readability.
+ * Examples: "2h 30m", "5m 10s", "1d 3h", "500ms"
+ */
+export function formatDuration(ms: number): string {
+  if (ms < 0) return "0ms";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+
+  const parts: string[] = [];
+
+  if (days > 0) {
+    parts.push(`${days}d`);
+    const remainingHours = hours % 24;
+    if (remainingHours > 0) parts.push(`${remainingHours}h`);
+  } else if (hours > 0) {
+    parts.push(`${hours}h`);
+    const remainingMinutes = minutes % 60;
+    if (remainingMinutes > 0) parts.push(`${remainingMinutes}m`);
+  } else if (minutes > 0) {
+    parts.push(`${minutes}m`);
+    const remainingSeconds = seconds % 60;
+    if (remainingSeconds > 0) parts.push(`${remainingSeconds}s`);
+  } else {
+    parts.push(`${seconds}s`);
+  }
+
+  return parts.join(" ");
+}

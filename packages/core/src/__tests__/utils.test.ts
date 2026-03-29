@@ -2,7 +2,12 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { isRetryableHttpStatus, normalizeRetryConfig, readLastJsonlEntry } from "../utils.js";
+import {
+  formatDuration,
+  isRetryableHttpStatus,
+  normalizeRetryConfig,
+  readLastJsonlEntry,
+} from "../utils.js";
 import { parsePrFromUrl } from "../utils/pr.js";
 
 describe("readLastJsonlEntry", () => {
@@ -137,5 +142,55 @@ describe("parsePrFromUrl", () => {
 
   it("returns null when the URL has no PR number", () => {
     expect(parsePrFromUrl("https://example.com/foo/bar/pull/not-a-number")).toBeNull();
+  });
+});
+
+describe("formatDuration", () => {
+  it("formats milliseconds for durations under 1 second", () => {
+    expect(formatDuration(0)).toBe("0ms");
+    expect(formatDuration(1)).toBe("1ms");
+    expect(formatDuration(500)).toBe("500ms");
+    expect(formatDuration(999)).toBe("999ms");
+  });
+
+  it("rounds milliseconds to nearest integer", () => {
+    expect(formatDuration(500.4)).toBe("500ms");
+    expect(formatDuration(500.6)).toBe("501ms");
+  });
+
+  it("formats seconds for durations under 1 minute", () => {
+    expect(formatDuration(1000)).toBe("1s");
+    expect(formatDuration(45000)).toBe("45s");
+    expect(formatDuration(59000)).toBe("59s");
+  });
+
+  it("formats minutes and seconds for durations under 1 hour", () => {
+    expect(formatDuration(60000)).toBe("1m");
+    expect(formatDuration(90000)).toBe("1m 30s");
+    expect(formatDuration(5 * 60000 + 10000)).toBe("5m 10s");
+    expect(formatDuration(59 * 60000 + 59000)).toBe("59m 59s");
+  });
+
+  it("formats hours and minutes for durations under 1 day", () => {
+    expect(formatDuration(60 * 60000)).toBe("1h");
+    expect(formatDuration(2 * 60 * 60000 + 30 * 60000)).toBe("2h 30m");
+    expect(formatDuration(23 * 60 * 60000 + 59 * 60000)).toBe("23h 59m");
+  });
+
+  it("formats days and hours for longer durations", () => {
+    expect(formatDuration(24 * 60 * 60000)).toBe("1d");
+    expect(formatDuration(24 * 60 * 60000 + 3 * 60 * 60000)).toBe("1d 3h");
+    expect(formatDuration(7 * 24 * 60 * 60000 + 12 * 60 * 60000)).toBe("7d 12h");
+  });
+
+  it("omits zero units in the second position", () => {
+    expect(formatDuration(2 * 60 * 60000)).toBe("2h");
+    expect(formatDuration(5 * 60000)).toBe("5m");
+    expect(formatDuration(2 * 24 * 60 * 60000)).toBe("2d");
+  });
+
+  it("handles negative values", () => {
+    expect(formatDuration(-1)).toBe("0ms");
+    expect(formatDuration(-1000)).toBe("0ms");
   });
 });
