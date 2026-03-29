@@ -1,5 +1,11 @@
 # @composio/ao
 
+## 0.2.2
+
+### Patch Changes
+
+- @composio/ao-cli@0.2.2
+
 ## 0.2.1
 
 ### Patch Changes

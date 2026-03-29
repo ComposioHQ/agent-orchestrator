@@ -65,3 +65,6 @@ AGENTS.md
 .claude/
 .opencode/
 
+# OS-specific files
+.DS_Store
+Thumbs.db

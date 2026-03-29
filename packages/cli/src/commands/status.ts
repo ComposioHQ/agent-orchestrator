@@ -465,13 +465,13 @@ async function showFallbackStatus(): Promise<void> {
   // Use claude-code as default agent for fallback introspection
   const agent = getAgentByName("claude-code");
 
-  for (const session of allTmux.sort()) {
-    const activityTs = await getTmuxActivity(session);
-    const lastActivity = activityTs ? formatAge(activityTs) : "-";
-    console.log(`  ${chalk.green(session)} ${chalk.dim(`(${lastActivity})`)}`);
+  const sortedSessions = allTmux.sort();
 
-    // Try introspection even without config
-    try {
+  // Pre-fetch activity and introspection in parallel
+  const details = await Promise.all(
+    sortedSessions.map(async (session) => {
+      const activityTsPromise = getTmuxActivity(session).catch(() => null);
+
       const sessionObj: Session = {
         id: session,
         projectId: "",
@@ -487,12 +487,27 @@ async function showFallbackStatus(): Promise<void> {
         lastActivityAt: new Date(),
         metadata: {},
       };
-      const introspection = await agent.getSessionInfo(sessionObj);
-      if (introspection?.summary) {
-        console.log(`     ${chalk.dim("Claude:")} ${introspection.summary.slice(0, 65)}`);
-      }
-    } catch {
-      // Not critical
+
+      const introspectionPromise = agent.getSessionInfo(sessionObj).catch(() => null);
+
+      const [activityTs, introspection] = await Promise.all([
+        activityTsPromise,
+        introspectionPromise,
+      ]);
+
+      return { activityTs, introspection };
+    }),
+  );
+
+  for (let i = 0; i < sortedSessions.length; i++) {
+    const session = sortedSessions[i];
+    const { activityTs, introspection } = details[i];
+
+    const lastActivity = activityTs ? formatAge(activityTs) : "-";
+    console.log(`  ${chalk.green(session)} ${chalk.dim(`(${lastActivity})`)}`);
+
+    if (introspection?.summary) {
+      console.log(`     ${chalk.dim("Claude:")} ${introspection.summary.slice(0, 65)}`);
     }
   }
   console.log();

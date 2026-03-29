@@ -1,6 +1,6 @@
 {
   "name": "@composio/ao",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Orchestrate parallel AI coding agents — global CLI wrapper",
   "license": "MIT",
   "type": "module",
