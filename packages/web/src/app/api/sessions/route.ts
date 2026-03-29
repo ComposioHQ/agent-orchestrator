@@ -15,6 +15,7 @@ import { filterProjectSessions } from "@/lib/project-utils";
 const METADATA_ENRICH_TIMEOUT_MS = 3_000;
 const PR_ENRICH_TIMEOUT_MS = 4_000;
 const PER_PR_ENRICH_TIMEOUT_MS = 1_500;
+const PR_ENRICH_CONCURRENCY_LIMIT = 3;
 
 async function settlesWithin(promise: Promise<unknown>, timeoutMs: number): Promise<boolean> {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -29,6 +30,46 @@ async function settlesWithin(promise: Promise<unknown>, timeoutMs: number): Prom
       clearTimeout(timeoutId);
     }
   }
+}
+
+/**
+ * Simple concurrency pool that limits the number of parallel promise executions.
+ * Once the deadline is reached, no new promises will be started.
+ */
+async function withConcurrencyLimit<T>(
+  items: T[],
+  fn: (item: T) => Promise<unknown>,
+  limit: number,
+  deadlineMs: number,
+): Promise<void> {
+  const deadline = Date.now() + deadlineMs;
+  const queue = [...items];
+  let active = 0;
+  const results: Promise<unknown>[] = [];
+
+  const runNext = (): void => {
+    if (queue.length === 0 || active >= limit || Date.now() > deadline) {
+      return;
+    }
+
+    const item = queue.shift();
+    if (item === undefined) return;
+
+    active++;
+    const promise = fn(item).finally(() => {
+      active--;
+      runNext();
+    });
+    results.push(promise);
+    runNext();
+  };
+
+  // Start initial batch
+  for (let i = 0; i < Math.min(limit, items.length); i++) {
+    runNext();
+  }
+
+  await Promise.allSettled(results);
 }
 
 export async function GET(request: Request) {
@@ -94,23 +135,30 @@ export async function GET(request: Request) {
     );
 
     if (metadataSettled) {
-      const prDeadlineAt = Date.now() + PR_ENRICH_TIMEOUT_MS;
-      for (let i = 0; i < workerSessions.length; i++) {
-        const core = workerSessions[i];
-        if (!core?.pr) continue;
+      // Use concurrency pool to limit parallel SCM requests and prevent starvation
+      const sessionsWithPRs = workerSessions
+        .map((core, index) => ({ core, index }))
+        .filter(({ core }) => core?.pr);
 
-        const remainingMs = prDeadlineAt - Date.now();
-        if (remainingMs <= 0) break;
+      await settlesWithin(
+        withConcurrencyLimit(
+          sessionsWithPRs,
+          ({ core, index }) => {
+            const project = resolveProject(core, config.projects);
+            const scm = getSCM(registry, project);
+            if (!scm) return Promise.resolve();
 
-        const project = resolveProject(core, config.projects);
-        const scm = getSCM(registry, project);
-        if (!scm) continue;
-
-        await settlesWithin(
-          enrichSessionPR(dashboardSessions[i], scm, core.pr),
-          Math.min(remainingMs, PER_PR_ENRICH_TIMEOUT_MS),
-        );
-      }
+            // core.pr is guaranteed non-null after the filter above
+            return settlesWithin(
+              enrichSessionPR(dashboardSessions[index], scm, core.pr!),
+              PER_PR_ENRICH_TIMEOUT_MS,
+            );
+          },
+          PR_ENRICH_CONCURRENCY_LIMIT,
+          PR_ENRICH_TIMEOUT_MS,
+        ),
+        PR_ENRICH_TIMEOUT_MS,
+      );
     }
 
     recordApiObservation({
