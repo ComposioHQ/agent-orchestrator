@@ -224,13 +224,15 @@ export async function shouldRefreshPREnrichment(
       const cached = prMetadataCache.get(prKey);
 
       // Check for incomplete cache (cached but no headSha)
+      // This happens when PR was cached but headSha wasn't captured
+      // We need to refresh to get complete data including headSha
       if (cached && cached.headSha === null) {
         shouldRefresh = true;
         details.push(`First time seeing PR #${pr.number} (Guard 2: no cached head SHA)`);
         continue;
       }
 
-      // Only check commit status ETag if we have cached data with a head SHA
+      // Only check commit status ETag if we have cached data with a non-null head SHA
       if (!cached || !cached.headSha) {
         // No cached metadata - skip Guard 2. Since Guard 1 didn't detect changes
         // and we have no cached data, there's nothing to check.
@@ -382,7 +384,8 @@ async function checkPRListETag(
     // ETag header format: "etag": "W/"abc123..." or "etag": "abc123..."
     const etagMatch = output.match(/etag:\s*(.+)/i);
     if (etagMatch) {
-      const newETag = etagMatch[1];
+      // Trim to remove trailing whitespace/newlines that could cause comparison issues
+      const newETag = etagMatch[1].trim();
       setPRListETag(owner, repo, newETag);
     }
 
@@ -439,7 +442,8 @@ async function checkCommitStatusETag(
     // Extract new ETag from response headers
     const etagMatch = output.match(/etag:\s*(.+)/i);
     if (etagMatch) {
-      const newETag = etagMatch[1];
+      // Trim to remove trailing whitespace/newlines that could cause comparison issues
+      const newETag = etagMatch[1].trim();
       setCommitStatusETag(owner, repo, sha, newETag);
     }
 
