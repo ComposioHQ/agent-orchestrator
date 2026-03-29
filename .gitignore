@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .pnpm-store/
+package-lock.json
 .next/
 *.tsbuildinfo
 coverage/
