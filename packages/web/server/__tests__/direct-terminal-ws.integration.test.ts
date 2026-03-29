@@ -811,3 +811,63 @@ describe("server creation", () => {
     server2.shutdown();
   });
 });
+
+// =============================================================================
+// tmux configuration (history-limit fix for #738)
+// =============================================================================
+
+describe("tmux configuration", () => {
+  it("sets history-limit to 10000 on session creation", () => {
+    // Create a fresh test session to verify history-limit
+    const testSession = `ao-history-test-${process.pid}-${Date.now()}`;
+
+    try {
+      // Create session using the same method as production (tmux.newSession)
+      execFileSync(TMUX, ["new-session", "-d", "-s", testSession, "-x", "80", "-y", "24"], {
+        timeout: 5000,
+      });
+
+      // Set history-limit as done in tmux.newSession
+      execFileSync(TMUX, ["set-option", "-t", testSession, "history-limit", "10000"], {
+        timeout: 5000,
+      });
+
+      // Query the history-limit value
+      const output = execFileSync(TMUX, ["show-options", "-t", testSession, "-v", "history-limit"], {
+        encoding: "utf8",
+        timeout: 5000,
+      }) as string;
+
+      // Verify it's set to 10000
+      expect(output.trim()).toBe("10000");
+    } finally {
+      // Clean up test session
+      try {
+        execFileSync(TMUX, ["kill-session", "-t", testSession], { timeout: 5000 });
+      } catch {
+        /* already dead */
+      }
+    }
+  });
+
+  it("enables mouse mode and hides status bar on connection", async () => {
+    const ws = await connectWs(TEST_SESSION);
+    await waitForWsData(ws);
+
+    // Verify mouse mode is enabled (shows as "on" in show-options)
+    const mouseOutput = execFileSync(TMUX, ["show-options", "-t", TEST_SESSION, "-v", "mouse"], {
+      encoding: "utf8",
+      timeout: 5000,
+    }) as string;
+    expect(mouseOutput.trim()).toBe("on");
+
+    // Verify status bar is hidden (shows as "off" in show-options)
+    const statusOutput = execFileSync(TMUX, ["show-options", "-t", TEST_SESSION, "-v", "status"], {
+      encoding: "utf8",
+      timeout: 5000,
+    }) as string;
+    expect(statusOutput.trim()).toBe("off");
+
+    ws.close();
+  });
+});

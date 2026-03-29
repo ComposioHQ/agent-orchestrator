@@ -287,7 +287,12 @@ export function DirectTerminal({
           // Light mode needs an explicit contrast floor because agent UIs often emit
           // dim/faint ANSI sequences that become unreadable on a near-white background.
           minimumContrastRatio: isDark ? 1 : 7,
-          scrollback: 10000,
+          // Disable xterm.js scrollback to prevent cursor from moving with viewport.
+          // tmux sessions have their own scrollback buffer that should be used instead.
+          // This fixes the issue where the active prompt/cursor appears to travel up/down
+          // when scrolling terminal history instead of staying anchored at the input area.
+          // Users can access scrollback history via tmux's copy mode (Ctrl+b, [).
+          scrollback: 0,
           allowProposedApi: true,
           fastScrollModifier: "alt",
           fastScrollSensitivity: 3,
