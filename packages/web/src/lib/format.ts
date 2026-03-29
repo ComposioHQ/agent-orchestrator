@@ -56,3 +56,27 @@ export function getSessionTitle(session: DashboardSession): string {
   // 6. Status
   return session.status;
 }
+
+/** True when the issue label is only digits, optionally with a leading `#` (e.g. `#42`, `7`). */
+export function isNumericIssueLabel(label: string | null | undefined): boolean {
+  if (label == null) return false;
+  const t = label.trim();
+  return t.length > 0 && /^#?\d+$/.test(t);
+}
+
+/**
+ * Stable sidebar / rail label: issue-centric, never generic agent summary.
+ * Order: issueTitle → issueLabel (any) → humanized branch → short id.
+ */
+export function getSessionSidebarLabel(session: DashboardSession): string {
+  const title = session.issueTitle?.trim();
+  if (title) return title;
+
+  const label = session.issueLabel?.trim();
+  if (label) return label;
+
+  if (session.branch) return humanizeBranch(session.branch);
+
+  const id = session.id;
+  return id.length > 16 ? `${id.slice(0, 16)}…` : id;
+}

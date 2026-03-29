@@ -51,6 +51,11 @@ const zoneConfig: Record<
     color: "var(--color-text-tertiary)",
     caption: "Completed or exited",
   },
+  killed: {
+    label: "Killed",
+    color: "var(--color-status-error)",
+    caption: "Stopped or dead — restore to resume",
+  },
 };
 
 /**

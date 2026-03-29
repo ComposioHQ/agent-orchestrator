@@ -10,6 +10,7 @@ import {
   type GlobalPauseState,
   type DashboardOrchestratorLink,
   getAttentionLevel,
+  isKilledSession,
   isPRRateLimited,
   CI_STATUS,
 } from "@/lib/types";
@@ -21,7 +22,7 @@ import { ThemeToggle } from "./ThemeToggle";
 import type { ProjectInfo } from "@/lib/project-name";
 import { EmptyState } from "./Skeleton";
 import { DashboardCompactTopBar } from "./DashboardCompactTopBar";
-import { useShowDone } from "@/hooks/useShowDone";
+import { useShowKilledSessions } from "@/hooks/useShowKilledSessions";
 
 interface DashboardProps {
   initialSessions: DashboardSession[];
@@ -32,7 +33,7 @@ interface DashboardProps {
   orchestrators?: DashboardOrchestratorLink[];
 }
 
-const KANBAN_LEVELS_BASE = ["working", "pending", "review", "respond", "merge"] as const;
+const KANBAN_LEVELS_BASE = ["working", "pending", "review", "respond", "merge", "done"] as const;
 const EMPTY_ORCHESTRATORS: DashboardOrchestratorLink[] = [];
 
 function mergeOrchestrators(
@@ -70,9 +71,9 @@ export function Dashboard({
     useState<DashboardOrchestratorLink[]>(orchestratorLinks);
   const [spawningProjectIds, setSpawningProjectIds] = useState<string[]>([]);
   const [spawnErrors, setSpawnErrors] = useState<Record<string, string>>({});
-  const [showDone, setShowDone] = useShowDone();
-  const kanbanLevels = showDone
-    ? ([...KANBAN_LEVELS_BASE, "done"] as const)
+  const [showKilled, setShowKilled] = useShowKilledSessions();
+  const kanbanLevels = showKilled
+    ? ([...KANBAN_LEVELS_BASE, "killed"] as const)
     : KANBAN_LEVELS_BASE;
   const allProjectsView = projects.length > 1 && projectId === undefined;
 
@@ -85,6 +86,11 @@ export function Dashboard({
     setActiveOrchestrators((current) => mergeOrchestrators(current, orchestratorLinks));
   }, [orchestratorLinks]);
 
+  const boardSessions = useMemo(
+    () => displaySessions.filter((s) => showKilled || !isKilledSession(s)),
+    [displaySessions, showKilled],
+  );
+
   const grouped = useMemo(() => {
     const zones: Record<AttentionLevel, DashboardSession[]> = {
       merge: [],
@@ -93,12 +99,17 @@ export function Dashboard({
       pending: [],
       working: [],
       done: [],
+      killed: [],
     };
-    for (const session of displaySessions) {
-      zones[getAttentionLevel(session)].push(session);
+    for (const session of boardSessions) {
+      if (isKilledSession(session)) {
+        zones.killed.push(session);
+      } else {
+        zones[getAttentionLevel(session)].push(session);
+      }
     }
     return zones;
-  }, [displaySessions]);
+  }, [boardSessions]);
 
   const sessionsByProject = useMemo(() => {
     const groupedSessions = new Map<string, DashboardSession[]>();
@@ -127,7 +138,11 @@ export function Dashboard({
     if (!allProjectsView) return [];
 
     return projects.map((project) => {
-      const projectSessions = sessionsByProject.get(project.id) ?? [];
+      const projectSessionsRaw = sessionsByProject.get(project.id) ?? [];
+      const projectSessions = projectSessionsRaw.filter(
+        (s) => showKilled || !isKilledSession(s),
+      );
+      const killedCount = projectSessionsRaw.filter(isKilledSession).length;
       const counts: Record<AttentionLevel, number> = {
         merge: 0,
         respond: 0,
@@ -135,10 +150,15 @@ export function Dashboard({
         pending: 0,
         working: 0,
         done: 0,
+        killed: 0,
       };
 
       for (const session of projectSessions) {
-        counts[getAttentionLevel(session)]++;
+        if (isKilledSession(session)) {
+          counts.killed++;
+        } else {
+          counts[getAttentionLevel(session)]++;
+        }
       }
 
       return {
@@ -147,10 +167,11 @@ export function Dashboard({
           activeOrchestrators.find((orchestrator) => orchestrator.projectId === project.id) ?? null,
         sessionCount: projectSessions.length,
         openPRCount: projectSessions.filter((session) => session.pr?.state === "open").length,
+        killedCount,
         counts,
       };
     });
-  }, [activeOrchestrators, allProjectsView, projects, sessionsByProject]);
+  }, [activeOrchestrators, allProjectsView, projects, sessionsByProject, showKilled]);
 
   const handleSend = useCallback(async (sessionId: string, message: string) => {
     const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/send`, {
@@ -346,55 +367,73 @@ export function Dashboard({
         )}
 
         {allProjectsView && (
-          <ProjectOverviewGrid
-            overviews={projectOverviews}
-            onSpawnOrchestrator={handleSpawnOrchestrator}
-            spawningProjectIds={spawningProjectIds}
-            spawnErrors={spawnErrors}
-          />
+          <>
+            <div className="mb-4 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowKilled(!showKilled)}
+                className="rounded border border-[var(--color-border-default)] px-2.5 py-1 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]"
+              >
+                {showKilled ? "Hide killed sessions" : "Show killed sessions"}
+              </button>
+            </div>
+            <ProjectOverviewGrid
+              showKilled={showKilled}
+              overviews={projectOverviews}
+              onSpawnOrchestrator={handleSpawnOrchestrator}
+              spawningProjectIds={spawningProjectIds}
+              spawnErrors={spawnErrors}
+            />
+          </>
         )}
 
-        {!allProjectsView && hasAnySessions && (
-          <div className="kanban-board-wrap">
-            <div className="board-section-head">
-              <div>
-                <h2 className="board-section-head__title">Attention Board</h2>
-                <p className="board-section-head__subtitle">
-                  Triage by required intervention, not by chronology.
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => setShowDone(!showDone)}
-                  className="rounded border border-[var(--color-border-default)] px-2.5 py-1 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]"
-                >
-                  {showDone ? "Hide done" : "Show done"}
-                </button>
-                <div className="board-section-head__legend">
-                  <BoardLegendItem label="Human action" tone="var(--color-status-error)" />
-                  <BoardLegendItem label="Review queue" tone="var(--color-accent-orange)" />
-                  <BoardLegendItem label="Ready to land" tone="var(--color-status-ready)" />
+        {!allProjectsView && (
+          <>
+            <div className="mb-4 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowKilled(!showKilled)}
+                className="rounded border border-[var(--color-border-default)] px-2.5 py-1 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]"
+              >
+                {showKilled ? "Hide killed sessions" : "Show killed sessions"}
+              </button>
+            </div>
+            {hasAnySessions ? (
+              <div className="kanban-board-wrap">
+                <div className="board-section-head">
+                  <div>
+                    <h2 className="board-section-head__title">Attention Board</h2>
+                    <p className="board-section-head__subtitle">
+                      Triage by required intervention, not by chronology.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="board-section-head__legend">
+                      <BoardLegendItem label="Human action" tone="var(--color-status-error)" />
+                      <BoardLegendItem label="Review queue" tone="var(--color-accent-orange)" />
+                      <BoardLegendItem label="Ready to land" tone="var(--color-status-ready)" />
+                    </div>
+                  </div>
+                </div>
+                <div className="kanban-board">
+                  {kanbanLevels.map((level) => (
+                    <AttentionZone
+                      key={level}
+                      level={level}
+                      sessions={grouped[level]}
+                      onSend={handleSend}
+                      onKill={handleKill}
+                      onMerge={handleMerge}
+                      onRestore={handleRestore}
+                    />
+                  ))}
                 </div>
               </div>
-            </div>
-            <div className="kanban-board">
-              {kanbanLevels.map((level) => (
-                <AttentionZone
-                  key={level}
-                  level={level}
-                  sessions={grouped[level]}
-                  onSend={handleSend}
-                  onKill={handleKill}
-                  onMerge={handleMerge}
-                  onRestore={handleRestore}
-                />
-              ))}
-            </div>
-          </div>
+            ) : (
+              <EmptyState />
+            )}
+          </>
         )}
-
-        {!allProjectsView && !hasAnySessions && <EmptyState />}
 
         {openPRs.length > 0 && (
           <div className="mx-auto max-w-[900px]">
@@ -509,16 +548,19 @@ function OrchestratorControl({ orchestrators }: { orchestrators: DashboardOrches
 }
 
 function ProjectOverviewGrid({
+  showKilled,
   overviews,
   onSpawnOrchestrator,
   spawningProjectIds,
   spawnErrors,
 }: {
+  showKilled: boolean;
   overviews: Array<{
     project: ProjectInfo;
     orchestrator: DashboardOrchestratorLink | null;
     sessionCount: number;
     openPRCount: number;
+    killedCount: number;
     counts: Record<AttentionLevel, number>;
   }>;
   onSpawnOrchestrator: (project: ProjectInfo) => Promise<void>;
@@ -527,7 +569,7 @@ function ProjectOverviewGrid({
 }) {
   return (
     <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-      {overviews.map(({ project, orchestrator, sessionCount, openPRCount, counts }) => (
+      {overviews.map(({ project, orchestrator, sessionCount, openPRCount, killedCount, counts }) => (
         <section
           key={project.id}
           className="border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] p-4"
@@ -568,6 +610,13 @@ function ProjectOverviewGrid({
               value={counts.working}
               tone="var(--color-status-working)"
             />
+            {showKilled ? (
+              <ProjectMetric
+                label="Killed"
+                value={killedCount}
+                tone="var(--color-status-error)"
+              />
+            ) : null}
           </div>
 
           <div className="border-t border-[var(--color-border-subtle)] pt-3">
