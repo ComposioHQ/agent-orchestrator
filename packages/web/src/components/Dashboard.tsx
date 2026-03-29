@@ -25,6 +25,7 @@ import { BottomSheet } from "./BottomSheet";
 import { ConnectionBar } from "./ConnectionBar";
 import { MobileBottomNav } from "./MobileBottomNav";
 import { getProjectScopedHref } from "@/lib/project-utils";
+import { sendSessionMessage } from "@/lib/session-message-client";
 
 interface DashboardProps {
   initialSessions: DashboardSession[];
@@ -295,29 +296,11 @@ function DashboardInner({
 
   const handleSend = useCallback(async (sessionId: string, message: string) => {
     try {
-      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/send`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message }),
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        const messageText = text || "Unknown error";
-        console.error(`Failed to send message to ${sessionId}:`, messageText);
-        showToast(`Send failed: ${messageText}`, "error");
-        const errorWithToast = new Error(messageText);
-        (errorWithToast as Error & { toastShown?: boolean }).toastShown = true;
-        throw errorWithToast;
-      }
+      await sendSessionMessage(sessionId, message);
     } catch (error) {
-      const toastShown =
-        error instanceof Error &&
-        "toastShown" in error &&
-        (error as Error & { toastShown?: boolean }).toastShown;
-      if (!toastShown) {
-        console.error(`Network error sending message to ${sessionId}:`, error);
-        showToast("Network error while sending message", "error");
-      }
+      const messageText = error instanceof Error ? error.message : "Unknown error";
+      console.error(`Failed to send message to ${sessionId}:`, error);
+      showToast(`Send failed: ${messageText}`, "error");
       throw error;
     }
   }, [showToast]);
