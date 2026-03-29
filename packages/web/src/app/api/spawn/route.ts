@@ -1,8 +1,10 @@
 import { type NextRequest } from "next/server";
-import { validateIdentifier } from "@/lib/validation";
+import { stripControlChars, validateIdentifier } from "@/lib/validation";
 import { getServices } from "@/lib/services";
 import { sessionToDashboard } from "@/lib/serialize";
 import { getCorrelationId, jsonWithCorrelation, recordApiObservation } from "@/lib/observability";
+
+const MAX_SPAWN_PROMPT_CHARS = 32_768;
 
 /** POST /api/spawn — Spawn a new session */
 export async function POST(request: NextRequest) {
@@ -25,11 +27,41 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  if (body.agent !== undefined && body.agent !== null && body.agent !== "") {
+    const agentErr = validateIdentifier(body.agent, "agent");
+    if (agentErr) {
+      return jsonWithCorrelation({ error: agentErr }, { status: 400 }, correlationId);
+    }
+  }
+
+  let prompt: string | undefined;
+  if (body.prompt !== undefined && body.prompt !== null && body.prompt !== "") {
+    if (typeof body.prompt !== "string") {
+      return jsonWithCorrelation({ error: "prompt must be a string" }, { status: 400 }, correlationId);
+    }
+    if (body.prompt.length > MAX_SPAWN_PROMPT_CHARS) {
+      return jsonWithCorrelation(
+        { error: `prompt must be at most ${MAX_SPAWN_PROMPT_CHARS} characters` },
+        { status: 400 },
+        correlationId,
+      );
+    }
+    const cleaned = stripControlChars(body.prompt).trim();
+    if (cleaned.length > 0) {
+      prompt = cleaned;
+    }
+  }
+
   try {
     const { config, sessionManager } = await getServices();
     const session = await sessionManager.spawn({
       projectId: body.projectId as string,
       issueId: (body.issueId as string) ?? undefined,
+      agent:
+        typeof body.agent === "string" && body.agent.trim() !== ""
+          ? body.agent.trim()
+          : undefined,
+      prompt,
     });
 
     recordApiObservation({

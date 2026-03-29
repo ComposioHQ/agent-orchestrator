@@ -279,12 +279,15 @@ export function registerSession(program: Command): void {
     .command("restore")
     .description("Restore a terminated/crashed session in-place")
     .argument("<session>", "Session name to restore")
-    .action(async (sessionName: string) => {
+    .option("--agent <name>", "Override agent plugin for this restore (persisted)")
+    .action(async (sessionName: string, opts: { agent?: string }) => {
       const config = loadConfig();
       const sm = await getSessionManager(config);
 
       try {
-        const restored = await sm.restore(sessionName);
+        const restored = await sm.restore(sessionName, {
+          agent: opts.agent?.trim() || undefined,
+        });
         console.log(chalk.green(`\nSession ${sessionName} restored.`));
         if (restored.workspacePath) {
           console.log(chalk.dim(`  Worktree: ${restored.workspacePath}`));

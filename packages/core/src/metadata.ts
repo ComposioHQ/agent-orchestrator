@@ -293,6 +293,22 @@ export function listMetadata(dataDir: string): SessionId[] {
   });
 }
 
+/** List terminal sub-session metadata IDs for a parent AO session (`{parentId}-t1`, …). */
+export function listSubSessionIds(dataDir: string, parentSessionId: SessionId): SessionId[] {
+  validateSessionId(parentSessionId);
+  if (!existsSync(dataDir)) return [];
+  const prefix = `${parentSessionId}-t`;
+  return readdirSync(dataDir).filter((name) => {
+    if (!name.startsWith(prefix)) return false;
+    if (!VALID_SESSION_ID.test(name)) return false;
+    try {
+      return statSync(join(dataDir, name)).isFile();
+    } catch {
+      return false;
+    }
+  });
+}
+
 /**
  * Atomically reserve a session ID by creating its metadata file with O_EXCL.
  * Returns true if the ID was successfully reserved, false if it already exists.

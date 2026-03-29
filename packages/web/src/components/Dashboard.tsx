@@ -21,6 +21,7 @@ import { ThemeToggle } from "./ThemeToggle";
 import type { ProjectInfo } from "@/lib/project-name";
 import { EmptyState } from "./Skeleton";
 import { DashboardCompactTopBar } from "./DashboardCompactTopBar";
+import { useShowDone } from "@/hooks/useShowDone";
 
 interface DashboardProps {
   initialSessions: DashboardSession[];
@@ -31,7 +32,7 @@ interface DashboardProps {
   orchestrators?: DashboardOrchestratorLink[];
 }
 
-const KANBAN_LEVELS = ["working", "pending", "review", "respond", "merge"] as const;
+const KANBAN_LEVELS_BASE = ["working", "pending", "review", "respond", "merge"] as const;
 const EMPTY_ORCHESTRATORS: DashboardOrchestratorLink[] = [];
 
 function mergeOrchestrators(
@@ -69,6 +70,10 @@ export function Dashboard({
     useState<DashboardOrchestratorLink[]>(orchestratorLinks);
   const [spawningProjectIds, setSpawningProjectIds] = useState<string[]>([]);
   const [spawnErrors, setSpawnErrors] = useState<Record<string, string>>({});
+  const [showDone, setShowDone] = useShowDone();
+  const kanbanLevels = showDone
+    ? ([...KANBAN_LEVELS_BASE, "done"] as const)
+    : KANBAN_LEVELS_BASE;
   const allProjectsView = projects.length > 1 && projectId === undefined;
 
   const displaySessions = useMemo(() => {
@@ -223,9 +228,7 @@ export function Dashboard({
     }
   };
 
-  const hasAnySessions = KANBAN_LEVELS.some(
-    (level) => grouped[level].length > 0,
-  );
+  const hasAnySessions = kanbanLevels.some((level) => grouped[level].length > 0);
 
   const anyRateLimited = useMemo(
     () => sessions.some((session) => session.pr && isPRRateLimited(session.pr)),
@@ -360,14 +363,23 @@ export function Dashboard({
                   Triage by required intervention, not by chronology.
                 </p>
               </div>
-              <div className="board-section-head__legend">
-                <BoardLegendItem label="Human action" tone="var(--color-status-error)" />
-                <BoardLegendItem label="Review queue" tone="var(--color-accent-orange)" />
-                <BoardLegendItem label="Ready to land" tone="var(--color-status-ready)" />
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowDone(!showDone)}
+                  className="rounded border border-[var(--color-border-default)] px-2.5 py-1 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]"
+                >
+                  {showDone ? "Hide done" : "Show done"}
+                </button>
+                <div className="board-section-head__legend">
+                  <BoardLegendItem label="Human action" tone="var(--color-status-error)" />
+                  <BoardLegendItem label="Review queue" tone="var(--color-accent-orange)" />
+                  <BoardLegendItem label="Ready to land" tone="var(--color-status-ready)" />
+                </div>
               </div>
             </div>
             <div className="kanban-board">
-              {KANBAN_LEVELS.map((level) => (
+              {kanbanLevels.map((level) => (
                 <AttentionZone
                   key={level}
                   level={level}

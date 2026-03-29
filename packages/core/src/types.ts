@@ -179,6 +179,29 @@ export function isOrchestratorSession(session: {
   return session.metadata?.["role"] === "orchestrator" || session.id.endsWith("-orchestrator");
 }
 
+/** Options for restoring a session (CLI / explicit API only — not used by auto-recovery). */
+export interface RestoreOptions {
+  /** Override the agent plugin for this restore (persisted to metadata). */
+  agent?: string;
+}
+
+/** A sub-session (primary agent tmux or extra terminal) under one AO session. */
+export interface SubSession {
+  /** Sub-session ID (user-facing), e.g. "int-1" or "int-1-t1". */
+  id: string;
+  /** Parent AO session ID (top-level session). */
+  parentId: SessionId;
+  /** Primary agent pane vs extra terminal. */
+  type: "primary" | "terminal";
+  /** tmux session name. */
+  tmuxName: string;
+  /** Shared worktree path. */
+  workspacePath: string;
+  runtimeHandle: RuntimeHandle | null;
+  /** Whether the runtime (tmux) session is alive. */
+  alive: boolean;
+}
+
 /** Config for creating a new session */
 export interface SessionSpawnConfig {
   projectId: string;
@@ -1168,7 +1191,13 @@ export interface SessionMetadata {
 export interface SessionManager {
   spawn(config: SessionSpawnConfig): Promise<Session>;
   spawnOrchestrator(config: OrchestratorSpawnConfig): Promise<Session>;
-  restore(sessionId: SessionId): Promise<Session>;
+  restore(sessionId: SessionId, options?: RestoreOptions): Promise<Session>;
+  /** Extra shell tmux in the parent's worktree (metadata id `{parent}-t{n}`). */
+  createSubSession(sessionId: SessionId): Promise<SubSession>;
+  listSubSessions(sessionId: SessionId): Promise<SubSession[]>;
+  killSubSession(sessionId: SessionId, subSessionId: string): Promise<void>;
+  /** Recreate tmux for a terminal sub-session if it exited (lazy tab restore). */
+  restoreTerminalSubSession(sessionId: SessionId, subSessionId: SessionId): Promise<SubSession>;
   list(projectId?: string): Promise<Session[]>;
   get(sessionId: SessionId): Promise<Session | null>;
   kill(sessionId: SessionId, options?: { purgeOpenCode?: boolean }): Promise<void>;

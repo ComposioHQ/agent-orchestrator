@@ -1245,6 +1245,27 @@ describe("list", () => {
     expect(sessions.map((s) => s.id).sort()).toEqual(["app-1", "app-2"]);
   });
 
+  it("excludes terminal sub-sessions (parent metadata) from list", async () => {
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/w1",
+      branch: "feat/a",
+      status: "working",
+      project: "my-app",
+    });
+    writeMetadata(sessionsDir, "app-1-t1", {
+      worktree: "/tmp/w1",
+      branch: "feat/a",
+      status: "working",
+      project: "my-app",
+    });
+    updateMetadata(sessionsDir, "app-1-t1", { parent: "app-1", type: "terminal" });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const sessions = await sm.list();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].id).toBe("app-1");
+  });
+
   it("preserves lastActivityAt when read-time repair rewrites metadata", async () => {
     writeMetadata(sessionsDir, "app-orchestrator", {
       worktree: config.projects["my-app"]!.path,
@@ -4502,6 +4523,198 @@ describe("restore", () => {
     expect(meta!["status"]).toBe("spawning");
     expect(meta!["runtimeHandle"]).toBe(JSON.stringify(makeHandle("rt-1")));
     expect(meta!["opencodeSessionId"]).toBe("ses_from_post_launch");
+  });
+
+  it("persists agent override when restoring with options.agent", async () => {
+    const wsPath = join(tmpDir, "ws-app-1");
+    mkdirSync(wsPath, { recursive: true });
+
+    const altAgent: Agent = {
+      ...mockAgent,
+      name: "alt-agent",
+      getLaunchCommand: vi.fn().mockReturnValue("alt-agent --go"),
+    };
+
+    const registryMulti: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return name === "alt-agent" ? altAgent : mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/TEST-1",
+      status: "killed",
+      project: "my-app",
+      agent: "mock-agent",
+      runtimeHandle: JSON.stringify(makeHandle("rt-old")),
+    });
+
+    const sm = createSessionManager({ config, registry: registryMulti });
+    await sm.restore("app-1", { agent: "alt-agent" });
+
+    expect(altAgent.getLaunchCommand).toHaveBeenCalled();
+    expect(mockAgent.getLaunchCommand).not.toHaveBeenCalled();
+    const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta!["agent"]).toBe("alt-agent");
+  });
+
+  it("throws when restore agent override is unknown", async () => {
+    const wsPath = join(tmpDir, "ws-app-1");
+    mkdirSync(wsPath, { recursive: true });
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "feat/TEST-1",
+      status: "killed",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("rt-old")),
+    });
+    const registryStrict: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return name === "mock-agent" ? mockAgent : null;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+    const sm = createSessionManager({ config, registry: registryStrict });
+    await expect(sm.restore("app-1", { agent: "unknown-agent" })).rejects.toThrow(
+      "Agent plugin 'unknown-agent' not found",
+    );
+  });
+
+  it("rejects restore on terminal sub-session id", async () => {
+    writeMetadata(sessionsDir, "app-1-t1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "killed",
+      project: "my-app",
+      runtimeHandle: JSON.stringify(makeHandle("x")),
+    });
+    updateMetadata(sessionsDir, "app-1-t1", { parent: "app-1", type: "terminal" });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await expect(sm.restore("app-1-t1")).rejects.toThrow(SessionNotRestorableError);
+  });
+});
+
+describe("kill cascades terminal sub-sessions", () => {
+  it("destroys terminal sub-sessions when killing parent AO session", async () => {
+    const wsPath = join(tmpDir, "ws-parent");
+    mkdirSync(wsPath, { recursive: true });
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      tmuxName: "hash-app-1",
+      runtimeHandle: JSON.stringify(makeHandle("rt-parent")),
+    });
+    writeMetadata(sessionsDir, "app-1-t1", {
+      worktree: wsPath,
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      tmuxName: "hash-app-1-t1",
+      runtimeHandle: JSON.stringify(makeHandle("rt-sub")),
+    });
+    updateMetadata(sessionsDir, "app-1-t1", { parent: "app-1", type: "terminal" });
+
+    vi.mocked(mockRuntime.isAlive).mockResolvedValue(false);
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.kill("app-1");
+
+    expect(mockRuntime.destroy).toHaveBeenCalledWith(makeHandle("rt-sub"));
+    expect(readMetadataRaw(sessionsDir, "app-1-t1")).toBeNull();
+  });
+});
+
+describe("sub-sessions API", () => {
+  it("createSubSession writes metadata and tmux name", async () => {
+    const wsPath = join(tmpDir, "ws");
+    mkdirSync(wsPath, { recursive: true });
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "main",
+      status: "killed",
+      project: "my-app",
+      tmuxName: "pref-app-1",
+      runtimeHandle: JSON.stringify(makeHandle("rt")),
+    });
+    vi.mocked(mockRuntime.isAlive).mockResolvedValue(false);
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const sub = await sm.createSubSession("app-1");
+    expect(sub.id).toBe("app-1-t1");
+    expect(sub.tmuxName).toBe("pref-app-1-t1");
+    expect(mockRuntime.create).toHaveBeenCalled();
+    const raw = readMetadataRaw(sessionsDir, "app-1-t1");
+    expect(raw!["parent"]).toBe("app-1");
+    expect(raw!["type"]).toBe("terminal");
+  });
+
+  it("listSubSessions includes primary and terminals", async () => {
+    const wsPath = join(tmpDir, "ws");
+    mkdirSync(wsPath, { recursive: true });
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "main",
+      status: "killed",
+      project: "my-app",
+      tmuxName: "p-app-1",
+      runtimeHandle: JSON.stringify(makeHandle("rt-p")),
+    });
+    writeMetadata(sessionsDir, "app-1-t1", {
+      worktree: wsPath,
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      tmuxName: "p-app-1-t1",
+      runtimeHandle: JSON.stringify(makeHandle("rt-t1")),
+    });
+    updateMetadata(sessionsDir, "app-1-t1", { parent: "app-1", type: "terminal" });
+
+    vi.mocked(mockRuntime.isAlive).mockResolvedValue(true);
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const subs = await sm.listSubSessions("app-1");
+    expect(subs.map((s) => s.id)).toEqual(["app-1", "app-1-t1"]);
+    expect(subs[0].type).toBe("primary");
+    expect(subs[1].type).toBe("terminal");
+  });
+
+  it("killSubSession removes terminal metadata", async () => {
+    const wsPath = join(tmpDir, "ws");
+    mkdirSync(wsPath, { recursive: true });
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: wsPath,
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      tmuxName: "p-app-1",
+      runtimeHandle: JSON.stringify(makeHandle("rt-p")),
+    });
+    writeMetadata(sessionsDir, "app-1-t1", {
+      worktree: wsPath,
+      branch: "main",
+      status: "working",
+      project: "my-app",
+      tmuxName: "p-app-1-t1",
+      runtimeHandle: JSON.stringify(makeHandle("rt-t1")),
+    });
+    updateMetadata(sessionsDir, "app-1-t1", { parent: "app-1", type: "terminal" });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.killSubSession("app-1", "app-1-t1");
+    expect(mockRuntime.destroy).toHaveBeenCalledWith(makeHandle("rt-t1"));
+    expect(readMetadataRaw(sessionsDir, "app-1-t1")).toBeNull();
   });
 });
 

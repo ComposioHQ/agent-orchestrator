@@ -8,7 +8,7 @@ import { WorkspaceLayout } from "@/components/workspace/WorkspaceLayout";
 import { FileTree } from "@/components/workspace/FileTree";
 import { FilePreview } from "@/components/workspace/FilePreview";
 import { DiffViewer } from "@/components/workspace/DiffViewer";
-import { DirectTerminal } from "@/components/DirectTerminal";
+import { SessionTerminalTabs } from "@/components/SessionTerminalTabs";
 import { type DashboardSession, getAttentionLevel, type AttentionLevel } from "@/lib/types";
 import { activityIcon } from "@/lib/activity-icons";
 
@@ -168,10 +168,9 @@ export default function SessionPage() {
               <FilePreview sessionId={id} selectedFile={file} />
             ),
           terminal: (
-            <DirectTerminal
+            <SessionTerminalTabs
               sessionId={id}
               variant={sessionIsOrchestrator ? "orchestrator" : "agent"}
-              height="100%"
               isOpenCodeSession={session.metadata["agent"] === "opencode"}
               reloadCommand={
                 session.metadata["agent"] === "opencode" && session.metadata["opencodeSessionId"]

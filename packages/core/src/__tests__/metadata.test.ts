@@ -11,6 +11,7 @@ import {
   updateMetadata,
   deleteMetadata,
   listMetadata,
+  listSubSessionIds,
 } from "../metadata.js";
 
 let dataDir: string;
@@ -460,5 +461,17 @@ describe("listMetadata", () => {
     const list = listMetadata(emptyDir);
     expect(list).toEqual([]);
     // no cleanup needed since dir was never created
+  });
+});
+
+describe("listSubSessionIds", () => {
+  it("returns only terminal sub-session files for a parent id", () => {
+    writeMetadata(dataDir, "app-1", { worktree: "/tmp", branch: "a", status: "s" });
+    writeMetadata(dataDir, "app-1-t1", { worktree: "/tmp", branch: "a", status: "s" });
+    writeMetadata(dataDir, "app-1-t2", { worktree: "/tmp", branch: "a", status: "s" });
+    writeMetadata(dataDir, "app-1-other", { worktree: "/tmp", branch: "a", status: "s" });
+
+    const list = listSubSessionIds(dataDir, "app-1").sort();
+    expect(list).toEqual(["app-1-t1", "app-1-t2"]);
   });
 });
