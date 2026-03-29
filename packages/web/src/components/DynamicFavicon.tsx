@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { type DashboardSession, type AttentionLevel, getAttentionLevel } from "@/lib/types";
+import { type DashboardSession, type SessionAttentionLevel, getAttentionLevel } from "@/lib/types";
 
 /**
  * Determine overall health from sessions.
@@ -15,7 +15,7 @@ function computeHealth(sessions: DashboardSession[]): "green" | "yellow" | "red"
   let hasYellow = false;
 
   for (const session of sessions) {
-    const level: AttentionLevel = getAttentionLevel(session);
+    const level: SessionAttentionLevel = getAttentionLevel(session);
     if (level === "respond") return "red";
     if (level === "review" || level === "merge") hasYellow = true;
   }

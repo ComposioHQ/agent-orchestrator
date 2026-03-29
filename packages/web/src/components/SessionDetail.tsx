@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect, useRef, type ReactNode } from "react";
-import { useSearchParams } from "next/navigation";
+import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { CI_STATUS, isRestorable } from "@composio/ao-core/types";
 import { type DashboardSession, type DashboardPR, isPRMergeReady } from "@/lib/types";
-import { CI_STATUS } from "@composio/ao-core/types";
 import { cn } from "@/lib/cn";
 import { CICheckList } from "./CIBadge";
 import { DirectTerminal } from "./DirectTerminal";
@@ -283,8 +283,10 @@ export function SessionDetail({
   isOrchestrator = false,
   orchestratorZones,
 }: SessionDetailProps) {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const startFullscreen = searchParams.get("fullscreen") === "true";
+  const [restoring, setRestoring] = useState(false);
   const pr = session.pr;
   const activity = (session.activity && activityMeta[session.activity]) ?? {
     label: session.activity ?? "unknown",
@@ -305,6 +307,23 @@ export function SessionDetail({
   const reloadCommand = opencodeSessionId
     ? `/exit\nopencode --session ${opencodeSessionId}\n`
     : undefined;
+
+  const handleRestore = useCallback(async () => {
+    if (!confirm(`Restore session ${session.id}?`)) return;
+    setRestoring(true);
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(session.id)}/restore`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        console.error("Restore failed:", await res.text());
+        return;
+      }
+      router.refresh();
+    } finally {
+      setRestoring(false);
+    }
+  }, [router, session.id]);
 
   return (
     <div className="session-detail-page min-h-screen bg-[var(--color-bg-base)]">
@@ -331,6 +350,27 @@ export function SessionDetail({
               pr={pr}
             />
           )}
+
+          {!isOrchestrator && isRestorable(session) ? (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border border-[color-mix(in_srgb,var(--color-status-error)_22%,transparent)] bg-[color-mix(in_srgb,var(--color-status-error)_8%,transparent)] px-3.5 py-3">
+              <p className="text-[12px] text-[var(--color-text-secondary)]">
+                <span className="font-semibold text-[var(--color-status-error)]">
+                  {session.status === "killed"
+                    ? "This session is killed."
+                    : "This session has stopped."}
+                </span>{" "}
+                Restore to resume the agent in this workspace.
+              </p>
+              <button
+                type="button"
+                onClick={() => void handleRestore()}
+                disabled={restoring}
+                className="shrink-0 rounded border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] px-3 py-1.5 text-[11px] font-semibold text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-bg-hover)] disabled:cursor-wait disabled:opacity-60"
+              >
+                {restoring ? "Restoring…" : "Restore session"}
+              </button>
+            </div>
+          ) : null}
 
           <section className="mt-5">
             <div className="mb-3 flex items-center gap-2">

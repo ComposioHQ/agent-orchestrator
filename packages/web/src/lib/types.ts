@@ -47,8 +47,19 @@ export { CI_STATUS, TERMINAL_STATUSES, TERMINAL_ACTIVITIES, NON_RESTORABLE_STATU
  * 4. pending — Waiting on external (reviewer, CI). Nothing to do right now.
  * 5. working — Agents doing their thing. Don't interrupt.
  * 6. done    — Merged or terminated. Archive.
+ * 7. killed — Kanban-only column for `status === "killed"` (never returned by `getAttentionLevel`).
  */
-export type AttentionLevel = "merge" | "respond" | "review" | "pending" | "working" | "done";
+export type AttentionLevel =
+  | "merge"
+  | "respond"
+  | "review"
+  | "pending"
+  | "working"
+  | "done"
+  | "killed";
+
+/** Attention from session heuristics — never `"killed"` (that column is status-driven only). */
+export type SessionAttentionLevel = Exclude<AttentionLevel, "killed">;
 
 /**
  * Flattened session for dashboard rendering.
@@ -75,6 +86,11 @@ export interface DashboardSession {
   lastActivityAt: string;
   pr: DashboardPR | null;
   metadata: Record<string, string>;
+}
+
+/** Strict product filter: only sessions whose lifecycle status is killed. */
+export function isKilledSession(session: Pick<DashboardSession, "status">): boolean {
+  return session.status === "killed";
 }
 
 /**
@@ -184,7 +200,7 @@ export function isPRMergeReady(pr: DashboardPR): boolean {
 }
 
 /** Determines which attention zone a session belongs to */
-export function getAttentionLevel(session: DashboardSession): AttentionLevel {
+export function getAttentionLevel(session: DashboardSession): SessionAttentionLevel {
   // ── Done: terminal states ─────────────────────────────────────────
   if (
     session.status === "merged" ||

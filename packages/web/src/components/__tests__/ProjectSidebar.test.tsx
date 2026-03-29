@@ -36,6 +36,7 @@ describe("ProjectSidebar", () => {
   it("renders sidebar with all projects when there are multiple", () => {
     render(<ProjectSidebar projects={projects} sessions={[]} activeProjectId="project-1" activeSessionId={undefined} />);
     expect(screen.getByText("Projects")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Filter session list" })).toBeInTheDocument();
     expect(screen.getByText("All Projects")).toBeInTheDocument();
     expect(screen.getByText("Project One")).toBeInTheDocument();
     expect(screen.getByText("Project Two")).toBeInTheDocument();
@@ -54,10 +55,16 @@ describe("ProjectSidebar", () => {
     expect(allProjectsButton.className).toContain("accent");
   });
 
-  it("navigates to project query param when clicking a project", () => {
+  it("expands project on header click without navigating (dashboard is a separate link)", () => {
     render(<ProjectSidebar projects={projects} sessions={[]} activeProjectId="project-1" activeSessionId={undefined} />);
     fireEvent.click(screen.getByRole("button", { name: "Project Two" }));
-    expect(mockPush).toHaveBeenCalledWith("/?project=project-2");
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("exposes project dashboard link with correct href", () => {
+    render(<ProjectSidebar projects={projects} sessions={[]} activeProjectId="project-1" activeSessionId={undefined} />);
+    const dash = screen.getByRole("link", { name: "Project Two dashboard" });
+    expect(dash).toHaveAttribute("href", "/?project=project-2");
   });
 
   it("navigates to 'all' when clicking 'All Projects'", () => {
@@ -66,13 +73,13 @@ describe("ProjectSidebar", () => {
     expect(mockPush).toHaveBeenCalledWith("/?project=all");
   });
 
-  it("encodes project ID in URL", () => {
+  it("encodes project ID in dashboard link href", () => {
     const projectsWithSpecialChars = [
       { id: "my-app", name: "My App" },
       { id: "other-project", name: "Other Project" },
     ];
     render(<ProjectSidebar projects={projectsWithSpecialChars} sessions={[]} activeProjectId="my-app" activeSessionId={undefined} />);
-    fireEvent.click(screen.getByRole("button", { name: "Other Project" }));
-    expect(mockPush).toHaveBeenCalledWith("/?project=other-project");
+    const dash = screen.getByRole("link", { name: "Other Project dashboard" });
+    expect(dash.getAttribute("href")).toContain("project=other-project");
   });
 });

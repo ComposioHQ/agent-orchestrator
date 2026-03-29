@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { ProjectSidebar } from "@/components/ProjectSidebar";
 import { SidebarContext } from "@/components/workspace/SidebarContext";
-import type { DashboardSession } from "@/lib/types";
+import type { DashboardOrchestratorLink, DashboardSession } from "@/lib/types";
 import type { ProjectInfo } from "@/lib/project-name";
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "ao:web:sidebar-collapsed";
@@ -14,6 +14,7 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
   const searchParams = useSearchParams();
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [sessions, setSessions] = useState<DashboardSession[]>([]);
+  const [orchestrators, setOrchestrators] = useState<DashboardOrchestratorLink[]>([]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     if (typeof window === "undefined") return false;
     return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "1";
@@ -37,7 +38,7 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
       try {
         const [projectsRes, sessionsRes] = await Promise.all([
           fetch("/api/projects"),
-          fetch("/api/sessions?active=true"),
+          fetch("/api/sessions"),
         ]);
 
         if (!cancelled && projectsRes.ok) {
@@ -46,13 +47,18 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
         }
 
         if (!cancelled && sessionsRes.ok) {
-          const data = (await sessionsRes.json()) as { sessions?: DashboardSession[] };
+          const data = (await sessionsRes.json()) as {
+            sessions?: DashboardSession[];
+            orchestrators?: DashboardOrchestratorLink[];
+          };
           setSessions(data.sessions ?? []);
+          setOrchestrators(data.orchestrators ?? []);
         }
       } catch {
         if (!cancelled) {
           setProjects([]);
           setSessions([]);
+          setOrchestrators([]);
         }
       }
     }
@@ -108,6 +114,7 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
           <ProjectSidebar
             projects={projects}
             sessions={sessions}
+            orchestrators={orchestrators}
             activeProjectId={activeProjectId}
             activeSessionId={activeSessionId}
             collapsed={sidebarCollapsed}
@@ -122,6 +129,7 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
               <ProjectSidebar
                 projects={projects}
                 sessions={sessions}
+                orchestrators={orchestrators}
                 activeProjectId={activeProjectId}
                 activeSessionId={activeSessionId}
                 collapsed={false}

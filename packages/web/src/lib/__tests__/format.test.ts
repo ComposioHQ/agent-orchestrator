@@ -3,7 +3,13 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { humanizeBranch, getSessionTitle } from "../format";
+import {
+  humanizeBranch,
+  getSessionTitle,
+  getSessionSidebarLabel,
+  isNumericIssueLabel,
+  stripBranchHashPrefix,
+} from "../format";
 import type { DashboardSession } from "../types";
 
 // ---------------------------------------------------------------------------
@@ -32,10 +38,30 @@ function makeSession(overrides?: Partial<DashboardSession>): DashboardSession {
 }
 
 // ---------------------------------------------------------------------------
+// stripBranchHashPrefix
+// ---------------------------------------------------------------------------
+
+describe("stripBranchHashPrefix", () => {
+  it("removes leading hash run and trims", () => {
+    expect(stripBranchHashPrefix("#feat/foo")).toBe("feat/foo");
+    expect(stripBranchHashPrefix("##main")).toBe("main");
+    expect(stripBranchHashPrefix("  #issue-12  ")).toBe("issue-12");
+  });
+
+  it("leaves names without a hash unchanged (aside from trim)", () => {
+    expect(stripBranchHashPrefix("feat/bar")).toBe("feat/bar");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // humanizeBranch
 // ---------------------------------------------------------------------------
 
 describe("humanizeBranch", () => {
+  it("strips leading # before humanizing", () => {
+    expect(humanizeBranch("#feat/infer-project-id")).toBe("Infer Project Id");
+  });
+
   it("strips common prefixes and title-cases", () => {
     expect(humanizeBranch("feat/infer-project-id")).toBe("Infer Project Id");
     expect(humanizeBranch("fix/broken-auth-flow")).toBe("Broken Auth Flow");
@@ -192,5 +218,81 @@ describe("getSessionTitle", () => {
     expect(getSessionTitle(session)).toBe(
       "You are working on Linear ticket INT-1327: Refactor session manager",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isNumericIssueLabel
+// ---------------------------------------------------------------------------
+
+describe("isNumericIssueLabel", () => {
+  it("detects GitHub-style numeric labels", () => {
+    expect(isNumericIssueLabel("#42")).toBe(true);
+    expect(isNumericIssueLabel("7")).toBe(true);
+    expect(isNumericIssueLabel("  #99  ")).toBe(true);
+  });
+
+  it("rejects slug and alphanumeric tracker ids", () => {
+    expect(isNumericIssueLabel("INT-1327")).toBe(false);
+    expect(isNumericIssueLabel("fix-killed-toggle")).toBe(false);
+    expect(isNumericIssueLabel(null)).toBe(false);
+    expect(isNumericIssueLabel("")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getSessionSidebarLabel
+// ---------------------------------------------------------------------------
+
+describe("getSessionSidebarLabel", () => {
+  it("prefers issueTitle over issueLabel and summary", () => {
+    const session = makeSession({
+      issueTitle: "Fix auth bug",
+      issueLabel: "#99",
+      summary: "You are an AI assistant…",
+      branch: "feat/auth",
+    });
+    expect(getSessionSidebarLabel(session)).toBe("Fix auth bug");
+  });
+
+  it("uses issueLabel when title missing (numeric or slug)", () => {
+    expect(
+      getSessionSidebarLabel(
+        makeSession({ issueTitle: null, issueLabel: "fix-toggle", summary: "Session end" }),
+      ),
+    ).toBe("fix-toggle");
+    expect(
+      getSessionSidebarLabel(makeSession({ issueTitle: null, issueLabel: "#3", summary: "noise" })),
+    ).toBe("#3");
+  });
+
+  it("uses humanized branch when no issue fields", () => {
+    const session = makeSession({
+      issueTitle: null,
+      issueLabel: null,
+      summary: "Session end",
+      branch: "feat/infer-project-id",
+    });
+    expect(getSessionSidebarLabel(session)).toBe("Infer Project Id");
+  });
+
+  it("never uses summary", () => {
+    const session = makeSession({
+      issueTitle: null,
+      issueLabel: null,
+      summary: "You are an AI coding assistant",
+      summaryIsFallback: false,
+      branch: null,
+    });
+    expect(getSessionSidebarLabel(session)).toBe("ao-42");
+  });
+
+  it("humanizes branch after stripping leading #", () => {
+    const session = makeSession({
+      issueTitle: null,
+      issueLabel: null,
+      branch: "#feat/my-feature",
+    });
+    expect(getSessionSidebarLabel(session)).toBe("My Feature");
   });
 });

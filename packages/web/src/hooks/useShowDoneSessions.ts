@@ -2,17 +2,22 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-const SHOW_DONE_KEY = "ao-show-done";
-const CHANGED = "ao-show-done-changed";
+const SHOW_DONE_SIDEBAR_KEY = "ao-show-done-sessions-sidebar";
+const CHANGED = "ao-show-done-sessions-sidebar-changed";
 
-export function useShowDone(): readonly [boolean, (next: boolean) => void] {
+/** When false (default), hide non-killed sessions whose attention level is "done" (merged, terminated, etc.). */
+export function useShowDoneSessions(): readonly [boolean, (next: boolean) => void] {
   const [showDone, setShowDoneState] = useState(false);
 
   useEffect(() => {
-    const read = () => setShowDoneState(localStorage.getItem(SHOW_DONE_KEY) === "true");
+    const read = () => {
+      setShowDoneState(
+        typeof window !== "undefined" && localStorage.getItem(SHOW_DONE_SIDEBAR_KEY) === "true",
+      );
+    };
     read();
     const onStorage = (e: StorageEvent) => {
-      if (e.key === SHOW_DONE_KEY) read();
+      if (e.key === SHOW_DONE_SIDEBAR_KEY) read();
     };
     const onCustom = () => read();
     window.addEventListener("storage", onStorage);
@@ -24,7 +29,7 @@ export function useShowDone(): readonly [boolean, (next: boolean) => void] {
   }, []);
 
   const setShowDone = useCallback((next: boolean) => {
-    localStorage.setItem(SHOW_DONE_KEY, String(next));
+    localStorage.setItem(SHOW_DONE_SIDEBAR_KEY, String(next));
     setShowDoneState(next);
     window.dispatchEvent(new Event(CHANGED));
   }, []);

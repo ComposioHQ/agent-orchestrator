@@ -9,7 +9,7 @@ import { FileTree } from "@/components/workspace/FileTree";
 import { FilePreview } from "@/components/workspace/FilePreview";
 import { DiffViewer } from "@/components/workspace/DiffViewer";
 import { SessionTerminalTabs } from "@/components/SessionTerminalTabs";
-import { type DashboardSession, getAttentionLevel, type AttentionLevel } from "@/lib/types";
+import { type DashboardSession, getAttentionLevel } from "@/lib/types";
 import { activityIcon } from "@/lib/activity-icons";
 
 function truncate(s: string, max: number): string {
@@ -102,7 +102,7 @@ export default function SessionPage() {
       };
       for (const s of sessions) {
         if (!isOrchestratorSession(s)) {
-          counts[getAttentionLevel(s) as AttentionLevel]++;
+          counts[getAttentionLevel(s)]++;
         }
       }
       setZoneCounts(counts);
