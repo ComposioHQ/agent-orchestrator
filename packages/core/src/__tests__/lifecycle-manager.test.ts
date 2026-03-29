@@ -82,6 +82,41 @@ describe("start / stop", () => {
     // Should not throw on double stop
     lm.stop();
   });
+
+  it("treats done sessions as complete for the all-complete reaction", async () => {
+    const notifier = createMockNotifier();
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      notifier,
+    });
+
+    config.reactions = {
+      "all-complete": { auto: true, action: "notify", priority: "info" },
+    };
+    config.notificationRouting = {
+      ...config.notificationRouting,
+      info: ["desktop"],
+    };
+
+    vi.mocked(mockSessionManager.list).mockResolvedValue([
+      makeSession({ status: "done", activity: "exited" }),
+    ]);
+
+    const lm = createLifecycleManager({
+      config,
+      registry,
+      sessionManager: mockSessionManager,
+    });
+
+    lm.start(60_000);
+
+    await vi.waitFor(() => {
+      expect(notifier.notify).toHaveBeenCalledTimes(1);
+    });
+
+    lm.stop();
+  });
 });
 
 describe("check (single session)", () => {
