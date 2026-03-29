@@ -1,0 +1,23 @@
+packages/cli/src/commands/spawn.ts
+  ff23df7c065129b1 63,66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.22",
+  "base_commit_sha": "c9cc5053f7b943b3aa99efe4bca45a6feb46c16d",
+  "prompts": {
+    "ff23df7c065129b1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e0194d48-ee96-4704-8265-2bb7f4ec2d42",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 1,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    }
+  }
+}
