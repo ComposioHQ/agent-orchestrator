@@ -24,10 +24,17 @@ import { randomBytes } from "node:crypto";
 
 const execFileAsync = promisify(execFile);
 
-function normalizePermissionMode(mode: string | undefined): "permissionless" | "default" | "auto-edit" | "suggest" | undefined {
+function normalizePermissionMode(
+  mode: string | undefined,
+): "permissionless" | "default" | "auto-edit" | "suggest" | undefined {
   if (!mode) return undefined;
   if (mode === "skip") return "permissionless";
-  if (mode === "permissionless" || mode === "default" || mode === "auto-edit" || mode === "suggest") {
+  if (
+    mode === "permissionless" ||
+    mode === "default" ||
+    mode === "auto-edit" ||
+    mode === "suggest"
+  ) {
     return mode;
   }
   return undefined;
@@ -279,11 +286,7 @@ async function setupCodexWorkspace(workspacePath: string): Promise<void> {
   // 1. Write shared wrappers to ~/.ao/bin/
   await mkdir(AO_BIN_DIR, { recursive: true });
 
-  await atomicWriteFile(
-    join(AO_BIN_DIR, "ao-metadata-helper.sh"),
-    AO_METADATA_HELPER,
-    0o755,
-  );
+  await atomicWriteFile(join(AO_BIN_DIR, "ao-metadata-helper.sh"), AO_METADATA_HELPER, 0o755);
 
   // Only write wrappers if they don't exist or are outdated (check marker)
   const markerPath = join(AO_BIN_DIR, ".ao-version");
@@ -397,10 +400,7 @@ async function collectJsonlFiles(dir: string, depth = 0): Promise<string[]> {
  * entry matching the given workspace path. Reads only the first 4 KB
  * to avoid loading large rollout files into memory.
  */
-async function sessionFileMatchesCwd(
-  filePath: string,
-  workspacePath: string,
-): Promise<boolean> {
+async function sessionFileMatchesCwd(filePath: string, workspacePath: string): Promise<boolean> {
   try {
     // Read only the first 4 KB — session_meta is always in the first few lines.
     // Avoids loading large rollout files (100 MB+) into memory.
@@ -606,7 +606,10 @@ async function findCodexSessionFileCached(workspacePath: string): Promise<string
     return cached.path;
   }
   const result = await findCodexSessionFile(workspacePath);
-  sessionFileCache.set(workspacePath, { path: result, expiry: Date.now() + SESSION_FILE_CACHE_TTL_MS });
+  sessionFileCache.set(workspacePath, {
+    path: result,
+    expiry: Date.now() + SESSION_FILE_CACHE_TTL_MS,
+  });
   return result;
 }
 
@@ -619,6 +622,7 @@ function createCodexAgent(): Agent {
   return {
     name: "codex",
     processName: "codex",
+    promptDelivery: "post-launch",
 
     getLaunchCommand(config: AgentLaunchConfig): string {
       const binary = resolvedBinary ?? "codex";
@@ -634,12 +638,6 @@ function createCodexAgent(): Agent {
       } else if (config.systemPrompt) {
         // Codex accepts inline developer instructions via config override
         parts.push("-c", `developer_instructions=${shellEscape(config.systemPrompt)}`);
-      }
-
-      if (config.prompt) {
-        // Use `--` to end option parsing so prompts starting with `-` aren't
-        // misinterpreted as flags.
-        parts.push("--", shellEscape(config.prompt));
       }
 
       return parts.join(" ");
@@ -667,23 +665,34 @@ function createCodexAgent(): Agent {
     detectActivity(terminalOutput: string): ActivityState {
       if (!terminalOutput.trim()) return "idle";
 
+      const stripAnsi = (value: string): string =>
+        value.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "");
+
       const lines = terminalOutput.trim().split("\n");
-      const lastLine = lines[lines.length - 1]?.trim() ?? "";
+      const lastLine = stripAnsi(lines[lines.length - 1] ?? "").trim();
 
       // If Codex is showing its input prompt, it's idle
       if (/^[>$#]\s*$/.test(lastLine)) return "idle";
 
       // Check last few lines for approval prompts
-      const tail = lines.slice(-5).join("\n");
+      const tail = lines.slice(-15).map(stripAnsi).join("\n");
       if (/approval required/i.test(tail)) return "waiting_input";
       if (/\(y\)es.*\(n\)o/i.test(tail)) return "waiting_input";
+      if (/press enter to confirm or esc to cancel/i.test(tail)) return "waiting_input";
+
+      const hasYesOption = /^\s*1\.\s*(yes|proceed|allow)/im.test(tail);
+      const hasNoOption = /^\s*[>*]?\s*[2-9]\.\s*(no|deny|skip|cancel)/im.test(tail);
+      if (hasYesOption && hasNoOption) return "waiting_input";
 
       // Default to active — specific patterns (esc to interrupt, spinner
       // symbols) all map to "active" so no need to check them individually.
       return "active";
     },
 
-    async getActivityState(session: Session, readyThresholdMs?: number): Promise<ActivityDetection | null> {
+    async getActivityState(
+      session: Session,
+      readyThresholdMs?: number,
+    ): Promise<ActivityDetection | null> {
       const threshold = readyThresholdMs ?? DEFAULT_READY_THRESHOLD_MS;
 
       // Check if process is running first
