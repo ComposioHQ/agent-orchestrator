@@ -112,6 +112,10 @@ beforeEach(() => {
     cleanup: vi.fn(),
     send: vi.fn().mockResolvedValue(undefined),
     claimPR: vi.fn(),
+    createSubSession: vi.fn(),
+    listSubSessions: vi.fn(),
+    killSubSession: vi.fn(),
+    restoreTerminalSubSession: vi.fn(),
   } as SessionManager;
 
   config = {
