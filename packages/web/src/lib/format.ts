@@ -59,7 +59,7 @@ export function getSessionTitle(session: DashboardSession): string {
 
 /** True when the issue label is only digits, optionally with a leading `#` (e.g. `#42`, `7`). */
 export function isNumericIssueLabel(label: string | null | undefined): boolean {
-  if (label == null) return false;
+  if (label === undefined || label === null) return false;
   const t = label.trim();
   return t.length > 0 && /^#?\d+$/.test(t);
 }
