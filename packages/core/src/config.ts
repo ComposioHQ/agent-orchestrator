@@ -70,6 +70,7 @@ const TrackerConfigSchema = z
 const SCMConfigSchema = z
   .object({
     plugin: z.string(),
+    apiStrategy: z.enum(["graphql-batch", "rest-parallel"]).default("graphql-batch"),
     webhook: z
       .object({
         enabled: z.boolean().default(true),

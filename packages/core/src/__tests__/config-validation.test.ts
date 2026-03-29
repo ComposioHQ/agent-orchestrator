@@ -299,6 +299,7 @@ describe("Config Validation - SCM webhook contract", () => {
 
     expect(config.projects["proj1"]?.scm).toEqual({
       plugin: "github",
+      apiStrategy: "graphql-batch",
       webhook: {
         enabled: true,
         path: "/api/webhooks/github",
@@ -558,7 +559,11 @@ describe("Config Defaults", () => {
     };
 
     const validated = validateConfig(config);
-    expect(validated.projects.proj1.scm).toEqual({ plugin: "gitlab", host: "gitlab.company.com" });
+    expect(validated.projects.proj1.scm).toEqual({
+      plugin: "gitlab",
+      host: "gitlab.company.com",
+      apiStrategy: "graphql-batch",
+    });
     expect(validated.projects.proj1.tracker).toEqual({ plugin: "gitlab" });
   });
 

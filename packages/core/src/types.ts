@@ -592,6 +592,60 @@ export interface SCM {
 
   /** Check if PR is ready to merge */
   getMergeability(pr: PRInfo): Promise<MergeReadiness>;
+
+  // --- Batch Enrichment ---
+
+  /**
+   * Enrich multiple PRs in parallel with PR metadata, CI status, and review data.
+   * Returns a Map where keys are cache keys in format "owner/repo#number".
+   * Optional method - plugins may implement for efficiency.
+   */
+  enrichSessionsPRBatch?(
+    prs: PRInfo[],
+    config?: { project?: ProjectConfig; observer?: BatchObserver },
+  ): Promise<Map<string, PREnrichmentData>>;
+}
+
+// --- Batch Enrichment Types ---
+
+/**
+ * Batch enrichment data for a PR - returned by enrichSessionsPRBatch.
+ * Contains all data needed for PR lifecycle management in a single fetch.
+ */
+export interface PREnrichmentData {
+  state: PRState;
+  title: string;
+  additions: number;
+  deletions: number;
+  ciStatus: CIStatus;
+  ciChecks: CICheck[];
+  reviewDecision: ReviewDecision;
+  mergeability: MergeReadiness;
+  unresolvedThreads: number;
+  unresolvedComments: Array<{
+    url: string;
+    path: string;
+    author: string;
+    body: string;
+  }>;
+}
+
+/**
+ * Observer interface for batch operations - provides logging and observability.
+ */
+export interface BatchObserver {
+  recordSuccess(
+    operation: string,
+    durationMs: number,
+    details?: Record<string, unknown>,
+  ): void;
+  recordFailure(
+    operation: string,
+    error: Error,
+    durationMs: number,
+    details?: Record<string, unknown>,
+  ): void;
+  log(message: string, details?: Record<string, unknown>): void;
 }
 
 // --- PR Types ---
@@ -605,6 +659,8 @@ export interface PRInfo {
   branch: string;
   baseBranch: string;
   isDraft: boolean;
+  /** SHA of PR head commit (used for CI status checks) */
+  headRefOid?: string;
 }
 
 export type PRState = "open" | "merged" | "closed";
