@@ -74,7 +74,7 @@ export function registerSession(program: Command): void {
           const activityTs = activities[i];
 
           // Priority: live branch from workspace > metadata branch > empty string
-          let branchStr = (s.workspacePath && liveBranch) ? liveBranch : (s.branch || "");
+          const branchStr = (s.workspacePath && liveBranch) ? liveBranch : (s.branch || "");
           const age = activityTs ? formatAge(activityTs) : "-";
 
           const parts = [chalk.green(s.id), chalk.dim(`(${age})`)];
