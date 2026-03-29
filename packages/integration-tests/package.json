@@ -5,7 +5,7 @@
   "description": "Integration tests — requires real binaries and tmux",
   "type": "module",
   "scripts": {
-    "test": "echo 'Skipped — run test:integration instead'",
+    "test": "vitest run --config vitest.config.ts",
     "test:integration": "vitest run --config vitest.config.ts",
     "typecheck": "tsc --noEmit"
   },
