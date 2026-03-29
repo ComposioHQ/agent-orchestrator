@@ -134,6 +134,34 @@ export async function readLastJsonlEntry(
 }
 
 /**
+ * Format a duration in milliseconds to a human-readable string.
+ * Examples:
+ *   - 1500 -> "1s"
+ *   - 90000 -> "1m 30s"
+ *   - 3723000 -> "1h 2m 3s"
+ *
+ * @param ms - Duration in milliseconds
+ * @returns Human-readable duration string, or "0s" for zero/negative values
+ */
+export function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) {
+    return "0s";
+  }
+
+  const totalSeconds = Math.floor(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  const parts: string[] = [];
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  if (seconds > 0 || parts.length === 0) parts.push(`${seconds}s`);
+
+  return parts.join(" ");
+}
+
+/**
  * Given a session ID and the orchestrator config, find which project it belongs
  * to by matching session prefixes.
  */
