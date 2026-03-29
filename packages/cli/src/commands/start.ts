@@ -165,7 +165,7 @@ function canPromptForInstall(): boolean {
 /**
  * Prompt the user to optionally switch orchestrator/worker agents at startup.
  * Shows only agents detected on the current system (reuses detectAvailableAgents).
- * Returns the chosen agents + whether to persist them, or null if user skips.
+ * Returns the chosen agents
  */
 async function promptAgentSelection(): Promise<{
   orchestratorAgent: string;
