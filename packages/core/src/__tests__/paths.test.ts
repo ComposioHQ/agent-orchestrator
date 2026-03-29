@@ -349,13 +349,13 @@ describe("Tmux Naming", () => {
   });
 
   it("generateTmuxName format is {hash}-{prefix}-{num}", () => {
-    const tmuxName = generateTmuxName(configPath, "int", 1);
+    const tmuxName = generateTmuxName(tmpDir, "int", 1);
 
     expect(tmuxName).toMatch(/^[a-f0-9]{12}-int-1$/);
   });
 
   it("ALWAYS includes hash for global uniqueness", () => {
-    const tmuxName = generateTmuxName(configPath, "int", 1);
+    const tmuxName = generateTmuxName(tmpDir, "int", 1);
 
     expect(tmuxName).toMatch(/^[a-f0-9]{12}-/);
   });
@@ -399,7 +399,7 @@ describe("Tmux Naming", () => {
 
   it("user-facing name does NOT include hash", () => {
     const userFacing = generateSessionName("int", 1);
-    const tmuxName = generateTmuxName(configPath, "int", 1);
+    const tmuxName = generateTmuxName(tmpDir, "int", 1);
 
     expect(userFacing).toBe("int-1");
     expect(tmuxName).toMatch(/^[a-f0-9]{12}-int-1$/);

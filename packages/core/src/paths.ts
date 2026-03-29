@@ -2,10 +2,11 @@
  * Path utilities for hash-based directory structure.
  *
  * Architecture:
- * - Config location determines hash: sha256(dirname(configPath)).slice(0, 12)
+ * - Project path determines hash: sha256(projectPath).slice(0, 12)
  * - Each project gets directory: ~/.agent-orchestrator/{hash}-{projectId}/
  * - Sessions inside: sessions/{sessionName} (no hash prefix, already namespaced)
  * - Tmux names include hash for global uniqueness: {hash}-{prefix}-{num}
+ * - Both session dirs and tmux names use generateProjectHash(projectPath) for consistency
  */
 
 import { createHash } from "node:crypto";
@@ -186,9 +187,16 @@ export function generateSessionName(prefix: string, num: number): string {
  * Generate tmux session name (globally unique).
  * Format: {hash}-{prefix}-{num}
  * Example: "a3b4c5d6e7f8-int-1"
+ *
+ * Uses generateProjectHash(projectPath) so the hash matches the session
+ * directory hash from generateInstanceId.  When the config was local
+ * (<project>/agent-orchestrator.yaml), dirname(configPath) === projectPath,
+ * so the values were identical.  After migration to the global config,
+ * generateConfigHash would hash ~/.agent-orchestrator/ — a completely
+ * different value, breaking the mapping between session dirs and tmux names.
  */
-export function generateTmuxName(configPath: string, prefix: string, num: number): string {
-  const hash = generateConfigHash(configPath);
+export function generateTmuxName(projectPath: string, prefix: string, num: number): string {
+  const hash = generateProjectHash(projectPath);
   return `${hash}-${prefix}-${num}`;
 }
 
