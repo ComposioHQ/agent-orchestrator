@@ -402,7 +402,7 @@ function ProjectSidebarInner({
                   <button
                     type="button"
                     onClick={() => setSpawnModalProjectId(project.id)}
-                    className="mt-1 flex w-full items-center gap-2 py-[6px] pl-3 pr-2 text-left text-[11px] font-medium text-[var(--color-text-tertiary)] transition-colors hover:text-[var(--color-accent)]"
+                    className="mt-1 flex w-full cursor-pointer items-center gap-2 py-[6px] pl-3 pr-2 text-left text-[11px] font-medium text-[var(--color-text-tertiary)] transition-colors hover:text-[var(--color-accent)]"
                     title="Spawn new session"
                   >
                     <span className="flex h-5 w-5 items-center justify-center rounded border border-dashed border-[var(--color-border-muted)] text-[14px] leading-none">

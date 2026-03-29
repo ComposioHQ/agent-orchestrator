@@ -73,37 +73,43 @@ export function SessionTerminalTabs({
     let cancelled = false;
 
     void (async () => {
+      if (lastInitSessionRef.current === sessionId) return;
+
+      // Load stored state synchronously before fetching (optimization)
+      const stored = loadSessionTerminalTabState(sessionId);
+
       const list = await loadSubs();
       if (cancelled || !list?.length) return;
-      if (lastInitSessionRef.current === sessionId) return;
 
       lastInitSessionRef.current = sessionId;
 
-      const stored = loadSessionTerminalTabState(sessionId);
-      let nextId = sessionId;
+      let nextId = sessionId; // default to primary
 
+      // Check if stored sub-session is still available
       if (stored?.subSessionId) {
         const match = list.find((s) => s.id === stored.subSessionId);
         if (match) {
           if (match.type === "terminal" && !match.alive) {
+            // Terminal sub-session is dead, attempt to restore it
             try {
               const res = await fetch(
                 `/api/sessions/${encodeURIComponent(sessionId)}/sub-sessions/${encodeURIComponent(match.id)}/restore`,
                 { method: "POST" },
               );
               if (res.ok) {
-                const refreshed = await loadSubs();
-                if (!cancelled && refreshed?.some((s) => s.id === stored.subSessionId)) {
-                  nextId = stored.subSessionId;
-                }
+                // Restore succeeded, use this sub-session
+                nextId = stored.subSessionId;
               }
+              // If restore fails, fallback to primary
             } catch {
-              nextId = sessionId;
+              // Restore failed, fallback to primary
             }
           } else {
+            // Terminal is alive or primary exists, use the stored selection
             nextId = stored.subSessionId;
           }
         }
+        // If stored sub-session doesn't exist in list, use primary (nextId stays as sessionId)
       }
 
       if (!cancelled) {
@@ -195,7 +201,7 @@ export function SessionTerminalTabs({
             "flex h-7 w-7 items-center justify-center rounded border text-sm font-medium transition-colors",
             creating || subs === null
               ? "cursor-not-allowed border-[var(--color-border-muted)] text-[var(--color-text-tertiary)]"
-              : "border-[var(--color-border-default)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]",
+              : "cursor-pointer border-[var(--color-border-default)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]",
           )}
         >
           +
@@ -207,7 +213,7 @@ export function SessionTerminalTabs({
             title={sub.tmuxName}
             onClick={() => void selectTab(sub)}
             className={cn(
-              "rounded px-2.5 py-1 text-[11px] font-medium transition-colors",
+              "cursor-pointer rounded px-2.5 py-1 text-[11px] font-medium transition-colors",
               sub.id === activeId
                 ? "bg-[var(--color-bg-elevated)] text-[var(--color-text-primary)] shadow-sm"
                 : "text-[var(--color-text-tertiary)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-secondary)]",
