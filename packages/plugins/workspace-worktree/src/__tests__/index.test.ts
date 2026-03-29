@@ -60,6 +60,15 @@ function mockGitError(message: string) {
   mockExecFileAsync.mockRejectedValueOnce(new Error(message));
 }
 
+function mockOriginRemote(fetchSucceeds = true) {
+  mockGitSuccess(""); // git remote get-url origin
+  if (fetchSucceeds) {
+    mockGitSuccess(""); // git fetch origin --quiet
+  } else {
+    mockGitError("Could not resolve host"); // git fetch origin --quiet
+  }
+}
+
 function makeProject(overrides?: Partial<ProjectConfig>): ProjectConfig {
   return {
     name: "test-project",
@@ -106,8 +115,8 @@ describe("create() factory", () => {
   it("uses ~/.worktrees as default base dir", async () => {
     const ws = create();
 
-    // Mock: fetch, worktree add
-    mockGitSuccess(""); // fetch
+    mockOriginRemote();
+    mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
     mockGitSuccess(""); // worktree add
 
     const info = await ws.create(makeCreateConfig());
@@ -118,7 +127,8 @@ describe("create() factory", () => {
   it("uses custom worktreeDir from config", async () => {
     const ws = create({ worktreeDir: "/custom/worktrees" });
 
-    mockGitSuccess(""); // fetch
+    mockOriginRemote();
+    mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
     mockGitSuccess(""); // worktree add
 
     const info = await ws.create(makeCreateConfig());
@@ -129,7 +139,8 @@ describe("create() factory", () => {
   it("expands tilde in custom worktreeDir", async () => {
     const ws = create({ worktreeDir: "~/custom-path" });
 
-    mockGitSuccess(""); // fetch
+    mockOriginRemote();
+    mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
     mockGitSuccess(""); // worktree add
 
     const info = await ws.create(makeCreateConfig());
@@ -142,17 +153,30 @@ describe("workspace.create()", () => {
   it("calls git fetch and git worktree add with correct args", async () => {
     const ws = create();
 
-    mockGitSuccess(""); // fetch
+    mockOriginRemote();
+    mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
     mockGitSuccess(""); // worktree add
 
     await ws.create(makeCreateConfig());
 
-    // First call: git fetch origin --quiet
+    // First call: git remote get-url origin
+    expect(mockExecFileAsync).toHaveBeenCalledWith("git", ["remote", "get-url", "origin"], {
+      cwd: "/repo/path",
+    });
+
+    // Second call: git fetch origin --quiet
     expect(mockExecFileAsync).toHaveBeenCalledWith("git", ["fetch", "origin", "--quiet"], {
       cwd: "/repo/path",
     });
 
-    // Second call: git worktree add -b <branch> <path> <baseRef>
+    // Third call: git rev-parse --verify --quiet origin/main
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      ["rev-parse", "--verify", "--quiet", "origin/main"],
+      { cwd: "/repo/path" },
+    );
+
+    // Fourth call: git worktree add -b <branch> <path> <baseRef>
     expect(mockExecFileAsync).toHaveBeenCalledWith(
       "git",
       [
@@ -170,7 +194,8 @@ describe("workspace.create()", () => {
   it("creates the project worktree directory", async () => {
     const ws = create();
 
-    mockGitSuccess(""); // fetch
+    mockOriginRemote();
+    mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
     mockGitSuccess(""); // worktree add
 
     await ws.create(makeCreateConfig());
@@ -183,7 +208,8 @@ describe("workspace.create()", () => {
   it("continues when fetch fails (offline)", async () => {
     const ws = create();
 
-    mockGitError("Could not resolve host"); // fetch fails
+    mockOriginRemote(false);
+    mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
     mockGitSuccess(""); // worktree add succeeds
 
     const info = await ws.create(makeCreateConfig());
@@ -194,7 +220,8 @@ describe("workspace.create()", () => {
   it("handles branch already exists by adding worktree then checking out", async () => {
     const ws = create();
 
-    mockGitSuccess(""); // fetch
+    mockOriginRemote();
+    mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
     mockGitError("already exists"); // worktree add -b fails
     mockGitSuccess(""); // worktree add (without -b)
     mockGitSuccess(""); // checkout
@@ -219,7 +246,8 @@ describe("workspace.create()", () => {
   it("cleans up worktree on checkout failure", async () => {
     const ws = create();
 
-    mockGitSuccess(""); // fetch
+    mockOriginRemote();
+    mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
     mockGitError("already exists"); // worktree add -b fails
     mockGitSuccess(""); // worktree add (without -b)
     mockGitError("checkout failed: conflict"); // checkout fails
@@ -240,7 +268,8 @@ describe("workspace.create()", () => {
   it("still throws on checkout failure even if cleanup fails", async () => {
     const ws = create();
 
-    mockGitSuccess(""); // fetch
+    mockOriginRemote();
+    mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
     mockGitError("already exists"); // worktree add -b fails
     mockGitSuccess(""); // worktree add (without -b)
     mockGitError("checkout failed"); // checkout fails
@@ -254,7 +283,8 @@ describe("workspace.create()", () => {
   it("throws for non-already-exists worktree add errors", async () => {
     const ws = create();
 
-    mockGitSuccess(""); // fetch
+    mockOriginRemote();
+    mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
     mockGitError("fatal: invalid reference"); // worktree add fails with other error
 
     await expect(ws.create(makeCreateConfig())).rejects.toThrow(
@@ -297,7 +327,8 @@ describe("workspace.create()", () => {
   it("returns correct WorkspaceInfo", async () => {
     const ws = create();
 
-    mockGitSuccess(""); // fetch
+    mockOriginRemote();
+    mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
     mockGitSuccess(""); // worktree add
 
     const info = await ws.create(makeCreateConfig());
@@ -313,7 +344,8 @@ describe("workspace.create()", () => {
   it("expands tilde in project path", async () => {
     const ws = create();
 
-    mockGitSuccess(""); // fetch
+    mockOriginRemote();
+    mockGitSuccess(""); // git rev-parse --verify --quiet origin/main
     mockGitSuccess(""); // worktree add
 
     await ws.create(
@@ -325,6 +357,88 @@ describe("workspace.create()", () => {
     // fetch should use expanded path
     expect(mockExecFileAsync).toHaveBeenCalledWith("git", ["fetch", "origin", "--quiet"], {
       cwd: "/mock-home/my-repo",
+    });
+  });
+
+  it("uses the local default branch when origin remote is missing", async () => {
+    const ws = create();
+
+    mockGitError("fatal: not a git repository"); // git remote get-url origin fails
+    mockGitSuccess(""); // worktree add
+
+    await ws.create(makeCreateConfig());
+
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      [
+        "worktree",
+        "add",
+        "-b",
+        "feat/TEST-1",
+        "/mock-home/.worktrees/myproject/session-1",
+        "main",
+      ],
+      { cwd: "/repo/path" },
+    );
+  });
+});
+
+describe("workspace.restore()", () => {
+  it("prefers origin branch refs when origin exists", async () => {
+    const ws = create();
+
+    mockGitSuccess(""); // git worktree prune
+    mockOriginRemote();
+    mockGitError("fatal: invalid reference"); // git worktree add workspacePath cfg.branch fails
+    mockGitSuccess(""); // git rev-parse --verify --quiet origin/feat/TEST-1
+    mockGitSuccess(""); // git worktree add -b cfg.branch workspacePath origin/feat/TEST-1
+
+    const info = await ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1");
+
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      [
+        "worktree",
+        "add",
+        "-b",
+        "feat/TEST-1",
+        "/mock-home/.worktrees/myproject/session-1",
+        "origin/feat/TEST-1",
+      ],
+      { cwd: "/repo/path" },
+    );
+
+    expect(info.branch).toBe("feat/TEST-1");
+  });
+
+  it("uses the local default branch when origin remote is missing", async () => {
+    const ws = create();
+
+    mockGitSuccess(""); // git worktree prune
+    mockGitError("fatal: not a git repository"); // git remote get-url origin fails
+    mockGitError("fatal: invalid reference"); // git worktree add workspacePath cfg.branch fails
+    mockGitSuccess(""); // git worktree add -b cfg.branch workspacePath main
+
+    const info = await ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1");
+
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      [
+        "worktree",
+        "add",
+        "-b",
+        "feat/TEST-1",
+        "/mock-home/.worktrees/myproject/session-1",
+        "main",
+      ],
+      { cwd: "/repo/path" },
+    );
+
+    expect(info).toEqual({
+      path: "/mock-home/.worktrees/myproject/session-1",
+      branch: "feat/TEST-1",
+      sessionId: "session-1",
+      projectId: "myproject",
     });
   });
 });
