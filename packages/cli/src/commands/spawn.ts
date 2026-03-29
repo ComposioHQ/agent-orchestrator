@@ -224,7 +224,6 @@ export function registerSpawn(program: Command): void {
           claimPr: opts.claimPr,
           assignOnGithub: opts.assignOnGithub,
         };
-        const agent = opts.agent ?? process.env["AO_AGENT"];
 
         try {
           await runSpawnPreflight(config, projectId, claimOptions);
@@ -254,7 +253,7 @@ export function registerSpawn(program: Command): void {
 
             if (leaves.length <= 1) {
               console.log(chalk.yellow("Task is atomic — spawning directly."));
-              await spawnSession(config, projectId, issueId, opts.open, agent, claimOptions);
+              await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions);
             } else {
               // Create child issues and spawn sessions with lineage context
               const sm = await getSessionManager(config);
@@ -269,7 +268,7 @@ export function registerSpawn(program: Command): void {
                     issueId, // All work on the same parent issue for now
                     lineage: leaf.lineage,
                     siblings,
-                    agent,
+                    agent: opts.agent,
                   });
                   console.log(`  ${chalk.green("✓")} ${session.id} — ${leaf.description}`);
                 } catch (err) {
@@ -281,7 +280,7 @@ export function registerSpawn(program: Command): void {
               }
             }
           } else {
-            await spawnSession(config, projectId, issueId, opts.open, agent, claimOptions);
+            await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions);
           }
         } catch (err) {
           console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));

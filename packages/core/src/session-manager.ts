@@ -1216,11 +1216,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       project,
       defaults: config.defaults,
     });
-    const workerSelection = resolveAgentSelection({
-      role: "worker",
-      project,
-      defaults: config.defaults,
-    });
     const plugins = resolvePlugins(project, selection.agentName);
     if (!plugins.runtime) {
       throw new Error(`Runtime plugin '${project.runtime ?? config.defaults.runtime}' not found`);
@@ -1382,8 +1377,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         AO_CALLER_TYPE: "orchestrator",
         AO_PROJECT_ID: orchestratorConfig.projectId,
         AO_CONFIG_PATH: config.configPath,
-        ...(config.port !== undefined && config.port !== null && { AO_PORT: String(config.port) }),
-        AO_AGENT: workerSelection.agentName,
+        ...(config.port !== undefined && config.port !== null && { AO_PORT: String(config.port) })
       },
     });
 
