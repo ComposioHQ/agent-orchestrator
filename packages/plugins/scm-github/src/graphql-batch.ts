@@ -827,7 +827,7 @@ export async function enrichSessionsPRBatch(
           // PR not found (deleted/closed/permission issue)
           // Return enrichment data with mergeable: false
           const notFoundEnrichment: PREnrichmentData = {
-            state: pr.isDraft ? "open" : "closed",
+            state: "closed",
             ciStatus: "none",
             reviewDecision: "none",
             mergeable: false,
