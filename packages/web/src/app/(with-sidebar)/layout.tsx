@@ -5,6 +5,7 @@ import { usePathname, useSearchParams, useRouter } from "next/navigation";
 import { ProjectSidebar } from "@/components/ProjectSidebar";
 import { SidebarContext } from "@/components/workspace/SidebarContext";
 import { NewTerminalModal } from "@/components/NewTerminalModal";
+import { cn } from "@/lib/cn";
 import type { DashboardOrchestratorLink, DashboardSession } from "@/lib/types";
 import type { ProjectInfo } from "@/lib/project-name";
 import type { StandaloneTerminal } from "@/lib/standalone-terminals";
@@ -137,6 +138,62 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
     }
   }, []);
 
+  const terminalCollapsedAbbr = (label: string) => {
+    const t = label.trim();
+    if (!t) return "—";
+    return t.slice(0, 3).toUpperCase();
+  };
+
+  const TerminalsSidebarSectionCollapsed = () => (
+    <div className="flex w-full shrink-0 flex-col items-center border-t border-[var(--color-border-subtle)] py-2">
+      <button
+        type="button"
+        onClick={() => setNewTerminalModalOpen(true)}
+        className="mb-2 flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-dashed border-[var(--color-border-muted)] text-[12px] text-[var(--color-text-tertiary)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] active:bg-[var(--color-bg-hover)]"
+        title="New terminal"
+        aria-label="New terminal"
+      >
+        +
+      </button>
+      {terminals.length > 0 ? (
+        <div className="project-sidebar__collapsed-sessions w-full">
+          {terminals.slice(0, 5).map((terminal) => {
+            const isActive = activeTerminalName === terminal.tmuxName;
+            const abbr = terminalCollapsedAbbr(terminal.label);
+            const aliveBorder =
+              terminal.alive ? "var(--color-status-ready)" : "var(--color-text-tertiary)";
+            return (
+              <button
+                key={terminal.id}
+                type="button"
+                onClick={() => router.push(`/terminals/${encodeURIComponent(terminal.tmuxName)}`)}
+                className={cn(
+                  "project-sidebar__collapsed-session-btn",
+                  isActive && "project-sidebar__collapsed-session-btn--active",
+                )}
+                style={isActive ? undefined : { borderColor: aliveBorder }}
+                title={terminal.label}
+                aria-label={terminal.label}
+                aria-current={isActive ? "page" : undefined}
+              >
+                <span className="project-sidebar__session-abbr-first">{abbr[0]}</span>
+                <span className="project-sidebar__session-abbr-rest">{abbr.slice(1)}</span>
+              </button>
+            );
+          })}
+          {terminals.length > 5 ? (
+            <span
+              className="project-sidebar__collapsed-more"
+              title={`+${terminals.length - 5} more terminals`}
+            >
+              +{terminals.length - 5}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+
   const TerminalsSidebarSection = () => (
     <div className="flex flex-col border-t border-[var(--color-border-subtle)] px-2 py-3">
       <div className="mb-2 flex items-center justify-between px-2.5">
@@ -222,7 +279,7 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
               collapsed={sidebarCollapsed}
               onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
             />
-            {!sidebarCollapsed && <TerminalsSidebarSection />}
+            {sidebarCollapsed ? <TerminalsSidebarSectionCollapsed /> : <TerminalsSidebarSection />}
           </div>
         </div>
 
