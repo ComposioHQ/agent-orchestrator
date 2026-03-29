@@ -51,17 +51,30 @@ export function registerSession(program: Command): void {
           continue;
         }
 
-        for (const s of projectSessions) {
-          // Get live branch from worktree if available
-          let branchStr = s.branch || "";
-          if (s.workspacePath) {
-            const liveBranch = await git(["branch", "--show-current"], s.workspacePath);
-            if (liveBranch) branchStr = liveBranch;
-          }
+        // Pre-fetch all branches and activities in parallel
+        const branches = await Promise.all(
+          projectSessions.map(async (s) => {
+            if (s.workspacePath) {
+              return git(["branch", "--show-current"], s.workspacePath).catch(() => null);
+            }
+            return null;
+          }),
+        );
 
-          // Get tmux activity age
-          const tmuxTarget = s.runtimeHandle?.id ?? s.id;
-          const activityTs = await getTmuxActivity(tmuxTarget);
+        const activities = await Promise.all(
+          projectSessions.map((s) => {
+            const tmuxTarget = s.runtimeHandle?.id ?? s.id;
+            return getTmuxActivity(tmuxTarget).catch(() => null);
+          }),
+        );
+
+        for (let i = 0; i < projectSessions.length; i++) {
+          const s = projectSessions[i];
+          const liveBranch = branches[i];
+          const activityTs = activities[i];
+
+          // Priority: live branch from workspace > metadata branch > empty string
+          let branchStr = (s.workspacePath && liveBranch) ? liveBranch : (s.branch || "");
           const age = activityTs ? formatAge(activityTs) : "-";
 
           const parts = [chalk.green(s.id), chalk.dim(`(${age})`)];
