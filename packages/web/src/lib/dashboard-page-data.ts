@@ -64,7 +64,11 @@ export const getDashboardPageData = cache(async function getDashboardPageData(pr
     pageData.orchestrators = listDashboardOrchestrators(visibleSessions, config.projects);
 
     const coreSessions = filterWorkerSessions(allSessions, projectFilter, config.projects);
-    pageData.sessions = coreSessions.map(sessionToDashboard);
+    pageData.sessions = coreSessions.map((session) =>
+      sessionToDashboard(session, {
+        dashboardBaseUrl: config.dashboardBaseUrl,
+      }),
+    );
 
     const metaTimeout = new Promise<void>((resolve) => setTimeout(resolve, 3_000));
     await Promise.race([

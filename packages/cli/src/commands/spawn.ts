@@ -132,6 +132,12 @@ async function spawnSession(
     if (branchStr) console.log(`  Branch:   ${chalk.dim(branchStr)}`);
     if (claimedPrUrl) console.log(`  PR:       ${chalk.dim(claimedPrUrl)}`);
 
+    // Show dashboard URL if configured
+    if (config.dashboardBaseUrl) {
+      const dashboardBaseUrl = config.dashboardBaseUrl.replace(/\/$/, "");
+      console.log(`  Dashboard: ${chalk.dim(`${dashboardBaseUrl}/sessions/${session.id}`)}`);
+    }
+
     // Show the tmux name for attaching (stored in metadata or runtimeHandle)
     const tmuxTarget = session.runtimeHandle?.id ?? session.id;
     console.log(`  Attach:   ${chalk.dim(`tmux attach -t ${tmuxTarget}`)}`);
@@ -400,6 +406,11 @@ export function registerBatchSpawn(program: Command): void {
       if (failed.length > 0) {
         console.log(chalk.red(`Failed ${failed.length} issues:`));
         for (const item of failed) console.log(`  ${item.issue}: ${item.error}`);
+      }
+      // Show dashboard URL hint if configured
+      if (created.length > 0 && config.dashboardBaseUrl) {
+        const dashboardBaseUrl = config.dashboardBaseUrl.replace(/\/$/, "");
+        console.log(chalk.dim(`  Dashboard: ${dashboardBaseUrl}/sessions/[session-id]`));
       }
       console.log();
     });

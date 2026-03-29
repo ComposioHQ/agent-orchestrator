@@ -10,6 +10,11 @@ worktreeDir: ~/.worktrees
 # Web dashboard port
 port: 3000
 
+# Public base URL for the dashboard (optional, for constructing dashboard URLs in notifications)
+# Set this when the dashboard is accessible from a public IP or domain
+# Example: dashboardBaseUrl: http://91.107.194.138:3000
+# dashboardBaseUrl: http://localhost:3000
+
 # Terminal server ports (defaults: 14800/14801 — chosen to avoid conflicts with dev tools)
 # Override when running multiple dashboards to avoid EADDRINUSE
 # terminalPort: 14800

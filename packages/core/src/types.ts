@@ -889,6 +889,9 @@ export interface OrchestratorConfig {
   /** Web dashboard port (defaults to 3000) */
   port?: number;
 
+  /** Public base URL for the dashboard (e.g., "http://91.107.194.138:3000") */
+  dashboardBaseUrl?: string;
+
   /** Terminal WebSocket server port (defaults to 3001) */
   terminalPort?: number;
 

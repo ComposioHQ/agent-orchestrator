@@ -1,4 +1,5 @@
 import { ACTIVITY_STATE, isOrchestratorSession } from "@composio/ao-core";
+import { type NextRequest } from "next/server";
 import { getServices, getSCM } from "@/lib/services";
 import {
   sessionToDashboard,
@@ -31,7 +32,7 @@ async function settlesWithin(promise: Promise<unknown>, timeoutMs: number): Prom
   }
 }
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   const correlationId = getCorrelationId(request);
   const startedAt = Date.now();
   try {
@@ -78,7 +79,12 @@ export async function GET(request: Request) {
     let workerSessions = visibleSessions.filter((session) => !isOrchestratorSession(session));
 
     // Convert to dashboard format
-    let dashboardSessions = workerSessions.map(sessionToDashboard);
+    let dashboardSessions = workerSessions.map((session) =>
+      sessionToDashboard(session, {
+        dashboardBaseUrl: config.dashboardBaseUrl,
+        origin: request.nextUrl.origin,
+      }),
+    );
 
     if (activeOnly) {
       const activeIndices = dashboardSessions

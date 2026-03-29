@@ -20,7 +20,10 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       return jsonWithCorrelation({ error: "Session not found" }, { status: 404 }, correlationId);
     }
 
-    const dashboardSession = sessionToDashboard(coreSession);
+    const dashboardSession = sessionToDashboard(coreSession, {
+      dashboardBaseUrl: config.dashboardBaseUrl,
+      origin: _request.nextUrl.origin,
+    });
 
     // Enrich metadata (issue labels, agent summaries, issue titles)
     await enrichSessionsMetadata([coreSession], [dashboardSession], config, registry);

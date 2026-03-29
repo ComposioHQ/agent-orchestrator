@@ -273,6 +273,46 @@ function getConfiguredRepos(config: PluginConfig): string[] {
   }
 }
 
+/** Extract dashboardBaseUrl from agent-orchestrator.yaml config file. */
+function getDashboardBaseUrl(config: PluginConfig): string | null {
+  const configPath = resolveAoConfigPath(config);
+  if (!configPath) return null;
+
+  try {
+    const rawYaml = readFileSync(configPath, "utf-8");
+    const lines = rawYaml.split(/\r?\n/);
+    let inTopLevel = true;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+
+      // End of top-level section (e.g., "projects:")
+      if (trimmed.endsWith(":") && inTopLevel && !trimmed.startsWith("dashboardBaseUrl")) {
+        inTopLevel = false;
+        continue;
+      }
+
+      if (inTopLevel) {
+        const match = trimmed.match(/^dashboardBaseUrl:\s*(.+)$/);
+        if (match) {
+          const url = normalizeYamlScalar(match[1]);
+          return url || null;
+        }
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Construct a dashboard URL for a session ID. */
+function constructDashboardUrl(sessionId: string, baseUrl: string): string {
+  const cleaned = baseUrl.replace(/\/$/, "");
+  return `${cleaned}/sessions/${sessionId}`;
+}
+
 function getIssueRepository(issue: GitHubIssue): string | null {
   if (issue.repository) return issue.repository;
   const match = issue.url.match(/github\.com\/([^/]+\/[^/]+)\/issues\//);
@@ -868,18 +908,58 @@ export default function (api: PluginApi) {
     name: "ao_sessions",
     description:
       "Returns live session data from Agent Orchestrator — what agents are running, " +
-      "their status, branches, and progress. Use when the user asks about status or progress.",
+      "their status, branches, progress, and dashboard URLs. Use when the user asks about status, progress, or wants session detail links.",
     parameters: { type: "object", properties: {}, required: [] },
     async execute() {
-      const result = tryRunAo(config, ["status"]);
+      const result = tryRunAo(config, ["status", "--json"]);
       if (!result.ok) {
         return {
           content: [{ type: "text", text: `Failed to get sessions: ${result.error}` }],
           isError: true,
         };
       }
+      // Parse JSON output and format with dashboard URLs highlighted
+      let output = result.output || "No active sessions.";
+      if (result.output) {
+        try {
+          const sessions = JSON.parse(result.output) as Array<{
+            name: string;
+            role: string;
+            branch: string | null;
+            status: string | null;
+            summary: string | null;
+            pr: string | null;
+            issue: string | null;
+            lastActivity: string;
+            project: string | null;
+            dashboardUrl: string | null;
+          }>;
+          if (sessions.length > 0) {
+            const lines: string[] = [];
+            const dashboardBaseUrl = getDashboardBaseUrl(config);
+            for (const s of sessions) {
+              const role = s.role === "orchestrator" ? "Orchestrator" : "Session";
+              lines.push(`${role}: ${s.name}`);
+              if (s.project) lines.push(`  Project: ${s.project}`);
+              if (s.branch) lines.push(`  Branch: ${s.branch}`);
+              if (s.issue) lines.push(`  Issue: ${s.issue}`);
+              if (s.pr) lines.push(`  PR: ${s.pr}`);
+              if (s.status) lines.push(`  Status: ${s.status}`);
+              if (s.summary) lines.push(`  Summary: ${s.summary.slice(0, 100)}${s.summary.length > 100 ? "..." : ""}`);
+              // Use dashboardUrl from JSON if available, otherwise construct from config
+              const url = s.dashboardUrl || (dashboardBaseUrl ? constructDashboardUrl(s.name, dashboardBaseUrl) : null);
+              if (url) lines.push(`  Dashboard: ${url}`);
+              lines.push("");
+            }
+            output = lines.join("\n");
+          }
+        } catch {
+          // JSON parsing failed, fall back to raw output
+          output = result.output;
+        }
+      }
       return {
-        content: [{ type: "text", text: result.output || "No active sessions." }],
+        content: [{ type: "text", text: output }],
       };
     },
   });
@@ -929,7 +1009,8 @@ export default function (api: PluginApi) {
       "Spawn a durable coding agent (Claude Code, Codex, or OpenCode) on a task. " +
       "Creates an isolated git worktree, starts the agent, and wires up feedback " +
       "loops — CI failures and PR reviews automatically route back to the agent. " +
-      "Works with issue numbers (#42) or without for freeform tasks.",
+      "Works with issue numbers (#42) or without for freeform tasks. " +
+      "Returns a dashboard URL when dashboardBaseUrl is configured.",
     parameters: {
       type: "object",
       properties: {

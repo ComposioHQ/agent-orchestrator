@@ -75,6 +75,8 @@ export interface DashboardSession {
   lastActivityAt: string;
   pr: DashboardPR | null;
   metadata: Record<string, string>;
+  /** Dashboard URL for viewing this session's details page (e.g. "http://example.com:3000/sessions/ao-97") */
+  dashboardUrl?: string;
 }
 
 /**

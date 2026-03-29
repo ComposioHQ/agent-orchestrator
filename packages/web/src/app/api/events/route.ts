@@ -78,7 +78,11 @@ export async function GET(request: Request): Promise<Response> {
               : undefined;
           const sessions = await sessionManager.list(requestedProjectId);
           const workerSessions = filterWorkerSessions(sessions, projectFilter, config.projects);
-          const dashboardSessions = workerSessions.map(sessionToDashboard);
+          const dashboardSessions = workerSessions.map((session) =>
+            sessionToDashboard(session, {
+              dashboardBaseUrl: config.dashboardBaseUrl,
+            }),
+          );
           const projectObserver = ensureObserver(config);
 
           const initialEvent = {
@@ -137,7 +141,11 @@ export async function GET(request: Request): Promise<Response> {
                 : undefined;
             const sessions = await sessionManager.list(requestedProjectId);
             const workerSessions = filterWorkerSessions(sessions, projectFilter, config.projects);
-            dashboardSessions = workerSessions.map(sessionToDashboard);
+            dashboardSessions = workerSessions.map((session) =>
+              sessionToDashboard(session, {
+                dashboardBaseUrl: config.dashboardBaseUrl,
+              }),
+            );
             const projectObserver = ensureObserver(config);
 
             if (projectObserver && observerProjectId) {

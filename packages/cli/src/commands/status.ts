@@ -42,6 +42,7 @@ interface SessionInfo {
   reviewDecision: ReviewDecision | null;
   pendingThreads: number | null;
   activity: ActivityState | null;
+  dashboardUrl: string | null;
 }
 
 async function gatherSessionInfo(
@@ -118,6 +119,13 @@ async function gatherSessionInfo(
     }
   }
 
+  // Compute dashboard URL if configured
+  let dashboardUrl: string | null = null;
+  if (projectConfig.dashboardBaseUrl) {
+    const baseUrl = projectConfig.dashboardBaseUrl.replace(/\/$/, "");
+    dashboardUrl = `${baseUrl}/sessions/${session.id}`;
+  }
+
   return {
     name: session.id,
     role: isOrchestratorSession(session) ? "orchestrator" : "worker",
@@ -134,6 +142,7 @@ async function gatherSessionInfo(
     reviewDecision,
     pendingThreads,
     activity,
+    dashboardUrl,
   };
 }
 
