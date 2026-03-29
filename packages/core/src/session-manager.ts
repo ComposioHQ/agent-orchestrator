@@ -1492,7 +1492,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
       let enrichTimeoutId: ReturnType<typeof setTimeout> | null = null;
       const enrichTimeout = new Promise<void>((resolve) => {
-        enrichTimeoutId = setTimeout(resolve, 10_000);
+        enrichTimeoutId = setTimeout(resolve, OPENCODE_DISCOVERY_TIMEOUT_MS + 2_000);
       });
       const enrichPromise = ensureHandleAndEnrich(
         session,
