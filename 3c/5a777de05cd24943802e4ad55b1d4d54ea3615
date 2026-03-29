@@ -1,0 +1,29 @@
+packages/core/src/session-manager.ts
+  af0c02a1c5e5f8e3 63,688-689,1076-1077,1231-1232
+packages/integration-tests/src/cli-spawn-core-read-new.integration.test.ts
+  af0c02a1c5e5f8e3 115,142,202-203
+packages/core/src/__tests__/paths.test.ts
+  af0c02a1c5e5f8e3 352,358,402
+packages/core/src/paths.ts
+  af0c02a1c5e5f8e3 5,9,190-196,198-199
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.22",
+  "base_commit_sha": "3c5a777de05cd24943802e4ad55b1d4d54ea3615",
+  "prompts": {
+    "af0c02a1c5e5f8e3": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_2c6d90942ffedKkWlGpWu7HTLY",
+        "model": "zai-coding-plan/glm-5.1"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 5,
+      "total_deletions": 5,
+      "accepted_lines": 25,
+      "overriden_lines": 0
+    }
+  }
+}
