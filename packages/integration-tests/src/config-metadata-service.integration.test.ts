@@ -15,6 +15,7 @@ import {
   getSessionsDir,
   getProjectBaseDir,
   generateConfigHash,
+  generateProjectHash,
   writeMetadata,
   readMetadata,
   updateMetadata,
@@ -91,7 +92,7 @@ describe("config → metadata service integration (real filesystem)", () => {
     expect(sessionsDir).toContain("my-repo");
     expect(sessionsDir).toContain("sessions");
 
-    const hash = generateConfigHash(configPath);
+    const hash = generateProjectHash(repoPath);
     expect(sessionsDir).toContain(hash);
   });
 

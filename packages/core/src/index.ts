@@ -115,7 +115,6 @@ export {
 export type {
   ObservabilityMetricName,
   ObservabilityHealthStatus,
-  ObservabilityLevel,
   ObservabilitySummary,
   ProjectObserver,
 } from "./observability.js";
@@ -142,6 +141,7 @@ export type {
 // Path utilities — hash-based directory structure
 export {
   generateConfigHash,
+  generateProjectHash,
   generateProjectId,
   generateInstanceId,
   generateSessionPrefix,
@@ -159,6 +159,21 @@ export {
   validateAndStoreOrigin,
 } from "./paths.js";
 
+// Global config — Option C hybrid architecture (global registry + local behavior)
+export {
+  getGlobalConfigPath,
+  loadGlobalConfig,
+  saveGlobalConfig,
+  loadLocalProjectConfig,
+  syncProjectShadow,
+  registerProjectInGlobalConfig,
+  buildEffectiveProjectConfig,
+  isProjectShadowStale,
+  isOldConfigFormat,
+  migrateToGlobalConfig,
+} from "./global-config.js";
+export type { GlobalConfig, GlobalProjectEntry, LocalProjectConfig } from "./global-config.js";
+
 // Config generator — auto-generate config from repo URL
 export {
   isRepoUrl,
@@ -171,6 +186,7 @@ export {
   isRepoAlreadyCloned,
   resolveCloneTarget,
   sanitizeProjectId,
+  readOriginRemoteUrl,
 } from "./config-generator.js";
 export type {
   ParsedRepoUrl,
@@ -178,3 +194,46 @@ export type {
   DetectedProjectInfo,
   GenerateConfigOptions,
 } from "./config-generator.js";
+
+// Portfolio — cross-project aggregation
+export type {
+  PortfolioProject,
+  PortfolioPreferences,
+  PortfolioRegistered,
+  PortfolioSession,
+} from "./types.js";
+
+export {
+  getAoBaseDir,
+  getPortfolioDir,
+  getPreferencesPath,
+  getRegisteredPath,
+} from "./paths.js";
+
+export {
+  discoverProjects,
+  loadRegistered,
+  loadPreferences,
+  savePreferences,
+  saveRegistered,
+  getPortfolio,
+  registerProject,
+  unregisterProject,
+  refreshProject,
+} from "./portfolio-registry.js";
+
+export {
+  resolveProjectConfig,
+  clearConfigCache,
+} from "./portfolio-projects.js";
+
+export {
+  listPortfolioSessions,
+  getPortfolioSessionCounts,
+} from "./portfolio-session-service.js";
+
+export {
+  resolvePortfolioProject,
+  resolvePortfolioSession,
+  derivePortfolioProjectId,
+} from "./portfolio-routing.js";
