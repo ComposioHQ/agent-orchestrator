@@ -779,6 +779,78 @@ describe("reactions", () => {
   });
 });
 
+describe("pollAll", () => {
+  it("processes transitions into terminal statuses beyond merged and killed", async () => {
+    const terminalSession = makeSession({ status: "done", activity: "exited" });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(makeSession({ status: "working" }));
+
+    writeMetadata(env.sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+    expect(lm.getStates().get("app-1")).toBe("working");
+
+    vi.mocked(mockSessionManager.list).mockResolvedValue([terminalSession]);
+    vi.mocked(mockSessionManager.get).mockResolvedValue(terminalSession);
+
+    lm.start(60_000);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    lm.stop();
+
+    expect(lm.getStates().get("app-1")).toBe("done");
+  });
+
+  it("treats canonical terminal statuses as inactive for all-complete", async () => {
+    const notifier = createMockNotifier();
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      notifier,
+    });
+
+    config.reactions = {
+      "all-complete": { auto: true, action: "notify" },
+    };
+    config.notificationRouting.info = ["desktop"];
+
+    vi.mocked(mockSessionManager.list).mockResolvedValue([
+      makeSession({ status: "done", activity: "exited" }),
+      makeSession({ id: "app-2", status: "errored", activity: "exited" }),
+      makeSession({ id: "app-3", status: "cleanup", activity: "exited" }),
+      makeSession({ id: "app-4", status: "terminated", activity: "exited" }),
+    ]);
+
+    const lm = createLifecycleManager({
+      config,
+      registry,
+      sessionManager: mockSessionManager,
+    });
+
+    lm.start(60_000);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    lm.stop();
+
+    expect(mockSessionManager.get).not.toHaveBeenCalled();
+    expect(notifier.notify).toHaveBeenCalledTimes(1);
+    expect(notifier.notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "reaction.triggered",
+        data: expect.objectContaining({ reactionKey: "all-complete" }),
+      }),
+    );
+  });
+});
+
 describe("getStates", () => {
   it("returns copy of states map", async () => {
     const lm = setupCheck("app-1", {
