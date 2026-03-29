@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { cn } from "@/lib/cn";
 import type { ProjectInfo } from "@/lib/project-name";
@@ -12,8 +12,9 @@ import {
   type AttentionLevel,
 } from "@/lib/types";
 import { isOrchestratorSession } from "@composio/ao-core/types";
-import { getSessionSidebarLabel } from "@/lib/format";
+import { getSessionSidebarLabel, stripBranchHashPrefix } from "@/lib/format";
 import { useShowKilledSessions } from "@/hooks/useShowKilledSessions";
+import { useShowDoneSessions } from "@/hooks/useShowDoneSessions";
 import { SpawnSessionModal } from "@/components/SpawnSessionModal";
 
 interface ProjectSidebarProps {
@@ -72,6 +73,16 @@ const sessionToneLabel: Record<AttentionLevel, string> = {
   killed: "killed",
 };
 
+function sidebarSessionRowVisible(
+  session: DashboardSession,
+  showKilled: boolean,
+  showDone: boolean,
+): boolean {
+  if (isKilledSession(session)) return showKilled;
+  if (getAttentionLevel(session) === "done") return showDone;
+  return true;
+}
+
 function SessionDot({ level }: { level: AttentionLevel }) {
   return (
     <div
@@ -129,7 +140,20 @@ function ProjectSidebarInner({
     () => new Set(activeProjectId && activeProjectId !== "all" ? [activeProjectId] : []),
   );
   const [showKilled, setShowKilled] = useShowKilledSessions();
+  const [showDone, setShowDone] = useShowDoneSessions();
   const [spawnModalProjectId, setSpawnModalProjectId] = useState<string | null>(null);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const filterWrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!filterOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const el = filterWrapRef.current;
+      if (el && !el.contains(e.target as Node)) setFilterOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [filterOpen]);
 
   const orchestratorByProject = useMemo(() => {
     const m = new Map<string, DashboardOrchestratorLink>();
@@ -158,7 +182,88 @@ function ProjectSidebarInner({
   };
 
   const filterWorkers = (workers: DashboardSession[]) =>
-    workers.filter((s) => showKilled || !isKilledSession(s));
+    workers.filter((s) => sidebarSessionRowVisible(s, showKilled, showDone));
+
+  const filterPopover = (
+    <div
+      ref={filterWrapRef}
+      className={cn("relative", filterOpen && "z-30")}
+    >
+      <button
+        type="button"
+        onClick={() => setFilterOpen((o) => !o)}
+        className="flex h-7 w-7 cursor-pointer items-center justify-center rounded border border-[var(--color-border-subtle)] text-[var(--color-text-tertiary)] transition-colors hover:border-[var(--color-border-default)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text-primary)]"
+        aria-expanded={filterOpen}
+        aria-haspopup="true"
+        aria-label="Filter session list"
+        title="Filter sessions"
+      >
+        <svg
+          className="h-3.5 w-3.5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          viewBox="0 0 24 24"
+        >
+          <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" />
+        </svg>
+      </button>
+      {filterOpen ? (
+        <div
+          className={cn(
+            "absolute top-[calc(100%+4px)] z-40 w-[200px] border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] py-2 shadow-[0_12px_28px_rgba(0,0,0,0.2)]",
+            collapsed ? "left-0" : "right-0",
+          )}
+          role="dialog"
+          aria-label="Session filters"
+        >
+          <div className="px-3 pb-1 text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--color-text-tertiary)]">
+            Visibility
+          </div>
+          <label className="flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-[11px] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]">
+            <span>Show killed sessions</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={showKilled}
+              onClick={() => setShowKilled(!showKilled)}
+              className={cn(
+                "relative h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors",
+                showKilled ? "bg-[var(--color-accent)]" : "bg-[var(--color-border-strong)]",
+              )}
+            >
+              <span
+                className={cn(
+                  "pointer-events-none absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform",
+                  showKilled ? "translate-x-[1.125rem]" : "translate-x-0",
+                )}
+              />
+            </button>
+          </label>
+          <label className="flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-[11px] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]">
+            <span>Show done sessions</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={showDone}
+              onClick={() => setShowDone(!showDone)}
+              className={cn(
+                "relative h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors",
+                showDone ? "bg-[var(--color-accent)]" : "bg-[var(--color-border-strong)]",
+              )}
+            >
+              <span
+                className={cn(
+                  "pointer-events-none absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform",
+                  showDone ? "translate-x-[1.125rem]" : "translate-x-0",
+                )}
+              />
+            </button>
+          </label>
+        </div>
+      ) : null}
+    </div>
+  );
 
   const sessionsByProject = useMemo(() => {
     const map = new Map<string, { all: DashboardSession[]; workers: DashboardSession[] }>();
@@ -203,7 +308,8 @@ function ProjectSidebarInner({
   if (collapsed) {
     return (
       <>
-        <aside className="project-sidebar project-sidebar--collapsed flex h-full w-[56px] flex-col items-center py-3">
+        <aside className="project-sidebar project-sidebar--collapsed flex h-full w-[56px] flex-col items-center py-2">
+          <div className="mb-1 flex w-full shrink-0 justify-center px-1">{filterPopover}</div>
           <div className="flex flex-1 flex-col items-center gap-3 overflow-y-auto">
             {projects.map((project) => {
               const entry = sessionsByProject.map.get(project.id);
@@ -241,7 +347,8 @@ function ProjectSidebarInner({
                         const level = sidebarSessionLevel(session);
                         const isSessionActive = effectiveActiveSessionId === session.id;
                         const title = getSessionSidebarLabel(session);
-                        const abbr = title.slice(0, 3).toUpperCase();
+                        const displayTitle = stripBranchHashPrefix(title);
+                        const abbr = displayTitle.slice(0, 3).toUpperCase();
                         return (
                           <button
                             key={session.id}
@@ -257,7 +364,7 @@ function ProjectSidebarInner({
                               level === "respond" && "animate-[activity-pulse_2s_ease-in-out_infinite]",
                             )}
                             style={{ borderColor: sessionDotColor[level] }}
-                            title={`${title} (${sessionToneLabel[level]})`}
+                            title={`${displayTitle} (${sessionToneLabel[level]})`}
                           >
                             <span className="project-sidebar__session-abbr-first">{abbr[0]}</span>
                             <span className="project-sidebar__session-abbr-rest">{abbr.slice(1)}</span>
@@ -296,10 +403,11 @@ function ProjectSidebarInner({
   return (
     <>
       <aside className="project-sidebar flex h-full w-[244px] flex-col">
-        <div className="flex items-center border-b border-[var(--color-border-subtle)] px-3 py-1.5">
+        <div className="flex items-center justify-between gap-2 border-b border-[var(--color-border-subtle)] px-3 py-1.5">
           <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--color-text-tertiary)]">
             Projects
           </span>
+          {filterPopover}
         </div>
         <div className="project-sidebar__header px-4 pb-3 pt-3">
           <div className="project-sidebar__title-row">
@@ -333,16 +441,6 @@ function ProjectSidebarInner({
               <span className="project-sidebar__metric-label">blocked</span>
             </div>
           </div>
-        </div>
-
-        <div className="px-3 pb-2">
-          <button
-            type="button"
-            onClick={() => setShowKilled(!showKilled)}
-            className="w-full cursor-pointer rounded border border-[var(--color-border-default)] px-2.5 py-1.5 text-left text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]"
-          >
-            {showKilled ? "Hide killed sessions" : "Show killed sessions"}
-          </button>
         </div>
 
         <nav className="flex-1 overflow-y-auto px-2 pb-3">
@@ -467,6 +565,8 @@ function ProjectSidebarInner({
                       const level = sidebarSessionLevel(session);
                       const isSessionActive = effectiveActiveSessionId === session.id;
                       const title = getSessionSidebarLabel(session);
+                      const primary = stripBranchHashPrefix(title);
+                      const idShort = session.id.slice(0, 8);
                       return (
                         <div
                           key={session.id}
@@ -485,7 +585,7 @@ function ProjectSidebarInner({
                             }
                           }}
                           className={cn(
-                            "project-sidebar__session group flex w-full cursor-pointer items-center gap-2 py-[6px] pl-3 pr-2 transition-colors",
+                            "project-sidebar__session group flex w-full cursor-pointer items-start gap-2 py-[6px] pl-3 pr-2 transition-colors",
                             isSessionActive
                               ? "project-sidebar__session--active text-[var(--color-accent)]"
                               : "text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]",
@@ -493,32 +593,17 @@ function ProjectSidebarInner({
                         >
                           <SessionDot level={level} />
                           <div className="min-w-0 flex-1">
-                            <span className="block truncate text-[11px]">{title}</span>
-                            {session.branch ? (
-                              <span className="block truncate font-mono text-[10px] text-[var(--color-text-tertiary)]">
-                                {session.branch}
-                              </span>
-                            ) : null}
+                            <span className="block truncate text-[11px]">{primary}</span>
+                            <span
+                              className="block truncate font-mono text-[9px] text-[var(--color-text-tertiary)]"
+                              title={session.id}
+                            >
+                              {idShort}
+                            </span>
                           </div>
-                          <span className="project-sidebar__session-tone shrink-0">
+                          <span className="project-sidebar__session-tone ml-auto shrink-0 pt-0.5 text-[10px] text-[var(--color-text-muted)]">
                             {sessionToneLabel[level]}
                           </span>
-                          <a
-                            href={`/sessions/${encodeURIComponent(session.id)}?view=classic`}
-                            onClick={(e) => e.stopPropagation()}
-                            className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
-                            title="Classic view"
-                          >
-                            📋
-                          </a>
-                          <a
-                            href={`/sessions/${encodeURIComponent(session.id)}`}
-                            onClick={(e) => e.stopPropagation()}
-                            className="project-sidebar__session-id shrink-0 font-mono text-[9px] hover:underline"
-                            title={session.id}
-                          >
-                            {session.id.slice(0, 8)}
-                          </a>
                         </div>
                       );
                     })}

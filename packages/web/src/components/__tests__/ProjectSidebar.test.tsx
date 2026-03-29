@@ -36,6 +36,7 @@ describe("ProjectSidebar", () => {
   it("renders sidebar with all projects when there are multiple", () => {
     render(<ProjectSidebar projects={projects} sessions={[]} activeProjectId="project-1" activeSessionId={undefined} />);
     expect(screen.getByText("Projects")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Filter session list" })).toBeInTheDocument();
     expect(screen.getByText("All Projects")).toBeInTheDocument();
     expect(screen.getByText("Project One")).toBeInTheDocument();
     expect(screen.getByText("Project Two")).toBeInTheDocument();

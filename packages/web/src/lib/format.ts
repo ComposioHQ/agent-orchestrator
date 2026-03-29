@@ -6,14 +6,25 @@
 import type { DashboardSession } from "./types.js";
 
 /**
+ * Remove a leading `#` (or run of `#`) from branch strings.
+ * Some payloads prefix branch names like issue refs; git itself does not use `#` in names.
+ */
+export function stripBranchHashPrefix(branch: string): string {
+  return branch.trim().replace(/^#+/, "").trim();
+}
+
+/**
  * Humanize a git branch name into a readable title.
  * e.g., "feat/infer-project-id" → "Infer Project ID"
  *       "fix/broken-auth-flow"  → "Broken Auth Flow"
  *       "session/ao-52"         → "ao-52"
  */
 export function humanizeBranch(branch: string): string {
+  const cleaned = stripBranchHashPrefix(branch);
+  if (!cleaned) return "";
+
   // Remove common prefixes
-  const withoutPrefix = branch.replace(
+  const withoutPrefix = cleaned.replace(
     /^(?:feat|fix|chore|refactor|docs|test|ci|session|release|hotfix|feature|bugfix|build|wip|improvement)\//,
     "",
   );
@@ -75,7 +86,10 @@ export function getSessionSidebarLabel(session: DashboardSession): string {
   const label = session.issueLabel?.trim();
   if (label) return label;
 
-  if (session.branch) return humanizeBranch(session.branch);
+  if (session.branch) {
+    const hb = humanizeBranch(session.branch);
+    if (hb) return hb;
+  }
 
   const id = session.id;
   return id.length > 16 ? `${id.slice(0, 16)}…` : id;

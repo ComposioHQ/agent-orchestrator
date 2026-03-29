@@ -3,7 +3,13 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { humanizeBranch, getSessionTitle, getSessionSidebarLabel, isNumericIssueLabel } from "../format";
+import {
+  humanizeBranch,
+  getSessionTitle,
+  getSessionSidebarLabel,
+  isNumericIssueLabel,
+  stripBranchHashPrefix,
+} from "../format";
 import type { DashboardSession } from "../types";
 
 // ---------------------------------------------------------------------------
@@ -32,10 +38,30 @@ function makeSession(overrides?: Partial<DashboardSession>): DashboardSession {
 }
 
 // ---------------------------------------------------------------------------
+// stripBranchHashPrefix
+// ---------------------------------------------------------------------------
+
+describe("stripBranchHashPrefix", () => {
+  it("removes leading hash run and trims", () => {
+    expect(stripBranchHashPrefix("#feat/foo")).toBe("feat/foo");
+    expect(stripBranchHashPrefix("##main")).toBe("main");
+    expect(stripBranchHashPrefix("  #issue-12  ")).toBe("issue-12");
+  });
+
+  it("leaves names without a hash unchanged (aside from trim)", () => {
+    expect(stripBranchHashPrefix("feat/bar")).toBe("feat/bar");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // humanizeBranch
 // ---------------------------------------------------------------------------
 
 describe("humanizeBranch", () => {
+  it("strips leading # before humanizing", () => {
+    expect(humanizeBranch("#feat/infer-project-id")).toBe("Infer Project Id");
+  });
+
   it("strips common prefixes and title-cases", () => {
     expect(humanizeBranch("feat/infer-project-id")).toBe("Infer Project Id");
     expect(humanizeBranch("fix/broken-auth-flow")).toBe("Broken Auth Flow");
@@ -259,5 +285,14 @@ describe("getSessionSidebarLabel", () => {
       branch: null,
     });
     expect(getSessionSidebarLabel(session)).toBe("ao-42");
+  });
+
+  it("humanizes branch after stripping leading #", () => {
+    const session = makeSession({
+      issueTitle: null,
+      issueLabel: null,
+      branch: "#feat/my-feature",
+    });
+    expect(getSessionSidebarLabel(session)).toBe("My Feature");
   });
 });
