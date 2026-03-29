@@ -341,19 +341,6 @@ function createOpenCodeAgent(): Agent {
         }
       }
 
-      // 3. Fallback: use JSONL file mtime for active/ready/idle when session list
-      //    is unavailable (e.g. opencode session list fails or session not found).
-      if (activityResult) {
-        const ageMs = Math.max(0, Date.now() - activityResult.modifiedAt.getTime());
-        if (ageMs <= activeWindowMs) {
-          return { state: "active", timestamp: activityResult.modifiedAt };
-        }
-        if (ageMs <= threshold) {
-          return { state: "ready", timestamp: activityResult.modifiedAt };
-        }
-        return { state: "idle", timestamp: activityResult.modifiedAt };
-      }
-
       return null;
     },
 

@@ -1035,37 +1035,11 @@ describe("getActivityState with activity JSONL", () => {
     expect(result?.state).toBe("active");
   });
 
-  it("falls back to JSONL mtime for 'active' when session list fails", async () => {
+  it("returns null when session list fails and JSONL has non-actionable activity", async () => {
     mockTmuxWithProcess("opencode");
     mockReadLastActivityEntry.mockResolvedValueOnce({
       entry: { ts: new Date().toISOString(), state: "active", source: "terminal" },
-      modifiedAt: new Date(Date.now() - 5_000), // 5s ago
-    });
-    // opencode session list returns empty (session not found)
-    mockExecFileAsync.mockImplementation((cmd: string) => {
-      if (cmd === "tmux") return Promise.resolve({ stdout: "/dev/ttys003\n", stderr: "" });
-      if (cmd === "ps") {
-        return Promise.resolve({
-          stdout: "  PID TT       ARGS\n  789 ttys003  opencode\n",
-          stderr: "",
-        });
-      }
-      if (cmd === "opencode") return Promise.resolve({ stdout: "[]", stderr: "" });
-      return Promise.reject(new Error("unexpected"));
-    });
-
-    const result = await agent.getActivityState(
-      makeSession({ runtimeHandle: makeTmuxHandle() }),
-      60_000,
-    );
-    expect(result?.state).toBe("active");
-  });
-
-  it("falls back to JSONL mtime for 'ready' when session list fails", async () => {
-    mockTmuxWithProcess("opencode");
-    mockReadLastActivityEntry.mockResolvedValueOnce({
-      entry: { ts: new Date().toISOString(), state: "active", source: "terminal" },
-      modifiedAt: new Date(Date.now() - 45_000), // 45s ago — past activeWindow (30s), within threshold
+      modifiedAt: new Date(Date.now() - 5_000),
     });
     mockExecFileAsync.mockImplementation((cmd: string) => {
       if (cmd === "tmux") return Promise.resolve({ stdout: "/dev/ttys003\n", stderr: "" });
@@ -1083,32 +1057,7 @@ describe("getActivityState with activity JSONL", () => {
       makeSession({ runtimeHandle: makeTmuxHandle() }),
       60_000,
     );
-    expect(result?.state).toBe("ready");
-  });
-
-  it("falls back to JSONL mtime for 'idle' when session list fails", async () => {
-    mockTmuxWithProcess("opencode");
-    mockReadLastActivityEntry.mockResolvedValueOnce({
-      entry: { ts: new Date().toISOString(), state: "active", source: "terminal" },
-      modifiedAt: new Date(Date.now() - 120_000), // 120s ago — past threshold (60s)
-    });
-    mockExecFileAsync.mockImplementation((cmd: string) => {
-      if (cmd === "tmux") return Promise.resolve({ stdout: "/dev/ttys003\n", stderr: "" });
-      if (cmd === "ps") {
-        return Promise.resolve({
-          stdout: "  PID TT       ARGS\n  789 ttys003  opencode\n",
-          stderr: "",
-        });
-      }
-      if (cmd === "opencode") return Promise.resolve({ stdout: "[]", stderr: "" });
-      return Promise.reject(new Error("unexpected"));
-    });
-
-    const result = await agent.getActivityState(
-      makeSession({ runtimeHandle: makeTmuxHandle() }),
-      60_000,
-    );
-    expect(result?.state).toBe("idle");
+    expect(result).toBeNull();
   });
 
   it("returns null when both session list and JSONL are unavailable", async () => {
