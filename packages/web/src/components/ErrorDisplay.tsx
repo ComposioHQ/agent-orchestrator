@@ -92,7 +92,7 @@ export function ErrorDisplay({
         {showBackLink && (
           <a
             href="/"
-            className="rounded-md bg-[var(--color-accent)] px-4 py-2 text-[13px] font-medium text-white transition-opacity hover:opacity-90"
+            className="rounded-md border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] px-4 py-2 text-[13px] font-medium text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-bg-elevated-hover)]"
           >
             Go to dashboard
           </a>

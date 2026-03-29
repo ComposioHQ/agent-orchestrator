@@ -81,6 +81,23 @@ export default function GlobalError({
             >
               Reload page
             </button>
+            <a
+              href="/"
+              style={{
+                padding: "8px 16px",
+                fontSize: 13,
+                fontWeight: 500,
+                border: "1px solid #272a2f",
+                borderRadius: 6,
+                backgroundColor: "#1a1d22",
+                color: "#eef3ff",
+                textDecoration: "none",
+                display: "inline-block",
+                cursor: "pointer",
+              }}
+            >
+              Go to dashboard
+            </a>
           </div>
 
           <div style={{ marginTop: 24 }}>
