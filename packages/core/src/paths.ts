@@ -66,9 +66,17 @@ export function generateProjectId(projectPath: string): string {
  * Generate instance ID combining hash and project ID.
  * Format: {hash}-{projectId}
  * Example: "a3b4c5d6e7f8-integrator"
+ *
+ * Uses generateProjectHash(projectPath) so the hash is stable regardless of
+ * where the config file lives.  When the config was local
+ * (<project>/agent-orchestrator.yaml), dirname(configPath) === projectPath,
+ * so the two hash functions produced the same value.  After migration to the
+ * global config (~/.agent-orchestrator/config.yaml), generateConfigHash would
+ * produce a different (wrong) hash.  Keying on projectPath keeps existing
+ * session directories reachable.
  */
-export function generateInstanceId(configPath: string, projectPath: string): string {
-  const hash = generateConfigHash(configPath);
+export function generateInstanceId(_configPath: string, projectPath: string): string {
+  const hash = generateProjectHash(projectPath);
   const projectId = generateProjectId(projectPath);
   return `${hash}-${projectId}`;
 }
@@ -235,22 +243,27 @@ export function getRegisteredPath(): string {
 
 /**
  * Validate and store the .origin file for a project.
- * Throws if a hash collision is detected (different config, same hash).
+ *
+ * When the stored config path differs from the current one (e.g. after
+ * migrating from a local config to the global hybrid config), the .origin
+ * file is updated to the new path.  A true SHA-256 hash collision on 12 hex
+ * chars (1 in 2^48) is astronomically unlikely and not worth blocking a
+ * legitimate config migration.
  */
 export function validateAndStoreOrigin(configPath: string, projectPath: string): void {
   const originPath = getOriginFilePath(configPath, projectPath);
-  const resolvedConfigPath = realpathSync(configPath);
+  let resolvedConfigPath: string;
+  try {
+    resolvedConfigPath = realpathSync(configPath);
+  } catch {
+    resolvedConfigPath = resolve(configPath);
+  }
 
   if (existsSync(originPath)) {
     const stored = readFileSync(originPath, "utf-8").trim();
     if (stored !== resolvedConfigPath) {
-      throw new Error(
-        `Hash collision detected!\n` +
-          `Directory: ${getProjectBaseDir(configPath, projectPath)}\n` +
-          `Expected config: ${resolvedConfigPath}\n` +
-          `Actual config: ${stored}\n` +
-          `This is a rare hash collision. Please move one of the configs to a different directory.`,
-      );
+      // Config path changed (local → global migration). Update .origin.
+      writeFileSync(originPath, resolvedConfigPath, "utf-8");
     }
   } else {
     // Create project base directory and .origin file

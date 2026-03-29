@@ -25,6 +25,7 @@ import {
   generateSessionPrefix,
 } from "./paths.js";
 import { loadConfig, findConfigFile } from "./config.js";
+import { loadGlobalConfig, getGlobalConfigPath } from "./global-config.js";
 import { atomicWriteFileSync } from "./atomic-write.js";
 import { derivePortfolioProjectId } from "./portfolio-routing.js";
 
@@ -89,9 +90,36 @@ export function discoverProjects(): PortfolioProject[] {
         }
       }
     } catch {
-      degraded = true;
-      degradedReason = `Failed to load config at ${configPath}`;
+      // .origin may point to a flat local config (post-migration to hybrid model).
+      // Fall back to the global config for project metadata while keeping the
+      // original configPath so the session-directory hash remains stable.
+      try {
+        const globalPath = getGlobalConfigPath();
+        if (existsSync(globalPath) && globalPath !== configPath) {
+          config = loadConfig(globalPath);
+          projectConfig = config.projects[projectId];
+          if (!projectConfig) {
+            for (const [key, pc] of Object.entries(config.projects)) {
+              if (basename(pc.path) === projectId) {
+                projectConfig = pc;
+                break;
+              }
+            }
+          }
+        }
+      } catch {
+        // Global config also unavailable
+      }
+
+      if (!projectConfig) {
+        degraded = true;
+        degradedReason = `Failed to load config at ${configPath}`;
+      }
     }
+
+    // Skip directories whose config can't be resolved at all — these are
+    // stale test/dev artifacts, not real projects the user cares about.
+    if (degraded) continue;
 
     const project: PortfolioProject = {
       id: projectId,
@@ -106,14 +134,38 @@ export function discoverProjects(): PortfolioProject[] {
       enabled: true,
       pinned: false,
       lastSeenAt: new Date().toISOString(),
-      degraded,
-      degradedReason,
     };
 
     projects.push(project);
   }
 
-  return projects;
+  // Deduplicate: after migration from local → global config, two directories
+  // may exist for the same project (one hashed from the local config path, one
+  // from the global config path). Keep the entry whose configPath is NOT the
+  // global config — it has the stable project-path-based hash and contains the
+  // legacy sessions. The global-config-based directory is an artefact of the
+  // migration period and typically only holds the orchestrator session.
+  const globalConfigPath = getGlobalConfigPath();
+  const byRepoPath = new Map<string, PortfolioProject[]>();
+  for (const project of projects) {
+    const key = project.repoPath;
+    const list = byRepoPath.get(key) ?? [];
+    list.push(project);
+    byRepoPath.set(key, list);
+  }
+
+  const deduped: PortfolioProject[] = [];
+  for (const candidates of byRepoPath.values()) {
+    if (candidates.length === 1) {
+      deduped.push(candidates[0]);
+    } else {
+      // Prefer the entry whose configPath is the local config (not global)
+      const local = candidates.find((c) => c.configPath !== globalConfigPath);
+      deduped.push(local ?? candidates[0]);
+    }
+  }
+
+  return deduped;
 }
 
 /** Find the config key for a given ProjectConfig within an OrchestratorConfig */
