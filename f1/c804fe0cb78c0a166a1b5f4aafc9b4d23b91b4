@@ -1,0 +1,43 @@
+packages/core/src/portfolio-registry.ts
+  ff23df7c065129b1 28,77,85,102,116
+packages/core/src/global-config.ts
+  ff23df7c065129b1 341,500,543-544,546,548,550,552,556
+  af0c02a1c5e5f8e3 58,61-65,68-69,132-137,454,526,549,551,553-555,557
+packages/cli/src/commands/spawn.ts
+  ff23df7c065129b1 253
+packages/web/src/app/api/settings/preferences/route.ts
+  ff23df7c065129b1 23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.22",
+  "base_commit_sha": "f1c804fe0cb78c0a166a1b5f4aafc9b4d23b91b4",
+  "prompts": {
+    "af0c02a1c5e5f8e3": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_2c6d90942ffedKkWlGpWu7HTLY",
+        "model": "zai-coding-plan/glm-5.1"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 48,
+      "total_deletions": 38,
+      "accepted_lines": 45,
+      "overriden_lines": 0
+    },
+    "ff23df7c065129b1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e0194d48-ee96-4704-8265-2bb7f4ec2d42",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 16,
+      "total_deletions": 17,
+      "accepted_lines": 16,
+      "overriden_lines": 0
+    }
+  }
+}
