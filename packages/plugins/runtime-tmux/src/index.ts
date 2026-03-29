@@ -34,12 +34,11 @@ function assertValidSessionId(id: string): void {
   }
 }
 
-function writeLaunchScript(command: string): { invocation: string; scriptPath: string } {
+function writeLaunchScript(command: string): string {
   const scriptPath = join(tmpdir(), `ao-launch-${randomUUID()}.sh`);
-  const content = `#!/usr/bin/env bash\n${command}\n`;
+  const content = `#!/usr/bin/env bash\nrm -- "$0" 2>/dev/null || true\n${command}\n`;
   writeFileSync(scriptPath, content, { encoding: "utf-8", mode: 0o700 });
-  const invocation = `bash ${shellEscape(scriptPath)}`;
-  return { invocation, scriptPath };
+  return `bash ${shellEscape(scriptPath)}`;
 }
 
 /** Run a tmux command and return stdout */
@@ -84,18 +83,10 @@ export function create(): Runtime {
       // invocation instead of a pasted wall of shell.
       try {
         if (config.launchCommand.length > 200) {
-          const { scriptPath, invocation } = writeLaunchScript(config.launchCommand);
-          try {
-            await tmux("send-keys", "-t", sessionName, "-l", invocation);
-            await sleep(300);
-            await tmux("send-keys", "-t", sessionName, "Enter");
-          } finally {
-            try {
-              unlinkSync(scriptPath);
-            } catch {
-              // ignore cleanup errors
-            }
-          }
+          const invocation = writeLaunchScript(config.launchCommand);
+          await tmux("send-keys", "-t", sessionName, "-l", invocation);
+          await sleep(300);
+          await tmux("send-keys", "-t", sessionName, "Enter");
         } else {
           await tmux("send-keys", "-t", sessionName, config.launchCommand, "Enter");
         }
