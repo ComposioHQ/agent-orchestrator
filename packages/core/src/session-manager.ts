@@ -202,6 +202,17 @@ function getSessionNumber(sessionId: string, prefix: string): number | undefined
   return Number.isNaN(parsed) ? undefined : parsed;
 }
 
+/**
+ * Build a dashboard URL for a given session id using the configured base URL
+ * (or a localhost fallback). Returns `null` when no base is available.
+ */
+function buildDashboardUrl(config: OrchestratorConfig, sessionId: string): string | null {
+  const base = config.dashboardBaseUrl ?? `http://localhost:${config.port ?? 3000}`;
+  if (!base) return null;
+  const trimmed = base.replace(/\/+$/, "");
+  return `${trimmed}/sessions/${encodeURIComponent(sessionId)}`;
+}
+
 const PR_TRACKING_STATUSES: ReadonlySet<string> = new Set([
   "pr_open",
   "ci_failed",
@@ -1115,6 +1126,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       },
     };
 
+    // Compute dashboard URL if a base is configured (or infer localhost)
+    session.dashboardUrl = buildDashboardUrl(config, sessionId);
+
     try {
       writeMetadata(sessionsDir, sessionId, {
         worktree: workspacePath,
@@ -1394,6 +1408,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         ...(reusableOpenCodeSessionId ? { opencodeSessionId: reusableOpenCodeSessionId } : {}),
       },
     };
+
+    // Attach dashboard URL to orchestrator session as well
+    session.dashboardUrl = buildDashboardUrl(config, session.id);
 
     try {
       writeMetadata(sessionsDir, sessionId, {
