@@ -1,0 +1,23 @@
+packages/cli/src/commands/status.ts
+  af0c02a1c5e5f8e3 225-227,276-279,445-447
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.22",
+  "base_commit_sha": "b79e4a0cd06ebf40cfb90ae7b51e5492bf4e7352",
+  "prompts": {
+    "af0c02a1c5e5f8e3": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_2c6d90942ffedKkWlGpWu7HTLY",
+        "model": "zai-coding-plan/glm-5.1"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 11,
+      "total_deletions": 3,
+      "accepted_lines": 11,
+      "overriden_lines": 0
+    }
+  }
+}
