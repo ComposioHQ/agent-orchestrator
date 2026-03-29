@@ -169,8 +169,7 @@ function canPromptForInstall(): boolean {
  */
 async function promptAgentSelection(): Promise<{
   orchestratorAgent: string;
-  workerAgent: string;
-  saveToConfig: boolean;
+  workerAgent: string
 } | null> {
   if (canPromptForInstall()) {
     const clack = await import("@clack/prompts");
@@ -208,26 +207,14 @@ async function promptAgentSelection(): Promise<{
         return null;
       }
     
-      const saveToConfig = await clack.confirm({
-        message: "Save to config for future sessions?",
-        initialValue: false,
-      });
-      if (clack.isCancel(saveToConfig)) {
-        clack.cancel("Cancelled.");
-        return null;
-      }
-    
       return {
         orchestratorAgent,
-        workerAgent,
-        saveToConfig,
+        workerAgent
       };
     }
   } else {
     return null 
   };
-
-  
 }
 
 async function askYesNo(
@@ -1222,31 +1209,15 @@ export function registerStart(program: Command): void {
           // ── Agent selection prompt (Step 10)──
           const agentOverride = await promptAgentSelection();
           if (agentOverride) {
-            const { orchestratorAgent, workerAgent, saveToConfig } = agentOverride;
+            const { orchestratorAgent, workerAgent } = agentOverride;
 
-            // Patch in-memory config
-            config.projects[projectId] = {
-              ...config.projects[projectId],
-              orchestrator: {
-                ...(config.projects[projectId].orchestrator ?? {}),
-                agent: orchestratorAgent,
-              },
-              worker: {
-                ...(config.projects[projectId].worker ?? {}),
-                agent: workerAgent,
-              },
-            };
-            project = config.projects[projectId];
-
-            if (saveToConfig) {
-              const rawYaml = readFileSync(config.configPath, "utf-8");
-              const rawConfig = yamlParse(rawYaml);
-              const proj = rawConfig.projects[projectId];
-              proj.orchestrator = { ...(proj.orchestrator ?? {}), agent: orchestratorAgent };
-              proj.worker = { ...(proj.worker ?? {}), agent: workerAgent };
-              writeFileSync(config.configPath, yamlStringify(rawConfig, { indent: 2 }));
-              console.log(chalk.dim(`  ✓ Saved to ${config.configPath}\n`));
-            }
+            const rawYaml = readFileSync(config.configPath, "utf-8");
+            const rawConfig = yamlParse(rawYaml);
+            const proj = rawConfig.projects[projectId];
+            proj.orchestrator = { ...(proj.orchestrator ?? {}), agent: orchestratorAgent };
+            proj.worker = { ...(proj.worker ?? {}), agent: workerAgent };
+            writeFileSync(config.configPath, yamlStringify(rawConfig, { indent: 2 }));
+            console.log(chalk.dim(`  ✓ Saved to ${config.configPath}\n`));
           }
 
           const actualPort = await runStartup(config, projectId, project, opts);
