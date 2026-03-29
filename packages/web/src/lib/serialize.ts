@@ -278,6 +278,16 @@ export function enrichSessionIssue(
 ): void {
   if (!dashboard.issueUrl) return;
 
+  // If issueUrl is not a full URL (e.g., Jira stores just "TEST-2264"),
+  // resolve it to a full URL using the tracker plugin
+  if (tracker.issueUrl && !dashboard.issueUrl.startsWith("http")) {
+    try {
+      dashboard.issueUrl = tracker.issueUrl(dashboard.issueUrl, project);
+    } catch {
+      // Keep the raw issue ID as-is
+    }
+  }
+
   // Use tracker plugin to extract human-readable label from URL
   if (tracker.issueLabel) {
     try {

@@ -64,3 +64,6 @@ CLAUDE.md
 AGENTS.md
 .claude/
 .opencode/
+
+# Personal developer notes (not for repo)
+.developer/
