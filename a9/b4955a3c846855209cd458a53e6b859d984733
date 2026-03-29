@@ -1,0 +1,29 @@
+packages/core/src/types.ts
+  e129a32749bee826 202-203
+packages/core/src/agent-selection.ts
+  e129a32749bee826 43-47
+packages/core/src/session-manager.ts
+  e129a32749bee826 1213
+packages/web/src/app/api/orchestrators/route.ts
+  e129a32749bee826 26,28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.22",
+  "base_commit_sha": "a9b4955a3c846855209cd458a53e6b859d984733",
+  "prompts": {
+    "e129a32749bee826": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "07762ca9-ce23-4277-8a0c-597679cfdb03",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 10,
+      "overriden_lines": 0
+    }
+  }
+}
