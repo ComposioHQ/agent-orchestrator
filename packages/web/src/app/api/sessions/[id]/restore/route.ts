@@ -15,8 +15,8 @@ import {
 } from "@/lib/observability";
 
 /** POST /api/sessions/:id/restore — Restore a terminated session */
-export async function POST(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const correlationId = getCorrelationId(_request);
+export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const correlationId = getCorrelationId(request);
   const startedAt = Date.now();
   const { id } = await params;
   const idErr = validateIdentifier(id, "id");
@@ -24,10 +24,20 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
     return jsonWithCorrelation({ error: idErr }, { status: 400 }, correlationId);
   }
 
+  const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+  let agent: string | undefined;
+  if (body && typeof body.agent === "string" && body.agent.trim() !== "") {
+    const agentErr = validateIdentifier(body.agent.trim(), "agent");
+    if (agentErr) {
+      return jsonWithCorrelation({ error: agentErr }, { status: 400 }, correlationId);
+    }
+    agent = body.agent.trim();
+  }
+
   try {
     const { config, sessionManager } = await getServices();
     const projectId = resolveProjectIdForSessionId(config, id);
-    const restored = await sessionManager.restore(id);
+    const restored = await sessionManager.restore(id, agent ? { agent } : undefined);
 
     recordApiObservation({
       config,

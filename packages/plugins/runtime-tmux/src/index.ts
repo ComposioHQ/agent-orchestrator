@@ -58,6 +58,18 @@ export function create(): Runtime {
       // Create tmux session in detached mode
       await tmux("new-session", "-d", "-s", sessionName, "-c", config.workspacePath, ...envArgs);
 
+      // Plain shell sessions (empty command) — tmux already starts the default shell.
+      if (!config.launchCommand || config.launchCommand.trim() === "") {
+        return {
+          id: sessionName,
+          runtimeName: "tmux",
+          data: {
+            createdAt: Date.now(),
+            workspacePath: config.workspacePath,
+          },
+        };
+      }
+
       // Send the launch command — clean up the session if this fails.
       // Use load-buffer + paste-buffer for long commands to avoid tmux/zsh
       // truncation issues (commands >200 chars get mangled by send-keys).

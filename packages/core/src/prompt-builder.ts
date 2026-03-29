@@ -39,11 +39,14 @@ Your primary deliverable is a **feature plan** — a Markdown document that capt
 - **Files to modify** — List of files you expect to touch.
 - **Risks and open questions** — Unknowns, edge cases, areas needing human input.
 - **Validation strategy** — How the change will be tested.
+- **Implementation checklist** — A detailed, phased checklist with checkboxes for step-by-step execution.
 
 Store plans under \`.feature-plans/\` at the project root (create it if missing):
 - \`.feature-plans/pending/\` — planned work not started yet
 - \`.feature-plans/wip/\` — actively in progress (move your plan here when working)
 - \`.feature-plans/done/\` — completed or superseded plans (keep for history)
+
+If \`.feature-plans/_plan_sample_format.md\` exists, use it as the reference format for your plan.
 
 **Do not start implementation until the user approves or explicitly asks you to proceed.**
 

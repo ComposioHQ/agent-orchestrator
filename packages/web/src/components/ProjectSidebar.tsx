@@ -7,6 +7,8 @@ import type { ProjectInfo } from "@/lib/project-name";
 import { getAttentionLevel, type DashboardSession, type AttentionLevel } from "@/lib/types";
 import { isOrchestratorSession } from "@composio/ao-core/types";
 import { getSessionTitle } from "@/lib/format";
+import { useShowDone } from "@/hooks/useShowDone";
+import { SpawnSessionModal } from "@/components/SpawnSessionModal";
 
 interface ProjectSidebarProps {
   projects: ProjectInfo[];
@@ -112,6 +114,8 @@ function ProjectSidebarInner({
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(
     () => new Set(activeProjectId && activeProjectId !== "all" ? [activeProjectId] : []),
   );
+  const [showDone] = useShowDone();
+  const [spawnModalProjectId, setSpawnModalProjectId] = useState<string | null>(null);
 
   useEffect(() => {
     if (activeProjectId && activeProjectId !== "all") {
@@ -172,7 +176,8 @@ function ProjectSidebarInner({
             const health = entry ? computeProjectHealth(entry.all) : ("gray" as ProjectHealth);
             const isActive = activeProjectId === project.id;
             const initial = project.name.charAt(0).toUpperCase();
-            const workerSessions = entry?.workers.filter((s) => getAttentionLevel(s) !== "done") ?? [];
+            const workerSessions =
+              entry?.workers.filter((s) => showDone || getAttentionLevel(s) !== "done") ?? [];
             return (
               <div key={project.id} className="flex flex-col items-center gap-1">
                 <button
@@ -303,7 +308,8 @@ function ProjectSidebarInner({
         {projects.map((project) => {
           const entry = sessionsByProject.map.get(project.id);
           const projectSessions = entry?.all ?? [];
-          const workerSessions = entry?.workers ?? [];
+          const workerSessions =
+            entry?.workers.filter((s) => showDone || getAttentionLevel(s) !== "done") ?? [];
           const health = computeProjectHealth(projectSessions);
           const isExpanded = expandedProjects.has(project.id);
           const isActive = activeProjectId === project.id;
@@ -341,9 +347,9 @@ function ProjectSidebarInner({
                 )}
               </button>
 
-              {isExpanded && workerSessions.length > 0 && (
+              {isExpanded && (
                 <div className="project-sidebar__children ml-3 py-0.5">
-                  {workerSessions.filter((s) => getAttentionLevel(s) !== "done").map((session) => {
+                  {workerSessions.map((session) => {
                     const level = getAttentionLevel(session);
                     const isSessionActive = effectiveActiveSessionId === session.id;
                     const title = getSessionTitle(session);
@@ -393,6 +399,17 @@ function ProjectSidebarInner({
                       </div>
                     );
                   })}
+                  <button
+                    type="button"
+                    onClick={() => setSpawnModalProjectId(project.id)}
+                    className="mt-1 flex w-full items-center gap-2 py-[6px] pl-3 pr-2 text-left text-[11px] font-medium text-[var(--color-text-tertiary)] transition-colors hover:text-[var(--color-accent)]"
+                    title="Spawn new session"
+                  >
+                    <span className="flex h-5 w-5 items-center justify-center rounded border border-dashed border-[var(--color-border-muted)] text-[14px] leading-none">
+                      +
+                    </span>
+                    New session
+                  </button>
                 </div>
               )}
             </div>
@@ -400,6 +417,13 @@ function ProjectSidebarInner({
         })}
       </nav>
       {/* sidebar toggle moved to top bar */}
+      {spawnModalProjectId ? (
+        <SpawnSessionModal
+          projectId={spawnModalProjectId}
+          open
+          onClose={() => setSpawnModalProjectId(null)}
+        />
+      ) : null}
     </aside>
   );
 }
