@@ -88,6 +88,14 @@ projects:
     # OpenCode issue session strategy (only for agent: opencode)
     # opencodeIssueSessionStrategy: reuse   # reuse | delete | ignore
 
+    # Task decomposer configuration
+    # decomposer:
+    #   enabled: false
+    #   maxDepth: 3
+    #   model: claude-sonnet-4-20250514     # or MiniMax-M2.7 for MiniMax
+    #   provider: anthropic                  # anthropic | minimax
+    #   requireApproval: true
+
     # Per-project reaction overrides
     # reactions:
     #   approved-and-green:

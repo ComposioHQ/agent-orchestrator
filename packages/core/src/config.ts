@@ -134,12 +134,14 @@ const DecomposerConfigSchema = z
     maxDepth: z.number().min(1).max(5).default(3),
     model: z.string().default("claude-sonnet-4-20250514"),
     requireApproval: z.boolean().default(true),
+    provider: z.enum(["anthropic", "minimax"]).default("anthropic"),
   })
   .default({
     enabled: false,
     maxDepth: 3,
     model: "claude-sonnet-4-20250514",
     requireApproval: true,
+    provider: "anthropic",
   });
 
 const ProjectConfigSchema = z.object({
