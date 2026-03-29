@@ -1,0 +1,47 @@
+packages/web/src/components/__tests__/PortfolioPage.test.tsx
+  ff23df7c065129b1 39
+packages/web/src/app/api/projects/route.ts
+  ff23df7c065129b1 1
+packages/web/src/hooks/usePortfolioEvents.ts
+  ff23df7c065129b1 4
+packages/web/src/components/__tests__/Modal.test.tsx
+  ff23df7c065129b1 48
+packages/web/src/lib/portfolio-page-data.ts
+  ff23df7c065129b1 11
+packages/web/src/app/api/projects/[id]/route.ts
+  ff23df7c065129b1 18
+packages/web/src/components/UnifiedSidebar.tsx
+  ff23df7c065129b1 57
+packages/web/src/app/api/browse-directory/route.ts
+  ff23df7c065129b1 1
+packages/integration-tests/src/cli-spawn-core-read-new.integration.test.ts
+  ff23df7c065129b1 26,104-105
+packages/web/src/middleware.ts
+  ff23df7c065129b1 1
+packages/web/src/components/Dashboard.tsx
+  ff23df7c065129b1 100
+packages/web/src/app/api/sessions/route.ts
+  ff23df7c065129b1 15,37
+packages/integration-tests/src/config-metadata-service.integration.test.ts
+  ff23df7c065129b1 18,95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.22",
+  "base_commit_sha": "1e86bdc451d43ba7a6db51e4d6f7633aae653af3",
+  "prompts": {
+    "ff23df7c065129b1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e0194d48-ee96-4704-8265-2bb7f4ec2d42",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 24,
+      "total_deletions": 28,
+      "accepted_lines": 19,
+      "overriden_lines": 0
+    }
+  }
+}
