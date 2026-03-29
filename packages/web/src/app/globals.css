@@ -1597,6 +1597,15 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   color: var(--color-accent);
 }
 
+/* Terminal sidebar items reuse session styles but don't need the tree connector line */
+.terminal-sidebar-list .project-sidebar__session::before {
+  display: none;
+}
+
+.terminal-sidebar-list .project-sidebar__session {
+  margin-left: 0;
+}
+
 .project-sidebar__collapse-btn,
 .project-sidebar__collapsed-toggle {
   display: inline-flex;

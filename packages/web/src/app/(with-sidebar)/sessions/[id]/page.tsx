@@ -3,13 +3,12 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { isOrchestratorSession } from "@composio/ao-core/types";
-import { SessionDetail } from "@/components/SessionDetail";
 import { WorkspaceLayout } from "@/components/workspace/WorkspaceLayout";
 import { FileTree } from "@/components/workspace/FileTree";
 import { FilePreview } from "@/components/workspace/FilePreview";
 import { DiffViewer } from "@/components/workspace/DiffViewer";
 import { SessionTerminalTabs } from "@/components/SessionTerminalTabs";
-import { type DashboardSession, getAttentionLevel } from "@/lib/types";
+import { type DashboardSession } from "@/lib/types";
 import { activityIcon } from "@/lib/activity-icons";
 
 function truncate(s: string, max: number): string {
@@ -35,33 +34,45 @@ function buildSessionTitle(session: DashboardSession): string {
   return emoji ? `${emoji} ${id} | ${detail}` : `${id} | ${detail}`;
 }
 
-interface ZoneCounts {
-  merge: number;
-  respond: number;
-  review: number;
-  pending: number;
-  working: number;
-  done: number;
+function createStubSession(id: string, projectId: string): DashboardSession {
+  return {
+    id,
+    projectId,
+    status: "working",
+    activity: null,
+    branch: null,
+    issueId: null,
+    issueUrl: null,
+    issueLabel: null,
+    issueTitle: null,
+    summary: null,
+    summaryIsFallback: false,
+    createdAt: new Date().toISOString(),
+    lastActivityAt: new Date().toISOString(),
+    pr: null,
+    metadata: {},
+  };
 }
 
 export default function SessionPage() {
   const params = useParams();
   const searchParams = useSearchParams();
   const id = params.id as string;
-  const useClassicView = searchParams.get("view") === "classic";
+  const projectId = searchParams.get("project") ?? "";
 
   const [session, setSession] = useState<DashboardSession | null>(null);
-  const [zoneCounts, setZoneCounts] = useState<ZoneCounts | null>(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const sessionProjectId = session?.projectId ?? null;
+
+  // Stub session for immediate render
+  const stubSession = createStubSession(id, projectId);
+  const displaySession = session ?? stubSession;
   const sessionIsOrchestrator = session ? isOrchestratorSession(session) : false;
 
   useEffect(() => {
     if (session) {
       document.title = buildSessionTitle(session);
     } else {
-      document.title = `${id} | Session Detail`;
+      document.title = `${id} | Session`;
     }
   }, [session, id]);
 
@@ -70,7 +81,6 @@ export default function SessionPage() {
       const res = await fetch(`/api/sessions/${encodeURIComponent(id)}`);
       if (res.status === 404) {
         setError("Session not found");
-        setLoading(false);
         return;
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -80,78 +90,27 @@ export default function SessionPage() {
     } catch (err) {
       console.error("Failed to fetch session:", err);
       setError("Failed to load session");
-    } finally {
-      setLoading(false);
     }
   }, [id]);
 
-  const fetchZoneCounts = useCallback(async () => {
-    if (!sessionIsOrchestrator || !sessionProjectId) return;
-    try {
-      const res = await fetch(`/api/sessions?project=${encodeURIComponent(sessionProjectId)}`);
-      if (!res.ok) return;
-      const body = (await res.json()) as { sessions: DashboardSession[] };
-      const sessions = body.sessions ?? [];
-      const counts: ZoneCounts = {
-        merge: 0,
-        respond: 0,
-        review: 0,
-        pending: 0,
-        working: 0,
-        done: 0,
-      };
-      for (const s of sessions) {
-        if (!isOrchestratorSession(s)) {
-          counts[getAttentionLevel(s)]++;
-        }
-      }
-      setZoneCounts(counts);
-    } catch {
-      // non-critical - status strip just won't show
-    }
-  }, [sessionIsOrchestrator, sessionProjectId]);
 
   useEffect(() => {
     void fetchSession();
-    const t = setTimeout(() => {
-      void fetchZoneCounts();
-    }, 2000);
-    return () => clearTimeout(t);
-  }, [fetchSession, fetchZoneCounts]);
-
-  useEffect(() => {
     const interval = setInterval(() => {
       void fetchSession();
-      void fetchZoneCounts();
     }, 5000);
     return () => clearInterval(interval);
-  }, [fetchSession, fetchZoneCounts]);
+  }, [fetchSession]);
 
-  if (loading) {
-    return (
-      <div className="flex h-full items-center justify-center bg-[var(--color-bg-base)]">
-        <div className="text-[13px] text-[var(--color-text-tertiary)]">Loading session…</div>
-      </div>
-    );
-  }
+  const isOpenCodeSession = session?.metadata["agent"] === "opencode";
+  const reloadCommand =
+    isOpenCodeSession && session?.metadata["opencodeSessionId"]
+      ? `/exit\nopencode --session ${session.metadata["opencodeSessionId"]}\n`
+      : undefined;
 
-  if (error || !session) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-4 bg-[var(--color-bg-base)]">
-        <div className="text-[13px] text-[var(--color-status-error)]">
-          {error ?? "Session not found"}
-        </div>
-        <a href="/" className="text-[12px] text-[var(--color-accent)] hover:underline">
-          ← Back to dashboard
-        </a>
-      </div>
-    );
-  }
-
-  // Use workspace layout by default, unless classic view is requested
-  if (!useClassicView) {
-    return (
-      <WorkspaceLayout session={session}>
+  return (
+    <>
+      <WorkspaceLayout session={displaySession}>
         {{
           fileTree: (file, { showChangedOnly, onFileSelected }) => (
             <FileTree
@@ -171,25 +130,20 @@ export default function SessionPage() {
             <SessionTerminalTabs
               sessionId={id}
               variant={sessionIsOrchestrator ? "orchestrator" : "agent"}
-              isOpenCodeSession={session.metadata["agent"] === "opencode"}
-              reloadCommand={
-                session.metadata["agent"] === "opencode" && session.metadata["opencodeSessionId"]
-                  ? `/exit\nopencode --session ${session.metadata["opencodeSessionId"]}\n`
-                  : undefined
-              }
+              isOpenCodeSession={isOpenCodeSession}
+              reloadCommand={reloadCommand}
             />
           ),
         }}
       </WorkspaceLayout>
-    );
-  }
-
-  // Classic view for backwards compatibility
-  return (
-    <SessionDetail
-      session={session}
-      isOrchestrator={sessionIsOrchestrator}
-      orchestratorZones={zoneCounts ?? undefined}
-    />
+      {error && (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-[rgba(0,0,0,0.9)]">
+          <div className="text-[13px] text-[var(--color-status-error)]">{error}</div>
+          <a href="/" className="mt-4 text-[12px] text-[var(--color-accent)] hover:underline">
+            ← Back to dashboard
+          </a>
+        </div>
+      )}
+    </>
   );
 }
