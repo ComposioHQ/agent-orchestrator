@@ -222,7 +222,9 @@ export function registerStatus(program: Command): void {
 
           if (portfolio.length === 0) {
             console.log(chalk.dim("No projects in portfolio."));
-            console.log(chalk.dim("Run `ao start` in a project or `ao project add <path>` to register one."));
+            console.log(
+              chalk.dim("Run `ao start` in a project or `ao project add <path>` to register one."),
+            );
             return;
           }
 
@@ -271,7 +273,10 @@ export function registerStatus(program: Command): void {
           );
           console.log();
         } catch (err) {
-          console.error(chalk.red("Failed to load portfolio:"), err instanceof Error ? err.message : String(err));
+          console.error(
+            chalk.red("Failed to load portfolio:"),
+            err instanceof Error ? err.message : String(err),
+          );
           process.exit(1);
         }
         return;
@@ -435,8 +440,11 @@ export function registerStatus(program: Command): void {
           // Plugin registry or tracker unavailable — skip silently
         }
 
-        console.log(chalk.dim("  Tip: Use --portfolio to see all projects"));
         console.log();
+      }
+
+      if (!opts.json && projectIds.length > 1) {
+        console.log(chalk.dim("  Tip: Use --portfolio to see all projects"));
       }
     });
 }
