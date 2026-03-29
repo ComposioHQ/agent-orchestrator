@@ -163,13 +163,14 @@ Running one AI agent in a terminal is easy. Running 30 across different issues, 
 
 ## Documentation
 
-| Doc                                      | What it covers                                               |
-| ---------------------------------------- | ------------------------------------------------------------ |
-| [Setup Guide](SETUP.md)                  | Detailed installation, configuration, and troubleshooting    |
-| [CLI Reference](docs/CLI.md)             | All `ao` commands (mostly used by the orchestrator agent)    |
-| [Examples](examples/)                    | Config templates (GitHub, Linear, multi-project, auto-merge) |
-| [Development Guide](docs/DEVELOPMENT.md) | Architecture, conventions, plugin pattern                    |
-| [Contributing](CONTRIBUTING.md)          | How to contribute, build plugins, PR process                 |
+| Doc                                                          | What it covers                                               |
+| ------------------------------------------------------------ | ------------------------------------------------------------ |
+| [Codebase Walkthrough](docs/CODEBASE_WALKTHROUGH.md)         | Beginner-friendly tour of the entire codebase with analogies |
+| [Setup Guide](SETUP.md)                                      | Detailed installation, configuration, and troubleshooting    |
+| [CLI Reference](docs/CLI.md)                                 | All `ao` commands (mostly used by the orchestrator agent)    |
+| [Examples](examples/)                                        | Config templates (GitHub, Linear, multi-project, auto-merge) |
+| [Development Guide](docs/DEVELOPMENT.md)                     | Architecture, conventions, plugin pattern                    |
+| [Contributing](CONTRIBUTING.md)                              | How to contribute, build plugins, PR process                 |
 
 ## Development
 
