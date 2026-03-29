@@ -52,6 +52,7 @@ import { isHumanCaller } from "../lib/caller-context.js";
 import { detectEnvironment } from "../lib/detect-env.js";
 import { detectAgentRuntime, detectAvailableAgents, type DetectedAgent } from "../lib/detect-agent.js";
 import { detectDefaultBranch } from "../lib/git-utils.js";
+import { promptConfirm, promptSelect } from "../lib/prompts.js";
 import {
   detectProjectType,
   generateRulesFromTemplates,
@@ -109,24 +110,15 @@ async function resolveProject(
 
   // No match — prompt if interactive, otherwise error
   if (isHumanCaller()) {
-    console.log(chalk.yellow(`\nMultiple projects configured. Which one would you like to ${action}?\n`));
-    projectIds.forEach((id, i) => console.log(`  ${i + 1}. ${config.projects[id].name ?? id} (${id})`));
-
-    const { createInterface } = await import("node:readline/promises");
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    try {
-      const choice = await rl.question(`\n  Choose project [1-${projectIds.length}]: `);
-
-      const idx = Number.parseInt(choice.trim(), 10);
-      if (!Number.isFinite(idx) || idx < 1 || idx > projectIds.length) {
-        throw new Error("Please enter a valid number from the list");
-      }
-
-      const projectId = projectIds[idx - 1];
-      return { projectId, project: config.projects[projectId] };
-    } finally {
-      rl.close();
-    }
+    const projectId = await promptSelect(
+      `Choose project to ${action}:`,
+      projectIds.map((id) => ({
+        value: id,
+        label: config.projects[id].name ?? id,
+        hint: id,
+      })),
+    );
+    return { projectId, project: config.projects[projectId] };
   } else {
     throw new Error(
       `Multiple projects configured. Specify which one to ${action}:\n  ${projectIds.map((id) => `ao ${action} ${id}`).join("\n  ")}`,
@@ -176,18 +168,7 @@ async function askYesNo(
   nonInteractiveDefault = defaultYes,
 ): Promise<boolean> {
   if (!canPromptForInstall()) return nonInteractiveDefault;
-
-  const { createInterface } = await import("node:readline/promises");
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    const suffix = defaultYes ? "[Y/n]" : "[y/N]";
-    const answer = await rl.question(`${question} ${suffix}: `);
-    const normalized = answer.trim().toLowerCase();
-    if (!normalized) return defaultYes;
-    return normalized === "y" || normalized === "yes";
-  } finally {
-    rl.close();
-  }
+  return await promptConfirm(question, defaultYes);
 }
 
 function gitInstallAttempts(): InstallAttempt[] {
@@ -338,40 +319,37 @@ async function promptInstallAgentRuntime(available: DetectedAgent[]): Promise<De
 
   console.log(chalk.yellow("⚠ No supported agent runtime detected."));
   console.log(chalk.dim("  You can install one now (recommended) or continue and install later.\n"));
-  const skipOption = AGENT_INSTALL_OPTIONS.length + 1;
-  AGENT_INSTALL_OPTIONS.forEach((option, i) => {
-    const command = [option.cmd, ...option.args].join(" ");
-    console.log(`  ${i + 1}. ${option.label} (${option.id}) — ${command}`);
-  });
-  console.log(`  ${skipOption}. Skip for now\n`);
+  const choice = await promptSelect(
+    "Choose runtime to install:",
+    [
+      ...AGENT_INSTALL_OPTIONS.map((option) => ({
+        value: option.id,
+        label: option.label,
+        hint: [option.cmd, ...option.args].join(" "),
+      })),
+      { value: "skip", label: "Skip for now" },
+    ],
+  );
+  if (choice === "skip") {
+    return available;
+  }
 
-  const { createInterface } = await import("node:readline/promises");
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const selected = AGENT_INSTALL_OPTIONS.find((option) => option.id === choice);
+  if (!selected) {
+    return available;
+  }
+
+  console.log(chalk.dim(`  Installing ${selected.label}...`));
   try {
-    const choice = await rl.question(`  Choose runtime to install [1-${skipOption}]: `);
-    const idx = Number.parseInt(choice.trim(), 10);
-    if (!Number.isFinite(idx) || idx < 1 || idx > skipOption) {
-      return available;
+    await runInteractiveCommand(selected.cmd, selected.args);
+    const refreshed = await detectAvailableAgents();
+    if (refreshed.length > 0) {
+      console.log(chalk.green(`  ✓ ${selected.label} installed successfully`));
     }
-    if (idx === skipOption) {
-      return available;
-    }
-
-    const selected = AGENT_INSTALL_OPTIONS[idx - 1];
-    console.log(chalk.dim(`  Installing ${selected.label}...`));
-    try {
-      await runInteractiveCommand(selected.cmd, selected.args);
-      const refreshed = await detectAvailableAgents();
-      if (refreshed.length > 0) {
-        console.log(chalk.green(`  ✓ ${selected.label} installed successfully`));
-      }
-      return refreshed;
-    } catch {
-      console.log(chalk.yellow(`  ⚠ Could not install ${selected.label} automatically.`));
-      return available;
-    }
-  } finally {
-    rl.close();
+    return refreshed;
+  } catch {
+    console.log(chalk.yellow(`  ⚠ Could not install ${selected.label} automatically.`));
+    return available;
   }
 }
 
@@ -1101,17 +1079,18 @@ export function registerStart(program: Command): void {
               console.log(`  PID: ${running.pid} | Up since: ${running.startedAt}`);
               console.log(`  Projects: ${running.projects.join(", ")}\n`);
 
-              // Interactive menu
-              const { createInterface } = await import("node:readline/promises");
-              const rl = createInterface({ input: process.stdin, output: process.stdout });
-              console.log("  1. Open dashboard (keep current)");
-              console.log("  2. Start new orchestrator on this project");
-              console.log("  3. Override — restart everything");
-              console.log("  4. Quit\n");
-              const choice = await rl.question("  Choice [1-4]: ");
-              rl.close();
+              const choice = await promptSelect(
+                "AO is already running. What do you want to do?",
+                [
+                  { value: "open", label: "Open dashboard", hint: "Keep the current instance" },
+                  { value: "new", label: "Start new orchestrator", hint: "Add a new session for this project" },
+                  { value: "restart", label: "Restart everything", hint: "Stop the current instance first" },
+                  { value: "quit", label: "Quit" },
+                ],
+                "open",
+              );
 
-              if (choice.trim() === "1") {
+              if (choice === "open") {
                 const url = `http://localhost:${running.port}`;
                 const [cmd, args]: [string, string[]] =
                   process.platform === "win32"
@@ -1119,7 +1098,7 @@ export function registerStart(program: Command): void {
                     : [process.platform === "linux" ? "xdg-open" : "open", [url]];
                 spawn(cmd, args, { stdio: "ignore" });
                 process.exit(0);
-              } else if (choice.trim() === "2") {
+              } else if (choice === "new") {
                 // Generate unique orchestrator: same project, new session
                 const rawYaml = readFileSync(config.configPath, "utf-8");
                 const rawConfig = yamlParse(rawYaml);
@@ -1149,7 +1128,7 @@ export function registerStart(program: Command): void {
                 projectId = newId;
                 project = config.projects[newId];
                 // Continue to startup below
-              } else if (choice.trim() === "3") {
+              } else if (choice === "restart") {
                 try { process.kill(running.pid, "SIGTERM"); } catch { /* already dead */ }
                 if (!(await waitForExit(running.pid, 5000))) {
                   console.log(chalk.yellow("  Process didn't exit cleanly, sending SIGKILL..."));
