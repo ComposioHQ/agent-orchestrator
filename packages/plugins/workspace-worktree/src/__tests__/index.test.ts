@@ -217,6 +217,46 @@ describe("workspace.create()", () => {
     expect(info.path).toBe("/mock-home/.worktrees/myproject/session-1");
   });
 
+  it("uses refs/heads/<defaultBranch> when origin is missing", async () => {
+    const ws = create();
+
+    mockGitError("fatal: not a git repository"); // git remote get-url origin fails
+    mockGitSuccess(""); // git rev-parse --verify --quiet refs/heads/main
+    mockGitSuccess(""); // worktree add succeeds
+
+    await ws.create(makeCreateConfig());
+
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      ["rev-parse", "--verify", "--quiet", "refs/heads/main"],
+      { cwd: "/repo/path" },
+    );
+
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      [
+        "worktree",
+        "add",
+        "-b",
+        "feat/TEST-1",
+        "/mock-home/.worktrees/myproject/session-1",
+        "refs/heads/main",
+      ],
+      { cwd: "/repo/path" },
+    );
+  });
+
+  it("throws when neither origin nor the local default branch can be resolved", async () => {
+    const ws = create();
+
+    mockGitError("fatal: not a git repository"); // git remote get-url origin fails
+    mockGitError("fatal: invalid reference"); // git rev-parse --verify --quiet refs/heads/main
+
+    await expect(ws.create(makeCreateConfig())).rejects.toThrow(
+      'Unable to resolve base ref for default branch "main"',
+    );
+  });
+
   it("handles branch already exists by adding worktree then checking out", async () => {
     const ws = create();
 
@@ -364,6 +404,7 @@ describe("workspace.create()", () => {
     const ws = create();
 
     mockGitError("fatal: not a git repository"); // git remote get-url origin fails
+    mockGitSuccess(""); // git rev-parse --verify --quiet refs/heads/main
     mockGitSuccess(""); // worktree add
 
     await ws.create(makeCreateConfig());
@@ -376,7 +417,7 @@ describe("workspace.create()", () => {
         "-b",
         "feat/TEST-1",
         "/mock-home/.worktrees/myproject/session-1",
-        "main",
+        "refs/heads/main",
       ],
       { cwd: "/repo/path" },
     );
@@ -417,7 +458,8 @@ describe("workspace.restore()", () => {
     mockGitSuccess(""); // git worktree prune
     mockGitError("fatal: not a git repository"); // git remote get-url origin fails
     mockGitError("fatal: invalid reference"); // git worktree add workspacePath cfg.branch fails
-    mockGitSuccess(""); // git worktree add -b cfg.branch workspacePath main
+    mockGitSuccess(""); // git rev-parse --verify --quiet refs/heads/main
+    mockGitSuccess(""); // git worktree add -b cfg.branch workspacePath refs/heads/main
 
     const info = await ws.restore!(makeCreateConfig(), "/mock-home/.worktrees/myproject/session-1");
 
@@ -429,7 +471,7 @@ describe("workspace.restore()", () => {
         "-b",
         "feat/TEST-1",
         "/mock-home/.worktrees/myproject/session-1",
-        "main",
+        "refs/heads/main",
       ],
       { cwd: "/repo/path" },
     );

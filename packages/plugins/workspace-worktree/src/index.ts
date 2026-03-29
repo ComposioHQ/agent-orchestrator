@@ -64,7 +64,10 @@ async function resolveBaseRef(
     if (await refExists(repoPath, remoteDefaultBranch)) return remoteDefaultBranch;
   }
 
-  return defaultBranch;
+  const localDefaultBranch = `refs/heads/${defaultBranch}`;
+  if (await refExists(repoPath, localDefaultBranch)) return localDefaultBranch;
+
+  throw new Error(`Unable to resolve base ref for default branch "${defaultBranch}"`);
 }
 
 /** Only allow safe characters in path segments to prevent directory traversal */
@@ -286,7 +289,15 @@ export function create(config?: Record<string, unknown>): Workspace {
           try {
             await git(repoPath, "worktree", "add", "-b", cfg.branch, workspacePath, baseRef);
           } catch {
-            await git(repoPath, "worktree", "add", "-b", cfg.branch, workspacePath, cfg.project.defaultBranch);
+            await git(
+              repoPath,
+              "worktree",
+              "add",
+              "-b",
+              cfg.branch,
+              workspacePath,
+              `refs/heads/${cfg.project.defaultBranch}`,
+            );
           }
         }
       }
