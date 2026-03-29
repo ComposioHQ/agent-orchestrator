@@ -226,8 +226,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     // Track activity state across steps so stuck detection can run after PR checks
     let detectedIdleTimestamp: Date | null = null;
 
+    // For sessions already in "killed" state that have an open PR, skip runtime
+    // liveness checks (steps 1 & 2) and go straight to PR state checks (step 4).
+    // This allows ci_failed, merge_conflicts, and mergeable states to be detected
+    // so the corresponding reactions (ci-failed, merge-conflicts, approved-and-green)
+    // can still fire after the agent process has exited.
+    const alreadyKilled = session.status === "killed";
+
     // 1. Check if runtime is alive
-    if (session.runtimeHandle) {
+    if (!alreadyKilled && session.runtimeHandle) {
       const runtime = registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime);
       if (runtime) {
         const alive = await runtime.isAlive(session.runtimeHandle).catch(() => true);
@@ -236,7 +243,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
 
     // 2. Check agent activity — prefer JSONL-based detection (runtime-agnostic)
-    if (agent && session.runtimeHandle) {
+    if (!alreadyKilled && agent && session.runtimeHandle) {
       try {
         // Try JSONL-based activity detection first (reads agent's session files directly)
         const activityState = await agent.getActivityState(session, config.readyThresholdMs);
@@ -804,11 +811,17 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
       // Include sessions that are active OR whose status changed from what we last saw
       // (e.g., list() detected a dead runtime and marked it "killed" — we need to
-      // process that transition even though the new status is terminal)
+      // process that transition even though the new status is terminal).
+      // Also keep killed sessions that have an open PR so that CI status and merge
+      // conflict changes can still be detected and trigger reactions (ci-failed,
+      // merge-conflicts, approved-and-green) even after the agent process has exited.
       const sessionsToCheck = sessions.filter((s) => {
         if (s.status !== "merged" && s.status !== "killed") return true;
         const tracked = states.get(s.id);
-        return tracked !== undefined && tracked !== s.status;
+        if (tracked !== undefined && tracked !== s.status) return true;
+        // Keep killed sessions with an open PR so PR-related reactions can still fire
+        if (s.status === "killed" && s.pr) return true;
+        return false;
       });
 
       // Poll all sessions concurrently
