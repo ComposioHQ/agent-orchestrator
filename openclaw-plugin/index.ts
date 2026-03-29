@@ -559,7 +559,7 @@ export default function (api: PluginApi) {
   function buildLiveContext(): string | null {
     try {
       const issuesResult = fetchIssues(config);
-      const sessionsResult = tryRunAo(config, ["status"], 10_000);
+      const sessionsResult = tryRunAo(config, ["status"], 30_000);
 
       const issuesSummary = !issuesResult.ok
         ? issuesResult.error
@@ -705,14 +705,14 @@ export default function (api: PluginApi) {
 
       switch (subcommand) {
         case "sessions": {
-          const result = tryRunAo(config, ["status"]);
+          const result = tryRunAo(config, ["status"], 30_000);
           if (!result.ok) return { text: `Failed to get sessions:\n${result.error}` };
           return { text: result.output || "No active sessions." };
         }
 
         case "status": {
           // `ao status` shows all sessions; no per-session lookup available
-          const result = tryRunAo(config, ["status"]);
+          const result = tryRunAo(config, ["status"], 30_000);
           if (!result.ok) return { text: `Failed:\n${result.error}` };
           return { text: result.output };
         }
@@ -871,7 +871,7 @@ export default function (api: PluginApi) {
       "their status, branches, and progress. Use when the user asks about status or progress.",
     parameters: { type: "object", properties: {}, required: [] },
     async execute() {
-      const result = tryRunAo(config, ["status"]);
+      const result = tryRunAo(config, ["status"], 30_000);
       if (!result.ok) {
         return {
           content: [{ type: "text", text: `Failed to get sessions: ${result.error}` }],
@@ -1008,7 +1008,7 @@ export default function (api: PluginApi) {
 
       // Schedule auto follow-ups
       const checkStatus = (label: string) => {
-        const status = tryRunAo(config, ["status"], 10_000);
+        const status = tryRunAo(config, ["status"], 30_000);
         const msg = status.ok ? status.output : "Could not reach AO for status check.";
         try {
           api.runtime?.sendMessageToDefaultSession?.(
@@ -1053,7 +1053,7 @@ export default function (api: PluginApi) {
       required: ["sessionId", "message"],
     },
     async execute(_toolCallId: string, params: { sessionId: string; message: string }) {
-      const result = tryRunAo(config, ["send", sanitizeCliArg(params.sessionId), params.message]);
+      const result = tryRunAo(config, ["send", sanitizeCliArg(params.sessionId), params.message], 30_000);
       if (!result.ok) {
         return {
           content: [{ type: "text", text: `Failed to send: ${result.error}` }],
@@ -1329,7 +1329,7 @@ export default function (api: PluginApi) {
       const args = ["status"];
       if (params.project) args.push("-p", params.project);
       if (params.json) args.push("--json");
-      const result = tryRunAo(config, args, 15_000);
+      const result = tryRunAo(config, args, 30_000);
       if (!result.ok) {
         return {
           content: [{ type: "text", text: `Status failed: ${result.error}` }],
@@ -1360,7 +1360,7 @@ export default function (api: PluginApi) {
 
       api.logger.info(`[ao-health] Starting (every ${pollMs / 1000}s)`);
       healthInterval = setInterval(() => {
-        const result = tryRunAo(config, ["status"], 10_000);
+        const result = tryRunAo(config, ["status"], 30_000);
         if (!result.ok) {
           api.logger.warn(`[ao-health] AO unreachable: ${result.error}`);
         }
