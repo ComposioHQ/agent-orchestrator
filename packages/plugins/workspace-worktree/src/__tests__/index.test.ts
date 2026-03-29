@@ -283,6 +283,30 @@ describe("workspace.create()", () => {
     expect(info.branch).toBe("feat/TEST-1");
   });
 
+  it("handles existing branch with local default-branch fallback when origin is missing", async () => {
+    const ws = create();
+
+    mockGitError("fatal: not a git repository"); // git remote get-url origin fails
+    mockGitSuccess(""); // git rev-parse --verify --quiet refs/heads/main
+    mockGitError("already exists"); // worktree add -b fails
+    mockGitSuccess(""); // worktree add without -b using refs/heads/main
+    mockGitSuccess(""); // checkout existing branch
+
+    const info = await ws.create(makeCreateConfig());
+
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      ["worktree", "add", "/mock-home/.worktrees/myproject/session-1", "refs/heads/main"],
+      { cwd: "/repo/path" },
+    );
+
+    expect(mockExecFileAsync).toHaveBeenCalledWith("git", ["checkout", "feat/TEST-1"], {
+      cwd: "/mock-home/.worktrees/myproject/session-1",
+    });
+
+    expect(info.branch).toBe("feat/TEST-1");
+  });
+
   it("cleans up worktree on checkout failure", async () => {
     const ws = create();
 
