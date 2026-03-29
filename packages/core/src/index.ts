@@ -116,6 +116,7 @@ export {
 export type {
   ObservabilityMetricName,
   ObservabilityHealthStatus,
+  ObservabilityLevel,
   ObservabilitySummary,
   ProjectObserver,
 } from "./observability.js";

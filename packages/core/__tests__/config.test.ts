@@ -1,18 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, writeFileSync, rmSync, realpathSync } from "node:fs";
 import { join } from "node:path";
-import type * as NodeOs from "node:os";
-import { tmpdir, homedir } from "node:os";
+import { tmpdir } from "node:os";
 import { loadConfig, findConfigFile } from "../src/config.js";
 import { ConfigNotFoundError } from "../src/types.js";
-
-vi.mock("node:os", async (importOriginal) => {
-  const actual = (await importOriginal()) as typeof NodeOs;
-  return {
-    ...actual,
-    homedir: vi.fn(actual.homedir),
-  };
-});
 
 describe("Config Loading", () => {
   let testDir: string;
@@ -20,22 +11,16 @@ describe("Config Loading", () => {
   let originalEnv: NodeJS.ProcessEnv;
 
   beforeEach(() => {
-    // Create temp test directory with a unique subdir to isolate from parent tree
-    const baseDir = join(tmpdir(), `ao-test-${Date.now()}`);
-    mkdirSync(baseDir, { recursive: true });
-    testDir = baseDir;
+    // Create temp test directory
+    testDir = join(tmpdir(), `ao-test-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
 
     // Save original state
     originalCwd = process.cwd();
     originalEnv = { ...process.env };
 
-    // Clear AO_CONFIG_PATH to ensure tests control discovery
-    delete process.env["AO_CONFIG_PATH"];
-
-    // Mock homedir to point to an empty subdir so home-based discovery doesn't find real configs
-    const fakeHome = join(testDir, "fakehome");
-    mkdirSync(fakeHome, { recursive: true });
-    vi.mocked(homedir).mockReturnValue(fakeHome);
+    // Clear AO_CONFIG_PATH to ensure test isolation
+    delete process.env.AO_CONFIG_PATH;
 
     // Change to test directory
     process.chdir(testDir);
@@ -45,7 +30,6 @@ describe("Config Loading", () => {
     // Restore original state
     process.chdir(originalCwd);
     process.env = originalEnv;
-    vi.mocked(homedir).mockRestore();
 
     // Cleanup test directory
     try {
@@ -84,11 +68,6 @@ describe("Config Loading", () => {
     });
 
     it("should return null if no config found", () => {
-      // Ensure we're in an isolated subdir with no config anywhere up the tree
-      const isolatedDir = join(testDir, "isolated", "deep", "subdir");
-      mkdirSync(isolatedDir, { recursive: true });
-      process.chdir(isolatedDir);
-
       const found = findConfigFile();
       expect(found).toBeNull();
     });
@@ -135,11 +114,6 @@ projects:
     });
 
     it("should throw error if config not found", () => {
-      // Ensure we're in an isolated subdir with no config anywhere up the tree
-      const isolatedDir = join(testDir, "isolated", "deep", "subdir");
-      mkdirSync(isolatedDir, { recursive: true });
-      process.chdir(isolatedDir);
-
       expect(() => loadConfig()).toThrow(ConfigNotFoundError);
     });
   });
