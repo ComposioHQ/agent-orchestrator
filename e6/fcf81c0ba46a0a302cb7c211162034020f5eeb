@@ -1,0 +1,36 @@
+docs/DASHBOARD-UNIFICATION.md
+  ff23df7c065129b1 1-181
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.22",
+  "base_commit_sha": "e6fcf81c0ba46a0a302cb7c211162034020f5eeb",
+  "prompts": {
+    "0dfd38dd4ee786a5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2e970658-5121-43b1-a9a3-6c5d8ee9a2b3",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 74,
+      "total_deletions": 83,
+      "accepted_lines": 73,
+      "overriden_lines": 0
+    },
+    "ff23df7c065129b1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e0194d48-ee96-4704-8265-2bb7f4ec2d42",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>",
+      "messages": [],
+      "total_additions": 181,
+      "total_deletions": 0,
+      "accepted_lines": 181,
+      "overriden_lines": 0
+    }
+  }
+}
