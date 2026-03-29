@@ -35,10 +35,24 @@ function reducer(state: State, action: Action): State {
       const next = state.sessions.map((s) => {
         const patch = patchMap.get(s.id);
         if (!patch) return s;
+
+        // Check if any field we care about has changed
+        const prCiStatusChanged =
+          patch.prCiStatus !== undefined &&
+          patch.prCiStatus !== null &&
+          s.pr !== null &&
+          s.pr?.ciStatus !== patch.prCiStatus;
+        const prCiChecksChanged =
+          patch.prCiChecks !== undefined &&
+          patch.prCiChecks !== null &&
+          s.pr !== null;
+
         if (
           s.status === patch.status &&
           s.activity === patch.activity &&
-          s.lastActivityAt === patch.lastActivityAt
+          s.lastActivityAt === patch.lastActivityAt &&
+          !prCiStatusChanged &&
+          !prCiChecksChanged
         ) {
           return s;
         }
@@ -48,6 +62,16 @@ function reducer(state: State, action: Action): State {
           status: patch.status,
           activity: patch.activity,
           lastActivityAt: patch.lastActivityAt,
+          // Patch PR CI data when the snapshot includes fresh cache data
+          ...(s.pr && patch.prCiStatus !== null && patch.prCiStatus !== undefined
+            ? {
+                pr: {
+                  ...s.pr,
+                  ciStatus: patch.prCiStatus,
+                  ciChecks: patch.prCiChecks ?? s.pr.ciChecks,
+                },
+              }
+            : {}),
         };
       });
       return changed ? { ...state, sessions: next } : state;
