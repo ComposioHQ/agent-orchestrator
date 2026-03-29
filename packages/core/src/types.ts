@@ -199,6 +199,8 @@ export interface SessionSpawnConfig {
 export interface OrchestratorSpawnConfig {
   projectId: string;
   systemPrompt?: string;
+  /** Override the agent plugin for this orchestrator (e.g. "codex", "claude-code", "opencode") */
+  agent?: string;
 }
 
 // =============================================================================

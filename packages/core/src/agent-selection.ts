@@ -40,13 +40,11 @@ export function resolveAgentSelection(params: {
 
   const agentName = persistedAgent
     ? persistedAgent
-    : role === "worker"
-      ? (spawnAgentOverride ??
-        roleProjectConfig?.agent ??
-        project.agent ??
-        roleDefaults?.agent ??
-        defaults.agent)
-      : (roleProjectConfig?.agent ?? project.agent ?? roleDefaults?.agent ?? defaults.agent);
+    : (spawnAgentOverride ??
+      roleProjectConfig?.agent ??
+      project.agent ??
+      roleDefaults?.agent ??
+      defaults.agent);
 
   const agentConfig: AgentSpecificConfig = {
     ...sharedConfig,

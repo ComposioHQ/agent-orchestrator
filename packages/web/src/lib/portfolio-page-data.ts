@@ -39,6 +39,7 @@ export async function loadPortfolioPageData(): Promise<{
   const summaries = new Map<string, PortfolioProjectSummary>();
 
   for (const project of portfolio) {
+    if (project.enabled === false) continue;
     summaries.set(project.id, {
       id: project.id,
       name: project.name,

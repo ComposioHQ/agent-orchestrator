@@ -1210,6 +1210,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       role: "orchestrator",
       project,
       defaults: config.defaults,
+      spawnAgentOverride: orchestratorConfig.agent,
     });
     const plugins = resolvePlugins(project, selection.agentName);
     if (!plugins.runtime) {

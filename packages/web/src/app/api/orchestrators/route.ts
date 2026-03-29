@@ -23,8 +23,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `Unknown project: ${projectId}` }, { status: 404 });
     }
 
+    const agent = typeof body.agent === "string" ? body.agent : undefined;
     const systemPrompt = generateOrchestratorPrompt({ config, projectId, project });
-    const session = await sessionManager.spawnOrchestrator({ projectId, systemPrompt });
+    const session = await sessionManager.spawnOrchestrator({ projectId, systemPrompt, agent });
 
     return NextResponse.json(
       {
