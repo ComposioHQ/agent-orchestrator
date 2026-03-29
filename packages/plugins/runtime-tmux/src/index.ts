@@ -34,15 +34,12 @@ function assertValidSessionId(id: string): void {
   }
 }
 
-function writeLaunchScript(command: string): string {
+function writeLaunchScript(command: string): { invocation: string; scriptPath: string } {
   const scriptPath = join(tmpdir(), `ao-launch-${randomUUID()}.sh`);
-  const content = `#!/usr/bin/env bash
-rm -- "$0" 2>/dev/null || true
-${command}
-`;
+  const content = `#!/usr/bin/env bash\n${command}\n`;
   writeFileSync(scriptPath, content, { encoding: "utf-8", mode: 0o700 });
   const invocation = `bash ${shellEscape(scriptPath)}`;
-  return invocation
+  return { invocation, scriptPath };
 }
 
 /** Run a tmux command and return stdout */
@@ -87,8 +84,16 @@ export function create(): Runtime {
       // invocation instead of a pasted wall of shell.
       try {
         if (config.launchCommand.length > 200) {
-          const invocation = writeLaunchScript(config.launchCommand);
-          await tmux("send-keys", "-t", sessionName, "-l", invocation);
+          const { scriptPath, invocation } = writeLaunchScript(config.launchCommand);
+          try {
+            await tmux("send-keys", "-t", sessionName, "-l", invocation);
+          } finally {
+            try {
+              unlinkSync(scriptPath);
+            } catch {
+              // ignore cleanup errors
+            }
+          }
           await sleep(300);
           await tmux("send-keys", "-t", sessionName, "Enter");
         } else {
