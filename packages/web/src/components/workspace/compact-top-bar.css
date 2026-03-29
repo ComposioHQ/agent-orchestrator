@@ -68,11 +68,16 @@
   background: none;
   border: none;
   cursor: pointer;
-  padding: 4px;
   color: var(--color-text-secondary);
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  /* Touch target: full bar height, square */
+  min-width: 40px;
+  min-height: 40px;
+  margin: 0;
+  margin-left: -12px; /* negate parent's padding-left so button is flush-left */
+  padding: 0;
 }
 
 .compact-top-bar__right {
@@ -83,6 +88,12 @@
   flex-wrap: wrap;
   min-width: 0;
   max-width: 100%;
+}
+
+.compact-top-bar--dashboard .compact-top-bar__sidebar-toggle {
+  align-self: stretch;
+  margin-top: -6px;
+  margin-bottom: -6px;
 }
 
 /* Dashboard: multi-line when needed, priority controls stay tappable */
@@ -100,6 +111,12 @@
     align-items: center;
     padding-top: 0;
     padding-bottom: 0;
+  }
+
+  .compact-top-bar--dashboard .compact-top-bar__sidebar-toggle {
+    align-self: center;
+    margin-top: 0;
+    margin-bottom: 0;
   }
 }
 
