@@ -417,7 +417,11 @@ export function findConfigFile(startDir?: string): string | null {
       try {
         const raw = readFileSync(configPath, "utf-8");
         const parsed = parseYaml(raw);
-        if (!parsed || typeof parsed !== "object" || !("projects" in (parsed as Record<string, unknown>))) {
+        if (
+          !parsed ||
+          typeof parsed !== "object" ||
+          !("projects" in (parsed as Record<string, unknown>))
+        ) {
           // Flat local config — skip, keep searching upward
           continue;
         }
@@ -445,13 +449,29 @@ export function findConfigFile(startDir?: string): string | null {
   }
 
   // 3. Check explicit startDir if provided
+  //    Same flat-config check as step 2: after migration, project directories
+  //    contain a flat behavior-only config that should not be returned here.
   if (startDir) {
     const files = ["agent-orchestrator.yaml", "agent-orchestrator.yml"];
     for (const filename of files) {
       const path = resolve(startDir, filename);
-      if (existsSync(path)) {
-        return path;
+      if (!existsSync(path)) continue;
+
+      try {
+        const raw = readFileSync(path, "utf-8");
+        const parsed = parseYaml(raw);
+        if (
+          !parsed ||
+          typeof parsed !== "object" ||
+          !("projects" in (parsed as Record<string, unknown>))
+        ) {
+          continue;
+        }
+      } catch {
+        continue;
       }
+
+      return path;
     }
   }
 
