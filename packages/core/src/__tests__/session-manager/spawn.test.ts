@@ -1004,8 +1004,9 @@ describe("spawn", () => {
     expect(session.status).toBe("spawning");
     expect(mockRuntime.sendMessage).toHaveBeenCalled();
     expect(stderrSpy).toHaveBeenCalledWith(
-      expect.stringContaining('"operation":"metadata-update"'),
+      expect.stringContaining('"operation":"prompt-delivery.metadata-update"'),
     );
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('"level":"warn"'));
 
     updateMetadataSpy.mockRestore();
     stderrSpy.mockRestore();

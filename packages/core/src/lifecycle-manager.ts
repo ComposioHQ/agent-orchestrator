@@ -216,26 +216,34 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const promptAttemptedAt = session.metadata["promptDeliveryAttemptedAt"];
     if (!promptAttemptedAt) return;
 
-    const createdAt = new Date(promptAttemptedAt);
-    const ageMs = Date.now() - createdAt.getTime();
+    const attemptedAt = new Date(promptAttemptedAt);
+    const attemptedAtTime = attemptedAt.getTime();
+    if (!Number.isFinite(attemptedAtTime)) return;
+
+    let ageMs = Date.now() - attemptedAtTime;
+    if (ageMs < 0) {
+      ageMs = 0;
+    }
+
     const promptStatus = session.metadata["promptDeliveryStatus"];
     if (ageMs >= 120_000 || promptStatus === "success") return;
 
     const isTerminalDetection = options?.detectionMethod === "terminal";
-    const anomalyLogEntry = {
-      source: "ao-lifecycle-manager",
-      component: "anomaly-detection",
+    observer.recordOperation({
+      metric: "lifecycle_poll",
       operation: "early-needs-input",
-      outcome: "detected" as const,
+      outcome: "failure",
+      correlationId: createCorrelationId("early-needs-input"),
       sessionId: session.id,
       projectId: session.projectId,
-      reason: `Session entered needs_input within ${Math.round(ageMs / 1000)}s of creation${isTerminalDetection ? " (terminal detection)" : ""}. Likely prompt delivery failure (status: ${promptStatus ?? "unknown"}).`,
-      ageMs,
-      promptDeliveryStatus: promptStatus ?? "unknown",
-      ...(isTerminalDetection ? { detectionMethod: "terminal" as const } : {}),
-      timestamp: new Date().toISOString(),
-    };
-    process.stderr.write(`${JSON.stringify(anomalyLogEntry)}\n`);
+      reason: `Session entered needs_input within ${Math.round(ageMs / 1000)}s of prompt delivery attempt${isTerminalDetection ? " (terminal detection)" : ""}. Likely prompt delivery failure (status: ${promptStatus ?? "unknown"}).`,
+      data: {
+        ageMs,
+        promptDeliveryStatus: promptStatus ?? "unknown",
+        ...(isTerminalDetection ? { detectionMethod: "terminal" as const } : {}),
+      },
+      level: "warn",
+    });
   }
 
   /** Determine current status for a session by polling plugins. */

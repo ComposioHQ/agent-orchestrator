@@ -63,6 +63,7 @@ import {
   generateConfigHash,
   validateAndStoreOrigin,
 } from "./paths.js";
+import { createCorrelationId, createProjectObserver } from "./observability.js";
 import { asValidOpenCodeSessionId } from "./opencode-session-id.js";
 import { normalizeOrchestratorSessionStrategy } from "./orchestrator-session-strategy.js";
 import {
@@ -265,6 +266,7 @@ export interface SessionManagerDeps {
 /** Create a SessionManager instance. */
 export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionManager {
   const { config, registry } = deps;
+  const observer = createProjectObserver(config, "session-manager");
 
   interface LocatedSession {
     raw: Record<string, string>;
@@ -1191,17 +1193,16 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           updateMetadata(sessionsDir, sessionId, patch);
         } catch (err) {
           const errorDetails = err instanceof Error ? err.message : String(err);
-          const metadataFailureLogEntry = {
-            source: "ao-session-manager",
-            component: "prompt-delivery",
-            operation: "metadata-update",
-            outcome: "failure" as const,
+          observer.recordOperation({
+            metric: "spawn",
+            operation: "prompt-delivery.metadata-update",
+            outcome: "failure",
+            correlationId: createCorrelationId("spawn-prompt-metadata"),
             sessionId,
             projectId: spawnConfig.projectId,
             reason: `Failed to persist prompt delivery metadata: ${errorDetails}`,
-            timestamp: new Date().toISOString(),
-          };
-          process.stderr.write(`${JSON.stringify(metadataFailureLogEntry)}\n`);
+            level: "warn",
+          });
         }
       };
 
@@ -1219,48 +1220,53 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           await plugins.runtime.sendMessage(handle, agentLaunchConfig.prompt);
 
           promptDeliveryStatus = "success";
-          const successLogEntry = {
-            source: "ao-session-manager",
-            component: "prompt-delivery",
-            operation: "post-launch-prompt",
-            outcome: "success" as const,
+          observer.recordOperation({
+            metric: "spawn",
+            operation: "prompt-delivery.post-launch",
+            outcome: "success",
+            correlationId: createCorrelationId("spawn-prompt-delivery"),
             sessionId,
             projectId: spawnConfig.projectId,
             reason: `Initial prompt delivered on attempt ${attempt + 1}`,
-            attempt: attempt + 1,
-            timestamp: new Date().toISOString(),
-          };
-          process.stderr.write(`${JSON.stringify(successLogEntry)}\n`);
+            data: {
+              attempt: attempt + 1,
+              maxAttempts,
+            },
+            level: "info",
+          });
           break;
         } catch (err) {
           const errorDetails = err instanceof Error ? err.message : String(err);
-          const failureLogEntry = {
-            source: "ao-session-manager",
-            component: "prompt-delivery",
-            operation: "post-launch-prompt",
-            outcome: "failure" as const,
+          observer.recordOperation({
+            metric: "spawn",
+            operation: "prompt-delivery.post-launch",
+            outcome: "failure",
+            correlationId: createCorrelationId("spawn-prompt-delivery"),
             sessionId,
             projectId: spawnConfig.projectId,
             reason: `Failed to deliver initial prompt on attempt ${attempt + 1}/${maxAttempts}: ${errorDetails}`,
-            attempt: attempt + 1,
-            maxAttempts,
-            timestamp: new Date().toISOString(),
-          };
-          process.stderr.write(`${JSON.stringify(failureLogEntry)}\n`);
+            data: {
+              attempt: attempt + 1,
+              maxAttempts,
+            },
+            level: "warn",
+          });
 
           if (attempt === maxAttempts - 1) {
             promptDeliveryStatus = "failed";
-            const finalFailureLogEntry = {
-              source: "ao-session-manager",
-              component: "prompt-delivery",
-              operation: "post-launch-prompt",
-              outcome: "failure" as const,
+            observer.recordOperation({
+              metric: "spawn",
+              operation: "prompt-delivery.post-launch",
+              outcome: "failure",
+              correlationId: createCorrelationId("spawn-prompt-delivery"),
               sessionId,
               projectId: spawnConfig.projectId,
               reason: `All ${maxAttempts} attempts to deliver initial prompt failed. Agent may need manual input via 'ao send'.`,
-              timestamp: new Date().toISOString(),
-            };
-            process.stderr.write(`${JSON.stringify(finalFailureLogEntry)}\n`);
+              data: {
+                maxAttempts,
+              },
+              level: "warn",
+            });
           }
         }
       }

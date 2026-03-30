@@ -230,6 +230,7 @@ describe("check (single session)", () => {
     expect(stderrSpy).toHaveBeenCalledWith(
       expect.stringContaining('"operation":"early-needs-input"'),
     );
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('"level":"warn"'));
     expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('"detectionMethod":"terminal"'));
 
     stderrSpy.mockRestore();
@@ -263,6 +264,7 @@ describe("check (single session)", () => {
     expect(stderrSpy).toHaveBeenCalledWith(
       expect.stringContaining('"promptDeliveryStatus":"failed"'),
     );
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('"level":"warn"'));
 
     stderrSpy.mockRestore();
   });
