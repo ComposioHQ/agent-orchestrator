@@ -202,6 +202,7 @@ import { POST as killPOST } from "@/app/api/sessions/[id]/kill/route";
 import { POST as restorePOST } from "@/app/api/sessions/[id]/restore/route";
 import { POST as remapPOST } from "@/app/api/sessions/[id]/remap/route";
 import { POST as mergePOST } from "@/app/api/prs/[id]/merge/route";
+import { POST as verifyPOST } from "@/app/api/verify/route";
 import { GET as eventsGET } from "@/app/api/events/route";
 import { GET as observabilityGET } from "@/app/api/observability/route";
 import { GET as runtimeTerminalGET } from "@/app/api/runtime/terminal/route";
@@ -633,6 +634,62 @@ describe("API Routes", () => {
       expect(res.status).toBe(500);
       const data = await res.json();
       expect(data.error).toBe("boom");
+    });
+  });
+
+  describe("POST /api/verify", () => {
+    it("returns 400 for malformed JSON", async () => {
+      const req = makeRequest("/api/verify", {
+        method: "POST",
+        body: "not json",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const res = await verifyPOST(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toMatch(/Invalid JSON body/);
+    });
+
+    it("verifies an issue when payload is valid", async () => {
+      const trackerUpdateIssue = vi.fn(async () => undefined);
+      (mockRegistry.get as ReturnType<typeof vi.fn>).mockReturnValue({
+        ...mockSCM,
+        updateIssue: trackerUpdateIssue,
+      });
+
+      const previousProjectConfig = mockConfig.projects["my-app"];
+      mockConfig.projects["my-app"] = {
+        ...previousProjectConfig,
+        tracker: { plugin: "github" },
+      };
+
+      try {
+        const req = makeRequest("/api/verify", {
+          method: "POST",
+          body: JSON.stringify({
+            issueId: "INT-800",
+            projectId: "my-app",
+            action: "verify",
+          }),
+          headers: { "Content-Type": "application/json" },
+        });
+
+        const res = await verifyPOST(req);
+
+        expect(res.status).toBe(200);
+        expect(trackerUpdateIssue).toHaveBeenCalledWith(
+          "INT-800",
+          expect.objectContaining({
+            state: "closed",
+            labels: ["verified", "agent:done"],
+            removeLabels: ["merged-unverified"],
+          }),
+          mockConfig.projects["my-app"],
+        );
+      } finally {
+        mockConfig.projects["my-app"] = previousProjectConfig;
+      }
     });
   });
 
