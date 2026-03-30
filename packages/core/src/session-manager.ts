@@ -1078,6 +1078,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
               archivedSessionObj,
               project,
             );
+            if (nativeResumeCommand) {
+              resumedFromSessionId = archivedSession.sessionId;
+            }
           } catch {
             // getRestoreCommand failed — fall through to context injection
           }
@@ -1095,13 +1098,12 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
             if (prevContext) {
               const contextSection = formatPreviousSessionContext(prevContext);
               composedPrompt = contextSection + "\n\n" + composedPrompt;
+              resumedFromSessionId = archivedSession.sessionId;
             }
           } catch {
             // Context building failed — proceed with fresh launch
           }
         }
-
-        resumedFromSessionId = archivedSession.sessionId;
       }
     }
 

@@ -2170,6 +2170,31 @@ describe("spawn", () => {
       const meta = readMetadataRaw(sessionsDir, session.id);
       expect(meta!["resumedFrom"]).toBeUndefined();
     });
+
+    it("does not set resumedFrom when archived session has no useful context", async () => {
+      // Archive a session with no summary, no PR, no commits — nothing to inject
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: "/tmp/ws",
+        branch: "feat/INT-600",
+        status: "killed",
+        issue: "INT-600",
+        agent: "mock-agent",
+        createdAt: "2025-06-01T00:00:00.000Z",
+        // No summary, no PR — buildPreviousSessionContext will return null
+      });
+      deleteMetadata(sessionsDir, "app-1", true);
+
+      const sm = createSessionManager({ config, registry: mockRegistry });
+      const session = await sm.spawn({ projectId: "my-app", issueId: "INT-600" });
+
+      // resumedFrom should NOT be set because no actual context was injected
+      const meta = readMetadataRaw(sessionsDir, session.id);
+      expect(meta!["resumedFrom"]).toBeUndefined();
+
+      // Prompt should NOT contain previous session context
+      const launchConfig = (mockAgent.getLaunchCommand as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+      expect(launchConfig?.prompt).not.toContain("Previous Session Context");
+    });
   });
 });
 
