@@ -58,6 +58,7 @@ import {
   generateRulesFromTemplates,
   formatProjectTypeForDisplay,
 } from "../lib/project-detection.js";
+import { findProjectForDirectory } from "../lib/project-resolution.js";
 
 const DEFAULT_PORT = 3000;
 const IS_TTY = Boolean(process.stdin.isTTY && process.stdout.isTTY);
@@ -102,10 +103,9 @@ async function resolveProject(
   // Multiple projects — try matching cwd to a project path
   // Note: loadConfig() already expands ~ in project paths via expandPaths()
   const currentDir = resolve(cwd());
-  for (const [id, proj] of Object.entries(config.projects)) {
-    if (resolve(proj.path) === currentDir) {
-      return { projectId: id, project: proj };
-    }
+  const matchedProjectId = findProjectForDirectory(config.projects, currentDir);
+  if (matchedProjectId) {
+    return { projectId: matchedProjectId, project: config.projects[matchedProjectId] };
   }
 
   // No match — prompt if interactive, otherwise error
