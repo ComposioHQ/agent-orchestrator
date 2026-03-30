@@ -619,6 +619,7 @@ function createCodexAgent(): Agent {
   return {
     name: "codex",
     processName: "codex",
+    promptDelivery: "post-launch",
 
     getLaunchCommand(config: AgentLaunchConfig): string {
       const binary = resolvedBinary ?? "codex";
@@ -636,11 +637,9 @@ function createCodexAgent(): Agent {
         parts.push("-c", `developer_instructions=${shellEscape(config.systemPrompt)}`);
       }
 
-      if (config.prompt) {
-        // Use `--` to end option parsing so prompts starting with `-` aren't
-        // misinterpreted as flags.
-        parts.push("--", shellEscape(config.prompt));
-      }
+      // NOTE: prompt is NOT included here. Delivering it post-launch keeps
+      // Codex in interactive mode; inlining the prompt can cause Codex to run
+      // as a one-shot command and exit before AO can track live status.
 
       return parts.join(" ");
     },
@@ -673,10 +672,23 @@ function createCodexAgent(): Agent {
       // If Codex is showing its input prompt, it's idle
       if (/^[>$#]\s*$/.test(lastLine)) return "idle";
 
-      // Check last few lines for approval prompts
-      const tail = lines.slice(-5).join("\n");
+      // Check the recent buffer for approval prompts. Codex uses both the
+      // older "(y)es / (n)o" style and a newer numbered approval UI.
+      // Strip ANSI escape codes — tmux pane output is raw and contains color/
+      // cursor sequences that break regex matching.
+      const stripAnsi = (s: string): string =>
+        s.replace(/\x1b\[[0-9;]*[mGKHFABCDJr]/g, "");
+    
+      const tail = lines.slice(-15).map(stripAnsi).join("\n");
       if (/approval required/i.test(tail)) return "waiting_input";
       if (/\(y\)es.*\(n\)o/i.test(tail)) return "waiting_input";
+      if (/press enter to confirm or esc to cancel/i.test(tail)) return "waiting_input";
+
+      // Numbered approval menu fallback — matches the "1. Yes, proceed (y)" +
+      // "3. No, and tell Codex..." pattern seen in the Codex v0.117.0 UI.
+      const hasYesOption = /^\s*1\.\s*yes[,\s]/im.test(tail);
+      const hasNoOption = /^\s*[>*]?\s*[23]\.\s*no[,\s]/im.test(tail);
+      if (hasYesOption && hasNoOption) return "waiting_input";
 
       // Default to active — specific patterns (esc to interrupt, spinner
       // symbols) all map to "active" so no need to check them individually.

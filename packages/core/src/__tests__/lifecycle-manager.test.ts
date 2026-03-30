@@ -200,6 +200,61 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("needs_input");
   });
 
+  it("detects needs_input for codex from terminal output even when getActivityState returns idle", async () => {
+    const codexAgent: Agent = {
+      ...plugins.agent,
+      name: "codex",
+      processName: "codex",
+      getActivityState: vi.fn().mockResolvedValue({
+        state: "idle" as ActivityState,
+        timestamp: new Date(),
+      }),
+      detectActivity: vi.fn().mockReturnValue("waiting_input" as ActivityState),
+    };
+
+    const runtimeWithApprovalPrompt = {
+      ...plugins.runtime,
+      getOutput: vi.fn().mockResolvedValue("Approval required\n(y)es / (n)o\n"),
+    };
+
+    const registryWithCodex: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return runtimeWithApprovalPrompt;
+        if (slot === "agent") {
+          if (name === "codex") return codexAgent;
+          if (name === "mock-agent") return plugins.agent;
+        }
+        return null;
+      }),
+    };
+
+    const configWithCodexWorker: OrchestratorConfig = {
+      ...config,
+      projects: {
+        ...config.projects,
+        "my-app": {
+          ...config.projects["my-app"],
+          worker: { agent: "codex" },
+        },
+      },
+    };
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "working", metadata: { agent: "codex" } }),
+      metaOverrides: { agent: "codex" },
+      registry: registryWithCodex,
+      configOverride: configWithCodexWorker,
+    });
+
+    await lm.check("app-1");
+
+    expect(codexAgent.getActivityState).toHaveBeenCalled();
+    expect(runtimeWithApprovalPrompt.getOutput).toHaveBeenCalled();
+    expect(codexAgent.detectActivity).toHaveBeenCalledWith("Approval required\n(y)es / (n)o\n");
+    expect(lm.getStates().get("app-1")).toBe("needs_input");
+  });
+
   it("transitions to stuck when idle exceeds agent-stuck threshold (OpenCode-style activity)", async () => {
     config.reactions = {
       "agent-stuck": { auto: true, action: "notify", threshold: "1m" },
@@ -316,6 +371,25 @@ describe("check (single session)", () => {
 
     const lm = setupCheck("app-1", {
       session: makeSession({ status: "stuck" }),
+    });
+
+    await lm.check("app-1");
+    expect(lm.getStates().get("app-1")).toBe("stuck");
+  });
+
+  it("still marks a session as stuck when native idle detection succeeds but getOutput throws", async () => {
+    config.reactions = {
+      "agent-stuck": { auto: true, action: "notify", threshold: "1m" },
+    };
+
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({
+      state: "idle",
+      timestamp: new Date(Date.now() - 120_000),
+    });
+    vi.mocked(plugins.runtime.getOutput).mockRejectedValue(new Error("tmux error"));
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "working" }),
     });
 
     await lm.check("app-1");

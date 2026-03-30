@@ -196,6 +196,7 @@ describe("plugin manifest & exports", () => {
     const agent = create();
     expect(agent.name).toBe("codex");
     expect(agent.processName).toBe("codex");
+    expect(agent.promptDelivery).toBe("post-launch");
   });
 
   it("default export is a valid PluginModule", () => {
@@ -250,29 +251,29 @@ describe("getLaunchCommand", () => {
     expect(cmd).toContain("--model 'gpt-4o'");
   });
 
-  it("appends shell-escaped prompt with -- separator", () => {
+  it("does not inline the prompt into the launch command", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "Fix it" }));
-    expect(cmd).toContain("-- 'Fix it'");
+    expect(cmd).not.toContain("Fix it");
+    expect(cmd).not.toContain(" -- ");
   });
 
   it("combines all options", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ permissions: "permissionless", model: "o3", prompt: "Go" }),
     );
-    expect(cmd).toBe("'codex' -c check_for_update_on_startup=false --dangerously-bypass-approvals-and-sandbox --model 'o3' -c model_reasoning_effort=high -- 'Go'");
+    expect(cmd).toBe("'codex' -c check_for_update_on_startup=false --dangerously-bypass-approvals-and-sandbox --model 'o3' -c model_reasoning_effort=high");
   });
 
-  it("escapes single quotes in prompt (POSIX shell escaping)", () => {
+  it("does not include prompt text with quotes in the launch command", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ prompt: "it's broken" }));
-    expect(cmd).toContain("-- 'it'\\''s broken'");
+    expect(cmd).not.toContain("it's broken");
   });
 
-  it("escapes dangerous characters in prompt", () => {
+  it("does not include prompt text with dangerous shell characters in the launch command", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ prompt: "$(rm -rf /); `evil`; $HOME" }),
     );
-    // Single-quoted strings prevent shell expansion
-    expect(cmd).toContain("-- '$(rm -rf /); `evil`; $HOME'");
+    expect(cmd).not.toContain("$(rm -rf /); `evil`; $HOME");
   });
 
   it("includes -c model_instructions_file when systemPromptFile is set", () => {
@@ -581,6 +582,14 @@ describe("detectActivity", () => {
     ).toBe("waiting_input");
     expect(
       agent.detectActivity("Working (esc to interrupt)\nFinished\n(y)es / (n)o\n"),
+    ).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for the numbered command approval prompt", () => {
+    expect(
+      agent.detectActivity(
+        "Would you like to run the following command?\n\n$ printf '\\033[2J\\033[H'\n\n1. Yes, proceed (y)\n2. Yes, and don't ask again\n3. No, and tell Codex what to do differently (esc)\n\nPress enter to confirm or esc to cancel\n",
+      ),
     ).toBe("waiting_input");
   });
 

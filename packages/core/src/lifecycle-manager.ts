@@ -350,13 +350,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }).agentName;
     const agent = registry.get<Agent>("agent", agentName);
     const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    const runtime = session.runtimeHandle
+      ? registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime)
+      : null;
 
     // Track activity state across steps so stuck detection can run after PR checks
     let detectedIdleTimestamp: Date | null = null;
 
     // 1. Check if runtime is alive
     if (session.runtimeHandle) {
-      const runtime = registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime);
       if (runtime) {
         const alive = await runtime.isAlive(session.runtimeHandle).catch(() => true);
         if (!alive) return "killed";
@@ -379,14 +381,28 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             detectedIdleTimestamp = activityState.timestamp;
           }
 
+          // Some agents can surface higher-priority prompt states like
+          // waiting_input only through terminal parsing. Preserve the native
+          // activity probe, but allow recent output to upgrade the session
+          // into needs_input without forcing every agent to encode that state
+          // in getActivityState().
+          if (runtime) {
+            try {
+              const terminalOutput = await runtime.getOutput(session.runtimeHandle, 10);
+              if (terminalOutput) {
+                const activity = agent.detectActivity(terminalOutput);
+                if (activity === "waiting_input") return "needs_input";
+              }
+            } catch {
+              // Output probing is only an upgrade path for waiting_input.
+              // Preserve the native activity result if terminal capture fails.
+            }
+          }
+
           // active/ready/idle (below threshold)/blocked (below threshold) —
           // proceed to PR checks below
         } else {
           // getActivityState returned null — fall back to terminal output parsing
-          const runtime = registry.get<Runtime>(
-            "runtime",
-            project.runtime ?? config.defaults.runtime,
-          );
           const terminalOutput = runtime ? await runtime.getOutput(session.runtimeHandle, 10) : "";
           if (terminalOutput) {
             const activity = agent.detectActivity(terminalOutput);
