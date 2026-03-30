@@ -1,5 +1,8 @@
 import type { Command } from "commander";
 import chalk from "chalk";
+import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { homedir } from "node:os";
 import { createCorrelationId, createProjectObserver, loadConfig } from "@composio/ao-core";
 import { getLifecycleManager } from "../lib/create-session-manager.js";
 import {
@@ -7,6 +10,37 @@ import {
   getLifecycleWorkerStatus,
   writeLifecycleWorkerPid,
 } from "../lib/lifecycle-service.js";
+
+// Stable PID file for poll-all mode, located in the global data dir
+// rather than under a project dir (which would be unstable across config changes).
+const ALL_PROJECTS_PID_FILE = join(homedir(), ".agent-orchestrator", "lifecycle-all.pid");
+
+function readAllPid(): number | null {
+  try {
+    if (!existsSync(ALL_PROJECTS_PID_FILE)) return null;
+    const raw = readFileSync(ALL_PROJECTS_PID_FILE, "utf-8").trim();
+    const pid = Number.parseInt(raw, 10);
+    return Number.isFinite(pid) && pid > 0 ? pid : null;
+  } catch { return null; }
+}
+
+function isProcessRunning(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+function writeAllPid(pid: number): void {
+  mkdirSync(dirname(ALL_PROJECTS_PID_FILE), { recursive: true });
+  writeFileSync(ALL_PROJECTS_PID_FILE, `${pid}\n`, "utf-8");
+}
+
+function clearAllPid(pid?: number): void {
+  if (!existsSync(ALL_PROJECTS_PID_FILE)) return;
+  if (pid !== undefined) {
+    const stored = readAllPid();
+    if (stored !== null && stored !== pid) return;
+  }
+  try { unlinkSync(ALL_PROJECTS_PID_FILE); } catch { /* best effort */ }
+}
 
 function parseInterval(value: string): number {
   const parsed = Number.parseInt(value, 10);
@@ -36,20 +70,28 @@ export function registerLifecycleWorker(program: Command): void {
       }
 
       // Duplicate-run protection
-      // For poll-all mode, use the first project as the PID key since the
-      // lifecycle-service helpers require a real project ID to resolve paths.
-      const projectIds = Object.keys(config.projects);
-      const pidKey = projectId ?? projectIds[0];
-      if (pidKey) {
-        const existing = getLifecycleWorkerStatus(config, pidKey);
+      if (projectId) {
+        const existing = getLifecycleWorkerStatus(config, projectId);
         if (existing.running && existing.pid !== process.pid) {
           observer.setHealth({
             surface: "lifecycle.worker",
             status: "warn",
-            projectId: pidKey,
+            projectId,
             correlationId: createCorrelationId("lifecycle-worker"),
             reason: `Worker already running with pid ${existing.pid}`,
-            details: { projectId: pidKey, pid: existing.pid },
+            details: { projectId, pid: existing.pid },
+          });
+          return;
+        }
+      } else {
+        // Poll-all mode: use stable PID file in global data dir
+        const existingPid = readAllPid();
+        if (existingPid !== null && existingPid !== process.pid && isProcessRunning(existingPid)) {
+          observer.setHealth({
+            surface: "lifecycle.worker",
+            status: "warn",
+            correlationId: createCorrelationId("lifecycle-worker"),
+            reason: `Poll-all worker already running with pid ${existingPid}`,
           });
           return;
         }
@@ -65,7 +107,11 @@ export function registerLifecycleWorker(program: Command): void {
         shuttingDown = true;
         if (heartbeat) clearInterval(heartbeat);
         lifecycle.stop();
-        if (pidKey) clearLifecycleWorkerPid(config, pidKey, process.pid);
+        if (projectId) {
+          clearLifecycleWorkerPid(config, projectId, process.pid);
+        } else {
+          clearAllPid(process.pid);
+        }
         observer.setHealth({
           surface: "lifecycle.worker",
           status: code === 0 ? "warn" : "error",
@@ -118,7 +164,11 @@ export function registerLifecycleWorker(program: Command): void {
         shutdown(1);
       });
 
-      if (pidKey) writeLifecycleWorkerPid(config, pidKey, process.pid);
+      if (projectId) {
+        writeLifecycleWorkerPid(config, projectId, process.pid);
+      } else {
+        writeAllPid(process.pid);
+      }
       observer.setHealth({
         surface: "lifecycle.worker",
         status: "ok",

@@ -177,7 +177,6 @@ export type {
 // Path utilities — hash-based directory structure
 export {
   generateConfigHash,
-  generateProjectPathHash,
   generateProjectId,
   generateInstanceId,
   generateSessionPrefix,

@@ -28,17 +28,6 @@ export function generateConfigHash(configPath: string): string {
 }
 
 /**
- * Generate a 12-character hash from a project path.
- * Used in multi-project mode where hash is derived from project.path
- * instead of the config file location.
- */
-export function generateProjectPathHash(projectPath: string): string {
-  const resolved = existsSync(projectPath) ? realpathSync(projectPath) : projectPath;
-  const hash = createHash("sha256").update(resolved).digest("hex");
-  return hash.slice(0, 12);
-}
-
-/**
  * Generate project ID from project path (basename of the path).
  * Example: ~/repos/integrator → "integrator"
  */

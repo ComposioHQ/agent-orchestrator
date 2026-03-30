@@ -19,6 +19,8 @@ import {
   saveGlobalConfig,
   findGlobalConfigPath,
   isOldConfigFormat,
+  isSecretField,
+  filterSecrets,
 } from "./global-config.js";
 import {
   generateConfigHash,
@@ -187,9 +189,22 @@ export function migrateToMultiProject(configPath: string): MigrationResult {
       _shadowSyncedAt: Math.floor(Date.now() / 1000),
     };
 
-    // Copy all fields to shadow
+    // Copy all non-identity, non-secret fields to shadow
     for (const [key, value] of Object.entries(projectRaw)) {
-      if (!identityFields.has(key)) {
+      if (identityFields.has(key)) continue;
+      if (isSecretField(key)) {
+        warnings.push(`Excluded secret-like field "${key}" from shadow for "${configKey}"`);
+        continue;
+      }
+      if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+        const excluded: string[] = [];
+        (globalEntry as Record<string, unknown>)[key] = filterSecrets(
+          value as Record<string, unknown>, excluded, key,
+        );
+        for (const e of excluded) {
+          warnings.push(`Excluded secret-like field "${e}" from shadow for "${configKey}"`);
+        }
+      } else {
         (globalEntry as Record<string, unknown>)[key] = value;
       }
     }
@@ -328,18 +343,10 @@ export function buildEffectiveConfig(
     // The project ID (map key) is already the session prefix — do not
     // re-apply generateSessionPrefix, which would double-abbreviate it.
     const sessionPrefix = projectId;
-
-    // Infer SCM if not set
     const repo = String(behaviorFields["repo"] ?? "");
-    let scm = behaviorFields["scm"] as Record<string, unknown> | undefined;
-    if (!scm && repo.includes("/")) {
-      scm = { plugin: "github" };
-    }
 
-    let tracker = behaviorFields["tracker"] as Record<string, unknown> | undefined;
-    if (!tracker) {
-      tracker = { plugin: scm?.["plugin"] as string ?? "github" };
-    }
+    // Don't infer scm/tracker here — leave them for applyProjectDefaults
+    // which has the full inferScmPlugin logic (GitLab detection, etc.).
 
     projects[projectId] = {
       name: entry.name ?? projectId,
@@ -351,8 +358,8 @@ export function buildEffectiveConfig(
       runtime: behaviorFields["runtime"] as string | undefined,
       agent: behaviorFields["agent"] as string | undefined,
       workspace: behaviorFields["workspace"] as string | undefined,
-      tracker: tracker as import("./types.js").TrackerConfig | undefined,
-      scm: scm as import("./types.js").SCMConfig | undefined,
+      tracker: behaviorFields["tracker"] as import("./types.js").TrackerConfig | undefined,
+      scm: behaviorFields["scm"] as import("./types.js").SCMConfig | undefined,
       symlinks: behaviorFields["symlinks"] as string[] | undefined,
       postCreate: behaviorFields["postCreate"] as string[] | undefined,
       agentConfig: behaviorFields["agentConfig"] as import("./types.js").AgentSpecificConfig | undefined,

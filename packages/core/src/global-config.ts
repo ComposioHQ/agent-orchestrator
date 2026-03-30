@@ -17,6 +17,7 @@ import { homedir } from "node:os";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
 import { randomBytes } from "node:crypto";
+import { expandHome } from "./paths.js";
 
 // =============================================================================
 // TYPES
@@ -34,7 +35,7 @@ const isInternalField = (key: string): boolean => key.startsWith("_");
 /** Secret-like field patterns (excluded from shadow sync in hybrid mode) */
 const SECRET_PATTERNS = [/token$/i, /key$/i, /secret$/i, /password$/i];
 
-function isSecretField(key: string): boolean {
+export function isSecretField(key: string): boolean {
   return SECRET_PATTERNS.some((p) => p.test(key));
 }
 
@@ -212,14 +213,6 @@ export type LocalProjectConfig = z.infer<typeof LocalProjectConfigSchema>;
 // =============================================================================
 // DISCOVERY
 // =============================================================================
-
-/** Expand ~ to home directory */
-function expandHome(filepath: string): string {
-  if (filepath.startsWith("~/")) {
-    return join(homedir(), filepath.slice(2));
-  }
-  return filepath;
-}
 
 /**
  * Discover the global config file path.
@@ -486,7 +479,7 @@ export function syncShadow(
 }
 
 /** Recursively filter secret-like fields from an object at all nesting levels */
-function filterSecrets(
+export function filterSecrets(
   obj: Record<string, unknown>,
   excluded: string[],
   parentKey: string,

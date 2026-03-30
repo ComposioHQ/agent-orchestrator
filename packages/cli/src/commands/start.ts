@@ -12,7 +12,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve, basename } from "node:path";
-import { homedir } from "node:os";
 import { cwd } from "node:process";
 import chalk from "chalk";
 import ora from "ora";
@@ -42,6 +41,7 @@ import {
   needsMigration,
   migrateToMultiProject,
   generateProjectId,
+  expandHome,
   type OrchestratorConfig,
   type ProjectConfig,
   type ParsedRepoUrl,
@@ -214,14 +214,6 @@ async function handleMultiProjectStart(
   const effectiveConfig = loadConfig();
 
   return { config: effectiveConfig, projectId };
-}
-
-/** Expand ~ to home directory */
-function expandHome(filepath: string): string {
-  if (filepath.startsWith("~/")) {
-    return resolve(homedir(), filepath.slice(2));
-  }
-  return filepath;
 }
 
 // =============================================================================
