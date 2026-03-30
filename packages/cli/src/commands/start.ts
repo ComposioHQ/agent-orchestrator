@@ -174,47 +174,39 @@ async function promptAgentSelection(): Promise<{
   if (canPromptForInstall()) {
     const clack = await import("@clack/prompts");
 
-    const switchAgents = await clack.confirm({
-      message: "Switch agent config?",
-      initialValue: false,
-    });
-    if (clack.isCancel(switchAgents) || !switchAgents) {
-      return null
-    } else {
-      const available = await detectAvailableAgents();
-      if (available.length === 0) {
-        clack.log.warn("No agent runtimes detected — using existing config.");
-        return null;
-      }
-    
-      const agentOptions = available.map((a) => ({ value: a.name, label: a.displayName }));
-    
-      const orchestratorAgent = await clack.select({
-        message: "Orchestrator agent:",
-        options: agentOptions
-      });
-      if (clack.isCancel(orchestratorAgent)) {
-        clack.cancel("Cancelled.");
-        return null;
-      }
-    
-      const workerAgent = await clack.select({
-        message: "Worker agent:",
-        options: agentOptions
-      });
-      if (clack.isCancel(workerAgent)) {
-        clack.cancel("Cancelled.");
-        return null;
-      }
-    
-      return {
-        orchestratorAgent,
-        workerAgent
-      };
+    const available = await detectAvailableAgents();
+    if (available.length === 0) {
+      clack.log.warn("No agent runtimes detected — using existing config.");
+      return null;
     }
+
+    const agentOptions = available.map((a) => ({ value: a.name, label: a.displayName }));
+
+    const orchestratorAgent = await clack.select({
+      message: "Orchestrator agent:",
+      options: agentOptions
+    });
+    if (clack.isCancel(orchestratorAgent)) {
+      clack.cancel("Cancelled.");
+      return null;
+    }
+
+    const workerAgent = await clack.select({
+      message: "Worker agent:",
+      options: agentOptions
+    });
+    if (clack.isCancel(workerAgent)) {
+      clack.cancel("Cancelled.");
+      return null;
+    }
+
+    return {
+      orchestratorAgent,
+      workerAgent
+    };
   } else {
-    return null 
-  };
+    return null;
+  }
 }
 
 async function askYesNo(
