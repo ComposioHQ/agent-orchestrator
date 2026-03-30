@@ -64,7 +64,15 @@ function readOpenClawHealth(config: OrchestratorConfig): OpenClawHealthSummary |
 
   try {
     const raw = readFileSync(healthPath, "utf-8");
-    return JSON.parse(raw) as OpenClawHealthSummary;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (typeof parsed !== "object" || parsed === null) return null;
+    return {
+      lastSuccessAt: typeof parsed.lastSuccessAt === "string" ? parsed.lastSuccessAt : null,
+      lastFailureAt: typeof parsed.lastFailureAt === "string" ? parsed.lastFailureAt : null,
+      lastFailureError: typeof parsed.lastFailureError === "string" ? parsed.lastFailureError : null,
+      totalSent: typeof parsed.totalSent === "number" ? parsed.totalSent : 0,
+      totalFailed: typeof parsed.totalFailed === "number" ? parsed.totalFailed : 0,
+    };
   } catch {
     return null;
   }

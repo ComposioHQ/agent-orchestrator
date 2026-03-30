@@ -42,6 +42,7 @@ function normalizeGatewayBaseUrl(url: string): string {
 
 function resolveOpenClawBinaryPath(): string | undefined {
   const shell = process.env["SHELL"] ?? "/bin/sh";
+  if (!shell.startsWith("/")) return undefined;
   const result = spawnSync(shell, ["-lc", "command -v openclaw"], {
     encoding: "utf-8",
   });
