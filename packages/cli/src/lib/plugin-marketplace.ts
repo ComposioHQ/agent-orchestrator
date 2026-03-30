@@ -5,8 +5,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { InstalledPluginConfig, PluginModule, PluginSlot } from "@composio/ao-core";
 
-const require = createRequire(import.meta.url);
-const registryData = require("../assets/plugin-registry.json") as unknown[];
+const registryData = createRequire(import.meta.url)("../assets/plugin-registry.json") as unknown[];
 
 export interface MarketplacePluginEntry {
   id: string;
@@ -207,8 +206,7 @@ export function isLocalPluginReference(reference: string): boolean {
     reference.startsWith("./") ||
     reference.startsWith("../") ||
     reference.startsWith("/") ||
-    reference.startsWith("~/") ||
-    isAbsolute(reference)
+    reference.startsWith("~/")
   );
 }
 
