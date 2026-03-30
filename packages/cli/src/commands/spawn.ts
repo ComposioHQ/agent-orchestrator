@@ -4,6 +4,8 @@ import type { Command } from "commander";
 import { resolve } from "node:path";
 import {
   loadConfig,
+  loadConfigFromGlobal,
+  ConfigNotFoundError,
   decompose,
   getLeaves,
   getSiblings,
@@ -165,6 +167,7 @@ export function registerSpawn(program: Command): void {
     .option("--agent <name>", "Override the agent plugin (e.g. codex, claude-code)")
     .option("--claim-pr <pr>", "Immediately claim an existing PR for the spawned session")
     .option("--assign-on-github", "Assign the claimed PR to the authenticated GitHub user")
+    .option("-p, --project <id>", "Project ID (for cross-project spawning from anywhere)")
     .option("--decompose", "Decompose issue into subtasks before spawning")
     .option("--max-depth <n>", "Max decomposition depth (default: 3)")
     .action(
@@ -174,6 +177,7 @@ export function registerSpawn(program: Command): void {
         opts: {
           open?: boolean;
           agent?: string;
+          project?: string;
           claimPr?: string;
           assignOnGithub?: boolean;
           decompose?: boolean;
@@ -193,14 +197,33 @@ export function registerSpawn(program: Command): void {
           process.exit(1);
         }
 
-        const config = loadConfig();
+        let config: OrchestratorConfig;
+        try {
+          config = loadConfig();
+        } catch (err) {
+          // Try global config fallback when --project is used from outside a project
+          if (err instanceof ConfigNotFoundError && opts.project) {
+            const globalConfig = loadConfigFromGlobal();
+            if (!globalConfig) {
+              console.error(chalk.red("No config found. Run `ao start` first."));
+              process.exit(1);
+            }
+            config = globalConfig;
+          } else if (err instanceof ConfigNotFoundError) {
+            console.error(chalk.red("No config found. Run `ao start` first."));
+            process.exit(1);
+          } else {
+            throw err;
+          }
+        }
+
         let projectId: string;
         let issueId: string | undefined;
 
         if (first) {
           issueId = first;
           try {
-            projectId = autoDetectProject(config);
+            projectId = opts.project ?? autoDetectProject(config);
           } catch (err) {
             console.error(chalk.red(err instanceof Error ? err.message : String(err)));
             process.exit(1);
@@ -208,11 +231,21 @@ export function registerSpawn(program: Command): void {
         } else {
           // No args: auto-detect project, no issue
           try {
-            projectId = autoDetectProject(config);
+            projectId = opts.project ?? autoDetectProject(config);
           } catch (err) {
             console.error(chalk.red(err instanceof Error ? err.message : String(err)));
             process.exit(1);
           }
+        }
+
+        // Validate --project flag
+        if (opts.project && !config.projects[opts.project]) {
+          console.error(
+            chalk.red(
+              `Unknown project: ${opts.project}. Available: ${Object.keys(config.projects).join(", ")}`,
+            ),
+          );
+          process.exit(1);
         }
 
         if (!opts.claimPr && opts.assignOnGithub) {
@@ -296,12 +329,31 @@ export function registerBatchSpawn(program: Command): void {
     .description("Spawn sessions for multiple issues with duplicate detection")
     .argument("<issues...>", "Issue identifiers (project is auto-detected)")
     .option("--open", "Open sessions in terminal tabs")
-    .action(async (issues: string[], opts: { open?: boolean }) => {
-      const config = loadConfig();
+    .option("-p, --project <id>", "Project ID (for cross-project spawning from anywhere)")
+    .action(async (issues: string[], opts: { open?: boolean; project?: string }) => {
+      let config: OrchestratorConfig;
+      try {
+        config = loadConfig();
+      } catch (err) {
+        if (err instanceof ConfigNotFoundError && opts.project) {
+          const globalConfig = loadConfigFromGlobal();
+          if (!globalConfig) {
+            console.error(chalk.red("No config found. Run `ao start` first."));
+            process.exit(1);
+          }
+          config = globalConfig;
+        } else if (err instanceof ConfigNotFoundError) {
+          console.error(chalk.red("No config found. Run `ao start` first."));
+          process.exit(1);
+        } else {
+          throw err;
+        }
+      }
+
       let projectId: string;
 
       try {
-        projectId = autoDetectProject(config);
+        projectId = opts.project ?? autoDetectProject(config);
       } catch (err) {
         console.error(chalk.red(err instanceof Error ? err.message : String(err)));
         process.exit(1);

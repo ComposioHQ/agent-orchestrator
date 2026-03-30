@@ -95,11 +95,37 @@ function writeState(state: RunningState | null): void {
 /**
  * Register the current AO instance as running.
  * Uses a lockfile to prevent concurrent registration.
+ * If another daemon is already running, merges projects into its entry.
  */
 export async function register(entry: RunningState): Promise<void> {
   const release = await acquireLock();
   try {
-    writeState(entry);
+    const existing = readState();
+    if (existing && isProcessAlive(existing.pid) && existing.pid !== entry.pid) {
+      // Another daemon is running — merge projects into its entry
+      const mergedProjects = [...new Set([...existing.projects, ...entry.projects])];
+      writeState({ ...existing, projects: mergedProjects });
+    } else {
+      writeState(entry);
+    }
+  } finally {
+    release();
+  }
+}
+
+/**
+ * Add a project to the running state without replacing the daemon entry.
+ * No-op if the project is already listed or no daemon is running.
+ */
+export async function addProject(projectId: string): Promise<void> {
+  const release = await acquireLock();
+  try {
+    const state = readState();
+    if (!state) return;
+    if (!state.projects.includes(projectId)) {
+      state.projects.push(projectId);
+      writeState(state);
+    }
   } finally {
     release();
   }

@@ -12,6 +12,7 @@ export * from "./types.js";
 export {
   loadConfig,
   loadConfigWithPath,
+  loadConfigFromGlobal,
   validateConfig,
   getDefaultConfig,
   findConfig,
@@ -158,6 +159,29 @@ export {
   expandHome,
   validateAndStoreOrigin,
 } from "./paths.js";
+
+// Global config registry
+export {
+  loadGlobalConfig,
+  saveGlobalConfig,
+  getGlobalConfigPath,
+  getGlobalConfigDir,
+  globalConfigExists,
+  registerProject,
+  unregisterProject,
+  extractShadow,
+  isProjectRegistered,
+} from "./global-config.js";
+
+// Config resolver — multi-project config assembly
+export { resolveMultiProjectConfig } from "./config-resolver.js";
+
+// Local config parser — flat behavior-only format
+export { isLocalConfig, parseLocalConfig } from "./local-config.js";
+
+// Migration — single-project to multi-project
+export { needsMigration, migrateToMultiProject } from "./migration.js";
+export type { MigrationResult } from "./migration.js";
 
 // Config generator — auto-generate config from repo URL
 export {

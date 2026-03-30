@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 export const dynamic = "force-dynamic";
 import { Dashboard } from "@/components/Dashboard";
+import { PortfolioPage } from "@/components/PortfolioPage";
 import {
   getDashboardPageData,
   getDashboardProjectName,
@@ -21,6 +22,17 @@ export default async function Home(props: { searchParams: Promise<{ project?: st
   const searchParams = await props.searchParams;
   const projectFilter = resolveDashboardProjectFilter(searchParams.project);
   const pageData = await getDashboardPageData(projectFilter);
+
+  // Show portfolio page when explicitly viewing all projects and multiple projects exist
+  if (projectFilter === "all" && pageData.projects.length > 1) {
+    return (
+      <PortfolioPage
+        projects={pageData.projects}
+        sessions={pageData.sessions}
+        orchestrators={pageData.orchestrators}
+      />
+    );
+  }
 
   return (
     <Dashboard

@@ -12,6 +12,8 @@ import {
   type ProjectConfig,
   isOrchestratorSession,
   loadConfig,
+  loadConfigFromGlobal,
+  ConfigNotFoundError,
 } from "@composio/ao-core";
 import { git, getTmuxSessions, getTmuxActivity } from "../lib/shell.js";
 import {
@@ -214,11 +216,21 @@ export function registerStatus(program: Command): void {
       let config: ReturnType<typeof loadConfig>;
       try {
         config = loadConfig();
-      } catch {
-        console.log(chalk.yellow("No config found. Run `ao init` first."));
-        console.log(chalk.dim("Falling back to session discovery...\n"));
-        await showFallbackStatus();
-        return;
+      } catch (err) {
+        // Try global config as fallback (shows all registered projects)
+        if (err instanceof ConfigNotFoundError) {
+          const globalConfig = loadConfigFromGlobal();
+          if (globalConfig) {
+            config = globalConfig;
+          } else {
+            console.log(chalk.yellow("No config found. Run `ao init` first."));
+            console.log(chalk.dim("Falling back to session discovery...\n"));
+            await showFallbackStatus();
+            return;
+          }
+        } else {
+          throw err;
+        }
       }
 
       if (opts.project && !config.projects[opts.project]) {

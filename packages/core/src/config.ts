@@ -17,6 +17,12 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { ConfigNotFoundError, type OrchestratorConfig } from "./types.js";
 import { generateSessionPrefix } from "./paths.js";
+import {
+  loadGlobalConfig,
+  getGlobalConfigPath,
+  globalConfigExists,
+} from "./global-config.js";
+import { resolveMultiProjectConfig } from "./config-resolver.js";
 
 function inferScmPlugin(project: {
   repo: string;
@@ -467,6 +473,11 @@ export function loadConfig(configPath?: string): OrchestratorConfig {
   const path = configPath ?? findConfigFile();
 
   if (!path) {
+    // Try global config registry as fallback
+    const globalFallback = loadConfigFromGlobal();
+    if (globalFallback) {
+      return globalFallback;
+    }
     throw new ConfigNotFoundError();
   }
 
@@ -478,6 +489,25 @@ export function loadConfig(configPath?: string): OrchestratorConfig {
   config.configPath = path;
 
   return config;
+}
+
+/**
+ * Load config from the global registry.
+ * Used when no local config file is found (global-only mode or remote access).
+ * Returns null if global config doesn't exist or has no projects.
+ */
+export function loadConfigFromGlobal(homeOverride?: string): OrchestratorConfig | null {
+  if (!globalConfigExists(homeOverride)) {
+    return null;
+  }
+
+  const globalConfig = loadGlobalConfig(homeOverride);
+  if (Object.keys(globalConfig.projects).length === 0) {
+    return null;
+  }
+
+  const globalConfigPath = getGlobalConfigPath(homeOverride);
+  return resolveMultiProjectConfig(globalConfig, globalConfigPath);
 }
 
 /** Load config and return both config and resolved path */

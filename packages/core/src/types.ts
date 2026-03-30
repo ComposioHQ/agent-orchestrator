@@ -997,6 +997,68 @@ export interface DefaultPlugins {
   };
 }
 
+// =============================================================================
+// GLOBAL CONFIG REGISTRY
+// =============================================================================
+
+/** Configuration mode for a project */
+export type ConfigMode = "hybrid" | "global-only";
+
+/** Entry in the global project registry */
+export interface ProjectRegistryEntry {
+  /** Human-readable name */
+  name: string;
+  /** Unique project identifier (derived from path basename) */
+  id: string;
+  /** Absolute path to the project repository */
+  path: string;
+  /** Repository identifier (e.g. "org/repo") */
+  repo: string;
+  /** Default git branch */
+  defaultBranch: string;
+  /** How this project's config is managed */
+  configMode: ConfigMode;
+  /** Path to local config file (hybrid mode only) */
+  localConfigPath?: string;
+  /** Session prefix override */
+  sessionPrefix?: string;
+}
+
+/**
+ * Shadow copy of a project's behavior config (stored in global registry).
+ * Strips identity fields (name, repo, path, defaultBranch, sessionPrefix)
+ * which belong in the ProjectRegistryEntry.
+ */
+export type ProjectShadow = Omit<
+  ProjectConfig,
+  "name" | "repo" | "path" | "defaultBranch" | "sessionPrefix"
+>;
+
+/** Global config file structure (~/.agent-orchestrator/config.yaml) */
+export interface GlobalConfig {
+  /** Schema version for migration */
+  version: number;
+  /** Project registry — keyed by project ID */
+  projects: Record<string, ProjectRegistryEntry>;
+  /** Shadow copies of project behavior configs — keyed by project ID */
+  shadows: Record<string, ProjectShadow>;
+  /** Daemon-level settings */
+  daemon: {
+    port?: number;
+    terminalPort?: number;
+    directTerminalPort?: number;
+    readyThresholdMs?: number;
+  };
+  /** Global notification config */
+  notifiers?: Record<string, NotifierConfig>;
+  /** Global notification routing by priority */
+  notificationRouting?: Record<EventPriority, string[]>;
+  /** Global default reactions */
+  reactions?: Record<string, ReactionConfig>;
+  /** Global default plugins */
+  defaults?: Partial<DefaultPlugins>;
+}
+
 export interface RoleAgentConfig {
   agent?: string;
   agentConfig?: AgentSpecificConfig;

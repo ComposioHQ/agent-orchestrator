@@ -29,6 +29,14 @@ import {
   configToYaml,
   normalizeOrchestratorSessionStrategy,
   ConfigNotFoundError,
+  loadGlobalConfig,
+  saveGlobalConfig,
+  registerProject,
+  extractShadow,
+  globalConfigExists,
+  needsMigration,
+  migrateToMultiProject,
+  isProjectRegistered,
   type OrchestratorConfig,
   type ProjectConfig,
   type ParsedRepoUrl,
@@ -875,13 +883,45 @@ async function runStartup(
 
   if (shouldStartLifecycle) {
     try {
-      spinner.start("Starting lifecycle worker");
-      lifecycleStatus = await ensureLifecycleWorker(config, projectId);
-      spinner.succeed(
-        lifecycleStatus.started
-          ? `Lifecycle worker started${lifecycleStatus.pid ? ` (PID ${lifecycleStatus.pid})` : ""}`
-          : `Lifecycle worker already running${lifecycleStatus.pid ? ` (PID ${lifecycleStatus.pid})` : ""}`,
+      spinner.start("Starting lifecycle workers");
+      // Ensure lifecycle workers for ALL configured projects (multi-project support)
+      const allProjectIds = Object.keys(config.projects);
+      const lifecycleResults = await Promise.allSettled(
+        allProjectIds.map((pid) => ensureLifecycleWorker(config, pid)),
       );
+      let startedCount = 0;
+      let alreadyRunningCount = 0;
+      for (const result of lifecycleResults) {
+        if (result.status === "fulfilled") {
+          if (result.value.started) startedCount++;
+          else alreadyRunningCount++;
+          // Use the current project's lifecycle status for backward compat
+          if (lifecycleResults.indexOf(result) === allProjectIds.indexOf(projectId)) {
+            lifecycleStatus = result.value;
+          }
+        }
+      }
+      // Fallback: use any fulfilled result
+      if (!lifecycleStatus) {
+        for (const result of lifecycleResults) {
+          if (result.status === "fulfilled") {
+            lifecycleStatus = result.value;
+            break;
+          }
+        }
+      }
+      const totalProjects = allProjectIds.length;
+      if (totalProjects === 1) {
+        spinner.succeed(
+          lifecycleStatus?.started
+            ? `Lifecycle worker started${lifecycleStatus.pid ? ` (PID ${lifecycleStatus.pid})` : ""}`
+            : `Lifecycle worker already running${lifecycleStatus?.pid ? ` (PID ${lifecycleStatus.pid})` : ""}`,
+        );
+      } else {
+        spinner.succeed(
+          `Lifecycle workers: ${startedCount} started, ${alreadyRunningCount} already running (${totalProjects} projects)`,
+        );
+      }
     } catch (err) {
       spinner.fail("Lifecycle worker failed to start");
       if (dashboardProcess) {
@@ -1097,6 +1137,48 @@ export function registerStart(program: Command): void {
             }
             config = loadedConfig;
             ({ projectId, project } = await resolveProject(config, projectArg));
+          }
+
+          // ── Register project in global config registry ──
+          {
+            const globalConfig = loadGlobalConfig();
+            const registeredIds = new Set(Object.keys(globalConfig.projects));
+
+            // Auto-migrate legacy config if needed
+            if (needsMigration({ projects: config.projects }, registeredIds)) {
+              const rawYaml = readFileSync(config.configPath, "utf-8");
+              const rawParsed = yamlParse(rawYaml);
+              const result = migrateToMultiProject(rawParsed, config.configPath);
+              // Merge with existing global config (don't overwrite other projects)
+              let merged = globalConfig;
+              for (const [id, entry] of Object.entries(result.globalConfig.projects)) {
+                merged = registerProject(merged, entry, result.globalConfig.shadows[id]);
+              }
+              if (result.globalConfig.daemon.port !== undefined && !merged.daemon.port) {
+                merged.daemon = { ...merged.daemon, ...result.globalConfig.daemon };
+              }
+              if (result.globalConfig.defaults && !merged.defaults) {
+                merged.defaults = result.globalConfig.defaults;
+              }
+              saveGlobalConfig(merged);
+              console.log(chalk.dim("  ✓ Registered project(s) in global config registry"));
+            } else if (!isProjectRegistered(globalConfig, projectId)) {
+              // Register single project
+              const entry = {
+                name: project.name ?? projectId,
+                id: projectId,
+                path: project.path,
+                repo: project.repo,
+                defaultBranch: project.defaultBranch ?? "main",
+                configMode: "hybrid" as const,
+                localConfigPath: config.configPath,
+                sessionPrefix: project.sessionPrefix,
+              };
+              const shadow = extractShadow(project);
+              const updated = registerProject(globalConfig, entry, shadow);
+              saveGlobalConfig(updated);
+              console.log(chalk.dim("  ✓ Registered project in global config registry"));
+            }
           }
 
           // ── Already-running detection (Step 9) ──
