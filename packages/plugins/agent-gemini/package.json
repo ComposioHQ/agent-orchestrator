@@ -1,7 +1,7 @@
 {
-  "name": "@composio/ao-plugin-agent-claude-code",
-  "version": "0.2.0",
-  "description": "Agent plugin: Claude Code",
+  "name": "@composio/ao-plugin-agent-gemini",
+  "version": "0.1.0",
+  "description": "Agent plugin: Gemini CLI",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
@@ -18,7 +18,7 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/ComposioHQ/agent-orchestrator.git",
-    "directory": "packages/plugins/agent-claude-code"
+    "directory": "packages/plugins/agent-gemini"
   },
   "homepage": "https://github.com/ComposioHQ/agent-orchestrator",
   "bugs": {

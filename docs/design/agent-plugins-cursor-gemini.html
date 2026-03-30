@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cursor & Gemini CLI Agent Plugins — Agent Orchestrator</title>
+    <style>
+      :root {
+        --bg: #f2efe7;
+        --panel: #fffdf8;
+        --ink: #1f1a16;
+        --muted: #6f6357;
+        --brand: #165a72;
+        --line: #dfd3c2;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+        line-height: 1.5;
+        background:
+          radial-gradient(circle at 12% 10%, #ebdfcb 0%, transparent 35%),
+          radial-gradient(circle at 88% 85%, #e5d4ba 0%, transparent 30%), var(--bg);
+      }
+
+      .wrap {
+        max-width: 1100px;
+        margin: 2rem auto;
+        padding: 0 1rem 3rem;
+      }
+
+      .hero,
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--panel);
+      }
+
+      .hero {
+        padding: 1.2rem;
+      }
+
+      .card {
+        padding: 1rem;
+      }
+
+      h1,
+      h2,
+      h3 {
+        font-family: "IBM Plex Serif", Georgia, serif;
+        margin: 0.6rem 0;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      .grid {
+        margin-top: 1rem;
+        display: grid;
+        gap: 1rem;
+      }
+
+      @media (min-width: 900px) {
+        .grid.two {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .grid.three {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+      }
+
+      ul,
+      ol {
+        margin: 0.4rem 0 0;
+        padding-left: 1rem;
+      }
+
+      code {
+        font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+        background: #f3ebe0;
+        border-radius: 4px;
+        padding: 0.1rem 0.28rem;
+      }
+
+      pre {
+        margin-top: 0.7rem;
+        padding: 0.7rem;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #faf4ec;
+        overflow-x: auto;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 1rem 0;
+        font-size: 0.9rem;
+      }
+
+      th {
+        background: #f3ebe0;
+        text-align: left;
+        padding: 0.5rem 0.7rem;
+        border: 1px solid var(--line);
+        font-weight: 600;
+      }
+
+      td {
+        padding: 0.5rem 0.7rem;
+        border: 1px solid var(--line);
+        vertical-align: top;
+      }
+
+      .badge {
+        display: inline-block;
+        padding: 0.1rem 0.4rem;
+        border-radius: 6px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        margin-right: 0.3rem;
+      }
+
+      .badge-new {
+        background: #3fb950;
+        color: #000;
+      }
+
+      .badge-shared {
+        background: var(--brand);
+        color: #fff;
+      }
+
+      .badge-cursor {
+        background: #a371f7;
+        color: #fff;
+      }
+
+      .badge-gemini {
+        background: #db6d28;
+        color: #fff;
+      }
+
+      .diagram {
+        background: #faf4ec;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 1rem;
+        margin: 1rem 0;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <section class="hero">
+        <h1>Cursor & Gemini CLI Agent Plugins</h1>
+        <p class="muted">
+          Added support for Cursor Agent CLI and Gemini CLI as new agent plugins via a shared
+          <code>agent-base</code> factory. This eliminates code duplication and provides unified
+          JSONL/session introspection for all JSONL-based agents.
+        </p>
+        <p class="muted">
+          PR: <a href="https://github.com/ComposioHQ/agent-orchestrator/pull/592">#592</a>
+          &nbsp;·&nbsp; Status: Open &nbsp;·&nbsp; March 2026
+        </p>
+      </section>
+
+      <section class="grid two">
+        <article class="card">
+          <h2>Architecture</h2>
+          <div class="diagram">
+<pre>
+┌─────────────────────────────────────────┐
+│         agent-orchestrator               │
+└─────────────────────────────────────────┘
+                  │
+    ┌─────────────┼─────────────┐
+    ▼             ▼             ▼
+┌─────────┐ ┌─────────┐ ┌─────────┐
+│ claude- │ │ agent-  │ │ agent-  │
+│ code    │ │ cursor  │ │ gemini  │
+└─────────┘ └─────────┘ └─────────┘
+                  │
+                  ▼
+┌─────────────────────────────────────────┐
+│       @composio/ao-plugin-agent-base    │
+│  • createAgentPlugin factory            │
+│  • setupHookInWorkspace                 │
+│  • parseJsonlFileTail                   │
+│  • getActivityState                     │
+└─────────────────────────────────────────┘
+</pre>
+          </div>
+        </article>
+
+        <article class="card">
+          <h2>New Packages</h2>
+          <ul>
+            <li><span class="badge badge-shared">NEW</span> <code>agent-base</code> — Shared factory for JSONL-based agents</li>
+            <li><span class="badge badge-cursor">NEW</span> <code>agent-cursor</code> — Cursor Agent CLI plugin</li>
+            <li><span class="badge badge-gemini">NEW</span> <code>agent-gemini</code> — Gemini CLI plugin</li>
+          </ul>
+          <p class="muted" style="margin-top: 0.5rem;">
+            Refactored agent-claude-code to import ps-cache from agent-base; removes ~40 lines of duplicate process-detection logic
+          </p>
+        </article>
+      </section>
+
+      <section class="card" style="margin-top: 1rem;">
+        <h2>Configuration Differences</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Feature</th>
+              <th>Claude Code</th>
+              <th>Cursor</th>
+              <th>Gemini</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Process name</td>
+              <td><code>claude</code></td>
+              <td><code>cursor-agent</code></td>
+              <td><code>gemini</code></td>
+            </tr>
+            <tr>
+              <td>Permission flag</td>
+              <td><code>--dangerously-skip-permissions</code></td>
+              <td><code>--force</code></td>
+              <td><code>--yolo</code></td>
+            </tr>
+            <tr>
+              <td>System prompt</td>
+              <td><code>--append-system-prompt</code></td>
+              <td>sendMessage</td>
+              <td><code>GEMINI_SYSTEM_MD</code></td>
+            </tr>
+            <tr>
+              <td>Hook event</td>
+              <td>PostToolUse</td>
+              <td>PostToolUse</td>
+              <td>AfterTool</td>
+            </tr>
+            <tr>
+              <td>Session ext</td>
+              <td>.jsonl</td>
+              <td>.jsonl</td>
+              <td>.json</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="grid two" style="margin-top: 1rem;">
+        <article class="card">
+          <h2>Shared Functionality</h2>
+          <ul>
+            <li><code>createAgentPlugin(config)</code> — Factory function</li>
+            <li><code>toAgentProjectPath()</code> — Path encoding for session dirs</li>
+            <li><code>setupHookInWorkspace()</code> — Claude Code settings.json hooks</li>
+            <li><code>parseJsonlFileTail()</code> — Read last N lines from session files</li>
+            <li><code>extractSummary()</code> — Parse conversation summary</li>
+            <li><code>extractCost()</code> — Calculate session cost from JSONL</li>
+            <li><code>getActivityState()</code> — Detect idle/active/exited</li>
+            <li><code>isProcessRunning()</code> — Check if agent process is alive</li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h2>Integration Tests</h2>
+          <p>Live integration tests verify both agents can spawn autonomously via CLI and execute tasks.</p>
+          <ul>
+            <li>✓ agent-gemini (integration) > fibonacci.py runs and outputs correct fibonacci numbers</li>
+            <li>✓ agent-cursor (integration) > fibonacci.py runs and outputs correct fibonacci numbers</li>
+          </ul>
+          <p class="muted" style="margin-top: 0.5rem;">8 live integration tests (4 Cursor + 4 Gemini) + 491 unit tests</p>
+        </article>
+      </section>
+
+      <section class="card" style="margin-top: 1rem;">
+        <h2>Files Changed</h2>
+        <ul>
+          <li><strong>New packages:</strong> 3 (agent-base, agent-cursor, agent-gemini)</li>
+          <li><strong>Modified packages:</strong> cli, agent-claude-code</li>
+          <li><strong>Unit tests:</strong> 307 (agent-base) + 78 (cursor) + 106 (gemini) = 491 passing</li>
+          <li><strong>Total:</strong> 36 files changed (PR scope: Cursor + Gemini plugins only)</li>
+        </ul>
+      </section>
+
+      <section class="card" style="margin-top: 1rem;">
+        <h2>Next Steps</h2>
+        <ul>
+          <li>Add more agent plugins using the same factory pattern</li>
+          <li>Expand session introspection (cost tracking, summaries)</li>
+          <li>Add restore-session support for Cursor/Gemini</li>
+        </ul>
+      </section>
+    </main>
+  </body>
+</html>

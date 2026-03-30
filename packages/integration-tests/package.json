@@ -12,6 +12,8 @@
   "dependencies": {
     "@composio/ao-core": "workspace:*",
     "@composio/ao-plugin-agent-claude-code": "workspace:*",
+    "@composio/ao-plugin-agent-cursor": "workspace:*",
+    "@composio/ao-plugin-agent-gemini": "workspace:*",
     "@composio/ao-plugin-agent-codex": "workspace:*",
     "@composio/ao-plugin-agent-aider": "workspace:*",
     "@composio/ao-plugin-agent-opencode": "workspace:*",
