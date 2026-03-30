@@ -14,10 +14,9 @@ import {
   type OpenCodeAgentConfig,
 } from "@composio/ao-core";
 import { execFile, execFileSync } from "node:child_process";
-import { promisify, stripVTControlCharacters } from "node:util";
+import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const stripAnsi = (value: string): string => stripVTControlCharacters(value);
 
 interface OpenCodeSessionListEntry {
   id: string;
@@ -240,7 +239,7 @@ function createOpenCodeAgent(): Agent {
 
     detectActivity(terminalOutput: string): ActivityState {
       if (!terminalOutput.trim()) return "idle";
-      const tail = terminalOutput.trim().split("\n").slice(-15).map(stripAnsi).join("\n");
+      const tail = terminalOutput.trim().split("\n").slice(-15).join("\n");
 
       if (hasApprovalPrompt(tail)) return "waiting_input";
 

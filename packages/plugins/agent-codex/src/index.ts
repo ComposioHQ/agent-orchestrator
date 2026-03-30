@@ -666,16 +666,14 @@ function createCodexAgent(): Agent {
     detectActivity(terminalOutput: string): ActivityState {
       if (!terminalOutput.trim()) return "idle";
 
-      const stripAnsi = (value: string): string => stripVTControlCharacters(value);
-
       const lines = terminalOutput.trim().split("\n");
-      const lastLine = stripAnsi(lines[lines.length - 1] ?? "").trim();
+      const lastLine = stripVTControlCharacters(lines[lines.length - 1] ?? "").trim();
 
       // If Codex is showing its input prompt, it's idle
       if (/^[>$#]\s*$/.test(lastLine)) return "idle";
 
       // Check last few lines for approval prompts
-      const tail = lines.slice(-15).map(stripAnsi).join("\n");
+      const tail = lines.slice(-15).join("\n");
       if (hasApprovalPrompt(tail)) return "waiting_input";
 
       // Default to active — specific patterns (esc to interrupt, spinner
