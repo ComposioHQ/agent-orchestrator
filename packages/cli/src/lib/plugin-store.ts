@@ -117,16 +117,6 @@ export function tryResolveInstalledPluginSpecifier(packageName: string): string 
   }
 }
 
-export function resolveInstalledPluginSpecifier(packageName: string): string {
-  const specifier = tryResolveInstalledPluginSpecifier(packageName);
-  if (!specifier) {
-    throw new Error(
-      `Package ${packageName} is not installed in the AO plugin store (${getPluginStoreRoot()}).`,
-    );
-  }
-  return specifier;
-}
-
 export async function importPluginModuleFromSource(specifier: string): Promise<unknown> {
   if (isPackageSpecifier(specifier)) {
     const storeSpecifier = tryResolveInstalledPluginSpecifier(specifier);

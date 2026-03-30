@@ -39,17 +39,6 @@ export function getAgentByName(name: string): Agent {
   return plugin.create();
 }
 
-/** Resolve the Agent plugin from the shared registry. */
-export function getAgentFromRegistry(
-  registry: PluginRegistry,
-  config: OrchestratorConfig,
-  projectId?: string,
-): Agent {
-  const agentName =
-    (projectId ? config.projects[projectId]?.agent : undefined) || config.defaults.agent;
-  return getAgentByNameFromRegistry(registry, agentName);
-}
-
 /** Get an agent by name from the shared registry. */
 export function getAgentByNameFromRegistry(registry: PluginRegistry, name: string): Agent {
   const plugin = registry.get<Agent>("agent", name);

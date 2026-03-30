@@ -16,7 +16,6 @@ export interface MarketplacePluginEntry {
 }
 
 export const BUNDLED_MARKETPLACE_PLUGIN_CATALOG = registryData as MarketplacePluginEntry[];
-export const MARKETPLACE_PLUGIN_CATALOG = BUNDLED_MARKETPLACE_PLUGIN_CATALOG;
 export const DEFAULT_REMOTE_MARKETPLACE_REGISTRY_URL =
   "https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/packages/cli/src/assets/plugin-registry.json";
 
@@ -155,6 +154,9 @@ function resolvePackageExportsEntry(exportsField: unknown): string | null {
 
   const importEntry = exportsRecord["import"];
   if (typeof importEntry === "string") return importEntry;
+
+  const defaultEntry = exportsRecord["default"];
+  if (typeof defaultEntry === "string") return defaultEntry;
 
   return null;
 }

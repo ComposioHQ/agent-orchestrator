@@ -119,8 +119,8 @@ function buildTsConfig(): string {
 
 function buildIndexTs(input: PluginScaffoldInput): string {
   const manifestName = normalizePluginName(input.displayName);
-  const displayName = input.displayName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  const description = input.description.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const displayName = input.displayName.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+  const description = input.description.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
 
   return `import type { PluginModule } from "@composio/ao-core";
 

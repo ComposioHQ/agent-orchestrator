@@ -251,10 +251,6 @@ async function verifyPluginDescriptor(
   return normalizedDescriptor;
 }
 
-function printPluginList(config: OrchestratorConfig | null, installedOnly: boolean): void {
-  printPluginListFromCatalog(config, installedOnly, loadMarketplaceCatalog());
-}
-
 function printPluginListFromCatalog(
   config: OrchestratorConfig | null,
   installedOnly: boolean,
