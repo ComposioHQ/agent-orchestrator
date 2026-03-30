@@ -1,0 +1,59 @@
+[
+  {
+    "id": "agent-codex",
+    "package": "@composio/ao-plugin-agent-codex",
+    "slot": "agent",
+    "description": "Agent plugin: OpenAI Codex CLI",
+    "source": "registry",
+    "latestVersion": "0.2.0"
+  },
+  {
+    "id": "agent-aider",
+    "package": "@composio/ao-plugin-agent-aider",
+    "slot": "agent",
+    "description": "Agent plugin: Aider CLI",
+    "source": "registry",
+    "latestVersion": "0.2.0"
+  },
+  {
+    "id": "agent-opencode",
+    "package": "@composio/ao-plugin-agent-opencode",
+    "slot": "agent",
+    "description": "Agent plugin: OpenCode CLI",
+    "source": "registry",
+    "latestVersion": "0.2.0"
+  },
+  {
+    "id": "notifier-openclaw",
+    "package": "@composio/ao-plugin-notifier-openclaw",
+    "slot": "notifier",
+    "description": "Notifier plugin: OpenClaw webhook notifications",
+    "source": "registry",
+    "setupAction": "openclaw-setup",
+    "latestVersion": "0.1.1"
+  },
+  {
+    "id": "notifier-discord",
+    "package": "@composio/ao-plugin-notifier-discord",
+    "slot": "notifier",
+    "description": "Notifier plugin: Discord notifications",
+    "source": "registry",
+    "latestVersion": "0.1.0"
+  },
+  {
+    "id": "tracker-gitlab",
+    "package": "@composio/ao-plugin-tracker-gitlab",
+    "slot": "tracker",
+    "description": "Tracker plugin: GitLab issues",
+    "source": "registry",
+    "latestVersion": "0.1.1"
+  },
+  {
+    "id": "scm-gitlab",
+    "package": "@composio/ao-plugin-scm-gitlab",
+    "slot": "scm",
+    "description": "SCM plugin: GitLab pull/merge requests",
+    "source": "registry",
+    "latestVersion": "0.1.1"
+  }
+]
