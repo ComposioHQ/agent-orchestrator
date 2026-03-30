@@ -1,0 +1,49 @@
+name: Test Coverage
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: coverage-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  coverage:
+    name: Coverage Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r --filter '!@composio/ao-web' build
+
+      - name: Core coverage
+        run: pnpm --filter @composio/ao-core exec vitest run --coverage
+
+      - name: CLI coverage
+        run: pnpm --filter @composio/ao-cli exec vitest run --coverage
+
+  coverage-web:
+    name: Coverage Check (Web)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install tmux
+        run: sudo apt-get update && sudo apt-get install -y tmux
+      - name: Start tmux server
+        run: tmux start-server
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r --filter '!@composio/ao-web' build
+
+      - name: Web coverage
+        run: pnpm --filter @composio/ao-web exec vitest run --coverage

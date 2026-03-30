@@ -11,5 +11,15 @@ export default defineConfig({
         maxThreads: 8,
       },
     },
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "text-summary", "lcov"],
+      thresholds: {
+        lines: 80,
+        branches: 80,
+        functions: 80,
+        statements: 80,
+      },
+    },
   },
 });
