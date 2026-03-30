@@ -226,7 +226,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
 
     const promptStatus = session.metadata["promptDeliveryStatus"];
-    if (ageMs >= 120_000 || promptStatus === "success") return;
+    if (ageMs >= 120_000 || promptStatus !== "failed") return;
 
     const isTerminalDetection = options?.detectionMethod === "terminal";
     observer.recordOperation({
@@ -236,10 +236,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       correlationId: createCorrelationId("early-needs-input"),
       sessionId: session.id,
       projectId: session.projectId,
-      reason: `Session entered needs_input within ${Math.round(ageMs / 1000)}s of prompt delivery attempt${isTerminalDetection ? " (terminal detection)" : ""}. Likely prompt delivery failure (status: ${promptStatus ?? "unknown"}).`,
+      reason: `Session entered needs_input within ${Math.round(ageMs / 1000)}s of prompt delivery attempt${isTerminalDetection ? " (terminal detection)" : ""} after prompt delivery failed.`,
       data: {
         ageMs,
-        promptDeliveryStatus: promptStatus ?? "unknown",
+        promptDeliveryStatus: promptStatus,
         ...(isTerminalDetection ? { detectionMethod: "terminal" as const } : {}),
       },
       level: "warn",

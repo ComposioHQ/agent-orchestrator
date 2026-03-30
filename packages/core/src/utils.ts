@@ -170,7 +170,7 @@ export function hasApprovalPrompt(terminalOutput: string): boolean {
   if (/\(y\)es.*\(n\)o/i.test(tail)) return true;
   if (/press enter to confirm or esc to cancel/i.test(tail)) return true;
 
-  const hasYesOption = /^\s*1\.\s*(yes|proceed|allow)/im.test(tail);
+  const hasYesOption = /^\s*[>*]?\s*1\.\s*(yes|proceed|allow)/im.test(tail);
   const hasNoOption = /^\s*[>*]?\s*[2-9]\.\s*(no|deny|skip|cancel)/im.test(tail);
   return hasYesOption && hasNoOption;
 }

@@ -303,6 +303,37 @@ describe("check (single session)", () => {
     stderrSpy.mockRestore();
   });
 
+  it("does not log early-needs-input anomaly while prompt delivery is pending", async () => {
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({ state: "waiting_input" });
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    const attemptedAt = new Date(Date.now() - 15_000).toISOString();
+    const lm = setupCheck("app-1", {
+      session: makeSession({
+        status: "working",
+        metadata: {
+          promptDeliveryStatus: "pending",
+          promptDeliveryAttemptedAt: attemptedAt,
+        },
+      }),
+      metaOverrides: {
+        promptDeliveryStatus: "pending",
+        promptDeliveryAttemptedAt: attemptedAt,
+      },
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("needs_input");
+
+    const wroteAnomalyLog = stderrSpy.mock.calls.some((call) =>
+      String(call[0]).includes('"operation":"early-needs-input"'),
+    );
+    expect(wroteAnomalyLog).toBe(false);
+
+    stderrSpy.mockRestore();
+  });
+
   it("transitions to stuck when idle exceeds agent-stuck threshold (OpenCode-style activity)", async () => {
     config.reactions = {
       "agent-stuck": { auto: true, action: "notify", threshold: "1m" },
