@@ -484,18 +484,20 @@ describe("getActivityState with activity JSONL", () => {
     expect(result?.state).toBe("blocked");
   });
 
-  it("falls through to native signals for non-critical JSONL states", async () => {
+  it("falls through to JSONL mtime fallback for non-critical states when native signals unavailable", async () => {
     mockTmuxWithProcess("aider");
     mockReadLastActivityEntry.mockResolvedValueOnce({
       entry: { ts: new Date().toISOString(), state: "active", source: "terminal" },
       modifiedAt: new Date(),
     });
 
-    // Non-critical "active" from AO JSONL is ignored — falls through to
-    // git/chat fallbacks. With no git commits or chat history, returns null.
+    // Non-critical "active" from AO JSONL is ignored by checkActivityLogState —
+    // falls through to git/chat fallbacks. With no git commits or chat history,
+    // falls through to JSONL mtime fallback (step 4) which returns "active"
+    // since modifiedAt is recent.
     const result = await agent.getActivityState(
       makeSession({ runtimeHandle: makeTmuxHandle() }),
     );
-    expect(result).toBeNull();
+    expect(result?.state).toBe("active");
   });
 });

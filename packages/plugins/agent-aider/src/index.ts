@@ -200,15 +200,31 @@ function createAiderAgent(): Agent {
 
       // 3. Fallback: check chat history file modification time
       const chatMtime = await getChatHistoryMtime(session.workspacePath);
-      if (!chatMtime) {
-        return null;
+      if (chatMtime) {
+        const ageMs = Date.now() - chatMtime.getTime();
+        const activeWindowMs = Math.min(30_000, threshold);
+        if (ageMs < activeWindowMs) return { state: "active", timestamp: chatMtime };
+        if (ageMs < threshold) return { state: "ready", timestamp: chatMtime };
+        return { state: "idle", timestamp: chatMtime };
       }
 
-      const ageMs = Date.now() - chatMtime.getTime();
-      const activeWindowMs = Math.min(30_000, threshold);
-      if (ageMs < activeWindowMs) return { state: "active", timestamp: chatMtime };
-      if (ageMs < threshold) return { state: "ready", timestamp: chatMtime };
-      return { state: "idle", timestamp: chatMtime };
+      // 4. Fallback: use JSONL file mtime for active/ready/idle when chat history
+      //    is unavailable (e.g. early session startup before first interaction).
+      //    This works because recordActivity only writes on state transitions
+      //    (not every poll cycle), so mtime reflects the last real state change.
+      if (activityResult) {
+        const activeWindowMs = Math.min(30_000, threshold);
+        const ageMs = Math.max(0, Date.now() - activityResult.modifiedAt.getTime());
+        if (ageMs <= activeWindowMs) {
+          return { state: "active", timestamp: activityResult.modifiedAt };
+        }
+        if (ageMs <= threshold) {
+          return { state: "ready", timestamp: activityResult.modifiedAt };
+        }
+        return { state: "idle", timestamp: activityResult.modifiedAt };
+      }
+
+      return null;
     },
 
     async recordActivity(session: Session, terminalOutput: string): Promise<void> {
