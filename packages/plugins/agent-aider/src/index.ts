@@ -2,7 +2,7 @@ import {
   shellEscape,
   DEFAULT_READY_THRESHOLD_MS,
   isAgentProcessRunning,
-  normalizePermissionMode,
+  normalizeAgentPermissionMode,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
@@ -78,7 +78,7 @@ function createAiderAgent(): Agent {
     getLaunchCommand(config: AgentLaunchConfig): string {
       const parts: string[] = ["aider"];
 
-      const permissionMode = normalizePermissionMode(config.permissions);
+      const permissionMode = normalizeAgentPermissionMode(config.permissions);
       if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
         parts.push("--yes");
       }

@@ -96,11 +96,7 @@ export {
   readLastJsonlEntry,
   resolveProjectIdForSessionId,
 } from "./utils.js";
-export {
-  isAgentProcessRunning,
-  resetProcessListCache,
-  normalizePermissionMode,
-} from "./process-detection.js";
+export { isAgentProcessRunning, resetProcessListCache } from "./process-detection.js";
 export type { AgentProcessDetectionOptions } from "./process-detection.js";
 export {
   getWebhookHeader,

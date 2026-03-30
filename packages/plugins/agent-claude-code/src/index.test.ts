@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type {
-  Session,
-  RuntimeHandle,
-  AgentLaunchConfig,
-  WorkspaceHooksConfig,
+import {
+  resetProcessListCache,
+  type Session,
+  type RuntimeHandle,
+  type AgentLaunchConfig,
+  type WorkspaceHooksConfig,
 } from "@composio/ao-core";
-import { resetProcessListCache } from "@composio/ao-core";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks — available inside vi.mock factories

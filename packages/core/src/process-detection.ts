@@ -1,10 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import {
-  normalizeAgentPermissionMode,
-  type AgentPermissionMode,
-  type RuntimeHandle,
-} from "./types.js";
+import type { RuntimeHandle } from "./types.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -110,8 +106,4 @@ export async function isAgentProcessRunning(
   } catch {
     return false;
   }
-}
-
-export function normalizePermissionMode(mode: string | undefined): AgentPermissionMode | undefined {
-  return normalizeAgentPermissionMode(mode);
 }

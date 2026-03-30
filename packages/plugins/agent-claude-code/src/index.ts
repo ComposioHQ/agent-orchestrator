@@ -3,7 +3,7 @@ import {
   readLastJsonlEntry,
   DEFAULT_READY_THRESHOLD_MS,
   isAgentProcessRunning,
-  normalizePermissionMode,
+  normalizeAgentPermissionMode,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
@@ -533,7 +533,7 @@ function createClaudeCodeAgent(): Agent {
       // This command must be safe for both shell and execFile contexts.
       const parts: string[] = ["claude"];
 
-      const permissionMode = normalizePermissionMode(config.permissions);
+      const permissionMode = normalizeAgentPermissionMode(config.permissions);
       if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
         parts.push("--dangerously-skip-permissions");
       }
@@ -692,7 +692,7 @@ function createClaudeCodeAgent(): Agent {
       // Build resume command
       const parts: string[] = ["claude", "--resume", shellEscape(sessionUuid)];
 
-      const permissionMode = normalizePermissionMode(project.agentConfig?.permissions);
+      const permissionMode = normalizeAgentPermissionMode(project.agentConfig?.permissions);
       if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
         parts.push("--dangerously-skip-permissions");
       }

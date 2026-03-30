@@ -1,7 +1,7 @@
 import {
   DEFAULT_READY_THRESHOLD_MS,
   isAgentProcessRunning,
-  normalizePermissionMode,
+  normalizeAgentPermissionMode,
   shellEscape,
   type Agent,
   type AgentSessionInfo,
@@ -549,7 +549,7 @@ export async function resolveCodexBinary(): Promise<string> {
 
 /** Append approval-policy flags to a command parts array */
 function appendApprovalFlags(parts: string[], permissions: string | undefined): void {
-  const mode = normalizePermissionMode(permissions);
+  const mode = normalizeAgentPermissionMode(permissions);
   if (mode === "permissionless") {
     parts.push("--dangerously-bypass-approvals-and-sandbox");
   } else if (mode === "auto-edit") {
