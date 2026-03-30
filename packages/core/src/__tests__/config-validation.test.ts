@@ -332,6 +332,115 @@ describe("Config Validation - SCM webhook contract", () => {
   });
 });
 
+describe("Config Validation - External Plugin Source Fields", () => {
+  it("rejects tracker configs that specify both package and path", () => {
+    expect(() =>
+      validateConfig({
+        projects: {
+          proj1: {
+            path: "/repos/test",
+            repo: "org/test",
+            defaultBranch: "main",
+            tracker: {
+              plugin: "jira",
+              package: "@acme/ao-plugin-tracker-jira",
+              path: "./plugins/jira.js",
+            },
+          },
+        },
+      }),
+    ).toThrow(/Cannot specify both 'package' and 'path'/);
+  });
+
+  it("rejects scm configs that specify both package and path", () => {
+    expect(() =>
+      validateConfig({
+        projects: {
+          proj1: {
+            path: "/repos/test",
+            repo: "org/test",
+            defaultBranch: "main",
+            scm: {
+              plugin: "gitlab-custom",
+              package: "@acme/ao-plugin-scm-gitlab-custom",
+              path: "./plugins/scm.js",
+            },
+          },
+        },
+      }),
+    ).toThrow(/Cannot specify both 'package' and 'path'/);
+  });
+
+  it("rejects notifier configs that specify both package and path", () => {
+    expect(() =>
+      validateConfig({
+        projects: {
+          proj1: {
+            path: "/repos/test",
+            repo: "org/test",
+            defaultBranch: "main",
+          },
+        },
+        notifiers: {
+          alerts: {
+            plugin: "discord-custom",
+            package: "@acme/ao-plugin-notifier-discord-custom",
+            path: "./plugins/notifier.js",
+          },
+        },
+      }),
+    ).toThrow(/Cannot specify both 'package' and 'path'/);
+  });
+
+  it("accepts tracker package declarations", () => {
+    const config = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: {
+            plugin: "jira",
+            package: "@acme/ao-plugin-tracker-jira",
+            host: "jira.example.com",
+          },
+        },
+      },
+    });
+
+    expect(config.projects.proj1.tracker).toEqual({
+      plugin: "jira",
+      package: "@acme/ao-plugin-tracker-jira",
+      host: "jira.example.com",
+    });
+  });
+
+  it("accepts notifier path declarations", () => {
+    const config = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+        },
+      },
+      notifiers: {
+        alerts: {
+          plugin: "discord-custom",
+          path: "~/plugins/discord-custom.js",
+          webhookUrl: "https://discord.com/api/webhooks/test",
+        },
+      },
+    });
+
+    expect(config.notifiers.alerts).toEqual({
+      plugin: "discord-custom",
+      path: "~/plugins/discord-custom.js",
+      webhookUrl: "https://discord.com/api/webhooks/test",
+    });
+  });
+});
+
 describe("Config Schema Validation", () => {
   it("requires projects field", () => {
     const config = {

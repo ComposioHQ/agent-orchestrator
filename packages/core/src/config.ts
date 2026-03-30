@@ -64,12 +64,19 @@ const ReactionConfigSchema = z.object({
 const TrackerConfigSchema = z
   .object({
     plugin: z.string(),
+    package: z.string().min(1).optional(),
+    path: z.string().min(1).optional(),
   })
-  .passthrough();
+  .passthrough()
+  .refine((val) => !(val.package && val.path), {
+    message: "Cannot specify both 'package' and 'path' for a plugin — use one or the other",
+  });
 
 const SCMConfigSchema = z
   .object({
     plugin: z.string(),
+    package: z.string().min(1).optional(),
+    path: z.string().min(1).optional(),
     webhook: z
       .object({
         enabled: z.boolean().default(true),
@@ -82,13 +89,21 @@ const SCMConfigSchema = z
       })
       .optional(),
   })
-  .passthrough();
+  .passthrough()
+  .refine((val) => !(val.package && val.path), {
+    message: "Cannot specify both 'package' and 'path' for a plugin — use one or the other",
+  });
 
 const NotifierConfigSchema = z
   .object({
     plugin: z.string(),
+    package: z.string().min(1).optional(),
+    path: z.string().min(1).optional(),
   })
-  .passthrough();
+  .passthrough()
+  .refine((val) => !(val.package && val.path), {
+    message: "Cannot specify both 'package' and 'path' for a plugin — use one or the other",
+  });
 
 const AgentPermissionSchema = z
   .enum(["permissionless", "default", "auto-edit", "suggest", "skip"])

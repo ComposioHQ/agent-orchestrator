@@ -259,6 +259,48 @@ describe("loadBuiltins", () => {
     });
   });
 
+  it("does not pass external-intended config to builtin when entry declares a package", async () => {
+    const registry = createPluginRegistry();
+    const fakeDiscord = makePlugin("notifier", "discord");
+    const config = makeOrchestratorConfig({
+      notifiers: {
+        discord: {
+          plugin: "discord",
+          package: "@acme/ao-plugin-notifier-discord",
+          webhookUrl: "https://discord.com/api/webhooks/test",
+        },
+      },
+    });
+
+    await registry.loadBuiltins(config, async (pkg: string) => {
+      if (pkg === "@composio/ao-plugin-notifier-discord") return fakeDiscord;
+      throw new Error(`Not found: ${pkg}`);
+    });
+
+    expect(fakeDiscord.create).toHaveBeenCalledWith(undefined);
+  });
+
+  it("does not pass external-intended config to builtin when entry declares a path", async () => {
+    const registry = createPluginRegistry();
+    const fakeDiscord = makePlugin("notifier", "discord");
+    const config = makeOrchestratorConfig({
+      notifiers: {
+        discord: {
+          plugin: "discord",
+          path: "./plugins/discord.js",
+          webhookUrl: "https://discord.com/api/webhooks/test",
+        },
+      },
+    });
+
+    await registry.loadBuiltins(config, async (pkg: string) => {
+      if (pkg === "@composio/ao-plugin-notifier-discord") return fakeDiscord;
+      throw new Error(`Not found: ${pkg}`);
+    });
+
+    expect(fakeDiscord.create).toHaveBeenCalledWith(undefined);
+  });
+
   it("does not match notifier key when explicit plugin points to another notifier", async () => {
     const registry = createPluginRegistry();
     const fakeOpenClaw = makePlugin("notifier", "openclaw");
@@ -365,5 +407,233 @@ describe("loadFromConfig", () => {
     // Should have attempted to import builtin plugins via the provided importFn
     expect(importedPackages.length).toBeGreaterThan(0);
     expect(importedPackages).toContain("@composio/ao-plugin-runtime-tmux");
+  });
+});
+
+describe("loadExternals", () => {
+  it("loads an external tracker plugin from a package without passing project config to create()", async () => {
+    const registry = createPluginRegistry();
+    const fakeTracker = makePlugin("tracker", "jira");
+    const config = makeOrchestratorConfig({
+      configPath: "/tmp/agent-orchestrator.yaml",
+      projects: {
+        proj1: {
+          path: "/repos/app",
+          repo: "org/app",
+          defaultBranch: "main",
+          tracker: {
+            plugin: "jira",
+            package: "@acme/ao-plugin-tracker-jira",
+            host: "jira.example.com",
+            projectKey: "APP",
+          },
+        },
+      },
+    });
+
+    await registry.loadExternals(config, async (pkg: string) => {
+      if (pkg === "@acme/ao-plugin-tracker-jira") return fakeTracker;
+      throw new Error(`Unexpected import: ${pkg}`);
+    });
+
+    expect(fakeTracker.create).toHaveBeenCalledWith(undefined);
+    expect(registry.get("tracker", "jira")).not.toBeNull();
+  });
+
+  it("loads an external notifier plugin from a package and passes notifier config to create()", async () => {
+    const registry = createPluginRegistry();
+    const fakeNotifier = makePlugin("notifier", "discord-custom");
+    const config = makeOrchestratorConfig({
+      configPath: "/tmp/agent-orchestrator.yaml",
+      notifiers: {
+        alerts: {
+          plugin: "discord-custom",
+          package: "@acme/ao-plugin-notifier-discord-custom",
+          webhookUrl: "https://discord.com/api/webhooks/test",
+          threadId: "1234",
+        },
+      },
+    });
+
+    await registry.loadExternals(config, async (pkg: string) => {
+      if (pkg === "@acme/ao-plugin-notifier-discord-custom") return fakeNotifier;
+      throw new Error(`Unexpected import: ${pkg}`);
+    });
+
+    expect(fakeNotifier.create).toHaveBeenCalledWith({
+      webhookUrl: "https://discord.com/api/webhooks/test",
+      threadId: "1234",
+    });
+    expect(registry.get("notifier", "discord-custom")).not.toBeNull();
+  });
+
+  it("resolves relative local paths against the config directory", async () => {
+    const registry = createPluginRegistry();
+    const fakeTracker = makePlugin("tracker", "local-tracker");
+    const importSpy = vi.fn(async (pkg: string) => {
+      if (pkg === "/workspace/config/plugins/local-tracker.js") return fakeTracker;
+      throw new Error(`Unexpected import: ${pkg}`);
+    });
+    const config = makeOrchestratorConfig({
+      configPath: "/workspace/config/agent-orchestrator.yaml",
+      projects: {
+        proj1: {
+          path: "/repos/app",
+          repo: "org/app",
+          defaultBranch: "main",
+          tracker: {
+            plugin: "local-tracker",
+            path: "./plugins/local-tracker.js",
+          },
+        },
+      },
+    });
+
+    await registry.loadExternals(config, importSpy);
+
+    expect(importSpy).toHaveBeenCalledWith("/workspace/config/plugins/local-tracker.js");
+  });
+
+  it("expands home-relative local paths before importing", async () => {
+    const registry = createPluginRegistry();
+    const fakeTracker = makePlugin("tracker", "home-tracker");
+    const importSpy = vi.fn(async (pkg: string) => {
+      if (pkg === "/Users/tester/plugins/home-tracker.js") return fakeTracker;
+      throw new Error(`Unexpected import: ${pkg}`);
+    });
+    const config = makeOrchestratorConfig({
+      configPath: "/workspace/config/agent-orchestrator.yaml",
+      projects: {
+        proj1: {
+          path: "/repos/app",
+          repo: "org/app",
+          defaultBranch: "main",
+          tracker: {
+            plugin: "home-tracker",
+            path: "~/plugins/home-tracker.js",
+          },
+        },
+      },
+    });
+
+    const originalHome = process.env["HOME"];
+    process.env["HOME"] = "/Users/tester";
+    try {
+      await registry.loadExternals(config, importSpy);
+    } finally {
+      if (originalHome === undefined) {
+        delete process.env["HOME"];
+      } else {
+        process.env["HOME"] = originalHome;
+      }
+    }
+
+    expect(importSpy).toHaveBeenCalledWith("/Users/tester/plugins/home-tracker.js");
+  });
+
+  it("rejects conflicting sources for the same external plugin across projects", async () => {
+    const registry = createPluginRegistry();
+    const config = makeOrchestratorConfig({
+      configPath: "/tmp/agent-orchestrator.yaml",
+      projects: {
+        proj1: {
+          path: "/repos/app-one",
+          repo: "org/app-one",
+          defaultBranch: "main",
+          tracker: {
+            plugin: "jira",
+            package: "@acme/ao-plugin-tracker-jira",
+          },
+        },
+        proj2: {
+          path: "/repos/app-two",
+          repo: "org/app-two",
+          defaultBranch: "main",
+          tracker: {
+            plugin: "jira",
+            path: "./plugins/jira.js",
+          },
+        },
+      },
+    });
+
+    await expect(registry.loadExternals(config)).rejects.toThrow(
+      /Conflicting sources for tracker plugin "jira"/,
+    );
+  });
+
+  it("rejects an external plugin that conflicts with a built-in slot:name", async () => {
+    const registry = createPluginRegistry();
+    registry.register(makePlugin("tracker", "github"));
+    const config = makeOrchestratorConfig({
+      configPath: "/tmp/agent-orchestrator.yaml",
+      projects: {
+        proj1: {
+          path: "/repos/app",
+          repo: "org/app",
+          defaultBranch: "main",
+          tracker: {
+            plugin: "github",
+            package: "@acme/ao-plugin-tracker-github",
+          },
+        },
+      },
+    });
+
+    await expect(registry.loadExternals(config)).rejects.toThrow(
+      /conflicts with already-registered tracker plugin "github"/i,
+    );
+  });
+
+  it("rejects manifest slot mismatches", async () => {
+    const registry = createPluginRegistry();
+    const fakeNotifier = makePlugin("notifier", "jira");
+    const config = makeOrchestratorConfig({
+      configPath: "/tmp/agent-orchestrator.yaml",
+      projects: {
+        proj1: {
+          path: "/repos/app",
+          repo: "org/app",
+          defaultBranch: "main",
+          tracker: {
+            plugin: "jira",
+            package: "@acme/ao-plugin-tracker-jira",
+          },
+        },
+      },
+    });
+
+    await expect(
+      registry.loadExternals(config, async (pkg: string) => {
+        if (pkg === "@acme/ao-plugin-tracker-jira") return fakeNotifier;
+        throw new Error(`Unexpected import: ${pkg}`);
+      }),
+    ).rejects.toThrow(/expected slot "tracker"/);
+  });
+
+  it("rejects manifest name mismatches", async () => {
+    const registry = createPluginRegistry();
+    const fakeTracker = makePlugin("tracker", "wrong-name");
+    const config = makeOrchestratorConfig({
+      configPath: "/tmp/agent-orchestrator.yaml",
+      projects: {
+        proj1: {
+          path: "/repos/app",
+          repo: "org/app",
+          defaultBranch: "main",
+          tracker: {
+            plugin: "jira",
+            package: "@acme/ao-plugin-tracker-jira",
+          },
+        },
+      },
+    });
+
+    await expect(
+      registry.loadExternals(config, async (pkg: string) => {
+        if (pkg === "@acme/ao-plugin-tracker-jira") return fakeTracker;
+        throw new Error(`Unexpected import: ${pkg}`);
+      }),
+    ).rejects.toThrow(/expected name "jira"/);
   });
 });

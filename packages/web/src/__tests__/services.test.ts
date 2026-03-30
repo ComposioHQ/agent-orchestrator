@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const {
   mockLoadConfig,
   mockRegister,
+  mockLoadExternals,
   mockCreateSessionManager,
   mockRegistry,
   tmuxPlugin,
@@ -15,6 +16,7 @@ const {
 } = vi.hoisted(() => {
   const mockLoadConfig = vi.fn();
   const mockRegister = vi.fn();
+  const mockLoadExternals = vi.fn();
   const mockCreateSessionManager = vi.fn();
   const mockRegistry = {
     register: mockRegister,
@@ -22,11 +24,13 @@ const {
     list: vi.fn(),
     loadBuiltins: vi.fn(),
     loadFromConfig: vi.fn(),
+    loadExternals: mockLoadExternals,
   };
 
   return {
     mockLoadConfig,
     mockRegister,
+    mockLoadExternals,
     mockCreateSessionManager,
     mockRegistry,
     tmuxPlugin: { manifest: { name: "tmux" } },
@@ -69,8 +73,10 @@ describe("services", () => {
   beforeEach(() => {
     vi.resetModules();
     mockRegister.mockClear();
+    mockLoadExternals.mockReset();
     mockCreateSessionManager.mockReset();
     mockLoadConfig.mockReset();
+    mockLoadExternals.mockResolvedValue(undefined);
     mockLoadConfig.mockReturnValue({
       configPath: "/tmp/agent-orchestrator.yaml",
       port: 3000,
@@ -99,6 +105,30 @@ describe("services", () => {
     expect(mockRegister).toHaveBeenCalledWith(opencodePlugin);
   });
 
+  it("loads external plugins through the registry during initialization", async () => {
+    const { getServices } = await import("../lib/services");
+
+    await getServices();
+
+    expect(mockLoadExternals).toHaveBeenCalledTimes(1);
+    expect(mockLoadExternals).toHaveBeenCalledWith(
+      expect.objectContaining({ configPath: "/tmp/agent-orchestrator.yaml" }),
+      expect.any(Function),
+    );
+  });
+
+  it("passes a runtime import function to loadExternals", async () => {
+    mockLoadExternals.mockImplementation(async (_config: unknown, importer: (s: string) => Promise<unknown>) => {
+      const mod = (await importer("node:path")) as { basename?: (value: string) => string };
+      expect(mod.basename?.("/tmp/example.txt")).toBe("example.txt");
+    });
+
+    const { getServices } = await import("../lib/services");
+    await getServices();
+
+    expect(mockLoadExternals).toHaveBeenCalledTimes(1);
+  });
+
   it("caches initialized services across repeated calls", async () => {
     const { getServices } = await import("../lib/services");
 
@@ -118,11 +148,13 @@ describe("pollBacklog", () => {
   beforeEach(async () => {
     vi.resetModules();
     mockRegister.mockClear();
+    mockLoadExternals.mockReset();
     mockCreateSessionManager.mockReset();
     mockLoadConfig.mockReset();
     mockUpdateIssue.mockClear();
     mockListIssues.mockClear();
     mockSpawn.mockClear();
+    mockLoadExternals.mockResolvedValue(undefined);
 
     mockLoadConfig.mockReturnValue({
       configPath: "/tmp/agent-orchestrator.yaml",
