@@ -102,7 +102,6 @@ export function registerSession(program: Command): void {
       const sessionInfo = await sm.get(sessionName);
       const tmuxTarget = sessionInfo?.runtimeHandle?.id ?? sessionName;
       const runtimeName = sessionInfo?.runtimeHandle?.runtimeName ?? "tmux";
-      const fallbackCommand = `tmux attach -t ${tmuxTarget}`;
       const attachInfo = await sm.getAttachInfo(sessionName).catch(() => null);
 
       if (runtimeName === "tmux") {

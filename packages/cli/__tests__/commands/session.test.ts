@@ -44,6 +44,7 @@ const {
     restore: vi.fn(),
     remap: vi.fn(),
     get: vi.fn(),
+    getAttachInfo: vi.fn(),
     spawn: vi.fn(),
     spawnOrchestrator: vi.fn(),
     send: vi.fn(),
@@ -203,6 +204,7 @@ beforeEach(() => {
   mockSessionManager.restore.mockReset();
   mockSessionManager.remap.mockReset();
   mockSessionManager.get.mockReset();
+  mockSessionManager.getAttachInfo.mockReset();
   mockSessionManager.spawn.mockReset();
   mockSessionManager.send.mockReset();
   mockSessionManager.claimPR.mockReset();
@@ -225,6 +227,7 @@ beforeEach(() => {
   } satisfies CleanupResult);
   mockSessionManager.restore.mockResolvedValue(undefined);
   mockSessionManager.remap.mockResolvedValue("ses_mock");
+  mockSessionManager.getAttachInfo.mockResolvedValue(null);
   mockSessionManager.claimPR.mockResolvedValue({
     sessionId: "app-1",
     projectId: "my-app",

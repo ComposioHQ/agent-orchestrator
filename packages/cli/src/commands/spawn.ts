@@ -14,7 +14,6 @@ import {
   type DecomposerConfig,
   DEFAULT_DECOMPOSER_CONFIG,
 } from "@composio/ao-core";
-import { exec } from "../lib/shell.js";
 import { banner } from "../lib/format.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 import { ensureLifecycleWorker } from "../lib/lifecycle-service.js";
@@ -25,7 +24,6 @@ import {
   appendStringOption,
   resolveRuntimeOverride,
   type RuntimeOverride,
-  type RuntimeOverrideFlagOptions,
 } from "../lib/runtime-overrides.js";
 
 /**
@@ -445,10 +443,12 @@ export function registerBatchSpawn(program: Command): void {
           // Exclude terminal sessions so completed/merged sessions don't block respawning
           // (e.g. when an issue is reopened after its PR was merged).
           const existingSessions = await sm.list(projectId);
+          const sessionsWithIssues = existingSessions.filter(
+            (s): s is typeof s & { issueId: string } =>
+              typeof s.issueId === "string" && !TERMINAL_STATUSES.has(s.status),
+          );
           const existingIssueMap = new Map(
-            existingSessions
-              .filter((s) => s.issueId && !TERMINAL_STATUSES.has(s.status))
-              .map((s) => [s.issueId!.toLowerCase(), s.id]),
+            sessionsWithIssues.map((s) => [s.issueId.toLowerCase(), s.id]),
           );
 
           for (const issue of issues) {
