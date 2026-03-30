@@ -193,6 +193,8 @@ export const manifest = {
   displayName: "Claude Code",
 };
 
+const PROCESS_DETECTION_TIMEOUT_MS = 5_000;
+
 // =============================================================================
 // JSONL Helpers
 // =============================================================================
@@ -585,7 +587,9 @@ function createClaudeCodeAgent(): Agent {
     },
 
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
-      return isAgentProcessRunning(handle, "claude");
+      return isAgentProcessRunning(handle, "claude", {
+        commandTimeoutMs: PROCESS_DETECTION_TIMEOUT_MS,
+      });
     },
 
     async getActivityState(
