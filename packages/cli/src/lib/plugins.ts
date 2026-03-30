@@ -5,6 +5,7 @@ import codexPlugin from "@composio/ao-plugin-agent-codex";
 import aiderPlugin from "@composio/ao-plugin-agent-aider";
 import opencodePlugin from "@composio/ao-plugin-agent-opencode";
 import githubSCMPlugin from "@composio/ao-plugin-scm-github";
+import gitlabSCMPlugin from "@composio/ao-plugin-scm-gitlab";
 
 const agentPlugins: Record<string, { create(): Agent }> = {
   "claude-code": claudeCodePlugin,
@@ -15,6 +16,7 @@ const agentPlugins: Record<string, { create(): Agent }> = {
 
 const builtinSCMPlugins: Record<string, { create(): SCM }> = {
   github: githubSCMPlugin,
+  gitlab: gitlabSCMPlugin,
 };
 
 /**

@@ -46,6 +46,7 @@
     "@composio/ao-plugin-runtime-process": "workspace:*",
     "@composio/ao-plugin-runtime-tmux": "workspace:*",
     "@composio/ao-plugin-scm-github": "workspace:*",
+        "@composio/ao-plugin-scm-gitlab": "workspace:*",
     "@composio/ao-plugin-terminal-iterm2": "workspace:*",
     "@composio/ao-plugin-terminal-web": "workspace:*",
     "@composio/ao-plugin-tracker-github": "workspace:*",
