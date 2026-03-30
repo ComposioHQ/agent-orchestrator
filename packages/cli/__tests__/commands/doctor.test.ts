@@ -12,11 +12,12 @@ vi.mock("../../src/lib/script-runner.js", () => ({
 
 vi.mock("@composio/ao-core", () => ({
   findConfigFile: (...args: unknown[]) => mockFindConfigFile(...args),
+  getObservabilityBaseDir: () => "/tmp/.agent-orchestrator/observability",
   loadConfig: vi.fn(),
 }));
 
 vi.mock("../../src/lib/openclaw-probe.js", () => ({
-  probeGateway: vi.fn(),
+  detectOpenClawInstallation: vi.fn(),
   validateToken: vi.fn(),
 }));
 
