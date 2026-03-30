@@ -7,7 +7,11 @@
  * 3. Local file paths specified in config
  */
 
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import type {
+  InstalledPluginConfig,
   PluginSlot,
   PluginManifest,
   PluginModule,
@@ -17,6 +21,8 @@ import type {
 
 /** Map from "slot:name" → plugin instance */
 type PluginMap = Map<string, { manifest: PluginManifest; instance: unknown }>;
+
+const LOCAL_PLUGIN_ENTRY_CANDIDATES = ["dist/index.js", "index.js"] as const;
 
 function makeKey(slot: PluginSlot, name: string): string {
   return `${slot}:${name}`;
@@ -72,12 +78,127 @@ function extractPluginConfig(
       const matches = hasExplicitPlugin ? configuredPlugin === name : notifierName === name;
       if (matches) {
         const { plugin: _plugin, ...rest } = notifierConfig as Record<string, unknown>;
-        return rest;
+        return config.configPath ? { ...rest, configPath: config.configPath } : rest;
       }
     }
   }
 
   return undefined;
+}
+
+function isPluginModule(value: unknown): value is PluginModule {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<PluginModule>;
+  return Boolean(candidate.manifest && typeof candidate.create === "function");
+}
+
+function normalizeImportedPluginModule(value: unknown): PluginModule | null {
+  if (isPluginModule(value)) return value;
+
+  if (value && typeof value === "object" && "default" in value) {
+    const defaultExport = (value as { default?: unknown }).default;
+    if (isPluginModule(defaultExport)) return defaultExport;
+  }
+
+  return null;
+}
+
+function resolveConfigRelativePath(targetPath: string, configPath?: string): string {
+  if (isAbsolute(targetPath)) return targetPath;
+  const baseDir = configPath ? dirname(configPath) : process.cwd();
+  return resolve(baseDir, targetPath);
+}
+
+function resolvePackageExportsEntry(exportsField: unknown): string | null {
+  if (typeof exportsField === "string") return exportsField;
+  if (!exportsField || typeof exportsField !== "object") return null;
+
+  const exportsRecord = exportsField as Record<string, unknown>;
+  const dotEntry = exportsRecord["."];
+
+  if (typeof dotEntry === "string") return dotEntry;
+  if (dotEntry && typeof dotEntry === "object") {
+    const importEntry = (dotEntry as Record<string, unknown>)["import"];
+    if (typeof importEntry === "string") return importEntry;
+    const defaultEntry = (dotEntry as Record<string, unknown>)["default"];
+    if (typeof defaultEntry === "string") return defaultEntry;
+  }
+
+  const importEntry = exportsRecord["import"];
+  if (typeof importEntry === "string") return importEntry;
+
+  const defaultEntry = exportsRecord["default"];
+  if (typeof defaultEntry === "string") return defaultEntry;
+
+  return null;
+}
+
+function resolveLocalPluginEntrypoint(pluginPath: string): string | null {
+  if (!existsSync(pluginPath)) return null;
+
+  const stat = statSync(pluginPath);
+  if (stat.isFile()) {
+    return pluginPath;
+  }
+
+  if (!stat.isDirectory()) {
+    return null;
+  }
+
+  const packageJsonPath = join(pluginPath, "package.json");
+  if (existsSync(packageJsonPath)) {
+    try {
+      const raw = readFileSync(packageJsonPath, "utf-8");
+      const packageJson = JSON.parse(raw) as {
+        exports?: unknown;
+        module?: unknown;
+        main?: unknown;
+      };
+
+      const exportsEntry = resolvePackageExportsEntry(packageJson.exports);
+      if (exportsEntry) {
+        const resolvedEntry = resolve(pluginPath, exportsEntry);
+        if (existsSync(resolvedEntry)) return resolvedEntry;
+      }
+
+      if (typeof packageJson.module === "string") {
+        const moduleEntry = resolve(pluginPath, packageJson.module);
+        if (existsSync(moduleEntry)) return moduleEntry;
+      }
+
+      if (typeof packageJson.main === "string") {
+        const mainEntry = resolve(pluginPath, packageJson.main);
+        if (existsSync(mainEntry)) return mainEntry;
+      }
+    } catch {
+      // Fall through to common entrypoint guesses below.
+    }
+  }
+
+  for (const candidate of LOCAL_PLUGIN_ENTRY_CANDIDATES) {
+    const entry = join(pluginPath, candidate);
+    if (existsSync(entry)) return entry;
+  }
+
+  return null;
+}
+
+function inferPackageSpecifier(value: string | undefined): string | null {
+  if (!value) return null;
+  return value.startsWith("@") || value.includes("/") ? value : null;
+}
+
+function resolvePluginSpecifier(
+  plugin: InstalledPluginConfig,
+  config: OrchestratorConfig,
+): string | null {
+  if (plugin.path) {
+    const absolutePath = resolveConfigRelativePath(plugin.path, config.configPath);
+    const entrypoint = resolveLocalPluginEntrypoint(absolutePath);
+    return entrypoint ? pathToFileURL(entrypoint).href : null;
+  }
+
+  return plugin.package ?? inferPackageSpecifier(plugin.name);
 }
 
 export function createPluginRegistry(): PluginRegistry {
@@ -113,8 +234,8 @@ export function createPluginRegistry(): PluginRegistry {
       const doImport = importFn ?? ((pkg: string) => import(pkg));
       for (const builtin of BUILTIN_PLUGINS) {
         try {
-          const mod = (await doImport(builtin.pkg)) as PluginModule;
-          if (mod.manifest && typeof mod.create === "function") {
+          const mod = normalizeImportedPluginModule(await doImport(builtin.pkg));
+          if (mod) {
             const pluginConfig = orchestratorConfig
               ? extractPluginConfig(builtin.slot, builtin.name, orchestratorConfig)
               : undefined;
@@ -133,8 +254,24 @@ export function createPluginRegistry(): PluginRegistry {
       // Load built-ins with orchestrator config so plugins receive their settings
       await this.loadBuiltins(config, importFn);
 
-      // Then, load any additional plugins specified in project configs
-      // (future: support npm package names and local file paths)
+      const doImport = importFn ?? ((pkg: string) => import(pkg));
+
+      for (const plugin of config.plugins ?? []) {
+        if (plugin.enabled === false) continue;
+
+        const specifier = resolvePluginSpecifier(plugin, config);
+        if (!specifier) continue;
+
+        try {
+          const mod = normalizeImportedPluginModule(await doImport(specifier));
+          if (!mod) continue;
+
+          const pluginConfig = extractPluginConfig(mod.manifest.slot, mod.manifest.name, config);
+          this.register(mod, pluginConfig);
+        } catch {
+          // External plugin unavailable or invalid — continue loading the rest.
+        }
+      }
     },
   };
 }

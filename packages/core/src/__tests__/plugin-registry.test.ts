@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { createPluginRegistry } from "../plugin-registry.js";
 import type { PluginModule, PluginManifest, OrchestratorConfig } from "../types.js";
 
@@ -365,5 +368,90 @@ describe("loadFromConfig", () => {
     // Should have attempted to import builtin plugins via the provided importFn
     expect(importedPackages.length).toBeGreaterThan(0);
     expect(importedPackages).toContain("@composio/ao-plugin-runtime-tmux");
+  });
+
+  it("loads external package plugins from config.plugins", async () => {
+    const registry = createPluginRegistry();
+    const agentPlugin = makePlugin("agent", "goose");
+    const config = makeOrchestratorConfig({
+      configPath: "/tmp/agent-orchestrator.yaml",
+      plugins: [
+        {
+          name: "goose",
+          source: "npm",
+          package: "@example/ao-plugin-agent-goose",
+        },
+      ],
+    });
+
+    await registry.loadFromConfig(config, async (specifier: string) => {
+      if (specifier === "@example/ao-plugin-agent-goose") {
+        return { default: agentPlugin };
+      }
+      throw new Error(`Not found: ${specifier}`);
+    });
+
+    expect(registry.list("agent")).toContainEqual(
+      expect.objectContaining({ name: "goose", slot: "agent" }),
+    );
+    expect(registry.get("agent", "goose")).not.toBeNull();
+  });
+
+  it("loads local plugins relative to the config file", async () => {
+    const registry = createPluginRegistry();
+    const tmpConfigDir = mkdtempSync(join(tmpdir(), "ao-plugin-registry-"));
+    const localPluginDir = join(tmpConfigDir, "plugins", "role-qa");
+    mkdirSync(join(localPluginDir, "dist"), { recursive: true });
+    writeFileSync(join(localPluginDir, "dist", "index.js"), "export default {};\n");
+    writeFileSync(
+      join(localPluginDir, "package.json"),
+      JSON.stringify({ name: "role-qa", main: "dist/index.js" }),
+    );
+
+    const config = makeOrchestratorConfig({
+      configPath: join(tmpConfigDir, "agent-orchestrator.yaml"),
+      plugins: [
+        {
+          name: "gitlab-plus",
+          source: "local",
+          path: "./plugins/role-qa",
+        },
+      ],
+    });
+
+    let importedSpecifier = "";
+    await registry.loadFromConfig(config, async (specifier: string) => {
+      if (specifier.startsWith("file:")) {
+        importedSpecifier = specifier;
+        return makePlugin("tracker", "gitlab-plus");
+      }
+      throw new Error(`Not found: ${specifier}`);
+    });
+
+    expect(importedSpecifier).toContain("/plugins/role-qa/dist/index.js");
+    expect(registry.get("tracker", "gitlab-plus")).not.toBeNull();
+  });
+
+  it("skips disabled external plugins", async () => {
+    const registry = createPluginRegistry();
+    const config = makeOrchestratorConfig({
+      configPath: "/tmp/agent-orchestrator.yaml",
+      plugins: [
+        {
+          name: "goose",
+          source: "npm",
+          package: "@example/ao-plugin-agent-goose",
+          enabled: false,
+        },
+      ],
+    });
+    const importFn = vi.fn(async (_specifier: string) => {
+      throw new Error("should not import disabled plugin");
+    });
+
+    await registry.loadFromConfig(config, importFn);
+
+    expect(importFn).not.toHaveBeenCalledWith("@example/ao-plugin-agent-goose");
+    expect(registry.get("agent", "goose")).toBeNull();
   });
 });
