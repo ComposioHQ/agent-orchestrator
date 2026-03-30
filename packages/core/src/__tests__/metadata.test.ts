@@ -11,6 +11,7 @@ import {
   updateMetadata,
   deleteMetadata,
   listMetadata,
+  findArchivedSessionForIssue,
 } from "../metadata.js";
 
 let dataDir: string;
@@ -460,5 +461,128 @@ describe("listMetadata", () => {
     const list = listMetadata(emptyDir);
     expect(list).toEqual([]);
     // no cleanup needed since dir was never created
+  });
+});
+
+describe("findArchivedSessionForIssue", () => {
+  it("finds archived session matching issue and agent", () => {
+    writeMetadata(dataDir, "app-1", {
+      worktree: "/tmp/w",
+      branch: "feat/INT-100",
+      status: "killed",
+      issue: "INT-100",
+      agent: "claude-code",
+      createdAt: "2025-06-01T00:00:00.000Z",
+      summary: "Fixed the login bug",
+    });
+    deleteMetadata(dataDir, "app-1", true);
+
+    const result = findArchivedSessionForIssue(dataDir, "INT-100", "claude-code");
+    expect(result).not.toBeNull();
+    expect(result!.sessionId).toBe("app-1");
+    expect(result!.metadata["issue"]).toBe("INT-100");
+    expect(result!.metadata["agent"]).toBe("claude-code");
+    expect(result!.metadata["summary"]).toBe("Fixed the login bug");
+  });
+
+  it("returns null when no matching issue", () => {
+    writeMetadata(dataDir, "app-1", {
+      worktree: "/tmp/w",
+      branch: "feat/INT-100",
+      status: "killed",
+      issue: "INT-100",
+      agent: "claude-code",
+    });
+    deleteMetadata(dataDir, "app-1", true);
+
+    const result = findArchivedSessionForIssue(dataDir, "INT-999", "claude-code");
+    expect(result).toBeNull();
+  });
+
+  it("returns null when agent doesn't match", () => {
+    writeMetadata(dataDir, "app-1", {
+      worktree: "/tmp/w",
+      branch: "feat/INT-100",
+      status: "killed",
+      issue: "INT-100",
+      agent: "claude-code",
+    });
+    deleteMetadata(dataDir, "app-1", true);
+
+    const result = findArchivedSessionForIssue(dataDir, "INT-100", "codex");
+    expect(result).toBeNull();
+  });
+
+  it("returns the most recent session when multiple exist", () => {
+    // Create first session
+    writeMetadata(dataDir, "app-1", {
+      worktree: "/tmp/w",
+      branch: "feat/INT-100",
+      status: "killed",
+      issue: "INT-100",
+      agent: "claude-code",
+      createdAt: "2025-06-01T00:00:00.000Z",
+      summary: "First attempt",
+    });
+    deleteMetadata(dataDir, "app-1", true);
+
+    // Create second session (more recent)
+    writeMetadata(dataDir, "app-2", {
+      worktree: "/tmp/w2",
+      branch: "feat/INT-100",
+      status: "killed",
+      issue: "INT-100",
+      agent: "claude-code",
+      createdAt: "2025-06-15T00:00:00.000Z",
+      summary: "Second attempt",
+    });
+    deleteMetadata(dataDir, "app-2", true);
+
+    const result = findArchivedSessionForIssue(dataDir, "INT-100", "claude-code");
+    expect(result).not.toBeNull();
+    expect(result!.metadata["summary"]).toBe("Second attempt");
+  });
+
+  it("returns null when archive directory doesn't exist", () => {
+    const result = findArchivedSessionForIssue(dataDir, "INT-100", "claude-code");
+    expect(result).toBeNull();
+  });
+});
+
+describe("resumedFrom persistence", () => {
+  it("roundtrips resumedFrom through writeMetadata and readMetadata", () => {
+    writeMetadata(dataDir, "app-2", {
+      worktree: "/tmp/w",
+      branch: "main",
+      status: "spawning",
+      resumedFrom: "app-1",
+    });
+
+    const meta = readMetadata(dataDir, "app-2");
+    expect(meta).not.toBeNull();
+    expect(meta!.resumedFrom).toBe("app-1");
+  });
+
+  it("resumedFrom is persisted in the key=value file", () => {
+    writeMetadata(dataDir, "app-2", {
+      worktree: "/tmp/w",
+      branch: "main",
+      status: "spawning",
+      resumedFrom: "app-1",
+    });
+
+    const content = readFileSync(join(dataDir, "app-2"), "utf-8");
+    expect(content).toContain("resumedFrom=app-1");
+  });
+
+  it("resumedFrom is undefined when not set", () => {
+    writeMetadata(dataDir, "app-3", {
+      worktree: "/tmp/w",
+      branch: "main",
+      status: "working",
+    });
+
+    const meta = readMetadata(dataDir, "app-3");
+    expect(meta!.resumedFrom).toBeUndefined();
   });
 });

@@ -1995,5 +1995,181 @@ describe("spawn", () => {
       expect(readMetadataRaw(sessionsDir, "app-orchestrator")).toEqual({});
     });
   });
+
+  describe("auto-resume on respawn", () => {
+    it("injects previous session context when archived session exists for the same issue", async () => {
+      // Create and archive a previous session for the same issue
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: "/tmp/ws",
+        branch: "feat/INT-100",
+        status: "killed",
+        issue: "INT-100",
+        agent: "mock-agent",
+        createdAt: "2025-06-01T00:00:00.000Z",
+        summary: "Implemented the login flow",
+      });
+      deleteMetadata(sessionsDir, "app-1", true);
+
+      const sm = createSessionManager({ config, registry: mockRegistry });
+      const session = await sm.spawn({ projectId: "my-app", issueId: "INT-100" });
+
+      // Session should be spawned with resumedFrom metadata
+      const meta = readMetadataRaw(sessionsDir, session.id);
+      expect(meta).not.toBeNull();
+      expect(meta!["resumedFrom"]).toBe("app-1");
+
+      // The launch command should have been called (context injection goes through prompt)
+      expect(mockAgent.getLaunchCommand).toHaveBeenCalled();
+      const launchConfig = (mockAgent.getLaunchCommand as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+      // The prompt should contain previous session context
+      expect(launchConfig?.prompt).toContain("Previous Session Context");
+      expect(launchConfig?.prompt).toContain("Implemented the login flow");
+    });
+
+    it("skips resume when workerRespawnStrategy is fresh", async () => {
+      // Create and archive a previous session
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: "/tmp/ws",
+        branch: "feat/INT-200",
+        status: "killed",
+        issue: "INT-200",
+        agent: "mock-agent",
+        createdAt: "2025-06-01T00:00:00.000Z",
+        summary: "Previous work",
+      });
+      deleteMetadata(sessionsDir, "app-1", true);
+
+      // Set strategy to fresh
+      config.projects["my-app"]!.workerRespawnStrategy = "fresh";
+
+      const sm = createSessionManager({ config, registry: mockRegistry });
+      const session = await sm.spawn({ projectId: "my-app", issueId: "INT-200" });
+
+      // Should NOT have resumedFrom metadata
+      const meta = readMetadataRaw(sessionsDir, session.id);
+      expect(meta!["resumedFrom"]).toBeUndefined();
+
+      // Prompt should NOT contain previous session context
+      const launchConfig = (mockAgent.getLaunchCommand as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+      expect(launchConfig?.prompt).not.toContain("Previous Session Context");
+    });
+
+    it("tries native resume when agent supports getRestoreCommand", async () => {
+      // Create and archive a previous session
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: "/tmp/ws",
+        branch: "feat/INT-300",
+        status: "killed",
+        issue: "INT-300",
+        agent: "mock-agent",
+        createdAt: "2025-06-01T00:00:00.000Z",
+        summary: "Previous work",
+      });
+      deleteMetadata(sessionsDir, "app-1", true);
+
+      // Add getRestoreCommand to the mock agent
+      (mockAgent as Agent & { getRestoreCommand: ReturnType<typeof vi.fn> }).getRestoreCommand =
+        vi.fn().mockResolvedValue("mock-agent --resume abc123");
+
+      const sm = createSessionManager({ config, registry: mockRegistry });
+      const session = await sm.spawn({ projectId: "my-app", issueId: "INT-300" });
+
+      // Should have used the restore command instead of getLaunchCommand's result
+      const runtimeCreateCall = (mockRuntime.create as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+      expect(runtimeCreateCall?.launchCommand).toBe("mock-agent --resume abc123");
+
+      // Should have resumedFrom metadata
+      const meta = readMetadataRaw(sessionsDir, session.id);
+      expect(meta!["resumedFrom"]).toBe("app-1");
+    });
+
+    it("falls back to context injection when getRestoreCommand returns null", async () => {
+      // Create and archive a previous session
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: "/tmp/ws",
+        branch: "feat/INT-400",
+        status: "killed",
+        issue: "INT-400",
+        agent: "mock-agent",
+        createdAt: "2025-06-01T00:00:00.000Z",
+        summary: "Half-done work",
+      });
+      deleteMetadata(sessionsDir, "app-1", true);
+
+      // getRestoreCommand returns null (no session file found)
+      (mockAgent as Agent & { getRestoreCommand: ReturnType<typeof vi.fn> }).getRestoreCommand =
+        vi.fn().mockResolvedValue(null);
+
+      const sm = createSessionManager({ config, registry: mockRegistry });
+      await sm.spawn({ projectId: "my-app", issueId: "INT-400" });
+
+      // Should fall back to regular launch with context injection
+      expect(mockAgent.getLaunchCommand).toHaveBeenCalled();
+      const launchConfig = (mockAgent.getLaunchCommand as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+      expect(launchConfig?.prompt).toContain("Previous Session Context");
+      expect(launchConfig?.prompt).toContain("Half-done work");
+    });
+
+    it("uses context-inject strategy skipping native resume", async () => {
+      // Create and archive a previous session
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: "/tmp/ws",
+        branch: "feat/INT-500",
+        status: "killed",
+        issue: "INT-500",
+        agent: "mock-agent",
+        createdAt: "2025-06-01T00:00:00.000Z",
+        summary: "Work in progress",
+      });
+      deleteMetadata(sessionsDir, "app-1", true);
+
+      // Add getRestoreCommand but set strategy to context-inject
+      (mockAgent as Agent & { getRestoreCommand: ReturnType<typeof vi.fn> }).getRestoreCommand =
+        vi.fn().mockResolvedValue("mock-agent --resume abc123");
+      config.projects["my-app"]!.workerRespawnStrategy = "context-inject";
+
+      const sm = createSessionManager({ config, registry: mockRegistry });
+      await sm.spawn({ projectId: "my-app", issueId: "INT-500" });
+
+      // getRestoreCommand should NOT have been called (skipped by strategy)
+      expect(
+        (mockAgent as Agent & { getRestoreCommand: ReturnType<typeof vi.fn> }).getRestoreCommand,
+      ).not.toHaveBeenCalled();
+
+      // Should have context injected into prompt
+      const launchConfig = (mockAgent.getLaunchCommand as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+      expect(launchConfig?.prompt).toContain("Previous Session Context");
+    });
+
+    it("proceeds with fresh launch when no archived session exists", async () => {
+      const sm = createSessionManager({ config, registry: mockRegistry });
+      const session = await sm.spawn({ projectId: "my-app", issueId: "INT-999" });
+
+      // Should have no resumedFrom metadata
+      const meta = readMetadataRaw(sessionsDir, session.id);
+      expect(meta!["resumedFrom"]).toBeUndefined();
+
+      // Should use regular launch
+      expect(mockAgent.getLaunchCommand).toHaveBeenCalled();
+    });
+
+    it("does not attempt resume when no issueId is provided", async () => {
+      // Create and archive a session (shouldn't matter without issueId)
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: "/tmp/ws",
+        branch: "feat/test",
+        status: "killed",
+        agent: "mock-agent",
+        createdAt: "2025-06-01T00:00:00.000Z",
+      });
+      deleteMetadata(sessionsDir, "app-1", true);
+
+      const sm = createSessionManager({ config, registry: mockRegistry });
+      const session = await sm.spawn({ projectId: "my-app" });
+
+      const meta = readMetadataRaw(sessionsDir, session.id);
+      expect(meta!["resumedFrom"]).toBeUndefined();
+    });
+  });
 });
 

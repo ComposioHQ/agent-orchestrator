@@ -1068,6 +1068,14 @@ export interface ProjectConfig {
 
   opencodeIssueSessionStrategy?: "reuse" | "delete" | "ignore";
 
+  /**
+   * Strategy when respawning a worker for the same issue after a crash/kill.
+   * - "resume": attempt native agent resume (claude --resume, codex resume), then context injection, then fresh
+   * - "context-inject": skip native resume, inject context from previous session into prompt
+   * - "fresh": always start from scratch (current behavior)
+   */
+  workerRespawnStrategy?: "resume" | "context-inject" | "fresh";
+
   /** Task decomposition configuration */
   decomposer?: {
     /** Enable auto-decomposition for backlog issues (default: false) */
@@ -1223,6 +1231,7 @@ export interface SessionMetadata {
   createdAt?: string;
   runtimeHandle?: string;
   restoredAt?: string;
+  resumedFrom?: string; // Session ID this was resumed from (session lineage tracking)
   role?: string; // "orchestrator" for orchestrator sessions
   dashboardPort?: number;
   terminalWsPort?: number;

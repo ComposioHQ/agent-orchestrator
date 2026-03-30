@@ -29,6 +29,7 @@ export {
   updateMetadata,
   deleteMetadata,
   listMetadata,
+  findArchivedSessionForIssue,
 } from "./metadata.js";
 
 // tmux — command wrappers
@@ -54,6 +55,10 @@ export type { LifecycleManagerDeps } from "./lifecycle-manager.js";
 // Prompt builder — layered prompt composition
 export { buildPrompt, BASE_AGENT_PROMPT } from "./prompt-builder.js";
 export type { PromptBuildConfig } from "./prompt-builder.js";
+
+// Session context builder — context injection for respawned sessions
+export { buildPreviousSessionContext, formatPreviousSessionContext } from "./session-context-builder.js";
+export type { PreviousSessionContext } from "./session-context-builder.js";
 
 // Decomposer — LLM-driven task decomposition
 export {

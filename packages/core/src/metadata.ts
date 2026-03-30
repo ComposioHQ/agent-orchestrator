@@ -86,6 +86,7 @@ export function readMetadata(dataDir: string, sessionId: SessionId): SessionMeta
     createdAt: raw["createdAt"],
     runtimeHandle: raw["runtimeHandle"],
     restoredAt: raw["restoredAt"],
+    resumedFrom: raw["resumedFrom"],
     role: raw["role"],
     dashboardPort: raw["dashboardPort"] ? Number(raw["dashboardPort"]) : undefined,
     terminalWsPort: raw["terminalWsPort"] ? Number(raw["terminalWsPort"]) : undefined,
@@ -135,6 +136,7 @@ export function writeMetadata(
   if (metadata.createdAt) data["createdAt"] = metadata.createdAt;
   if (metadata.runtimeHandle) data["runtimeHandle"] = metadata.runtimeHandle;
   if (metadata.restoredAt) data["restoredAt"] = metadata.restoredAt;
+  if (metadata.resumedFrom) data["resumedFrom"] = metadata.resumedFrom;
   if (metadata.role) data["role"] = metadata.role;
   if (metadata.dashboardPort !== undefined) data["dashboardPort"] = String(metadata.dashboardPort);
   if (metadata.terminalWsPort !== undefined)
@@ -291,6 +293,46 @@ export function listMetadata(dataDir: string): SessionId[] {
       return false;
     }
   });
+}
+
+/**
+ * Search archived sessions for the most recent one matching a given issue ID and agent name.
+ * Searches both active and archived metadata, returning archived entries only.
+ * Returns the raw metadata of the most recent match, or null if none found.
+ */
+export function findArchivedSessionForIssue(
+  dataDir: string,
+  issueId: string,
+  agentName: string,
+): { sessionId: string; metadata: Record<string, string> } | null {
+  const archiveDir = join(dataDir, "archive");
+  if (!existsSync(archiveDir)) return null;
+
+  // Collect unique session IDs from archive
+  const sessionIds = new Set<string>();
+  for (const file of readdirSync(archiveDir)) {
+    const match = file.match(/^([a-zA-Z0-9_-]+)_\d/);
+    if (match?.[1]) sessionIds.add(match[1]);
+  }
+
+  // Find the most recent archived session matching issue + agent
+  let bestMatch: { sessionId: string; metadata: Record<string, string>; timestamp: string } | null =
+    null;
+
+  for (const sid of sessionIds) {
+    const raw = readArchivedMetadataRaw(dataDir, sid);
+    if (!raw) continue;
+    if (raw["issue"] !== issueId) continue;
+    if (raw["agent"] !== agentName) continue;
+
+    // Use createdAt as the comparison key (archived sessions are timestamped)
+    const timestamp = raw["createdAt"] ?? "";
+    if (!bestMatch || timestamp > bestMatch.timestamp) {
+      bestMatch = { sessionId: sid, metadata: raw, timestamp };
+    }
+  }
+
+  return bestMatch ? { sessionId: bestMatch.sessionId, metadata: bestMatch.metadata } : null;
 }
 
 /**

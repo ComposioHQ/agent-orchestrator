@@ -53,8 +53,13 @@ import {
   deleteMetadata,
   listMetadata,
   reserveSessionId,
+  findArchivedSessionForIssue,
 } from "./metadata.js";
 import { buildPrompt } from "./prompt-builder.js";
+import {
+  buildPreviousSessionContext,
+  formatPreviousSessionContext,
+} from "./session-context-builder.js";
 import {
   getSessionsDir,
   getWorktreesDir,
@@ -1019,7 +1024,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     }
 
-    const composedPrompt = buildPrompt({
+    let composedPrompt = buildPrompt({
       project,
       projectId: spawnConfig.projectId,
       issueId: spawnConfig.issueId,
@@ -1028,6 +1033,77 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       lineage: spawnConfig.lineage,
       siblings: spawnConfig.siblings,
     });
+
+    // --- Auto-resume fallback chain ---
+    // When respawning for the same issue, try to resume from a previous session
+    // rather than starting from scratch. Fallback order:
+    //   1. workerRespawnStrategy == "fresh" → skip, launch fresh
+    //   2. No previous archived session → fresh
+    //   3. Agent implements getRestoreCommand() and strategy is "resume" → native resume
+    //   4. Build context from archived metadata + git history → context injection
+    const respawnStrategy = project.workerRespawnStrategy ?? "resume";
+    let resumedFromSessionId: string | undefined;
+    let nativeResumeCommand: string | null = null;
+
+    if (respawnStrategy !== "fresh" && spawnConfig.issueId) {
+      const archivedSession = findArchivedSessionForIssue(
+        sessionsDir,
+        spawnConfig.issueId,
+        selection.agentName,
+      );
+
+      if (archivedSession) {
+        // Step 1: Try native resume if strategy is "resume" and agent supports it
+        if (respawnStrategy === "resume" && plugins.agent.getRestoreCommand) {
+          try {
+            // Construct a minimal Session from archived metadata for getRestoreCommand
+            const archivedSessionObj: Session = {
+              id: archivedSession.sessionId,
+              projectId: spawnConfig.projectId,
+              status: (archivedSession.metadata["status"] ?? "killed") as Session["status"],
+              activity: null,
+              branch: archivedSession.metadata["branch"] || null,
+              issueId: archivedSession.metadata["issue"] || null,
+              pr: null,
+              workspacePath: archivedSession.metadata["worktree"] || null,
+              runtimeHandle: null,
+              agentInfo: null,
+              createdAt: archivedSession.metadata["createdAt"]
+                ? new Date(archivedSession.metadata["createdAt"])
+                : new Date(),
+              lastActivityAt: new Date(),
+              metadata: archivedSession.metadata,
+            };
+            nativeResumeCommand = await plugins.agent.getRestoreCommand(
+              archivedSessionObj,
+              project,
+            );
+          } catch {
+            // getRestoreCommand failed — fall through to context injection
+          }
+        }
+
+        // Step 2: If no native resume, try context injection
+        if (!nativeResumeCommand) {
+          try {
+            const prevContext = await buildPreviousSessionContext(
+              archivedSession.sessionId,
+              archivedSession.metadata,
+              workspacePath,
+              project.defaultBranch,
+            );
+            if (prevContext) {
+              const contextSection = formatPreviousSessionContext(prevContext);
+              composedPrompt = contextSection + "\n\n" + composedPrompt;
+            }
+          } catch {
+            // Context building failed — proceed with fresh launch
+          }
+        }
+
+        resumedFromSessionId = archivedSession.sessionId;
+      }
+    }
 
     // Get agent launch config and create runtime — clean up workspace on failure
     const opencodeIssueSessionStrategy = project.opencodeIssueSessionStrategy ?? "reuse";
@@ -1057,7 +1133,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     let handle: RuntimeHandle;
     try {
-      const launchCommand = plugins.agent.getLaunchCommand(agentLaunchConfig);
+      // Use native resume command if available, otherwise fresh launch
+      const launchCommand = nativeResumeCommand ?? plugins.agent.getLaunchCommand(agentLaunchConfig);
       const environment = plugins.agent.getEnvironment(agentLaunchConfig);
 
       handle = await plugins.runtime.create({
@@ -1112,6 +1189,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       lastActivityAt: new Date(),
       metadata: {
         ...(reusedOpenCodeSessionId ? { opencodeSessionId: reusedOpenCodeSessionId } : {}),
+        ...(resumedFromSessionId ? { resumedFrom: resumedFromSessionId } : {}),
       },
     };
 
@@ -1127,6 +1205,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         createdAt: new Date().toISOString(),
         runtimeHandle: JSON.stringify(handle),
         opencodeSessionId: reusedOpenCodeSessionId,
+        resumedFrom: resumedFromSessionId,
       });
 
       if (plugins.agent.postLaunchSetup) {
