@@ -190,7 +190,7 @@ export function Dashboard({
         throw error;
       }
       console.error(`Network error sending message to ${sessionId}:`, error);
-      throw new Error("Network error while sending message");
+      throw new Error("Network error while sending message", { cause: error });
     }
   }, []);
 

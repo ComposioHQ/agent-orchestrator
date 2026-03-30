@@ -1,19 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdirSync, writeFileSync, rmSync, realpathSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import type * as NodeOs from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { loadConfig, findConfigFile } from "../src/config.js";
 import { ConfigNotFoundError } from "../src/types.js";
 
 vi.mock("node:os", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:os")>();
+  const actual = (await importOriginal()) as typeof NodeOs;
   return {
     ...actual,
     homedir: vi.fn(actual.homedir),
   };
 });
-
-import { homedir } from "node:os";
 
 describe("Config Loading", () => {
   let testDir: string;
