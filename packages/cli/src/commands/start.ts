@@ -172,38 +172,18 @@ async function promptAgentSelection(): Promise<{
   workerAgent: string
 } | null> {
   if (canPromptForInstall()) {
-    const clack = await import("@clack/prompts");
-
     const available = await detectAvailableAgents();
     if (available.length === 0) {
-      clack.log.warn("No agent runtimes detected — using existing config.");
+      console.log(chalk.yellow("No agent runtimes detected — using existing config."));
       return null;
     }
 
     const agentOptions = available.map((a) => ({ value: a.name, label: a.displayName }));
 
-    const orchestratorAgent = await clack.select({
-      message: "Orchestrator agent:",
-      options: agentOptions
-    });
-    if (clack.isCancel(orchestratorAgent)) {
-      clack.cancel("Cancelled.");
-      return null;
-    }
+    const orchestratorAgent = await promptSelect("Orchestrator agent:", agentOptions);
+    const workerAgent = await promptSelect("Worker agent:", agentOptions);
 
-    const workerAgent = await clack.select({
-      message: "Worker agent:",
-      options: agentOptions
-    });
-    if (clack.isCancel(workerAgent)) {
-      clack.cancel("Cancelled.");
-      return null;
-    }
-
-    return {
-      orchestratorAgent,
-      workerAgent
-    };
+    return { orchestratorAgent, workerAgent };
   } else {
     return null;
   }
