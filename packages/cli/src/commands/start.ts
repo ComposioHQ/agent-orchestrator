@@ -190,10 +190,13 @@ async function handleMultiProjectStart(
       return null;
     }
   } else {
-    // Already registered — sync shadow if hybrid mode
-    const mode = detectConfigMode(resolvedDir);
+    // Already registered — sync shadow if hybrid mode.
+    // Use the registered project path (not CWD) for mode detection,
+    // since CWD may be a subdirectory where no config file exists.
+    const registeredPath = expandHome(globalConfig.projects[projectId].path);
+    const mode = detectConfigMode(registeredPath);
     if (mode === "hybrid") {
-      const localPath = findLocalConfigPath(resolvedDir);
+      const localPath = findLocalConfigPath(registeredPath);
       if (localPath) {
         try {
           const localConfig = loadLocalProjectConfig(localPath);
