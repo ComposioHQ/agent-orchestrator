@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { InstalledPluginConfig, PluginModule, PluginSlot } from "@composio/ao-core";
-import registryData from "../assets/plugin-registry.json";
+import registryData from "../assets/plugin-registry.json" with { type: "json" };
 
 export interface MarketplacePluginEntry {
   id: string;
