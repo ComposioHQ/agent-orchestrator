@@ -260,7 +260,7 @@ export function registerStatus(program: Command): void {
         // Resolve agent and SCM for this project
         const agentName = projectConfig.agent ?? config.defaults.agent;
         const agent = getAgentByName(agentName);
-        const scm = getSCM(config, projectId);
+        const scm = await getSCM(config, projectId);
 
         if (!opts.json) {
           console.log(header(projectConfig.name || projectId));

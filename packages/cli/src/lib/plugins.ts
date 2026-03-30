@@ -1,9 +1,11 @@
 import type { Agent, OrchestratorConfig, SCM } from "@composio/ao-core";
+import { createPluginRegistry } from "@composio/ao-core";
 import claudeCodePlugin from "@composio/ao-plugin-agent-claude-code";
 import codexPlugin from "@composio/ao-plugin-agent-codex";
 import aiderPlugin from "@composio/ao-plugin-agent-aider";
 import opencodePlugin from "@composio/ao-plugin-agent-opencode";
 import githubSCMPlugin from "@composio/ao-plugin-scm-github";
+import gitlabSCMPlugin from "@composio/ao-plugin-scm-gitlab";
 
 const agentPlugins: Record<string, { create(): Agent }> = {
   "claude-code": claudeCodePlugin,
@@ -12,8 +14,9 @@ const agentPlugins: Record<string, { create(): Agent }> = {
   opencode: opencodePlugin,
 };
 
-const scmPlugins: Record<string, { create(): SCM }> = {
+const builtinSCMPlugins: Record<string, { create(): SCM }> = {
   github: githubSCMPlugin,
+  gitlab: gitlabSCMPlugin,
 };
 
 /**
@@ -41,12 +44,24 @@ export function getAgentByName(name: string): Agent {
 
 /**
  * Resolve the SCM plugin for a project (or fall back to "github").
+ * First checks built-in plugins, then loads external plugins from config.
  */
-export function getSCM(config: OrchestratorConfig, projectId: string): SCM {
+export async function getSCM(config: OrchestratorConfig, projectId: string): Promise<SCM> {
   const scmName = config.projects[projectId]?.scm?.plugin || "github";
-  const plugin = scmPlugins[scmName];
-  if (!plugin) {
+  const scmConfig = config.projects[projectId]?.scm as Record<string, unknown> | undefined;
+
+  // Try built-in first
+  const builtin = builtinSCMPlugins[scmName];
+  if (builtin) {
+    return builtin.create();
+  }
+
+  // Fall back to plugin-registry (loads external plugins from config.plugins[])
+  const registry = createPluginRegistry();
+  await registry.loadFromConfig(config, (pkg: string) => import(pkg));
+  const scm = registry.get<SCM>("scm", scmName);
+  if (!scm) {
     throw new Error(`Unknown SCM plugin: ${scmName}`);
   }
-  return plugin.create();
+  return scm;
 }

@@ -196,6 +196,10 @@ const OrchestratorConfigSchema = z.object({
     info: ["composio"],
   }),
   reactions: z.record(ReactionConfigSchema).default({}),
+  // External private plugins — loaded from local filesystem paths at startup
+  plugins: z
+    .array(z.object({ path: z.string() }))
+    .optional(),
 });
 
 // =============================================================================

@@ -4,9 +4,11 @@
  * Plugins can be:
  * 1. Built-in (packages/plugins/*)
  * 2. npm packages (@composio/ao-plugin-*)
- * 3. Local file paths specified in config
+ * 3. Local file paths specified in config (via plugins[].path in agent-orchestrator.yaml)
  */
 
+import { resolve } from "node:path";
+import { expandHome } from "./paths.js";
 import type {
   PluginSlot,
   PluginManifest,
@@ -131,8 +133,30 @@ export function createPluginRegistry(): PluginRegistry {
       // Load built-ins with orchestrator config so plugins receive their settings
       await this.loadBuiltins(config, importFn);
 
-      // Then, load any additional plugins specified in project configs
-      // (future: support npm package names and local file paths)
+      // Load external plugins declared in config plugins[].path
+      const externalPlugins = config.plugins ?? [];
+      for (const entry of externalPlugins) {
+        if (!entry.path) continue;
+
+        // Resolve ~ to home directory, reusing the shared expandHome utility
+        const resolvedPath = resolve(expandHome(entry.path));
+        const entryPoint = `${resolvedPath}/dist/index.js`;
+
+        try {
+          const doImport = importFn ?? ((p: string) => import(p));
+          const mod = (await doImport(entryPoint)) as PluginModule;
+          if (mod.manifest && typeof mod.create === "function") {
+            this.register(mod);
+            console.log(`[plugin-registry] Loaded external plugin: ${mod.manifest.name} (${mod.manifest.slot}) from ${entryPoint}`);
+          } else {
+            console.warn(`[plugin-registry] Skipped ${entryPoint}: missing manifest or create()`);
+          }
+        } catch (err) {
+          console.error(
+            `[plugin-registry] Failed to load external plugin from "${entryPoint}": ${(err as Error).message}`,
+          );
+        }
+      }
     },
   };
 }
