@@ -662,7 +662,8 @@ function createClaudeCodeAgent(): Agent {
       const parts: string[] = ["claude"];
 
       const permissionMode = normalizePermissionMode(config.permissions);
-      if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
+      const isBypassMode = permissionMode === "permissionless" || permissionMode === "auto-edit";
+      if (isBypassMode) {
         parts.push("--dangerously-skip-permissions");
       }
 
@@ -683,7 +684,17 @@ function createClaudeCodeAgent(): Agent {
       // runtime.sendMessage() to keep Claude in interactive mode.
       // Using -p causes one-shot mode (Claude exits after responding).
 
-      return parts.join(" ");
+      const cmd = parts.join(" ");
+
+      // Claude Code's --dangerously-skip-permissions shows an interactive confirmation
+      // prompt that blocks non-interactive (tmux) sessions. Auto-accept it by sending
+      // Down + Enter keystrokes via tmux after a short delay. Uses $AO_TMUX_NAME
+      // (set by session manager) to target the correct tmux pane.
+      if (isBypassMode) {
+        return `(sleep 3 && tmux send-keys -t "\${AO_TMUX_NAME:-\${AO_SESSION_NAME}}" Down Enter 2>/dev/null) & ${cmd}`;
+      }
+
+      return cmd;
     },
 
     getEnvironment(config: AgentLaunchConfig): Record<string, string> {

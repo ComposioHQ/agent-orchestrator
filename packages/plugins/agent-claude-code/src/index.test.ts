@@ -173,6 +173,7 @@ describe("getLaunchCommand", () => {
   it("includes --dangerously-skip-permissions when permissions=permissionless", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "permissionless" }));
     expect(cmd).toContain("--dangerously-skip-permissions");
+    expect(cmd).toContain("tmux send-keys");
   });
 
   it("treats legacy permissions=skip as permissionless", () => {
@@ -180,11 +181,13 @@ describe("getLaunchCommand", () => {
       makeLaunchConfig({ permissions: "skip" as unknown as AgentLaunchConfig["permissions"] }),
     );
     expect(cmd).toContain("--dangerously-skip-permissions");
+    expect(cmd).toContain("tmux send-keys");
   });
 
   it("maps permissions=auto-edit to no-prompt mode on Claude", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "auto-edit" }));
     expect(cmd).toContain("--dangerously-skip-permissions");
+    expect(cmd).toContain("tmux send-keys");
   });
 
   it("shell-escapes model argument", () => {
@@ -202,7 +205,8 @@ describe("getLaunchCommand", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ permissions: "permissionless", model: "opus", prompt: "Hello" }),
     );
-    expect(cmd).toBe("claude --dangerously-skip-permissions --model 'opus'");
+    expect(cmd).toContain("claude --dangerously-skip-permissions --model 'opus'");
+    expect(cmd).toContain("tmux send-keys");
   });
 
   it("omits --dangerously-skip-permissions when permissions=default", () => {
@@ -264,6 +268,7 @@ describe("getEnvironment", () => {
     const env = agent.getEnvironment(makeLaunchConfig());
     expect(env["AO_ISSUE_ID"]).toBeUndefined();
   });
+
 });
 
 // =========================================================================
