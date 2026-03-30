@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Session, RuntimeHandle, AgentLaunchConfig } from "@composio/ao-core";
+import {
+  resetProcessListCache,
+  type Session,
+  type RuntimeHandle,
+  type AgentLaunchConfig,
+} from "@composio/ao-core";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -77,6 +82,7 @@ function mockTmuxWithProcess(processName: string, found = true) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetProcessListCache();
 });
 
 // =========================================================================

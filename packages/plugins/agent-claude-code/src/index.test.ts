@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Session, RuntimeHandle, AgentLaunchConfig, WorkspaceHooksConfig } from "@composio/ao-core";
+import type {
+  Session,
+  RuntimeHandle,
+  AgentLaunchConfig,
+  WorkspaceHooksConfig,
+} from "@composio/ao-core";
+import { resetProcessListCache } from "@composio/ao-core";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks — available inside vi.mock factories
@@ -50,7 +56,7 @@ vi.mock("node:os", () => ({
   homedir: mockHomedir,
 }));
 
-import { create, manifest, default as defaultExport, resetPsCache, METADATA_UPDATER_SCRIPT } from "./index.js";
+import { create, manifest, default as defaultExport, METADATA_UPDATER_SCRIPT } from "./index.js";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -128,7 +134,7 @@ function mockJsonlFiles(
 // ---------------------------------------------------------------------------
 beforeEach(() => {
   vi.clearAllMocks();
-  resetPsCache();
+  resetProcessListCache();
   mockHomedir.mockReturnValue("/mock/home");
 });
 
@@ -720,12 +726,8 @@ describe("METADATA_UPDATER_SCRIPT content", () => {
   it("does NOT use ^-anchored regexes directly on $command for gh/git detection", () => {
     // The old buggy patterns matched $command with ^ anchor.
     // After the fix, ^ is still used but on $clean_command (which has cd stripped).
-    expect(METADATA_UPDATER_SCRIPT).not.toMatch(
-      /"\$command"\s*=~\s*\^gh/,
-    );
-    expect(METADATA_UPDATER_SCRIPT).not.toMatch(
-      /"\$command"\s*=~\s*\^git/,
-    );
+    expect(METADATA_UPDATER_SCRIPT).not.toMatch(/"\$command"\s*=~\s*\^gh/);
+    expect(METADATA_UPDATER_SCRIPT).not.toMatch(/"\$command"\s*=~\s*\^git/);
   });
 
   it("strips cd prefixes with both && and ; delimiters", () => {
@@ -737,21 +739,15 @@ describe("METADATA_UPDATER_SCRIPT content", () => {
   });
 
   it("detects gh pr create on clean_command", () => {
-    expect(METADATA_UPDATER_SCRIPT).toMatch(
-      /"\$clean_command"\s*=~\s*\^gh\[/,
-    );
+    expect(METADATA_UPDATER_SCRIPT).toMatch(/"\$clean_command"\s*=~\s*\^gh\[/);
   });
 
   it("detects git checkout -b on clean_command", () => {
-    expect(METADATA_UPDATER_SCRIPT).toMatch(
-      /"\$clean_command"\s*=~\s*\^git\[.*checkout/,
-    );
+    expect(METADATA_UPDATER_SCRIPT).toMatch(/"\$clean_command"\s*=~\s*\^git\[.*checkout/);
   });
 
   it("detects gh pr merge on clean_command", () => {
-    expect(METADATA_UPDATER_SCRIPT).toMatch(
-      /"\$clean_command"\s*=~\s*\^gh\[.*merge/,
-    );
+    expect(METADATA_UPDATER_SCRIPT).toMatch(/"\$clean_command"\s*=~\s*\^gh\[.*merge/);
   });
 });
 
