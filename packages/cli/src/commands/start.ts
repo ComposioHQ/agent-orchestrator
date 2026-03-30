@@ -1044,6 +1044,7 @@ export function registerStart(program: Command): void {
     .option("--no-dashboard", "Skip starting the dashboard server")
     .option("--no-orchestrator", "Skip starting the orchestrator agent")
     .option("--rebuild", "Clean and rebuild dashboard before starting")
+    .option("--interactive", "Prompt to configure config settings")
     .action(
       async (
         projectArg?: string,
@@ -1051,6 +1052,7 @@ export function registerStart(program: Command): void {
           dashboard?: boolean;
           orchestrator?: boolean;
           rebuild?: boolean;
+          interactive?: boolean;
         },
       ) => {
         try {
@@ -1207,7 +1209,7 @@ export function registerStart(program: Command): void {
           }
 
           // ── Agent selection prompt (Step 10)──
-          const agentOverride = await promptAgentSelection();
+          const agentOverride = opts?.interactive ? await promptAgentSelection() : null;
           if (agentOverride) {
             const { orchestratorAgent, workerAgent } = agentOverride;
 
