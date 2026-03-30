@@ -2083,6 +2083,32 @@ describe("spawn", () => {
       expect(meta!["resumedFrom"]).toBe("app-1");
     });
 
+    it("skips post-launch prompt delivery when using native resume", async () => {
+      // Create and archive a previous session
+      writeMetadata(sessionsDir, "app-1", {
+        worktree: "/tmp/ws",
+        branch: "feat/INT-350",
+        status: "killed",
+        issue: "INT-350",
+        agent: "mock-agent",
+        createdAt: "2025-06-01T00:00:00.000Z",
+        summary: "Previous work",
+      });
+      deleteMetadata(sessionsDir, "app-1", true);
+
+      // Set agent to post-launch prompt delivery (like Claude Code)
+      Object.defineProperty(mockAgent, "promptDelivery", { value: "post-launch", configurable: true });
+      (mockAgent as Agent & { getRestoreCommand: ReturnType<typeof vi.fn> }).getRestoreCommand =
+        vi.fn().mockResolvedValue("mock-agent --resume abc123");
+
+      const sm = createSessionManager({ config, registry: mockRegistry });
+      await sm.spawn({ projectId: "my-app", issueId: "INT-350", prompt: "Work on this" });
+
+      // Runtime.sendMessage should NOT have been called — native resume means
+      // the agent already has its conversation history
+      expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
+    });
+
     it("falls back to context injection when getRestoreCommand returns null", async () => {
       // Create and archive a previous session
       writeMetadata(sessionsDir, "app-1", {

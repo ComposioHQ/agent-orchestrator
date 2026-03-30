@@ -1260,7 +1260,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     // exits after -p, so we send the prompt after it starts in interactive mode).
     // This is intentionally outside the try/catch above — a prompt delivery failure
     // should NOT destroy the session. The agent is running; user can retry with `ao send`.
-    if (plugins.agent.promptDelivery === "post-launch" && agentLaunchConfig.prompt) {
+    // Skip when using native resume — the agent already has its full conversation history
+    // and sending the prompt would cause it to restart work from scratch.
+    if (plugins.agent.promptDelivery === "post-launch" && agentLaunchConfig.prompt && !nativeResumeCommand) {
       try {
         // Wait for agent to start and be ready for input
         await new Promise((resolve) => setTimeout(resolve, 5_000));
