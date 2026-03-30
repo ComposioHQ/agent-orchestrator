@@ -36,6 +36,7 @@ describe("notifier-desktop", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPlatform.mockReturnValue("darwin");
+    // By default terminal-notifier succeeds
     mockExecFile.mockImplementation(
       (_cmd: string, _args: string[], cb: (err: Error | null) => void) => {
         cb(null);
@@ -83,98 +84,122 @@ describe("notifier-desktop", () => {
   });
 
   describe("notify", () => {
-    it("calls osascript on macOS", async () => {
+    it("calls terminal-notifier on macOS", async () => {
       const notifier = create();
       await notifier.notify(makeEvent());
 
       expect(mockExecFile).toHaveBeenCalledOnce();
-      expect(mockExecFile.mock.calls[0][0]).toBe("osascript");
-      expect(mockExecFile.mock.calls[0][1][0]).toBe("-e");
+      expect(mockExecFile.mock.calls[0][0]).toBe("terminal-notifier");
     });
 
     it("includes session ID in title", async () => {
       const notifier = create();
       await notifier.notify(makeEvent({ sessionId: "backend-5" }));
 
-      const script = mockExecFile.mock.calls[0][1][1] as string;
-      expect(script).toContain("backend-5");
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      const titleIdx = args.indexOf("-title");
+      expect(args[titleIdx + 1]).toContain("backend-5");
     });
 
     it("includes event message in notification body", async () => {
       const notifier = create();
       await notifier.notify(makeEvent({ message: "CI is failing" }));
 
-      const script = mockExecFile.mock.calls[0][1][1] as string;
-      expect(script).toContain("CI is failing");
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      const msgIdx = args.indexOf("-message");
+      expect(args[msgIdx + 1]).toContain("CI is failing");
     });
 
     it("uses URGENT prefix for urgent priority", async () => {
       const notifier = create();
       await notifier.notify(makeEvent({ priority: "urgent" }));
 
-      const script = mockExecFile.mock.calls[0][1][1] as string;
-      expect(script).toContain("URGENT");
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      const titleIdx = args.indexOf("-title");
+      expect(args[titleIdx + 1]).toContain("URGENT");
     });
 
     it("uses 'Agent Orchestrator' prefix for non-urgent priority", async () => {
       const notifier = create();
       await notifier.notify(makeEvent({ priority: "action" }));
 
-      const script = mockExecFile.mock.calls[0][1][1] as string;
-      expect(script).toContain("Agent Orchestrator");
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      const titleIdx = args.indexOf("-title");
+      expect(args[titleIdx + 1]).toContain("Agent Orchestrator");
     });
 
     it("includes sound for urgent notifications", async () => {
       const notifier = create();
       await notifier.notify(makeEvent({ priority: "urgent" }));
 
-      const script = mockExecFile.mock.calls[0][1][1] as string;
-      expect(script).toContain('sound name "default"');
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      expect(args).toContain("-sound");
     });
 
     it("does not include sound for info notifications", async () => {
       const notifier = create();
       await notifier.notify(makeEvent({ priority: "info" }));
 
-      const script = mockExecFile.mock.calls[0][1][1] as string;
-      expect(script).not.toContain("sound name");
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      expect(args).not.toContain("-sound");
     });
 
     it("does not include sound for action notifications", async () => {
       const notifier = create();
       await notifier.notify(makeEvent({ priority: "action" }));
 
-      const script = mockExecFile.mock.calls[0][1][1] as string;
-      expect(script).not.toContain("sound name");
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      expect(args).not.toContain("-sound");
     });
 
     it("does not include sound for warning notifications", async () => {
       const notifier = create();
       await notifier.notify(makeEvent({ priority: "warning" }));
 
-      const script = mockExecFile.mock.calls[0][1][1] as string;
-      expect(script).not.toContain("sound name");
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      expect(args).not.toContain("-sound");
     });
 
     it("respects sound=false config even for urgent", async () => {
       const notifier = create({ sound: false });
       await notifier.notify(makeEvent({ priority: "urgent" }));
 
-      const script = mockExecFile.mock.calls[0][1][1] as string;
-      expect(script).not.toContain("sound name");
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      expect(args).not.toContain("-sound");
     });
 
-    it("escapes special characters in title and message", async () => {
-      const notifier = create();
-      await notifier.notify(
-        makeEvent({ sessionId: 'test"inject', message: 'msg with "quotes" and \\backslash' }),
-      );
+    it("includes dashboard URL as open action", async () => {
+      const notifier = create({ port: 4000 });
+      await notifier.notify(makeEvent());
 
-      const script = mockExecFile.mock.calls[0][1][1] as string;
-      // Should not contain unescaped quotes (other than the AppleScript string delimiters)
-      expect(script).toContain('test\\"inject');
-      expect(script).toContain('\\"quotes\\"');
-      expect(script).toContain("\\\\backslash");
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      const openIdx = args.indexOf("-open");
+      expect(args[openIdx + 1]).toBe("http://localhost:4000");
+    });
+
+    it("defaults to port 3000 for dashboard URL", async () => {
+      const notifier = create();
+      await notifier.notify(makeEvent());
+
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      const openIdx = args.indexOf("-open");
+      expect(args[openIdx + 1]).toBe("http://localhost:3000");
+    });
+
+    it("falls back to osascript when terminal-notifier fails", async () => {
+      mockExecFile
+        .mockImplementationOnce((_cmd: string, _args: string[], cb: (err: Error | null) => void) => {
+          cb(new Error("terminal-notifier not found"));
+        })
+        .mockImplementationOnce((_cmd: string, _args: string[], cb: (err: Error | null) => void) => {
+          cb(null);
+        });
+
+      const notifier = create();
+      await expect(notifier.notify(makeEvent())).resolves.toBeUndefined();
+      expect(mockExecFile).toHaveBeenCalledTimes(2);
+      expect(mockExecFile.mock.calls[0][0]).toBe("terminal-notifier");
+      expect(mockExecFile.mock.calls[1][0]).toBe("osascript");
     });
   });
 
@@ -241,9 +266,11 @@ describe("notifier-desktop", () => {
       ];
       await notifier.notifyWithActions!(makeEvent(), actions);
 
-      const script = mockExecFile.mock.calls[0][1][1] as string;
-      expect(script).toContain("Merge");
-      expect(script).toContain("Kill");
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      const msgIdx = args.indexOf("-message");
+      const messageArg = args[msgIdx + 1];
+      expect(messageArg).toContain("Merge");
+      expect(messageArg).toContain("Kill");
     });
 
     it("includes sound for urgent with actions", async () => {
@@ -251,20 +278,20 @@ describe("notifier-desktop", () => {
       const actions: NotifyAction[] = [{ label: "Fix", url: "https://example.com" }];
       await notifier.notifyWithActions!(makeEvent({ priority: "urgent" }), actions);
 
-      const script = mockExecFile.mock.calls[0][1][1] as string;
-      expect(script).toContain('sound name "default"');
+      const args = mockExecFile.mock.calls[0][1] as string[];
+      expect(args).toContain("-sound");
     });
   });
 
   describe("error handling", () => {
-    it("rejects when execFile fails", async () => {
+    it("rejects when both terminal-notifier and osascript fail", async () => {
       mockExecFile.mockImplementation(
         (_cmd: string, _args: string[], cb: (err: Error | null) => void) => {
-          cb(new Error("osascript not found"));
+          cb(new Error("command not found"));
         },
       );
       const notifier = create();
-      await expect(notifier.notify(makeEvent())).rejects.toThrow("osascript not found");
+      await expect(notifier.notify(makeEvent())).rejects.toThrow("command not found");
     });
   });
 });
