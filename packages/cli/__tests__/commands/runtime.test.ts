@@ -10,7 +10,9 @@ const { mockConfigPathRef } = vi.hoisted(() => ({
 }));
 
 vi.mock("@composio/ao-core", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@composio/ao-core")>();
+  const actual = (await importOriginal()) as Record<string, unknown> & {
+    loadConfigWithPath: (configPath?: string) => unknown;
+  };
   return {
     ...actual,
     loadConfigWithPath: (configPath?: string) =>

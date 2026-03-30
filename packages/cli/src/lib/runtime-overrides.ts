@@ -54,6 +54,7 @@ function parseRuntimeConfigOverride(raw?: string): Record<string, unknown> | und
   } catch (err) {
     throw new Error(
       `Invalid --runtime-config JSON: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
     );
   }
 
