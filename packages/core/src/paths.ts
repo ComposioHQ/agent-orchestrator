@@ -16,6 +16,9 @@ import { realpathSync, existsSync, writeFileSync, readFileSync, mkdirSync } from
 /**
  * Generate a 12-character hash from a config directory path.
  * Always resolves symlinks before hashing to ensure consistency.
+ *
+ * @deprecated Use generateProjectPathHash() for new code.
+ * This function is kept for backwards compatibility with existing storage directories.
  */
 export function generateConfigHash(configPath: string): string {
   const resolved = realpathSync(configPath);

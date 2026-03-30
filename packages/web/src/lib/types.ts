@@ -143,6 +143,7 @@ export interface SSESnapshotEvent {
   emittedAt?: string;
   sessions: Array<{
     id: string;
+    projectId?: string;
     status: SessionStatus;
     activity: ActivityState | null;
     attentionLevel: AttentionLevel;

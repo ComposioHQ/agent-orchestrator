@@ -17,6 +17,8 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { ConfigNotFoundError, type OrchestratorConfig } from "./types.js";
 import { generateSessionPrefix } from "./paths.js";
+import { loadGlobalConfig, findGlobalConfigPath } from "./global-config.js";
+import { buildEffectiveConfig } from "./migration.js";
 
 function inferScmPlugin(project: {
   repo: string;
@@ -460,23 +462,47 @@ export function findConfig(startDir?: string): string | null {
   return findConfigFile(startDir);
 }
 
-/** Load and validate config from a YAML file */
+/**
+ * Load config with multi-project support.
+ *
+ * Resolution order:
+ * 1. If explicit configPath is provided, use it (old-format compat)
+ * 2. Try global config at ~/.agent-orchestrator/config.yaml
+ *    → If found, build effective config from global + local configs
+ * 3. Fall back to local config search (old single-file format)
+ */
 export function loadConfig(configPath?: string): OrchestratorConfig {
-  // Priority: 1. Explicit param, 2. Search (including AO_CONFIG_PATH env var)
-  // findConfigFile handles AO_CONFIG_PATH validation, so delegate to it
-  const path = configPath ?? findConfigFile();
+  // 1. Explicit param — use old single-file format
+  if (configPath) {
+    return loadConfigFromFile(configPath);
+  }
 
+  // 2. Try global config (multi-project mode)
+  const globalConfig = loadGlobalConfig();
+  if (globalConfig && Object.keys(globalConfig.projects).length > 0) {
+    const globalPath = findGlobalConfigPath();
+    const config = buildEffectiveConfig(globalConfig, globalPath);
+    // Apply defaults and reactions that the old path normally applies
+    let effective = applyProjectDefaults(config);
+    effective = applyDefaultReactions(effective);
+    return effective;
+  }
+
+  // 3. Fall back to local config search
+  const path = findConfigFile();
   if (!path) {
     throw new ConfigNotFoundError();
   }
 
+  return loadConfigFromFile(path);
+}
+
+/** Load config from a specific file (old single-file format) */
+function loadConfigFromFile(path: string): OrchestratorConfig {
   const raw = readFileSync(path, "utf-8");
   const parsed = parseYaml(raw);
   const config = validateConfig(parsed);
-
-  // Set the config path in the config object for hash generation
   config.configPath = path;
-
   return config;
 }
 
@@ -485,19 +511,25 @@ export function loadConfigWithPath(configPath?: string): {
   config: OrchestratorConfig;
   path: string;
 } {
+  // Try global config first (multi-project mode)
+  if (!configPath) {
+    const globalConfig = loadGlobalConfig();
+    if (globalConfig && Object.keys(globalConfig.projects).length > 0) {
+      const globalPath = findGlobalConfigPath();
+      let config = buildEffectiveConfig(globalConfig, globalPath);
+      config = applyProjectDefaults(config);
+      config = applyDefaultReactions(config);
+      return { config, path: globalPath };
+    }
+  }
+
   const path = configPath ?? findConfigFile();
 
   if (!path) {
     throw new ConfigNotFoundError();
   }
 
-  const raw = readFileSync(path, "utf-8");
-  const parsed = parseYaml(raw);
-  const config = validateConfig(parsed);
-
-  // Set the config path in the config object for hash generation
-  config.configPath = path;
-
+  const config = loadConfigFromFile(path);
   return { config, path };
 }
 

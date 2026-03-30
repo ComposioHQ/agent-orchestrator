@@ -263,7 +263,10 @@ export function registerStatus(program: Command): void {
         const scm = getSCM(config, projectId);
 
         if (!opts.json) {
-          console.log(header(projectConfig.name || projectId));
+          const modeLabel = projectConfig.configMode
+            ? chalk.dim(` [${projectConfig.configMode}]`)
+            : "";
+          console.log(header(`${projectConfig.name || projectId}${modeLabel}`));
         }
 
         if (projectSessions.length === 0) {

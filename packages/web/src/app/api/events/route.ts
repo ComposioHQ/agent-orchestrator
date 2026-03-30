@@ -87,6 +87,7 @@ export async function GET(request: Request): Promise<Response> {
             emittedAt: new Date().toISOString(),
             sessions: dashboardSessions.map((s) => ({
               id: s.id,
+              projectId: s.projectId,
               status: s.status,
               activity: s.activity,
               attentionLevel: getAttentionLevel(s),

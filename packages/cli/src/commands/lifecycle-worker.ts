@@ -1,5 +1,8 @@
 import type { Command } from "commander";
 import chalk from "chalk";
+import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { homedir } from "node:os";
 import { createCorrelationId, createProjectObserver, loadConfig } from "@composio/ao-core";
 import { getLifecycleManager } from "../lib/create-session-manager.js";
 import {
@@ -7,6 +10,44 @@ import {
   getLifecycleWorkerStatus,
   writeLifecycleWorkerPid,
 } from "../lib/lifecycle-service.js";
+
+// Stable PID file for poll-all mode, located in the global data dir
+// rather than under a project dir (which would be unstable across config changes).
+const ALL_PROJECTS_PID_FILE = join(homedir(), ".agent-orchestrator", "lifecycle-all.pid");
+
+function readAllPid(): number | null {
+  try {
+    if (!existsSync(ALL_PROJECTS_PID_FILE)) return null;
+    const raw = readFileSync(ALL_PROJECTS_PID_FILE, "utf-8").trim();
+    const pid = Number.parseInt(raw, 10);
+    return Number.isFinite(pid) && pid > 0 ? pid : null;
+  } catch { return null; }
+}
+
+function isProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err: unknown) {
+    // EPERM means the process exists but we lack permission to signal it
+    if (err && typeof err === "object" && "code" in err && err.code === "EPERM") return true;
+    return false;
+  }
+}
+
+function writeAllPid(pid: number): void {
+  mkdirSync(dirname(ALL_PROJECTS_PID_FILE), { recursive: true });
+  writeFileSync(ALL_PROJECTS_PID_FILE, `${pid}\n`, "utf-8");
+}
+
+function clearAllPid(pid?: number): void {
+  if (!existsSync(ALL_PROJECTS_PID_FILE)) return;
+  if (pid !== undefined) {
+    const stored = readAllPid();
+    if (stored !== null && stored !== pid) return;
+  }
+  try { unlinkSync(ALL_PROJECTS_PID_FILE); } catch { /* best effort */ }
+}
 
 function parseInterval(value: string): number {
   const parsed = Number.parseInt(value, 10);
@@ -16,13 +57,13 @@ function parseInterval(value: string): number {
 export function registerLifecycleWorker(program: Command): void {
   program
     .command("lifecycle-worker")
-    .description("Internal lifecycle polling worker")
-    .argument("<project>", "Project ID from config")
+    .description("Internal lifecycle polling worker (omit project to poll all)")
+    .argument("[project]", "Project ID from config (omit for all projects)")
     .option("--interval-ms <ms>", "Polling interval in milliseconds", "30000")
-    .action(async (projectId: string, opts: { intervalMs?: string }) => {
+    .action(async (projectId: string | undefined, opts: { intervalMs?: string }) => {
       const config = loadConfig();
       const observer = createProjectObserver(config, "lifecycle-worker");
-      if (!config.projects[projectId]) {
+      if (projectId && !config.projects[projectId]) {
         observer.setHealth({
           surface: "lifecycle.worker",
           status: "error",
@@ -35,19 +76,32 @@ export function registerLifecycleWorker(program: Command): void {
         process.exit(1);
       }
 
-      const existing = getLifecycleWorkerStatus(config, projectId);
-      if (existing.running && existing.pid !== process.pid) {
-        // Another lifecycle worker is already running for this project — exit
-        // silently to avoid duplicate polling loops.
-        observer.setHealth({
-          surface: "lifecycle.worker",
-          status: "warn",
-          projectId,
-          correlationId: createCorrelationId("lifecycle-worker"),
-          reason: `Worker already running with pid ${existing.pid}`,
-          details: { projectId, pid: existing.pid },
-        });
-        return;
+      // Duplicate-run protection
+      if (projectId) {
+        const existing = getLifecycleWorkerStatus(config, projectId);
+        if (existing.running && existing.pid !== process.pid) {
+          observer.setHealth({
+            surface: "lifecycle.worker",
+            status: "warn",
+            projectId,
+            correlationId: createCorrelationId("lifecycle-worker"),
+            reason: `Worker already running with pid ${existing.pid}`,
+            details: { projectId, pid: existing.pid },
+          });
+          return;
+        }
+      } else {
+        // Poll-all mode: use stable PID file in global data dir
+        const existingPid = readAllPid();
+        if (existingPid !== null && existingPid !== process.pid && isProcessRunning(existingPid)) {
+          observer.setHealth({
+            surface: "lifecycle.worker",
+            status: "warn",
+            correlationId: createCorrelationId("lifecycle-worker"),
+            reason: `Poll-all worker already running with pid ${existingPid}`,
+          });
+          return;
+        }
       }
 
       const lifecycle = await getLifecycleManager(config, projectId);
@@ -60,7 +114,11 @@ export function registerLifecycleWorker(program: Command): void {
         shuttingDown = true;
         if (heartbeat) clearInterval(heartbeat);
         lifecycle.stop();
-        clearLifecycleWorkerPid(config, projectId, process.pid);
+        if (projectId) {
+          clearLifecycleWorkerPid(config, projectId, process.pid);
+        } else {
+          clearAllPid(process.pid);
+        }
         observer.setHealth({
           surface: "lifecycle.worker",
           status: code === 0 ? "warn" : "error",
@@ -113,7 +171,11 @@ export function registerLifecycleWorker(program: Command): void {
         shutdown(1);
       });
 
-      writeLifecycleWorkerPid(config, projectId, process.pid);
+      if (projectId) {
+        writeLifecycleWorkerPid(config, projectId, process.pid);
+      } else {
+        writeAllPid(process.pid);
+      }
       observer.setHealth({
         surface: "lifecycle.worker",
         status: "ok",

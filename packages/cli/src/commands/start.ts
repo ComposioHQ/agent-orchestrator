@@ -29,9 +29,23 @@ import {
   configToYaml,
   normalizeOrchestratorSessionStrategy,
   ConfigNotFoundError,
+  // Multi-project imports
+  loadGlobalConfig,
+  saveGlobalConfig,
+  registerProject,
+  detectConfigMode,
+  findLocalConfigPath,
+  loadLocalProjectConfig,
+  syncShadow,
+  matchProjectByCwd,
+  needsMigration,
+  migrateToMultiProject,
+  generateProjectId,
+  expandHome,
   type OrchestratorConfig,
   type ProjectConfig,
   type ParsedRepoUrl,
+  type GlobalProjectEntry,
 } from "@composio/ao-core";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import { exec, execSilent, git } from "../lib/shell.js";
@@ -61,6 +75,146 @@ import {
 
 const DEFAULT_PORT = 3000;
 const IS_TTY = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+
+// =============================================================================
+// MULTI-PROJECT REGISTRATION & SYNC
+// =============================================================================
+
+/**
+ * Handle multi-project registration and shadow sync on `ao start`.
+ *
+ * Flow:
+ * 1. Check for old format → migrate if needed
+ * 2. Load or scaffold global config
+ * 3. Register current project if not yet registered
+ * 4. Detect mode (hybrid/global-only) and sync shadow if hybrid
+ * 5. Return effective OrchestratorConfig
+ */
+async function handleMultiProjectStart(
+  workingDir: string,
+): Promise<{ config: OrchestratorConfig; projectId: string } | null> {
+  const resolvedDir = resolve(workingDir);
+
+  // 1. Check for old format migration
+  const localConfigPath = findConfigFile(resolvedDir);
+  if (localConfigPath && needsMigration(localConfigPath)) {
+    console.log(chalk.yellow("\nDetected single-project config format."));
+    console.log(chalk.dim("Migrating to multi-project...\n"));
+
+    const result = migrateToMultiProject(localConfigPath);
+    if (result.migrated) {
+      console.log(chalk.green(`  ✓ Created global config at ${result.globalConfigPath}`));
+      for (const id of result.registeredProjects) {
+        const sessions = result.sessionCounts[id] ?? 0;
+        console.log(chalk.green(`  ✓ Registered project "${id}"${sessions > 0 ? ` (${sessions} sessions preserved)` : ""}`));
+      }
+      if (result.warnings.length > 0) {
+        for (const w of result.warnings) {
+          console.log(chalk.yellow(`  ⚠ ${w}`));
+        }
+      }
+      console.log(chalk.green("\nMigration complete.\n"));
+    }
+  }
+
+  // 2. Load or scaffold global config
+  let globalConfig = loadGlobalConfig();
+  if (!globalConfig) {
+    // No global config exists — will be handled by the existing auto-create flow
+    // Return null to let the old flow handle first-time setup
+    return null;
+  }
+
+  // 3. Check if current dir matches a registered project
+  let projectId = matchProjectByCwd(globalConfig, resolvedDir);
+
+  if (!projectId) {
+    // Not registered yet — check if there's a local config (hybrid) or register as global-only
+    const localPath = findLocalConfigPath(resolvedDir);
+
+    if (localPath) {
+      // Has local config → auto-register in hybrid mode
+      const derivedId = generateSessionPrefix(generateProjectId(resolvedDir));
+
+      // Check for collision
+      if (globalConfig.projects[derivedId]) {
+        const existing = globalConfig.projects[derivedId];
+        if (resolve(expandHome(existing.path)) !== resolvedDir) {
+          // Collision with different project
+          if (isHumanCaller()) {
+            console.log(chalk.yellow(`\nDerived project ID "${derivedId}" is already taken by ${existing.name ?? derivedId}.`));
+            // For now, append a suffix
+            let suffix = 2;
+            let altId = `${derivedId}${suffix}`;
+            while (globalConfig.projects[altId]) {
+              suffix++;
+              altId = `${derivedId}${suffix}`;
+            }
+            projectId = altId;
+            console.log(chalk.dim(`  Using "${projectId}" instead.\n`));
+          } else {
+            return null; // Let old flow handle
+          }
+        } else {
+          projectId = derivedId;
+        }
+      } else {
+        projectId = derivedId;
+      }
+
+      // Register project
+      const entry: GlobalProjectEntry = {
+        name: basename(resolvedDir),
+        path: resolvedDir,
+      };
+      globalConfig = registerProject(globalConfig, projectId, entry);
+
+      // Sync shadow from local config
+      try {
+        const localConfig = loadLocalProjectConfig(localPath);
+        const { config: synced, excludedSecrets } = syncShadow(globalConfig, projectId, localConfig);
+        globalConfig = synced;
+        if (excludedSecrets.length > 0) {
+          console.log(chalk.yellow(`  ⚠ Excluded secret-like fields from shadow: ${excludedSecrets.join(", ")}`));
+        }
+      } catch (err) {
+        console.log(chalk.yellow(`  ⚠ Could not sync local config: ${err instanceof Error ? err.message : String(err)}`));
+      }
+
+      saveGlobalConfig(globalConfig);
+      console.log(chalk.green(`  ✓ Registered project "${projectId}" (hybrid mode)`));
+      console.log(chalk.green(`  ✓ Shadow synced to global config`));
+    } else {
+      // No local config — not registered, not in a known project dir
+      // Return null to let the old auto-create flow handle this
+      return null;
+    }
+  } else {
+    // Already registered — sync shadow if hybrid mode
+    const mode = detectConfigMode(resolvedDir);
+    if (mode === "hybrid") {
+      const localPath = findLocalConfigPath(resolvedDir);
+      if (localPath) {
+        try {
+          const localConfig = loadLocalProjectConfig(localPath);
+          const { config: synced, excludedSecrets } = syncShadow(globalConfig, projectId, localConfig);
+          globalConfig = synced;
+          saveGlobalConfig(globalConfig);
+          if (excludedSecrets.length > 0) {
+            console.log(chalk.yellow(`  ⚠ Excluded secret-like fields from shadow: ${excludedSecrets.join(", ")}`));
+          }
+        } catch (err) {
+          console.log(chalk.yellow(`  ⚠ Shadow sync failed: ${err instanceof Error ? err.message : String(err)}`));
+        }
+      }
+    }
+  }
+
+  // 4. Build effective config (use loadConfig which applies defaults + reactions)
+  const effectiveConfig = loadConfig();
+
+  return { config: effectiveConfig, projectId };
+}
 
 // =============================================================================
 // HELPERS
@@ -1083,20 +1237,28 @@ export function registerStart(program: Command): void {
               }
             }
           } else {
-            // ── No arg or project ID: load config or auto-create ──
-            let loadedConfig: OrchestratorConfig | null = null;
-            try {
-              loadedConfig = loadConfig();
-            } catch (err) {
-              if (err instanceof ConfigNotFoundError) {
-                // First run — auto-create config
-                loadedConfig = await autoCreateConfig(cwd());
-              } else {
-                throw err;
+            // ── No arg or project ID: try multi-project flow first ──
+            const multiResult = await handleMultiProjectStart(cwd());
+            if (multiResult) {
+              config = multiResult.config;
+              // If projectArg was provided, honor it instead of the cwd-derived ID
+              ({ projectId, project } = await resolveProject(config, projectArg ?? multiResult.projectId));
+            } else {
+              // Fall back to legacy single-file config or auto-create
+              let loadedConfig: OrchestratorConfig | null = null;
+              try {
+                loadedConfig = loadConfig();
+              } catch (err) {
+                if (err instanceof ConfigNotFoundError) {
+                  // First run — auto-create config
+                  loadedConfig = await autoCreateConfig(cwd());
+                } else {
+                  throw err;
+                }
               }
+              config = loadedConfig;
+              ({ projectId, project } = await resolveProject(config, projectArg));
             }
-            config = loadedConfig;
-            ({ projectId, project } = await resolveProject(config, projectArg));
           }
 
           // ── Already-running detection (Step 9) ──
