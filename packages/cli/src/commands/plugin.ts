@@ -1,5 +1,4 @@
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
 import chalk from "chalk";
 import type { Command } from "commander";
 import {
@@ -131,6 +130,7 @@ async function installOrVerifyPlugin(
           rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr);
         throw new Error(
           `${message}\nRollback failed for ${descriptor.package}: ${rollbackMessage}`,
+          { cause: err },
         );
       }
     }
@@ -206,6 +206,7 @@ async function updateManagedPlugin(
           rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr);
         throw new Error(
           `${message}\nRollback failed for ${plugin.package}: ${rollbackMessage}`,
+          { cause: err },
         );
       }
     }

@@ -25,7 +25,7 @@ const {
 }));
 
 vi.mock("@composio/ao-core", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@composio/ao-core")>();
+  const actual: typeof import("@composio/ao-core") = await importOriginal();
   return {
     ...actual,
     findConfigFile: (...args: unknown[]) => mockFindConfigFile(...args),
