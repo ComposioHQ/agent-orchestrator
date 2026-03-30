@@ -22,7 +22,7 @@ Spawn parallel AI coding agents, each in its own git worktree. Agents autonomous
 
 Agent Orchestrator manages fleets of AI coding agents working in parallel on your codebase. Each agent gets its own git worktree, its own branch, and its own PR. When CI fails, the agent fixes it. When reviewers leave comments, the agent addresses them. You only get pulled in when human judgment is needed.
 
-**Agent-agnostic** (Claude Code, Codex, Aider, OpenCode, Cursor, Amp) · **Runtime-agnostic** (tmux, Docker) · **Tracker-agnostic** (GitHub, Linear)
+**Agent-agnostic** (Claude Code, Codex, Aider) · **Runtime-agnostic** (tmux, Docker) · **Tracker-agnostic** (GitHub, Linear)
 
 <div align="center">
 
@@ -103,6 +103,7 @@ The orchestrator agent uses the [AO CLI](docs/CLI.md) internally to manage sessi
 
 ```yaml
 # agent-orchestrator.yaml
+# Runtime data is auto-derived under ~/.agent-orchestrator/{hash}-{projectId}/
 port: 3000
 
 defaults:
@@ -138,18 +139,17 @@ See [`agent-orchestrator.yaml.example`](agent-orchestrator.yaml.example) for the
 
 ## Plugin Architecture
 
-Eight slots. Every abstraction is swappable.
+Seven plugin slots. Lifecycle stays in core.
 
 | Slot      | Default     | Alternatives             |
 | --------- | ----------- | ------------------------ |
-| Runtime   | tmux        | docker, k8s, process     |
-| Agent     | claude-code | codex, aider, opencode, cursor, amp |
+| Runtime   | tmux        | process                  |
+| Agent     | claude-code | codex, aider, opencode   |
 | Workspace | worktree    | clone                    |
-| Tracker   | github      | linear                   |
-| SCM       | github      | —                        |
-| Notifier  | desktop     | slack, composio, webhook |
+| Tracker   | github      | linear, gitlab           |
+| SCM       | github      | gitlab                   |
+| Notifier  | desktop     | slack, discord, composio, webhook, openclaw |
 | Terminal  | iterm2      | web                      |
-| Lifecycle | core        | —                        |
 
 All interfaces defined in [`packages/core/src/types.ts`](packages/core/src/types.ts). A plugin implements one interface and exports a `PluginModule`. That's it.
 
