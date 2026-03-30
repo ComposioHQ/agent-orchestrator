@@ -185,6 +185,7 @@ function resolveLocalPluginEntrypoint(pluginPath: string): string | null {
 
 function inferPackageSpecifier(value: string | undefined): string | null {
   if (!value) return null;
+  if (value.startsWith(".") || value.startsWith("/")) return null;
   return value.startsWith("@") || value.includes("/") ? value : null;
 }
 
@@ -192,13 +193,19 @@ function resolvePluginSpecifier(
   plugin: InstalledPluginConfig,
   config: OrchestratorConfig,
 ): string | null {
-  if (plugin.path) {
-    const absolutePath = resolveConfigRelativePath(plugin.path, config.configPath);
-    const entrypoint = resolveLocalPluginEntrypoint(absolutePath);
-    return entrypoint ? pathToFileURL(entrypoint).href : null;
+  switch (plugin.source) {
+    case "local": {
+      if (!plugin.path) return null;
+      const absolutePath = resolveConfigRelativePath(plugin.path, config.configPath);
+      const entrypoint = resolveLocalPluginEntrypoint(absolutePath);
+      return entrypoint ? pathToFileURL(entrypoint).href : null;
+    }
+    case "registry":
+    case "npm":
+      return plugin.package ?? inferPackageSpecifier(plugin.name);
+    default:
+      return null;
   }
-
-  return plugin.package ?? inferPackageSpecifier(plugin.name);
 }
 
 export function createPluginRegistry(): PluginRegistry {
@@ -260,7 +267,10 @@ export function createPluginRegistry(): PluginRegistry {
         if (plugin.enabled === false) continue;
 
         const specifier = resolvePluginSpecifier(plugin, config);
-        if (!specifier) continue;
+        if (!specifier) {
+          console.warn(`[plugin-registry] Could not resolve specifier for plugin "${plugin.name}" (source: ${plugin.source})`);
+          continue;
+        }
 
         try {
           const mod = normalizeImportedPluginModule(await doImport(specifier));
@@ -268,8 +278,8 @@ export function createPluginRegistry(): PluginRegistry {
 
           const pluginConfig = extractPluginConfig(mod.manifest.slot, mod.manifest.name, config);
           this.register(mod, pluginConfig);
-        } catch {
-          // External plugin unavailable or invalid — continue loading the rest.
+        } catch (error) {
+          console.warn(`[plugin-registry] Failed to load plugin "${specifier}":`, error);
         }
       }
     },
