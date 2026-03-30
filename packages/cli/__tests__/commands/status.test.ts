@@ -14,7 +14,6 @@ import {
   type Session,
   type SessionManager,
   type ActivityState,
-  getSessionsDir,
 } from "@composio/ao-core";
 
 const {
@@ -95,7 +94,34 @@ vi.mock("../../src/lib/plugins.js", () => ({
     getSessionInfo: mockIntrospect,
     getActivityState: mockGetActivityState,
   }),
+  getAgentByNameFromRegistry: () => ({
+    name: "claude-code",
+    processName: "claude",
+    detectActivity: () => "idle",
+    getSessionInfo: mockIntrospect,
+    getActivityState: mockGetActivityState,
+  }),
   getSCM: () => ({
+    name: "github",
+    detectPR: mockDetectPR,
+    getCISummary: mockGetCISummary,
+    getReviewDecision: mockGetReviewDecision,
+    getPendingComments: mockGetPendingComments,
+    getAutomatedComments: vi.fn().mockResolvedValue([]),
+    getCIChecks: vi.fn().mockResolvedValue([]),
+    getReviews: vi.fn().mockResolvedValue([]),
+    getMergeability: vi.fn().mockResolvedValue({
+      mergeable: true,
+      ciPassing: true,
+      approved: false,
+      noConflicts: true,
+      blockers: [],
+    }),
+    getPRState: vi.fn().mockResolvedValue("open"),
+    mergePR: vi.fn(),
+    closePR: vi.fn(),
+  }),
+  getSCMFromRegistry: () => ({
     name: "github",
     detectPR: mockDetectPR,
     getCISummary: mockGetCISummary,
@@ -179,6 +205,7 @@ function makeSession(overrides: Partial<Session> & { id: string; projectId: stri
 
 vi.mock("../../src/lib/create-session-manager.js", () => ({
   getSessionManager: async (): Promise<SessionManager> => mockSessionManager as SessionManager,
+  getPluginRegistry: async () => ({ get: vi.fn(), list: vi.fn(), register: vi.fn() }),
 }));
 
 let tmpDir: string;
@@ -221,8 +248,8 @@ beforeEach(() => {
     reactions: {},
   } as Record<string, unknown>;
 
-  // Calculate and create sessions directory for hash-based architecture
-  sessionsDir = getSessionsDir(configPath, join(tmpDir, "main-repo"));
+  // Keep test metadata under the temp fixture directory instead of ~/.agent-orchestrator.
+  sessionsDir = join(tmpDir, "sessions");
   mkdirSync(sessionsDir, { recursive: true });
   sessionsDirRef.current = sessionsDir;
 

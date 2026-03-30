@@ -1,4 +1,4 @@
-import type { Agent, OrchestratorConfig, SCM } from "@composio/ao-core";
+import type { Agent, OrchestratorConfig, PluginRegistry, SCM } from "@composio/ao-core";
 import claudeCodePlugin from "@composio/ao-plugin-agent-claude-code";
 import codexPlugin from "@composio/ao-plugin-agent-codex";
 import aiderPlugin from "@composio/ao-plugin-agent-aider";
@@ -27,11 +27,7 @@ const scmPlugins: Record<string, { create(): SCM }> = {
 export function getAgent(config: OrchestratorConfig, projectId?: string): Agent {
   const agentName =
     (projectId ? config.projects[projectId]?.agent : undefined) || config.defaults.agent;
-  const plugin = agentPlugins[agentName];
-  if (!plugin) {
-    throw new Error(`Unknown agent plugin: ${agentName}`);
-  }
-  return plugin.create();
+  return getAgentByName(agentName);
 }
 
 /** Get an agent by name directly (for fallback/no-config scenarios). */
@@ -41,6 +37,26 @@ export function getAgentByName(name: string): Agent {
     throw new Error(`Unknown agent plugin: ${name}`);
   }
   return plugin.create();
+}
+
+/** Resolve the Agent plugin from the shared registry. */
+export function getAgentFromRegistry(
+  registry: PluginRegistry,
+  config: OrchestratorConfig,
+  projectId?: string,
+): Agent {
+  const agentName =
+    (projectId ? config.projects[projectId]?.agent : undefined) || config.defaults.agent;
+  return getAgentByNameFromRegistry(registry, agentName);
+}
+
+/** Get an agent by name from the shared registry. */
+export function getAgentByNameFromRegistry(registry: PluginRegistry, name: string): Agent {
+  const plugin = registry.get<Agent>("agent", name);
+  if (!plugin) {
+    throw new Error(`Unknown agent plugin: ${name}`);
+  }
+  return plugin;
 }
 
 /**
@@ -53,4 +69,18 @@ export function getSCM(config: OrchestratorConfig, projectId: string): SCM {
     throw new Error(`Unknown SCM plugin: ${scmName}`);
   }
   return plugin.create();
+}
+
+/** Resolve the SCM plugin for a project from the shared registry. */
+export function getSCMFromRegistry(
+  registry: PluginRegistry,
+  config: OrchestratorConfig,
+  projectId: string,
+): SCM {
+  const scmName = config.projects[projectId]?.scm?.plugin || "github";
+  const plugin = registry.get<SCM>("scm", scmName);
+  if (!plugin) {
+    throw new Error(`Unknown SCM plugin: ${scmName}`);
+  }
+  return plugin;
 }
