@@ -1,0 +1,76 @@
+# Dependencies (recursive — dockerignore needs **/ unlike gitignore)
+**/node_modules/
+**/.pnpm-store/
+
+# Build outputs (recursive)
+**/dist/
+**/.next/
+**/dist-server/
+**/*.tsbuildinfo
+
+# Version control
+.git/
+.gitignore
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Test and coverage
+**/coverage/
+*.patch
+tests/
+
+# Environment files (secrets)
+.env
+.env.local
+.env.*.local
+.env.production.local
+.env.development.local
+.env.test.local
+
+# Credentials and secrets
+*.key
+*.pem
+*.p12
+*.pfx
+secrets.yaml
+secrets.yml
+credentials.json
+.secrets/
+.credentials/
+.aws/
+.gcloud/
+.azure/
+
+# Agent config (personal)
+CLAUDE.md
+AGENTS.md
+.claude/
+.opencode/
+.sisyphus/
+agent-orchestrator.yaml
+
+# Documentation and non-essential files
+**/*.md
+!docker/README.md
+LICENSE
+CHANGELOG.md
+.changeset/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Mobile app (not part of Docker setup)
+packages/mobile/
+
+# Screenshots and e2e artifacts
+packages/web/screenshots/
+packages/web/e2e/
+
+# Husky hooks
+.husky/
