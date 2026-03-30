@@ -126,12 +126,21 @@ describe("parsePrFromUrl", () => {
     });
   });
 
-  it("falls back to trailing number for non-GitHub URLs", () => {
+  it("parses GitLab MR URLs", () => {
     expect(parsePrFromUrl("https://gitlab.com/foo/bar/-/merge_requests/456")).toEqual({
-      owner: "",
-      repo: "",
+      owner: "gitlab.com/foo",
+      repo: "bar",
       number: 456,
       url: "https://gitlab.com/foo/bar/-/merge_requests/456",
+    });
+  });
+
+  it("falls back to trailing number for non-GitHub/GitLab URLs", () => {
+    expect(parsePrFromUrl("https://example.com/some/path/789")).toEqual({
+      owner: "",
+      repo: "",
+      number: 789,
+      url: "https://example.com/some/path/789",
     });
   });
 
