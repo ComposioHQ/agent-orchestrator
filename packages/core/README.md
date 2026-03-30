@@ -1,4 +1,4 @@
-# @agent-orchestrator/core
+# @composio/ao-core
 
 Core services, types, and configuration for the Agent Orchestrator system.
 
@@ -88,16 +88,16 @@ Loads plugins and provides access to them:
 - `get<T>(slot, name)` — get plugin by slot + name
 - `list(slot)` — list all plugins for a slot
 - `loadBuiltins(config?)` — load built-in plugins (runtime-tmux, agent-claude-code, etc.)
-- `loadFromConfig(config)` — load plugins from config (npm packages, local paths)
+- `loadFromConfig(config)` — load built-ins today; external plugin descriptors are the marketplace extension point
 
 **Built-in plugins** (loaded by default):
 
 - runtime-tmux, runtime-process
 - agent-claude-code, agent-codex, agent-aider, agent-opencode, agent-cursor, agent-amp
 - workspace-worktree, workspace-clone
-- tracker-github, tracker-linear
-- scm-github
-- notifier-desktop, notifier-slack, notifier-composio, notifier-webhook
+- tracker-github, tracker-linear, tracker-gitlab
+- scm-github, scm-gitlab
+- notifier-desktop, notifier-discord, notifier-slack, notifier-composio, notifier-openclaw, notifier-webhook
 - terminal-iterm2, terminal-web
 
 ### `src/config.ts` — Configuration Loading
@@ -106,12 +106,12 @@ Loads and validates `agent-orchestrator.yaml`:
 
 **Main config sections:**
 
-- `dataDir` — where session metadata lives (~/.agent-orchestrator)
-- `worktreeDir` — where workspaces are created (~/.worktrees)
+- Runtime data paths are auto-derived from the config location under `~/.agent-orchestrator/{hash}-{projectId}/`
 - `port` — web dashboard port (default 3000, set different values for multiple projects)
 - `terminalPort` — terminal WebSocket port (auto-detected if not set)
 - `directTerminalPort` — direct terminal WebSocket port (auto-detected if not set)
 - `defaults` — default plugins (runtime, agent, workspace, notifiers)
+- `plugins` — installer-managed external plugin descriptors (registry, npm, or local)
 - `projects` — per-project config (repo, path, branch, symlinks, reactions, agentRules)
 - `notifiers` — notification channel config (Slack webhooks, etc.)
 - `notificationRouting` — which notifiers get which priority events
@@ -125,7 +125,7 @@ Loads and validates `agent-orchestrator.yaml`:
 
 1. Edit `src/types.ts` → `Session` interface
 2. Edit `src/services/session-manager.ts` → initialize field in `spawn()`
-3. Rebuild: `pnpm --filter @agent-orchestrator/core build`
+3. Rebuild: `pnpm --filter @composio/ao-core build`
 
 ### Adding an Event Type
 
@@ -188,13 +188,13 @@ Migration notes:
 
 ```bash
 # Run all core tests
-pnpm --filter @agent-orchestrator/core test
+pnpm --filter @composio/ao-core test
 
 # Run in watch mode
-pnpm --filter @agent-orchestrator/core test -- --watch
+pnpm --filter @composio/ao-core test -- --watch
 
 # Run specific test
-pnpm --filter @agent-orchestrator/core test -- session-manager.test.ts
+pnpm --filter @composio/ao-core test -- session-manager.test.ts
 ```
 
 Tests are in `src/__tests__/`:
@@ -209,10 +209,10 @@ Tests are in `src/__tests__/`:
 
 ```bash
 # Build core
-pnpm --filter @agent-orchestrator/core build
+pnpm --filter @composio/ao-core build
 
 # Typecheck
-pnpm --filter @agent-orchestrator/core typecheck
+pnpm --filter @composio/ao-core typecheck
 ```
 
 This package is a dependency of all other packages. Build it first if working on the codebase.
@@ -221,7 +221,7 @@ This package is a dependency of all other packages. Build it first if working on
 
 **Why flat metadata files?**
 
-- Debuggability: `cat ~/.agent-orchestrator/my-app-3` shows full state
+- Debuggability: `cat ~/.agent-orchestrator/<hash>-my-app/sessions/app-3` shows full state
 - No database dependency (survives crashes, easy to inspect)
 - Backwards-compatible with bash script orchestrator
 
