@@ -180,7 +180,7 @@ describe("scm-forgejo plugin", () => {
       const event = await scm.parseWebhook?.(makeWebhookRequest(), project);
       expect(event).toEqual(
         expect.objectContaining({
-          provider: "github",
+          provider: "forgejo",
           kind: "pull_request",
           action: "opened",
           prNumber: 42,
@@ -226,7 +226,7 @@ describe("scm-forgejo plugin", () => {
       );
 
       expect(event).toEqual(
-        expect.objectContaining({ provider: "github", kind: "comment", prNumber: 42 }),
+        expect.objectContaining({ provider: "forgejo", kind: "comment", prNumber: 42 }),
       );
     });
 
@@ -245,7 +245,7 @@ describe("scm-forgejo plugin", () => {
       );
 
       expect(event).toEqual(
-        expect.objectContaining({ provider: "github", kind: "comment", prNumber: 42 }),
+        expect.objectContaining({ provider: "forgejo", kind: "comment", prNumber: 42 }),
       );
       expect(event?.timestamp?.toISOString()).toBe("2026-03-10T12:00:00.000Z");
     });
@@ -270,7 +270,7 @@ describe("scm-forgejo plugin", () => {
 
       expect(event).toEqual(
         expect.objectContaining({
-          provider: "github",
+          provider: "forgejo",
           kind: "comment",
           prNumber: 42,
         }),
@@ -295,7 +295,7 @@ describe("scm-forgejo plugin", () => {
 
       expect(event).toEqual(
         expect.objectContaining({
-          provider: "github",
+          provider: "forgejo",
           kind: "ci",
           action: "failure",
           branch: "feat/my-feature",
@@ -324,7 +324,7 @@ describe("scm-forgejo plugin", () => {
 
       expect(event).toEqual(
         expect.objectContaining({
-          provider: "github",
+          provider: "forgejo",
           kind: "ci",
           branch: "feat/my-feature",
           sha: "def456",
@@ -349,7 +349,7 @@ describe("scm-forgejo plugin", () => {
 
       expect(event).toEqual(
         expect.objectContaining({
-          provider: "github",
+          provider: "forgejo",
           kind: "push",
           branch: "feat/my-feature",
           sha: "abcde12345",
@@ -374,7 +374,7 @@ describe("scm-forgejo plugin", () => {
 
       expect(event).toEqual(
         expect.objectContaining({
-          provider: "github",
+          provider: "forgejo",
           kind: "push",
           branch: undefined,
           sha: "abcde12345",
@@ -1219,7 +1219,7 @@ describe("scm-forgejo plugin", () => {
 
       const result = await scm.getMergeability(pr);
       expect(result.noConflicts).toBe(false);
-      expect(result.blockers).toContain("Merge status unknown (GitHub is computing)");
+      expect(result.blockers).toContain("Merge status unknown (Forgejo is computing)");
       expect(result.mergeable).toBe(false);
     });
 

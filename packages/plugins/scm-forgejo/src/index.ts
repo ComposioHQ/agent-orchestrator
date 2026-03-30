@@ -40,7 +40,6 @@ import {
 } from "@composio/ao-core/scm-webhook-utils";
 
 const execFileAsync = promisify(execFile);
-let forgejoHostname: string | undefined;
 
 /** Known bot logins that produce automated review comments */
 const BOT_AUTHORS = new Set([
@@ -77,13 +76,13 @@ async function execCli(bin: ExecCommand, args: string[], cwd?: string): Promise<
   }
 }
 
-async function gh(args: string[]): Promise<string> {
-  const argv = forgejoHostname ? ["--hostname", forgejoHostname, ...args] : args;
+async function ghExec(args: string[], hostname?: string): Promise<string> {
+  const argv = hostname ? ["--hostname", hostname, ...args] : args;
   return execCli("gh", argv);
 }
 
-async function ghInDir(args: string[], cwd: string): Promise<string> {
-  const argv = forgejoHostname ? ["--hostname", forgejoHostname, ...args] : args;
+async function ghExecInDir(args: string[], cwd: string, hostname?: string): Promise<string> {
+  const argv = hostname ? ["--hostname", hostname, ...args] : args;
   return execCli("gh", argv, cwd);
 }
 
@@ -165,8 +164,11 @@ function mapRawCheckStateToStatus(rawState: string | undefined): CICheck["status
   return "skipped";
 }
 
-async function getCIChecksFromStatusRollup(pr: PRInfo): Promise<CICheck[]> {
-  const raw = await gh([
+async function getCIChecksFromStatusRollup(
+  pr: PRInfo,
+  ghCli: (args: string[]) => Promise<string>,
+): Promise<CICheck[]> {
+  const raw = await ghCli([
     "pr",
     "view",
     String(pr.number),
@@ -289,7 +291,7 @@ function parseForgejoWebhookEvent(
     const pr = pullRequest as Record<string, unknown>;
     const head = pr["head"] as Record<string, unknown> | undefined;
     return {
-      provider: "github",
+      provider: "forgejo",
       kind: "pull_request",
       action,
       rawEventType,
@@ -314,7 +316,7 @@ function parseForgejoWebhookEvent(
     const pr = pullRequest as Record<string, unknown>;
     const head = pr["head"] as Record<string, unknown> | undefined;
     return {
-      provider: "github",
+      provider: "forgejo",
       kind: rawEventType === "pull_request_review" ? "review" : "comment",
       action,
       rawEventType,
@@ -347,7 +349,7 @@ function parseForgejoWebhookEvent(
     const issueRecord = issue as Record<string, unknown>;
     if (!("pull_request" in issueRecord)) return null;
     return {
-      provider: "github",
+      provider: "forgejo",
       kind: "comment",
       action,
       rawEventType,
@@ -369,7 +371,7 @@ function parseForgejoWebhookEvent(
       : [];
     const firstPR = pullRequests[0];
     return {
-      provider: "github",
+      provider: "forgejo",
       kind: "ci",
       action,
       rawEventType,
@@ -395,7 +397,7 @@ function parseForgejoWebhookEvent(
       ? (payload["branches"] as Array<Record<string, unknown>>)
       : [];
     return {
-      provider: "github",
+      provider: "forgejo",
       kind: "ci",
       action: typeof payload["state"] === "string" ? (payload["state"] as string) : action,
       rawEventType,
@@ -414,7 +416,7 @@ function parseForgejoWebhookEvent(
         ? (payload["head_commit"] as Record<string, unknown>)
         : undefined;
     return {
-      provider: "github",
+      provider: "forgejo",
       kind: "push",
       action,
       rawEventType,
@@ -454,7 +456,9 @@ function parseDate(val: string | undefined | null): Date {
 // ---------------------------------------------------------------------------
 
 function createForgejoSCM(config?: Record<string, unknown>): SCM {
-  forgejoHostname = typeof config?.host === "string" ? config.host : undefined;
+  const hostname = typeof config?.host === "string" ? config.host : undefined;
+  const gh = (args: string[]) => ghExec(args, hostname);
+  const ghInDir = (args: string[], cwd: string) => ghExecInDir(args, cwd, hostname);
 
   return {
     name: "forgejo",
@@ -682,7 +686,7 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
         });
       } catch (err) {
         if (isUnsupportedPrChecksJsonError(err)) {
-          return getCIChecksFromStatusRollup(pr);
+          return getCIChecksFromStatusRollup(pr, gh);
         }
         throw new Error("Failed to fetch CI checks", { cause: err });
       }
@@ -1006,7 +1010,7 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
       if (mergeable === "CONFLICTING") {
         blockers.push("Merge conflicts");
       } else if (mergeable === "UNKNOWN" || mergeable === "") {
-        blockers.push("Merge status unknown (GitHub is computing)");
+        blockers.push("Merge status unknown (Forgejo is computing)");
       }
       if (mergeState === "BEHIND") {
         blockers.push("Branch is behind base branch");

@@ -17,14 +17,13 @@ import type {
 } from "@composio/ao-core";
 
 const execFileAsync = promisify(execFile);
-let forgejoHostname: string | undefined;
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-async function gh(args: string[]): Promise<string> {
-  const argv = forgejoHostname ? ["--hostname", forgejoHostname, ...args] : args;
+async function gh(args: string[], hostname?: string): Promise<string> {
+  const argv = hostname ? ["--hostname", hostname, ...args] : args;
   try {
     const { stdout } = await execFileAsync("gh", argv, {
       maxBuffer: 10 * 1024 * 1024,
@@ -76,7 +75,11 @@ function isUnknownJsonFieldError(err: unknown, fieldName: string): boolean {
   return unknownFieldSignals && text.includes(fieldName.toLowerCase());
 }
 
-async function ghIssueViewJson(identifier: string, project: ProjectConfig): Promise<string> {
+async function ghIssueViewJson(
+  identifier: string,
+  project: ProjectConfig,
+  hostname?: string,
+): Promise<string> {
   const fieldsWithStateReason = "number,title,body,url,state,stateReason,labels,assignees";
   try {
     return await gh([
@@ -87,7 +90,7 @@ async function ghIssueViewJson(identifier: string, project: ProjectConfig): Prom
       project.repo,
       "--json",
       fieldsWithStateReason,
-    ]);
+    ], hostname);
   } catch (err) {
     if (!isUnknownJsonFieldError(err, "stateReason")) throw err;
     return gh([
@@ -98,21 +101,21 @@ async function ghIssueViewJson(identifier: string, project: ProjectConfig): Prom
       project.repo,
       "--json",
       "number,title,body,url,state,labels,assignees",
-    ]);
+    ], hostname);
   }
 }
 
-async function ghIssueListJson(args: string[]): Promise<string> {
+async function ghIssueListJson(args: string[], hostname?: string): Promise<string> {
   const withStateReason = [
     ...args,
     "--json",
     "number,title,body,url,state,stateReason,labels,assignees",
   ];
   try {
-    return await gh(withStateReason);
+    return await gh(withStateReason, hostname);
   } catch (err) {
     if (!isUnknownJsonFieldError(err, "stateReason")) throw err;
-    return gh([...args, "--json", "number,title,body,url,state,labels,assignees"]);
+    return gh([...args, "--json", "number,title,body,url,state,labels,assignees"], hostname);
   }
 }
 
@@ -130,13 +133,13 @@ function mapState(ghState: string, stateReason?: string | null): Issue["state"] 
 // ---------------------------------------------------------------------------
 
 function createForgejoTracker(config?: Record<string, unknown>): Tracker {
-  forgejoHostname = typeof config?.host === "string" ? config.host : undefined;
+  const hostname = typeof config?.host === "string" ? config.host : undefined;
 
   return {
     name: "forgejo",
 
     async getIssue(identifier: string, project: ProjectConfig): Promise<Issue> {
-      const raw = await ghIssueViewJson(identifier, project);
+      const raw = await ghIssueViewJson(identifier, project, hostname);
 
       const data: {
         number: number;
@@ -169,14 +172,14 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
         project.repo,
         "--json",
         "state",
-      ]);
+      ], hostname);
       const data: { state: string } = JSON.parse(raw);
       return data.state.toUpperCase() === "CLOSED";
     },
 
     issueUrl(identifier: string, project: ProjectConfig): string {
       const num = identifier.replace(/^#/, "");
-      const host = forgejoHostname ?? repoHost(project.repo) ?? "github.com";
+      const host = hostname ?? repoHost(project.repo) ?? "github.com";
       return `https://${host}/${stripHost(project.repo)}/issues/${num}`;
     },
 
@@ -248,7 +251,7 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
         args.push("--assignee", filters.assignee);
       }
 
-      const raw = await ghIssueListJson(args);
+      const raw = await ghIssueListJson(args, hostname);
       const issues: Array<{
         number: number;
         title: string;
@@ -279,9 +282,9 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
       // Handle state change — Forgejo Issues only supports open/closed.
       // "in_progress" is not a Forgejo state, so it is intentionally a no-op.
       if (update.state === "closed") {
-        await gh(["issue", "close", identifier, "--repo", project.repo]);
+        await gh(["issue", "close", identifier, "--repo", project.repo], hostname);
       } else if (update.state === "open") {
-        await gh(["issue", "reopen", identifier, "--repo", project.repo]);
+        await gh(["issue", "reopen", identifier, "--repo", project.repo], hostname);
       }
 
       // Handle label removal
@@ -294,7 +297,7 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
           project.repo,
           "--remove-label",
           update.removeLabels.join(","),
-        ]);
+        ], hostname);
       }
 
       // Handle label changes
@@ -307,7 +310,7 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
           project.repo,
           "--add-label",
           update.labels.join(","),
-        ]);
+        ], hostname);
       }
 
       // Handle assignee changes
@@ -320,7 +323,7 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
           project.repo,
           "--add-assignee",
           update.assignee,
-        ]);
+        ], hostname);
       }
 
       // Handle comment
@@ -333,7 +336,7 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
           project.repo,
           "--body",
           update.comment,
-        ]);
+        ], hostname);
       }
     },
 
@@ -358,7 +361,7 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
       }
 
       // gh issue create outputs the URL of the new issue
-      const url = await gh(args);
+      const url = await gh(args, hostname);
 
       // Extract issue number from URL and fetch full details
       const match = url.match(/\/issues\/(\d+)/);
