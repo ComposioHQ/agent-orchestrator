@@ -498,7 +498,7 @@ export function registerSetup(program: Command): void {
       "--routing-preset <preset>",
       "OpenClaw routing preset: urgent-only | urgent-action | all",
     )
-    .option("--non-interactive", "Skip prompts — requires --url (token auto-generated if not provided)")
+    .option("--non-interactive", "Skip prompts — auto-detects OpenClaw if --url not provided (token auto-generated if not provided)")
     .action(async (opts: SetupOptions) => {
       try {
         await runSetupAction(opts);

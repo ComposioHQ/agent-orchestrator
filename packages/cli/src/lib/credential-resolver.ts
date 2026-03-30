@@ -30,6 +30,11 @@ interface ResolvedCredential {
   source: "env" | "openclaw";
 }
 
+interface AppliedCredential {
+  key: ResolvableKey;
+  source: "openclaw";
+}
+
 function readOpenClawKeys(): Record<string, string> {
   const keys: Record<string, string> = {};
 
@@ -94,9 +99,9 @@ export function resolveCredential(key: ResolvableKey): ResolvedCredential | null
  *
  * Returns the list of keys that were injected from OpenClaw.
  */
-export function applyOpenClawCredentials(): ResolvedCredential[] {
+export function applyOpenClawCredentials(): AppliedCredential[] {
   const openclawKeys = readOpenClawKeys();
-  const applied: ResolvedCredential[] = [];
+  const applied: AppliedCredential[] = [];
 
   for (const key of RESOLVABLE_KEYS) {
     if (process.env[key] && process.env[key]!.length > 0) continue;
@@ -104,11 +109,11 @@ export function applyOpenClawCredentials(): ResolvedCredential[] {
     const value = openclawKeys[key];
     if (value) {
       process.env[key] = value;
-      applied.push({ key, value, source: "openclaw" });
+      applied.push({ key, source: "openclaw" });
     }
   }
 
   return applied;
 }
 
-export { RESOLVABLE_KEYS, type ResolvableKey, type ResolvedCredential };
+export { RESOLVABLE_KEYS, type ResolvableKey, type ResolvedCredential, type AppliedCredential };

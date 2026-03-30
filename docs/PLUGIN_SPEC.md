@@ -7,10 +7,10 @@ This document defines the runtime contract and packaging requirements for Agent 
 Plugins are standard Node.js modules that export a `PluginModule`:
 
 ```ts
-export interface PluginModule {
+export interface PluginModule<T = unknown> {
   manifest: PluginManifest;
-  create(config?: Record<string, unknown>): unknown;
-  detect?(input?: unknown): Promise<unknown> | unknown;
+  create(config?: Record<string, unknown>): T;
+  detect?(): boolean;
 }
 ```
 

@@ -112,7 +112,7 @@ async function checkOpenClawNotifier(
       "OpenClaw token is not set. Fix: set OPENCLAW_HOOKS_TOKEN env var or add token to notifiers.openclaw in config",
     );
   } else if (installation.state === "running") {
-    const tokenResult = await validateToken(url, token);
+    const tokenResult = await validateToken(installation.gatewayUrl, token);
     if (!tokenResult.valid) {
       fail(`OpenClaw token validation failed: ${tokenResult.error}`);
     } else {
