@@ -142,6 +142,13 @@ const DecomposerConfigSchema = z
     requireApproval: true,
   });
 
+const GnapConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    dir: z.string().default(".gnap"),
+  })
+  .default({ enabled: false, dir: ".gnap" });
+
 const ProjectConfigSchema = z.object({
   name: z.string().optional(),
   repo: z.string(),
@@ -170,6 +177,7 @@ const ProjectConfigSchema = z.object({
     .optional(),
   opencodeIssueSessionStrategy: z.enum(["reuse", "delete", "ignore"]).optional(),
   decomposer: DecomposerConfigSchema.optional(),
+  gnap: GnapConfigSchema.optional(),
 });
 
 const DefaultPluginsSchema = z.object({

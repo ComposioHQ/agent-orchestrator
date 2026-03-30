@@ -74,6 +74,45 @@ export type {
   DecomposerConfig,
 } from "./decomposer.js";
 
+// GNAP — Git-Native Agent Protocol persistent state layer
+export {
+  initGnapDir,
+  isGnapInitialized,
+  getGnapDir,
+  writeGnapTask,
+  readGnapTask,
+  updateGnapTask,
+  listGnapTasks,
+  readGnapAgents,
+  writeGnapAgent,
+  writeGnapRun,
+  readGnapRun,
+  updateGnapRun,
+  writeGnapMessage,
+  sessionStatusToGnapState,
+  gnapTaskStateToRunState,
+  generateGnapTaskId,
+  syncSessionToGnap,
+  syncDecompositionToGnap,
+  DEFAULT_GNAP_CONFIG,
+} from "./gnap.js";
+export type {
+  GnapTask,
+  GnapTaskState,
+  GnapAgent,
+  GnapAgentType,
+  GnapAgentStatus,
+  GnapAgentsFile,
+  GnapRun,
+  GnapRunState,
+  GnapMessage,
+  GnapMessageType,
+  GnapComment,
+  GnapConfig,
+  GnapSyncOptions,
+  GnapDecompositionSyncOptions,
+} from "./gnap.js";
+
 // Orchestrator prompt — generates orchestrator context for `ao start`
 export { generateOrchestratorPrompt } from "./orchestrator-prompt.js";
 export type { OrchestratorPromptConfig } from "./orchestrator-prompt.js";
