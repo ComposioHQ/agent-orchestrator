@@ -7,7 +7,7 @@ import { SessionCard } from "./SessionCard";
 interface AttentionZoneProps {
   level: AttentionLevel;
   sessions: DashboardSession[];
-  onSend?: (sessionId: string, message: string) => void;
+  onSend?: (sessionId: string, message: string) => Promise<void> | void;
   onKill?: (sessionId: string) => void;
   onMerge?: (prNumber: number) => void;
   onRestore?: (sessionId: string) => void;

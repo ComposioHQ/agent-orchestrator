@@ -8,7 +8,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve, dirname } from "node:path";
 import { isPortAvailable } from "./web-dir.js";
 import { exec } from "./shell.js";
 
@@ -27,31 +27,63 @@ async function checkPort(port: number): Promise<void> {
 
 /**
  * Check that workspace packages have been compiled (TypeScript → JavaScript).
- * Verifies @composio/ao-core dist output exists from the web package's
- * node_modules, since a missing dist/ causes module resolution errors when
- * starting the dashboard. Works with both `next dev` and `next build`.
+ * Locates @composio/ao-core by walking up from webDir, handling both pnpm
+ * workspaces (symlinked deps in webDir/node_modules) and npm/yarn global
+ * installs (hoisted to a parent node_modules).
  */
 async function checkBuilt(webDir: string): Promise<void> {
-  const nodeModules = resolve(webDir, "node_modules", "@composio", "ao-core");
-  if (!existsSync(nodeModules)) {
-    throw new Error("Dependencies not installed. Run: pnpm install && pnpm build");
+  const corePkgDir = findPackageUp(webDir, "@composio", "ao-core");
+  if (!corePkgDir) {
+    const hint = webDir.includes("node_modules")
+      ? "Run: npm install -g @composio/ao@latest"
+      : "Run: pnpm install && pnpm build";
+    throw new Error(`Dependencies not installed. ${hint}`);
   }
-  const coreEntry = resolve(nodeModules, "dist", "index.js");
+  const coreEntry = resolve(corePkgDir, "dist", "index.js");
   if (!existsSync(coreEntry)) {
-    throw new Error("Packages not built. Run: pnpm build");
+    const hint = webDir.includes("node_modules")
+      ? "Run: npm install -g @composio/ao@latest"
+      : "Run: pnpm build";
+    throw new Error(`Packages not built. ${hint}`);
   }
 }
 
 /**
- * Check that tmux is installed (required for the default runtime).
- * Throws if not installed.
+ * Walk up from startDir looking for node_modules/<segments>.
+ * Mirrors Node's module resolution: checks each ancestor directory until
+ * the package is found or the filesystem root is reached.
+ */
+function findPackageUp(startDir: string, ...segments: string[]): string | null {
+  let dir = resolve(startDir);
+  while (true) {
+    const candidate = resolve(dir, "node_modules", ...segments);
+    if (existsSync(candidate)) return candidate;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+/**
+ * Check that tmux is installed.
+ * Throws with platform-appropriate manual install instructions when missing.
  */
 async function checkTmux(): Promise<void> {
   try {
     await exec("tmux", ["-V"]);
+    return;
   } catch {
-    throw new Error("tmux is not installed. Install it: brew install tmux");
+    // tmux not found
   }
+
+  const hint =
+    process.platform === "darwin"
+      ? "brew install tmux"
+      : process.platform === "win32"
+        ? "tmux is not available on Windows. Use WSL: wsl --install, then: sudo apt install tmux"
+        : "sudo apt install tmux (Debian/Ubuntu) or sudo dnf install tmux (Fedora)";
+  throw new Error(`tmux is not installed. Install it: ${hint}`);
 }
 
 /**

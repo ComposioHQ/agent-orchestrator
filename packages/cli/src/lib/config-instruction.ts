@@ -22,7 +22,7 @@ defaults:
   agent: claude-code          # claude-code | aider | codex | opencode
   workspace: worktree         # worktree | clone
   notifiers:                  # List of active notifier plugins
-    - desktop                 # desktop | slack | webhook | composio | openclaw
+    - desktop                 # desktop | discord | slack | webhook | composio | openclaw
   orchestrator:
     agent: claude-code        # Agent for orchestrator sessions (optional override)
   worker:
@@ -102,6 +102,11 @@ notifiers:
   webhook:
     plugin: webhook
     # url: https://example.com/hook
+  openclaw:
+    plugin: openclaw
+    # url: http://127.0.0.1:18789/hooks/agent
+    # token: \${OPENCLAW_HOOKS_TOKEN}
+    # Run 'ao setup openclaw' for guided configuration
 
 # ── Notification routing (optional) ─────────────────────────────────
 # Route notifications by priority level.
@@ -122,7 +127,7 @@ notificationRouting:
 # Workspace: worktree, clone
 # SCM:       github, gitlab
 # Tracker:   github, linear, gitlab
-# Notifier:  desktop, slack, webhook, composio, openclaw
+# Notifier:  desktop, discord, slack, webhook, composio, openclaw
 # Terminal:  iterm2, web
 `.trim();
 }

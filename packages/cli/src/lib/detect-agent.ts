@@ -56,8 +56,8 @@ export async function detectAvailableAgents(): Promise<DetectedAgent[]> {
  * - Multiple agents available + human caller → prompt to pick
  * - Multiple agents available + non-human → pick first (claude-code if available)
  */
-export async function detectAgentRuntime(): Promise<string> {
-  const available = await detectAvailableAgents();
+export async function detectAgentRuntime(preDetected?: DetectedAgent[]): Promise<string> {
+  const available = preDetected ?? await detectAvailableAgents();
 
   if (available.length === 0) {
     return "claude-code";

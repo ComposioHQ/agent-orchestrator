@@ -169,7 +169,17 @@ describe("notifier-openclaw", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const notifier = create({ token: "tok", retries: 2, retryDelayMs: 1 });
-    await expect(notifier.notify(makeEvent())).rejects.toThrow("OpenClaw webhook failed (401)");
+    await expect(notifier.notify(makeEvent())).rejects.toThrow("OpenClaw rejected the auth token");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws actionable error on ECONNREFUSED", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error("fetch failed: ECONNREFUSED"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const notifier = create({ token: "tok", retries: 0 });
+    await expect(notifier.notify(makeEvent())).rejects.toThrow(
+      "Can't reach OpenClaw gateway",
+    );
   });
 });

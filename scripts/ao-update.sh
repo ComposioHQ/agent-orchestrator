@@ -116,14 +116,14 @@ if [ "$SMOKE_ONLY" = false ]; then
 
   printf '\nRefreshing ao launcher...\n'
   (
-    cd "$REPO_ROOT/packages/cli"
+    cd "$REPO_ROOT/packages/ao"
     if npm link 2>/dev/null; then
       :
     elif [ -t 0 ]; then
       printf '  Permission denied. Retrying with sudo...\n'
       sudo npm link
     else
-      printf 'ERROR: Permission denied. Run manually: cd %s/packages/cli && sudo npm link\n' "$REPO_ROOT"
+      printf 'ERROR: Permission denied. Run manually: cd %s/packages/ao && sudo npm link\n' "$REPO_ROOT"
       exit 1
     fi
   )

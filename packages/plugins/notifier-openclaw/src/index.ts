@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import {
   type EventPriority,
   type Notifier,
@@ -8,12 +11,33 @@ import {
 } from "@composio/ao-core";
 import { isRetryableHttpStatus, normalizeRetryConfig, validateUrl } from "@composio/ao-core/utils";
 
+/**
+ * Read the hooks token from ~/.openclaw/openclaw.json as a fallback for
+ * daemon contexts where the shell profile (and OPENCLAW_HOOKS_TOKEN) isn't
+ * sourced. This file is written by `ao setup openclaw` and lives outside
+ * the project directory so it's never committed to version control.
+ */
+function readTokenFromOpenClawConfig(): string | undefined {
+  try {
+    const configPath = join(homedir(), ".openclaw", "openclaw.json");
+    if (!existsSync(configPath)) return undefined;
+    const raw = readFileSync(configPath, "utf-8");
+    const config = JSON.parse(raw) as Record<string, unknown>;
+    const token = (config.hooks as Record<string, unknown> | undefined)?.token;
+    return typeof token === "string" && token ? token : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export const manifest = {
   name: "openclaw",
   slot: "notifier" as const,
   description: "Notifier plugin: OpenClaw webhook notifications",
   version: "0.1.0",
 };
+
+const DEFAULT_TIMEOUT_MS = 10_000;
 
 type WakeMode = "now" | "next-heartbeat";
 
@@ -36,16 +60,29 @@ async function postWithRetry(
   let lastError: Error | undefined;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
     try {
       const response = await fetch(url, {
         method: "POST",
         headers,
         body: JSON.stringify(payload),
+        signal: controller.signal,
       });
 
       if (response.ok) return;
 
       const body = await response.text();
+
+      if (response.status === 401 || response.status === 403) {
+        lastError = new Error(
+          `OpenClaw rejected the auth token (HTTP ${response.status}).\n` +
+            `  Check that hooks.token in your OpenClaw config matches the token configured for AO.\n` +
+            `  Reconfigure: ao setup openclaw`,
+        );
+        throw lastError;
+      }
+
       lastError = new Error(`OpenClaw webhook failed (${response.status}): ${body}`);
 
       if (!isRetryableHttpStatus(response.status)) {
@@ -61,11 +98,22 @@ async function postWithRetry(
       if (err === lastError) throw err;
       lastError = err instanceof Error ? err : new Error(String(err));
 
+      if (lastError.message.includes("ECONNREFUSED")) {
+        throw new Error(
+          `Can't reach OpenClaw gateway at ${url}.\n` +
+            `  Is OpenClaw running? Check: openclaw status\n` +
+            `  Wrong URL? Run: ao setup openclaw`,
+          { cause: err },
+        );
+      }
+
       if (attempt < retries) {
         console.warn(
           `[notifier-openclaw] Retry ${attempt + 1}/${retries} for session=${context.sessionId} after network error: ${lastError.message}`,
         );
       }
+    } finally {
+      clearTimeout(timer);
     }
 
     if (attempt < retries) {
@@ -108,13 +156,26 @@ function formatActionsLine(actions: NotifyAction[]): string {
   return `Actions available: ${labels}`;
 }
 
+/**
+ * Resolve a token value that may be a `${ENV_VAR}` placeholder (as written
+ * into agent-orchestrator.yaml by `ao setup openclaw`) or a literal string.
+ * Returns undefined for empty/unresolvable values so callers can chain `??`.
+ */
+function resolveEnvVarToken(raw: unknown): string | undefined {
+  if (typeof raw !== "string" || !raw) return undefined;
+  const match = raw.match(/^\$\{([^}]+)\}$/);
+  if (match) return process.env[match[1]] || undefined;
+  return raw;
+}
+
 export function create(config?: Record<string, unknown>): Notifier {
   const url =
     (typeof config?.url === "string" ? config.url : undefined) ??
     "http://127.0.0.1:18789/hooks/agent";
   const token =
-    (typeof config?.token === "string" ? config.token : undefined) ??
-    process.env.OPENCLAW_HOOKS_TOKEN;
+    resolveEnvVarToken(config?.token) ??
+    process.env.OPENCLAW_HOOKS_TOKEN ??
+    readTokenFromOpenClawConfig();
   const senderName = typeof config?.name === "string" ? config.name : "AO";
   const sessionKeyPrefix =
     typeof config?.sessionKeyPrefix === "string" ? config.sessionKeyPrefix : "hook:ao:";
@@ -127,7 +188,9 @@ export function create(config?: Record<string, unknown>): Notifier {
 
   if (!token) {
     console.warn(
-      "[notifier-openclaw] No token configured (token or OPENCLAW_HOOKS_TOKEN). Sending without Authorization header.",
+      "[notifier-openclaw] No token configured.\n" +
+        "  Set OPENCLAW_HOOKS_TOKEN env var, or add token to your notifier config.\n" +
+        "  Run: ao setup openclaw",
     );
   }
 

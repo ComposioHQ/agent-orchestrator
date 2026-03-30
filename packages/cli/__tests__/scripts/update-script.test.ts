@@ -22,6 +22,7 @@ describe("scripts/ao-update.sh", () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-script-"));
     const fakeRepo = join(tempRoot, "repo");
     mkdirSync(join(fakeRepo, "packages", "cli"), { recursive: true });
+    mkdirSync(join(fakeRepo, "packages", "ao"), { recursive: true });
 
     const binDir = join(tempRoot, "bin");
     mkdirSync(binDir, { recursive: true });
@@ -79,6 +80,7 @@ esac\nexit 0`,
     const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-smoke-"));
     const fakeRepo = join(tempRoot, "repo");
     mkdirSync(join(fakeRepo, "packages", "agent-orchestrator", "bin"), { recursive: true });
+    mkdirSync(join(fakeRepo, "packages", "ao"), { recursive: true });
     writeFileSync(
       join(fakeRepo, "packages", "agent-orchestrator", "bin", "ao.js"),
       "#!/usr/bin/env node\n",
@@ -178,6 +180,7 @@ exit 0`,
     const tempRoot = mkdtempSync(join(tmpdir(), "ao-update-post-dirty-"));
     const fakeRepo = join(tempRoot, "repo");
     mkdirSync(join(fakeRepo, "packages", "cli"), { recursive: true });
+    mkdirSync(join(fakeRepo, "packages", "ao"), { recursive: true });
 
     const binDir = join(tempRoot, "bin");
     mkdirSync(binDir, { recursive: true });

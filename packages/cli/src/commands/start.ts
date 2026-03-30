@@ -50,7 +50,7 @@ import { preflight } from "../lib/preflight.js";
 import { register, unregister, isAlreadyRunning, getRunning, waitForExit } from "../lib/running-state.js";
 import { isHumanCaller } from "../lib/caller-context.js";
 import { detectEnvironment } from "../lib/detect-env.js";
-import { detectAgentRuntime } from "../lib/detect-agent.js";
+import { detectAgentRuntime, detectAvailableAgents, type DetectedAgent } from "../lib/detect-agent.js";
 import { detectDefaultBranch } from "../lib/git-utils.js";
 import {
   detectProjectType,
@@ -59,6 +59,7 @@ import {
 } from "../lib/project-detection.js";
 
 const DEFAULT_PORT = 3000;
+const IS_TTY = Boolean(process.stdin.isTTY && process.stdout.isTTY);
 
 // =============================================================================
 // HELPERS
@@ -137,6 +138,221 @@ function resolveProjectByRepo(
   return resolveProject(config);
 }
 
+interface InstallAttempt {
+  cmd: string;
+  args: string[];
+  label: string;
+}
+
+function canPromptForInstall(): boolean {
+  return isHumanCaller() && IS_TTY;
+}
+
+async function askYesNo(
+  question: string,
+  defaultYes = true,
+  nonInteractiveDefault = defaultYes,
+): Promise<boolean> {
+  if (!canPromptForInstall()) return nonInteractiveDefault;
+
+  const { createInterface } = await import("node:readline/promises");
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const suffix = defaultYes ? "[Y/n]" : "[y/N]";
+    const answer = await rl.question(`${question} ${suffix}: `);
+    const normalized = answer.trim().toLowerCase();
+    if (!normalized) return defaultYes;
+    return normalized === "y" || normalized === "yes";
+  } finally {
+    rl.close();
+  }
+}
+
+function gitInstallAttempts(): InstallAttempt[] {
+  if (process.platform === "darwin") {
+    return [{ cmd: "brew", args: ["install", "git"], label: "brew install git" }];
+  }
+  if (process.platform === "linux") {
+    return [
+      { cmd: "sudo", args: ["apt-get", "install", "-y", "git"], label: "sudo apt-get install -y git" },
+      { cmd: "sudo", args: ["dnf", "install", "-y", "git"], label: "sudo dnf install -y git" },
+    ];
+  }
+  if (process.platform === "win32") {
+    return [
+      {
+        cmd: "winget",
+        args: ["install", "--id", "Git.Git", "-e", "--source", "winget"],
+        label: "winget install --id Git.Git -e --source winget",
+      },
+    ];
+  }
+  return [];
+}
+
+function gitInstallHints(): string[] {
+  if (process.platform === "darwin") return ["brew install git"];
+  if (process.platform === "win32") return ["winget install --id Git.Git -e --source winget"];
+  return [
+    "sudo apt install git      # Debian/Ubuntu",
+    "sudo dnf install git      # Fedora/RHEL",
+  ];
+}
+
+function ghInstallAttempts(): InstallAttempt[] {
+  if (process.platform === "darwin") {
+    return [{ cmd: "brew", args: ["install", "gh"], label: "brew install gh" }];
+  }
+  if (process.platform === "linux") {
+    return [
+      { cmd: "sudo", args: ["apt-get", "install", "-y", "gh"], label: "sudo apt-get install -y gh" },
+      { cmd: "sudo", args: ["dnf", "install", "-y", "gh"], label: "sudo dnf install -y gh" },
+    ];
+  }
+  if (process.platform === "win32") {
+    return [
+      {
+        cmd: "winget",
+        args: ["install", "--id", "GitHub.cli", "-e", "--source", "winget"],
+        label: "winget install --id GitHub.cli -e --source winget",
+      },
+    ];
+  }
+  return [];
+}
+
+async function runInteractiveCommand(cmd: string, args: string[]): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(cmd, args, { stdio: "inherit" });
+    child.once("error", reject);
+    child.once("close", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`Command failed (${code ?? "unknown"}): ${cmd} ${args.join(" ")}`));
+    });
+  });
+}
+
+async function tryInstallWithAttempts(
+  attempts: InstallAttempt[],
+  verify: () => Promise<boolean>,
+): Promise<boolean> {
+  for (const attempt of attempts) {
+    try {
+      console.log(chalk.dim(`  Running: ${attempt.label}`));
+      await runInteractiveCommand(attempt.cmd, attempt.args);
+      if (await verify()) return true;
+    } catch {
+      // Try next installer
+    }
+  }
+  return verify();
+}
+
+async function ensureGit(context: string): Promise<void> {
+  const hasGit = (await execSilent("git", ["--version"])) !== null;
+  if (hasGit) return;
+
+  console.log(chalk.yellow(`⚠ Git is required for ${context}.`));
+  const shouldInstall = await askYesNo("Install Git now?", true, false);
+  if (shouldInstall) {
+    const installed = await tryInstallWithAttempts(
+      gitInstallAttempts(),
+      async () => (await execSilent("git", ["--version"])) !== null,
+    );
+    if (installed) {
+      console.log(chalk.green("  ✓ Git installed successfully"));
+      return;
+    }
+  }
+
+  console.error(chalk.red("\n✗ Git is required but is not installed.\n"));
+  console.log(chalk.bold("  Install Git manually, then re-run ao start:\n"));
+  for (const hint of gitInstallHints()) {
+    console.log(chalk.cyan(`    ${hint}`));
+  }
+  console.log();
+  process.exit(1);
+}
+
+interface AgentInstallOption {
+  id: string;
+  label: string;
+  cmd: string;
+  args: string[];
+}
+
+const AGENT_INSTALL_OPTIONS: AgentInstallOption[] = [
+  {
+    id: "claude-code",
+    label: "Claude Code",
+    cmd: "npm",
+    args: ["install", "-g", "@anthropic-ai/claude-code"],
+  },
+  {
+    id: "codex",
+    label: "OpenAI Codex",
+    cmd: "npm",
+    args: ["install", "-g", "@openai/codex"],
+  },
+  {
+    id: "aider",
+    label: "Aider",
+    cmd: "pipx",
+    args: ["install", "aider-chat"],
+  },
+  {
+    id: "opencode",
+    label: "OpenCode",
+    cmd: "npm",
+    args: ["install", "-g", "opencode-ai"],
+  },
+];
+
+async function promptInstallAgentRuntime(available: DetectedAgent[]): Promise<DetectedAgent[]> {
+  if (available.length > 0 || !canPromptForInstall()) return available;
+
+  console.log(chalk.yellow("⚠ No supported agent runtime detected."));
+  console.log(chalk.dim("  You can install one now (recommended) or continue and install later.\n"));
+  const skipOption = AGENT_INSTALL_OPTIONS.length + 1;
+  AGENT_INSTALL_OPTIONS.forEach((option, i) => {
+    const command = [option.cmd, ...option.args].join(" ");
+    console.log(`  ${i + 1}. ${option.label} (${option.id}) — ${command}`);
+  });
+  console.log(`  ${skipOption}. Skip for now\n`);
+
+  const { createInterface } = await import("node:readline/promises");
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const choice = await rl.question(`  Choose runtime to install [1-${skipOption}]: `);
+    const idx = Number.parseInt(choice.trim(), 10);
+    if (!Number.isFinite(idx) || idx < 1 || idx > skipOption) {
+      return available;
+    }
+    if (idx === skipOption) {
+      return available;
+    }
+
+    const selected = AGENT_INSTALL_OPTIONS[idx - 1];
+    console.log(chalk.dim(`  Installing ${selected.label}...`));
+    try {
+      await runInteractiveCommand(selected.cmd, selected.args);
+      const refreshed = await detectAvailableAgents();
+      if (refreshed.length > 0) {
+        console.log(chalk.green(`  ✓ ${selected.label} installed successfully`));
+      }
+      return refreshed;
+    } catch {
+      console.log(chalk.yellow(`  ⚠ Could not install ${selected.label} automatically.`));
+      return available;
+    }
+  } finally {
+    rl.close();
+  }
+}
+
 /**
  * Clone a repo with authentication support.
  *
@@ -191,6 +407,8 @@ async function handleUrlStart(
   spinner.start("Parsing repository URL");
   const parsed = parseRepoUrl(url);
   spinner.succeed(`Repository: ${chalk.cyan(parsed.ownerRepo)} (${parsed.host})`);
+
+  await ensureGit("repository cloning");
 
   // 2. Determine target directory
   const cwd = process.cwd();
@@ -286,7 +504,9 @@ async function autoCreateConfig(workingDir: string): Promise<OrchestratorConfig>
   const defaultBranch = env.defaultBranch || "main";
 
   // Detect available agent runtimes via plugin registry
-  const agent = await detectAgentRuntime();
+  let detectedAgents = await detectAvailableAgents();
+  detectedAgents = await promptInstallAgentRuntime(detectedAgents);
+  const agent = await detectAgentRuntime(detectedAgents);
   console.log(chalk.green(`  ✓ Agent runtime: ${agent}`));
 
   const port = await findFreePort(DEFAULT_PORT);
@@ -331,7 +551,23 @@ async function autoCreateConfig(workingDir: string): Promise<OrchestratorConfig>
   }
 
   if (!env.hasTmux) {
-    console.log(chalk.yellow("⚠ tmux not found — install with: brew install tmux"));
+    console.log(chalk.yellow("⚠ tmux not found — will prompt to install at startup"));
+  }
+  if (!env.hasGh) {
+    console.log(chalk.yellow("⚠ GitHub CLI (gh) not found — optional, but recommended for GitHub workflows."));
+    const shouldInstallGh = await askYesNo("Install GitHub CLI now?", false);
+    if (shouldInstallGh) {
+      const installedGh = await tryInstallWithAttempts(
+        ghInstallAttempts(),
+        async () => (await execSilent("gh", ["--version"])) !== null,
+      );
+      if (installedGh) {
+        env.hasGh = true;
+        console.log(chalk.green("  ✓ GitHub CLI installed successfully"));
+      } else {
+        console.log(chalk.yellow("  ⚠ Could not install GitHub CLI automatically."));
+      }
+    }
   }
   if (!env.ghAuthed && env.hasGh) {
     console.log(chalk.yellow("⚠ GitHub CLI not authenticated — run: gh auth login"));
@@ -349,6 +585,8 @@ async function addProjectToConfig(
   config: OrchestratorConfig,
   projectPath: string,
 ): Promise<string> {
+  await ensureGit("adding projects");
+
   const resolvedPath = resolve(projectPath.replace(/^~/, process.env["HOME"] || ""));
   let projectId = basename(resolvedPath);
 
@@ -491,6 +729,62 @@ async function startDashboard(
 }
 
 /**
+ * Ensure tmux is available — interactive install with user consent if missing.
+ * Called from runStartup() so ALL ao start
+ * paths (normal, URL, retry with existing config) are covered.
+ */
+function tmuxInstallAttempts(): InstallAttempt[] {
+  if (process.platform === "darwin") {
+    return [{ cmd: "brew", args: ["install", "tmux"], label: "brew install tmux" }];
+  }
+  if (process.platform === "linux") {
+    return [
+      { cmd: "sudo", args: ["apt-get", "install", "-y", "tmux"], label: "sudo apt-get install -y tmux" },
+      { cmd: "sudo", args: ["dnf", "install", "-y", "tmux"], label: "sudo dnf install -y tmux" },
+    ];
+  }
+  return [];
+}
+
+function tmuxInstallHints(): string[] {
+  if (process.platform === "darwin") return ["brew install tmux"];
+  if (process.platform === "win32") return [
+    "# Install WSL first, then inside WSL:",
+    "sudo apt install tmux",
+  ];
+  return [
+    "sudo apt install tmux      # Debian/Ubuntu",
+    "sudo dnf install tmux      # Fedora/RHEL",
+  ];
+}
+
+async function ensureTmux(): Promise<void> {
+  const hasTmux = (await execSilent("tmux", ["-V"])) !== null;
+  if (hasTmux) return;
+
+  console.log(chalk.yellow("⚠ tmux is required for runtime \"tmux\"."));
+  const shouldInstall = await askYesNo("Install tmux now?", true, false);
+  if (shouldInstall) {
+    const installed = await tryInstallWithAttempts(
+      tmuxInstallAttempts(),
+      async () => (await execSilent("tmux", ["-V"])) !== null,
+    );
+    if (installed) {
+      console.log(chalk.green("  ✓ tmux installed successfully"));
+      return;
+    }
+  }
+
+  console.error(chalk.red("\n✗ tmux is required but is not installed.\n"));
+  console.log(chalk.bold("  Install tmux manually, then re-run ao start:\n"));
+  for (const hint of tmuxInstallHints()) {
+    console.log(chalk.cyan(`    ${hint}`));
+  }
+  console.log();
+  process.exit(1);
+}
+
+/**
  * Shared startup logic: launch dashboard + orchestrator session, print summary.
  * Used by both normal and URL-based start flows.
  */
@@ -500,6 +794,13 @@ async function runStartup(
   project: ProjectConfig,
   opts?: { dashboard?: boolean; orchestrator?: boolean; rebuild?: boolean },
 ): Promise<number> {
+  // Ensure tmux is available before doing anything — covers all entry paths
+  // (normal start, URL start, retry with existing config)
+  const runtime = config.defaults?.runtime ?? "tmux";
+  if (runtime === "tmux") {
+    await ensureTmux();
+  }
+
   const sessionId = `${project.sessionPrefix}-orchestrator`;
   const shouldStartLifecycle = opts?.dashboard !== false || opts?.orchestrator !== false;
   let lifecycleStatus: Awaited<ReturnType<typeof ensureLifecycleWorker>> | null = null;

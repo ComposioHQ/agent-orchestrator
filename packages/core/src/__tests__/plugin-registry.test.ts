@@ -285,6 +285,34 @@ describe("loadBuiltins", () => {
       retries: 3,
     });
   });
+
+  it("should use provided importFn instead of built-in import", async () => {
+    const registry = createPluginRegistry();
+    const importedPackages: string[] = [];
+
+    const fakeImportFn = async (pkg: string): Promise<unknown> => {
+      importedPackages.push(pkg);
+      // Return a valid plugin module for runtime-tmux
+      if (pkg === "@composio/ao-plugin-runtime-tmux") {
+        return {
+          manifest: { name: "tmux", slot: "runtime", description: "test", version: "0.0.0" },
+          create: () => ({ name: "tmux" }),
+        };
+      }
+      // Throw for everything else to simulate not-installed
+      throw new Error(`Module not found: ${pkg}`);
+    };
+
+    await registry.loadBuiltins(undefined, fakeImportFn);
+
+    // importFn should have been called for all builtin plugins
+    expect(importedPackages.length).toBeGreaterThan(0);
+    expect(importedPackages).toContain("@composio/ao-plugin-runtime-tmux");
+
+    // The tmux plugin should be registered
+    const tmux = registry.get("runtime", "tmux");
+    expect(tmux).not.toBeNull();
+  });
 });
 
 describe("extractPluginConfig (via register with config)", () => {
@@ -320,5 +348,22 @@ describe("loadFromConfig", () => {
     // loadFromConfig calls loadBuiltins internally, which may fail to
     // import packages in the test env — should still succeed gracefully
     await expect(registry.loadFromConfig(config)).resolves.toBeUndefined();
+  });
+
+  it("should pass importFn through loadFromConfig to loadBuiltins", async () => {
+    const registry = createPluginRegistry();
+    const config = makeOrchestratorConfig({});
+    const importedPackages: string[] = [];
+
+    const fakeImportFn = async (pkg: string): Promise<unknown> => {
+      importedPackages.push(pkg);
+      throw new Error(`Not found: ${pkg}`);
+    };
+
+    await registry.loadFromConfig(config, fakeImportFn);
+
+    // Should have attempted to import builtin plugins via the provided importFn
+    expect(importedPackages.length).toBeGreaterThan(0);
+    expect(importedPackages).toContain("@composio/ao-plugin-runtime-tmux");
   });
 });

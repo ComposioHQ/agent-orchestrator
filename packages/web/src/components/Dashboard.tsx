@@ -174,13 +174,23 @@ export function Dashboard({
   }, [activeOrchestrators, allProjectsView, projects, sessionsByProject, showKilled]);
 
   const handleSend = useCallback(async (sessionId: string, message: string) => {
-    const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/send`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message }),
-    });
-    if (!res.ok) {
-      console.error(`Failed to send message to ${sessionId}:`, await res.text());
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message }),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        console.error(`Failed to send message to ${sessionId}:`, text);
+        throw new Error(text || `Failed to send message to ${sessionId}`);
+      }
+    } catch (error) {
+      if (error instanceof Error) {
+        throw error;
+      }
+      console.error(`Network error sending message to ${sessionId}:`, error);
+      throw new Error("Network error while sending message", { cause: error });
     }
   }, []);
 
