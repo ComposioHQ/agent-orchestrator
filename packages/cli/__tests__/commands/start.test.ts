@@ -44,6 +44,10 @@ const {
   mockStopLifecycleWorker: vi.fn(),
 }));
 
+const { mockDetectOpenClawInstallation } = vi.hoisted(() => ({
+  mockDetectOpenClawInstallation: vi.fn(),
+}));
+
 vi.mock("../../src/lib/shell.js", () => ({
   tmux: vi.fn(),
   exec: mockExec,
@@ -149,6 +153,10 @@ vi.mock("../../src/lib/project-detection.js", () => ({
   formatProjectTypeForDisplay: vi.fn().mockReturnValue(""),
 }));
 
+vi.mock("../../src/lib/openclaw-probe.js", () => ({
+  detectOpenClawInstallation: (...args: unknown[]) => mockDetectOpenClawInstallation(...args),
+}));
+
 // Mock node:child_process — start.ts imports spawn for dashboard + browser open
 vi.mock("node:child_process", async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -215,6 +223,12 @@ beforeEach(() => {
   });
   mockStopLifecycleWorker.mockReset();
   mockStopLifecycleWorker.mockResolvedValue(true);
+  mockDetectOpenClawInstallation.mockReset();
+  mockDetectOpenClawInstallation.mockResolvedValue({
+    state: "missing",
+    gatewayUrl: "http://127.0.0.1:18789",
+    probe: { reachable: false, error: "not running" },
+  });
   mockSpawn.mockClear();
 });
 
@@ -364,6 +378,50 @@ describe("start command — project resolution", () => {
       .mock.calls.map((c) => c.join(" "))
       .join("\n");
     expect(errors).toContain("No projects configured");
+  });
+});
+
+describe("start command — OpenClaw preflight", () => {
+  it("warns when OpenClaw is configured but offline", async () => {
+    mockConfigRef.current = {
+      ...makeConfig({ "my-app": makeProject() }),
+      notifiers: {
+        openclaw: {
+          plugin: "openclaw",
+          url: "http://127.0.0.1:18789/hooks/agent",
+        },
+      },
+    };
+    mockDetectOpenClawInstallation.mockResolvedValue({
+      state: "installed-but-stopped",
+      gatewayUrl: "http://127.0.0.1:18789",
+      probe: { reachable: false, error: "not running" },
+    });
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]);
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("OpenClaw is configured but the gateway is not reachable");
+  });
+
+  it("suggests setup when OpenClaw is running but not configured", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockDetectOpenClawInstallation.mockResolvedValue({
+      state: "running",
+      gatewayUrl: "http://127.0.0.1:18789",
+      probe: { reachable: true, httpStatus: 200 },
+    });
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]);
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("ao setup openclaw");
   });
 });
 
