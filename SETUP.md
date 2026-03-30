@@ -594,7 +594,7 @@ lsof -ti:3000 | xargs kill
 **Solution:**
 
 ```bash
-# Check worktreeDir permissions
+# Check the default worktree root
 ls -la ~/.worktrees
 
 # Create directory if missing
@@ -906,9 +906,9 @@ ao session ls --json | jq -r '.[] | select(.status == "merged") | .id' | xargs -
 
 Yes! Each orchestrator instance should have:
 
-- Different data directory (`dataDir`)
+- A different config file or config directory, so AO gets a different hash namespace
 - Different dashboard port (`port`) — e.g., 3000 for project A, 3001 for project B
-- Different config file
+- Different config file contents as needed
 
 Terminal WebSocket ports are auto-detected by default, so you typically only need to set `port:` differently. If you need explicit control, you can also set `terminalPort:` and `directTerminalPort:` per config.
 

@@ -125,21 +125,17 @@ describe("scripts/ao-doctor.sh", () => {
     const binDir = join(tempRoot, "bin");
     mkdirSync(binDir, { recursive: true });
     createHealthyPath(binDir);
+    mkdirSync(join(tempRoot, ".agent-orchestrator"), { recursive: true });
+    mkdirSync(join(tempRoot, ".worktrees"), { recursive: true });
 
     const configPath = join(tempRoot, "agent-orchestrator.yaml");
-    const dataDir = join(tempRoot, "data");
-    const worktreeDir = join(tempRoot, "worktrees");
-    mkdirSync(dataDir, { recursive: true });
-    mkdirSync(worktreeDir, { recursive: true });
-    writeFileSync(
-      configPath,
-      [`dataDir: ${dataDir}`, `worktreeDir: ${worktreeDir}`, "projects: {}"].join("\n"),
-    );
+    writeFileSync(configPath, "projects: {}\n");
 
     const result = spawnSync("bash", [scriptPath], {
       env: {
         ...process.env,
         PATH: `${binDir}:/bin:/usr/bin`,
+        HOME: tempRoot,
         AO_REPO_ROOT: fakeRepo,
         AO_CONFIG_PATH: configPath,
       },
@@ -169,6 +165,8 @@ describe("scripts/ao-doctor.sh", () => {
     );
 
     const configPath = join(tempRoot, "agent-orchestrator.yaml");
+    const metadataRoot = join(tempRoot, ".agent-orchestrator");
+    const worktreeRoot = join(tempRoot, ".worktrees");
     const dataDir = join(tempRoot, "data");
     const worktreeDir = join(tempRoot, "worktrees");
     const commentedDataDir = `${dataDir} # session metadata`;
@@ -191,6 +189,7 @@ describe("scripts/ao-doctor.sh", () => {
       env: {
         ...process.env,
         PATH: `${binDir}:/bin:/usr/bin`,
+        HOME: tempRoot,
         AO_REPO_ROOT: fakeRepo,
         AO_CONFIG_PATH: configPath,
         AO_DOCTOR_TMP_ROOT: tmpRoot,
@@ -200,8 +199,8 @@ describe("scripts/ao-doctor.sh", () => {
 
     const npmCommands = readFileSync(npmLog, "utf8");
     const staleStillExists = existsSync(staleFile);
-    const dataDirExists = existsSync(dataDir);
-    const worktreeDirExists = existsSync(worktreeDir);
+    const metadataRootExists = existsSync(metadataRoot);
+    const worktreeRootExists = existsSync(worktreeRoot);
     const commentedDataDirExists = existsSync(commentedDataDir);
     const commentedWorktreeDirExists = existsSync(commentedWorktreeDir);
     rmSync(tempRoot, { recursive: true, force: true });
@@ -211,9 +210,10 @@ describe("scripts/ao-doctor.sh", () => {
     expect(npmCommands).toContain("link");
     expect(result.stdout).toContain("launcher");
     expect(result.stdout).toContain("stale temp files");
+    expect(result.stdout).toContain("legacy and ignored");
     expect(staleStillExists).toBe(false);
-    expect(dataDirExists).toBe(true);
-    expect(worktreeDirExists).toBe(true);
+    expect(metadataRootExists).toBe(true);
+    expect(worktreeRootExists).toBe(true);
     expect(commentedDataDirExists).toBe(false);
     expect(commentedWorktreeDirExists).toBe(false);
   });
@@ -227,10 +227,8 @@ describe("scripts/ao-doctor.sh", () => {
     createHealthyDocker(binDir, { rootless: true, gpu: true });
 
     const configPath = join(tempRoot, "agent-orchestrator.yaml");
-    const dataDir = join(tempRoot, "data");
-    const worktreeDir = join(tempRoot, "worktrees");
-    mkdirSync(dataDir, { recursive: true });
-    mkdirSync(worktreeDir, { recursive: true });
+    mkdirSync(join(tempRoot, ".agent-orchestrator"), { recursive: true });
+    mkdirSync(join(tempRoot, ".worktrees"), { recursive: true });
     writeFileSync(
       configPath,
       [
@@ -243,8 +241,6 @@ describe("scripts/ao-doctor.sh", () => {
         "    runtimeConfig:",
         "      image: ghcr.io/composio/ao:test",
         "      gpus: all",
-        `dataDir: ${dataDir}`,
-        `worktreeDir: ${worktreeDir}`,
       ].join("\n"),
     );
 
@@ -252,6 +248,7 @@ describe("scripts/ao-doctor.sh", () => {
       env: {
         ...process.env,
         PATH: `${binDir}:${process.env.PATH || ""}`,
+        HOME: tempRoot,
         AO_REPO_ROOT: fakeRepo,
         AO_CONFIG_PATH: configPath,
       },
@@ -284,10 +281,8 @@ describe("scripts/ao-doctor.sh", () => {
     createHealthyDocker(binDir, { rootless: true });
 
     const configPath = join(tempRoot, "agent-orchestrator.yaml");
-    const dataDir = join(tempRoot, "data");
-    const worktreeDir = join(tempRoot, "worktrees");
-    mkdirSync(dataDir, { recursive: true });
-    mkdirSync(worktreeDir, { recursive: true });
+    mkdirSync(join(tempRoot, ".agent-orchestrator"), { recursive: true });
+    mkdirSync(join(tempRoot, ".worktrees"), { recursive: true });
     writeFileSync(
       configPath,
       [
@@ -300,8 +295,6 @@ describe("scripts/ao-doctor.sh", () => {
         "    runtimeConfig:",
         "      limits:",
         "        memory: 4g",
-        `dataDir: ${dataDir}`,
-        `worktreeDir: ${worktreeDir}`,
       ].join("\n"),
     );
 
@@ -309,6 +302,7 @@ describe("scripts/ao-doctor.sh", () => {
       env: {
         ...process.env,
         PATH: `${binDir}:${process.env.PATH || ""}`,
+        HOME: tempRoot,
         AO_REPO_ROOT: fakeRepo,
         AO_CONFIG_PATH: configPath,
       },
