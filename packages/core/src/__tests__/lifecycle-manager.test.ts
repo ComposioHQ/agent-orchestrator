@@ -206,9 +206,20 @@ describe("check (single session)", () => {
       "Do you want to continue?\n(y)es / (n)o\n",
     );
     vi.mocked(plugins.agent.detectActivity).mockReturnValue("waiting_input");
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
     const lm = setupCheck("app-1", {
-      session: makeSession({ status: "working" }),
+      session: makeSession({
+        status: "working",
+        metadata: {
+          promptDeliveryStatus: "failed",
+          promptDeliveryAttemptedAt: new Date(Date.now() - 10_000).toISOString(),
+        },
+      }),
+      metaOverrides: {
+        promptDeliveryStatus: "failed",
+        promptDeliveryAttemptedAt: new Date(Date.now() - 10_000).toISOString(),
+      },
     });
 
     await lm.check("app-1");
@@ -216,6 +227,12 @@ describe("check (single session)", () => {
     expect(plugins.runtime.getOutput).toHaveBeenCalled();
     expect(plugins.agent.detectActivity).toHaveBeenCalled();
     expect(lm.getStates().get("app-1")).toBe("needs_input");
+    expect(stderrSpy).toHaveBeenCalledWith(
+      expect.stringContaining('"operation":"early-needs-input"'),
+    );
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('"detectionMethod":"terminal"'));
+
+    stderrSpy.mockRestore();
   });
 
   it("logs anomaly when session quickly enters needs_input after failed prompt delivery", async () => {

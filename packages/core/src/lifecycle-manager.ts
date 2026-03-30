@@ -295,7 +295,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
               const terminalOutput = await runtime.getOutput(session.runtimeHandle, 10);
               if (terminalOutput) {
                 const activity = agent.detectActivity(terminalOutput);
-                if (activity === "waiting_input") return "needs_input";
+                if (activity === "waiting_input") {
+                  maybeLogEarlyNeedsInputAnomaly(session, { detectionMethod: "terminal" });
+                  return "needs_input";
+                }
               }
             } catch {
               // Output probing is only an upgrade path for waiting_input.
