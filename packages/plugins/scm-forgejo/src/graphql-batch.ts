@@ -48,6 +48,34 @@ interface ETagCache {
   commitStatus: LRUCache<string, string>; // Key: "owner/repo#sha", Value: ETag
 }
 
+function cacheScope(hostname?: string): string {
+  return hostname ?? "default";
+}
+
+function scopedRepoKey(owner: string, repo: string, hostname?: string): string {
+  return `${cacheScope(hostname)}:${owner}/${repo}`;
+}
+
+function scopedCommitKey(owner: string, repo: string, sha: string, hostname?: string): string {
+  return `${cacheScope(hostname)}:${owner}/${repo}#${sha}`;
+}
+
+function scopedPRKey(owner: string, repo: string, number: number, hostname?: string): string {
+  return `${cacheScope(hostname)}:${owner}/${repo}#${number}`;
+}
+
+function legacyRepoKey(owner: string, repo: string): string {
+  return `${owner}/${repo}`;
+}
+
+function legacyCommitKey(owner: string, repo: string, sha: string): string {
+  return `${owner}/${repo}#${sha}`;
+}
+
+function legacyPRKey(owner: string, repo: string, number: number): string {
+  return `${owner}/${repo}#${number}`;
+}
+
 /**
  * Global ETag cache instance.
  * This is shared across all batch enrichment calls within the process lifecycle.
@@ -80,8 +108,8 @@ export function clearETagCache(): void {
 /**
  * Get PR list ETag for a repository.
  */
-export function getPRListETag(owner: string, repo: string): string | undefined {
-  return etagCache.prList.get(`${owner}/${repo}`);
+export function getPRListETag(owner: string, repo: string, hostname?: string): string | undefined {
+  return etagCache.prList.get(scopedRepoKey(owner, repo, hostname));
 }
 
 /**
@@ -91,16 +119,17 @@ export function getCommitStatusETag(
   owner: string,
   repo: string,
   sha: string,
+  hostname?: string,
 ): string | undefined {
-  return etagCache.commitStatus.get(`${owner}/${repo}#${sha}`);
+  return etagCache.commitStatus.get(scopedCommitKey(owner, repo, sha, hostname));
 }
 
 /**
  * Set PR list ETag for a repository.
  * Exported for testing.
  */
-export function setPRListETag(owner: string, repo: string, etag: string): void {
-  etagCache.prList.set(`${owner}/${repo}`, etag);
+export function setPRListETag(owner: string, repo: string, etag: string, hostname?: string): void {
+  etagCache.prList.set(scopedRepoKey(owner, repo, hostname), etag);
 }
 
 /**
@@ -112,8 +141,9 @@ export function setCommitStatusETag(
   repo: string,
   sha: string,
   etag: string,
+  hostname?: string,
 ): void {
-  etagCache.commitStatus.set(`${owner}/${repo}#${sha}`, etag);
+  etagCache.commitStatus.set(scopedCommitKey(owner, repo, sha, hostname), etag);
 }
 
 /**
@@ -221,8 +251,8 @@ export async function shouldRefreshPREnrichment(
   // If Guard 1 detected changes, we're going to refresh all PRs anyway.
   if (!guard1DetectedChanges) {
     for (const pr of prs) {
-      const prKey = `${pr.owner}/${pr.repo}#${pr.number}`;
-      const cached = prMetadataCache.get(prKey);
+      const prKey = scopedPRKey(pr.owner, pr.repo, pr.number, hostname);
+      const cached = prMetadataCache.get(prKey) ?? prMetadataCache.get(legacyPRKey(pr.owner, pr.repo, pr.number));
 
       // Check for incomplete cache (cached but no headSha)
       // This happens when PR was cached but headSha wasn't captured
@@ -339,11 +369,11 @@ async function checkPRListETag(
   repo: string,
   hostname?: string,
 ): Promise<boolean> {
-  const repoKey = `${owner}/${repo}`;
-  const cachedETag = etagCache.prList.get(repoKey);
+  const scopedKey = scopedRepoKey(owner, repo, hostname);
+  const cachedETag = etagCache.prList.get(scopedKey) ?? etagCache.prList.get(legacyRepoKey(owner, repo));
 
   // Build gh CLI args for REST API call
-  const url = `repos/${repoKey}/pulls?state=open&sort=updated&direction=desc&per_page=1`;
+  const url = `repos/${owner}/${repo}/pulls?state=open&sort=updated&direction=desc&per_page=1`;
   const args = hostname
     ? ["--hostname", hostname, "api", "--method", "GET", url, "-i"]
     : ["api", "--method", "GET", url, "-i"]; // -i includes headers
@@ -369,7 +399,7 @@ async function checkPRListETag(
     if (etagMatch) {
       // Trim to remove trailing whitespace/newlines that could cause comparison issues
       const newETag = etagMatch[1].trim();
-      setPRListETag(owner, repo, newETag);
+      setPRListETag(owner, repo, newETag, hostname);
     }
 
     // PR list changed - cost: 1 REST point
@@ -379,7 +409,7 @@ async function checkPRListETag(
     const errorMsg = err instanceof Error ? err.message : String(err);
     // Log but don't throw - allow GraphQL batch to proceed
     // eslint-disable-next-line no-console -- Observability logging for ETag errors
-    console.warn(`[ETag Guard 1] PR list check failed for ${repoKey}: ${errorMsg}`);
+    console.warn(`[ETag Guard 1] PR list check failed for ${owner}/${repo}: ${errorMsg}`);
     return true; // Assume changed to be safe
   }
 }
@@ -401,8 +431,9 @@ async function checkCommitStatusETag(
   sha: string,
   hostname?: string,
 ): Promise<boolean> {
-  const commitKey = `${owner}/${repo}#${sha}`;
-  const cachedETag = etagCache.commitStatus.get(commitKey);
+  const scopedKey = scopedCommitKey(owner, repo, sha, hostname);
+  const cachedETag =
+    etagCache.commitStatus.get(scopedKey) ?? etagCache.commitStatus.get(legacyCommitKey(owner, repo, sha));
 
   // Build gh CLI args for REST API call
   const url = `repos/${owner}/${repo}/commits/${sha}/status`;
@@ -430,7 +461,7 @@ async function checkCommitStatusETag(
     if (etagMatch) {
       // Trim to remove trailing whitespace/newlines that could cause comparison issues
       const newETag = etagMatch[1].trim();
-      setCommitStatusETag(owner, repo, sha, newETag);
+      setCommitStatusETag(owner, repo, sha, newETag, hostname);
     }
 
     // CI status changed - cost: 1 REST point
@@ -440,7 +471,7 @@ async function checkCommitStatusETag(
     const errorMsg = err instanceof Error ? err.message : String(err);
     // eslint-disable-next-line no-console -- Observability logging for ETag errors
     console.warn(
-      `[ETag Guard 2] Commit status check failed for ${commitKey}: ${errorMsg}`,
+      `[ETag Guard 2] Commit status check failed for ${owner}/${repo}#${sha}: ${errorMsg}`,
     );
     return true; // Assume changed to be safe
   }
@@ -777,8 +808,10 @@ export async function enrichSessionsPRBatch(
     const missingPRs: PRInfo[] = [];
 
     for (const pr of prs) {
-      const prKey = `${pr.owner}/${pr.repo}#${pr.number}`;
-      const cachedData = prEnrichmentDataCache.get(prKey);
+      const prKey = scopedPRKey(pr.owner, pr.repo, pr.number, hostname);
+      const cachedData =
+        prEnrichmentDataCache.get(prKey) ??
+        prEnrichmentDataCache.get(legacyPRKey(pr.owner, pr.repo, pr.number));
       if (cachedData) {
         result.set(prKey, cachedData);
       } else {
@@ -824,7 +857,7 @@ export async function enrichSessionsPRBatch(
       // Extract results for each PR in the batch
       batch.forEach((pr, index) => {
         const alias = `pr${index}`;
-        const prKey = `${pr.owner}/${pr.repo}#${pr.number}`;
+        const prKey = scopedPRKey(pr.owner, pr.repo, pr.number, hostname);
         const repositoryData = data[alias] as { pullRequest?: unknown } | undefined;
 
         if (repositoryData?.pullRequest) {

@@ -748,6 +748,25 @@ describe("ETag Cache", () => {
 
       expect(getCommitStatusETag(owner, repo, sha)).toBeUndefined();
     });
+
+    it("isolates ETag values by hostname", () => {
+      const owner = "testowner";
+      const repo = "testrepo";
+      const sha = "abc123def456";
+
+      setPRListETag(owner, repo, "etag-host-a", "forgejo-a.internal");
+      setPRListETag(owner, repo, "etag-host-b", "forgejo-b.internal");
+      setCommitStatusETag(owner, repo, sha, "status-host-a", "forgejo-a.internal");
+      setCommitStatusETag(owner, repo, sha, "status-host-b", "forgejo-b.internal");
+
+      expect(getPRListETag(owner, repo, "forgejo-a.internal")).toBe("etag-host-a");
+      expect(getPRListETag(owner, repo, "forgejo-b.internal")).toBe("etag-host-b");
+      expect(getPRListETag(owner, repo)).toBeUndefined();
+
+      expect(getCommitStatusETag(owner, repo, sha, "forgejo-a.internal")).toBe("status-host-a");
+      expect(getCommitStatusETag(owner, repo, sha, "forgejo-b.internal")).toBe("status-host-b");
+      expect(getCommitStatusETag(owner, repo, sha)).toBeUndefined();
+    });
   });
 
   describe("PR Metadata Cache", () => {
