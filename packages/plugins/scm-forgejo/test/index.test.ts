@@ -116,6 +116,23 @@ describe("scm-forgejo plugin", () => {
     it("returns an SCM with correct name", () => {
       expect(scm.name).toBe("forgejo");
     });
+
+    it("routes gh commands via GH_HOST when host config is set", async () => {
+      const hosted = create({ host: "forgejo.acme.internal" });
+      mockGh({
+        number: 42,
+        url: "https://forgejo.acme.internal/acme/repo/pull/42",
+        title: "feat: add feature",
+        headRefName: "feat/my-feature",
+        baseRefName: "main",
+        isDraft: false,
+      });
+
+      await hosted.resolvePR?.("42", project);
+
+      const options = ghMock.mock.calls[0]?.[2] as { env?: Record<string, string> };
+      expect(options?.env?.["GH_HOST"]).toBe("forgejo.acme.internal");
+    });
   });
 
   describe("verifyWebhook", () => {

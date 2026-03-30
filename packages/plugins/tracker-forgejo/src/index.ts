@@ -23,15 +23,16 @@ const execFileAsync = promisify(execFile);
 // ---------------------------------------------------------------------------
 
 async function gh(args: string[], hostname?: string): Promise<string> {
-  const argv = hostname ? ["--hostname", hostname, ...args] : args;
+  const env = hostname ? { ...process.env, GH_HOST: hostname } : process.env;
   try {
-    const { stdout } = await execFileAsync("gh", argv, {
+    const { stdout } = await execFileAsync("gh", args, {
       maxBuffer: 10 * 1024 * 1024,
       timeout: 30_000,
+      env,
     });
     return stdout.trim();
   } catch (err) {
-    throw new Error(`gh ${argv.slice(0, 3).join(" ")} failed: ${(err as Error).message}`, {
+    throw new Error(`gh ${args.slice(0, 3).join(" ")} failed: ${(err as Error).message}`, {
       cause: err,
     });
   }

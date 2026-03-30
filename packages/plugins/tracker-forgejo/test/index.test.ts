@@ -77,6 +77,16 @@ describe("tracker-forgejo plugin", () => {
     it("returns a Tracker with correct name", () => {
       expect(tracker.name).toBe("forgejo");
     });
+
+    it("routes gh commands via GH_HOST when host config is set", async () => {
+      const hosted = create({ host: "forgejo.acme.internal" });
+      mockGh(sampleIssue);
+
+      await hosted.getIssue("123", project);
+
+      const options = ghMock.mock.calls[0]?.[2] as { env?: Record<string, string> };
+      expect(options?.env?.["GH_HOST"]).toBe("forgejo.acme.internal");
+    });
   });
 
   // ---- getIssue ----------------------------------------------------------

@@ -61,10 +61,16 @@ const BOT_AUTHORS = new Set([
 
 type ExecCommand = "gh" | "git";
 
-async function execCli(bin: ExecCommand, args: string[], cwd?: string): Promise<string> {
+async function execCli(
+  bin: ExecCommand,
+  args: string[],
+  cwd?: string,
+  env?: NodeJS.ProcessEnv,
+): Promise<string> {
   try {
     const { stdout } = await execFileAsync(bin, args, {
       ...(cwd ? { cwd } : {}),
+      ...(env ? { env } : {}),
       maxBuffer: 10 * 1024 * 1024,
       timeout: 30_000,
     });
@@ -77,13 +83,13 @@ async function execCli(bin: ExecCommand, args: string[], cwd?: string): Promise<
 }
 
 async function ghExec(args: string[], hostname?: string): Promise<string> {
-  const argv = hostname ? ["--hostname", hostname, ...args] : args;
-  return execCli("gh", argv);
+  const env = hostname ? { ...process.env, GH_HOST: hostname } : undefined;
+  return execCli("gh", args, undefined, env);
 }
 
 async function ghExecInDir(args: string[], cwd: string, hostname?: string): Promise<string> {
-  const argv = hostname ? ["--hostname", hostname, ...args] : args;
-  return execCli("gh", argv, cwd);
+  const env = hostname ? { ...process.env, GH_HOST: hostname } : undefined;
+  return execCli("gh", args, cwd, env);
 }
 
 async function git(args: string[], cwd: string): Promise<string> {
