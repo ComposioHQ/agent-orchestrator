@@ -17,6 +17,7 @@ export default tseslint.config(
       "test-clipboard*.mjs",
       "test-clipboard*.sh",
       "packages/mobile/**",
+      "contracts/**",
     ],
   },
 
