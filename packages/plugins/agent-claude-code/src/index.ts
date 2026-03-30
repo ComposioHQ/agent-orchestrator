@@ -2,6 +2,8 @@ import {
   shellEscape,
   readLastJsonlEntry,
   DEFAULT_READY_THRESHOLD_MS,
+  isAgentProcessRunning,
+  normalizePermissionMode,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
@@ -14,23 +16,11 @@ import {
   type Session,
   type WorkspaceHooksConfig,
 } from "@composio/ao-core";
-import { execFile, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { readdir, readFile, stat, open, writeFile, mkdir, chmod } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
-import { promisify } from "node:util";
-
-const execFileAsync = promisify(execFile);
-
-function normalizePermissionMode(mode: string | undefined): "permissionless" | "default" | "auto-edit" | "suggest" | undefined {
-  if (!mode) return undefined;
-  if (mode === "skip") return "permissionless";
-  if (mode === "permissionless" || mode === "default" || mode === "auto-edit" || mode === "suggest") {
-    return mode;
-  }
-  return undefined;
-}
 
 // =============================================================================
 // Metadata Updater Hook Script
@@ -314,8 +304,7 @@ async function parseJsonlFileTail(filePath: string, maxBytes = 131_072): Promise
   // Skip potentially truncated first line only when we started mid-file.
   // If offset === 0 we read from the start so the first line is complete.
   const firstNewline = content.indexOf("\n");
-  const safeContent =
-    offset > 0 && firstNewline >= 0 ? content.slice(firstNewline + 1) : content;
+  const safeContent = offset > 0 && firstNewline >= 0 ? content.slice(firstNewline + 1) : content;
   const lines: JsonlLine[] = [];
   for (const line of safeContent.split("\n")) {
     const trimmed = line.trim();
@@ -333,9 +322,7 @@ async function parseJsonlFileTail(filePath: string, maxBytes = 131_072): Promise
 }
 
 /** Extract auto-generated summary from JSONL (last "summary" type entry) */
-function extractSummary(
-  lines: JsonlLine[],
-): { summary: string; isFallback: boolean } | null {
+function extractSummary(lines: JsonlLine[]): { summary: string; isFallback: boolean } | null {
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
     if (line?.type === "summary" && line.summary) {
@@ -406,121 +393,6 @@ function extractCost(lines: JsonlLine[]): CostEstimate | undefined {
   }
 
   return { inputTokens, outputTokens, estimatedCostUsd: totalCost };
-}
-
-// =============================================================================
-// Process Detection
-// =============================================================================
-
-/**
- * TTL cache for `ps -eo pid,tty,args` output. Without this, listing N sessions
- * would spawn N concurrent `ps` processes, each taking 30+ seconds on machines
- * with many processes. The cache ensures `ps` is called at most once per TTL
- * window regardless of how many sessions are being enriched.
- */
-let psCache: { output: string; timestamp: number; promise?: Promise<string> } | null = null;
-const PS_CACHE_TTL_MS = 5_000;
-
-/** Reset the ps cache. Exported for testing only. */
-export function resetPsCache(): void {
-  psCache = null;
-}
-
-async function getCachedProcessList(): Promise<string> {
-  const now = Date.now();
-  if (psCache && now - psCache.timestamp < PS_CACHE_TTL_MS) {
-    // Cache hit — return resolved output or wait for in-flight request
-    if (psCache.promise) return psCache.promise;
-    return psCache.output;
-  }
-
-  // Cache miss or expired — start a single `ps` call and share the promise.
-  // Guard both callbacks so they only update psCache if it still belongs to
-  // this request — a newer request may have replaced it while we were waiting.
-  const promise = execFileAsync("ps", ["-eo", "pid,tty,args"], {
-    timeout: 5_000,
-  }).then(({ stdout }) => {
-    if (psCache?.promise === promise) {
-      psCache = { output: stdout, timestamp: Date.now() };
-    }
-    return stdout;
-  });
-
-  // Store the in-flight promise so concurrent callers share it
-  psCache = { output: "", timestamp: now, promise };
-
-  try {
-    return await promise;
-  } catch {
-    // On failure, clear cache so the next caller retries — but only if
-    // psCache still points to this request (avoid clobbering a newer entry)
-    if (psCache?.promise === promise) {
-      psCache = null;
-    }
-    return "";
-  }
-}
-
-/**
- * Check if a process named "claude" is running in the given runtime handle's context.
- * Uses ps to find processes by TTY (for tmux) or by PID.
- */
-async function findClaudeProcess(handle: RuntimeHandle): Promise<number | null> {
-  try {
-    // For tmux runtime, get the pane TTY and find claude on it
-    if (handle.runtimeName === "tmux" && handle.id) {
-      const { stdout: ttyOut } = await execFileAsync(
-        "tmux",
-        ["list-panes", "-t", handle.id, "-F", "#{pane_tty}"],
-        { timeout: 5_000 },
-      );
-      // Iterate all pane TTYs (multi-pane sessions) — succeed on any match
-      const ttys = ttyOut
-        .trim()
-        .split("\n")
-        .map((t) => t.trim())
-        .filter(Boolean);
-      if (ttys.length === 0) return null;
-
-      const psOut = await getCachedProcessList();
-      if (!psOut) return null;
-
-      const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
-      // Match "claude" as a word boundary — prevents false positives on
-      // names like "claude-code" or paths that merely contain the substring.
-      const processRe = /(?:^|\/)claude(?:\s|$)/;
-      for (const line of psOut.split("\n")) {
-        const cols = line.trimStart().split(/\s+/);
-        if (cols.length < 3 || !ttySet.has(cols[1] ?? "")) continue;
-        const args = cols.slice(2).join(" ");
-        if (processRe.test(args)) {
-          return parseInt(cols[0] ?? "0", 10);
-        }
-      }
-      return null;
-    }
-
-    // For process runtime, check if the PID stored in handle data is alive
-    const rawPid = handle.data["pid"];
-    const pid = typeof rawPid === "number" ? rawPid : Number(rawPid);
-    if (Number.isFinite(pid) && pid > 0) {
-      try {
-        process.kill(pid, 0); // Signal 0 = check existence
-        return pid;
-      } catch (err: unknown) {
-        // EPERM means the process exists but we lack permission to signal it
-        if (err instanceof Error && "code" in err && err.code === "EPERM") {
-          return pid;
-        }
-        return null;
-      }
-    }
-
-    // No reliable way to identify the correct process for this session
-    return null;
-  } catch {
-    return null;
-  }
 }
 
 // =============================================================================
@@ -713,8 +585,7 @@ function createClaudeCodeAgent(): Agent {
     },
 
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
-      const pid = await findClaudeProcess(handle);
-      return pid !== null;
+      return isAgentProcessRunning(handle, "claude");
     },
 
     async getActivityState(
