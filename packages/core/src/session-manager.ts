@@ -60,7 +60,7 @@ import {
   getWorktreesDir,
   getProjectBaseDir,
   generateTmuxName,
-  generateConfigHash,
+  generateProjectHash,
   validateAndStoreOrigin,
 } from "./paths.js";
 import { asValidOpenCodeSessionId } from "./opencode-session-id.js";
@@ -685,8 +685,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     );
     for (let attempts = 0; attempts < 10_000; attempts++) {
       const sessionId = `${project.sessionPrefix}-${num}`;
-      const tmuxName = config.configPath
-        ? generateTmuxName(config.configPath, project.sessionPrefix, num)
+      const tmuxName = project.path
+        ? generateTmuxName(project.path, project.sessionPrefix, num)
         : undefined;
 
       if (!usedNumbers.has(num) && reserveSessionId(sessionsDir, sessionId)) {
@@ -1073,7 +1073,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           AO_CALLER_TYPE: "agent",
           AO_PROJECT_ID: spawnConfig.projectId,
           AO_CONFIG_PATH: config.configPath,
-          ...(config.port !== undefined && config.port !== null && { AO_PORT: String(config.port) }),
+          ...(config.port !== undefined &&
+            config.port !== null && { AO_PORT: String(config.port) }),
         },
       });
     } catch (err) {
@@ -1210,6 +1211,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       role: "orchestrator",
       project,
       defaults: config.defaults,
+      spawnAgentOverride: orchestratorConfig.agent,
     });
     const plugins = resolvePlugins(project, selection.agentName);
     if (!plugins.runtime) {
@@ -1226,8 +1228,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     // Generate tmux name if using new architecture
     let tmuxName: string | undefined;
-    if (config.configPath) {
-      const hash = generateConfigHash(config.configPath);
+    if (project.path) {
+      const hash = generateProjectHash(project.path);
       tmuxName = `${hash}-${sessionId}`;
     }
 
