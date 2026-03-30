@@ -130,7 +130,7 @@ async function installOrVerifyPlugin(
           rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr);
         throw new Error(
           `${message}\nRollback failed for ${descriptor.package}: ${rollbackMessage}`,
-          { cause: err },
+          { cause: rollbackErr },
         );
       }
     }
@@ -206,7 +206,7 @@ async function updateManagedPlugin(
           rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr);
         throw new Error(
           `${message}\nRollback failed for ${plugin.package}: ${rollbackMessage}`,
-          { cause: err },
+          { cause: rollbackErr },
         );
       }
     }
