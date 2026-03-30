@@ -60,6 +60,7 @@ describe("tracker-forgejo plugin", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     tracker = create();
+    delete process.env["GH_HOST"];
   });
 
   // ---- manifest ----------------------------------------------------------
@@ -187,12 +188,19 @@ describe("tracker-forgejo plugin", () => {
   // ---- issueUrl ----------------------------------------------------------
 
   describe("issueUrl", () => {
-    it("generates correct URL", () => {
-      expect(tracker.issueUrl("42", project)).toBe("https://github.com/acme/repo/issues/42");
+    it("generates Forgejo URL fallback when no host is configured", () => {
+      expect(tracker.issueUrl("42", project)).toBe("https://forgejo.example/acme/repo/issues/42");
     });
 
     it("strips # prefix from identifier", () => {
-      expect(tracker.issueUrl("#42", project)).toBe("https://github.com/acme/repo/issues/42");
+      expect(tracker.issueUrl("#42", project)).toBe("https://forgejo.example/acme/repo/issues/42");
+    });
+
+    it("uses GH_HOST when configured", () => {
+      process.env["GH_HOST"] = "forgejo.acme.internal";
+      expect(tracker.issueUrl("42", project)).toBe(
+        "https://forgejo.acme.internal/acme/repo/issues/42",
+      );
     });
   });
 

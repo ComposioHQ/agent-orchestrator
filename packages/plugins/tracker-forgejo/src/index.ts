@@ -51,6 +51,12 @@ function stripHost(repo: string): string {
   return repo;
 }
 
+function defaultForgejoHost(): string | undefined {
+  const envHost = process.env["GH_HOST"]?.trim();
+  if (!envHost) return undefined;
+  return envHost;
+}
+
 function getErrorText(err: unknown): string {
   if (!(err instanceof Error)) return "";
 
@@ -179,7 +185,7 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
 
     issueUrl(identifier: string, project: ProjectConfig): string {
       const num = identifier.replace(/^#/, "");
-      const host = hostname ?? repoHost(project.repo) ?? "github.com";
+      const host = hostname ?? repoHost(project.repo) ?? defaultForgejoHost() ?? "forgejo.example";
       return `https://${host}/${stripHost(project.repo)}/issues/${num}`;
     },
 

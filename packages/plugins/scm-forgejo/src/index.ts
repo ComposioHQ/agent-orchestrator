@@ -1048,7 +1048,7 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
       prs: PRInfo[],
       observer?: BatchObserver,
     ): Promise<Map<string, PREnrichmentData>> {
-      return enrichSessionsPRBatchImpl(prs, observer);
+      return enrichSessionsPRBatchImpl(prs, observer, hostname);
     },
   };
 }

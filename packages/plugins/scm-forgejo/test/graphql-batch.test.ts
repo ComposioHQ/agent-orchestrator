@@ -13,6 +13,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   generateBatchQuery,
   MAX_BATCH_SIZE,
+  enrichSessionsPRBatch,
   parseCIState,
   parseReviewDecision,
   parsePRState,
@@ -857,6 +858,32 @@ describe("shouldRefreshPREnrichment - ETag Guard Strategy", () => {
       expect(mockExecFileImpl).toHaveBeenCalledTimes(1);
     });
 
+    it("passes --hostname to gh when hostname is provided", async () => {
+      const prs = [
+        {
+          owner: "owner",
+          repo: "repo",
+          number: 123,
+          url: "https://forgejo.example/owner/repo/pull/123",
+          title: "Test PR",
+          branch: "feature",
+          baseBranch: "main",
+          isDraft: false,
+        },
+      ];
+
+      mockExecFileImpl.mockResolvedValueOnce({
+        stdout: "HTTP/2 304",
+        stderr: "",
+      });
+
+      await shouldRefreshPREnrichment(prs, "forgejo.example");
+
+      expect(mockExecFileImpl).toHaveBeenCalled();
+      const firstCallArgs = mockExecFileImpl.mock.calls[0]?.[1] as string[];
+      expect(firstCallArgs).toEqual(expect.arrayContaining(["--hostname", "forgejo.example"]));
+    });
+
     it("should not refresh when PR list ETag returns 304 Not Modified", async () => {
       const prs = [
         {
@@ -1170,5 +1197,72 @@ describe("shouldRefreshPREnrichment - ETag Guard Strategy", () => {
       );
       expect(callsWithHeader).toHaveLength(2); // Both Guard 1 and Guard 2
     });
+  });
+});
+
+describe("enrichSessionsPRBatch hostname propagation", () => {
+  beforeEach(() => {
+    clearETagCache();
+    clearPRMetadataCache();
+    mockExecFileImpl.mockClear();
+  });
+
+  it("passes --hostname to GraphQL batch requests", async () => {
+    const prs = [
+      {
+        owner: "owner",
+        repo: "repo",
+        number: 123,
+        url: "https://forgejo.example/owner/repo/pull/123",
+        title: "Test PR",
+        branch: "feature",
+        baseBranch: "main",
+        isDraft: false,
+      },
+    ];
+
+    mockExecFileImpl
+      .mockResolvedValueOnce({
+        stdout: "HTTP/2 200",
+        stderr: "",
+      })
+      .mockResolvedValueOnce({
+        stdout: "gh version 2.x",
+        stderr: "",
+      })
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          data: {
+            pr0: {
+              pullRequest: {
+                title: "Test PR",
+                state: "OPEN",
+                additions: 1,
+                deletions: 0,
+                isDraft: false,
+                mergeable: "MERGEABLE",
+                mergeStateStatus: "CLEAN",
+                reviewDecision: "APPROVED",
+                headRefOid: "abc123",
+                commits: {
+                  nodes: [{ commit: { statusCheckRollup: { state: "SUCCESS" } } }],
+                },
+                reviews: { nodes: [] },
+              },
+            },
+          },
+        }),
+        stderr: "",
+      });
+
+    await enrichSessionsPRBatch(prs, undefined, "forgejo.example");
+
+    const graphQlCall = mockExecFileImpl.mock.calls.find(
+      (call) => Array.isArray(call[1]) && (call[1] as string[]).includes("graphql"),
+    );
+    expect(graphQlCall).toBeDefined();
+    expect(graphQlCall?.[1]).toEqual(
+      expect.arrayContaining(["--hostname", "forgejo.example", "api", "graphql"]),
+    );
   });
 });

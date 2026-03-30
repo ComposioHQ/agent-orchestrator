@@ -175,6 +175,7 @@ function updatePRMetadataCache(
  */
 export async function shouldRefreshPREnrichment(
   prs: PRInfo[],
+  hostname?: string,
 ): Promise<ETagGuardResult> {
   const details: string[] = [];
   let shouldRefresh = false;
@@ -201,7 +202,7 @@ export async function shouldRefreshPREnrichment(
   let guard1DetectedChanges = false;
   for (const [repoKey] of repos) {
     const [owner, repo] = repoKey.split("/");
-    const prListChanged = await checkPRListETag(owner, repo);
+    const prListChanged = await checkPRListETag(owner, repo, hostname);
     if (prListChanged) {
       guard1DetectedChanges = true;
       shouldRefresh = true;
@@ -243,6 +244,7 @@ export async function shouldRefreshPREnrichment(
         pr.owner,
         pr.repo,
         cached.headSha,
+        hostname,
       );
       if (statusChanged) {
         shouldRefresh = true;
@@ -335,13 +337,16 @@ export const MAX_BATCH_SIZE = 25;
 async function checkPRListETag(
   owner: string,
   repo: string,
+  hostname?: string,
 ): Promise<boolean> {
   const repoKey = `${owner}/${repo}`;
   const cachedETag = etagCache.prList.get(repoKey);
 
   // Build gh CLI args for REST API call
   const url = `repos/${repoKey}/pulls?state=open&sort=updated&direction=desc&per_page=1`;
-  const args = ["api", "--method", "GET", url, "-i"]; // -i includes headers
+  const args = hostname
+    ? ["--hostname", hostname, "api", "--method", "GET", url, "-i"]
+    : ["api", "--method", "GET", url, "-i"]; // -i includes headers
 
   // Add If-None-Match header if we have a cached ETag
   if (cachedETag) {
@@ -394,13 +399,16 @@ async function checkCommitStatusETag(
   owner: string,
   repo: string,
   sha: string,
+  hostname?: string,
 ): Promise<boolean> {
   const commitKey = `${owner}/${repo}#${sha}`;
   const cachedETag = etagCache.commitStatus.get(commitKey);
 
   // Build gh CLI args for REST API call
   const url = `repos/${owner}/${repo}/commits/${sha}/status`;
-  const args = ["api", "--method", "GET", url, "-i"]; // -i includes headers
+  const args = hostname
+    ? ["--hostname", hostname, "api", "--method", "GET", url, "-i"]
+    : ["api", "--method", "GET", url, "-i"]; // -i includes headers
 
   // Add If-None-Match header if we have a cached ETag
   if (cachedETag) {
@@ -527,6 +535,7 @@ export function generateBatchQuery(prs: PRInfo[]): {
  */
 async function executeBatchQuery(
   prs: PRInfo[],
+  hostname?: string,
 ): Promise<Record<string, unknown>> {
   const { query, variables } = generateBatchQuery(prs);
 
@@ -548,7 +557,9 @@ async function executeBatchQuery(
     }
   }
 
-  const args = ["api", "graphql", ...varArgs, "-f", `query=${query}`];
+  const args = hostname
+    ? ["--hostname", hostname, "api", "graphql", ...varArgs, "-f", `query=${query}`]
+    : ["api", "graphql", ...varArgs, "-f", `query=${query}`];
 
   // Scale timeout based on batch size to prevent large batches from timing out
   // Base: 30s, +2s per PR beyond first 10
@@ -749,6 +760,7 @@ function extractPREnrichment(
 export async function enrichSessionsPRBatch(
   prs: PRInfo[],
   observer?: BatchObserver,
+  hostname?: string,
 ): Promise<Map<string, PREnrichmentData>> {
   const result = new Map<string, PREnrichmentData>();
 
@@ -757,7 +769,7 @@ export async function enrichSessionsPRBatch(
   }
 
   // Step 1: Check if we need to refresh using 2-Guard ETag Strategy
-  const guardResult = await shouldRefreshPREnrichment(prs);
+  const guardResult = await shouldRefreshPREnrichment(prs, hostname);
 
   if (!guardResult.shouldRefresh) {
     // No changes detected - try to return cached data
@@ -806,7 +818,7 @@ export async function enrichSessionsPRBatch(
     let batchDuration: number;
 
     try {
-      const data = await executeBatchQuery(batch);
+      const data = await executeBatchQuery(batch, hostname);
       batchDuration = Date.now() - batchStartTime;
 
       // Extract results for each PR in the batch
