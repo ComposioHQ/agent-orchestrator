@@ -6,6 +6,7 @@ import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
 import { type DashboardSession, type DashboardPR, isPRMergeReady } from "@/lib/types";
 import { CI_STATUS } from "@composio/ao-core/types";
 import { cn } from "@/lib/cn";
+import { getProjectSessionHref } from "@/lib/project-utils";
 import { CICheckList } from "./CIBadge";
 import { DirectTerminal } from "./DirectTerminal";
 import { MobileBottomNav } from "./MobileBottomNav";
@@ -349,10 +350,10 @@ export function SessionDetail({
   const crumbHref = dashboardHref;
   const crumbLabel = isOrchestrator ? "Orchestrator" : "Dashboard";
   const orchestratorHref = useMemo(() => {
-    if (isOrchestrator) return `/sessions/${encodeURIComponent(session.id)}`;
-    if (!projectOrchestratorId) return null;
-    return `/sessions/${encodeURIComponent(projectOrchestratorId)}`;
-  }, [isOrchestrator, projectOrchestratorId, session.id]);
+    if (isOrchestrator) return getProjectSessionHref(session.projectId, session.id);
+    if (!projectOrchestratorId || !session.projectId) return null;
+    return getProjectSessionHref(session.projectId, projectOrchestratorId);
+  }, [isOrchestrator, projectOrchestratorId, session.id, session.projectId]);
 
   return (
     <div className="session-detail-page min-h-screen bg-[var(--color-bg-base)]">

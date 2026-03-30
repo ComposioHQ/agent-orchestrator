@@ -19,7 +19,9 @@ function matchesProject(
   if (session.projectId === projectId) return true;
   const project = projects[projectId];
   if (project?.sessionPrefix && session.id.startsWith(project.sessionPrefix)) return true;
-  return projects[session.projectId]?.sessionPrefix === projectId;
+  // Removed loose reverse-match fallback (projects[session.projectId]?.sessionPrefix === projectId)
+  // to prevent cross-project leakage in multi-project portfolios
+  return false;
 }
 
 export function filterProjectSessions<T extends SessionLike>(
@@ -37,6 +39,10 @@ export function getProjectScopedHref(
   projectId: string | undefined,
 ): string {
   return projectId ? `${basePath}?project=${encodeURIComponent(projectId)}` : `${basePath}?project=all`;
+}
+
+export function getProjectSessionHref(projectId: string, sessionId: string): string {
+  return `/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}`;
 }
 
 export function filterWorkerSessions<T extends SessionLike>(

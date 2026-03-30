@@ -11,6 +11,7 @@ import {
 } from "@/lib/types";
 import { cn } from "@/lib/cn";
 import { getSessionTitle } from "@/lib/format";
+import { getProjectSessionHref } from "@/lib/project-utils";
 import { CICheckList } from "./CIBadge";
 import { ActivityDot } from "./ActivityDot";
 import { getSizeLabel } from "./PRStatus";
@@ -421,7 +422,7 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
         )}
         {!isTerminal && (
           <a
-            href={`/sessions/${encodeURIComponent(session.id)}`}
+            href={getProjectSessionHref(session.projectId, session.id)}
             onClick={(e) => e.stopPropagation()}
             className="session-card__control inline-flex items-center justify-center gap-1.5 border border-[var(--color-border-default)] bg-[var(--color-bg-subtle)] px-2.5 py-1 text-[11px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] hover:no-underline"
           >

@@ -23,8 +23,9 @@ export async function POST(request: NextRequest) {
     }
     const project = config.projects[projectId];
 
+    const agent = typeof body.agent === "string" ? body.agent : undefined;
     const systemPrompt = generateOrchestratorPrompt({ config, projectId, project });
-    const session = await sessionManager.spawnOrchestrator({ projectId, systemPrompt });
+    const session = await sessionManager.spawnOrchestrator({ projectId, systemPrompt, agent });
 
     return NextResponse.json(
       {

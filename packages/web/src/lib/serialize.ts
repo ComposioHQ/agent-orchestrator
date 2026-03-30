@@ -40,9 +40,9 @@ export function resolveProject(
   const entry = Object.entries(projects).find(([, p]) => core.id.startsWith(p.sessionPrefix));
   if (entry) return entry[1];
 
-  // Fall back to first project
-  const firstKey = Object.keys(projects)[0];
-  return firstKey ? projects[firstKey] : undefined;
+  // No match — return undefined instead of falling back to first project
+  // to avoid cross-project leakage in multi-project portfolios
+  return undefined;
 }
 
 /** Convert a core Session to a DashboardSession (without PR/issue enrichment). */
