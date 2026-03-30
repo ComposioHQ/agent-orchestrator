@@ -581,4 +581,24 @@ describe("Config Defaults", () => {
     expect(validated.projects.proj1.tracker).toEqual({ plugin: "gitlab", host: "gitlab.com" });
     expect(validated.projects.proj1.scm).toEqual({ plugin: "gitlab" });
   });
+
+  it("infers Forgejo tracker/scm defaults from configured plugin", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          scm: {
+            plugin: "forgejo",
+            host: "git.rankworld.games",
+          },
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.projects.proj1.scm).toEqual({ plugin: "forgejo", host: "git.rankworld.games" });
+    expect(validated.projects.proj1.tracker).toEqual({ plugin: "forgejo" });
+  });
 });

@@ -113,6 +113,11 @@ describe("detectScmPlatform", () => {
     expect(detectScmPlatform("gitlab.com")).toBe("gitlab");
   });
 
+  it("detects Forgejo/Gitea hosts", () => {
+    expect(detectScmPlatform("forgejo.example.com")).toBe("forgejo");
+    expect(detectScmPlatform("gitea.internal")).toBe("forgejo");
+  });
+
   it("detects Bitbucket", () => {
     expect(detectScmPlatform("bitbucket.org")).toBe("bitbucket");
   });

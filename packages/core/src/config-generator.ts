@@ -29,7 +29,7 @@ export interface ParsedRepoUrl {
 }
 
 /** Detect which SCM platform a host belongs to */
-export type ScmPlatform = "github" | "gitlab" | "bitbucket" | "unknown";
+export type ScmPlatform = "github" | "gitlab" | "forgejo" | "bitbucket" | "unknown";
 
 /**
  * Check if a string looks like a repo URL (HTTP(S) or SSH git URL).
@@ -90,6 +90,7 @@ export function detectScmPlatform(host: string): ScmPlatform {
   const lower = host.toLowerCase();
   if (lower === "github.com" || lower.endsWith(".github.com")) return "github";
   if (lower === "gitlab.com" || lower.endsWith(".gitlab.com")) return "gitlab";
+  if (lower.includes("forgejo") || lower.includes("gitea")) return "forgejo";
   if (
     lower === "bitbucket.org" ||
     lower.endsWith(".bitbucket.org") ||
@@ -220,7 +221,10 @@ export function generateConfigFromUrl(options: GenerateConfigOptions): Record<st
 
   // Tracker — same platform as SCM for known hosts, github as fallback
   projectConfig.tracker = {
-    plugin: platform === "github" || platform === "gitlab" ? platform : "github",
+    plugin:
+      platform === "github" || platform === "gitlab" || platform === "forgejo"
+        ? platform
+        : "github",
   };
 
   // Post-create commands based on detected package manager (JS ecosystem only)

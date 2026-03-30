@@ -39,7 +39,9 @@ import pluginRuntimeTmux from "@composio/ao-plugin-runtime-tmux";
 import pluginAgentClaudeCode from "@composio/ao-plugin-agent-claude-code";
 import pluginAgentOpencode from "@composio/ao-plugin-agent-opencode";
 import pluginWorkspaceWorktree from "@composio/ao-plugin-workspace-worktree";
+import pluginScmForgejo from "@composio/ao-plugin-scm-forgejo";
 import pluginScmGithub from "@composio/ao-plugin-scm-github";
+import pluginTrackerForgejo from "@composio/ao-plugin-tracker-forgejo";
 import pluginTrackerGithub from "@composio/ao-plugin-tracker-github";
 import pluginTrackerLinear from "@composio/ao-plugin-tracker-linear";
 
@@ -81,7 +83,9 @@ async function initServices(): Promise<Services> {
   registry.register(pluginAgentClaudeCode);
   registry.register(pluginAgentOpencode);
   registry.register(pluginWorkspaceWorktree);
+  registry.register(pluginScmForgejo);
   registry.register(pluginScmGithub);
+  registry.register(pluginTrackerForgejo);
   registry.register(pluginTrackerGithub);
   registry.register(pluginTrackerLinear);
 

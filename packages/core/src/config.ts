@@ -22,23 +22,45 @@ function inferScmPlugin(project: {
   repo: string;
   scm?: Record<string, unknown>;
   tracker?: Record<string, unknown>;
-}): "github" | "gitlab" {
+}): "github" | "gitlab" | "forgejo" {
+  if (project.scm?.["plugin"] === "forgejo") {
+    return "forgejo";
+  }
+
   const scmPlugin = project.scm?.["plugin"];
   if (scmPlugin === "gitlab") {
     return "gitlab";
   }
 
   const scmHost = project.scm?.["host"];
+  if (
+    typeof scmHost === "string" &&
+    (scmHost.toLowerCase().includes("forgejo") || scmHost.toLowerCase().includes("gitea"))
+  ) {
+    return "forgejo";
+  }
+
   if (typeof scmHost === "string" && scmHost.toLowerCase().includes("gitlab")) {
     return "gitlab";
   }
 
   const trackerPlugin = project.tracker?.["plugin"];
+  if (trackerPlugin === "forgejo") {
+    return "forgejo";
+  }
+
   if (trackerPlugin === "gitlab") {
     return "gitlab";
   }
 
   const trackerHost = project.tracker?.["host"];
+  if (
+    typeof trackerHost === "string" &&
+    (trackerHost.toLowerCase().includes("forgejo") || trackerHost.toLowerCase().includes("gitea"))
+  ) {
+    return "forgejo";
+  }
+
   if (typeof trackerHost === "string" && trackerHost.toLowerCase().includes("gitlab")) {
     return "gitlab";
   }
