@@ -217,6 +217,18 @@ function createAiderAgent(): Agent {
         terminalOutput,
         (output) => this.detectActivity(output),
       );
+
+      // Deduplicate writes to avoid refreshing file mtime every poll cycle,
+      // which would prevent the JSONL mtime fallback in getActivityState from
+      // reaching "ready" or "idle". Skip only when same state AND recent (<60s).
+      if (state !== "waiting_input" && state !== "blocked") {
+        const lastEntry = await readLastActivityEntry(session.workspacePath);
+        if (lastEntry && lastEntry.entry.state === state) {
+          const entryAgeMs = Date.now() - lastEntry.modifiedAt.getTime();
+          if (entryAgeMs < 20_000) return;
+        }
+      }
+
       await appendActivityEntry(session.workspacePath, state, "terminal", trigger);
     },
 

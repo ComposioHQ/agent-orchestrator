@@ -1061,11 +1061,11 @@ describe("getActivityState with activity JSONL", () => {
     expect(result?.state).toBe("active");
   });
 
-  it("falls back to JSONL entry state for 'ready' when session list fails", async () => {
+  it("falls back to JSONL mtime for 'ready' when session list fails", async () => {
     mockTmuxWithProcess("opencode");
     mockReadLastActivityEntry.mockResolvedValueOnce({
-      entry: { ts: new Date().toISOString(), state: "ready", source: "terminal" },
-      modifiedAt: new Date(Date.now() - 45_000),
+      entry: { ts: new Date().toISOString(), state: "active", source: "terminal" },
+      modifiedAt: new Date(Date.now() - 45_000), // 45s ago — past activeWindow (30s), within threshold
     });
     mockExecFileAsync.mockImplementation((cmd: string) => {
       if (cmd === "tmux") return Promise.resolve({ stdout: "/dev/ttys003\n", stderr: "" });
@@ -1086,11 +1086,11 @@ describe("getActivityState with activity JSONL", () => {
     expect(result?.state).toBe("ready");
   });
 
-  it("falls back to JSONL entry state for 'idle' when session list fails", async () => {
+  it("falls back to JSONL mtime for 'idle' when session list fails", async () => {
     mockTmuxWithProcess("opencode");
     mockReadLastActivityEntry.mockResolvedValueOnce({
-      entry: { ts: new Date().toISOString(), state: "idle", source: "terminal" },
-      modifiedAt: new Date(Date.now() - 120_000),
+      entry: { ts: new Date().toISOString(), state: "active", source: "terminal" },
+      modifiedAt: new Date(Date.now() - 120_000), // 120s ago — past threshold (60s)
     });
     mockExecFileAsync.mockImplementation((cmd: string) => {
       if (cmd === "tmux") return Promise.resolve({ stdout: "/dev/ttys003\n", stderr: "" });

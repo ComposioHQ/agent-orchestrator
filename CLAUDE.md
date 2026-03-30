@@ -387,7 +387,7 @@ async getActivityState(session, readyThresholdMs?): Promise<ActivityDetection | 
 
 **For agents using AO Activity JSONL (the common case for new plugins):**
 
-1. Implement `recordActivity`:
+1. Implement `recordActivity` **with deduplication** — this is critical:
 ```typescript
 async recordActivity(session: Session, terminalOutput: string): Promise<void> {
   if (!session.workspacePath) return;
@@ -395,9 +395,26 @@ async recordActivity(session: Session, terminalOutput: string): Promise<void> {
     terminalOutput,
     (output) => this.detectActivity(output),
   );
+
+  // CRITICAL: Deduplicate writes. The lifecycle calls recordActivity every
+  // poll cycle (~30s). Without dedup, the file mtime refreshes every cycle,
+  // so the JSONL mtime fallback in getActivityState can never reach "ready"
+  // or "idle" (mtime is always <30s old). Skip the write when the state
+  // hasn't changed AND the last entry is recent enough to prove liveness.
+  // Always write actionable states (waiting_input/blocked) immediately.
+  if (state !== "waiting_input" && state !== "blocked") {
+    const lastEntry = await readLastActivityEntry(session.workspacePath);
+    if (lastEntry && lastEntry.entry.state === state) {
+      const entryAgeMs = Date.now() - lastEntry.modifiedAt.getTime();
+      if (entryAgeMs < 20_000) return; // 20s — less than activeWindow (30s)
+    }
+  }
+
   await appendActivityEntry(session.workspacePath, state, "terminal", trigger);
 }
 ```
+
+**Why 20 seconds?** The `activeWindow` is 30s — if mtime is <30s old, `getActivityState` returns `active`. The dedup window must be shorter so the write happens before mtime ages past 30s. At 20s dedup with ~30s poll cycles, writes happen every 20-30s, keeping the session `active` during real work. When work stops and the lifecycle gets no terminal output, writes stop, mtime ages → `ready` → `idle`.
 
 2. Implement `detectActivity` with patterns specific to the agent's terminal output:
 ```typescript
