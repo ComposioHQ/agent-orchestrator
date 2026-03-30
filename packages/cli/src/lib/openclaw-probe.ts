@@ -5,6 +5,11 @@
  * Probes the OpenClaw gateway for reachability and validates auth tokens.
  */
 
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+
 export interface ProbeResult {
   reachable: boolean;
   httpStatus?: number;
@@ -16,9 +21,35 @@ export interface TokenValidation {
   error?: string;
 }
 
+export interface OpenClawInstallation {
+  state: "missing" | "installed-but-stopped" | "running";
+  gatewayUrl: string;
+  binaryPath?: string;
+  configPath?: string;
+  probe: ProbeResult;
+}
+
 const DEFAULT_TIMEOUT_MS = 3_000;
 const DEFAULT_OPENCLAW_URL = "http://127.0.0.1:18789";
 const HOOKS_PATH = "/hooks/agent";
+
+function normalizeGatewayBaseUrl(url: string): string {
+  const normalized = url.trim().replace(/\/+$/, "");
+  return normalized.endsWith(HOOKS_PATH)
+    ? normalized.slice(0, -HOOKS_PATH.length)
+    : normalized;
+}
+
+function resolveOpenClawBinaryPath(): string | undefined {
+  const shell = process.env["SHELL"] ?? "/bin/sh";
+  const result = spawnSync(shell, ["-lc", "command -v openclaw"], {
+    encoding: "utf-8",
+  });
+
+  if (result.status !== 0) return undefined;
+  const path = result.stdout.trim();
+  return path || undefined;
+}
 
 /**
  * Probe the OpenClaw gateway for reachability.
@@ -28,7 +59,7 @@ export async function probeGateway(
   baseUrl: string = DEFAULT_OPENCLAW_URL,
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): Promise<ProbeResult> {
-  const url = baseUrl.replace(/\/+$/, "");
+  const url = normalizeGatewayBaseUrl(baseUrl);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -52,6 +83,29 @@ export async function probeGateway(
   } finally {
     clearTimeout(timer);
   }
+}
+
+export async function detectOpenClawInstallation(
+  baseUrl: string = DEFAULT_OPENCLAW_URL,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+): Promise<OpenClawInstallation> {
+  const gatewayUrl = normalizeGatewayBaseUrl(baseUrl);
+  const binaryPath = resolveOpenClawBinaryPath();
+  const configPath = join(homedir(), ".openclaw", "openclaw.json");
+  const hasConfig = existsSync(configPath);
+  const probe = await probeGateway(gatewayUrl, timeoutMs);
+
+  return {
+    state: probe.reachable
+      ? "running"
+      : binaryPath || hasConfig
+        ? "installed-but-stopped"
+        : "missing",
+    gatewayUrl,
+    binaryPath,
+    configPath: hasConfig ? configPath : undefined,
+    probe,
+  };
 }
 
 /**
@@ -125,4 +179,4 @@ export async function validateToken(
   }
 }
 
-export { DEFAULT_OPENCLAW_URL, HOOKS_PATH };
+export { DEFAULT_OPENCLAW_URL, HOOKS_PATH, normalizeGatewayBaseUrl };
