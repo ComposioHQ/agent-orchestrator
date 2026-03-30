@@ -24,6 +24,9 @@ describe("Config Loading", () => {
 
     // Change to test directory
     process.chdir(testDir);
+
+    // Clear AO_CONFIG_PATH to avoid picking up parent config
+    delete process.env["AO_CONFIG_PATH"];
   });
 
   afterEach(() => {
@@ -143,6 +146,135 @@ projects:
 
       const config = loadConfig();
       expect(config.port).toBe(3001); // Should use env, not local
+    });
+  });
+
+  describe("Environment Variable Expansion", () => {
+    it("should expand ${VAR} references in config", () => {
+      const configPath = join(testDir, "agent-orchestrator.yaml");
+      writeFileSync(
+        configPath,
+        `
+port: \${TEST_PORT}
+projects:
+  test-project:
+    repo: test/repo
+    path: ${testDir}
+    defaultBranch: main
+`,
+      );
+
+      process.env["TEST_PORT"] = "9999";
+      const config = loadConfig(configPath);
+      expect(config.port).toBe(9999);
+    });
+
+    it("should expand ${VAR} in notifier config", () => {
+      const configPath = join(testDir, "agent-orchestrator.yaml");
+      writeFileSync(
+        configPath,
+        `
+notifiers:
+  slack:
+    plugin: slack
+    webhookUrl: \${SLACK_WEBHOOK_URL}
+projects:
+  test-project:
+    repo: test/repo
+    path: ${testDir}
+    defaultBranch: main
+`,
+      );
+
+      process.env["SLACK_WEBHOOK_URL"] = "https://hooks.slack.com/services/ABC/123/XYZ";
+      const config = loadConfig(configPath);
+      expect(config.notifiers.slack.webhookUrl).toBe(
+        "https://hooks.slack.com/services/ABC/123/XYZ",
+      );
+    });
+
+    it("should leave placeholder unchanged if env var not set", () => {
+      const configPath = join(testDir, "agent-orchestrator.yaml");
+      writeFileSync(
+        configPath,
+        `
+notifiers:
+  slack:
+    plugin: slack
+    webhookUrl: \${UNDEFINED_VAR}
+projects:
+  test-project:
+    repo: test/repo
+    path: ${testDir}
+    defaultBranch: main
+`,
+      );
+
+      // Don't set UNDEFINED_VAR
+      const config = loadConfig(configPath);
+      expect(config.notifiers.slack.webhookUrl).toBe("${UNDEFINED_VAR}");
+    });
+
+    it("should expand multiple env var references", () => {
+      const configPath = join(testDir, "agent-orchestrator.yaml");
+      writeFileSync(
+        configPath,
+        `
+notifiers:
+  slack:
+    plugin: slack
+    webhookUrl: \${SLACK_WEBHOOK_URL}
+  discord:
+    plugin: discord
+    webhookUrl: \${DISCORD_WEBHOOK_URL}
+projects:
+  test-project:
+    repo: test/repo
+    path: \${PROJECT_PATH}
+    defaultBranch: main
+`,
+      );
+
+      process.env["SLACK_WEBHOOK_URL"] = "https://hooks.slack.com/services/ABC/123/XYZ";
+      process.env["DISCORD_WEBHOOK_URL"] = "https://discord.com/api/webhooks/123/abc";
+      process.env["PROJECT_PATH"] = testDir;
+
+      const config = loadConfig(configPath);
+      expect(config.notifiers.slack.webhookUrl).toBe(
+        "https://hooks.slack.com/services/ABC/123/XYZ",
+      );
+      expect(config.notifiers.discord.webhookUrl).toBe(
+        "https://discord.com/api/webhooks/123/abc",
+      );
+      expect(config.projects["test-project"].path).toBe(testDir);
+    });
+
+    it("should expand env var with complex value", () => {
+      const configPath = join(testDir, "agent-orchestrator.yaml");
+      writeFileSync(
+        configPath,
+        `
+notifiers:
+  custom:
+    plugin: custom
+    apiKey: \${API_KEY}
+    endpoint: \${API_ENDPOINT}
+projects:
+  test-project:
+    repo: test/repo
+    path: ${testDir}
+    defaultBranch: main
+`,
+      );
+
+      process.env["API_KEY"] = "sk-1234567890abcdef";
+      process.env["API_ENDPOINT"] = "https://api.example.com/v1/endpoint?param=value";
+
+      const config = loadConfig(configPath);
+      expect(config.notifiers.custom.apiKey).toBe("sk-1234567890abcdef");
+      expect(config.notifiers.custom.endpoint).toBe(
+        "https://api.example.com/v1/endpoint?param=value",
+      );
     });
   });
 });

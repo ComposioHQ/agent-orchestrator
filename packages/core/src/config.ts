@@ -210,6 +210,14 @@ function expandHome(filepath: string): string {
   return filepath;
 }
 
+/** Expand ${VAR} environment variable references in a string */
+function expandEnvVars(content: string): string {
+  return content.replace(/\$\{([^}]+)\}/g, (_match, varName) => {
+    const value = process.env[varName];
+    return value !== undefined ? value : `\${${varName}}`;
+  });
+}
+
 /** Expand all path fields in the config */
 function expandPaths(config: OrchestratorConfig): OrchestratorConfig {
   for (const project of Object.values(config.projects)) {
@@ -471,7 +479,8 @@ export function loadConfig(configPath?: string): OrchestratorConfig {
   }
 
   const raw = readFileSync(path, "utf-8");
-  const parsed = parseYaml(raw);
+  const expanded = expandEnvVars(raw);
+  const parsed = parseYaml(expanded);
   const config = validateConfig(parsed);
 
   // Set the config path in the config object for hash generation
@@ -492,7 +501,8 @@ export function loadConfigWithPath(configPath?: string): {
   }
 
   const raw = readFileSync(path, "utf-8");
-  const parsed = parseYaml(raw);
+  const expanded = expandEnvVars(raw);
+  const parsed = parseYaml(expanded);
   const config = validateConfig(parsed);
 
   // Set the config path in the config object for hash generation
