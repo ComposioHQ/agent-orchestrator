@@ -42,7 +42,6 @@ registerDoctor(program);
 registerUpdate(program);
 registerSetup(program);
 registerRuntime(program);
-registerSetup(program);
 
 program
   .command("config-help")
