@@ -6,6 +6,23 @@ import type {
   AgentSpecificConfig,
 } from "@composio/ao-core";
 
+vi.mock("@composio/ao-core", async (importOriginal) => {
+  const actual = (await importOriginal()) as object;
+  return {
+    ...actual,
+    hasApprovalPrompt: (terminalOutput: string): boolean => {
+      if (!terminalOutput.trim()) return false;
+      const tail = terminalOutput.trim().split("\n").slice(-15).join("\n");
+      if (/approval required/i.test(tail)) return true;
+      if (/\(y\)es.*\(n\)o/i.test(tail)) return true;
+      if (/press enter to confirm or esc to cancel/i.test(tail)) return true;
+      const hasYesOption = /^\s*1\.\s*(yes|proceed|allow)/im.test(tail);
+      const hasNoOption = /^\s*[>*]?\s*[2-9]\.\s*(no|deny|skip|cancel)/im.test(tail);
+      return hasYesOption && hasNoOption;
+    },
+  };
+});
+
 // ---------------------------------------------------------------------------
 // Hoisted mocks — available inside vi.mock factories
 // ---------------------------------------------------------------------------

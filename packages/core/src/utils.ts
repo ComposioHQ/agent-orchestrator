@@ -3,6 +3,7 @@
  */
 
 import { open, stat } from "node:fs/promises";
+import { stripVTControlCharacters } from "node:util";
 import type { OrchestratorConfig } from "./types.js";
 
 /**
@@ -51,9 +52,10 @@ export function normalizeRetryConfig(
   const rawRetries = config?.retries as number | undefined;
   const rawDelay = config?.retryDelayMs as number | undefined;
   const retries = Number.isFinite(rawRetries) ? Math.max(0, rawRetries ?? 0) : defaults.retries;
-  const retryDelayMs = Number.isFinite(rawDelay) && (rawDelay ?? -1) >= 0
-    ? (rawDelay as number)
-    : defaults.retryDelayMs;
+  const retryDelayMs =
+    Number.isFinite(rawDelay) && (rawDelay ?? -1) >= 0
+      ? (rawDelay as number)
+      : defaults.retryDelayMs;
   return { retries, retryDelayMs };
 }
 
@@ -148,4 +150,27 @@ export function resolveProjectIdForSessionId(
     }
   }
   return undefined;
+}
+
+/**
+ * Shared approval prompt detector for terminal output.
+ * Handles ANSI-colored output and common yes/no confirmation formats.
+ */
+export function hasApprovalPrompt(terminalOutput: string): boolean {
+  if (!terminalOutput.trim()) return false;
+
+  const tail = terminalOutput
+    .trim()
+    .split("\n")
+    .slice(-15)
+    .map((line) => stripVTControlCharacters(line))
+    .join("\n");
+
+  if (/approval required/i.test(tail)) return true;
+  if (/\(y\)es.*\(n\)o/i.test(tail)) return true;
+  if (/press enter to confirm or esc to cancel/i.test(tail)) return true;
+
+  const hasYesOption = /^\s*1\.\s*(yes|proceed|allow)/im.test(tail);
+  const hasNoOption = /^\s*[>*]?\s*[2-9]\.\s*(no|deny|skip|cancel)/im.test(tail);
+  return hasYesOption && hasNoOption;
 }

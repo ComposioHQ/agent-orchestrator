@@ -1,5 +1,6 @@
 import {
   DEFAULT_READY_THRESHOLD_MS,
+  hasApprovalPrompt,
   shellEscape,
   asValidOpenCodeSessionId,
   type Agent,
@@ -242,13 +243,7 @@ function createOpenCodeAgent(): Agent {
       const stripAnsi = (value: string): string => stripVTControlCharacters(value);
       const tail = terminalOutput.trim().split("\n").slice(-15).map(stripAnsi).join("\n");
 
-      if (/approval required/i.test(tail)) return "waiting_input";
-      if (/\(y\)es.*\(n\)o/i.test(tail)) return "waiting_input";
-      if (/press enter to confirm or esc to cancel/i.test(tail)) return "waiting_input";
-
-      const hasYesOption = /^\s*1\.\s*(yes|proceed|allow)/im.test(tail);
-      const hasNoOption = /^\s*[>*]?\s*[2-9]\.\s*(no|deny|skip|cancel)/im.test(tail);
-      if (hasYesOption && hasNoOption) return "waiting_input";
+      if (hasApprovalPrompt(tail)) return "waiting_input";
 
       return "active";
     },
