@@ -772,6 +772,7 @@ describe("scm-github plugin", () => {
         isResolved: boolean;
         id: string;
         author: string | null;
+        authorTypename?: string | null;
         body: string;
         path: string | null;
         line: number | null;
@@ -790,7 +791,9 @@ describe("scm-github plugin", () => {
                     nodes: [
                       {
                         id: t.id,
-                        author: t.author ? { login: t.author } : null,
+                        author: t.author
+                          ? { login: t.author, __typename: t.authorTypename || "User" }
+                          : null,
                         body: t.body,
                         path: t.path,
                         line: t.line,
@@ -877,6 +880,52 @@ describe("scm-github plugin", () => {
       const comments = await scm.getPendingComments(pr);
       expect(comments).toHaveLength(1);
       expect(comments[0].author).toBe("alice");
+    });
+
+    it("filters out GitHub App bots by __typename (regardless of login format)", async () => {
+      // Simulate GraphQL API returning bot author without [bot] suffix
+      // This is the actual behavior for GitHub App bots
+      mockGh(
+        makeGraphQLThreads([
+          {
+            isResolved: false,
+            id: "C1",
+            author: "alice",
+            body: "Human comment",
+            path: "a.ts",
+            line: 1,
+            url: "u",
+            createdAt: "2025-01-01T00:00:00Z",
+          },
+          {
+            isResolved: false,
+            id: "C2",
+            author: "cursor",
+            authorTypename: "Bot",
+            body: "Cursor Bugbot says fix this",
+            path: "a.ts",
+            line: 2,
+            url: "u",
+            createdAt: "2025-01-01T00:00:00Z",
+          },
+          {
+            isResolved: false,
+            id: "C3",
+            author: "github-actions",
+            authorTypename: "Bot",
+            body: "GitHub Actions comment",
+            path: "a.ts",
+            line: 3,
+            url: "u",
+            createdAt: "2025-01-01T00:00:00Z",
+          },
+        ]),
+      );
+
+      const comments = await scm.getPendingComments(pr);
+      expect(comments).toHaveLength(1);
+      expect(comments[0].author).toBe("alice");
+      // Bot comments should be filtered out even though they don't have [bot] suffix
     });
 
     it("throws on error", async () => {
