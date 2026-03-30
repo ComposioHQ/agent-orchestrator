@@ -23,6 +23,10 @@ function inferScmPlugin(project: {
   scm?: Record<string, unknown>;
   tracker?: Record<string, unknown>;
 }): "github" | "gitlab" | "forgejo" {
+  if (project.scm?.["plugin"] === "github") {
+    return "github";
+  }
+
   if (project.scm?.["plugin"] === "forgejo") {
     return "forgejo";
   }
@@ -45,6 +49,10 @@ function inferScmPlugin(project: {
   }
 
   const trackerPlugin = project.tracker?.["plugin"];
+  if (trackerPlugin === "github") {
+    return "github";
+  }
+
   if (trackerPlugin === "forgejo") {
     return "forgejo";
   }

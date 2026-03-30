@@ -64,6 +64,10 @@ function scopedPRKey(owner: string, repo: string, number: number, hostname?: str
   return `${cacheScope(hostname)}:${owner}/${repo}#${number}`;
 }
 
+function publicPRKey(owner: string, repo: string, number: number): string {
+  return `${owner}/${repo}#${number}`;
+}
+
 function legacyRepoKey(owner: string, repo: string): string {
   return `${owner}/${repo}`;
 }
@@ -808,12 +812,13 @@ export async function enrichSessionsPRBatch(
     const missingPRs: PRInfo[] = [];
 
     for (const pr of prs) {
-      const prKey = scopedPRKey(pr.owner, pr.repo, pr.number, hostname);
+      const scopedKey = scopedPRKey(pr.owner, pr.repo, pr.number, hostname);
+      const resultKey = publicPRKey(pr.owner, pr.repo, pr.number);
       const cachedData =
-        prEnrichmentDataCache.get(prKey) ??
+        prEnrichmentDataCache.get(scopedKey) ??
         prEnrichmentDataCache.get(legacyPRKey(pr.owner, pr.repo, pr.number));
       if (cachedData) {
-        result.set(prKey, cachedData);
+        result.set(resultKey, cachedData);
       } else {
         missingPRs.push(pr);
       }
@@ -857,16 +862,17 @@ export async function enrichSessionsPRBatch(
       // Extract results for each PR in the batch
       batch.forEach((pr, index) => {
         const alias = `pr${index}`;
-        const prKey = scopedPRKey(pr.owner, pr.repo, pr.number, hostname);
+        const cacheKey = scopedPRKey(pr.owner, pr.repo, pr.number, hostname);
+        const resultKey = publicPRKey(pr.owner, pr.repo, pr.number);
         const repositoryData = data[alias] as { pullRequest?: unknown } | undefined;
 
         if (repositoryData?.pullRequest) {
           const extracted = extractPREnrichment(repositoryData.pullRequest);
           if (extracted) {
             const { data: enrichment, headSha } = extracted;
-            result.set(prKey, enrichment);
+            result.set(resultKey, enrichment);
             // Update PR metadata cache for future ETag checks
-            updatePRMetadataCache(prKey, enrichment, headSha);
+            updatePRMetadataCache(cacheKey, enrichment, headSha);
           }
         } else {
           // PR not found (deleted/closed/permission issue)

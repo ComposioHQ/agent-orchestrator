@@ -1284,4 +1284,58 @@ describe("enrichSessionsPRBatch hostname propagation", () => {
       expect.arrayContaining(["--hostname", "forgejo.example", "api", "graphql"]),
     );
   });
+
+  it("returns public owner/repo#number keys even when hostname is scoped", async () => {
+    const prs = [
+      {
+        owner: "owner",
+        repo: "repo",
+        number: 123,
+        url: "https://forgejo.example/owner/repo/pull/123",
+        title: "Test PR",
+        branch: "feature",
+        baseBranch: "main",
+        isDraft: false,
+      },
+    ];
+
+    mockExecFileImpl
+      .mockResolvedValueOnce({
+        stdout: "HTTP/2 200",
+        stderr: "",
+      })
+      .mockResolvedValueOnce({
+        stdout: "gh version 2.x",
+        stderr: "",
+      })
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          data: {
+            pr0: {
+              pullRequest: {
+                title: "Test PR",
+                state: "OPEN",
+                additions: 1,
+                deletions: 0,
+                isDraft: false,
+                mergeable: "MERGEABLE",
+                mergeStateStatus: "CLEAN",
+                reviewDecision: "APPROVED",
+                headRefOid: "abc123",
+                commits: {
+                  nodes: [{ commit: { statusCheckRollup: { state: "SUCCESS" } } }],
+                },
+                reviews: { nodes: [] },
+              },
+            },
+          },
+        }),
+        stderr: "",
+      });
+
+    const result = await enrichSessionsPRBatch(prs, undefined, "forgejo.example");
+
+    expect(result.has("owner/repo#123")).toBe(true);
+    expect(result.has("forgejo.example:owner/repo#123")).toBe(false);
+  });
 });
