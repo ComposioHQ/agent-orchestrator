@@ -342,6 +342,7 @@ export function createMockSessionManager(): SessionManager {
     restore: vi.fn().mockResolvedValue(makeSession()),
     list: vi.fn().mockResolvedValue([]),
     get: vi.fn().mockResolvedValue(null),
+    getAttachInfo: vi.fn().mockResolvedValue(null),
     kill: vi.fn().mockResolvedValue(undefined),
     cleanup: vi.fn().mockResolvedValue({ killed: [], skipped: [], errors: [] }),
     send: vi.fn().mockResolvedValue(undefined),
