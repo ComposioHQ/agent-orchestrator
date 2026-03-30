@@ -25,7 +25,7 @@ const {
 }));
 
 vi.mock("@composio/ao-core", async (importOriginal) => {
-  const actual = await importOriginal();
+  const actual = (await importOriginal()) as Record<string, unknown>;
   return {
     ...actual,
     findConfigFile: (...args: unknown[]) => mockFindConfigFile(...args),

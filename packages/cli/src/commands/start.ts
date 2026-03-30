@@ -855,7 +855,7 @@ async function ensureTmux(): Promise<void> {
 async function warnAboutOpenClawStatus(config: OrchestratorConfig): Promise<void> {
   const openclawConfig = config.notifiers?.["openclaw"];
   const openclawConfigured =
-    openclawConfig != null &&
+    openclawConfig !== null && openclawConfig !== undefined &&
     typeof openclawConfig === "object" &&
     openclawConfig.plugin === "openclaw";
   const configuredUrl =
