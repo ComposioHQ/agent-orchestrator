@@ -5,7 +5,6 @@ services:
       context: .
       dockerfile: docker/core/Dockerfile
       target: dev
-    container_name: ao-core
     volumes:
       - ./packages/core/src:/app/packages/core/src
       - ./tsconfig.base.json:/app/tsconfig.base.json
@@ -21,7 +20,6 @@ services:
       context: .
       dockerfile: docker/web/Dockerfile
       target: dev
-    container_name: ao-web
     ports:
       - "${WEB_PORT:-3000}:3000"
       - "${TERMINAL_PORT:-14800}:14800"
@@ -49,7 +47,6 @@ services:
       context: .
       dockerfile: docker/cli/Dockerfile
       target: dev
-    container_name: ao-cli
     volumes:
       - ./packages/cli/src:/app/packages/cli/src
       - ./packages/cli/templates:/app/packages/cli/templates
