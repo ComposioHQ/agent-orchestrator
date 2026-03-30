@@ -1,6 +1,8 @@
 import {
   DEFAULT_READY_THRESHOLD_MS,
   shellEscape,
+  isAgentProcessRunning,
+  normalizeAgentPermissionMode,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
@@ -23,15 +25,6 @@ import { promisify } from "node:util";
 import { randomBytes } from "node:crypto";
 
 const execFileAsync = promisify(execFile);
-
-function normalizePermissionMode(mode: string | undefined): "permissionless" | "default" | "auto-edit" | "suggest" | undefined {
-  if (!mode) return undefined;
-  if (mode === "skip") return "permissionless";
-  if (mode === "permissionless" || mode === "default" || mode === "auto-edit" || mode === "suggest") {
-    return mode;
-  }
-  return undefined;
-}
 
 /** Shared bin directory for ao shell wrappers (prepended to PATH) */
 const AO_BIN_DIR = join(homedir(), ".ao", "bin");
@@ -563,7 +556,7 @@ export async function resolveCodexBinary(): Promise<string> {
 
 /** Append approval-policy flags to a command parts array */
 function appendApprovalFlags(parts: string[], permissions: string | undefined): void {
-  const mode = normalizePermissionMode(permissions);
+  const mode = normalizeAgentPermissionMode(permissions);
   if (mode === "permissionless") {
     parts.push("--dangerously-bypass-approvals-and-sandbox");
   } else if (mode === "auto-edit") {
@@ -718,54 +711,7 @@ function createCodexAgent(): Agent {
     },
 
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
-      try {
-        if (handle.runtimeName === "tmux" && handle.id) {
-          const { stdout: ttyOut } = await execFileAsync(
-            "tmux",
-            ["list-panes", "-t", handle.id, "-F", "#{pane_tty}"],
-            { timeout: 30_000 },
-          );
-          const ttys = ttyOut
-            .trim()
-            .split("\n")
-            .map((t) => t.trim())
-            .filter(Boolean);
-          if (ttys.length === 0) return false;
-
-          const { stdout: psOut } = await execFileAsync("ps", ["-eo", "pid,tty,args"], {
-            timeout: 30_000,
-          });
-          const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
-          const processRe = /(?:^|\/)codex(?:\s|$)/;
-          for (const line of psOut.split("\n")) {
-            const cols = line.trimStart().split(/\s+/);
-            if (cols.length < 3 || !ttySet.has(cols[1] ?? "")) continue;
-            const args = cols.slice(2).join(" ");
-            if (processRe.test(args)) {
-              return true;
-            }
-          }
-          return false;
-        }
-
-        const rawPid = handle.data["pid"];
-        const pid = typeof rawPid === "number" ? rawPid : Number(rawPid);
-        if (Number.isFinite(pid) && pid > 0) {
-          try {
-            process.kill(pid, 0);
-            return true;
-          } catch (err: unknown) {
-            if (err instanceof Error && "code" in err && err.code === "EPERM") {
-              return true;
-            }
-            return false;
-          }
-        }
-
-        return false;
-      } catch {
-        return false;
-      }
+      return isAgentProcessRunning(handle, "codex");
     },
 
     async getSessionInfo(session: Session): Promise<AgentSessionInfo | null> {
