@@ -19,14 +19,17 @@ import { banner } from "../lib/format.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 import { ensureLifecycleWorker } from "../lib/lifecycle-service.js";
 import { preflight } from "../lib/preflight.js";
+import { isHumanCaller } from "../lib/caller-context.js";
+import { promptSelect } from "../lib/prompts.js";
 
 /**
  * Auto-detect the project ID from the config.
  * - If only one project exists, use it.
+ * - If multiple projects exist and the caller is interactive, prompt to choose.
  * - If multiple projects exist, match cwd against project paths.
  * - Falls back to AO_PROJECT_ID env var (set when called from an agent session).
  */
-function autoDetectProject(config: OrchestratorConfig): string {
+async function autoDetectProject(config: OrchestratorConfig): Promise<string> {
   const projectIds = Object.keys(config.projects);
   if (projectIds.length === 0) {
     throw new Error("No projects configured. Run 'ao start' first.");
@@ -49,9 +52,21 @@ function autoDetectProject(config: OrchestratorConfig): string {
     }
   }
 
+  if (isHumanCaller()) {
+    return await promptSelect(
+      "Choose project to spawn for:",
+      projectIds.map((id) => ({
+        value: id,
+        label: config.projects[id].name ?? id,
+        hint: id,
+      })),
+    );
+  }
+
   throw new Error(
-    `Multiple projects configured. Specify one: ${projectIds.join(", ")}\n` +
-      `Or run from within a project directory.`,
+    `Multiple projects configured. Unable to infer which project to spawn for.\n` +
+      `Available projects: ${projectIds.join(", ")}\n` +
+      `Run this command from within a project directory, set AO_PROJECT_ID, or use an interactive terminal to choose a project.`,
   );
 }
 
@@ -200,7 +215,7 @@ export function registerSpawn(program: Command): void {
         if (first) {
           issueId = first;
           try {
-            projectId = autoDetectProject(config);
+            projectId = await autoDetectProject(config);
           } catch (err) {
             console.error(chalk.red(err instanceof Error ? err.message : String(err)));
             process.exit(1);
@@ -208,7 +223,7 @@ export function registerSpawn(program: Command): void {
         } else {
           // No args: auto-detect project, no issue
           try {
-            projectId = autoDetectProject(config);
+            projectId = await autoDetectProject(config);
           } catch (err) {
             console.error(chalk.red(err instanceof Error ? err.message : String(err)));
             process.exit(1);
@@ -301,7 +316,7 @@ export function registerBatchSpawn(program: Command): void {
       let projectId: string;
 
       try {
-        projectId = autoDetectProject(config);
+        projectId = await autoDetectProject(config);
       } catch (err) {
         console.error(chalk.red(err instanceof Error ? err.message : String(err)));
         process.exit(1);

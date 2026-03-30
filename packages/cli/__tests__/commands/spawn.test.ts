@@ -4,23 +4,30 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { type Session, type SessionManager, getProjectBaseDir } from "@composio/ao-core";
 
-const { mockExec, mockConfigRef, mockSessionManager, mockEnsureLifecycleWorker } = vi.hoisted(
-  () => ({
-    mockExec: vi.fn(),
-    mockConfigRef: { current: null as Record<string, unknown> | null },
-    mockSessionManager: {
-      list: vi.fn(),
-      kill: vi.fn(),
-      cleanup: vi.fn(),
-      get: vi.fn(),
-      spawn: vi.fn(),
-      spawnOrchestrator: vi.fn(),
-      send: vi.fn(),
-      claimPR: vi.fn(),
-    },
-    mockEnsureLifecycleWorker: vi.fn(),
-  }),
-);
+const {
+  mockExec,
+  mockConfigRef,
+  mockSessionManager,
+  mockEnsureLifecycleWorker,
+  mockPromptSelect,
+  mockIsHumanCaller,
+} = vi.hoisted(() => ({
+  mockExec: vi.fn(),
+  mockConfigRef: { current: null as Record<string, unknown> | null },
+  mockSessionManager: {
+    list: vi.fn(),
+    kill: vi.fn(),
+    cleanup: vi.fn(),
+    get: vi.fn(),
+    spawn: vi.fn(),
+    spawnOrchestrator: vi.fn(),
+    send: vi.fn(),
+    claimPR: vi.fn(),
+  },
+  mockEnsureLifecycleWorker: vi.fn(),
+  mockPromptSelect: vi.fn(),
+  mockIsHumanCaller: vi.fn().mockReturnValue(true),
+}));
 
 vi.mock("../../src/lib/shell.js", () => ({
   tmux: vi.fn(),
@@ -57,6 +64,15 @@ vi.mock("../../src/lib/create-session-manager.js", () => ({
 
 vi.mock("../../src/lib/lifecycle-service.js", () => ({
   ensureLifecycleWorker: (...args: unknown[]) => mockEnsureLifecycleWorker(...args),
+}));
+
+vi.mock("../../src/lib/prompts.js", () => ({
+  promptConfirm: vi.fn(),
+  promptSelect: (...args: unknown[]) => mockPromptSelect(...args),
+}));
+
+vi.mock("../../src/lib/caller-context.js", () => ({
+  isHumanCaller: (...args: unknown[]) => mockIsHumanCaller(...args),
 }));
 
 vi.mock("../../src/lib/metadata.js", () => ({
@@ -116,6 +132,9 @@ beforeEach(() => {
   mockSessionManager.claimPR.mockReset();
   mockExec.mockReset();
   mockEnsureLifecycleWorker.mockReset();
+  mockPromptSelect.mockReset();
+  mockIsHumanCaller.mockReset();
+  mockIsHumanCaller.mockReturnValue(true);
   mockEnsureLifecycleWorker.mockResolvedValue({
     running: true,
     started: true,
@@ -226,6 +245,64 @@ describe("spawn command", () => {
     });
   });
 
+  it("prompts for a project when multiple are configured and spawn is ambiguous", async () => {
+    const fakeSession: Session = {
+      id: "api-1",
+      projectId: "backend",
+      status: "spawning",
+      activity: null,
+      branch: "feat/INT-100",
+      issueId: "INT-100",
+      pr: null,
+      workspacePath: "/tmp/api-wt",
+      runtimeHandle: { id: "hash-api-1", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+
+    (mockConfigRef.current as Record<string, unknown>).projects = {
+      frontend: {
+        name: "Frontend",
+        repo: "org/frontend",
+        path: join(tmpDir, "frontend-repo"),
+        defaultBranch: "main",
+        sessionPrefix: "fe",
+      },
+      backend: {
+        name: "Backend",
+        repo: "org/backend",
+        path: join(tmpDir, "backend-repo"),
+        defaultBranch: "main",
+        sessionPrefix: "api",
+      },
+    };
+    mkdirSync(join(tmpDir, "frontend-repo"), { recursive: true });
+    mkdirSync(join(tmpDir, "backend-repo"), { recursive: true });
+
+    mockPromptSelect.mockResolvedValue("backend");
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+
+    await program.parseAsync(["node", "test", "spawn", "INT-100"]);
+
+    expect(mockPromptSelect).toHaveBeenCalledWith(
+      "Choose project to spawn for:",
+      expect.arrayContaining([
+        expect.objectContaining({ value: "frontend", label: "Frontend", hint: "frontend" }),
+        expect.objectContaining({ value: "backend", label: "Backend", hint: "backend" }),
+      ]),
+    );
+    expect(mockEnsureLifecycleWorker).toHaveBeenCalledWith(
+      expect.objectContaining({ configPath: expect.any(String) }),
+      "backend",
+    );
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith({
+      projectId: "backend",
+      issueId: "INT-100",
+    });
+  });
+
   it("shows tmux attach command using runtimeHandle.id (hash-based name)", async () => {
     const fakeSession: Session = {
       id: "app-7",
@@ -326,6 +403,41 @@ describe("spawn command", () => {
     await expect(program.parseAsync(["node", "test", "spawn"])).rejects.toThrow(
       "process.exit(1)",
     );
+  });
+
+  it("shows a non-interactive inference error when multiple projects are configured", async () => {
+    (mockConfigRef.current as Record<string, unknown>).projects = {
+      frontend: {
+        name: "Frontend",
+        repo: "org/frontend",
+        path: join(tmpDir, "frontend-repo"),
+        defaultBranch: "main",
+        sessionPrefix: "fe",
+      },
+      backend: {
+        name: "Backend",
+        repo: "org/backend",
+        path: join(tmpDir, "backend-repo"),
+        defaultBranch: "main",
+        sessionPrefix: "api",
+      },
+    };
+    mkdirSync(join(tmpDir, "frontend-repo"), { recursive: true });
+    mkdirSync(join(tmpDir, "backend-repo"), { recursive: true });
+    mockIsHumanCaller.mockReturnValue(false);
+
+    await expect(program.parseAsync(["node", "test", "spawn"])).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => String(c[0]))
+      .join("\n");
+    expect(errors).toContain("Unable to infer which project to spawn for");
+    expect(errors).toContain("AO_PROJECT_ID");
+    expect(mockPromptSelect).not.toHaveBeenCalled();
+    expect(mockSessionManager.spawn).not.toHaveBeenCalled();
   });
 
   it("claims a PR for the spawned session when --claim-pr is provided", async () => {
