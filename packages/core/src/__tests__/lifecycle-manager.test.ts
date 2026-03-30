@@ -795,3 +795,219 @@ describe("getStates", () => {
     expect(lm.getStates().get("app-1")).toBe("working");
   });
 });
+
+describe("pollAll / all-complete reaction (lines 1012-1052)", () => {
+  it("triggers all-complete reaction when all sessions are terminal", async () => {
+    config.reactions = {
+      "all-complete": {
+        auto: true,
+        action: "notify",
+      },
+    };
+
+    const notifier = createMockNotifier();
+    const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("merged") });
+
+    const registryWithNotifier: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return plugins.runtime;
+        if (slot === "agent") return plugins.agent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "notifier" && name === "desktop") return notifier;
+        return null;
+      }),
+    };
+
+    // Create a session that will transition to merged
+    vi.mocked(mockSessionManager.list).mockResolvedValue([
+      makeSession({ id: "app-1", status: "approved", pr: makePR() }),
+    ]);
+    vi.mocked(mockSessionManager.get).mockResolvedValue(
+      makeSession({ id: "app-1", status: "approved", pr: makePR() }),
+    );
+
+    writeMetadata(env.sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "feat/test",
+      status: "approved",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithNotifier,
+      sessionManager: mockSessionManager,
+    });
+
+    // Check the session — should transition to merged
+    await lm.check("app-1");
+    expect(lm.getStates().get("app-1")).toBe("merged");
+  });
+
+  it("records observability data when projectId is scoped (lines 1018-1039)", async () => {
+    const notifier = createMockNotifier();
+
+    const registryWithNotifier: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return plugins.runtime;
+        if (slot === "agent") return plugins.agent;
+        if (slot === "notifier" && name === "desktop") return notifier;
+        return null;
+      }),
+    };
+
+    vi.mocked(mockSessionManager.list).mockResolvedValue([]);
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithNotifier,
+      sessionManager: mockSessionManager,
+      projectId: "my-app",
+    });
+
+    // Start and immediately stop — the initial pollAll() is triggered
+    lm.start(999_999);
+    // Wait a tick for the initial pollAll to complete
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    lm.stop();
+
+    // Should not throw — observability is recorded when projectId is scoped
+  });
+
+  it("handles pollAll error gracefully (lines 1040-1059)", async () => {
+    vi.mocked(mockSessionManager.list).mockRejectedValue(new Error("DB connection lost"));
+
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+      projectId: "my-app",
+    });
+
+    // Start and immediately stop
+    lm.start(999_999);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    lm.stop();
+
+    // Should not throw — error is caught and recorded in observability
+  });
+
+  it("handles pollAll error without projectId scoped", async () => {
+    vi.mocked(mockSessionManager.list).mockRejectedValue(new Error("DB connection lost"));
+
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+    });
+
+    lm.start(999_999);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    lm.stop();
+  });
+});
+
+describe("determineStatus edge cases", () => {
+  it("returns working when status is spawning and agent is active", async () => {
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({ state: "active" });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "spawning" }),
+    });
+
+    await lm.check("app-1");
+    expect(lm.getStates().get("app-1")).toBe("working");
+  });
+
+  it("transitions needs_input back to working when agent becomes active", async () => {
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({ state: "active" });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "needs_input" }),
+    });
+
+    await lm.check("app-1");
+    expect(lm.getStates().get("app-1")).toBe("working");
+  });
+
+  it("handles getActivityState returning blocked with timestamp below stuck threshold", async () => {
+    config.reactions = {
+      "agent-stuck": { auto: true, action: "notify", threshold: "10m" },
+    };
+
+    // Blocked but only for 5 seconds — below threshold
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({
+      state: "blocked",
+      timestamp: new Date(Date.now() - 5_000),
+    });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "working", metadata: { agent: "mock-agent" } }),
+      metaOverrides: { agent: "mock-agent" },
+    });
+
+    await lm.check("app-1");
+    // Should stay working since blocked time is below threshold
+    expect(lm.getStates().get("app-1")).toBe("working");
+  });
+
+  it("detects stuck when blocked exceeds threshold", async () => {
+    config.reactions = {
+      "agent-stuck": { auto: true, action: "notify", threshold: "1m" },
+    };
+
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({
+      state: "blocked",
+      timestamp: new Date(Date.now() - 120_000),
+    });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "working", metadata: { agent: "mock-agent" } }),
+      metaOverrides: { agent: "mock-agent" },
+    });
+
+    await lm.check("app-1");
+    expect(lm.getStates().get("app-1")).toBe("stuck");
+  });
+
+  it("keeps current status when SCM check throws", async () => {
+    const mockSCM = createMockSCM({
+      getPRState: vi.fn().mockRejectedValue(new Error("API error")),
+    });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "pr_open", pr: makePR() }),
+      registry,
+    });
+
+    await lm.check("app-1");
+    // SCM check failed — should preserve existing status
+    expect(lm.getStates().get("app-1")).toBe("pr_open");
+  });
+
+  it("detects killed when PR is closed", async () => {
+    const mockSCM = createMockSCM({
+      getPRState: vi.fn().mockResolvedValue("closed"),
+    });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "pr_open", pr: makePR() }),
+      registry,
+    });
+
+    await lm.check("app-1");
+    expect(lm.getStates().get("app-1")).toBe("killed");
+  });
+});

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { isOrchestratorSession, isIssueNotFoundError } from "../types.js";
+import {
+  isOrchestratorSession,
+  isIssueNotFoundError,
+  normalizeAgentPermissionMode,
+  isOpenCodeSessionManager,
+} from "../types.js";
 
 describe("isOrchestratorSession", () => {
   it("detects orchestrators by explicit role metadata", () => {
@@ -47,5 +52,56 @@ describe("isIssueNotFoundError", () => {
     expect(isIssueNotFoundError(null)).toBe(false);
     expect(isIssueNotFoundError(undefined)).toBe(false);
     expect(isIssueNotFoundError("string")).toBe(false);
+  });
+});
+
+describe("normalizeAgentPermissionMode", () => {
+  it("returns undefined for undefined input", () => {
+    expect(normalizeAgentPermissionMode(undefined)).toBeUndefined();
+  });
+
+  it("returns canonical mode for valid modes", () => {
+    expect(normalizeAgentPermissionMode("permissionless")).toBe("permissionless");
+    expect(normalizeAgentPermissionMode("default")).toBe("default");
+    expect(normalizeAgentPermissionMode("auto-edit")).toBe("auto-edit");
+    expect(normalizeAgentPermissionMode("suggest")).toBe("suggest");
+  });
+
+  it("normalizes 'skip' legacy alias to 'permissionless' (line 1153)", () => {
+    expect(normalizeAgentPermissionMode("skip")).toBe("permissionless");
+  });
+
+  it("returns undefined for unknown mode strings (line 1154)", () => {
+    expect(normalizeAgentPermissionMode("unknown")).toBeUndefined();
+    expect(normalizeAgentPermissionMode("")).toBeUndefined();
+  });
+});
+
+describe("isOpenCodeSessionManager", () => {
+  it("returns true when remap function exists (line 1276)", () => {
+    const sm = {
+      spawn: async () => ({} as any),
+      list: async () => [],
+      get: async () => null,
+      kill: async () => {},
+      cleanup: async () => ({ killed: [], skipped: [], errors: [] }),
+      send: async () => {},
+      claimPR: async () => ({} as any),
+      remap: async () => {},
+    };
+    expect(isOpenCodeSessionManager(sm as any)).toBe(true);
+  });
+
+  it("returns false when remap function is missing", () => {
+    const sm = {
+      spawn: async () => ({} as any),
+      list: async () => [],
+      get: async () => null,
+      kill: async () => {},
+      cleanup: async () => ({ killed: [], skipped: [], errors: [] }),
+      send: async () => {},
+      claimPR: async () => ({} as any),
+    };
+    expect(isOpenCodeSessionManager(sm as any)).toBe(false);
   });
 });

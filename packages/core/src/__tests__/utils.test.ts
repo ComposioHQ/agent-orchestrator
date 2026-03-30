@@ -2,8 +2,17 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { isRetryableHttpStatus, normalizeRetryConfig, readLastJsonlEntry } from "../utils.js";
+import {
+  escapeAppleScript,
+  isRetryableHttpStatus,
+  normalizeRetryConfig,
+  readLastJsonlEntry,
+  resolveProjectIdForSessionId,
+  shellEscape,
+  validateUrl,
+} from "../utils.js";
 import { parsePrFromUrl } from "../utils/pr.js";
+import type { OrchestratorConfig } from "../types.js";
 
 describe("readLastJsonlEntry", () => {
   let tmpDir: string;
@@ -137,5 +146,232 @@ describe("parsePrFromUrl", () => {
 
   it("returns null when the URL has no PR number", () => {
     expect(parsePrFromUrl("https://example.com/foo/bar/pull/not-a-number")).toBeNull();
+  });
+});
+
+describe("validateUrl", () => {
+  it("accepts https URLs without throwing", () => {
+    expect(() => validateUrl("https://example.com", "test")).not.toThrow();
+  });
+
+  it("accepts http URLs without throwing", () => {
+    expect(() => validateUrl("http://example.com", "test")).not.toThrow();
+  });
+
+  it("throws for ftp URLs", () => {
+    expect(() => validateUrl("ftp://example.com", "test")).toThrow(
+      '[test] Invalid url: must be http(s), got "ftp://example.com"',
+    );
+  });
+
+  it("throws for URLs without protocol", () => {
+    expect(() => validateUrl("example.com", "test-label")).toThrow("[test-label]");
+  });
+
+  it("throws for empty string", () => {
+    expect(() => validateUrl("", "empty")).toThrow('[empty] Invalid url: must be http(s), got ""');
+  });
+
+  it("includes the label in the error message", () => {
+    expect(() => validateUrl("ws://socket", "WebSocket")).toThrow("[WebSocket]");
+  });
+
+  it("throws for file:// protocol", () => {
+    expect(() => validateUrl("file:///etc/passwd", "file")).toThrow("Invalid url");
+  });
+});
+
+describe("escapeAppleScript", () => {
+  it("returns unchanged string when no special characters", () => {
+    expect(escapeAppleScript("hello world")).toBe("hello world");
+  });
+
+  it("escapes double quotes", () => {
+    expect(escapeAppleScript('say "hello"')).toBe('say \\"hello\\"');
+  });
+
+  it("escapes backslashes", () => {
+    expect(escapeAppleScript("path\\to\\file")).toBe("path\\\\to\\\\file");
+  });
+
+  it("escapes both backslashes and double quotes together", () => {
+    expect(escapeAppleScript('path\\to\\"file"')).toBe('path\\\\to\\\\\\"file\\"');
+  });
+
+  it("handles empty string", () => {
+    expect(escapeAppleScript("")).toBe("");
+  });
+
+  it("handles string with only backslashes", () => {
+    expect(escapeAppleScript("\\\\")).toBe("\\\\\\\\");
+  });
+
+  it("handles string with only quotes", () => {
+    expect(escapeAppleScript('""')).toBe('\\"\\"');
+  });
+});
+
+describe("shellEscape", () => {
+  it("wraps a simple string in single quotes", () => {
+    expect(shellEscape("hello")).toBe("'hello'");
+  });
+
+  it("escapes embedded single quotes", () => {
+    expect(shellEscape("it's")).toBe("'it'\\''s'");
+  });
+
+  it("handles empty string", () => {
+    expect(shellEscape("")).toBe("''");
+  });
+
+  it("wraps strings with spaces", () => {
+    expect(shellEscape("hello world")).toBe("'hello world'");
+  });
+
+  it("handles strings with special shell characters", () => {
+    expect(shellEscape("$HOME")).toBe("'$HOME'");
+    expect(shellEscape("foo;bar")).toBe("'foo;bar'");
+    expect(shellEscape("a|b")).toBe("'a|b'");
+  });
+
+  it("escapes multiple single quotes", () => {
+    expect(shellEscape("it's a 'test'")).toBe("'it'\\''s a '\\''test'\\'''");
+  });
+});
+
+describe("normalizeRetryConfig - additional", () => {
+  it("uses custom defaults when provided", () => {
+    const result = normalizeRetryConfig(undefined, { retries: 5, retryDelayMs: 2000 });
+    expect(result).toEqual({ retries: 5, retryDelayMs: 2000 });
+  });
+
+  it("handles NaN retries by falling back to defaults", () => {
+    const result = normalizeRetryConfig({ retries: NaN, retryDelayMs: 100 });
+    expect(result.retries).toBe(2); // default
+    expect(result.retryDelayMs).toBe(100);
+  });
+
+  it("handles Infinity retries by falling back to defaults", () => {
+    const result = normalizeRetryConfig({ retries: Infinity, retryDelayMs: 100 });
+    expect(result.retries).toBe(2); // default
+  });
+
+  it("clamps retries of 0 to 0", () => {
+    const result = normalizeRetryConfig({ retries: 0 });
+    expect(result.retries).toBe(0);
+  });
+
+  it("handles retryDelayMs of 0", () => {
+    const result = normalizeRetryConfig({ retryDelayMs: 0 });
+    expect(result.retryDelayMs).toBe(0);
+  });
+
+  it("handles undefined config fields individually", () => {
+    const result = normalizeRetryConfig({ retries: 3 });
+    expect(result.retries).toBe(3);
+    expect(result.retryDelayMs).toBe(1000); // default
+  });
+
+  it("handles non-numeric values by falling back to defaults", () => {
+    const result = normalizeRetryConfig({ retries: "abc" as unknown, retryDelayMs: "xyz" as unknown });
+    expect(result.retries).toBe(2);
+    expect(result.retryDelayMs).toBe(1000);
+  });
+});
+
+describe("resolveProjectIdForSessionId", () => {
+  const config: OrchestratorConfig = {
+    configPath: "/tmp/test/agent-orchestrator.yaml",
+    port: 3000,
+    defaults: {
+      runtime: "tmux",
+      agent: "claude-code",
+      workspace: "worktree",
+      notifiers: [],
+    },
+    projects: {
+      "my-app": {
+        name: "My App",
+        repo: "org/my-app",
+        path: "/tmp/my-app",
+        defaultBranch: "main",
+        sessionPrefix: "app",
+      },
+      "web-service": {
+        name: "Web Service",
+        repo: "org/web",
+        path: "/tmp/web",
+        defaultBranch: "main",
+        sessionPrefix: "web",
+      },
+    },
+    notifiers: {},
+    notificationRouting: { urgent: [], action: [], warning: [], info: [] },
+    reactions: {},
+    readyThresholdMs: 300_000,
+  };
+
+  it("resolves project ID from session ID with prefix and number", () => {
+    expect(resolveProjectIdForSessionId(config, "app-1")).toBe("my-app");
+  });
+
+  it("resolves project ID from session ID with prefix and longer suffix", () => {
+    expect(resolveProjectIdForSessionId(config, "app-42-extra")).toBe("my-app");
+  });
+
+  it("resolves exact prefix match (session ID equals prefix)", () => {
+    expect(resolveProjectIdForSessionId(config, "app")).toBe("my-app");
+  });
+
+  it("resolves a different project correctly", () => {
+    expect(resolveProjectIdForSessionId(config, "web-5")).toBe("web-service");
+  });
+
+  it("returns undefined for unknown session prefix", () => {
+    expect(resolveProjectIdForSessionId(config, "unknown-1")).toBeUndefined();
+  });
+
+  it("returns undefined for empty session ID", () => {
+    expect(resolveProjectIdForSessionId(config, "")).toBeUndefined();
+  });
+
+  it("does not match partial prefixes", () => {
+    // "ap" should NOT match "app" prefix
+    expect(resolveProjectIdForSessionId(config, "ap-1")).toBeUndefined();
+  });
+
+  it("requires dash separator after prefix", () => {
+    // "appx" should not match "app" prefix (no dash separator)
+    expect(resolveProjectIdForSessionId(config, "appx")).toBeUndefined();
+  });
+
+  it("handles config with no projects", () => {
+    const emptyConfig: OrchestratorConfig = {
+      ...config,
+      projects: {},
+    };
+    expect(resolveProjectIdForSessionId(emptyConfig, "app-1")).toBeUndefined();
+  });
+});
+
+describe("isRetryableHttpStatus - additional", () => {
+  it("marks 200 as non-retryable", () => {
+    expect(isRetryableHttpStatus(200)).toBe(false);
+  });
+
+  it("marks 301 as non-retryable", () => {
+    expect(isRetryableHttpStatus(301)).toBe(false);
+  });
+
+  it("marks 502 as retryable", () => {
+    expect(isRetryableHttpStatus(502)).toBe(true);
+  });
+
+  it("marks 504 as retryable", () => {
+    expect(isRetryableHttpStatus(504)).toBe(true);
+  });
+
+  it("marks 499 as non-retryable", () => {
+    expect(isRetryableHttpStatus(499)).toBe(false);
   });
 });

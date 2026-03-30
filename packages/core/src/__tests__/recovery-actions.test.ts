@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { readMetadataRaw } from "../metadata.js";
 import { getSessionsDir } from "../paths.js";
-import { escalateSession, recoverSession } from "../recovery/actions.js";
+import { cleanupSession, escalateSession, executeAction, recoverSession } from "../recovery/actions.js";
 import { runRecovery } from "../recovery/manager.js";
 import { getRecoveryLogPath, scanAllSessions } from "../recovery/scanner.js";
 import {
@@ -13,7 +13,7 @@ import {
   type RecoveryAssessment,
   type RecoveryContext,
 } from "../recovery/types.js";
-import type { OrchestratorConfig, PluginRegistry } from "../types.js";
+import type { OrchestratorConfig, PluginRegistry, Runtime, Workspace } from "../types.js";
 
 function makeConfig(rootDir: string): OrchestratorConfig {
   return {
@@ -303,5 +303,459 @@ describe("recovery manager and scanner", () => {
 
     expect(scanned).toHaveLength(1);
     expect(scanned[0]?.sessionId).toBe("app-1");
+  });
+});
+
+describe("recoverSession - error handling", () => {
+  let rootDir: string;
+
+  afterEach(() => {
+    if (rootDir) {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns success:false when updateMetadata throws (invalid session ID)", async () => {
+    rootDir = join(tmpdir(), `ao-recovery-${randomUUID()}`);
+    mkdirSync(rootDir, { recursive: true });
+    mkdirSync(join(rootDir, "project"), { recursive: true });
+    writeFileSync(join(rootDir, "agent-orchestrator.yaml"), "projects: {}\n", "utf-8");
+
+    const config = makeConfig(rootDir);
+    const registry = makeRegistry();
+    // Use an invalid session ID with special chars to make validateSessionId throw
+    const assessment = makeAssessment({
+      sessionId: "app/../invalid",
+    });
+    const context = makeContext(rootDir);
+
+    const result = await recoverSession(assessment, config, registry, context);
+
+    expect(result.success).toBe(false);
+    expect(result.action).toBe("recover");
+    expect(result.error).toBeDefined();
+  });
+
+  it("dryRun returns success without modifying metadata", async () => {
+    rootDir = join(tmpdir(), `ao-recovery-${randomUUID()}`);
+    mkdirSync(rootDir, { recursive: true });
+    mkdirSync(join(rootDir, "project"), { recursive: true });
+    writeFileSync(join(rootDir, "agent-orchestrator.yaml"), "projects: {}\n", "utf-8");
+
+    const config = makeConfig(rootDir);
+    const registry = makeRegistry();
+    const assessment = makeAssessment();
+    const context = makeContext(rootDir, { dryRun: true });
+
+    const result = await recoverSession(assessment, config, registry, context);
+
+    expect(result.success).toBe(true);
+    expect(result.action).toBe("recover");
+    // In dry run, no session is created
+    expect(result.session).toBeUndefined();
+  });
+
+  it("increments recoveryCount from rawMetadata", async () => {
+    rootDir = join(tmpdir(), `ao-recovery-${randomUUID()}`);
+    mkdirSync(rootDir, { recursive: true });
+    mkdirSync(join(rootDir, "project"), { recursive: true });
+    writeFileSync(join(rootDir, "agent-orchestrator.yaml"), "projects: {}\n", "utf-8");
+
+    const config = makeConfig(rootDir);
+    const registry = makeRegistry();
+    const assessment = makeAssessment({
+      rawMetadata: {
+        ...makeAssessment().rawMetadata,
+        recoveryCount: "1",
+      },
+    });
+    const context = makeContext(rootDir);
+
+    const result = await recoverSession(assessment, config, registry, context);
+
+    expect(result.success).toBe(true);
+    expect(result.action).toBe("recover");
+
+    const sessionsDir = getSessionsDir(config.configPath, config.projects.app.path);
+    const metadata = readMetadataRaw(sessionsDir, "app-1");
+    expect(metadata?.["recoveryCount"]).toBe("2");
+  });
+});
+
+describe("cleanupSession", () => {
+  let rootDir: string;
+
+  afterEach(() => {
+    if (rootDir) {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns success in dry-run mode without performing cleanup", async () => {
+    rootDir = join(tmpdir(), `ao-recovery-${randomUUID()}`);
+    mkdirSync(rootDir, { recursive: true });
+    mkdirSync(join(rootDir, "project"), { recursive: true });
+    writeFileSync(join(rootDir, "agent-orchestrator.yaml"), "projects: {}\n", "utf-8");
+
+    const config = makeConfig(rootDir);
+    const registry = makeRegistry();
+    const assessment = makeAssessment({
+      action: "cleanup",
+      classification: "dead",
+      runtimeAlive: false,
+      workspaceExists: false,
+    });
+    const context = makeContext(rootDir, { dryRun: true });
+
+    const result = await cleanupSession(assessment, config, registry, context);
+
+    expect(result.success).toBe(true);
+    expect(result.action).toBe("cleanup");
+  });
+
+  it("destroys runtime when runtimeAlive and handle present", async () => {
+    rootDir = join(tmpdir(), `ao-recovery-${randomUUID()}`);
+    mkdirSync(rootDir, { recursive: true });
+    mkdirSync(join(rootDir, "project"), { recursive: true });
+    writeFileSync(join(rootDir, "agent-orchestrator.yaml"), "projects: {}\n", "utf-8");
+
+    const config = makeConfig(rootDir);
+    const mockRuntime: Runtime = {
+      name: "tmux",
+      create: vi.fn(),
+      destroy: vi.fn().mockResolvedValue(undefined),
+      sendMessage: vi.fn(),
+      getOutput: vi.fn(),
+      isAlive: vi.fn(),
+    };
+    const registry: PluginRegistry = {
+      register: vi.fn(),
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        return null;
+      }),
+      list: vi.fn().mockReturnValue([]),
+      loadBuiltins: vi.fn(),
+      loadFromConfig: vi.fn(),
+    };
+
+    const assessment = makeAssessment({
+      action: "cleanup",
+      classification: "dead",
+      runtimeAlive: true,
+      runtimeHandle: { id: "rt-1", runtimeName: "tmux", data: {} },
+      workspaceExists: false,
+    });
+
+    // Create sessions dir with metadata for the session
+    const sessionsDir = getSessionsDir(config.configPath, config.projects.app.path);
+    mkdirSync(sessionsDir, { recursive: true });
+    writeFileSync(join(sessionsDir, "app-1"), "project=app\nstatus=working\n", "utf-8");
+
+    const context = makeContext(rootDir);
+    const result = await cleanupSession(assessment, config, registry, context);
+
+    expect(result.success).toBe(true);
+    expect(result.action).toBe("cleanup");
+    expect(mockRuntime.destroy).toHaveBeenCalledWith({ id: "rt-1", runtimeName: "tmux", data: {} });
+  });
+
+  it("destroys workspace when workspaceExists and workspace plugin available", async () => {
+    rootDir = join(tmpdir(), `ao-recovery-${randomUUID()}`);
+    mkdirSync(rootDir, { recursive: true });
+    mkdirSync(join(rootDir, "project"), { recursive: true });
+    writeFileSync(join(rootDir, "agent-orchestrator.yaml"), "projects: {}\n", "utf-8");
+
+    const config = makeConfig(rootDir);
+    const mockWorkspace: Workspace = {
+      name: "worktree",
+      create: vi.fn(),
+      destroy: vi.fn().mockResolvedValue(undefined),
+      list: vi.fn(),
+    };
+    const registry: PluginRegistry = {
+      register: vi.fn(),
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+      list: vi.fn().mockReturnValue([]),
+      loadBuiltins: vi.fn(),
+      loadFromConfig: vi.fn(),
+    };
+
+    const assessment = makeAssessment({
+      action: "cleanup",
+      classification: "dead",
+      runtimeAlive: false,
+      workspaceExists: true,
+      rawMetadata: {
+        ...makeAssessment().rawMetadata,
+        worktree: "/tmp/workspace-path",
+      },
+    });
+
+    // Create sessions dir with metadata
+    const sessionsDir = getSessionsDir(config.configPath, config.projects.app.path);
+    mkdirSync(sessionsDir, { recursive: true });
+    writeFileSync(join(sessionsDir, "app-1"), "project=app\nstatus=working\n", "utf-8");
+
+    const context = makeContext(rootDir);
+    const result = await cleanupSession(assessment, config, registry, context);
+
+    expect(result.success).toBe(true);
+    expect(mockWorkspace.destroy).toHaveBeenCalledWith("/tmp/workspace-path");
+  });
+
+  it("ignores errors from runtime.destroy during cleanup", async () => {
+    rootDir = join(tmpdir(), `ao-recovery-${randomUUID()}`);
+    mkdirSync(rootDir, { recursive: true });
+    mkdirSync(join(rootDir, "project"), { recursive: true });
+    writeFileSync(join(rootDir, "agent-orchestrator.yaml"), "projects: {}\n", "utf-8");
+
+    const config = makeConfig(rootDir);
+    const mockRuntime: Runtime = {
+      name: "tmux",
+      create: vi.fn(),
+      destroy: vi.fn().mockRejectedValue(new Error("destroy failed")),
+      sendMessage: vi.fn(),
+      getOutput: vi.fn(),
+      isAlive: vi.fn(),
+    };
+    const registry: PluginRegistry = {
+      register: vi.fn(),
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        return null;
+      }),
+      list: vi.fn().mockReturnValue([]),
+      loadBuiltins: vi.fn(),
+      loadFromConfig: vi.fn(),
+    };
+
+    const assessment = makeAssessment({
+      action: "cleanup",
+      runtimeAlive: true,
+      runtimeHandle: { id: "rt-1", runtimeName: "tmux", data: {} },
+      workspaceExists: false,
+    });
+
+    const sessionsDir = getSessionsDir(config.configPath, config.projects.app.path);
+    mkdirSync(sessionsDir, { recursive: true });
+    writeFileSync(join(sessionsDir, "app-1"), "project=app\nstatus=working\n", "utf-8");
+
+    const context = makeContext(rootDir);
+    const result = await cleanupSession(assessment, config, registry, context);
+
+    // Should succeed even though runtime.destroy threw
+    expect(result.success).toBe(true);
+    expect(result.action).toBe("cleanup");
+  });
+
+  it("returns failure when metadata update throws (invalid session ID)", async () => {
+    rootDir = join(tmpdir(), `ao-recovery-${randomUUID()}`);
+    mkdirSync(rootDir, { recursive: true });
+    mkdirSync(join(rootDir, "project"), { recursive: true });
+    writeFileSync(join(rootDir, "agent-orchestrator.yaml"), "projects: {}\n", "utf-8");
+
+    const config = makeConfig(rootDir);
+    const registry = makeRegistry();
+    // Invalid session ID triggers validateSessionId error inside updateMetadata
+    const assessment = makeAssessment({
+      sessionId: "app/../bad",
+      action: "cleanup",
+      runtimeAlive: false,
+      workspaceExists: false,
+    });
+    const context = makeContext(rootDir);
+
+    const result = await cleanupSession(assessment, config, registry, context);
+
+    expect(result.success).toBe(false);
+    expect(result.action).toBe("cleanup");
+    expect(result.error).toBeDefined();
+  });
+});
+
+describe("escalateSession - additional", () => {
+  let rootDir: string;
+
+  afterEach(() => {
+    if (rootDir) {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("updates metadata with escalation info on non-dry run", async () => {
+    rootDir = join(tmpdir(), `ao-recovery-${randomUUID()}`);
+    mkdirSync(rootDir, { recursive: true });
+    mkdirSync(join(rootDir, "project"), { recursive: true });
+    writeFileSync(join(rootDir, "agent-orchestrator.yaml"), "projects: {}\n", "utf-8");
+
+    const config = makeConfig(rootDir);
+    const registry = makeRegistry();
+    const assessment = makeAssessment({
+      action: "escalate",
+      classification: "partial",
+      reason: "Incomplete state",
+    });
+
+    // Create sessions dir with metadata
+    const sessionsDir = getSessionsDir(config.configPath, config.projects.app.path);
+    mkdirSync(sessionsDir, { recursive: true });
+    writeFileSync(join(sessionsDir, "app-1"), "project=app\nstatus=working\n", "utf-8");
+
+    const context = makeContext(rootDir);
+    const result = await escalateSession(assessment, config, registry, context);
+
+    expect(result.success).toBe(true);
+    expect(result.action).toBe("escalate");
+    expect(result.requiresManualIntervention).toBe(true);
+    expect(result.reason).toBe("Incomplete state");
+
+    const metadata = readMetadataRaw(sessionsDir, "app-1");
+    expect(metadata?.["status"]).toBe("stuck");
+    expect(metadata?.["escalationReason"]).toBe("Incomplete state");
+    expect(metadata?.["escalatedAt"]).toBeDefined();
+  });
+
+  it("returns failure when metadata update fails (invalid session ID)", async () => {
+    rootDir = join(tmpdir(), `ao-recovery-${randomUUID()}`);
+    mkdirSync(rootDir, { recursive: true });
+    mkdirSync(join(rootDir, "project"), { recursive: true });
+    writeFileSync(join(rootDir, "agent-orchestrator.yaml"), "projects: {}\n", "utf-8");
+
+    const config = makeConfig(rootDir);
+    const registry = makeRegistry();
+    // Invalid session ID triggers error inside updateMetadata
+    const assessment = makeAssessment({
+      sessionId: "app/../bad",
+      action: "escalate",
+      reason: "Runtime missing",
+    });
+    const context = makeContext(rootDir);
+
+    const result = await escalateSession(assessment, config, registry, context);
+
+    expect(result.success).toBe(false);
+    expect(result.action).toBe("escalate");
+    expect(result.error).toBeDefined();
+    expect(result.requiresManualIntervention).toBe(true);
+  });
+});
+
+describe("executeAction", () => {
+  let rootDir: string;
+
+  afterEach(() => {
+    if (rootDir) {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("routes to recoverSession for action=recover", async () => {
+    rootDir = join(tmpdir(), `ao-recovery-${randomUUID()}`);
+    mkdirSync(rootDir, { recursive: true });
+    mkdirSync(join(rootDir, "project"), { recursive: true });
+    writeFileSync(join(rootDir, "agent-orchestrator.yaml"), "projects: {}\n", "utf-8");
+
+    const config = makeConfig(rootDir);
+    const registry = makeRegistry();
+    const assessment = makeAssessment({ action: "recover" });
+    const context = makeContext(rootDir);
+
+    const result = await executeAction(assessment, config, registry, context);
+
+    expect(result.action).toBe("recover");
+    expect(result.success).toBe(true);
+  });
+
+  it("routes to cleanupSession for action=cleanup", async () => {
+    rootDir = join(tmpdir(), `ao-recovery-${randomUUID()}`);
+    mkdirSync(rootDir, { recursive: true });
+    mkdirSync(join(rootDir, "project"), { recursive: true });
+    writeFileSync(join(rootDir, "agent-orchestrator.yaml"), "projects: {}\n", "utf-8");
+
+    const config = makeConfig(rootDir);
+    const registry = makeRegistry();
+    const assessment = makeAssessment({
+      action: "cleanup",
+      runtimeAlive: false,
+      workspaceExists: false,
+    });
+
+    const sessionsDir = getSessionsDir(config.configPath, config.projects.app.path);
+    mkdirSync(sessionsDir, { recursive: true });
+    writeFileSync(join(sessionsDir, "app-1"), "project=app\nstatus=working\n", "utf-8");
+
+    const context = makeContext(rootDir);
+    const result = await executeAction(assessment, config, registry, context);
+
+    expect(result.action).toBe("cleanup");
+    expect(result.success).toBe(true);
+  });
+
+  it("routes to escalateSession for action=escalate", async () => {
+    rootDir = join(tmpdir(), `ao-recovery-${randomUUID()}`);
+    mkdirSync(rootDir, { recursive: true });
+    mkdirSync(join(rootDir, "project"), { recursive: true });
+    writeFileSync(join(rootDir, "agent-orchestrator.yaml"), "projects: {}\n", "utf-8");
+
+    const config = makeConfig(rootDir);
+    const registry = makeRegistry();
+    const assessment = makeAssessment({
+      action: "escalate",
+      reason: "Partial state",
+    });
+
+    const sessionsDir = getSessionsDir(config.configPath, config.projects.app.path);
+    mkdirSync(sessionsDir, { recursive: true });
+    writeFileSync(join(sessionsDir, "app-1"), "project=app\nstatus=working\n", "utf-8");
+
+    const context = makeContext(rootDir);
+    const result = await executeAction(assessment, config, registry, context);
+
+    expect(result.action).toBe("escalate");
+    expect(result.success).toBe(true);
+    expect(result.requiresManualIntervention).toBe(true);
+  });
+
+  it("returns skip result for action=skip", async () => {
+    rootDir = join(tmpdir(), `ao-recovery-${randomUUID()}`);
+    mkdirSync(rootDir, { recursive: true });
+    writeFileSync(join(rootDir, "agent-orchestrator.yaml"), "projects: {}\n", "utf-8");
+
+    const config = makeConfig(rootDir);
+    const registry = makeRegistry();
+    const assessment = makeAssessment({
+      action: "skip",
+      classification: "unrecoverable",
+    });
+    const context = makeContext(rootDir);
+
+    const result = await executeAction(assessment, config, registry, context);
+
+    expect(result.action).toBe("skip");
+    expect(result.success).toBe(true);
+    expect(result.sessionId).toBe("app-1");
+  });
+
+  it("returns skip for unknown action values (default case)", async () => {
+    rootDir = join(tmpdir(), `ao-recovery-${randomUUID()}`);
+    mkdirSync(rootDir, { recursive: true });
+    writeFileSync(join(rootDir, "agent-orchestrator.yaml"), "projects: {}\n", "utf-8");
+
+    const config = makeConfig(rootDir);
+    const registry = makeRegistry();
+    // Force an unknown action by casting
+    const assessment = makeAssessment({
+      action: "unknown" as RecoveryAssessment["action"],
+    });
+    const context = makeContext(rootDir);
+
+    const result = await executeAction(assessment, config, registry, context);
+
+    expect(result.action).toBe("skip");
+    expect(result.success).toBe(true);
   });
 });

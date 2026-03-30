@@ -217,3 +217,230 @@ describe("BASE_AGENT_PROMPT", () => {
     expect(BASE_AGENT_PROMPT).toContain("ao session claim-pr");
   });
 });
+
+// =============================================================================
+// Additional coverage: lineage, siblings, reactions, edge cases
+// =============================================================================
+
+describe("buildPrompt — lineage (decomposition context)", () => {
+  it("includes task hierarchy when lineage is provided", () => {
+    const result = buildPrompt({
+      project,
+      projectId: "test-app",
+      issueId: "INT-100",
+      lineage: ["Build full-stack app", "Backend services"],
+    });
+
+    expect(result).toContain("## Task Hierarchy");
+    expect(result).toContain("0. Build full-stack app");
+    expect(result).toContain("  1. Backend services");
+    expect(result).toContain("2. INT-100  <-- (this task)");
+    expect(result).toContain("Stay focused on YOUR specific task");
+  });
+
+  it("uses 'this task' label when issueId is not set", () => {
+    const result = buildPrompt({
+      project,
+      projectId: "test-app",
+      lineage: ["Root task"],
+    });
+
+    expect(result).toContain("## Task Hierarchy");
+    expect(result).toContain("1. this task  <-- (this task)");
+  });
+
+  it("omits task hierarchy when lineage is empty", () => {
+    const result = buildPrompt({
+      project,
+      projectId: "test-app",
+      lineage: [],
+    });
+
+    expect(result).not.toContain("## Task Hierarchy");
+  });
+
+  it("omits task hierarchy when lineage is not provided", () => {
+    const result = buildPrompt({
+      project,
+      projectId: "test-app",
+    });
+
+    expect(result).not.toContain("## Task Hierarchy");
+  });
+});
+
+describe("buildPrompt — siblings (parallel work context)", () => {
+  it("includes parallel work section when siblings are provided", () => {
+    const result = buildPrompt({
+      project,
+      projectId: "test-app",
+      siblings: ["Build API endpoints", "Set up database"],
+    });
+
+    expect(result).toContain("## Parallel Work");
+    expect(result).toContain("Sibling tasks being worked on in parallel:");
+    expect(result).toContain("  - Build API endpoints");
+    expect(result).toContain("  - Set up database");
+    expect(result).toContain("Do not duplicate work that sibling tasks handle");
+  });
+
+  it("omits parallel work section when siblings is empty", () => {
+    const result = buildPrompt({
+      project,
+      projectId: "test-app",
+      siblings: [],
+    });
+
+    expect(result).not.toContain("## Parallel Work");
+  });
+
+  it("omits parallel work section when siblings is not provided", () => {
+    const result = buildPrompt({
+      project,
+      projectId: "test-app",
+    });
+
+    expect(result).not.toContain("## Parallel Work");
+  });
+});
+
+describe("buildPrompt — lineage and siblings together", () => {
+  it("includes both sections when both are provided", () => {
+    const result = buildPrompt({
+      project,
+      projectId: "test-app",
+      issueId: "INT-50",
+      lineage: ["Root project", "Backend module"],
+      siblings: ["Auth service", "Payment service"],
+    });
+
+    expect(result).toContain("## Task Hierarchy");
+    expect(result).toContain("## Parallel Work");
+
+    // Hierarchy should come before parallel work
+    const hierarchyIdx = result.indexOf("## Task Hierarchy");
+    const parallelIdx = result.indexOf("## Parallel Work");
+    expect(hierarchyIdx).toBeLessThan(parallelIdx);
+  });
+});
+
+describe("buildPrompt — reactions config", () => {
+  it("includes reaction hints for multiple auto send-to-agent reactions", () => {
+    project.reactions = {
+      "ci-failed": { auto: true, action: "send-to-agent" },
+      "changes-requested": { auto: true, action: "send-to-agent" },
+      "agent-stuck": { auto: true, action: "notify" },
+    };
+    const result = buildPrompt({
+      project,
+      projectId: "test-app",
+      issueId: "INT-100",
+    });
+    expect(result).toContain("## Automated Reactions");
+    expect(result).toContain("ci-failed: auto-handled");
+    expect(result).toContain("changes-requested: auto-handled");
+    // notify reactions are not included in agent prompt
+    expect(result).not.toContain("agent-stuck");
+  });
+
+  it("omits reactions section when no auto send-to-agent reactions exist", () => {
+    project.reactions = {
+      "approved-and-green": { auto: false, action: "notify" },
+      "agent-stuck": { auto: true, action: "notify" },
+    };
+    const result = buildPrompt({
+      project,
+      projectId: "test-app",
+    });
+    expect(result).not.toContain("## Automated Reactions");
+  });
+
+  it("omits reactions section when reactions is not set", () => {
+    delete project.reactions;
+    const result = buildPrompt({
+      project,
+      projectId: "test-app",
+    });
+    expect(result).not.toContain("## Automated Reactions");
+  });
+});
+
+describe("buildPrompt — readUserRules edge cases", () => {
+  it("handles agentRulesFile pointing to empty file", () => {
+    const rulesPath = join(tmpDir, "empty-rules.md");
+    writeFileSync(rulesPath, "");
+    project.agentRulesFile = "empty-rules.md";
+
+    const result = buildPrompt({
+      project,
+      projectId: "test-app",
+    });
+    // Empty file content (after trim) should not produce a rules section
+    expect(result).not.toContain("## Project Rules");
+  });
+
+  it("handles agentRulesFile with only whitespace", () => {
+    const rulesPath = join(tmpDir, "whitespace-rules.md");
+    writeFileSync(rulesPath, "   \n  \n  ");
+    project.agentRulesFile = "whitespace-rules.md";
+
+    const result = buildPrompt({
+      project,
+      projectId: "test-app",
+    });
+    // Trimmed empty content should not produce rules
+    expect(result).not.toContain("## Project Rules");
+  });
+
+  it("handles agentRules being set and agentRulesFile missing", () => {
+    project.agentRules = "Use TypeScript strict mode.";
+    project.agentRulesFile = "does-not-exist.md";
+
+    const result = buildPrompt({
+      project,
+      projectId: "test-app",
+    });
+    // Should still include inline rules even though file is missing
+    expect(result).toContain("## Project Rules");
+    expect(result).toContain("Use TypeScript strict mode.");
+  });
+});
+
+describe("buildPrompt — section ordering", () => {
+  it("places sections in correct order: base, config, rules, hierarchy, siblings, userPrompt", () => {
+    project.agentRules = "Rule here.";
+    const result = buildPrompt({
+      project,
+      projectId: "test-app",
+      issueId: "INT-1",
+      lineage: ["Root"],
+      siblings: ["Sibling"],
+      userPrompt: "Focus on tests.",
+    });
+
+    const baseIdx = result.indexOf("Session Lifecycle");
+    const contextIdx = result.indexOf("## Project Context");
+    const rulesIdx = result.indexOf("## Project Rules");
+    const hierarchyIdx = result.indexOf("## Task Hierarchy");
+    const parallelIdx = result.indexOf("## Parallel Work");
+    const instructionsIdx = result.indexOf("## Additional Instructions");
+
+    expect(baseIdx).toBeLessThan(contextIdx);
+    expect(contextIdx).toBeLessThan(rulesIdx);
+    expect(rulesIdx).toBeLessThan(hierarchyIdx);
+    expect(hierarchyIdx).toBeLessThan(parallelIdx);
+    expect(parallelIdx).toBeLessThan(instructionsIdx);
+  });
+
+  it("uses projectId as fallback when project.name is not set", () => {
+    const projectNoName = { ...project };
+    delete (projectNoName as Record<string, unknown>).name;
+
+    const result = buildPrompt({
+      project: projectNoName,
+      projectId: "fallback-id",
+    });
+
+    expect(result).toContain("Project: fallback-id");
+  });
+});

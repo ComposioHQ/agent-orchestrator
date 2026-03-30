@@ -202,4 +202,69 @@ describe("feedback report store", () => {
     const records = store.list();
     expect(records).toEqual([saved]);
   });
+
+  it("returns empty array when reports directory does not exist (line 181)", () => {
+    const nonExistentDir = join(tmpdir(), `ao-feedback-nonexistent-${randomUUID()}`);
+    const store = new FeedbackReportStore(nonExistentDir);
+    const records = store.list();
+    expect(records).toEqual([]);
+  });
+
+  it("skips non-report files in the directory (line 185)", () => {
+    const store = new FeedbackReportStore(reportsDir);
+    store.persist(FEEDBACK_TOOL_NAMES.BUG_REPORT, validPayload);
+
+    // Write a file that doesn't match the report_*.kv pattern
+    writeFileSync(join(reportsDir, "not-a-report.txt"), "random content", "utf-8");
+    writeFileSync(join(reportsDir, "config.kv"), "key=value\n", "utf-8");
+
+    const records = store.list();
+    expect(records).toHaveLength(1);
+  });
+
+  it("skips entries that are not regular files (line 190)", () => {
+    const store = new FeedbackReportStore(reportsDir);
+    store.persist(FEEDBACK_TOOL_NAMES.BUG_REPORT, validPayload);
+
+    // Create a directory that matches the report pattern — statSync().isFile() returns false
+    mkdirSync(join(reportsDir, "report_dir-entry_abcd1234.kv"), { recursive: true });
+
+    const records = store.list();
+    expect(records).toHaveLength(1);
+  });
+
+  it("throws on invalid tool type in parseReportFile (line 131)", () => {
+    const store = new FeedbackReportStore(reportsDir);
+
+    // Write a report file with an invalid tool type
+    writeFileSync(
+      join(reportsDir, "report_2026-03-10T00-00-00-000Z_invalid.kv"),
+      [
+        "version=1",
+        "id=report_2026-03-10T00-00-00-000Z_invalid",
+        "tool=invalid_tool_type",
+        "createdAt=2026-03-10T00:00:00.000Z",
+        "dedupeKey=test-dedupe-key-001",
+        "title=test",
+        "body=test",
+        "session=test",
+        "source=test",
+        "confidence=0.5",
+        "evidence.0=test",
+      ].join("\n") + "\n",
+      "utf-8",
+    );
+
+    // The list() method catches parse errors and skips, so this should not throw
+    const records = store.list();
+    expect(records).toEqual([]);
+  });
+
+  it("validates improvement_suggestion tool input correctly", () => {
+    const result = validateFeedbackToolInput(
+      FEEDBACK_TOOL_NAMES.IMPROVEMENT_SUGGESTION,
+      validPayload,
+    );
+    expect(result.title).toBe(validPayload.title);
+  });
 });
