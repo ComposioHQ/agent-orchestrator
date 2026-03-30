@@ -204,7 +204,8 @@ export function CompactTopBar({ session, collapsed, toggleCollapsed, verticalLay
             {verticalLayout ? (
               <>
                 <rect x="1" y="1" width="14" height="14" rx="1.5" />
-                <line x1="8" y1="1" x2="8" y2="15" />
+                <line x1="1" y1="6" x2="15" y2="6" />
+                <line x1="1" y1="11" x2="15" y2="11" />
               </>
             ) : (
               <>

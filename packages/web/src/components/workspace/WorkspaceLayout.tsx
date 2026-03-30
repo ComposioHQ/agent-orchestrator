@@ -294,15 +294,7 @@ export function WorkspaceLayout({ session, children }: WorkspaceLayoutProps) {
   }
 
   // In horizontal mode: all 3 panes are columns
-  // In vertical mode: file tree is left column, preview+terminal stack vertically in right column
   function getGridTemplate(): string {
-    if (verticalLayout) {
-      // Only file tree and the right column (which itself is a vertical split)
-      const leftPanes = [{ visible: filesVisible, size: sizes[0] }];
-      const rightVisible = previewVisible || terminalVisible;
-      const rightPanes = [{ visible: rightVisible, size: sizes[1] + sizes[2] }];
-      return buildTemplate([...leftPanes, ...rightPanes]);
-    }
     return buildTemplate([
       { visible: filesVisible, size: sizes[0] },
       { visible: previewVisible, size: sizes[1] },
@@ -310,10 +302,21 @@ export function WorkspaceLayout({ session, children }: WorkspaceLayoutProps) {
     ]);
   }
 
-  function getVerticalTemplate(): string {
+  // Vertical layout: top row = file tree + preview columns, bottom row = terminal full width
+  // sizes[0] and sizes[1] control the file tree / preview column split (horizontal separator 0)
+  // The row split between top and bottom uses sizes[1]+sizes[0] vs sizes[2] (vertical separator 1)
+  function getVerticalRowTemplate(): string {
+    const topVisible = filesVisible || previewVisible;
     return buildTemplate([
-      { visible: previewVisible, size: sizes[1] },
+      { visible: topVisible, size: sizes[0] + sizes[1] },
       { visible: terminalVisible, size: sizes[2] },
+    ]);
+  }
+
+  function getVerticalColumnTemplate(): string {
+    return buildTemplate([
+      { visible: filesVisible, size: sizes[0] },
+      { visible: previewVisible, size: sizes[1] },
     ]);
   }
 
@@ -484,37 +487,29 @@ export function WorkspaceLayout({ session, children }: WorkspaceLayoutProps) {
     />
   );
 
-  // Vertical layout: file tree | [preview / terminal stacked vertically]
+  // Vertical layout: [file tree | preview] on top, terminal full-width below
   if (verticalLayout) {
-    const rightVisible = previewVisible || terminalVisible;
+    const topVisible = filesVisible || previewVisible;
     return (
       <div className="workspace-container">
         <CompactTopBar {...topBarProps} />
-        <div style={{ flex: 1, display: "flex", overflow: "hidden", minHeight: 0 }}>
-          <div
-            ref={containerRef}
-            style={{
-              flex: 1,
-              display: "grid",
-              gridTemplateColumns: getGridTemplate(),
-              overflow: "hidden",
-              minHeight: 0,
-            }}
-          >
-            {fileTreePane}
-            {filesVisible && rightVisible && (
-              <div className="workspace-separator" onMouseDown={(e) => onSeparatorMouse(0, "horizontal", e)} onTouchStart={(e) => onSeparatorTouch(0, "horizontal", e)} />
-            )}
-            {rightVisible && (
-              <div style={{ display: "grid", gridTemplateRows: getVerticalTemplate(), overflow: "hidden", minHeight: 0 }}>
-                {previewPane}
-                {previewVisible && terminalVisible && (
-                  <div className="workspace-separator workspace-separator--horizontal" onMouseDown={(e) => onSeparatorMouse(1, "vertical", e)} onTouchStart={(e) => onSeparatorTouch(1, "vertical", e)} />
-                )}
-                {terminalPane}
-              </div>
-            )}
-          </div>
+        <div
+          ref={containerRef}
+          style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr", gridTemplateRows: getVerticalRowTemplate(), overflow: "hidden", minHeight: 0 }}
+        >
+          {topVisible && (
+            <div style={{ display: "grid", gridTemplateColumns: getVerticalColumnTemplate(), overflow: "hidden", minHeight: 0 }}>
+              {fileTreePane}
+              {filesVisible && previewVisible && (
+                <div className="workspace-separator" onMouseDown={(e) => onSeparatorMouse(0, "horizontal", e)} onTouchStart={(e) => onSeparatorTouch(0, "horizontal", e)} />
+              )}
+              {previewPane}
+            </div>
+          )}
+          {topVisible && terminalVisible && (
+            <div className="workspace-separator workspace-separator--horizontal" onMouseDown={(e) => onSeparatorMouse(1, "vertical", e)} onTouchStart={(e) => onSeparatorTouch(1, "vertical", e)} />
+          )}
+          {terminalPane}
         </div>
         {quickOpen}
       </div>
