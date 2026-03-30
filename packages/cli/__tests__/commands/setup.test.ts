@@ -124,7 +124,7 @@ describe("setup openclaw command", () => {
         "--url",
         "http://127.0.0.1:18789/hooks/agent",
         "--token",
-        "test-token",
+        "x",
         "--non-interactive",
       ]);
 
@@ -137,7 +137,7 @@ describe("setup openclaw command", () => {
     });
 
     it("reads token from OPENCLAW_HOOKS_TOKEN env var and skips validation", async () => {
-      process.env["OPENCLAW_HOOKS_TOKEN"] = "env-token";
+      process.env["OPENCLAW_HOOKS_TOKEN"] = "x";
       const program = createProgram();
 
       await program.parseAsync([
@@ -204,7 +204,7 @@ describe("setup openclaw command", () => {
         "--url",
         "http://127.0.0.1:18789/hooks/agent",
         "--token",
-        "good-token",
+        "x",
         "--non-interactive",
       ]);
 

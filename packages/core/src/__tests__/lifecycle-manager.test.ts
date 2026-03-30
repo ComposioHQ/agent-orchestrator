@@ -200,6 +200,140 @@ describe("check (single session)", () => {
     expect(lm.getStates().get("app-1")).toBe("needs_input");
   });
 
+  it("upgrades idle activity to needs_input when terminal output shows waiting prompt", async () => {
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({ state: "idle" });
+    vi.mocked(plugins.runtime.getOutput).mockResolvedValue(
+      "Do you want to continue?\n(y)es / (n)o\n",
+    );
+    vi.mocked(plugins.agent.detectActivity).mockReturnValue("waiting_input");
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({
+        status: "working",
+        metadata: {
+          promptDeliveryStatus: "failed",
+          promptDeliveryAttemptedAt: new Date(Date.now() - 10_000).toISOString(),
+        },
+      }),
+      metaOverrides: {
+        promptDeliveryStatus: "failed",
+        promptDeliveryAttemptedAt: new Date(Date.now() - 10_000).toISOString(),
+      },
+    });
+
+    await lm.check("app-1");
+
+    expect(plugins.runtime.getOutput).toHaveBeenCalled();
+    expect(plugins.agent.detectActivity).toHaveBeenCalled();
+    expect(lm.getStates().get("app-1")).toBe("needs_input");
+    expect(stderrSpy).toHaveBeenCalledWith(
+      expect.stringContaining('"operation":"early-needs-input"'),
+    );
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('"level":"warn"'));
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('"detectionMethod":"terminal"'));
+
+    stderrSpy.mockRestore();
+  });
+
+  it("does not probe terminal output for active activity state", async () => {
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({ state: "active" });
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "working" }),
+    });
+
+    await lm.check("app-1");
+
+    expect(plugins.runtime.getOutput).not.toHaveBeenCalled();
+    expect(plugins.agent.detectActivity).not.toHaveBeenCalled();
+    expect(lm.getStates().get("app-1")).toBe("working");
+  });
+
+  it("logs anomaly when session quickly enters needs_input after failed prompt delivery", async () => {
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({ state: "waiting_input" });
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    const attemptedAt = new Date(Date.now() - 15_000).toISOString();
+    const lm = setupCheck("app-1", {
+      session: makeSession({
+        status: "working",
+        metadata: {
+          promptDeliveryStatus: "failed",
+          promptDeliveryAttemptedAt: attemptedAt,
+        },
+      }),
+      metaOverrides: {
+        promptDeliveryStatus: "failed",
+        promptDeliveryAttemptedAt: attemptedAt,
+      },
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("needs_input");
+    expect(stderrSpy).toHaveBeenCalledWith(
+      expect.stringContaining('"operation":"early-needs-input"'),
+    );
+    expect(stderrSpy).toHaveBeenCalledWith(
+      expect.stringContaining('"promptDeliveryStatus":"failed"'),
+    );
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('"level":"warn"'));
+
+    stderrSpy.mockRestore();
+  });
+
+  it("does not log early-needs-input anomaly when prompt delivery was never attempted", async () => {
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({ state: "waiting_input" });
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "working" }),
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("needs_input");
+
+    const wroteAnomalyLog = stderrSpy.mock.calls.some((call) =>
+      String(call[0]).includes('"operation":"early-needs-input"'),
+    );
+    expect(wroteAnomalyLog).toBe(false);
+
+    stderrSpy.mockRestore();
+  });
+
+  it("does not log early-needs-input anomaly while prompt delivery is pending", async () => {
+    vi.mocked(plugins.agent.getActivityState).mockResolvedValue({ state: "waiting_input" });
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    const attemptedAt = new Date(Date.now() - 15_000).toISOString();
+    const lm = setupCheck("app-1", {
+      session: makeSession({
+        status: "working",
+        metadata: {
+          promptDeliveryStatus: "pending",
+          promptDeliveryAttemptedAt: attemptedAt,
+        },
+      }),
+      metaOverrides: {
+        promptDeliveryStatus: "pending",
+        promptDeliveryAttemptedAt: attemptedAt,
+      },
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("needs_input");
+
+    const wroteAnomalyLog = stderrSpy.mock.calls.some((call) =>
+      String(call[0]).includes('"operation":"early-needs-input"'),
+    );
+    expect(wroteAnomalyLog).toBe(false);
+
+    stderrSpy.mockRestore();
+  });
+
   it("transitions to stuck when idle exceeds agent-stuck threshold (OpenCode-style activity)", async () => {
     config.reactions = {
       "agent-stuck": { auto: true, action: "notify", threshold: "1m" },

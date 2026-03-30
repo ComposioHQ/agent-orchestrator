@@ -1,5 +1,6 @@
 import {
   DEFAULT_READY_THRESHOLD_MS,
+  hasApprovalPrompt,
   shellEscape,
   asValidOpenCodeSessionId,
   type Agent,
@@ -238,7 +239,10 @@ function createOpenCodeAgent(): Agent {
 
     detectActivity(terminalOutput: string): ActivityState {
       if (!terminalOutput.trim()) return "idle";
-      // OpenCode doesn't have rich terminal output patterns yet
+      const tail = terminalOutput.trim().split("\n").slice(-15).join("\n");
+
+      if (hasApprovalPrompt(tail)) return "waiting_input";
+
       return "active";
     },
 

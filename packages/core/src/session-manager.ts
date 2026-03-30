@@ -63,6 +63,7 @@ import {
   generateConfigHash,
   validateAndStoreOrigin,
 } from "./paths.js";
+import { createCorrelationId, createProjectObserver } from "./observability.js";
 import { asValidOpenCodeSessionId } from "./opencode-session-id.js";
 import { normalizeOrchestratorSessionStrategy } from "./orchestrator-session-strategy.js";
 import {
@@ -265,6 +266,7 @@ export interface SessionManagerDeps {
 /** Create a SessionManager instance. */
 export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionManager {
   const { config, registry } = deps;
+  const observer = createProjectObserver(config, "session-manager");
 
   interface LocatedSession {
     raw: Record<string, string>;
@@ -1073,7 +1075,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           AO_CALLER_TYPE: "agent",
           AO_PROJECT_ID: spawnConfig.projectId,
           AO_CONFIG_PATH: config.configPath,
-          ...(config.port !== undefined && config.port !== null && { AO_PORT: String(config.port) }),
+          ...(config.port !== undefined &&
+            config.port !== null && { AO_PORT: String(config.port) }),
         },
       });
     } catch (err) {
@@ -1179,15 +1182,100 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     // exits after -p, so we send the prompt after it starts in interactive mode).
     // This is intentionally outside the try/catch above — a prompt delivery failure
     // should NOT destroy the session. The agent is running; user can retry with `ao send`.
+    let promptDeliveryStatus: "success" | "failed" | "pending" = "pending";
     if (plugins.agent.promptDelivery === "post-launch" && agentLaunchConfig.prompt) {
-      try {
-        // Wait for agent to start and be ready for input
-        await new Promise((resolve) => setTimeout(resolve, 5_000));
-        await plugins.runtime.sendMessage(handle, agentLaunchConfig.prompt);
-      } catch {
-        // Non-fatal: agent is running but didn't receive the initial prompt.
-        // User can retry with `ao send`.
+      const retryDelaysMs = [2_000, 4_000, 8_000] as const;
+      const maxAttempts = retryDelaysMs.length;
+      const promptDeliveryAttemptedAt = new Date().toISOString();
+
+      const safeUpdatePromptDeliveryMetadata = (patch: Record<string, string>): void => {
+        try {
+          updateMetadata(sessionsDir, sessionId, patch);
+        } catch (err) {
+          const errorDetails = err instanceof Error ? err.message : String(err);
+          observer.recordOperation({
+            metric: "spawn",
+            operation: "prompt-delivery.metadata-update",
+            outcome: "failure",
+            correlationId: createCorrelationId("spawn-prompt-metadata"),
+            sessionId,
+            projectId: spawnConfig.projectId,
+            reason: `Failed to persist prompt delivery metadata: ${errorDetails}`,
+            level: "warn",
+          });
+        }
+      };
+
+      session.metadata["promptDeliveryStatus"] = promptDeliveryStatus;
+      session.metadata["promptDeliveryAttemptedAt"] = promptDeliveryAttemptedAt;
+      safeUpdatePromptDeliveryMetadata({
+        promptDeliveryStatus,
+        promptDeliveryAttemptedAt,
+      });
+
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        try {
+          const delay = retryDelaysMs[attempt];
+          await sleep(delay);
+          await plugins.runtime.sendMessage(handle, agentLaunchConfig.prompt);
+
+          promptDeliveryStatus = "success";
+          observer.recordOperation({
+            metric: "spawn",
+            operation: "prompt-delivery.post-launch",
+            outcome: "success",
+            correlationId: createCorrelationId("spawn-prompt-delivery"),
+            sessionId,
+            projectId: spawnConfig.projectId,
+            reason: `Initial prompt delivered on attempt ${attempt + 1}`,
+            data: {
+              attempt: attempt + 1,
+              maxAttempts,
+            },
+            level: "info",
+          });
+          break;
+        } catch (err) {
+          const errorDetails = err instanceof Error ? err.message : String(err);
+          observer.recordOperation({
+            metric: "spawn",
+            operation: "prompt-delivery.post-launch",
+            outcome: "failure",
+            correlationId: createCorrelationId("spawn-prompt-delivery"),
+            sessionId,
+            projectId: spawnConfig.projectId,
+            reason: `Failed to deliver initial prompt on attempt ${attempt + 1}/${maxAttempts}: ${errorDetails}`,
+            data: {
+              attempt: attempt + 1,
+              maxAttempts,
+            },
+            level: "warn",
+          });
+
+          if (attempt === maxAttempts - 1) {
+            promptDeliveryStatus = "failed";
+            observer.recordOperation({
+              metric: "spawn",
+              operation: "prompt-delivery.post-launch",
+              outcome: "failure",
+              correlationId: createCorrelationId("spawn-prompt-delivery"),
+              sessionId,
+              projectId: spawnConfig.projectId,
+              reason: `All ${maxAttempts} attempts to deliver initial prompt failed. Agent may need manual input via 'ao send'.`,
+              data: {
+                maxAttempts,
+              },
+              level: "warn",
+            });
+          }
+        }
       }
+
+      session.metadata["promptDeliveryStatus"] = promptDeliveryStatus;
+      safeUpdatePromptDeliveryMetadata({ promptDeliveryStatus });
+
+      // Non-fatal: agent is running but didn't receive the initial prompt after all retries.
+      // User can retry with `ao send`.
     }
 
     return session;

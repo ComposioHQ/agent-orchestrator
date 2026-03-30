@@ -19,6 +19,10 @@ function makeLaunchConfig(overrides: Partial<AgentLaunchConfig> = {}): AgentLaun
 describe("agent-codex launch/env wiring (integration)", () => {
   const agent = codexPlugin.create();
 
+  it("uses post-launch prompt delivery mode", () => {
+    expect(agent.promptDelivery).toBe("post-launch");
+  });
+
   it("includes check_for_update_on_startup=false in launch command", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig());
     expect(cmd).toContain("-c check_for_update_on_startup=false");
@@ -33,6 +37,7 @@ describe("agent-codex launch/env wiring (integration)", () => {
       }),
     );
     expect(cmd).toContain("-c check_for_update_on_startup=false");
+    expect(cmd).not.toContain("Do the thing");
     expect(cmd).not.toContain("--ask-for-approval");
     expect(cmd).toContain("--model 'o3-mini'");
     expect(cmd).toContain("-c model_reasoning_effort=high");
