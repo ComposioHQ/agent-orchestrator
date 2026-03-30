@@ -1,4 +1,5 @@
 import type { OrchestratorConfig, ProjectConfig } from "@composio/ao-core";
+import { mergeRuntimeConfig, isPlainObject } from "@composio/ao-core";
 
 export interface RuntimeOverrideFlagOptions {
   runtime?: string;
@@ -18,31 +19,6 @@ export interface RuntimeOverride {
   runtimeConfig?: Record<string, unknown>;
   effectiveRuntime: string;
   effectiveRuntimeConfig?: Record<string, unknown>;
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function mergeRuntimeConfig(
-  base?: Record<string, unknown>,
-  override?: Record<string, unknown>,
-): Record<string, unknown> | undefined {
-  if (!base && !override) return undefined;
-
-  const merged: Record<string, unknown> = {};
-  for (const source of [base, override]) {
-    if (!source) continue;
-    for (const [key, value] of Object.entries(source)) {
-      const existing = merged[key];
-      merged[key] =
-        isPlainObject(existing) && isPlainObject(value)
-          ? mergeRuntimeConfig(existing, value)
-          : value;
-    }
-  }
-
-  return merged;
 }
 
 function parseRuntimeConfigOverride(raw?: string): Record<string, unknown> | undefined {

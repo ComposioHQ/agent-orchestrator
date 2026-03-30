@@ -78,7 +78,6 @@ export type {
 export { generateOrchestratorPrompt } from "./orchestrator-prompt.js";
 export type { OrchestratorPromptConfig } from "./orchestrator-prompt.js";
 
-
 // Global pause constants and utilities
 export {
   GLOBAL_PAUSE_UNTIL_KEY,
@@ -97,6 +96,7 @@ export {
   readLastJsonlEntry,
   resolveProjectIdForSessionId,
 } from "./utils.js";
+export { isPlainObject, mergeRuntimeConfig } from "./runtime-selection.js";
 export {
   getWebhookHeader,
   parseWebhookJsonObject,
