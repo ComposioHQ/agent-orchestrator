@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { RuntimeHandle } from "./types.js";
+import { escapeRegex } from "./utils.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -12,10 +13,6 @@ let psCache: { output: string; timestamp: number; promise?: Promise<string> } | 
 export interface AgentProcessDetectionOptions {
   psCacheTtlMs?: number;
   commandTimeoutMs?: number;
-}
-
-function escapeRegex(input: string): string {
-  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function getCachedProcessList(cacheTtlMs: number, commandTimeoutMs: number): Promise<string> {
