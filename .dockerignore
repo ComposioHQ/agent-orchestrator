@@ -55,7 +55,7 @@ AGENTS.md
 agent-orchestrator.yaml
 
 # Documentation and non-essential files
-*.md
+**/*.md
 !docker/README.md
 LICENSE
 CHANGELOG.md
