@@ -15,6 +15,7 @@ import {
   SESSION_STATUS,
   PR_STATE,
   CI_STATUS,
+  TERMINAL_STATUSES,
   type LifecycleManager,
   type SessionManager,
   type SessionId,
@@ -712,7 +713,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const humanReactionKey = "changes-requested";
     const automatedReactionKey = "bugbot-comments";
 
-    if (newStatus === "merged" || newStatus === "killed") {
+    if (TERMINAL_STATUSES.has(newStatus)) {
       clearReactionTracker(session.id, humanReactionKey);
       clearReactionTracker(session.id, automatedReactionKey);
       updateSessionMetadata(session, {
@@ -893,7 +894,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       });
 
       // Reset allCompleteEmitted when any session becomes active again
-      if (newStatus !== "merged" && newStatus !== "killed") {
+      if (!TERMINAL_STATUSES.has(newStatus)) {
         allCompleteEmitted = false;
       }
 
@@ -971,7 +972,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       // (e.g., list() detected a dead runtime and marked it "killed" — we need to
       // process that transition even though the new status is terminal)
       const sessionsToCheck = sessions.filter((s) => {
-        if (s.status !== "merged" && s.status !== "killed") return true;
+        if (!TERMINAL_STATUSES.has(s.status)) return true;
         const tracked = states.get(s.id);
         return tracked !== undefined && tracked !== s.status;
       });
@@ -999,7 +1000,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
 
       // Check if all sessions are complete (trigger reaction only once)
-      const activeSessions = sessions.filter((s) => s.status !== "merged" && s.status !== "killed");
+      const activeSessions = sessions.filter((s) => !TERMINAL_STATUSES.has(s.status));
       if (sessions.length > 0 && activeSessions.length === 0 && !allCompleteEmitted) {
         allCompleteEmitted = true;
 

@@ -8,6 +8,7 @@ import type {
   SessionManager,
   Agent,
   ActivityState,
+  SessionStatus,
 } from "../types.js";
 import {
   createTestEnvironment,
@@ -776,6 +777,137 @@ describe("reactions", () => {
     expect(notifier.notify).toHaveBeenCalledWith(
       expect.objectContaining({ type: "merge.completed" }),
     );
+  });
+});
+
+describe("pollAll terminal status accounting", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("treats all TERMINAL_STATUSES as inactive for all-complete", async () => {
+    const notifier = createMockNotifier();
+    const registryWithNotifier: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return plugins.runtime;
+        if (slot === "agent") return plugins.agent;
+        if (slot === "notifier" && name === "desktop") return notifier;
+        return null;
+      }),
+    };
+
+    // All sessions in various terminal states — should count as inactive
+    const terminalSessions = [
+      makeSession({ id: "s-1", status: "killed" as SessionStatus }),
+      makeSession({ id: "s-2", status: "merged" as SessionStatus }),
+      makeSession({ id: "s-3", status: "done" as SessionStatus }),
+      makeSession({ id: "s-4", status: "errored" as SessionStatus }),
+      makeSession({ id: "s-5", status: "terminated" as SessionStatus }),
+      makeSession({ id: "s-6", status: "cleanup" as SessionStatus }),
+    ];
+
+    vi.mocked(mockSessionManager.list).mockResolvedValue(terminalSessions);
+
+    // Route info-priority notifications to desktop so we can observe them
+    config.notificationRouting.info = ["desktop"];
+    config.reactions = {
+      "all-complete": { auto: true, action: "notify" },
+    };
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithNotifier,
+      sessionManager: mockSessionManager,
+    });
+
+    lm.start(60_000);
+    // Let the immediate pollAll() run
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(notifier.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "reaction.triggered" }),
+    );
+
+    lm.stop();
+  });
+
+  it("does not fire all-complete when a session is in non-terminal status like done is missing", async () => {
+    const notifier = createMockNotifier();
+    const registryWithNotifier: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "runtime") return plugins.runtime;
+        if (slot === "agent") return plugins.agent;
+        if (slot === "notifier" && name === "desktop") return notifier;
+        return null;
+      }),
+    };
+
+    // Mix of terminal and active sessions
+    const sessions = [
+      makeSession({ id: "s-1", status: "killed" as SessionStatus }),
+      makeSession({ id: "s-2", status: "working" as SessionStatus }),
+    ];
+
+    vi.mocked(mockSessionManager.list).mockResolvedValue(sessions);
+
+    config.reactions = {
+      "all-complete": { auto: true, action: "notify" },
+    };
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithNotifier,
+      sessionManager: mockSessionManager,
+    });
+
+    lm.start(60_000);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // all-complete should NOT have fired — "working" is still active
+    const allCompleteNotifications = vi.mocked(notifier.notify).mock.calls.filter(
+      (call: unknown[]) => {
+        const event = call[0] as Record<string, unknown> | undefined;
+        const data = event?.data as Record<string, unknown> | undefined;
+        return event?.type === "reaction.triggered" && data?.reactionKey === "all-complete";
+      },
+    );
+    expect(allCompleteNotifications).toHaveLength(0);
+
+    lm.stop();
+  });
+
+  it("skips polling sessions in terminal statuses like done or errored", async () => {
+    // Sessions in "done" / "errored" should not be polled
+    const sessions = [
+      makeSession({ id: "s-done", status: "done" as SessionStatus }),
+      makeSession({ id: "s-errored", status: "errored" as SessionStatus }),
+    ];
+
+    vi.mocked(mockSessionManager.list).mockResolvedValue(sessions);
+
+    // If these sessions were polled, determineStatus would call runtime.isAlive.
+    // Reset call count and verify it's not called.
+    vi.mocked(plugins.runtime.isAlive).mockClear();
+
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+    });
+
+    lm.start(60_000);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Terminal sessions should not be polled — runtime.isAlive should not be called
+    expect(plugins.runtime.isAlive).not.toHaveBeenCalled();
+
+    lm.stop();
   });
 });
 
