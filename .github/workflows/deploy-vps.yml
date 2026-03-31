@@ -1,0 +1,36 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: root
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -e
+            cd /root/agent-orchestrator
+            echo "==> Fetching latest changes..."
+            git fetch origin main
+            echo "==> Current: $(git rev-parse --short HEAD)"
+            git reset --hard origin/main
+            echo "==> Updated: $(git rev-parse --short HEAD)"
+            echo "==> Installing dependencies..."
+            pnpm install --frozen-lockfile
+            echo "==> Building..."
+            pnpm build
+            echo "==> Restarting services..."
+            pm2 restart ao --update-env || pm2 start ecosystem.config.js --only ao 2>/dev/null || echo "WARNING: pm2 restart failed, check config"
+            pm2 restart openclaw-gateway --update-env || true
+            echo "==> Deploy complete: $(git rev-parse --short HEAD)"
