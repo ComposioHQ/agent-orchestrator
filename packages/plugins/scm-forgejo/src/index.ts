@@ -787,89 +787,58 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
 
     async getPendingComments(pr: PRInfo): Promise<ReviewComment[]> {
       try {
-        // Use GraphQL with variables to get review threads with actual isResolved status
-        const raw = await gh([
-          "api",
-          "graphql",
-          "-f",
-          `owner=${pr.owner}`,
-          "-f",
-          `name=${pr.repo}`,
-          "-F",
-          `number=${pr.number}`,
-          "-f",
-          `query=query($owner: String!, $name: String!, $number: Int!) {
-            repository(owner: $owner, name: $name) {
-              pullRequest(number: $number) {
-                reviewThreads(first: 100) {
-                  nodes {
-                    isResolved
-                    comments(first: 1) {
-                      nodes {
-                        id
-                        author { login }
-                        body
-                        path
-                        line
-                        url
-                        createdAt
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }`,
-        ]);
+        const perPage = 100;
+        const comments: Array<{
+          id: number;
+          user: { login: string } | null;
+          body: string;
+          path: string | null;
+          line: number | null;
+          in_reply_to_id?: number | null;
+          created_at: string;
+          html_url: string;
+        }> = [];
 
-        const data: {
-          data: {
-            repository: {
-              pullRequest: {
-                reviewThreads: {
-                  nodes: Array<{
-                    isResolved: boolean;
-                    comments: {
-                      nodes: Array<{
-                        id: string;
-                        author: { login: string } | null;
-                        body: string;
-                        path: string | null;
-                        line: number | null;
-                        url: string;
-                        createdAt: string;
-                      }>;
-                    };
-                  }>;
-                };
-              };
-            };
-          };
-        } = JSON.parse(raw);
+        for (let page = 1; ; page++) {
+          const raw = await gh([
+            "api",
+            "--method",
+            "GET",
+            `repos/${repoFlag(pr)}/pulls/${pr.number}/comments?per_page=${perPage}&page=${page}`,
+          ]);
+          const pageComments: Array<{
+            id: number;
+            user: { login: string } | null;
+            body: string;
+            path: string | null;
+            line: number | null;
+            in_reply_to_id?: number | null;
+            created_at: string;
+            html_url: string;
+          }> = JSON.parse(raw);
 
-        const threads = data.data.repository.pullRequest.reviewThreads.nodes;
+          if (pageComments.length === 0) {
+            break;
+          }
 
-        return threads
-          .filter((t) => {
-            if (t.isResolved) return false; // only pending (unresolved) threads
-            const c = t.comments.nodes[0];
-            if (!c) return false; // skip threads with no comments
-            const author = c.author?.login ?? "";
-            return !BOT_AUTHORS.has(author);
-          })
-          .map((t) => {
-            const c = t.comments.nodes[0];
-            return {
-              id: c.id,
-              author: c.author?.login ?? "unknown",
-              body: c.body,
-              path: c.path || undefined,
-              line: c.line ?? undefined,
-              isResolved: t.isResolved,
-              createdAt: parseDate(c.createdAt),
-              url: c.url,
-            };
-          });
+          comments.push(...pageComments);
+          if (pageComments.length < perPage) {
+            break;
+          }
+        }
+
+        return comments
+          .filter((c) => !BOT_AUTHORS.has(c.user?.login ?? "") && c.in_reply_to_id == null)
+          .map((c) => ({
+            id: String(c.id),
+            author: c.user?.login ?? "unknown",
+            body: c.body,
+            path: c.path || undefined,
+            line: c.line ?? undefined,
+            isResolved: false,
+            createdAt: parseDate(c.created_at),
+            url: c.html_url,
+          }));
       } catch (err) {
         throw new Error("Failed to fetch pending comments", { cause: err });
       }

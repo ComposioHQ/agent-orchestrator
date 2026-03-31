@@ -804,111 +804,87 @@ describe("scm-forgejo plugin", () => {
   // ---- getPendingComments ------------------------------------------------
 
   describe("getPendingComments", () => {
-    function makeGraphQLThreads(
-      threads: Array<{
-        isResolved: boolean;
-        id: string;
-        author: string | null;
-        body: string;
-        path: string | null;
-        line: number | null;
-        url: string;
-        createdAt: string;
-      }>,
-    ) {
-      return {
-        data: {
-          repository: {
-            pullRequest: {
-              reviewThreads: {
-                nodes: threads.map((t) => ({
-                  isResolved: t.isResolved,
-                  comments: {
-                    nodes: [
-                      {
-                        id: t.id,
-                        author: t.author ? { login: t.author } : null,
-                        body: t.body,
-                        path: t.path,
-                        line: t.line,
-                        url: t.url,
-                        createdAt: t.createdAt,
-                      },
-                    ],
-                  },
-                })),
-              },
-            },
-          },
-        },
-      };
-    }
-
-    it("returns only unresolved non-bot comments from GraphQL", async () => {
+    it("returns non-bot top-level comments from REST PR comments endpoint", async () => {
       mockGh(
-        makeGraphQLThreads([
+        [
           {
-            isResolved: false,
-            id: "C1",
-            author: "alice",
+            id: 11,
+            user: { login: "alice" },
             body: "Fix line 10",
             path: "src/foo.ts",
             line: 10,
-            url: "https://github.com/c/1",
-            createdAt: "2025-01-01T00:00:00Z",
+            in_reply_to_id: null,
+            html_url: "https://github.com/c/1",
+            created_at: "2025-01-01T00:00:00Z",
           },
           {
-            isResolved: true,
-            id: "C2",
-            author: "bob",
-            body: "Resolved one",
+            id: 12,
+            user: { login: "cursor[bot]" },
+            body: "bot message",
             path: "src/bar.ts",
             line: 20,
-            url: "https://github.com/c/2",
-            createdAt: "2025-01-02T00:00:00Z",
+            in_reply_to_id: null,
+            html_url: "https://github.com/c/2",
+            created_at: "2025-01-02T00:00:00Z",
           },
-        ]),
+          {
+            id: 13,
+            user: { login: "bob" },
+            body: "reply",
+            path: "src/foo.ts",
+            line: 11,
+            in_reply_to_id: 11,
+            html_url: "https://github.com/c/3",
+            created_at: "2025-01-03T00:00:00Z",
+          },
+        ],
       );
 
       const comments = await scm.getPendingComments(pr);
       expect(comments).toHaveLength(1);
-      expect(comments[0]).toMatchObject({ id: "C1", author: "alice", isResolved: false });
+      expect(comments[0]).toMatchObject({ id: "11", author: "alice", isResolved: false });
+      expect(ghMock).toHaveBeenNthCalledWith(
+        1,
+        "gh",
+        ["api", "--method", "GET", "repos/acme/repo/pulls/42/comments?per_page=100&page=1"],
+        expect.any(Object),
+      );
     });
 
     it("filters out bot comments", async () => {
       mockGh(
-        makeGraphQLThreads([
+        [
           {
-            isResolved: false,
-            id: "C1",
-            author: "alice",
+            id: 1,
+            user: { login: "alice" },
             body: "Fix this",
             path: "a.ts",
             line: 1,
-            url: "u",
-            createdAt: "2025-01-01T00:00:00Z",
+            in_reply_to_id: null,
+            html_url: "u",
+            created_at: "2025-01-01T00:00:00Z",
           },
           {
-            isResolved: false,
-            id: "C2",
-            author: "cursor[bot]",
+            id: 2,
+            user: { login: "cursor[bot]" },
             body: "Bot says",
             path: "a.ts",
             line: 2,
-            url: "u",
-            createdAt: "2025-01-01T00:00:00Z",
+            in_reply_to_id: null,
+            html_url: "u",
+            created_at: "2025-01-01T00:00:00Z",
           },
           {
-            isResolved: false,
-            id: "C3",
-            author: "codecov[bot]",
+            id: 3,
+            user: { login: "codecov[bot]" },
             body: "Coverage",
             path: "a.ts",
             line: 3,
-            url: "u",
-            createdAt: "2025-01-01T00:00:00Z",
+            in_reply_to_id: null,
+            html_url: "u",
+            created_at: "2025-01-01T00:00:00Z",
           },
-        ]),
+        ],
       );
 
       const comments = await scm.getPendingComments(pr);
@@ -923,18 +899,18 @@ describe("scm-forgejo plugin", () => {
 
     it("handles null path and line", async () => {
       mockGh(
-        makeGraphQLThreads([
+        [
           {
-            isResolved: false,
-            id: "C1",
-            author: "alice",
+            id: 1,
+            user: { login: "alice" },
             body: "General comment",
             path: null,
             line: null,
-            url: "u",
-            createdAt: "2025-01-01T00:00:00Z",
+            in_reply_to_id: null,
+            html_url: "u",
+            created_at: "2025-01-01T00:00:00Z",
           },
-        ]),
+        ],
       );
       const comments = await scm.getPendingComments(pr);
       expect(comments[0].path).toBeUndefined();
