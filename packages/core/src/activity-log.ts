@@ -190,11 +190,20 @@ export function getActivityFallbackState(
     return { state: "idle", timestamp: entryTs };
   }
 
-  // Reclassify based on age: active→ready→idle
+  // Age-based decay: active→ready→idle, but never promote past the
+  // entry's detected state (e.g. a fresh "idle" entry stays "idle").
   const ageMs = Math.max(0, Date.now() - entryTs.getTime());
-  if (ageMs <= activeWindowMs) return { state: "active", timestamp: entryTs };
-  if (ageMs <= thresholdMs) return { state: "ready", timestamp: entryTs };
-  return { state: "idle", timestamp: entryTs };
+  let ageState: ActivityState;
+  if (ageMs <= activeWindowMs) ageState = "active";
+  else if (ageMs <= thresholdMs) ageState = "ready";
+  else ageState = "idle";
+
+  const activityRank: Record<string, number> = { active: 0, ready: 1, idle: 2 };
+  const entryRank = activityRank[entry.state] ?? 2;
+  const ageRank = activityRank[ageState] ?? 2;
+  const finalState = ageRank >= entryRank ? ageState : entry.state;
+
+  return { state: finalState, timestamp: entryTs };
 }
 
 /**
