@@ -6,7 +6,7 @@ on:
 
 concurrency:
   group: deploy-vps
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -31,6 +31,6 @@ jobs:
             echo "==> Building..."
             pnpm build
             echo "==> Restarting services..."
-            pm2 restart ao --update-env || pm2 start ecosystem.config.js --only ao 2>/dev/null || echo "WARNING: pm2 restart failed, check config"
+            pm2 restart ao --update-env
             pm2 restart openclaw-gateway --update-env || true
             echo "==> Deploy complete: $(git rev-parse --short HEAD)"
