@@ -1388,13 +1388,16 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   border-radius: 2px;
 }
 
-.project-sidebar {
+.sidebar-column {
   border-right: 1px solid var(--color-border-subtle);
   background: linear-gradient(
     180deg,
     color-mix(in srgb, var(--color-bg-elevated) 92%, black 8%) 0%,
     color-mix(in srgb, var(--color-bg-base) 90%, black 10%) 100%
   );
+}
+
+.project-sidebar {
 }
 
 .project-sidebar--collapsed {

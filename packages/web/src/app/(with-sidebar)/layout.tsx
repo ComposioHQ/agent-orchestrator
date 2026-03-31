@@ -269,7 +269,7 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
       <div className="dashboard-shell flex" style={{ height: "100dvh" }}>
         {/* Desktop sidebar — hidden on mobile via CSS */}
         <div className="dashboard-sidebar-desktop">
-          <div className="flex h-full flex-col">
+          <div className="sidebar-column flex h-full flex-col">
             <ProjectSidebar
               projects={projects}
               sessions={sessions}
@@ -287,7 +287,7 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
         {mobileSidebarOpen && (
           <div className="dashboard-sidebar-overlay" onClick={() => setMobileSidebarOpen(false)}>
             <div className="dashboard-sidebar-mobile" onClick={(e) => e.stopPropagation()}>
-              <div className="flex h-full flex-col">
+              <div className="sidebar-column flex h-full flex-col">
                 <ProjectSidebar
                   projects={projects}
                   sessions={sessions}
