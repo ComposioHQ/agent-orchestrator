@@ -1,11 +1,14 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { InstalledPluginConfig, PluginModule, PluginSlot } from "@composio/ao-core";
 
-const registryData = createRequire(import.meta.url)("../assets/plugin-registry.json") as unknown[];
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+// Resolve registry from package root (works from both src/lib/ and dist/lib/)
+const registryPath = resolve(__dirname, "../../src/assets/plugin-registry.json");
+const registryData = JSON.parse(readFileSync(registryPath, "utf-8")) as unknown[];
 
 export interface MarketplacePluginEntry {
   id: string;
@@ -18,6 +21,7 @@ export interface MarketplacePluginEntry {
 }
 
 export const BUNDLED_MARKETPLACE_PLUGIN_CATALOG = registryData as MarketplacePluginEntry[];
+export const MARKETPLACE_PLUGIN_CATALOG = BUNDLED_MARKETPLACE_PLUGIN_CATALOG;
 export const DEFAULT_REMOTE_MARKETPLACE_REGISTRY_URL =
   "https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/packages/cli/src/assets/plugin-registry.json";
 
@@ -157,9 +161,6 @@ function resolvePackageExportsEntry(exportsField: unknown): string | null {
   const importEntry = exportsRecord["import"];
   if (typeof importEntry === "string") return importEntry;
 
-  const defaultEntry = exportsRecord["default"];
-  if (typeof defaultEntry === "string") return defaultEntry;
-
   return null;
 }
 
@@ -206,7 +207,8 @@ export function isLocalPluginReference(reference: string): boolean {
     reference.startsWith("./") ||
     reference.startsWith("../") ||
     reference.startsWith("/") ||
-    reference.startsWith("~/")
+    reference.startsWith("~/") ||
+    isAbsolute(reference)
   );
 }
 
