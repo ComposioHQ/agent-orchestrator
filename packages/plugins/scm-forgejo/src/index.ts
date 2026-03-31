@@ -30,9 +30,6 @@ import {
   type BatchObserver,
 } from "@composio/ao-core";
 import {
-  enrichSessionsPRBatch as enrichSessionsPRBatchImpl,
-} from "./graphql-batch.js";
-import {
   getWebhookHeader,
   parseWebhookBranchRef,
   parseWebhookJsonObject,
@@ -1041,20 +1038,20 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
     },
 
     /**
-     * Batch fetch PR data for multiple PRs using GraphQL.
-     * This is an optimization for the orchestrator polling loop.
+     * Forgejo/Gitea does not provide GitHub-compatible GraphQL support.
      *
-     * Instead of making 3 separate API calls for each PR (getPRState,
-     * getCISummary, getReviewDecision), we fetch all data for all PRs
-     * in one GraphQL query using aliases.
-     *
-     * This reduces API calls from N×3 to 1 (or a few if batching needed).
+     * Return an empty map to signal "no batch data", allowing callers to
+     * use the existing per-PR REST fallback path without noisy GraphQL errors.
      */
     async enrichSessionsPRBatch(
-      prs: PRInfo[],
+      _prs: PRInfo[],
       observer?: BatchObserver,
     ): Promise<Map<string, PREnrichmentData>> {
-      return enrichSessionsPRBatchImpl(prs, observer, hostname);
+      observer?.log(
+        "debug",
+        "Forgejo SCM batch enrichment is disabled: GraphQL endpoint is not supported",
+      );
+      return new Map<string, PREnrichmentData>();
     },
   };
 }

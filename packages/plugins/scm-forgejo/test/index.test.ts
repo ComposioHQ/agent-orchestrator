@@ -529,6 +529,26 @@ describe("scm-forgejo plugin", () => {
     });
   });
 
+  // ---- enrichSessionsPRBatch --------------------------------------------
+
+  describe("enrichSessionsPRBatch", () => {
+    it("returns empty map to use REST fallback and does not call gh", async () => {
+      const observer = {
+        log: vi.fn(),
+      };
+
+      const result = await scm.enrichSessionsPRBatch?.([pr], observer as never);
+
+      expect(result).toBeInstanceOf(Map);
+      expect(result?.size).toBe(0);
+      expect(observer.log).toHaveBeenCalledWith(
+        "debug",
+        "Forgejo SCM batch enrichment is disabled: GraphQL endpoint is not supported",
+      );
+      expect(ghMock).not.toHaveBeenCalled();
+    });
+  });
+
   // ---- mergePR -----------------------------------------------------------
 
   describe("mergePR", () => {
