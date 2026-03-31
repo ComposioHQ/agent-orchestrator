@@ -89,15 +89,24 @@ export async function readLastActivityEntry(
       if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
 
       const record = parsed as Record<string, unknown>;
+      const validStates = new Set(["active", "ready", "idle", "waiting_input", "blocked"]);
+      const validSources = new Set(["terminal", "native"]);
       if (
         typeof record.ts !== "string" ||
         typeof record.state !== "string" ||
-        typeof record.source !== "string"
+        typeof record.source !== "string" ||
+        !validStates.has(record.state) ||
+        !validSources.has(record.source)
       ) {
         return null;
       }
 
-      const entry = record as unknown as ActivityLogEntry;
+      const entry: ActivityLogEntry = {
+        ts: record.ts,
+        state: record.state as ActivityLogEntry["state"],
+        source: record.source as ActivityLogEntry["source"],
+        ...(typeof record.trigger === "string" && { trigger: record.trigger }),
+      };
       return { entry, modifiedAt: fileStat.mtime };
     } finally {
       await handle.close();
