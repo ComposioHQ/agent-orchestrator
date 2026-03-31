@@ -4,17 +4,22 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import { isOrchestratorSession } from "@composio/ao-core/types";
 import { SessionDetail } from "@/components/SessionDetail";
-import { type DashboardSession, getAttentionLevel, type AttentionLevel } from "@/lib/types";
+import { type DashboardSession, type ActivityState, getAttentionLevel, type AttentionLevel } from "@/lib/types";
 import { activityIcon } from "@/lib/activity-icons";
+import { useSSESessionActivity } from "@/hooks/useSSESessionActivity";
 
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + "..." : s;
 }
 
 /** Build a descriptive tab title from session data. */
-function buildSessionTitle(session: DashboardSession): string {
+function buildSessionTitle(
+  session: DashboardSession,
+  activityOverride?: ActivityState | null,
+): string {
   const id = session.id;
-  const emoji = session.activity ? (activityIcon[session.activity] ?? "") : "";
+  const activity = activityOverride !== undefined ? activityOverride : session.activity;
+  const emoji = activity ? (activityIcon[activity] ?? "") : "";
   const isOrchestrator = isOrchestratorSession(session);
 
   let detail: string;
@@ -62,14 +67,17 @@ export default function SessionPage() {
   const sessionIsOrchestratorRef = useRef(false);
   const resolvedProjectSessionsKeyRef = useRef<string | null>(null);
 
-  // Update document title based on session data
+  // Subscribe to SSE for real-time activity updates (title emoji)
+  const sseActivity = useSSESessionActivity(id);
+
+  // Update document title based on session data + SSE activity override
   useEffect(() => {
     if (session) {
-      document.title = buildSessionTitle(session);
+      document.title = buildSessionTitle(session, sseActivity?.activity);
     } else {
       document.title = `${id} | Session Detail`;
     }
-  }, [session, id]);
+  }, [session, id, sseActivity]);
 
   useEffect(() => {
     sessionProjectIdRef.current = sessionProjectId;

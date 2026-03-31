@@ -663,4 +663,98 @@ describe("useSessionEvents", () => {
       expect(result.current.sessions[0].id).toBe("session-0");
     });
   });
+
+  describe("sseAttentionLevels", () => {
+    it("starts with empty attention levels", () => {
+      const sessions = makeSessions(2);
+      const { result } = renderHook(() => useSessionEvents(sessions));
+      expect(result.current.sseAttentionLevels).toEqual({});
+    });
+
+    it("populates attention levels from SSE snapshot", () => {
+      const sessions = makeSessions(2);
+      const { result } = renderHook(() => useSessionEvents(sessions));
+
+      act(() => {
+        eventSourceMock!.onmessage!.call(eventSourceMock, {
+          data: JSON.stringify({
+            type: "snapshot",
+            sessions: [
+              { id: "session-0", status: "working", activity: "active", attentionLevel: "working", lastActivityAt: new Date().toISOString() },
+              { id: "session-1", status: "needs_input", activity: "waiting_input", attentionLevel: "respond", lastActivityAt: new Date().toISOString() },
+            ],
+          }),
+        } as MessageEvent);
+      });
+
+      expect(result.current.sseAttentionLevels).toEqual({
+        "session-0": "working",
+        "session-1": "respond",
+      });
+    });
+
+    it("updates attention levels when they change", () => {
+      const sessions = makeSessions(1);
+      const { result } = renderHook(() => useSessionEvents(sessions));
+
+      act(() => {
+        eventSourceMock!.onmessage!.call(eventSourceMock, {
+          data: JSON.stringify({
+            type: "snapshot",
+            sessions: [
+              { id: "session-0", status: "working", activity: "active", attentionLevel: "working", lastActivityAt: new Date().toISOString() },
+            ],
+          }),
+        } as MessageEvent);
+      });
+
+      expect(result.current.sseAttentionLevels["session-0"]).toBe("working");
+
+      act(() => {
+        eventSourceMock!.onmessage!.call(eventSourceMock, {
+          data: JSON.stringify({
+            type: "snapshot",
+            sessions: [
+              { id: "session-0", status: "needs_input", activity: "waiting_input", attentionLevel: "respond", lastActivityAt: new Date().toISOString() },
+            ],
+          }),
+        } as MessageEvent);
+      });
+
+      expect(result.current.sseAttentionLevels["session-0"]).toBe("respond");
+    });
+
+    it("preserves referential stability when attention levels do not change", () => {
+      const sessions = makeSessions(1);
+      const { result } = renderHook(() => useSessionEvents(sessions));
+
+      const ts = new Date().toISOString();
+
+      act(() => {
+        eventSourceMock!.onmessage!.call(eventSourceMock, {
+          data: JSON.stringify({
+            type: "snapshot",
+            sessions: [
+              { id: "session-0", status: "working", activity: "active", attentionLevel: "working", lastActivityAt: ts },
+            ],
+          }),
+        } as MessageEvent);
+      });
+
+      const firstLevels = result.current.sseAttentionLevels;
+
+      act(() => {
+        eventSourceMock!.onmessage!.call(eventSourceMock, {
+          data: JSON.stringify({
+            type: "snapshot",
+            sessions: [
+              { id: "session-0", status: "working", activity: "active", attentionLevel: "working", lastActivityAt: ts },
+            ],
+          }),
+        } as MessageEvent);
+      });
+
+      expect(result.current.sseAttentionLevels).toBe(firstLevels);
+    });
+  });
 });
