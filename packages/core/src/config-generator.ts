@@ -218,7 +218,10 @@ export function generateConfigFromUrl(options: GenerateConfigOptions): Record<st
   // SCM plugin — always set explicitly so applyProjectDefaults doesn't override.
   // For known platforms, use the matching plugin. For unknown hosts, default to github
   // (best available option since it's the only fully implemented SCM plugin).
-  projectConfig.scm = { plugin: platform !== "unknown" ? platform : "github" };
+  projectConfig.scm =
+    platform === "forgejo"
+      ? { plugin: "forgejo", host: parsed.host }
+      : { plugin: platform !== "unknown" ? platform : "github" };
 
   // Tracker — same platform as SCM for known hosts, github as fallback
   projectConfig.tracker = {

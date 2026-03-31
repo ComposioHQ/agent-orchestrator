@@ -31,7 +31,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:integration": "vitest run graphql-batch.integration.test.ts",
+    "test:integration": "vitest run test/index.test.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {

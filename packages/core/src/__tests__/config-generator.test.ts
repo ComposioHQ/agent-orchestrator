@@ -292,6 +292,16 @@ describe("generateConfigFromUrl", () => {
     expect(project.tracker).toEqual({ plugin: "gitlab" });
   });
 
+  it("generates forgejo SCM config with host", () => {
+    const parsed = parseRepoUrl("https://forgejo.example.com/my-org/my-project");
+    const config = generateConfigFromUrl({ parsed, repoPath: tmpDir });
+
+    const projects = config.projects as Record<string, Record<string, unknown>>;
+    const project = projects["my-project"];
+    expect(project.scm).toEqual({ plugin: "forgejo", host: "forgejo.example.com" });
+    expect(project.tracker).toEqual({ plugin: "forgejo" });
+  });
+
   it("falls back to github for unknown hosts", () => {
     const parsed = parseRepoUrl("https://git.mycompany.com/team/app");
     const config = generateConfigFromUrl({ parsed, repoPath: tmpDir });
