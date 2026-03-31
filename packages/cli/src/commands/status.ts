@@ -10,8 +10,10 @@ import {
   type ActivityState,
   type Tracker,
   type ProjectConfig,
+  type PluginRegistry,
   isOrchestratorSession,
   loadConfig,
+  createPluginRegistry,
 } from "@composio/ao-core";
 import { git, getTmuxSessions, getTmuxActivity } from "../lib/shell.js";
 import {
@@ -23,7 +25,7 @@ import {
   reviewDecisionIcon,
   padCol,
 } from "../lib/format.js";
-import { getAgentByName, getSCM } from "../lib/plugins.js";
+import { getAgentByName } from "../lib/plugins.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
 
 interface SessionInfo {
@@ -47,7 +49,7 @@ interface SessionInfo {
 async function gatherSessionInfo(
   session: Session,
   agent: Agent,
-  scm: SCM,
+  scm: SCM | null,
   projectConfig: ReturnType<typeof loadConfig>,
 ): Promise<SessionInfo> {
   const suppressPROwnership = isOrchestratorSession(session);
@@ -88,13 +90,13 @@ async function gatherSessionInfo(
 
   // Extract PR number from metadata URL as fallback
   if (prUrl) {
-    const prMatch = /\/pull\/(\d+)/.exec(prUrl);
+    const prMatch = /\/pull\/(\d+)|\/merge_requests\/(\d+)/.exec(prUrl);
     if (prMatch) {
-      prNumber = parseInt(prMatch[1], 10);
+      prNumber = parseInt(prMatch[1] ?? prMatch[2], 10);
     }
   }
 
-  if (branch && !suppressPROwnership) {
+  if (branch && !suppressPROwnership && scm) {
     try {
       const project = projectConfig.projects[session.projectId];
       if (project) {
@@ -235,6 +237,10 @@ export function registerStatus(program: Command): void {
         console.log();
       }
 
+      // Load plugin registry once for all projects
+      const registry = createPluginRegistry();
+      await registry.loadFromConfig(config, (pkg: string) => import(pkg));
+
       // Group sessions by project
       const byProject = new Map<string, Session[]>();
       for (const s of sessions) {
@@ -260,7 +266,8 @@ export function registerStatus(program: Command): void {
         // Resolve agent and SCM for this project
         const agentName = projectConfig.agent ?? config.defaults.agent;
         const agent = getAgentByName(agentName);
-        const scm = getSCM(config, projectId);
+        const scmName = projectConfig.scm?.plugin || "github";
+        const scm = registry.get<SCM>("scm", scmName);
 
         if (!opts.json) {
           console.log(header(projectConfig.name || projectId));
@@ -327,10 +334,6 @@ export function registerStatus(program: Command): void {
 
         // Check for issues awaiting verification across all projects
         try {
-          const { createPluginRegistry } = await import("@composio/ao-core");
-          const registry = createPluginRegistry();
-          await registry.loadFromConfig(config, (pkg: string) => import(pkg));
-
           let unverifiedTotal = 0;
           for (const projectId of projectIds) {
             const project: ProjectConfig | undefined = config.projects[projectId];
