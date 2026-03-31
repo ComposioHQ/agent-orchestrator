@@ -25,16 +25,13 @@ vi.mock("node:child_process", () => {
 });
 
 let ctx: TestContext;
-let tmpDir: string;
-let configPath: string;
 let sessionsDir: string;
 let mockRegistry: PluginRegistry;
 let config: OrchestratorConfig;
-let originalPath: string | undefined;
 
 beforeEach(() => {
   ctx = setupTestContext();
-  ({ tmpDir, configPath, sessionsDir, mockRegistry, config, originalPath } = ctx);
+  ({ sessionsDir, mockRegistry, config } = ctx);
 
   // Create an opencode agent mock
   const opencodeAgent: Agent = {
