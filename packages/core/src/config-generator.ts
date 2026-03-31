@@ -88,9 +88,10 @@ export function parseRepoUrl(url: string): ParsedRepoUrl {
  */
 export function detectScmPlatform(host: string): ScmPlatform {
   const lower = host.toLowerCase();
+  const labels = lower.split(".");
   if (lower === "github.com" || lower.endsWith(".github.com")) return "github";
   if (lower === "gitlab.com" || lower.endsWith(".gitlab.com")) return "gitlab";
-  if (lower.includes("forgejo") || lower.includes("gitea")) return "forgejo";
+  if (labels.includes("forgejo") || labels.includes("gitea")) return "forgejo";
   if (
     lower === "bitbucket.org" ||
     lower.endsWith(".bitbucket.org") ||

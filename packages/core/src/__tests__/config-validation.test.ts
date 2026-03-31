@@ -621,4 +621,24 @@ describe("Config Defaults", () => {
     expect(validated.projects.proj1.scm).toEqual({ plugin: "github", host: "forgejo.company.internal" });
     expect(validated.projects.proj1.tracker).toEqual({ plugin: "github" });
   });
+
+  it("prefers GitLab when host is a GitLab domain containing forgejo-like subdomain", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          scm: {
+            plugin: "custom",
+            host: "forgejo.gitlab.com",
+          },
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.projects.proj1.scm).toEqual({ host: "forgejo.gitlab.com", plugin: "custom" });
+    expect(validated.projects.proj1.tracker).toEqual({ plugin: "gitlab" });
+  });
 });

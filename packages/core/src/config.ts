@@ -18,6 +18,23 @@ import { z } from "zod";
 import { ConfigNotFoundError, type OrchestratorConfig } from "./types.js";
 import { generateSessionPrefix } from "./paths.js";
 
+function hostLabels(value: unknown): string[] {
+  if (typeof value !== "string") return [];
+  const host = value.trim().toLowerCase().replace(/:\d+$/, "");
+  if (!host) return [];
+  return host.split(".");
+}
+
+function isGitLabHost(value: unknown): boolean {
+  const labels = hostLabels(value);
+  return labels.includes("gitlab");
+}
+
+function isForgejoLikeHost(value: unknown): boolean {
+  const labels = hostLabels(value);
+  return labels.includes("forgejo") || labels.includes("gitea");
+}
+
 function inferScmPlugin(project: {
   repo: string;
   scm?: Record<string, unknown>;
@@ -37,15 +54,12 @@ function inferScmPlugin(project: {
   }
 
   const scmHost = project.scm?.["host"];
-  if (
-    typeof scmHost === "string" &&
-    (scmHost.toLowerCase().includes("forgejo") || scmHost.toLowerCase().includes("gitea"))
-  ) {
-    return "forgejo";
+  if (isGitLabHost(scmHost)) {
+    return "gitlab";
   }
 
-  if (typeof scmHost === "string" && scmHost.toLowerCase().includes("gitlab")) {
-    return "gitlab";
+  if (isForgejoLikeHost(scmHost)) {
+    return "forgejo";
   }
 
   const trackerPlugin = project.tracker?.["plugin"];
@@ -62,15 +76,12 @@ function inferScmPlugin(project: {
   }
 
   const trackerHost = project.tracker?.["host"];
-  if (
-    typeof trackerHost === "string" &&
-    (trackerHost.toLowerCase().includes("forgejo") || trackerHost.toLowerCase().includes("gitea"))
-  ) {
-    return "forgejo";
+  if (isGitLabHost(trackerHost)) {
+    return "gitlab";
   }
 
-  if (typeof trackerHost === "string" && trackerHost.toLowerCase().includes("gitlab")) {
-    return "gitlab";
+  if (isForgejoLikeHost(trackerHost)) {
+    return "forgejo";
   }
 
   return "github";

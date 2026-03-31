@@ -118,6 +118,11 @@ describe("detectScmPlatform", () => {
     expect(detectScmPlatform("gitea.internal")).toBe("forgejo");
   });
 
+  it("does not treat partial forgejo/gitea substrings as forgejo", () => {
+    expect(detectScmPlatform("not-forgejo.com")).toBe("unknown");
+    expect(detectScmPlatform("gitea-proxy-github.io")).toBe("unknown");
+  });
+
   it("detects Bitbucket", () => {
     expect(detectScmPlatform("bitbucket.org")).toBe("bitbucket");
   });
