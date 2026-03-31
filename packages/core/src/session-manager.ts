@@ -74,6 +74,7 @@ import {
 import { sessionFromMetadata } from "./utils/session-from-metadata.js";
 import { safeJsonParse } from "./utils/validation.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
+import { buildCheckpointSummary } from "./checkpoint.js";
 
 const execFileAsync = promisify(execFile);
 const OPENCODE_DISCOVERY_TIMEOUT_MS = 10_000;
@@ -917,7 +918,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     if (!plugins.agent) {
       throw new Error(`Agent plugin '${selection.agentName}' not found`);
     }
-
     // Validate issue exists BEFORE creating any resources
     let resolvedIssue: Issue | undefined;
     if (spawnConfig.issueId && plugins.tracker) {
@@ -1218,6 +1218,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     if (!plugins.agent) {
       throw new Error(`Agent plugin '${selection.agentName}' not found`);
     }
+    const runtimePlugin = plugins.runtime;
+    const agentPlugin = plugins.agent;
 
     const sessionId = `${project.sessionPrefix}-orchestrator`;
     const orchestratorSessionStrategy = normalizeOrchestratorSessionStrategy(
@@ -2291,6 +2293,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     if (!plugins.agent) {
       throw new Error(`Agent plugin '${selection.agentName}' not found`);
     }
+    const runtimePlugin = plugins.runtime;
+    const agentPlugin = plugins.agent;
 
     // 5. Check workspace
     const workspacePath = raw["worktree"] || project.path;
@@ -2404,6 +2408,41 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       restoredAt: new Date(now),
     };
 
+    const waitUntilRestoredSessionReady = async (sessionToWaitOn: Session): Promise<void> => {
+      const sessionHandle = sessionToWaitOn.runtimeHandle;
+      if (!sessionHandle) {
+        return;
+      }
+
+      const deadline = Date.now() + SEND_RESTORE_READY_TIMEOUT_MS;
+      while (true) {
+        const [runtimeAlive, processRunning, output, foregroundCommand] = await Promise.all([
+          runtimePlugin.isAlive(sessionHandle).catch(() => true),
+          agentPlugin.isProcessRunning(sessionHandle).catch(() => true),
+          runtimePlugin
+            .getOutput(sessionHandle, SEND_CONFIRMATION_OUTPUT_LINES)
+            .then((value: string | undefined) => value ?? "")
+            .catch(() => ""),
+          sessionHandle.runtimeName === "tmux"
+            ? getTmuxForegroundCommand(sessionHandle.id)
+            : Promise.resolve(agentPlugin.processName),
+        ]);
+
+        const foregroundReady =
+          foregroundCommand === null || foregroundCommand === agentPlugin.processName;
+
+        if (runtimeAlive && foregroundReady && (processRunning || output.trim().length > 0)) {
+          return;
+        }
+
+        if (Date.now() >= deadline) {
+          return;
+        }
+
+        await sleep(SEND_RESTORE_READY_POLL_MS);
+      }
+    };
+
     if (plugins.agent.postLaunchSetup) {
       try {
         const metadataBeforePostLaunch = { ...(restoredSession.metadata ?? {}) };
@@ -2422,6 +2461,21 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       } catch {
         // Non-fatal — session is already running
       }
+    }
+
+    // Inject checkpoint summary so the agent has ground truth about workspace state.
+    // This prevents the "confused agent" problem where the agent's conversation
+    // history doesn't match the actual git state after a mid-task crash.
+    try {
+      const checkpointSummary = await buildCheckpointSummary(sessionId, sessionsDir, workspacePath);
+      if (checkpointSummary) {
+        // Wait for agent to be ready before sending
+        await waitUntilRestoredSessionReady(restoredSession);
+        await runtimePlugin.sendMessage(handle, checkpointSummary);
+      }
+    } catch {
+      // Non-fatal — agent is running, just didn't get the checkpoint context.
+      // The CI feedback loop will catch any issues reactively.
     }
 
     return restoredSession;

@@ -38,6 +38,8 @@ import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
 import { createCorrelationId, createProjectObserver } from "./observability.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
+import { writeCheckpoint } from "./checkpoint.js";
+
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
@@ -951,6 +953,16 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     } else {
       // No transition but track current state
       states.set(session.id, newStatus);
+    }
+    // Write periodic checkpoint for working sessions.
+    // Captures git state so restore() can inject ground truth.
+    // Best-effort — failures must never break the poll loop.
+    if (newStatus === "working" && session.workspacePath) {
+      const project = config.projects[session.projectId];
+      if (project) {
+        const sessionsDir = getSessionsDir(config.configPath, project.path);
+        writeCheckpoint(session.id, sessionsDir, session.workspacePath).catch(() => {});
+      }
     }
 
     await maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction);
