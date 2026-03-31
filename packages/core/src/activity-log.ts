@@ -88,7 +88,16 @@ export async function readLastActivityEntry(
       const parsed: unknown = JSON.parse(lastLine);
       if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
 
-      const entry = parsed as ActivityLogEntry;
+      const record = parsed as Record<string, unknown>;
+      if (
+        typeof record.ts !== "string" ||
+        typeof record.state !== "string" ||
+        typeof record.source !== "string"
+      ) {
+        return null;
+      }
+
+      const entry = record as unknown as ActivityLogEntry;
       return { entry, modifiedAt: fileStat.mtime };
     } finally {
       await handle.close();
@@ -120,6 +129,7 @@ export function checkActivityLogState(
     // gets refreshed every poll cycle by recordActivity and would prevent
     // stale entries from ever being detected.
     const entryTs = new Date(entry.ts);
+    if (Number.isNaN(entryTs.getTime())) return null;
     const ageMs = Date.now() - entryTs.getTime();
     if (ageMs <= ACTIVITY_INPUT_STALENESS_MS) {
       return { state: entry.state, timestamp: entryTs };

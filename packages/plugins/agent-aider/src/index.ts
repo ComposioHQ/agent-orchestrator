@@ -202,8 +202,8 @@ function createAiderAgent(): Agent {
       if (chatMtime) {
         const ageMs = Date.now() - chatMtime.getTime();
         const activeWindowMs = Math.min(30_000, threshold);
-        if (ageMs < activeWindowMs) return { state: "active", timestamp: chatMtime };
-        if (ageMs < threshold) return { state: "ready", timestamp: chatMtime };
+        if (ageMs <= activeWindowMs) return { state: "active", timestamp: chatMtime };
+        if (ageMs <= threshold) return { state: "ready", timestamp: chatMtime };
         return { state: "idle", timestamp: chatMtime };
       }
 
