@@ -401,8 +401,9 @@ export function unregisterProject(
   if (updated.projectOrder) {
     updated.projectOrder = updated.projectOrder.filter((id) => id !== projectId);
   }
-  // Clean up the per-project shadow file
-  deleteShadowFile(projectId);
+  // Note: shadow file deletion is NOT done here — callers should call
+  // deleteShadowFile(projectId) AFTER successfully saving the global config,
+  // to avoid data loss if saveGlobalConfig fails.
   return updated;
 }
 

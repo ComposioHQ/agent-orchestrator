@@ -76,7 +76,18 @@ export function registerLifecycleWorker(program: Command): void {
         process.exit(1);
       }
 
-      // Duplicate-run protection
+      // Duplicate-run protection — check both poll-all and per-project workers
+      // to prevent overlap between modes.
+      const allPid = readAllPid();
+      if (allPid !== null && allPid !== process.pid && isProcessRunning(allPid)) {
+        observer.setHealth({
+          surface: "lifecycle.worker",
+          status: "warn",
+          correlationId: createCorrelationId("lifecycle-worker"),
+          reason: `Poll-all worker already running with pid ${allPid}`,
+        });
+        return;
+      }
       if (projectId) {
         const existing = getLifecycleWorkerStatus(config, projectId);
         if (existing.running && existing.pid !== process.pid) {
@@ -87,18 +98,6 @@ export function registerLifecycleWorker(program: Command): void {
             correlationId: createCorrelationId("lifecycle-worker"),
             reason: `Worker already running with pid ${existing.pid}`,
             details: { projectId, pid: existing.pid },
-          });
-          return;
-        }
-      } else {
-        // Poll-all mode: use stable PID file in global data dir
-        const existingPid = readAllPid();
-        if (existingPid !== null && existingPid !== process.pid && isProcessRunning(existingPid)) {
-          observer.setHealth({
-            surface: "lifecycle.worker",
-            status: "warn",
-            correlationId: createCorrelationId("lifecycle-worker"),
-            reason: `Poll-all worker already running with pid ${existingPid}`,
           });
           return;
         }

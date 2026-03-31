@@ -510,8 +510,12 @@ export function loadConfig(configPath?: string): OrchestratorConfig {
   if (configPath) {
     try {
       return loadConfigFromFile(configPath);
-    } catch {
-      // May be a global config path or flat local config — try multi-project
+    } catch (err) {
+      // Only fall back to global config on schema validation errors
+      // (e.g., flat local config or global config passed as configPath).
+      // Re-throw I/O errors immediately.
+      if (!(err instanceof z.ZodError)) throw err;
+
       const globalConfig = loadGlobalConfig();
       if (globalConfig) {
         const globalPath = findGlobalConfigPath();
@@ -521,8 +525,8 @@ export function loadConfig(configPath?: string): OrchestratorConfig {
         validateProjectUniqueness(effective);
         return effective;
       }
-      // Re-throw original error if global config doesn't work either
-      return loadConfigFromFile(configPath);
+      // No global config — re-throw the original validation error
+      throw err;
     }
   }
 

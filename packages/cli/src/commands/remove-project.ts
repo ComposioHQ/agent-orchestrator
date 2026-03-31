@@ -11,6 +11,7 @@ import {
   loadGlobalConfig,
   saveGlobalConfig,
   unregisterProject,
+  deleteShadowFile,
   loadConfig,
 } from "@composio/ao-core";
 import { getSessionManager } from "../lib/create-session-manager.js";
@@ -77,9 +78,10 @@ export function registerRemoveProject(program: Command): void {
           // Not critical — worker may not be running
         }
 
-        // Remove from global config
+        // Remove from global config, then clean up shadow file
         const updated = unregisterProject(globalConfig, projectId);
         saveGlobalConfig(updated);
+        deleteShadowFile(projectId);
 
         console.log(chalk.green(`✓ Removed "${projectId}" from global config`));
         console.log(chalk.dim("  Local config (if any) was NOT deleted."));

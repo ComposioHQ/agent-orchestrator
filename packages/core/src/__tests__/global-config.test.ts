@@ -125,9 +125,8 @@ describe("registerProject / unregisterProject", () => {
     expect(original.projects["ao"]).toBeUndefined(); // immutable
   });
 
-  it("unregisters a project and deletes shadow file", () => {
+  it("unregisters a project (shadow deletion is caller responsibility)", () => {
     saveShadowFile("ao", { repo: "org/ao" });
-    expect(existsSync(getShadowFilePath("ao"))).toBe(true);
 
     const config: GlobalConfig = {
       port: 3000,
@@ -140,6 +139,10 @@ describe("registerProject / unregisterProject", () => {
     };
     const updated = unregisterProject(config, "ao");
     expect(updated.projects["ao"]).toBeUndefined();
+    // Shadow file is NOT deleted by unregisterProject — caller does it after save
+    expect(existsSync(getShadowFilePath("ao"))).toBe(true);
+    // Caller cleans up after successful save
+    deleteShadowFile("ao");
     expect(existsSync(getShadowFilePath("ao"))).toBe(false);
   });
 });
