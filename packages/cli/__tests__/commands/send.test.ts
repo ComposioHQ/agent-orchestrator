@@ -431,4 +431,159 @@ describe("send command", () => {
       expect(mockSessionManager.send).toHaveBeenCalledWith("app-1", "from file");
     });
   });
+
+  describe("message input", () => {
+    it("exits with error when no message provided", async () => {
+      mockTmux.mockImplementation(async (...args: string[]) => {
+        if (args[0] === "has-session") return "";
+        return "";
+      });
+
+      await expect(
+        program.parseAsync(["node", "test", "send", "my-session"]),
+      ).rejects.toThrow("process.exit(1)");
+
+      expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("No message provided"));
+    });
+
+    it("exits with error when file cannot be read", async () => {
+      await expect(
+        program.parseAsync(["node", "test", "send", "my-session", "--file", "/nonexistent/file.txt"]),
+      ).rejects.toThrow("process.exit(1)");
+
+      expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("Cannot read file"));
+    });
+
+    it("reads message from file when --file flag provided", async () => {
+      const filePath = join(tmpdir(), `ao-send-test-${Date.now()}.txt`);
+      writeFileSync(filePath, "message from file");
+
+      mockTmux.mockImplementation(async (...args: string[]) => {
+        if (args[0] === "has-session") return "";
+        if (args[0] === "capture-pane") return "❯ ";
+        return "";
+      });
+
+      mockDetectActivity
+        .mockReturnValueOnce("idle")
+        .mockReturnValueOnce("active");
+
+      try {
+        await program.parseAsync(["node", "test", "send", "my-session", "--file", filePath]);
+      } finally {
+        try { rmSync(filePath, { force: true }); } catch { /* ignore */ }
+      }
+
+      expect(mockExec).toHaveBeenCalledWith("tmux", [
+        "send-keys",
+        "-t",
+        "my-session",
+        "-l",
+        "message from file",
+      ]);
+    });
+  });
+
+  describe("multiline message delivery", () => {
+    it("uses load-buffer for multiline messages", async () => {
+      mockTmux.mockImplementation(async (...args: string[]) => {
+        if (args[0] === "has-session") return "";
+        if (args[0] === "capture-pane") return "❯ ";
+        return "";
+      });
+
+      mockDetectActivity
+        .mockReturnValueOnce("idle")
+        .mockReturnValueOnce("active");
+
+      const multilineMsg = "line1\nline2\nline3";
+      const filePath = join(tmpdir(), `ao-send-multiline-${Date.now()}.txt`);
+      writeFileSync(filePath, multilineMsg);
+
+      try {
+        await program.parseAsync(["node", "test", "send", "my-session", "--file", filePath]);
+      } finally {
+        try { rmSync(filePath, { force: true }); } catch { /* ignore */ }
+      }
+
+      // Should have used load-buffer for multiline content
+      expect(mockExec).toHaveBeenCalledWith("tmux", expect.arrayContaining(["load-buffer"]));
+      expect(mockExec).toHaveBeenCalledWith("tmux", expect.arrayContaining(["paste-buffer"]));
+    });
+  });
+
+  describe("timeout handling", () => {
+    it("uses default timeout of 600 when invalid value provided", async () => {
+      mockTmux.mockImplementation(async (...args: string[]) => {
+        if (args[0] === "has-session") return "";
+        if (args[0] === "capture-pane") return "❯ ";
+        return "";
+      });
+
+      mockDetectActivity
+        .mockReturnValueOnce("idle")
+        .mockReturnValueOnce("active");
+
+      await program.parseAsync([
+        "node",
+        "test",
+        "send",
+        "my-session",
+        "hello",
+        "--timeout",
+        "abc",
+      ]);
+
+      // Should complete without error since session is idle
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Message sent and processing"),
+      );
+    });
+  });
+
+  describe("verification retries", () => {
+    it("reports unconfirmed delivery after retries", async () => {
+      mockTmux.mockImplementation(async (...args: string[]) => {
+        if (args[0] === "has-session") return "";
+        if (args[0] === "capture-pane") return "idle output";
+        return "";
+      });
+
+      // Always reports idle — message never seems to be processing
+      mockDetectActivity.mockReturnValue("idle");
+
+      await program.parseAsync(["node", "test", "send", "my-session", "hello"]);
+
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining("could not confirm"),
+      );
+    });
+  });
+
+  describe("session context fallback", () => {
+    it("falls back to defaults when config load fails", async () => {
+      // When mockConfigRef is null, loadConfig will throw, causing fallback
+      mockConfigRef.current = null;
+      mockTmux.mockImplementation(async (...args: string[]) => {
+        if (args[0] === "has-session") return "";
+        if (args[0] === "capture-pane") return "❯ ";
+        return "";
+      });
+
+      mockDetectActivity
+        .mockReturnValueOnce("idle")
+        .mockReturnValueOnce("active");
+
+      await program.parseAsync(["node", "test", "send", "my-session", "hello"]);
+
+      // Should fall back to tmux and send via tmux
+      expect(mockExec).toHaveBeenCalledWith("tmux", [
+        "send-keys",
+        "-t",
+        "my-session",
+        "-l",
+        "hello",
+      ]);
+    });
+  });
 });

@@ -68,7 +68,7 @@ let tmpDir: string;
 let configPath: string;
 
 import { Command } from "commander";
-import { registerSpawn } from "../../src/commands/spawn.js";
+import { registerSpawn, registerBatchSpawn } from "../../src/commands/spawn.js";
 
 let program: Command;
 let consoleSpy: ReturnType<typeof vi.spyOn>;
@@ -694,5 +694,477 @@ describe("spawn pre-flight checks", () => {
       .join("\n");
     expect(errors).toContain("not installed");
     expect(errors).not.toContain("not authenticated");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// autoDetectProject — multi-project scenarios
+// ---------------------------------------------------------------------------
+
+describe("spawn — autoDetectProject", () => {
+  it("errors when no projects configured", async () => {
+    (mockConfigRef.current as Record<string, unknown>).projects = {};
+
+    await expect(
+      program.parseAsync(["node", "test", "spawn"]),
+    ).rejects.toThrow("process.exit(1)");
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => String(c[0]))
+      .join("\n");
+    expect(errors).toContain("No projects configured");
+  });
+
+  it("uses AO_PROJECT_ID env var when multiple projects exist", async () => {
+    const fakeSession: Session = {
+      id: "backend-1",
+      projectId: "backend",
+      status: "spawning",
+      activity: null,
+      branch: null,
+      issueId: null,
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "hash-backend-1", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+    // tmux check passes for preflight
+    mockExec.mockResolvedValue({ stdout: "tmux 3.3a", stderr: "" });
+
+    (mockConfigRef.current as Record<string, unknown>).projects = {
+      frontend: {
+        name: "Frontend",
+        repo: "org/frontend",
+        path: join(tmpDir, "frontend"),
+        defaultBranch: "main",
+        sessionPrefix: "fe",
+      },
+      backend: {
+        name: "Backend",
+        repo: "org/backend",
+        path: join(tmpDir, "backend"),
+        defaultBranch: "main",
+        sessionPrefix: "be",
+      },
+    };
+
+    process.env.AO_PROJECT_ID = "backend";
+    try {
+      await program.parseAsync(["node", "test", "spawn"]);
+      expect(mockSessionManager.spawn).toHaveBeenCalledWith({
+        projectId: "backend",
+        issueId: undefined,
+      });
+    } finally {
+      delete process.env.AO_PROJECT_ID;
+    }
+  });
+
+  it("matches cwd to project path when multiple projects exist", async () => {
+    const backendDir = join(tmpDir, "backend");
+    mkdirSync(backendDir, { recursive: true });
+
+    const fakeSession: Session = {
+      id: "backend-1",
+      projectId: "backend",
+      status: "spawning",
+      activity: null,
+      branch: null,
+      issueId: null,
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "hash-backend-1", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+    // tmux check passes for preflight
+    mockExec.mockResolvedValue({ stdout: "tmux 3.3a", stderr: "" });
+
+    (mockConfigRef.current as Record<string, unknown>).projects = {
+      frontend: {
+        name: "Frontend",
+        repo: "org/frontend",
+        path: join(tmpDir, "frontend"),
+        defaultBranch: "main",
+        sessionPrefix: "fe",
+      },
+      backend: {
+        name: "Backend",
+        repo: "org/backend",
+        path: backendDir,
+        defaultBranch: "main",
+        sessionPrefix: "be",
+      },
+    };
+
+    const cwdSpy = vi.spyOn(process, "cwd").mockReturnValue(backendDir);
+    try {
+      await program.parseAsync(["node", "test", "spawn"]);
+      expect(mockSessionManager.spawn).toHaveBeenCalledWith({
+        projectId: "backend",
+        issueId: undefined,
+      });
+    } finally {
+      cwdSpy.mockRestore();
+    }
+  });
+
+  it("errors when multiple projects and cannot detect which one", async () => {
+    (mockConfigRef.current as Record<string, unknown>).projects = {
+      frontend: {
+        name: "Frontend",
+        repo: "org/frontend",
+        path: "/somewhere/else/frontend",
+        defaultBranch: "main",
+        sessionPrefix: "fe",
+      },
+      backend: {
+        name: "Backend",
+        repo: "org/backend",
+        path: "/somewhere/else/backend",
+        defaultBranch: "main",
+        sessionPrefix: "be",
+      },
+    };
+
+    await expect(
+      program.parseAsync(["node", "test", "spawn"]),
+    ).rejects.toThrow("process.exit(1)");
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => String(c[0]))
+      .join("\n");
+    expect(errors).toContain("Multiple projects configured");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// --open flag
+// ---------------------------------------------------------------------------
+
+describe("spawn — --open flag", () => {
+  it("calls open-iterm-tab when --open is provided", async () => {
+    const fakeSession: Session = {
+      id: "app-1",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: null,
+      issueId: null,
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "tmux-target", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+    // tmux -V for preflight, then open-iterm-tab succeeds
+    mockExec.mockResolvedValue({ stdout: "tmux 3.3a", stderr: "" });
+
+    await program.parseAsync(["node", "test", "spawn", "--open"]);
+
+    expect(mockExec).toHaveBeenCalledWith("open-iterm-tab", ["tmux-target"]);
+  });
+
+  it("silently ignores open-iterm-tab failure", async () => {
+    const fakeSession: Session = {
+      id: "app-1",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: null,
+      issueId: null,
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "tmux-target", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+    // tmux -V succeeds for preflight, open-iterm-tab fails
+    mockExec
+      .mockResolvedValueOnce({ stdout: "tmux 3.3a", stderr: "" })
+      .mockRejectedValue(new Error("command not found"));
+
+    // Should not throw
+    await program.parseAsync(["node", "test", "spawn", "--open"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("app-1");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// spawnSession output details
+// ---------------------------------------------------------------------------
+
+describe("spawn — session output details", () => {
+  it("shows worktree and branch in output", async () => {
+    const fakeSession: Session = {
+      id: "app-3",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: "feat/my-feature",
+      issueId: "ISSUE-42",
+      pr: null,
+      workspacePath: "/tmp/worktrees/app-3",
+      runtimeHandle: { id: "hash-app-3", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+
+    await program.parseAsync(["node", "test", "spawn", "ISSUE-42"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("/tmp/worktrees/app-3");
+    expect(output).toContain("feat/my-feature");
+    expect(output).toContain("SESSION=app-3");
+  });
+
+  it("falls back to session id when runtimeHandle is null", async () => {
+    const fakeSession: Session = {
+      id: "app-5",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: null,
+      issueId: null,
+      pr: null,
+      workspacePath: null,
+      runtimeHandle: null,
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+
+    await program.parseAsync(["node", "test", "spawn"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("tmux attach -t app-5");
+  });
+
+  it("shows claimed PR URL and branch in output", async () => {
+    const fakeSession: Session = {
+      id: "app-1",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: null,
+      issueId: null,
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "hash-app-1", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+    mockSessionManager.claimPR.mockResolvedValue({
+      sessionId: "app-1",
+      projectId: "my-app",
+      pr: {
+        number: 456,
+        url: "https://github.com/org/repo/pull/456",
+        title: "Fix things",
+        owner: "org",
+        repo: "repo",
+        branch: "feat/fix-things",
+        baseBranch: "main",
+        isDraft: false,
+      },
+      branchChanged: true,
+      githubAssigned: false,
+      takenOverFrom: [],
+    });
+
+    await program.parseAsync(["node", "test", "spawn", "--claim-pr", "456"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    // The ora spinner says "claimed PR", console.log shows the PR URL and branch
+    expect(output).toContain("https://github.com/org/repo/pull/456");
+    expect(output).toContain("feat/fix-things");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// batch-spawn
+// ---------------------------------------------------------------------------
+
+describe("batch-spawn command", () => {
+  let batchProgram: Command;
+
+  beforeEach(() => {
+    batchProgram = new Command();
+    batchProgram.exitOverride();
+    registerBatchSpawn(batchProgram);
+    // Preflight: tmux check passes
+    mockExec.mockResolvedValue({ stdout: "tmux 3.3a", stderr: "" });
+  });
+
+  it("spawns sessions for multiple issues", async () => {
+    let callCount = 0;
+    mockSessionManager.spawn.mockImplementation(async (opts: Record<string, unknown>) => {
+      callCount++;
+      return {
+        id: `app-${callCount}`,
+        projectId: "my-app",
+        status: "spawning",
+        activity: null,
+        branch: `feat/${opts.issueId}`,
+        issueId: opts.issueId,
+        pr: null,
+        workspacePath: `/tmp/wt-${callCount}`,
+        runtimeHandle: { id: `hash-app-${callCount}`, runtimeName: "tmux", data: {} },
+        agentInfo: null,
+        createdAt: new Date(),
+        lastActivityAt: new Date(),
+        metadata: {},
+      } as Session;
+    });
+    mockSessionManager.list.mockResolvedValue([]);
+
+    await batchProgram.parseAsync(["node", "test", "batch-spawn", "ISSUE-1", "ISSUE-2"]);
+
+    expect(mockSessionManager.spawn).toHaveBeenCalledTimes(2);
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("Created 2 sessions");
+  });
+
+  it("skips duplicate issues in same batch", async () => {
+    mockSessionManager.spawn.mockResolvedValue({
+      id: "app-1",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: null,
+      issueId: "ISSUE-1",
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "hash-1", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    } as Session);
+    mockSessionManager.list.mockResolvedValue([]);
+
+    await batchProgram.parseAsync(["node", "test", "batch-spawn", "ISSUE-1", "ISSUE-1"]);
+
+    // Only spawns once — second is skipped as duplicate
+    expect(mockSessionManager.spawn).toHaveBeenCalledTimes(1);
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("Skip ISSUE-1");
+    expect(output).toContain("duplicate in this batch");
+  });
+
+  it("skips issues with existing sessions", async () => {
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-existing",
+        projectId: "my-app",
+        status: "working",
+        activity: null,
+        branch: "feat/ISSUE-1",
+        issueId: "ISSUE-1",
+        pr: null,
+        workspacePath: "/tmp/wt",
+        runtimeHandle: { id: "hash-existing", runtimeName: "tmux", data: {} },
+        agentInfo: null,
+        createdAt: new Date(),
+        lastActivityAt: new Date(),
+        metadata: {},
+      } as Session,
+    ]);
+
+    mockSessionManager.spawn.mockResolvedValue({
+      id: "app-2",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: null,
+      issueId: "ISSUE-2",
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "hash-2", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    } as Session);
+
+    await batchProgram.parseAsync(["node", "test", "batch-spawn", "ISSUE-1", "ISSUE-2"]);
+
+    // Only spawns for ISSUE-2 since ISSUE-1 already exists
+    expect(mockSessionManager.spawn).toHaveBeenCalledTimes(1);
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ issueId: "ISSUE-2" }),
+    );
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("Skip ISSUE-1");
+    expect(output).toContain("already has session");
+  });
+
+  it("reports failed spawns without stopping batch", async () => {
+    let callCount = 0;
+    mockSessionManager.spawn.mockImplementation(async (opts: Record<string, unknown>) => {
+      callCount++;
+      if (opts.issueId === "ISSUE-2") {
+        throw new Error("worktree creation failed");
+      }
+      return {
+        id: `app-${callCount}`,
+        projectId: "my-app",
+        status: "spawning",
+        activity: null,
+        branch: null,
+        issueId: opts.issueId,
+        pr: null,
+        workspacePath: "/tmp/wt",
+        runtimeHandle: { id: `hash-${callCount}`, runtimeName: "tmux", data: {} },
+        agentInfo: null,
+        createdAt: new Date(),
+        lastActivityAt: new Date(),
+        metadata: {},
+      } as Session;
+    });
+    mockSessionManager.list.mockResolvedValue([]);
+
+    await batchProgram.parseAsync(["node", "test", "batch-spawn", "ISSUE-1", "ISSUE-2", "ISSUE-3"]);
+
+    // Should still spawn 2 of 3 (ISSUE-2 fails)
+    expect(mockSessionManager.spawn).toHaveBeenCalledTimes(3);
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("Created 2 sessions");
+    expect(output).toContain("Failed 1 issues");
+    expect(output).toContain("worktree creation failed");
+  });
+
+  it("errors when no projects configured for batch-spawn", async () => {
+    (mockConfigRef.current as Record<string, unknown>).projects = {};
+
+    await expect(
+      batchProgram.parseAsync(["node", "test", "batch-spawn", "ISSUE-1"]),
+    ).rejects.toThrow("process.exit(1)");
   });
 });

@@ -679,3 +679,416 @@ describe("session remap", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// session ls — additional coverage
+// ---------------------------------------------------------------------------
+
+describe("session ls — additional", () => {
+  it("filters by project when --project flag given", async () => {
+    mockSessionManager.list.mockResolvedValue([]);
+    mockTmux.mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "session", "ls", "--project", "my-app"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("My App");
+  });
+
+  it("errors when --project references unknown project", async () => {
+    await expect(
+      program.parseAsync(["node", "test", "session", "ls", "--project", "unknown"]),
+    ).rejects.toThrow("process.exit(1)");
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => String(c[0]))
+      .join("\n");
+    expect(errors).toContain("Unknown project: unknown");
+  });
+
+  it("shows multiple sessions sorted by id", async () => {
+    writeFileSync(join(sessionsDir, "app-2"), "branch=feat/b\nstatus=working\n");
+    writeFileSync(join(sessionsDir, "app-1"), "branch=feat/a\nstatus=idle\n");
+
+    mockTmux.mockResolvedValue(null);
+    mockGit.mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "session", "ls"]);
+
+    const logCalls = consoleSpy.mock.calls.map((c) => String(c[0]));
+    const app1Idx = logCalls.findIndex((s) => s.includes("app-1"));
+    const app2Idx = logCalls.findIndex((s) => s.includes("app-2"));
+    expect(app1Idx).toBeLessThan(app2Idx);
+  });
+
+  it("shows session status in brackets", async () => {
+    writeFileSync(join(sessionsDir, "app-1"), "branch=main\nstatus=pr_open\n");
+
+    mockTmux.mockResolvedValue(null);
+    mockGit.mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "session", "ls"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("[pr_open]");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// session kill — error handling
+// ---------------------------------------------------------------------------
+
+describe("session kill — errors", () => {
+  it("reports generic kill failure", async () => {
+    mockSessionManager.kill.mockRejectedValue(new Error("tmux kill-session failed"));
+
+    await expect(
+      program.parseAsync(["node", "test", "session", "kill", "app-1"]),
+    ).rejects.toThrow("process.exit(1)");
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => String(c[0]))
+      .join("\n");
+    expect(errors).toContain("Failed to kill session app-1");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// session attach — errors and edge cases
+// ---------------------------------------------------------------------------
+
+describe("session attach — additional", () => {
+  it("uses session name as tmux target when runtimeHandle is null", async () => {
+    mockSessionManager.get.mockResolvedValue(null);
+    mockTmux.mockResolvedValue("");
+
+    await program.parseAsync(["node", "test", "session", "attach", "manual-session"]);
+
+    expect(mockTmux).toHaveBeenCalledWith("has-session", "-t", "manual-session");
+    expect(mockSpawn).toHaveBeenCalledWith("tmux", ["attach", "-t", "manual-session"], {
+      stdio: "inherit",
+    });
+  });
+
+  it("reports error when tmux attach fails with non-zero exit", async () => {
+    mockSessionManager.get.mockResolvedValue(null);
+    mockTmux.mockResolvedValue("");
+    mockSpawn.mockImplementation(() => makeMockChild(1));
+
+    await expect(
+      program.parseAsync(["node", "test", "session", "attach", "app-1"]),
+    ).rejects.toThrow("process.exit(1)");
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => String(c[0]))
+      .join("\n");
+    expect(errors).toContain("Failed to attach to session app-1");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// session cleanup — additional coverage
+// ---------------------------------------------------------------------------
+
+describe("session cleanup — additional", () => {
+  it("filters by project when --project flag given", async () => {
+    mockSessionManager.cleanup.mockResolvedValue({
+      killed: [],
+      skipped: [],
+      errors: [],
+    } satisfies CleanupResult);
+
+    await program.parseAsync(["node", "test", "session", "cleanup", "--project", "my-app"]);
+
+    expect(mockSessionManager.cleanup).toHaveBeenCalledWith("my-app");
+  });
+
+  it("errors when --project references unknown project", async () => {
+    await expect(
+      program.parseAsync(["node", "test", "session", "cleanup", "--project", "unknown"]),
+    ).rejects.toThrow("process.exit(1)");
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => String(c[0]))
+      .join("\n");
+    expect(errors).toContain("Unknown project: unknown");
+  });
+
+  it("dry-run shows errors from cleanup", async () => {
+    mockSessionManager.cleanup.mockResolvedValue({
+      killed: [],
+      skipped: [],
+      errors: [{ sessionId: "app-1", error: "API timeout" }],
+    } satisfies CleanupResult);
+
+    await program.parseAsync(["node", "test", "session", "cleanup", "--dry-run"]);
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => String(c[0]))
+      .join("\n");
+    expect(errors).toContain("Error checking app-1");
+    expect(errors).toContain("API timeout");
+  });
+
+  it("dry-run shows count message for multiple sessions", async () => {
+    mockSessionManager.cleanup.mockResolvedValue({
+      killed: ["app-1", "app-2"],
+      skipped: [],
+      errors: [],
+    } satisfies CleanupResult);
+
+    await program.parseAsync(["node", "test", "session", "cleanup", "--dry-run"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("Would kill app-1");
+    expect(output).toContain("Would kill app-2");
+    expect(output).toContain("2 sessions would be cleaned");
+  });
+
+  it("dry-run shows no sessions message when only orchestrators found", async () => {
+    mockSessionManager.cleanup.mockResolvedValue({
+      killed: ["app-orchestrator"],
+      skipped: [],
+      errors: [],
+    } satisfies CleanupResult);
+
+    await program.parseAsync(["node", "test", "session", "cleanup", "--dry-run"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("No sessions to clean up");
+    expect(output).not.toContain("app-orchestrator");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// session restore
+// ---------------------------------------------------------------------------
+
+describe("session restore", () => {
+  it("restores a session and shows details", async () => {
+    mockSessionManager.restore.mockResolvedValue({
+      id: "app-1",
+      projectId: "my-app",
+      status: "working",
+      activity: null,
+      branch: "feat/fix",
+      issueId: null,
+      pr: null,
+      workspacePath: "/tmp/wt/app-1",
+      runtimeHandle: { id: "tmux-app-1", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    });
+
+    await program.parseAsync(["node", "test", "session", "restore", "app-1"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("Session app-1 restored");
+    expect(output).toContain("/tmp/wt/app-1");
+    expect(output).toContain("feat/fix");
+    expect(output).toContain("tmux attach -t tmux-app-1");
+  });
+
+  it("shows session name for attach when runtimeHandle is null", async () => {
+    mockSessionManager.restore.mockResolvedValue({
+      id: "app-1",
+      projectId: "my-app",
+      status: "working",
+      activity: null,
+      branch: null,
+      issueId: null,
+      pr: null,
+      workspacePath: null,
+      runtimeHandle: null,
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    });
+
+    await program.parseAsync(["node", "test", "session", "restore", "app-1"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("tmux attach -t app-1");
+  });
+
+  it("shows specific error for SessionNotRestorableError", async () => {
+    mockSessionManager.restore.mockRejectedValue(
+      new (await import("@composio/ao-core")).SessionNotRestorableError("app-1", "still running"),
+    );
+
+    await expect(
+      program.parseAsync(["node", "test", "session", "restore", "app-1"]),
+    ).rejects.toThrow("process.exit(1)");
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => String(c[0]))
+      .join("\n");
+    expect(errors).toContain("Cannot restore: still running");
+  });
+
+  it("shows specific error for WorkspaceMissingError", async () => {
+    mockSessionManager.restore.mockRejectedValue(
+      new (await import("@composio/ao-core")).WorkspaceMissingError("/tmp/wt/app-1"),
+    );
+
+    await expect(
+      program.parseAsync(["node", "test", "session", "restore", "app-1"]),
+    ).rejects.toThrow("process.exit(1)");
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => String(c[0]))
+      .join("\n");
+    expect(errors).toContain("Workspace missing");
+  });
+
+  it("shows generic error for unknown restore failure", async () => {
+    mockSessionManager.restore.mockRejectedValue(new Error("unexpected failure"));
+
+    await expect(
+      program.parseAsync(["node", "test", "session", "restore", "app-1"]),
+    ).rejects.toThrow("process.exit(1)");
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => String(c[0]))
+      .join("\n");
+    expect(errors).toContain("Failed to restore session app-1");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// session claim-pr — additional
+// ---------------------------------------------------------------------------
+
+describe("session claim-pr — additional", () => {
+  afterEach(() => {
+    delete process.env["AO_SESSION_NAME"];
+    delete process.env["AO_SESSION"];
+  });
+
+  it("falls back to AO_SESSION when AO_SESSION_NAME is not set", async () => {
+    process.env["AO_SESSION"] = "app-9";
+
+    await program.parseAsync(["node", "test", "session", "claim-pr", "42"]);
+
+    expect(mockSessionManager.claimPR).toHaveBeenCalledWith("app-9", "42", {
+      assignOnGithub: undefined,
+    });
+  });
+
+  it("shows taken-over sessions in output", async () => {
+    mockSessionManager.claimPR.mockResolvedValue({
+      sessionId: "app-2",
+      projectId: "my-app",
+      pr: {
+        number: 42,
+        url: "https://github.com/org/repo/pull/42",
+        title: "Existing PR",
+        owner: "org",
+        repo: "repo",
+        branch: "feat/existing-pr",
+        baseBranch: "main",
+        isDraft: false,
+      },
+      branchChanged: false,
+      githubAssigned: false,
+      takenOverFrom: ["app-5", "app-7"],
+    });
+
+    await program.parseAsync(["node", "test", "session", "claim-pr", "42", "app-2"]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("Took over from: app-5, app-7");
+  });
+
+  it("shows GitHub assignment status", async () => {
+    mockSessionManager.claimPR.mockResolvedValue({
+      sessionId: "app-2",
+      projectId: "my-app",
+      pr: {
+        number: 42,
+        url: "https://github.com/org/repo/pull/42",
+        title: "Existing PR",
+        owner: "org",
+        repo: "repo",
+        branch: "feat/existing-pr",
+        baseBranch: "main",
+        isDraft: false,
+      },
+      branchChanged: true,
+      githubAssigned: true,
+      takenOverFrom: [],
+    });
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "session",
+      "claim-pr",
+      "42",
+      "app-2",
+      "--assign-on-github",
+    ]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("GitHub assignee: updated");
+  });
+
+  it("shows GitHub assignment error", async () => {
+    mockSessionManager.claimPR.mockResolvedValue({
+      sessionId: "app-2",
+      projectId: "my-app",
+      pr: {
+        number: 42,
+        url: "https://github.com/org/repo/pull/42",
+        title: "Existing PR",
+        owner: "org",
+        repo: "repo",
+        branch: "feat/existing-pr",
+        baseBranch: "main",
+        isDraft: false,
+      },
+      branchChanged: true,
+      githubAssigned: false,
+      githubAssignmentError: "Not a collaborator",
+      takenOverFrom: [],
+    });
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "session",
+      "claim-pr",
+      "42",
+      "app-2",
+      "--assign-on-github",
+    ]);
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("GitHub assignee: Not a collaborator");
+  });
+
+  it("reports error when claim fails", async () => {
+    mockSessionManager.claimPR.mockRejectedValue(new Error("PR not found"));
+
+    await expect(
+      program.parseAsync(["node", "test", "session", "claim-pr", "999", "app-1"]),
+    ).rejects.toThrow("process.exit(1)");
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => String(c[0]))
+      .join("\n");
+    expect(errors).toContain("Failed to claim PR for session app-1");
+  });
+});

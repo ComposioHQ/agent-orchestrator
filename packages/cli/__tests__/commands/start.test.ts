@@ -884,4 +884,240 @@ describe("stop command", () => {
       purgeOpenCode: true,
     });
   });
+
+  it("prints lifecycle status when lifecycle worker stopped", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockSessionManager.get.mockResolvedValue(null);
+    mockStopLifecycleWorker.mockResolvedValue(true);
+
+    await program.parseAsync(["node", "test", "stop"]);
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("Lifecycle worker stopped");
+  });
+
+  it("prints lifecycle not running when stop returns false", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockSessionManager.get.mockResolvedValue(null);
+    mockStopLifecycleWorker.mockResolvedValue(false);
+
+    await program.parseAsync(["node", "test", "stop"]);
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("Lifecycle worker not running");
+  });
+
+  it("shows error message when stop encounters an exception", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockSessionManager.get.mockRejectedValue(new Error("connection refused"));
+
+    await expect(
+      program.parseAsync(["node", "test", "stop"]),
+    ).rejects.toThrow("process.exit(1)");
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(errors).toContain("connection refused");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveProjectByRepo — URL start with multi-project config
+// ---------------------------------------------------------------------------
+
+describe("start command — resolveProjectByRepo fallback", () => {
+  it("falls back to single-project resolution when repo not in config", async () => {
+    const repoDir = join(tmpDir, "fallback-app");
+    createFakeRepo(repoDir, "https://github.com/owner/fallback-app.git");
+    mockCwd(tmpDir);
+
+    // Config has one project with a different repo field
+    writeFileSync(
+      join(repoDir, "agent-orchestrator.yaml"),
+      [
+        "port: 4000",
+        "defaults:",
+        "  runtime: tmux",
+        "  agent: claude-code",
+        "  workspace: worktree",
+        "  notifiers: [desktop]",
+        "projects:",
+        "  only-project:",
+        "    name: Only Project",
+        "    repo: owner/different-repo",
+        `    path: ${repoDir}`,
+        "    defaultBranch: main",
+        "    sessionPrefix: op",
+      ].join("\n"),
+    );
+
+    await program.parseAsync([
+      "node",
+      "test",
+      "start",
+      "https://github.com/owner/fallback-app",
+      "--no-dashboard",
+      "--no-orchestrator",
+    ]);
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    // Falls back to single-project resolution
+    expect(output).toContain("Only Project");
+    expect(output).toContain("Startup complete");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Dashboard and orchestrator startup paths
+// ---------------------------------------------------------------------------
+
+describe("start command — dashboard startup", () => {
+  it("starts dashboard and lifecycle when flags not disabled", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    const { findWebDir } = await import("../../src/lib/web-dir.js");
+    vi.mocked(findWebDir).mockReturnValue(tmpDir);
+    writeFileSync(join(tmpDir, "package.json"), "{}");
+
+    mockSessionManager.get.mockResolvedValue(null);
+    mockSessionManager.spawnOrchestrator.mockResolvedValue({ id: "app-orchestrator" });
+
+    await program.parseAsync(["node", "test", "start", "--no-orchestrator"]);
+
+    // Dashboard was started — waitForPortAndOpen should be called
+    expect(mockWaitForPortAndOpen).toHaveBeenCalledTimes(1);
+    expect(mockEnsureLifecycleWorker).toHaveBeenCalled();
+  });
+
+  it("aborts browser open polling when dashboard exits", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    const { findWebDir } = await import("../../src/lib/web-dir.js");
+    vi.mocked(findWebDir).mockReturnValue(tmpDir);
+    writeFileSync(join(tmpDir, "package.json"), "{}");
+
+    mockSessionManager.get.mockResolvedValue(null);
+    mockSessionManager.spawnOrchestrator.mockResolvedValue({ id: "app-orchestrator" });
+
+    // Create a more realistic fake child with event listener tracking
+    const exitListeners: Array<(code: number | null) => void> = [];
+    const fakeChild = {
+      on: vi.fn((event: string, handler: (code: number | null) => void) => {
+        if (event === "exit") exitListeners.push(handler);
+      }),
+      kill: vi.fn(),
+      emit: vi.fn(),
+      stdout: null,
+      stderr: null,
+    };
+    mockSpawn.mockReturnValue(fakeChild);
+
+    await program.parseAsync(["node", "test", "start"]);
+
+    // Dashboard process should have an exit handler registered
+    expect(fakeChild.on).toHaveBeenCalledWith("exit", expect.any(Function));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Lifecycle worker failure handling
+// ---------------------------------------------------------------------------
+
+describe("start command — lifecycle worker failure", () => {
+  it("fails startup when lifecycle worker cannot start", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockEnsureLifecycleWorker.mockRejectedValue(new Error("spawn failed"));
+
+    await expect(
+      program.parseAsync(["node", "test", "start", "--no-dashboard"]),
+    ).rejects.toThrow("process.exit(1)");
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(errors).toContain("Failed to start lifecycle worker");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Orchestrator session failure handling
+// ---------------------------------------------------------------------------
+
+describe("start command — orchestrator session failure", () => {
+  it("fails startup when orchestrator session creation fails", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockSessionManager.get.mockResolvedValue(null);
+    mockSessionManager.spawnOrchestrator.mockRejectedValue(new Error("tmux create failed"));
+
+    await expect(
+      program.parseAsync(["node", "test", "start", "--no-dashboard"]),
+    ).rejects.toThrow("process.exit(1)");
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(errors).toContain("Failed to setup orchestrator");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isLocalPath — path argument detection
+// ---------------------------------------------------------------------------
+
+describe("start command — stop --all flag", () => {
+  it("stops via running.json when --all is given with running instance", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    const { getRunning, unregister } = await import("../../src/lib/running-state.js");
+    vi.mocked(getRunning).mockResolvedValue({
+      pid: 99999,
+      port: 3000,
+      configPath: "/fake/config",
+      startedAt: new Date().toISOString(),
+      projects: ["my-app"],
+    });
+
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+
+    await program.parseAsync(["node", "test", "stop", "--all"]);
+
+    expect(killSpy).toHaveBeenCalledWith(99999, "SIGTERM");
+    expect(vi.mocked(unregister)).toHaveBeenCalled();
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("Stopped AO on port 3000");
+
+    killSpy.mockRestore();
+  });
+
+  it("reports no running instance when --all is given with nothing running", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    const { getRunning } = await import("../../src/lib/running-state.js");
+    vi.mocked(getRunning).mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "stop", "--all"]);
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("No running AO instance found");
+  });
 });

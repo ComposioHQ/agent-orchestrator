@@ -76,7 +76,12 @@ vi.mock("@composio/ao-core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@composio/ao-core")>();
   return {
     ...actual,
-    loadConfig: () => mockConfigRef.current,
+    loadConfig: () => {
+      if (mockConfigRef.current === null) {
+        throw new Error("No config found");
+      }
+      return mockConfigRef.current;
+    },
   };
 });
 
@@ -828,6 +833,324 @@ describe("status command", () => {
     expect(parsed.find((entry: { name: string }) => entry.name === "app-1")).toMatchObject({
       role: "worker",
       project: "my-app",
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Fallback status (no config)
+  // -------------------------------------------------------------------------
+
+  describe("fallback status (no config)", () => {
+    it("shows fallback status from tmux sessions when no config exists", async () => {
+      // Setting to null triggers the throw in the loadConfig mock
+      mockConfigRef.current = null;
+
+      mockTmux.mockImplementation(async (...args: string[]) => {
+        if (args[0] === "list-sessions") return "session-1\nsession-2";
+        if (args[0] === "display-message") {
+          return String(Math.floor(Date.now() / 1000) - 300); // 5 min ago
+        }
+        return null;
+      });
+
+      await program.parseAsync(["node", "test", "status"]);
+
+      const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+      expect(output).toContain("Falling back to session discovery");
+      expect(output).toContain("AGENT ORCHESTRATOR STATUS");
+      expect(output).toContain("session-1");
+      expect(output).toContain("session-2");
+      expect(output).toContain("2 tmux sessions found");
+    });
+
+    it("shows 'no tmux sessions' when fallback finds nothing", async () => {
+      mockConfigRef.current = null;
+
+      mockTmux.mockImplementation(async (...args: string[]) => {
+        if (args[0] === "list-sessions") return null;
+        return null;
+      });
+
+      await program.parseAsync(["node", "test", "status"]);
+
+      const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+      expect(output).toContain("Falling back to session discovery");
+      expect(output).toContain("No tmux sessions found");
+    });
+
+    it("shows singular count for single tmux session in fallback", async () => {
+      mockConfigRef.current = null;
+
+      mockTmux.mockImplementation(async (...args: string[]) => {
+        if (args[0] === "list-sessions") return "my-session";
+        if (args[0] === "display-message") return null;
+        return null;
+      });
+
+      await program.parseAsync(["node", "test", "status"]);
+
+      const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+      expect(output).toContain("1 tmux session found");
+    });
+
+    it("shows agent introspection summary in fallback mode", async () => {
+      mockConfigRef.current = null;
+
+      mockTmux.mockImplementation(async (...args: string[]) => {
+        if (args[0] === "list-sessions") return "my-session";
+        if (args[0] === "display-message") {
+          return String(Math.floor(Date.now() / 1000) - 60);
+        }
+        return null;
+      });
+      mockIntrospect.mockResolvedValue({ summary: "Working on feature X" });
+
+      await program.parseAsync(["node", "test", "status"]);
+
+      const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+      expect(output).toContain("my-session");
+      expect(output).toContain("Working on feature X");
+    });
+
+    it("handles introspection failure in fallback mode", async () => {
+      mockConfigRef.current = null;
+
+      mockTmux.mockImplementation(async (...args: string[]) => {
+        if (args[0] === "list-sessions") return "my-session";
+        if (args[0] === "display-message") return null;
+        return null;
+      });
+      mockIntrospect.mockRejectedValue(new Error("Failed"));
+
+      await program.parseAsync(["node", "test", "status"]);
+
+      const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+      expect(output).toContain("my-session");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Error handling and edge cases
+  // -------------------------------------------------------------------------
+
+  describe("error handling", () => {
+    it("exits with error for unknown project filter", async () => {
+      await expect(
+        program.parseAsync(["node", "test", "status", "--project", "nonexistent"]),
+      ).rejects.toThrow("process.exit(1)");
+    });
+
+    it("shows empty project with no sessions", async () => {
+      mockSessionManager.list.mockResolvedValue([]);
+      mockTmux.mockResolvedValue(null);
+
+      await program.parseAsync(["node", "test", "status"]);
+
+      const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+      expect(output).toContain("no active sessions");
+      expect(output).toContain("0 active sessions across 1 project");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Multi-project display
+  // -------------------------------------------------------------------------
+
+  describe("multi-project display", () => {
+    it("shows sessions grouped by project", async () => {
+      mockConfigRef.current = {
+        ...(mockConfigRef.current as Record<string, unknown>),
+        projects: {
+          "my-app": {
+            name: "My App",
+            repo: "org/my-app",
+            path: join(tmpDir, "main-repo"),
+            defaultBranch: "main",
+            sessionPrefix: "app",
+            scm: { plugin: "github" },
+          },
+          docs: {
+            name: "Docs",
+            repo: "org/docs",
+            path: join(tmpDir, "docs-repo"),
+            defaultBranch: "main",
+            sessionPrefix: "docs",
+            scm: { plugin: "github" },
+          },
+        },
+      } as Record<string, unknown>;
+
+      mockSessionManager.list.mockResolvedValue([
+        makeSession({ id: "app-1", projectId: "my-app", branch: "feat/app" }),
+        makeSession({ id: "docs-1", projectId: "docs", branch: "feat/docs" }),
+      ]);
+      mockGit.mockResolvedValue(null);
+      mockTmux.mockResolvedValue(null);
+
+      await program.parseAsync(["node", "test", "status"]);
+
+      const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+      expect(output).toContain("My App");
+      expect(output).toContain("Docs");
+      expect(output).toContain("app-1");
+      expect(output).toContain("docs-1");
+      expect(output).toContain("2 active sessions across 2 projects");
+    });
+
+    it("filters sessions by --project flag", async () => {
+      mockConfigRef.current = {
+        ...(mockConfigRef.current as Record<string, unknown>),
+        projects: {
+          "my-app": {
+            name: "My App",
+            repo: "org/my-app",
+            path: join(tmpDir, "main-repo"),
+            defaultBranch: "main",
+            sessionPrefix: "app",
+            scm: { plugin: "github" },
+          },
+          docs: {
+            name: "Docs",
+            repo: "org/docs",
+            path: join(tmpDir, "docs-repo"),
+            defaultBranch: "main",
+            sessionPrefix: "docs",
+            scm: { plugin: "github" },
+          },
+        },
+      } as Record<string, unknown>;
+
+      mockSessionManager.list.mockResolvedValue([
+        makeSession({ id: "app-1", projectId: "my-app", branch: "feat/app" }),
+      ]);
+      mockGit.mockResolvedValue(null);
+      mockTmux.mockResolvedValue(null);
+
+      await program.parseAsync(["node", "test", "status", "--project", "my-app"]);
+
+      const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+      expect(output).toContain("My App");
+      // Should only show my-app project, not docs
+      expect(output).not.toContain("Docs");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Orchestrator row display
+  // -------------------------------------------------------------------------
+
+  describe("orchestrator display", () => {
+    it("shows orchestrator summary when available from agent introspection", async () => {
+      mockSessionManager.list.mockResolvedValue([
+        makeSession({
+          id: "app-orchestrator",
+          projectId: "my-app",
+          metadata: { role: "orchestrator" },
+        }),
+      ]);
+      mockGit.mockResolvedValue(null);
+      mockIntrospect.mockResolvedValue({ summary: "Coordinating 3 workers" });
+      mockTmux.mockResolvedValue(null);
+
+      await program.parseAsync(["node", "test", "status"]);
+
+      const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+      expect(output).toContain("Orchestrator:");
+      expect(output).toContain("Coordinating 3 workers");
+    });
+
+    it("shows orchestrator with metadata summary when introspection fails", async () => {
+      mockSessionManager.list.mockResolvedValue([
+        makeSession({
+          id: "app-orchestrator",
+          projectId: "my-app",
+          metadata: { role: "orchestrator", summary: "Managing tasks" },
+        }),
+      ]);
+      mockGit.mockResolvedValue(null);
+      mockIntrospect.mockRejectedValue(new Error("Failed"));
+      mockTmux.mockResolvedValue(null);
+
+      await program.parseAsync(["node", "test", "status"]);
+
+      const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+      expect(output).toContain("Orchestrator:");
+      expect(output).toContain("Managing tasks");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Session row formatting
+  // -------------------------------------------------------------------------
+
+  describe("session row formatting", () => {
+    it("shows dash when branch is null", async () => {
+      mockSessionManager.list.mockResolvedValue([
+        makeSession({ id: "app-1", projectId: "my-app", branch: null }),
+      ]);
+      mockGit.mockResolvedValue(null);
+      mockTmux.mockResolvedValue(null);
+
+      await program.parseAsync(["node", "test", "status", "--json"]);
+
+      const parsed = JSON.parse(consoleSpy.mock.calls.map((c) => c[0]).join(""));
+      expect(parsed[0].branch).toBeNull();
+    });
+
+    it("shows zero pending threads when no comments found", async () => {
+      writeFileSync(
+        join(sessionsDir, "app-1"),
+        "worktree=/tmp/wt\nbranch=feat/t\nstatus=working\n",
+      );
+
+      mockTmux.mockImplementation(async (...args: string[]) => {
+        if (args[0] === "list-sessions") return "app-1";
+        if (args[0] === "display-message") return String(Math.floor(Date.now() / 1000));
+        return null;
+      });
+      mockGit.mockResolvedValue("feat/t");
+
+      mockDetectPR.mockResolvedValue({
+        number: 1,
+        url: "https://github.com/org/repo/pull/1",
+        title: "T",
+        owner: "org",
+        repo: "repo",
+        branch: "feat/t",
+        baseBranch: "main",
+        isDraft: false,
+      });
+      mockGetCISummary.mockResolvedValue("none");
+      mockGetReviewDecision.mockResolvedValue("none");
+      mockGetPendingComments.mockResolvedValue([]);
+
+      await program.parseAsync(["node", "test", "status", "--json"]);
+
+      const parsed = JSON.parse(consoleSpy.mock.calls.map((c) => c[0]).join(""));
+      expect(parsed[0].pendingThreads).toBe(0);
+    });
+
+    it("truncates long summaries to 60 characters in display", async () => {
+      const longSummary =
+        "This is an extremely long summary that should definitely be truncated to fit in the display";
+      mockSessionManager.list.mockResolvedValue([
+        makeSession({
+          id: "app-1",
+          projectId: "my-app",
+          branch: "feat/long",
+          metadata: { summary: longSummary },
+        }),
+      ]);
+      mockGit.mockResolvedValue(null);
+      mockTmux.mockResolvedValue(null);
+
+      await program.parseAsync(["node", "test", "status"]);
+
+      const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+      // The full summary should not appear (it's 92 chars)
+      expect(output).not.toContain(longSummary);
+      // But a truncated version should appear
+      expect(output).toContain(longSummary.slice(0, 60));
     });
   });
 });
