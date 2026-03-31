@@ -87,21 +87,34 @@ function createAiderAgent(): Agent {
 
       const permissionMode = normalizePermissionMode(config.permissions);
       if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
-        parts.push("--yes");
+        parts.push("--yes-always");
       }
 
       if (config.model) {
         parts.push("--model", shellEscape(config.model));
       }
 
-      if (config.systemPromptFile) {
-        parts.push("--system-prompt", `"$(cat ${shellEscape(config.systemPromptFile)})"`);
-      } else if (config.systemPrompt) {
-        parts.push("--system-prompt", shellEscape(config.systemPrompt));
-      }
+      const hasSystemPromptFile = Boolean(config.systemPromptFile);
+      const hasSystemPrompt = Boolean(config.systemPrompt);
+      const hasUserPrompt = Boolean(config.prompt);
 
-      if (config.prompt) {
-        parts.push("--message", shellEscape(config.prompt));
+      if (hasSystemPromptFile) {
+        if (hasUserPrompt) {
+          parts.push(
+            "--message",
+            `"$(cat ${shellEscape(config.systemPromptFile!)}; printf '\\n\\n'; printf %s ${shellEscape(config.prompt!)})"`,
+          );
+        } else {
+          parts.push("--message", `"$(cat ${shellEscape(config.systemPromptFile!)})"`);
+        }
+      } else if (hasSystemPrompt) {
+        if (hasUserPrompt) {
+          parts.push("--message", shellEscape(`${config.systemPrompt}\n\n${config.prompt}`));
+        } else {
+          parts.push("--message", shellEscape(config.systemPrompt!));
+        }
+      } else if (hasUserPrompt) {
+        parts.push("--message", shellEscape(config.prompt!));
       }
 
       return parts.join(" ");
