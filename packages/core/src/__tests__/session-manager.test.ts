@@ -159,7 +159,7 @@ describe("deleteSession retry loop", () => {
     vi.useRealTimers();
   });
 
-  it("verifies final error propagation - last error is thrown after all retries fail", async () => {
+  it("verifies all retries are attempted when deletion fails", async () => {
     const { execFile } = await import("node:child_process");
 
     writeMetadata(sessionsDir, "app-3", {
@@ -192,8 +192,8 @@ describe("deleteSession retry loop", () => {
 
     const sm = createSessionManager({ config, registry: mockRegistry });
 
-    // The kill function catches the error and continues, so we need to verify
-    // that the error was thrown internally but handled gracefully
+    // The kill function catches and ignores deleteOpenCodeSession() failures,
+    // so this test verifies that all retry attempts are made despite errors
     await sm.kill("app-3", { purgeOpenCode: true });
 
     // Verify all 3 delete attempts were made
