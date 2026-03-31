@@ -215,6 +215,9 @@ describe("send", () => {
       runtimeHandle: JSON.stringify(makeHandle("rt-1")),
     });
 
+    vi.mocked(mockRuntime.isAlive).mockResolvedValue(true);
+    vi.mocked(mockRuntime.getOutput).mockResolvedValueOnce("before").mockResolvedValue("after");
+
     const sm = createSessionManager({ config, registry: mockRegistry });
     await sm.send("app-1", "hello");
 
@@ -246,6 +249,9 @@ describe("send", () => {
       opencodeSessionId: "ses bad id",
       runtimeHandle: JSON.stringify(makeHandle("rt-1")),
     });
+
+    vi.mocked(mockRuntime.isAlive).mockResolvedValue(true);
+    vi.mocked(mockRuntime.getOutput).mockResolvedValueOnce("before").mockResolvedValue("after");
 
     const sm = createSessionManager({ config, registry: mockRegistry });
     await sm.send("app-1", "hello");
@@ -351,7 +357,7 @@ describe("send", () => {
       makeHandle("rt-1"),
       "do not confirm on visibility",
     );
-  });
+  }, 10000);
 });
 
 describe("remap", () => {

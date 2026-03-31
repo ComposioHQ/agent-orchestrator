@@ -1,8 +1,17 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Command } from "commander";
 import chalk from "chalk";
-import { findConfigFile, loadConfig, type Notifier, type OrchestratorConfig } from "@composio/ao-core";
+import {
+  findConfigFile,
+  getObservabilityBaseDir,
+  loadConfig,
+  type Notifier,
+  type OrchestratorConfig,
+} from "@composio/ao-core";
 import { runRepoScript } from "../lib/script-runner.js";
-import { probeGateway, validateToken } from "../lib/openclaw-probe.js";
+import { detectOpenClawInstallation, validateToken } from "../lib/openclaw-probe.js";
+import { importPluginModuleFromSource } from "../lib/plugin-store.js";
 
 // ---------------------------------------------------------------------------
 // Helpers — match the PASS / WARN / FAIL style of ao-doctor.sh
@@ -34,6 +43,41 @@ function makeFailCounter(): { fail: (msg: string) => void; count: () => number }
 // Notifier connectivity checks (Gap 2)
 // ---------------------------------------------------------------------------
 
+interface OpenClawHealthSummary {
+  lastSuccessAt: string | null;
+  lastFailureAt: string | null;
+  lastFailureError: string | null;
+  totalSent: number;
+  totalFailed: number;
+}
+
+function formatTimestamp(timestamp: string | null): string | null {
+  if (!timestamp) return null;
+  const date = new Date(timestamp);
+  return Number.isNaN(date.getTime()) ? timestamp : date.toLocaleString();
+}
+
+function readOpenClawHealth(config: OrchestratorConfig): OpenClawHealthSummary | null {
+  if (!config.configPath) return null;
+  const healthPath = join(getObservabilityBaseDir(config.configPath), "openclaw-health.json");
+  if (!existsSync(healthPath)) return null;
+
+  try {
+    const raw = readFileSync(healthPath, "utf-8");
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (typeof parsed !== "object" || parsed === null) return null;
+    return {
+      lastSuccessAt: typeof parsed.lastSuccessAt === "string" ? parsed.lastSuccessAt : null,
+      lastFailureAt: typeof parsed.lastFailureAt === "string" ? parsed.lastFailureAt : null,
+      lastFailureError: typeof parsed.lastFailureError === "string" ? parsed.lastFailureError : null,
+      totalSent: typeof parsed.totalSent === "number" ? parsed.totalSent : 0,
+      totalFailed: typeof parsed.totalFailed === "number" ? parsed.totalFailed : 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function checkOpenClawNotifier(
   config: OrchestratorConfig,
   fail: (msg: string) => void,
@@ -53,33 +97,58 @@ async function checkOpenClawNotifier(
   const envVarMatch = rawToken?.match(/^\$\{([^}]+)\}$/);
   const token = (envVarMatch ? process.env[envVarMatch[1]] : rawToken) ?? process.env["OPENCLAW_HOOKS_TOKEN"];
 
-  // Step 1: Probe gateway reachability
-  const probe = await probeGateway(url);
-  if (!probe.reachable) {
-    fail(
-      `OpenClaw gateway is not reachable at ${url}. ` +
-        `Fix: ensure OpenClaw is running (openclaw status) or fix the URL in your config`,
+  const installation = await detectOpenClawInstallation(url);
+  if (installation.state === "running") {
+    pass(
+      `OpenClaw gateway detected at ${installation.gatewayUrl} (HTTP ${installation.probe.httpStatus})`,
     );
-    return;
+  } else if (installation.state === "installed-but-stopped") {
+    const installHint = installation.binaryPath
+      ? `installed at ${installation.binaryPath}`
+      : "configured on this machine";
+    fail(`OpenClaw is ${installHint} but the gateway is not running at ${installation.gatewayUrl}`);
+  } else {
+    fail(
+      `OpenClaw is not installed locally and the gateway is not reachable at ${installation.gatewayUrl}. ` +
+        `Fix: install/start OpenClaw or update the notifier URL`,
+    );
   }
-
-  pass(`OpenClaw gateway is reachable at ${url} (HTTP ${probe.httpStatus})`);
 
   // Step 2: Validate auth token if present
   if (!token) {
     warn(
       "OpenClaw token is not set. Fix: set OPENCLAW_HOOKS_TOKEN env var or add token to notifiers.openclaw in config",
     );
+  } else if (installation.state === "running") {
+    const tokenResult = await validateToken(installation.gatewayUrl, token);
+    if (!tokenResult.valid) {
+      fail(`OpenClaw token validation failed: ${tokenResult.error}`);
+    } else {
+      pass("OpenClaw token is valid");
+    }
+  }
+
+  const health = readOpenClawHealth(config);
+  if (!health) {
+    warn("No OpenClaw notification history recorded yet");
     return;
   }
 
-  const tokenResult = await validateToken(url, token);
-  if (!tokenResult.valid) {
-    fail(`OpenClaw token validation failed: ${tokenResult.error}`);
-    return;
+  const lastSuccess = formatTimestamp(health.lastSuccessAt);
+  if (lastSuccess) {
+    pass(`OpenClaw last successful notification: ${lastSuccess}`);
+  } else {
+    warn("OpenClaw has not recorded a successful notification yet");
   }
 
-  pass("OpenClaw token is valid");
+  if (health.lastFailureAt) {
+    const lastFailure = formatTimestamp(health.lastFailureAt);
+    warn(
+      `OpenClaw last failure: ${lastFailure ?? health.lastFailureAt} (${health.lastFailureError ?? "unknown error"})`,
+    );
+  }
+
+  pass(`OpenClaw notification totals: ${health.totalSent} sent, ${health.totalFailed} failed`);
 }
 
 async function checkNotifierConnectivity(
@@ -118,7 +187,7 @@ async function sendTestNotifications(
 ): Promise<void> {
   const { createPluginRegistry } = await import("@composio/ao-core");
   const registry = createPluginRegistry();
-  await registry.loadFromConfig(config);
+  await registry.loadFromConfig(config, importPluginModuleFromSource);
 
   const activeNotifierNames = config.defaults?.notifiers ?? [];
   const configuredNotifiers = Object.keys(config.notifiers ?? {});

@@ -18,6 +18,7 @@ import { findConfigFile } from "@composio/ao-core";
 import {
   probeGateway,
   validateToken,
+  detectOpenClawInstallation,
   DEFAULT_OPENCLAW_URL,
   HOOKS_PATH,
 } from "../lib/openclaw-probe.js";
@@ -40,11 +41,27 @@ interface SetupOptions {
   url?: string;
   token?: string;
   nonInteractive?: boolean;
+  routingPreset?: OpenClawRoutingPreset;
 }
+
+type OpenClawRoutingPreset = "urgent-only" | "urgent-action" | "all";
 
 interface ResolvedConfig {
   url: string;
   token: string;
+  routingPreset: OpenClawRoutingPreset;
+}
+
+const OPENCLAW_ROUTING_PRESETS = {
+  "urgent-only": ["urgent"],
+  "urgent-action": ["urgent", "action"],
+  all: ["urgent", "action", "warning", "info"],
+} as const;
+
+const NOTIFICATION_PRIORITIES = ["urgent", "action", "warning", "info"] as const;
+
+function isRoutingPreset(value: string | undefined): value is OpenClawRoutingPreset {
+  return value === "urgent-only" || value === "urgent-action" || value === "all";
 }
 
 function normalizeOpenClawHooksUrl(url: string): string {
@@ -174,7 +191,26 @@ async function interactiveSetup(existingUrl?: string): Promise<ResolvedConfig> {
     }
   }
 
-  return { url, token: tokenValue };
+  const routingPreset = await clack.select({
+    message: "Which notifications should OpenClaw receive?",
+    initialValue: "urgent-action",
+    options: [
+      { value: "urgent-action", label: "Urgent + action (recommended)" },
+      { value: "urgent-only", label: "Urgent only" },
+      { value: "all", label: "All priorities" },
+    ],
+  });
+
+  if (clack.isCancel(routingPreset)) {
+    clack.cancel("Setup cancelled.");
+    throw new SetupAbortedError("Setup cancelled.", 0);
+  }
+
+  return {
+    url,
+    token: tokenValue,
+    routingPreset: routingPreset as OpenClawRoutingPreset,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -182,14 +218,22 @@ async function interactiveSetup(existingUrl?: string): Promise<ResolvedConfig> {
 // ---------------------------------------------------------------------------
 
 async function nonInteractiveSetup(opts: SetupOptions): Promise<ResolvedConfig> {
-  const rawUrl = opts.url ?? process.env["OPENCLAW_GATEWAY_URL"];
+  let rawUrl = opts.url ?? process.env["OPENCLAW_GATEWAY_URL"];
   const token = opts.token ?? process.env["OPENCLAW_HOOKS_TOKEN"];
 
+  // Auto-detect OpenClaw if no URL was given explicitly
   if (!rawUrl) {
-    throw new SetupAbortedError(
-      "Error: --url is required in non-interactive mode.\n" +
-        "  Example: ao setup openclaw --url http://127.0.0.1:18789/hooks/agent --token YOUR_TOKEN --non-interactive",
-    );
+    const installation = await detectOpenClawInstallation();
+    if (installation.state === "running") {
+      rawUrl = `${installation.gatewayUrl}${HOOKS_PATH}`;
+      console.log(chalk.dim(`Auto-detected OpenClaw gateway at ${installation.gatewayUrl}`));
+    } else {
+      throw new SetupAbortedError(
+        "Error: OpenClaw gateway not reachable and no --url provided.\n" +
+          "  Start OpenClaw first, or pass --url explicitly:\n" +
+          "  Example: ao setup openclaw --url http://127.0.0.1:18789/hooks/agent --token YOUR_TOKEN --non-interactive",
+      );
+    }
   }
 
   let url = rawUrl;
@@ -209,7 +253,9 @@ async function nonInteractiveSetup(opts: SetupOptions): Promise<ResolvedConfig> 
   // token yet. We write both configs first, then the user restarts the gateway.
   console.log(chalk.dim("Skipping pre-validation (token will be written to both configs)."));
 
-  return { url, token: resolvedToken };
+  const routingPreset = isRoutingPreset(opts.routingPreset) ? opts.routingPreset : "urgent-action";
+
+  return { url, token: resolvedToken, routingPreset };
 }
 
 // ---------------------------------------------------------------------------
@@ -252,12 +298,14 @@ function writeOpenClawConfig(
     rawConfig.defaults.notifiers.push("openclaw");
   }
 
-  // Add "openclaw" to notificationRouting so notifications actually fire
-  // (AO prefers per-priority routing over defaults.notifiers)
+  const defaultsWithoutOpenClaw = (rawConfig.defaults.notifiers as string[]).filter(
+    (name) => name !== "openclaw",
+  );
+
+  // AO routes notifications by priority. Preserve existing notifiers and only
+  // adjust OpenClaw membership across the standard priority buckets.
   if (!rawConfig.notificationRouting) {
-    // Seed from existing defaults.notifiers so we don't silently drop notifiers
-    // (e.g. desktop) that the user already had for all priorities.
-    const base = [...new Set([...(rawConfig.defaults.notifiers as string[]), "openclaw"])];
+    const base = [...new Set(defaultsWithoutOpenClaw)];
     rawConfig.notificationRouting = {
       urgent: [...base],
       action: [...base],
@@ -265,11 +313,19 @@ function writeOpenClawConfig(
       info: [...base],
     };
   } else if (typeof rawConfig.notificationRouting === "object") {
-    for (const priority of Object.keys(rawConfig.notificationRouting)) {
-      const list = rawConfig.notificationRouting[priority];
-      if (Array.isArray(list) && !list.includes("openclaw")) {
-        list.push("openclaw");
+    for (const priority of NOTIFICATION_PRIORITIES) {
+      if (!Array.isArray(rawConfig.notificationRouting[priority])) {
+        rawConfig.notificationRouting[priority] = [];
       }
+    }
+  }
+
+  const selectedPriorities = new Set(OPENCLAW_ROUTING_PRESETS[resolved.routingPreset]);
+  for (const priority of NOTIFICATION_PRIORITIES) {
+    const list = rawConfig.notificationRouting[priority] as string[];
+    rawConfig.notificationRouting[priority] = list.filter((name) => name !== "openclaw");
+    if (selectedPriorities.has(priority)) {
+      rawConfig.notificationRouting[priority].push("openclaw");
     }
   }
 
@@ -438,7 +494,11 @@ export function registerSetup(program: Command): void {
     .description("Connect AO notifications to an OpenClaw gateway")
     .option("--url <url>", "OpenClaw webhook URL (e.g. http://127.0.0.1:18789/hooks/agent)")
     .option("--token <token>", "OpenClaw hooks auth token")
-    .option("--non-interactive", "Skip prompts — requires --url (token auto-generated if not provided)")
+    .option(
+      "--routing-preset <preset>",
+      "OpenClaw routing preset: urgent-only | urgent-action | all",
+    )
+    .option("--non-interactive", "Skip prompts — auto-detects OpenClaw if --url not provided (token auto-generated if not provided)")
     .action(async (opts: SetupOptions) => {
       try {
         await runSetupAction(opts);
@@ -452,7 +512,7 @@ export function registerSetup(program: Command): void {
     });
 }
 
-async function runSetupAction(opts: SetupOptions): Promise<void> {
+export async function runSetupAction(opts: SetupOptions): Promise<void> {
   const nonInteractive = opts.nonInteractive || !process.stdin.isTTY;
 
   // --- Find existing config ------------------------------------------------

@@ -23,8 +23,8 @@ import {
   reviewDecisionIcon,
   padCol,
 } from "../lib/format.js";
-import { getAgentByName, getSCM } from "../lib/plugins.js";
-import { getSessionManager } from "../lib/create-session-manager.js";
+import { getAgentByName, getAgentByNameFromRegistry, getSCMFromRegistry } from "../lib/plugins.js";
+import { getPluginRegistry, getSessionManager } from "../lib/create-session-manager.js";
 
 interface SessionInfo {
   name: string;
@@ -228,6 +228,7 @@ export function registerStatus(program: Command): void {
 
       // Use session manager to list sessions (metadata-based, not tmux-based)
       const sm = await getSessionManager(config);
+      const registry = await getPluginRegistry(config);
       const sessions = await sm.list(opts.project);
 
       if (!opts.json) {
@@ -259,8 +260,8 @@ export function registerStatus(program: Command): void {
 
         // Resolve agent and SCM for this project
         const agentName = projectConfig.agent ?? config.defaults.agent;
-        const agent = getAgentByName(agentName);
-        const scm = getSCM(config, projectId);
+        const agent = getAgentByNameFromRegistry(registry, agentName);
+        const scm = getSCMFromRegistry(registry, config, projectId);
 
         if (!opts.json) {
           console.log(header(projectConfig.name || projectId));
@@ -327,10 +328,6 @@ export function registerStatus(program: Command): void {
 
         // Check for issues awaiting verification across all projects
         try {
-          const { createPluginRegistry } = await import("@composio/ao-core");
-          const registry = createPluginRegistry();
-          await registry.loadFromConfig(config, (pkg: string) => import(pkg));
-
           let unverifiedTotal = 0;
           for (const projectId of projectIds) {
             const project: ProjectConfig | undefined = config.projects[projectId];
