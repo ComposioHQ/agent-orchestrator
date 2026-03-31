@@ -49,6 +49,7 @@ beforeEach(() => {
 afterEach(() => {
   teardownTestContext(ctx);
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 describe("deleteSession retry loop", () => {
