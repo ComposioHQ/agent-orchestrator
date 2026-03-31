@@ -414,8 +414,30 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
         }
 
         if (update.labels && update.labels.length > 0) {
+          const repoLabels = (await forgejoApi(
+            hostname,
+            token,
+            "GET",
+            `/repos/${owner}/${repo}/labels`,
+            { limit: 100 },
+          )) as Array<{ id?: number; name?: string }>;
+          const labelIdByName = new Map<string, number>();
+          for (const repoLabel of repoLabels) {
+            if (typeof repoLabel.name === "string" && typeof repoLabel.id === "number") {
+              labelIdByName.set(repoLabel.name, repoLabel.id);
+            }
+          }
+
+          const labelIds = update.labels.map((labelName) => labelIdByName.get(labelName));
+          const missingLabels = update.labels.filter((_, index) => labelIds[index] === undefined);
+          if (missingLabels.length > 0) {
+            throw new Error(
+              `Unable to resolve Forgejo label IDs for: ${missingLabels.join(", ")}`,
+            );
+          }
+
           await forgejoApi(hostname, token, "PATCH", `/repos/${owner}/${repo}/issues/${issueNumber}`, undefined, {
-            labels: update.labels,
+            labels: labelIds,
           });
         }
 

@@ -1205,6 +1205,33 @@ describe("scm-forgejo plugin", () => {
       expect(result.blockers).toContain("Review required");
     });
 
+    it("reports review required in REST mode when review decision is pending", async () => {
+      process.env["FORGEJO_TOKEN"] = "test-token";
+      const restScm = create({ host: "forgejo.example.com" });
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          mergeable: true,
+          mergeStateStatus: "CLEAN",
+          isDraft: false,
+        }),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      vi.spyOn(restScm, "getPRState").mockResolvedValue("open");
+      vi.spyOn(restScm, "getCISummary").mockResolvedValue("none");
+      vi.spyOn(restScm, "getReviewDecision").mockResolvedValue("pending");
+
+      try {
+        const result = await restScm.getMergeability(pr);
+        expect(result.blockers).toContain("Review required");
+        expect(result.mergeable).toBe(false);
+      } finally {
+        vi.unstubAllGlobals();
+        delete process.env["FORGEJO_TOKEN"];
+      }
+    });
+
     it("reports merge conflicts as blockers", async () => {
       mockGh({ state: "OPEN" }); // getPRState
       mockGh({

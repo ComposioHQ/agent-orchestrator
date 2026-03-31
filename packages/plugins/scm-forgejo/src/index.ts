@@ -1343,7 +1343,7 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
       const approved = reviewDecision === "APPROVED";
       if (reviewDecision === "CHANGES_REQUESTED") {
         blockers.push("Changes requested in review");
-      } else if (reviewDecision === "REVIEW_REQUIRED") {
+      } else if (reviewDecision === "REVIEW_REQUIRED" || reviewDecision === "PENDING") {
         blockers.push("Review required");
       }
 

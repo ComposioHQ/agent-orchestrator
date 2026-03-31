@@ -424,6 +424,42 @@ describe("tracker-forgejo plugin", () => {
       // Should have called gh 3 times: close + edit labels + comment
       expect(ghMock).toHaveBeenCalledTimes(3);
     });
+
+    it("uses label IDs (not names) for REST label updates", async () => {
+      process.env["FORGEJO_TOKEN"] = "test-token";
+      const restTracker = create({ host: "forgejo.example.com" });
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => [
+            { id: 10, name: "bug" },
+            { id: 20, name: "urgent" },
+          ],
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({}),
+        });
+      vi.stubGlobal("fetch", fetchMock);
+
+      try {
+        await restTracker.updateIssue!("123", { labels: ["bug", "urgent"] }, project);
+
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        const firstUrl = String(fetchMock.mock.calls[0]?.[0]);
+        expect(firstUrl).toContain("/api/v1/repos/acme/repo/labels");
+
+        const secondRequestInit = fetchMock.mock.calls[1]?.[1] as RequestInit;
+        expect(secondRequestInit?.method).toBe("PATCH");
+        expect(JSON.parse(String(secondRequestInit?.body))).toEqual({ labels: [10, 20] });
+      } finally {
+        vi.unstubAllGlobals();
+        delete process.env["FORGEJO_TOKEN"];
+      }
+    });
   });
 
   // ---- createIssue -------------------------------------------------------
