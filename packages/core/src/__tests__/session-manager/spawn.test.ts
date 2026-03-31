@@ -1,11 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import {
-  chmodSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-  existsSync,
-} from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { createSessionManager } from "../../session-manager.js";
 import { validateConfig } from "../../config.js";
@@ -26,7 +20,12 @@ import type {
   Tracker,
   RuntimeHandle,
 } from "../../types.js";
-import { setupTestContext, teardownTestContext, makeHandle, type TestContext } from "../test-utils.js";
+import {
+  setupTestContext,
+  teardownTestContext,
+  makeHandle,
+  type TestContext,
+} from "../test-utils.js";
 import { installMockOpencode, installMockGit } from "./opencode-helpers.js";
 
 let ctx: TestContext;
@@ -41,7 +40,16 @@ let originalPath: string | undefined;
 
 beforeEach(() => {
   ctx = setupTestContext();
-  ({ tmpDir, sessionsDir, mockRuntime, mockAgent, mockWorkspace, mockRegistry, config, originalPath } = ctx);
+  ({
+    tmpDir,
+    sessionsDir,
+    mockRuntime,
+    mockAgent,
+    mockWorkspace,
+    mockRegistry,
+    config,
+    originalPath,
+  } = ctx);
 });
 
 afterEach(() => {
@@ -873,7 +881,7 @@ describe("spawn", () => {
 
     const sm = createSessionManager({ config, registry: registryWithPostLaunch });
     const spawnPromise = sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
-    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(2_000);
     await spawnPromise;
 
     // Prompt should be sent via runtime.sendMessage, not included in launch command
@@ -910,7 +918,7 @@ describe("spawn", () => {
 
     const sm = createSessionManager({ config, registry: registryWithPostLaunch });
     const spawnPromise = sm.spawn({ projectId: "my-app" });
-    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(2_000);
     await spawnPromise;
 
     expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
@@ -942,14 +950,66 @@ describe("spawn", () => {
 
     const sm = createSessionManager({ config, registry: registryWithFailingSend });
     const spawnPromise = sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
-    await vi.advanceTimersByTimeAsync(5_000);
+    // Retry logic uses fixed delays: 2s, 4s, 8s
+    await vi.advanceTimersByTimeAsync(14_000);
     const session = await spawnPromise;
 
     // Session should still be returned successfully despite sendMessage failure
     expect(session.id).toBe("app-1");
     expect(session.status).toBe("spawning");
+    expect(failingRuntime.sendMessage).toHaveBeenCalledTimes(3);
+    expect(session.metadata["promptDeliveryStatus"]).toBe("failed");
+    expect(session.metadata["promptDeliveryAttemptedAt"]).toBeDefined();
+
+    const meta = readMetadataRaw(sessionsDir, "app-1");
+    expect(meta?.["promptDeliveryStatus"]).toBe("failed");
+    expect(meta?.["promptDeliveryAttemptedAt"]).toBeDefined();
     // Runtime should NOT have been destroyed
     expect(failingRuntime.destroy).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("continues spawn when prompt metadata persistence fails", async () => {
+    vi.useFakeTimers();
+
+    const postLaunchAgent = {
+      ...mockAgent,
+      promptDelivery: "post-launch" as const,
+    };
+
+    const registryWithPostLaunch: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return postLaunchAgent;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+    };
+
+    const metadataModule = await import("../../metadata.js");
+    const updateMetadataSpy = vi.spyOn(metadataModule, "updateMetadata");
+    updateMetadataSpy.mockImplementation(() => {
+      throw new Error("disk full");
+    });
+
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    const sm = createSessionManager({ config, registry: registryWithPostLaunch });
+    const spawnPromise = sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
+    await vi.advanceTimersByTimeAsync(2_000);
+    const session = await spawnPromise;
+
+    expect(session.id).toBe("app-1");
+    expect(session.status).toBe("spawning");
+    expect(mockRuntime.sendMessage).toHaveBeenCalled();
+    expect(stderrSpy).toHaveBeenCalledWith(
+      expect.stringContaining('"operation":"prompt-delivery.metadata-update"'),
+    );
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('"level":"warn"'));
+
+    updateMetadataSpy.mockRestore();
+    stderrSpy.mockRestore();
     vi.useRealTimers();
   });
 
@@ -972,12 +1032,12 @@ describe("spawn", () => {
     const sm = createSessionManager({ config, registry: registryWithPostLaunch });
     const spawnPromise = sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
 
-    // Advance only 4s — not enough, message should not have been sent yet
-    await vi.advanceTimersByTimeAsync(4_000);
+    // Advance only 1s — not enough, message should not have been sent yet (initial delay is 2s)
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
 
-    // Advance the remaining 1s — now it should fire
-    await vi.advanceTimersByTimeAsync(1_000);
+    // Advance the remaining time to exceed 2s (initial delay)
+    await vi.advanceTimersByTimeAsync(2_000);
     await spawnPromise;
     expect(mockRuntime.sendMessage).toHaveBeenCalled();
     vi.useRealTimers();
@@ -1996,4 +2056,3 @@ describe("spawn", () => {
     });
   });
 });
-

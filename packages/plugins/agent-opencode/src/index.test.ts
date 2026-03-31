@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Session, RuntimeHandle, AgentLaunchConfig } from "@composio/ao-core";
 
+vi.mock("@composio/ao-core", async (importOriginal) => importOriginal());
+
 const mockExecFileAsync = vi.fn();
 vi.mock("node:child_process", () => ({
   execFile: (...args: unknown[]) => {
@@ -515,6 +517,34 @@ describe("detectActivity — terminal output classification", () => {
 
   it("returns active for non-empty terminal output", () => {
     expect(agent.detectActivity("opencode is working\n")).toBe("active");
+  });
+
+  it("returns waiting_input for approval required text", () => {
+    expect(agent.detectActivity("approval required\n")).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for (y)es / (n)o prompt", () => {
+    expect(agent.detectActivity("Do you want to continue?\n(y)es / (n)o\n")).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for 'Press enter to confirm or esc to cancel' prompt", () => {
+    expect(agent.detectActivity("Press enter to confirm or esc to cancel\n")).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for numbered approval options", () => {
+    expect(
+      agent.detectActivity(
+        "Would you like to run this command?\n1. Yes, proceed\n> 3. No, and tell OpenCode what to do differently\n",
+      ),
+    ).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for ANSI-colored approval options", () => {
+    expect(
+      agent.detectActivity(
+        "\u001b[32m1. Yes, proceed\u001b[0m\n\u001b[36m> 3. No, and tell OpenCode what to do differently\u001b[0m\n",
+      ),
+    ).toBe("waiting_input");
   });
 });
 

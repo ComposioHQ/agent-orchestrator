@@ -337,6 +337,43 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     return idleMs > stuckThresholdMs;
   }
 
+  function maybeLogEarlyNeedsInputAnomaly(
+    session: Session,
+    options?: { detectionMethod?: "activity" | "terminal" },
+  ): void {
+    const promptAttemptedAt = session.metadata["promptDeliveryAttemptedAt"];
+    if (!promptAttemptedAt) return;
+
+    const attemptedAt = new Date(promptAttemptedAt);
+    const attemptedAtTime = attemptedAt.getTime();
+    if (!Number.isFinite(attemptedAtTime)) return;
+
+    let ageMs = Date.now() - attemptedAtTime;
+    if (ageMs < 0) {
+      ageMs = 0;
+    }
+
+    const promptStatus = session.metadata["promptDeliveryStatus"];
+    if (ageMs >= 120_000 || promptStatus !== "failed") return;
+
+    const isTerminalDetection = options?.detectionMethod === "terminal";
+    observer.recordOperation({
+      metric: "lifecycle_poll",
+      operation: "early-needs-input",
+      outcome: "failure",
+      correlationId: createCorrelationId("early-needs-input"),
+      sessionId: session.id,
+      projectId: session.projectId,
+      reason: `Session entered needs_input within ${Math.round(ageMs / 1000)}s of prompt delivery attempt${isTerminalDetection ? " (terminal detection)" : ""} after prompt delivery failed.`,
+      data: {
+        ageMs,
+        promptDeliveryStatus: promptStatus,
+        ...(isTerminalDetection ? { detectionMethod: "terminal" as const } : {}),
+      },
+      level: "warn",
+    });
+  }
+
   /** Determine current status for a session by polling plugins. */
   async function determineStatus(session: Session): Promise<SessionStatus> {
     const project = config.projects[session.projectId];
@@ -350,13 +387,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }).agentName;
     const agent = registry.get<Agent>("agent", agentName);
     const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    const runtime = session.runtimeHandle
+      ? registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime)
+      : null;
 
     // Track activity state across steps so stuck detection can run after PR checks
     let detectedIdleTimestamp: Date | null = null;
 
     // 1. Check if runtime is alive
     if (session.runtimeHandle) {
-      const runtime = registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime);
       if (runtime) {
         const alive = await runtime.isAlive(session.runtimeHandle).catch(() => true);
         if (!alive) return "killed";
@@ -369,7 +408,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         // Try JSONL-based activity detection first (reads agent's session files directly)
         const activityState = await agent.getActivityState(session, config.readyThresholdMs);
         if (activityState) {
-          if (activityState.state === "waiting_input") return "needs_input";
+          if (activityState.state === "waiting_input") {
+            maybeLogEarlyNeedsInputAnomaly(session);
+            return "needs_input";
+          }
           if (activityState.state === "exited") return "killed";
 
           if (
@@ -379,18 +421,43 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             detectedIdleTimestamp = activityState.timestamp;
           }
 
+          // Some agents can surface higher-priority prompt states like
+          // waiting_input only through terminal parsing. Preserve the native
+          // activity probe, but allow recent output to upgrade the session
+          // into needs_input without forcing every agent to encode that state
+          // in getActivityState().
+          if (
+            runtime &&
+            (activityState.state === "idle" ||
+              activityState.state === "blocked" ||
+              activityState.state === "ready")
+          ) {
+            try {
+              const terminalOutput = await runtime.getOutput(session.runtimeHandle, 10);
+              if (terminalOutput) {
+                const activity = agent.detectActivity(terminalOutput);
+                if (activity === "waiting_input") {
+                  maybeLogEarlyNeedsInputAnomaly(session, { detectionMethod: "terminal" });
+                  return "needs_input";
+                }
+              }
+            } catch {
+              // Output probing is only an upgrade path for waiting_input.
+              // Preserve the native activity result if terminal capture fails.
+            }
+          }
+
           // active/ready/idle (below threshold)/blocked (below threshold) —
           // proceed to PR checks below
         } else {
           // getActivityState returned null — fall back to terminal output parsing
-          const runtime = registry.get<Runtime>(
-            "runtime",
-            project.runtime ?? config.defaults.runtime,
-          );
           const terminalOutput = runtime ? await runtime.getOutput(session.runtimeHandle, 10) : "";
           if (terminalOutput) {
             const activity = agent.detectActivity(terminalOutput);
-            if (activity === "waiting_input") return "needs_input";
+            if (activity === "waiting_input") {
+              maybeLogEarlyNeedsInputAnomaly(session, { detectionMethod: "terminal" });
+              return "needs_input";
+            }
 
             const processAlive = await agent.isProcessRunning(session.runtimeHandle);
             if (!processAlive) return "killed";
