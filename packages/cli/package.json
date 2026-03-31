@@ -1,6 +1,6 @@
 {
   "name": "@composio/ao-cli",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "CLI for agent-orchestrator — the `ao` command",
   "license": "MIT",
   "type": "module",
@@ -25,7 +25,7 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && cp -r src/assets dist/",
     "dev": "tsx src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -40,6 +40,7 @@
     "@composio/ao-plugin-agent-opencode": "workspace:*",
     "@composio/ao-plugin-notifier-composio": "workspace:*",
     "@composio/ao-plugin-notifier-desktop": "workspace:*",
+    "@composio/ao-plugin-notifier-discord": "workspace:*",
     "@composio/ao-plugin-notifier-openclaw": "workspace:*",
     "@composio/ao-plugin-notifier-slack": "workspace:*",
     "@composio/ao-plugin-notifier-webhook": "workspace:*",
@@ -53,6 +54,7 @@
     "@composio/ao-plugin-workspace-clone": "workspace:*",
     "@composio/ao-plugin-workspace-worktree": "workspace:*",
     "@composio/ao-web": "workspace:*",
+    "@clack/prompts": "^0.9.1",
     "chalk": "^5.4.0",
     "commander": "^13.0.0",
     "ora": "^8.1.0",

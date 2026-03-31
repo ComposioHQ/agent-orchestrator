@@ -1,3 +1,5 @@
+import type { ObservabilityLevel } from "./observability.js";
+
 /**
  * Agent Orchestrator — Core Type Definitions
  *
@@ -620,6 +622,21 @@ export interface SCM {
 
   /** Check if PR is ready to merge */
   getMergeability(pr: PRInfo): Promise<MergeReadiness>;
+
+  /**
+   * Batch fetch PR data for multiple PRs in a single GraphQL query.
+   * Used by the orchestrator to poll all active sessions efficiently.
+   *
+   * This is an optimization method that, when implemented, can dramatically
+   * reduce API calls by fetching data for multiple PRs in one request
+   * instead of calling getPRState/getCISummary/getReviewDecision separately
+   * for each PR.
+   *
+   * @param prs - Array of PR information to fetch data for
+   * @param observer - Optional observer for batch operation metrics
+   * @returns Map keyed by "${owner}/${repo}#${number}" containing enrichment data
+   */
+  enrichSessionsPRBatch?(prs: PRInfo[], observer?: BatchObserver): Promise<Map<string, PREnrichmentData>>;
 }
 
 // --- PR Types ---
@@ -744,6 +761,59 @@ export interface MergeReadiness {
   approved: boolean;
   noConflicts: boolean;
   blockers: string[];
+}
+
+/**
+ * Batch enrichment data returned by SCM plugins.
+ * Contains all the information the orchestrator needs for status detection.
+ */
+export interface PREnrichmentData {
+  /** Current PR state */
+  state: PRState;
+  /** Overall CI status */
+  ciStatus: CIStatus;
+  /** Review decision */
+  reviewDecision: ReviewDecision;
+  /** Whether the PR is mergeable based on CI, reviews, and merge state */
+  mergeable: boolean;
+  /** PR title */
+  title?: string;
+  /** Number of additions */
+  additions?: number;
+  /** Number of deletions */
+  deletions?: number;
+  /** Whether PR is a draft */
+  isDraft?: boolean;
+  /** Whether PR has merge conflicts */
+  hasConflicts?: boolean;
+  /** Whether PR is behind base branch */
+  isBehind?: boolean;
+  /** List of blockers preventing merge */
+  blockers?: string[];
+}
+
+/**
+ * Observer for GraphQL batch PR enrichment operations.
+ * Used by SCM plugins to report batch success/failure to the observability system.
+ */
+export interface BatchObserver {
+  /** Record a successful batch enrichment */
+  recordSuccess(data: {
+    batchIndex: number;
+    totalBatches: number;
+    prCount: number;
+    durationMs: number;
+  }): void;
+  /** Record a failed batch enrichment */
+  recordFailure(data: {
+    batchIndex: number;
+    totalBatches: number;
+    prCount: number;
+    error: string;
+    durationMs: number;
+  }): void;
+  /** Log a message at a specific level */
+  log(level: ObservabilityLevel, message: string): void;
 }
 
 // =============================================================================
@@ -929,6 +999,9 @@ export interface OrchestratorConfig {
   /** Default plugin selections */
   defaults: DefaultPlugins;
 
+  /** Installer-managed external plugin descriptors */
+  plugins?: InstalledPluginConfig[];
+
   /** Project configurations */
   projects: Record<string, ProjectConfig>;
 
@@ -953,6 +1026,28 @@ export interface DefaultPlugins {
   worker?: {
     agent?: string;
   };
+}
+
+export type InstalledPluginSource = "registry" | "npm" | "local";
+
+export interface InstalledPluginConfig {
+  /** Stable logical plugin name used in config and CLI UX */
+  name: string;
+
+  /** Where the plugin should be resolved from */
+  source: InstalledPluginSource;
+
+  /** Package name for registry/npm-managed plugins */
+  package?: string;
+
+  /** Requested version/range for installer-managed plugins */
+  version?: string;
+
+  /** Filesystem path for local plugins */
+  path?: string;
+
+  /** Installer-managed enable flag (defaults to true) */
+  enabled?: boolean;
 }
 
 export interface RoleAgentConfig {

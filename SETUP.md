@@ -505,11 +505,11 @@ lsof -ti:3000 | xargs kill
 **Solution:**
 
 ```bash
-# Check worktreeDir permissions
-ls -la ~/.worktrees
+# AO stores runtime data under ~/.agent-orchestrator/
+ls -la ~/.agent-orchestrator
 
-# Create directory if missing
-mkdir -p ~/.worktrees
+# Create the base directory if missing
+mkdir -p ~/.agent-orchestrator
 
 # Check disk space
 df -h
@@ -618,10 +618,10 @@ projects:
     path: ~/backend
     sessionPrefix: api
 
-  mobile:
-    repo: org/mobile
-    path: ~/mobile
-    sessionPrefix: mob
+  docs:
+    repo: org/docs
+    path: ~/docs
+    sessionPrefix: doc
 ```
 
 See [examples/multi-project.yaml](./examples/multi-project.yaml) for full example.
@@ -817,11 +817,10 @@ ao session ls --json | jq -r '.[] | select(.status == "merged") | .id' | xargs -
 
 Yes! Each orchestrator instance should have:
 
-- Different data directory (`dataDir`)
 - Different dashboard port (`port`) — e.g., 3000 for project A, 3001 for project B
-- Different config file
+- Different config location or project paths
 
-Terminal WebSocket ports are auto-detected by default, so you typically only need to set `port:` differently. If you need explicit control, you can also set `terminalPort:` and `directTerminalPort:` per config.
+AO derives runtime directories from the config location, so separate config locations already produce separate hash-scoped runtime paths under `~/.agent-orchestrator/`. Terminal WebSocket ports are auto-detected by default, so you typically only need to set `port:` differently. If you need explicit control, you can also set `terminalPort:` and `directTerminalPort:` per config.
 
 Useful for:
 

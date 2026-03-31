@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { readMetadataRaw } from "../metadata.js";
-import { getSessionsDir } from "../paths.js";
-import { escalateSession, recoverSession } from "../recovery/actions.js";
+import { getSessionsDir, getProjectBaseDir } from "../paths.js";
+import { cleanupSession, escalateSession, recoverSession } from "../recovery/actions.js";
 import { runRecovery } from "../recovery/manager.js";
 import { getRecoveryLogPath, scanAllSessions } from "../recovery/scanner.js";
 import {
@@ -13,7 +13,7 @@ import {
   type RecoveryAssessment,
   type RecoveryContext,
 } from "../recovery/types.js";
-import type { OrchestratorConfig, PluginRegistry } from "../types.js";
+import type { OrchestratorConfig, PluginRegistry, Runtime, Workspace } from "../types.js";
 
 function makeConfig(rootDir: string): OrchestratorConfig {
   return {
@@ -101,6 +101,12 @@ describe("recoverSession", () => {
 
   afterEach(() => {
     if (rootDir) {
+      const configPath = join(rootDir, "agent-orchestrator.yaml");
+      const projectPath = join(rootDir, "project");
+      const projectBaseDir = getProjectBaseDir(configPath, projectPath);
+      if (existsSync(projectBaseDir)) {
+        rmSync(projectBaseDir, { recursive: true, force: true });
+      }
       rmSync(rootDir, { recursive: true, force: true });
     }
   });
@@ -215,6 +221,12 @@ describe("escalateSession", () => {
 
   afterEach(() => {
     if (rootDir) {
+      const configPath = join(rootDir, "agent-orchestrator.yaml");
+      const projectPath = join(rootDir, "project");
+      const projectBaseDir = getProjectBaseDir(configPath, projectPath);
+      if (existsSync(projectBaseDir)) {
+        rmSync(projectBaseDir, { recursive: true, force: true });
+      }
       rmSync(rootDir, { recursive: true, force: true });
     }
   });
@@ -242,11 +254,135 @@ describe("escalateSession", () => {
   });
 });
 
+describe("cleanupSession", () => {
+  let rootDir: string;
+
+  afterEach(() => {
+    if (rootDir) {
+      const configPath = join(rootDir, "agent-orchestrator.yaml");
+      const projectPath = join(rootDir, "project");
+      const projectBaseDir = getProjectBaseDir(configPath, projectPath);
+      if (existsSync(projectBaseDir)) {
+        rmSync(projectBaseDir, { recursive: true, force: true });
+      }
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("continues cleanup and calls deleteMetadata even when workspace.destroy throws", async () => {
+    rootDir = join(tmpdir(), `ao-recovery-${randomUUID()}`);
+    mkdirSync(rootDir, { recursive: true });
+    mkdirSync(join(rootDir, "project"), { recursive: true });
+    writeFileSync(join(rootDir, "agent-orchestrator.yaml"), "projects: {}\n", "utf-8");
+
+    const config = makeConfig(rootDir);
+    const workspacePath = join(rootDir, "worktree");
+    const mockWorkspace: Workspace = {
+      name: "worktree",
+      create: vi.fn(),
+      destroy: vi.fn().mockRejectedValue(new Error("Workspace destroy failed")),
+      list: vi.fn(),
+      exists: vi.fn(),
+    };
+    const registry: PluginRegistry = {
+      register: vi.fn(),
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+      list: vi.fn().mockReturnValue([]),
+      loadBuiltins: vi.fn().mockResolvedValue(undefined),
+      loadFromConfig: vi.fn().mockResolvedValue(undefined),
+    };
+    const assessment = makeAssessment({
+      action: "cleanup",
+      classification: "dead",
+      runtimeAlive: false,
+      workspaceExists: true,
+      workspacePath,
+      rawMetadata: {
+        ...makeAssessment().rawMetadata,
+        worktree: workspacePath,
+      },
+    });
+    const context = makeContext(rootDir);
+
+    const result = await cleanupSession(assessment, config, registry, context);
+    const sessionsDir = getSessionsDir(config.configPath, config.projects.app.path);
+
+    expect(mockWorkspace.destroy).toHaveBeenCalled();
+    expect(result.success).toBe(true);
+    expect(existsSync(join(sessionsDir, "app-1"))).toBe(false);
+  });
+
+  it("continues cleanup and calls workspace.destroy and deleteMetadata even when runtime.destroy throws", async () => {
+    rootDir = join(tmpdir(), `ao-recovery-${randomUUID()}`);
+    mkdirSync(rootDir, { recursive: true });
+    mkdirSync(join(rootDir, "project"), { recursive: true });
+    writeFileSync(join(rootDir, "agent-orchestrator.yaml"), "projects: {}\n", "utf-8");
+
+    const config = makeConfig(rootDir);
+    const workspacePath = join(rootDir, "worktree");
+    const mockRuntime: Runtime = {
+      name: "tmux",
+      create: vi.fn(),
+      destroy: vi.fn().mockRejectedValue(new Error("Runtime destroy failed")),
+      sendMessage: vi.fn(),
+      getOutput: vi.fn(),
+      isAlive: vi.fn(),
+    };
+    const mockWorkspace: Workspace = {
+      name: "worktree",
+      create: vi.fn(),
+      destroy: vi.fn().mockResolvedValue(undefined),
+      list: vi.fn(),
+      exists: vi.fn(),
+    };
+    const registry: PluginRegistry = {
+      register: vi.fn(),
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "workspace") return mockWorkspace;
+        return null;
+      }),
+      list: vi.fn().mockReturnValue([]),
+      loadBuiltins: vi.fn().mockResolvedValue(undefined),
+      loadFromConfig: vi.fn().mockResolvedValue(undefined),
+    };
+    const assessment = makeAssessment({
+      action: "cleanup",
+      classification: "partial",
+      runtimeAlive: true,
+      workspaceExists: true,
+      workspacePath,
+      rawMetadata: {
+        ...makeAssessment().rawMetadata,
+        worktree: workspacePath,
+      },
+    });
+    const context = makeContext(rootDir);
+
+    const result = await cleanupSession(assessment, config, registry, context);
+    const sessionsDir = getSessionsDir(config.configPath, config.projects.app.path);
+
+    expect(mockRuntime.destroy).toHaveBeenCalled();
+    expect(mockWorkspace.destroy).toHaveBeenCalled();
+    expect(result.success).toBe(true);
+    expect(existsSync(join(sessionsDir, "app-1"))).toBe(false);
+  });
+});
+
 describe("recovery manager and scanner", () => {
   let rootDir: string;
 
   afterEach(() => {
     if (rootDir) {
+      const configPath = join(rootDir, "agent-orchestrator.yaml");
+      const projectPath = join(rootDir, "project");
+      const projectBaseDir = getProjectBaseDir(configPath, projectPath);
+      if (existsSync(projectBaseDir)) {
+        rmSync(projectBaseDir, { recursive: true, force: true });
+      }
       rmSync(rootDir, { recursive: true, force: true });
     }
   });

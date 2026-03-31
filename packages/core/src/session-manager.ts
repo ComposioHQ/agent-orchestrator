@@ -76,7 +76,7 @@ import { safeJsonParse } from "./utils/validation.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
 
 const execFileAsync = promisify(execFile);
-const OPENCODE_DISCOVERY_TIMEOUT_MS = 2_000;
+const OPENCODE_DISCOVERY_TIMEOUT_MS = 10_000;
 const OPENCODE_INTERACTIVE_DISCOVERY_TIMEOUT_MS = 10_000;
 
 function errorIncludesSessionNotFound(err: unknown): boolean {
@@ -1372,7 +1372,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         AO_CALLER_TYPE: "orchestrator",
         AO_PROJECT_ID: orchestratorConfig.projectId,
         AO_CONFIG_PATH: config.configPath,
-        ...(config.port !== undefined && config.port !== null && { AO_PORT: String(config.port) }),
+        ...(config.port !== undefined && config.port !== null && { AO_PORT: String(config.port) })
       },
     });
 
@@ -1487,7 +1487,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
       let enrichTimeoutId: ReturnType<typeof setTimeout> | null = null;
       const enrichTimeout = new Promise<void>((resolve) => {
-        enrichTimeoutId = setTimeout(resolve, 2_000);
+        enrichTimeoutId = setTimeout(resolve, OPENCODE_DISCOVERY_TIMEOUT_MS + 2_000);
       });
       const enrichPromise = ensureHandleAndEnrich(
         session,

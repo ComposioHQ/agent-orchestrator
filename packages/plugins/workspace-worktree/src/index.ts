@@ -29,6 +29,47 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
   return stdout.trimEnd();
 }
 
+async function hasOriginRemote(cwd: string): Promise<boolean> {
+  try {
+    await git(cwd, "remote", "get-url", "origin");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function refExists(cwd: string, ref: string): Promise<boolean> {
+  try {
+    await git(cwd, "rev-parse", "--verify", "--quiet", ref);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveBaseRef(
+  repoPath: string,
+  defaultBranch: string,
+  options?: { branch?: string; hasOrigin?: boolean },
+): Promise<string> {
+  const hasOrigin = options?.hasOrigin ?? (await hasOriginRemote(repoPath));
+
+  if (hasOrigin) {
+    if (options?.branch) {
+      const remoteBranch = `origin/${options.branch}`;
+      if (await refExists(repoPath, remoteBranch)) return remoteBranch;
+    }
+
+    const remoteDefaultBranch = `origin/${defaultBranch}`;
+    if (await refExists(repoPath, remoteDefaultBranch)) return remoteDefaultBranch;
+  }
+
+  const localDefaultBranch = `refs/heads/${defaultBranch}`;
+  if (await refExists(repoPath, localDefaultBranch)) return localDefaultBranch;
+
+  throw new Error(`Unable to resolve base ref for default branch "${defaultBranch}"`);
+}
+
 /** Only allow safe characters in path segments to prevent directory traversal */
 const SAFE_PATH_SEGMENT = /^[a-zA-Z0-9_-]+$/;
 
@@ -64,14 +105,18 @@ export function create(config?: Record<string, unknown>): Workspace {
 
       mkdirSync(projectWorktreeDir, { recursive: true });
 
-      // Fetch latest from remote
-      try {
-        await git(repoPath, "fetch", "origin", "--quiet");
-      } catch {
-        // Fetch may fail if offline — continue anyway
+      const hasOrigin = await hasOriginRemote(repoPath);
+
+      // Fetch latest from remote when origin exists
+      if (hasOrigin) {
+        try {
+          await git(repoPath, "fetch", "origin", "--quiet");
+        } catch {
+          // Fetch may fail if offline — continue anyway
+        }
       }
 
-      const baseRef = `origin/${cfg.project.defaultBranch}`;
+      const baseRef = await resolveBaseRef(repoPath, cfg.project.defaultBranch, { hasOrigin });
 
       // Create worktree with a new branch
       try {
@@ -217,24 +262,43 @@ export function create(config?: Record<string, unknown>): Workspace {
       }
 
       // Fetch latest
-      try {
-        await git(repoPath, "fetch", "origin", "--quiet");
-      } catch {
-        // May fail if offline
+      const hasOrigin = await hasOriginRemote(repoPath);
+      if (hasOrigin) {
+        try {
+          await git(repoPath, "fetch", "origin", "--quiet");
+        } catch {
+          // May fail if offline
+        }
       }
 
       // Try to create worktree on the existing branch
       try {
         await git(repoPath, "worktree", "add", workspacePath, cfg.branch);
       } catch {
-        // Branch might not exist locally — try from origin
-        const remoteBranch = `origin/${cfg.branch}`;
-        try {
-          await git(repoPath, "worktree", "add", "-b", cfg.branch, workspacePath, remoteBranch);
-        } catch {
-          // Last resort: create from default branch
-          const baseRef = `origin/${cfg.project.defaultBranch}`;
+        const baseRef = await resolveBaseRef(repoPath, cfg.project.defaultBranch, {
+          branch: cfg.branch,
+          hasOrigin,
+        });
+
+        if (!baseRef.startsWith("origin/")) {
+          // No remote available — create from the local default branch
           await git(repoPath, "worktree", "add", "-b", cfg.branch, workspacePath, baseRef);
+        } else {
+          // Branch might not exist locally — try the remote ref first, then fall back
+          // to the local default branch if the remote ref is unavailable.
+          try {
+            await git(repoPath, "worktree", "add", "-b", cfg.branch, workspacePath, baseRef);
+          } catch {
+            await git(
+              repoPath,
+              "worktree",
+              "add",
+              "-b",
+              cfg.branch,
+              workspacePath,
+              `refs/heads/${cfg.project.defaultBranch}`,
+            );
+          }
         }
       }
 

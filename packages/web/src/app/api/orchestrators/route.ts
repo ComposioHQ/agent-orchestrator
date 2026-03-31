@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { generateOrchestratorPrompt } from "@composio/ao-core";
 import { getServices } from "@/lib/services";
-import { validateIdentifier } from "@/lib/validation";
+import { validateIdentifier, validateConfiguredProject } from "@/lib/validation";
 
 export async function POST(request: NextRequest) {
   const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
@@ -17,11 +17,11 @@ export async function POST(request: NextRequest) {
   try {
     const { config, sessionManager } = await getServices();
     const projectId = body.projectId as string;
-    const project = config.projects[projectId];
-
-    if (!project) {
-      return NextResponse.json({ error: `Unknown project: ${projectId}` }, { status: 404 });
+    const projectErr = validateConfiguredProject(config.projects, projectId);
+    if (projectErr) {
+      return NextResponse.json({ error: projectErr }, { status: 404 });
     }
+    const project = config.projects[projectId];
 
     const systemPrompt = generateOrchestratorPrompt({ config, projectId, project });
     const session = await sessionManager.spawnOrchestrator({ projectId, systemPrompt });

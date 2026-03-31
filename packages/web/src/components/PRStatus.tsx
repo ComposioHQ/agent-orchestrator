@@ -128,3 +128,46 @@ export function PRTableRow({ pr }: PRTableRowProps) {
     </tr>
   );
 }
+
+export function PRCard({ pr }: PRTableRowProps) {
+  const sizeLabel = getSizeLabel(pr.additions, pr.deletions);
+  const rateLimited = isPRRateLimited(pr);
+
+  const reviewLabel = rateLimited
+    ? "stale"
+    : pr.isDraft
+      ? "draft"
+      : pr.reviewDecision === "approved"
+        ? "approved"
+        : pr.reviewDecision === "changes_requested"
+          ? "changes"
+          : "review";
+
+  const ciLabel = rateLimited
+    ? "CI stale"
+    : pr.ciStatus === "passing"
+      ? "CI passing"
+      : pr.ciStatus === "failing"
+        ? "CI failing"
+        : "CI pending";
+
+  return (
+    <a
+      href={pr.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="mobile-pr-card"
+    >
+      <div className="mobile-pr-card__line">
+        <span className="mobile-pr-card__number">#{pr.number}</span>
+        <span className="mobile-pr-card__title">{pr.title}</span>
+        {!rateLimited ? <span className="mobile-pr-card__size">{sizeLabel}</span> : null}
+      </div>
+      <div className="mobile-pr-card__meta">
+        <span>{ciLabel}</span>
+        <span>{reviewLabel}</span>
+        <span>{pr.unresolvedThreads} threads</span>
+      </div>
+    </a>
+  );
+}

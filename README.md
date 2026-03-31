@@ -103,6 +103,7 @@ The orchestrator agent uses the [AO CLI](docs/CLI.md) internally to manage sessi
 
 ```yaml
 # agent-orchestrator.yaml
+# Runtime data is auto-derived under ~/.agent-orchestrator/{hash}-{projectId}/
 port: 3000
 
 defaults:
@@ -138,18 +139,17 @@ See [`agent-orchestrator.yaml.example`](agent-orchestrator.yaml.example) for the
 
 ## Plugin Architecture
 
-Eight slots. Every abstraction is swappable.
+Seven plugin slots. Lifecycle stays in core.
 
 | Slot      | Default     | Alternatives             |
 | --------- | ----------- | ------------------------ |
-| Runtime   | tmux        | docker, k8s, process     |
+| Runtime   | tmux        | process                  |
 | Agent     | claude-code | codex, aider, opencode   |
 | Workspace | worktree    | clone                    |
-| Tracker   | github      | linear                   |
-| SCM       | github      | —                        |
-| Notifier  | desktop     | slack, composio, webhook |
+| Tracker   | github      | linear, gitlab           |
+| SCM       | github      | gitlab                   |
+| Notifier  | desktop     | slack, discord, composio, webhook, openclaw |
 | Terminal  | iterm2      | web                      |
-| Lifecycle | core        | —                        |
 
 All interfaces defined in [`packages/core/src/types.ts`](packages/core/src/types.ts). A plugin implements one interface and exports a `PluginModule`. That's it.
 

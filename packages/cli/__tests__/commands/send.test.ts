@@ -36,6 +36,11 @@ vi.mock("../../src/lib/plugins.js", () => ({
     processName: "claude",
     detectActivity: mockDetectActivity,
   }),
+  getAgentByNameFromRegistry: () => ({
+    name: "claude-code",
+    processName: "claude",
+    detectActivity: mockDetectActivity,
+  }),
 }));
 
 vi.mock("../../src/lib/session-utils.js", () => ({
@@ -53,6 +58,7 @@ vi.mock("@composio/ao-core", () => ({
 
 vi.mock("../../src/lib/create-session-manager.js", () => ({
   getSessionManager: async () => mockSessionManager,
+  getPluginRegistry: async () => ({ get: vi.fn(), list: vi.fn(), register: vi.fn() }),
 }));
 
 import { Command } from "commander";

@@ -22,31 +22,56 @@ function log(label: string, msg: string): void {
   process.stdout.write(`[${label}] ${msg}\n`);
 }
 
-function spawnProcess(label: string, command: string, args: string[]): ChildProcess {
-  const child = spawn(command, args, {
-    cwd: pkgRoot,
-    stdio: ["ignore", "pipe", "pipe"],
-    env: process.env,
-  });
+function spawnProcess(
+  label: string,
+  command: string,
+  args: string[],
+  opts?: { restart?: boolean; maxRestarts?: number },
+): ChildProcess {
+  let restarts = 0;
+  const maxRestarts = opts?.maxRestarts ?? 3;
+  let slotIndex = -1;
 
-  child.stdout?.on("data", (data: Buffer) => {
-    for (const line of data.toString().split("\n").filter(Boolean)) {
-      log(label, line);
+  function launch(): ChildProcess {
+    const child = spawn(command, args, {
+      cwd: pkgRoot,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: process.env,
+    });
+
+    child.stdout?.on("data", (data: Buffer) => {
+      for (const line of data.toString().split("\n").filter(Boolean)) {
+        log(label, line);
+      }
+    });
+
+    child.stderr?.on("data", (data: Buffer) => {
+      for (const line of data.toString().split("\n").filter(Boolean)) {
+        log(label, line);
+      }
+    });
+
+    child.on("exit", (code) => {
+      log(label, `exited with code ${code}`);
+      if (!shuttingDown && opts?.restart && code !== 0 && restarts < maxRestarts) {
+        restarts++;
+        log(label, `restarting (attempt ${restarts}/${maxRestarts})`);
+        const replacement = launch();
+        // Replace in-place — slot was assigned on first push
+        children[slotIndex] = replacement;
+      }
+    });
+
+    // Only push on first launch; restarts replace the existing slot
+    if (slotIndex === -1) {
+      slotIndex = children.length;
+      children.push(child);
     }
-  });
 
-  child.stderr?.on("data", (data: Buffer) => {
-    for (const line of data.toString().split("\n").filter(Boolean)) {
-      log(label, line);
-    }
-  });
+    return child;
+  }
 
-  child.on("exit", (code) => {
-    log(label, `exited with code ${code}`);
-  });
-
-  children.push(child);
-  return child;
+  return launch();
 }
 
 /**
@@ -72,11 +97,11 @@ function resolveNextBin(): string {
 const port = process.env["PORT"] || "3000";
 spawnProcess("next", resolveNextBin(), ["start", "-p", port]);
 
-// Start terminal WebSocket server
-spawnProcess("terminal", "node", [resolve(__dirname, "terminal-websocket.js")]);
+// Start terminal WebSocket server (auto-restart on crash)
+spawnProcess("terminal", "node", [resolve(__dirname, "terminal-websocket.js")], { restart: true });
 
-// Start direct terminal WebSocket server
-spawnProcess("direct-terminal", "node", [resolve(__dirname, "direct-terminal-ws.js")]);
+// Start direct terminal WebSocket server (auto-restart on crash)
+spawnProcess("direct-terminal", "node", [resolve(__dirname, "direct-terminal-ws.js")], { restart: true });
 
 // Graceful shutdown — send SIGTERM to children and wait for them to exit
 let shuttingDown = false;

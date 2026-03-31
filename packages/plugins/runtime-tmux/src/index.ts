@@ -5,13 +5,14 @@ import { randomUUID } from "node:crypto";
 import { writeFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type {
-  PluginModule,
-  Runtime,
-  RuntimeCreateConfig,
-  RuntimeHandle,
-  RuntimeMetrics,
-  AttachInfo,
+import {
+  type PluginModule,
+  type Runtime,
+  type RuntimeCreateConfig,
+  type RuntimeHandle,
+  type RuntimeMetrics,
+  type AttachInfo,
+  shellEscape,
 } from "@composio/ao-core";
 
 const execFileAsync = promisify(execFile);
@@ -31,6 +32,13 @@ function assertValidSessionId(id: string): void {
   if (!SAFE_SESSION_ID.test(id)) {
     throw new Error(`Invalid session ID "${id}": must match ${SAFE_SESSION_ID}`);
   }
+}
+
+function writeLaunchScript(command: string): string {
+  const scriptPath = join(tmpdir(), `ao-launch-${randomUUID()}.sh`);
+  const content = `#!/usr/bin/env bash\nrm -- "$0" 2>/dev/null || true\n${command}\n`;
+  writeFileSync(scriptPath, content, { encoding: "utf-8", mode: 0o700 });
+  return `bash ${shellEscape(scriptPath)}`;
 }
 
 /** Run a tmux command and return stdout */
@@ -59,23 +67,12 @@ export function create(): Runtime {
       await tmux("new-session", "-d", "-s", sessionName, "-c", config.workspacePath, ...envArgs);
 
       // Send the launch command — clean up the session if this fails.
-      // Use load-buffer + paste-buffer for long commands to avoid tmux/zsh
-      // truncation issues (commands >200 chars get mangled by send-keys).
+      // Use a temp script for long commands so the pane shows a short
+      // invocation instead of a pasted wall of shell.
       try {
         if (config.launchCommand.length > 200) {
-          const bufferName = `ao-launch-${randomUUID().slice(0, 8)}`;
-          const tmpPath = join(tmpdir(), `ao-launch-${randomUUID()}.txt`);
-          writeFileSync(tmpPath, config.launchCommand, { encoding: "utf-8", mode: 0o600 });
-          try {
-            await tmux("load-buffer", "-b", bufferName, tmpPath);
-            await tmux("paste-buffer", "-b", bufferName, "-t", sessionName, "-d");
-          } finally {
-            try {
-              unlinkSync(tmpPath);
-            } catch {
-              /* ignore cleanup errors */
-            }
-          }
+          const invocation = writeLaunchScript(config.launchCommand);
+          await tmux("send-keys", "-t", sessionName, "-l", invocation);
           await sleep(300);
           await tmux("send-keys", "-t", sessionName, "Enter");
         } else {

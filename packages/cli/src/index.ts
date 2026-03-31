@@ -14,6 +14,8 @@ import { registerLifecycleWorker } from "./commands/lifecycle-worker.js";
 import { registerVerify } from "./commands/verify.js";
 import { registerDoctor } from "./commands/doctor.js";
 import { registerUpdate } from "./commands/update.js";
+import { registerSetup } from "./commands/setup.js";
+import { registerPlugin } from "./commands/plugin.js";
 import { getConfigInstruction } from "./lib/config-instruction.js";
 
 const program = new Command();
@@ -38,6 +40,8 @@ registerLifecycleWorker(program);
 registerVerify(program);
 registerDoctor(program);
 registerUpdate(program);
+registerSetup(program);
+registerPlugin(program);
 
 program
   .command("config-help")

@@ -1,12 +1,24 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Command } from "commander";
 
-const { mockExecuteScriptCommand } = vi.hoisted(() => ({
-  mockExecuteScriptCommand: vi.fn(),
+const { mockRunRepoScript, mockFindConfigFile } = vi.hoisted(() => ({
+  mockRunRepoScript: vi.fn(),
+  mockFindConfigFile: vi.fn(),
 }));
 
 vi.mock("../../src/lib/script-runner.js", () => ({
-  executeScriptCommand: (...args: unknown[]) => mockExecuteScriptCommand(...args),
+  runRepoScript: (...args: unknown[]) => mockRunRepoScript(...args),
+}));
+
+vi.mock("@composio/ao-core", () => ({
+  findConfigFile: (...args: unknown[]) => mockFindConfigFile(...args),
+  getObservabilityBaseDir: () => "/tmp/.agent-orchestrator/observability",
+  loadConfig: vi.fn(),
+}));
+
+vi.mock("../../src/lib/openclaw-probe.js", () => ({
+  detectOpenClawInstallation: vi.fn(),
+  validateToken: vi.fn(),
 }));
 
 import { registerDoctor } from "../../src/commands/doctor.js";
@@ -18,8 +30,10 @@ describe("doctor command", () => {
     program = new Command();
     program.exitOverride();
     registerDoctor(program);
-    mockExecuteScriptCommand.mockReset();
-    mockExecuteScriptCommand.mockResolvedValue(undefined);
+    mockRunRepoScript.mockReset();
+    mockRunRepoScript.mockResolvedValue(0);
+    mockFindConfigFile.mockReset();
+    mockFindConfigFile.mockReturnValue(null);
   });
 
   afterEach(() => {
@@ -29,12 +43,12 @@ describe("doctor command", () => {
   it("runs the doctor script with no extra args by default", async () => {
     await program.parseAsync(["node", "test", "doctor"]);
 
-    expect(mockExecuteScriptCommand).toHaveBeenCalledWith("ao-doctor.sh", []);
+    expect(mockRunRepoScript).toHaveBeenCalledWith("ao-doctor.sh", []);
   });
 
   it("passes through --fix", async () => {
     await program.parseAsync(["node", "test", "doctor", "--fix"]);
 
-    expect(mockExecuteScriptCommand).toHaveBeenCalledWith("ao-doctor.sh", ["--fix"]);
+    expect(mockRunRepoScript).toHaveBeenCalledWith("ao-doctor.sh", ["--fix"]);
   });
 });

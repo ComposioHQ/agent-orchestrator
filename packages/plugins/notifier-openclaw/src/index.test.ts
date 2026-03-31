@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import type { NotifyAction, OrchestratorEvent } from "@composio/ao-core";
 import { create, manifest } from "./index.js";
 
@@ -17,14 +20,23 @@ function makeEvent(overrides: Partial<OrchestratorEvent> = {}): OrchestratorEven
 }
 
 describe("notifier-openclaw", () => {
+  let tempConfigDir: string;
+  let tempConfigPath: string;
+  let tempHealthPath: string;
+
   beforeEach(() => {
     vi.restoreAllMocks();
     delete process.env.OPENCLAW_HOOKS_TOKEN;
+    tempConfigDir = mkdtempSync(join(tmpdir(), "openclaw-notifier-test-"));
+    tempConfigPath = join(tempConfigDir, "agent-orchestrator.yaml");
+    tempHealthPath = join(tempConfigDir, "openclaw-health.json");
+    writeFileSync(tempConfigPath, "projects: {}\n");
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
+    rmSync(tempConfigDir, { recursive: true, force: true });
   });
 
   it("has correct manifest", () => {
@@ -169,7 +181,64 @@ describe("notifier-openclaw", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const notifier = create({ token: "tok", retries: 2, retryDelayMs: 1 });
-    await expect(notifier.notify(makeEvent())).rejects.toThrow("OpenClaw webhook failed (401)");
+    await expect(notifier.notify(makeEvent())).rejects.toThrow("OpenClaw rejected the auth token");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws actionable error on ECONNREFUSED", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error("fetch failed: ECONNREFUSED"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const notifier = create({ token: "tok", retries: 0 });
+    await expect(notifier.notify(makeEvent())).rejects.toThrow(
+      "Can't reach OpenClaw gateway",
+    );
+  });
+
+  it("records success telemetry when a notification is sent", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const notifier = create({
+      token: "tok",
+      configPath: tempConfigPath,
+      healthSummaryPath: tempHealthPath,
+    });
+    await notifier.notify(makeEvent());
+
+    expect(existsSync(tempHealthPath)).toBe(true);
+
+    const summary = JSON.parse(readFileSync(tempHealthPath, "utf-8")) as {
+      lastSuccessAt: string | null;
+      totalSent: number;
+      totalFailed: number;
+    };
+    expect(summary.lastSuccessAt).toBeTruthy();
+    expect(summary.totalSent).toBe(1);
+    expect(summary.totalFailed).toBe(0);
+  });
+
+  it("records failure telemetry when notification delivery fails", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error("fetch failed: ECONNREFUSED"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const notifier = create({
+      token: "tok",
+      retries: 0,
+      configPath: tempConfigPath,
+      healthSummaryPath: tempHealthPath,
+    });
+    await expect(notifier.notify(makeEvent())).rejects.toThrow();
+
+    const summary = JSON.parse(readFileSync(tempHealthPath, "utf-8")) as {
+      lastFailureAt: string | null;
+      lastFailureError: string | null;
+      totalSent: number;
+      totalFailed: number;
+    };
+    expect(summary.lastFailureAt).toBeTruthy();
+    expect(summary.lastFailureError).toContain("Can't reach OpenClaw gateway");
+    expect(summary.totalSent).toBe(0);
+    expect(summary.totalFailed).toBe(1);
   });
 });

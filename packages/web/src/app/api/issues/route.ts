@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { getServices } from "@/lib/services";
-import { validateString } from "@/lib/validation";
+import { validateString, validateConfiguredProject } from "@/lib/validation";
 import type { Tracker } from "@composio/ao-core";
 
 export const dynamic = "force-dynamic";
@@ -70,10 +70,11 @@ export async function POST(request: NextRequest) {
 
   try {
     const { config, registry } = await getServices();
-    const project = config.projects[projectId];
-    if (!project) {
-      return NextResponse.json({ error: `Unknown project: ${projectId}` }, { status: 404 });
+    const projectErr = validateConfiguredProject(config.projects, projectId);
+    if (projectErr) {
+      return NextResponse.json({ error: projectErr }, { status: 404 });
     }
+    const project = config.projects[projectId];
 
     if (!project.tracker) {
       return NextResponse.json({ error: "No tracker configured for this project" }, { status: 422 });

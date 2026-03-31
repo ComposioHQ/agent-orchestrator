@@ -38,6 +38,7 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const projectFilter = searchParams.get("project");
     const activeOnly = searchParams.get("active") === "true";
+    const orchestratorOnly = searchParams.get("orchestratorOnly") === "true";
 
     const { config, registry, sessionManager } = await getServices();
     const requestedProjectId =
@@ -45,10 +46,34 @@ export async function GET(request: Request) {
         ? projectFilter
         : undefined;
     const coreSessions = await sessionManager.list(requestedProjectId);
-    const allSessions = requestedProjectId ? await sessionManager.list() : coreSessions;
     const visibleSessions = filterProjectSessions(coreSessions, projectFilter, config.projects);
     const orchestrators = listDashboardOrchestrators(visibleSessions, config.projects);
     const orchestratorId = orchestrators.length === 1 ? (orchestrators[0]?.id ?? null) : null;
+
+    if (orchestratorOnly) {
+      recordApiObservation({
+        config,
+        method: "GET",
+        path: "/api/sessions",
+        correlationId,
+        startedAt,
+        outcome: "success",
+        statusCode: 200,
+        data: { orchestratorOnly: true, orchestratorCount: orchestrators.length },
+      });
+
+      return jsonWithCorrelation(
+        {
+          orchestratorId,
+          orchestrators,
+          sessions: [],
+        },
+        { status: 200 },
+        correlationId,
+      );
+    }
+
+    const allSessions = requestedProjectId ? await sessionManager.list() : coreSessions;
 
     let workerSessions = visibleSessions.filter((session) => !isOrchestratorSession(session));
 
@@ -69,22 +94,26 @@ export async function GET(request: Request) {
     );
 
     if (metadataSettled) {
-      const prDeadlineAt = Date.now() + PR_ENRICH_TIMEOUT_MS;
+      const prEnrichPromises: Promise<boolean>[] = [];
+
       for (let i = 0; i < workerSessions.length; i++) {
         const core = workerSessions[i];
         if (!core?.pr) continue;
-
-        const remainingMs = prDeadlineAt - Date.now();
-        if (remainingMs <= 0) break;
 
         const project = resolveProject(core, config.projects);
         const scm = getSCM(registry, project);
         if (!scm) continue;
 
-        await settlesWithin(
-          enrichSessionPR(dashboardSessions[i], scm, core.pr),
-          Math.min(remainingMs, PER_PR_ENRICH_TIMEOUT_MS),
+        prEnrichPromises.push(
+          settlesWithin(
+            enrichSessionPR(dashboardSessions[i], scm, core.pr),
+            PER_PR_ENRICH_TIMEOUT_MS,
+          ),
         );
+      }
+
+      if (prEnrichPromises.length > 0) {
+        await settlesWithin(Promise.allSettled(prEnrichPromises), PR_ENRICH_TIMEOUT_MS);
       }
     }
 

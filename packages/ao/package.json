@@ -1,11 +1,14 @@
 {
   "name": "@composio/ao",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "Orchestrate parallel AI coding agents — global CLI wrapper",
   "license": "MIT",
   "type": "module",
   "bin": {
     "ao": "bin/ao.js"
+  },
+  "scripts": {
+    "postinstall": "node bin/postinstall.js"
   },
   "files": [
     "bin"

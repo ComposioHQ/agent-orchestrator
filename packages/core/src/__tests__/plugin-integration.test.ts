@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -36,18 +36,17 @@ import { createPluginRegistry } from "../plugin-registry.js";
 import { createSessionManager } from "../session-manager.js";
 import { createLifecycleManager } from "../lifecycle-manager.js";
 import { writeMetadata } from "../metadata.js";
-import { getSessionsDir } from "../paths.js";
+import { getSessionsDir, getProjectBaseDir } from "../paths.js";
 import trackerGithub from "@composio/ao-plugin-tracker-github";
 import scmGithub from "@composio/ao-plugin-scm-github";
+import { createMockPlugins, makeHandle, makeSession as makeSessionBase, makePR, type TestEnvironment } from "./test-utils.js";
 import type {
   OrchestratorConfig,
   PluginRegistry,
   Runtime,
   Agent,
   Workspace,
-  RuntimeHandle,
   SessionManager,
-  PRInfo,
   Session,
 } from "../types.js";
 
@@ -55,24 +54,18 @@ import type {
 // Shared fixtures + helpers
 // ---------------------------------------------------------------------------
 
-let tmpDir: string;
-let configPath: string;
-let sessionsDir: string;
+let env: TestEnvironment;
 let mockRuntime: Runtime;
 let mockAgent: Agent;
 let mockWorkspace: Workspace;
 let config: OrchestratorConfig;
 let project: OrchestratorConfig["projects"][string];
 
-function makeHandle(id: string): RuntimeHandle {
-  return { id, runtimeName: "mock", data: {} };
-}
-
 function mockGh(result: unknown): void {
   ghMock.mockResolvedValueOnce({ stdout: JSON.stringify(result) });
 }
 
-const pr: PRInfo = {
+const pr = makePR({
   number: 42,
   url: "https://github.com/acme/app/pull/42",
   title: "feat: add feature",
@@ -80,26 +73,18 @@ const pr: PRInfo = {
   repo: "app",
   branch: "feat/issue-99",
   baseBranch: "main",
-  isDraft: false,
-};
+});
 
 function makeSession(overrides: Partial<Session> = {}): Session {
-  return {
+  return makeSessionBase({
     id: "app-1",
     projectId: "my-app",
     status: "working",
-    activity: "active",
     branch: "feat/issue-99",
-    issueId: null,
-    pr: null,
     workspacePath: "/tmp/test-app",
     runtimeHandle: makeHandle("rt-1"),
-    agentInfo: null,
-    createdAt: new Date(),
-    lastActivityAt: new Date(),
-    metadata: {},
     ...overrides,
-  };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -109,57 +94,38 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 beforeEach(() => {
   vi.clearAllMocks();
 
-  tmpDir = join(tmpdir(), `ao-test-plugin-int-${randomUUID()}`);
-  mkdirSync(tmpDir, { recursive: true });
+  // Use test-utils to create the test environment
+  env = {
+    tmpDir: join(tmpdir(), `ao-test-plugin-int-${randomUUID()}`),
+    configPath: "",
+    sessionsDir: "",
+    config: {} as OrchestratorConfig,
+    cleanup: () => {},
+  };
 
-  // Create a temporary config file
-  configPath = join(tmpDir, "agent-orchestrator.yaml");
-  writeFileSync(configPath, "projects: {}\n");
+  mkdirSync(env.tmpDir, { recursive: true });
+  env.configPath = join(env.tmpDir, "agent-orchestrator.yaml");
+  writeFileSync(env.configPath, "projects: {}\n");
 
-  // Initialize project with tmpDir-based path
+  // Create mock plugins using test-utils
+  const plugins = createMockPlugins();
+  mockRuntime = plugins.runtime;
+  mockAgent = plugins.agent;
+  mockWorkspace = plugins.workspace;
+
+  // Initialize project
   project = {
     name: "Test App",
     repo: "acme/app",
-    path: join(tmpDir, "test-app"),
+    path: join(env.tmpDir, "test-app"),
     defaultBranch: "main",
     sessionPrefix: "app",
     tracker: { plugin: "github" },
     scm: { plugin: "github" },
   };
 
-  mockRuntime = {
-    name: "mock",
-    create: vi.fn().mockResolvedValue(makeHandle("rt-1")),
-    destroy: vi.fn().mockResolvedValue(undefined),
-    sendMessage: vi.fn().mockResolvedValue(undefined),
-    getOutput: vi.fn().mockResolvedValue(""),
-    isAlive: vi.fn().mockResolvedValue(true),
-  };
-
-  mockAgent = {
-    name: "mock-agent",
-    processName: "mock",
-    getLaunchCommand: vi.fn().mockReturnValue("mock-agent --start"),
-    getEnvironment: vi.fn().mockReturnValue({ AGENT_VAR: "1" }),
-    detectActivity: vi.fn().mockResolvedValue("active"),
-    isProcessRunning: vi.fn().mockResolvedValue(true),
-    getSessionInfo: vi.fn().mockResolvedValue(null),
-  };
-
-  mockWorkspace = {
-    name: "mock-ws",
-    create: vi.fn().mockResolvedValue({
-      path: "/tmp/mock-ws/app-1",
-      branch: "feat/issue-99",
-      sessionId: "app-1",
-      projectId: "my-app",
-    }),
-    destroy: vi.fn().mockResolvedValue(undefined),
-    list: vi.fn().mockResolvedValue([]),
-  };
-
   config = {
-    configPath,
+    configPath: env.configPath,
     port: 3000,
     defaults: {
       runtime: "mock",
@@ -178,15 +144,24 @@ beforeEach(() => {
       info: [],
     },
     reactions: {},
+    readyThresholdMs: 300_000,
   };
 
-  // Calculate sessions directory
-  sessionsDir = getSessionsDir(configPath, project.path);
-  mkdirSync(sessionsDir, { recursive: true });
+  env.config = config;
+  env.sessionsDir = getSessionsDir(env.configPath, project.path);
+  mkdirSync(env.sessionsDir, { recursive: true });
+
+  env.cleanup = () => {
+    const projectBaseDir = getProjectBaseDir(env.configPath, project.path);
+    if (existsSync(projectBaseDir)) {
+      rmSync(projectBaseDir, { recursive: true, force: true });
+    }
+    rmSync(env.tmpDir, { recursive: true, force: true });
+  };
 });
 
 afterEach(() => {
-  rmSync(tmpDir, { recursive: true, force: true });
+  env.cleanup();
 });
 
 // ---------------------------------------------------------------------------
@@ -309,7 +284,7 @@ describe("plugin integration", () => {
       const sm = createSessionManager({ config, registry });
 
       // Seed an orchestrator session with a closed issue — it should still be skipped
-      writeMetadata(sessionsDir, "app-orchestrator", {
+      writeMetadata(env.sessionsDir, "app-orchestrator", {
         worktree: "/tmp/mock-ws/app-orchestrator",
         branch: "main",
         status: "working",
@@ -320,7 +295,7 @@ describe("plugin integration", () => {
       });
 
       // Also seed a regular session with the same closed issue — it SHOULD be killed
-      writeMetadata(sessionsDir, "app-1", {
+      writeMetadata(env.sessionsDir, "app-1", {
         worktree: "/tmp/mock-ws/app-1",
         branch: "feat/issue-99",
         status: "working",
@@ -345,7 +320,7 @@ describe("plugin integration", () => {
       const sm = createSessionManager({ config, registry });
 
       // Seed a session with an issueId but no PR
-      writeMetadata(sessionsDir, "app-1", {
+      writeMetadata(env.sessionsDir, "app-1", {
         worktree: "/tmp/mock-ws/app-1",
         branch: "feat/issue-99",
         status: "working",
@@ -372,7 +347,7 @@ describe("plugin integration", () => {
       const registry = createTestRegistry();
       const sm = createSessionManager({ config, registry });
 
-      writeMetadata(sessionsDir, "app-1", {
+      writeMetadata(env.sessionsDir, "app-1", {
         worktree: "/tmp/mock-ws/app-1",
         branch: "feat/issue-99",
         status: "working",
@@ -397,7 +372,7 @@ describe("plugin integration", () => {
       const registry = createTestRegistry();
       const sm = createSessionManager({ config, registry });
 
-      writeMetadata(sessionsDir, "app-1", {
+      writeMetadata(env.sessionsDir, "app-1", {
         worktree: "/tmp/mock-ws/app-1",
         branch: "feat/issue-99",
         status: "working",
@@ -423,7 +398,7 @@ describe("plugin integration", () => {
 
       // metadataToSession extracts PR number from the URL tail (/42),
       // and owner/repo stay empty — scm-github receives exactly that.
-      writeMetadata(sessionsDir, "app-1", {
+      writeMetadata(env.sessionsDir, "app-1", {
         worktree: "/tmp/mock-ws/app-1",
         branch: "feat/issue-99",
         status: "working",
@@ -450,7 +425,7 @@ describe("plugin integration", () => {
       const registry = createTestRegistry();
       const sm = createSessionManager({ config, registry });
 
-      writeMetadata(sessionsDir, "app-1", {
+      writeMetadata(env.sessionsDir, "app-1", {
         worktree: "/tmp/mock-ws/app-1",
         branch: "feat/issue-99",
         status: "working",
@@ -481,7 +456,7 @@ describe("plugin integration", () => {
     function seedSession(overrides: Partial<Session> = {}): Session {
       const session = makeSession(overrides);
 
-      writeMetadata(sessionsDir, session.id, {
+      writeMetadata(env.sessionsDir, session.id, {
         worktree: session.workspacePath ?? "/tmp/test-app",
         branch: session.branch ?? "feat/issue-99",
         status: session.status,

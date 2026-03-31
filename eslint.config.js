@@ -7,6 +7,7 @@ export default tseslint.config(
   {
     ignores: [
       "**/dist/**",
+      "**/dist-server/**",
       "**/node_modules/**",
       "**/.next/**",
       "**/coverage/**",
@@ -15,7 +16,6 @@ export default tseslint.config(
       "packages/web/postcss.config.mjs",
       "test-clipboard*.mjs",
       "test-clipboard*.sh",
-      "packages/mobile/**",
     ],
   },
 
@@ -100,6 +100,20 @@ export default tseslint.config(
     },
     rules: {
       "no-console": "off", // Scripts use console for output
+    },
+  },
+
+  // ao bin scripts - Node.js environment (postinstall, etc.)
+  {
+    files: ["packages/ao/bin/**/*.js"],
+    languageOptions: {
+      globals: {
+        console: "readonly",
+        process: "readonly",
+      },
+    },
+    rules: {
+      "no-console": "off", // Bin scripts use console for install output
     },
   },
 );

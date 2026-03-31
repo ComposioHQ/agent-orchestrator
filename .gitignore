@@ -63,3 +63,7 @@ agent-orchestrator.yaml
 .claude/
 .opencode/
 .ao/
+
+# OS-specific files
+.DS_Store
+Thumbs.db

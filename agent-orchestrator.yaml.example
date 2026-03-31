@@ -1,11 +1,9 @@
 # Agent Orchestrator Configuration
 # Copy to agent-orchestrator.yaml and customize.
 
-# Where to store session metadata
-dataDir: ~/.agent-orchestrator
-
-# Where to create workspaces (git worktrees, clones)
-worktreeDir: ~/.worktrees
+# Runtime data directories are auto-derived from this config location under:
+#   ~/.agent-orchestrator/{hash}-{projectId}/
+# You usually do not need to configure paths manually.
 
 # Web dashboard port
 port: 3000
@@ -17,14 +15,27 @@ port: 3000
 
 # Default plugins (these are the defaults — you can omit this section)
 defaults:
-  runtime: tmux           # tmux | process | docker | kubernetes | ssh | e2b
-  agent: claude-code      # claude-code | codex | aider | goose | custom
+  runtime: tmux           # tmux | process
+  agent: claude-code      # claude-code | codex | aider | opencode
   # orchestrator:
   #   agent: claude-code
   # worker:
   #   agent: codex
-  workspace: worktree     # worktree | clone | copy
-  notifiers: [desktop]    # desktop | slack | discord | webhook | email
+  workspace: worktree     # worktree | clone
+  notifiers: [desktop]    # desktop | slack | discord | webhook | composio | openclaw
+
+# Installer-managed external plugins (optional)
+# plugins:
+#   - name: owasp-auditor
+#     source: registry     # registry | npm | local
+#     package: "@ao-plugins/owasp-auditor"
+#     version: "^0.1.0"
+#     enabled: true
+#
+#   - name: local-dev-plugin
+#     source: local
+#     path: ./plugins/local-dev-plugin
+#     enabled: true
 
 # Projects — at minimum, specify repo and path
 projects:
@@ -99,6 +110,14 @@ projects:
 #     plugin: slack
 #     webhook: ${SLACK_WEBHOOK_URL}
 #     channel: "#agent-updates"
+#
+#   openclaw:
+#     plugin: openclaw
+#     url: http://127.0.0.1:18789/hooks/agent  # Use https:// for remote (non-localhost) deployments
+#     token: ${OPENCLAW_HOOKS_TOKEN}
+#     retries: 3
+#     retryDelayMs: 1000
+#     wakeMode: now
 
 # Notification routing by priority
 # notificationRouting:

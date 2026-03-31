@@ -182,6 +182,23 @@ pnpm --filter @composio/ao-runtime-myplugin build
 pnpm --filter @composio/ao-runtime-myplugin test
 ```
 
+### Publishing to the Marketplace Registry
+
+To list your plugin in the AO marketplace so others can install it with `ao plugin install`, submit a PR that adds an entry to `packages/cli/src/assets/plugin-registry.json`.
+
+Each entry requires:
+
+- **`id`** — short kebab-case name (e.g. `tracker-jira`)
+- **`package`** — npm package name
+- **`slot`** — one of: `runtime`, `agent`, `workspace`, `tracker`, `scm`, `notifier`, `terminal`
+- **`description`** — one-line summary
+- **`source`** — always `"registry"`
+- **`latestVersion`** — semver string
+
+Optionally include `setupAction` if post-install configuration is needed (e.g. `"openclaw-setup"`).
+
+Your plugin package must satisfy the contract in [`docs/PLUGIN_SPEC.md`](docs/PLUGIN_SPEC.md) — export a `PluginModule` with a valid manifest and `create()` function. The package must be published to npm before your registry PR is merged so `ao plugin install` can fetch it.
+
 ---
 
 ## Code Conventions

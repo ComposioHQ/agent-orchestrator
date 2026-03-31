@@ -6,6 +6,7 @@
 
 import type { PluginModule } from "@composio/ao-core";
 import { isHumanCaller } from "./caller-context.js";
+import { promptSelect } from "./prompts.js";
 
 export interface DetectedAgent {
   name: string;
@@ -54,8 +55,8 @@ export async function detectAvailableAgents(): Promise<DetectedAgent[]> {
  * - Multiple agents available + human caller → prompt to pick
  * - Multiple agents available + non-human → pick first (claude-code if available)
  */
-export async function detectAgentRuntime(): Promise<string> {
-  const available = await detectAvailableAgents();
+export async function detectAgentRuntime(preDetected?: DetectedAgent[]): Promise<string> {
+  const available = preDetected ?? await detectAvailableAgents();
 
   if (available.length === 0) {
     return "claude-code";
@@ -71,27 +72,12 @@ export async function detectAgentRuntime(): Promise<string> {
     return available.find((a) => a.name === "claude-code")?.name ?? available[0].name;
   }
 
-  // Interactive: prompt human to pick using node:readline (no external deps)
-  const { createInterface } = await import("node:readline/promises");
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-
-  try {
-    console.log("\n  Multiple agent runtimes detected:\n");
-    available.forEach((a, i) => {
-      console.log(`  ${i + 1}. ${a.displayName} (${a.name})`);
-    });
-    console.log();
-
-    const answer = await rl.question(`  Choose default agent [1-${available.length}]: `);
-
-    const idx = parseInt(answer.trim(), 10) - 1;
-    if (idx >= 0 && idx < available.length) {
-      return available[idx].name;
-    }
-
-    // Invalid input — default to first
-    return available[0].name;
-  } finally {
-    rl.close();
-  }
+  return await promptSelect(
+    "Choose default agent runtime:",
+    available.map((agent) => ({
+      value: agent.name,
+      label: agent.displayName,
+      hint: agent.name,
+    }))
+  );
 }

@@ -47,49 +47,64 @@ describe("preflight.checkPort", () => {
 });
 
 describe("preflight.checkBuilt", () => {
-  it("passes when node_modules and core dist exist", async () => {
+  it("passes when ao-core and dist exist at webDir level (pnpm layout)", async () => {
+    // findPackageUp finds ao-core on first check (pnpm symlink in webDir/node_modules)
     mockExistsSync.mockReturnValue(true);
     await expect(preflight.checkBuilt("/web")).resolves.toBeUndefined();
     expect(mockExistsSync).toHaveBeenCalled();
   });
 
-  it("throws 'pnpm install' when node_modules is missing", async () => {
-    // First call checks node_modules/@composio/ao-core — missing
-    mockExistsSync.mockReturnValue(false);
-    await expect(preflight.checkBuilt("/web")).rejects.toThrow(
-      "pnpm install",
-    );
+  it("finds ao-core when hoisted one level up (npm global install layout)", async () => {
+    // /web/node_modules/@composio/ao-core     — miss
+    // /node_modules/@composio/ao-core         — hit
+    // /node_modules/@composio/ao-core/dist/index.js — exists
+    mockExistsSync
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true);
+    await expect(preflight.checkBuilt("/web")).resolves.toBeUndefined();
   });
 
-  it("throws 'pnpm build' when node_modules exists but dist is missing", async () => {
-    // First call: node_modules/@composio/ao-core exists
-    // Second call: dist/index.js does not exist
+  it("throws npm hint when ao-core not found in global install", async () => {
+    mockExistsSync.mockReturnValue(false);
+    await expect(
+      preflight.checkBuilt("/usr/local/lib/node_modules/@composio/ao-web"),
+    ).rejects.toThrow("npm install -g @composio/ao@latest");
+  });
+
+  it("throws pnpm hint when ao-core not found in monorepo", async () => {
+    mockExistsSync.mockReturnValue(false);
+    await expect(
+      preflight.checkBuilt("/home/user/agent-orchestrator/packages/web"),
+    ).rejects.toThrow("pnpm install && pnpm build");
+  });
+
+  it("throws 'pnpm build' when ao-core exists but dist is missing", async () => {
+    // findPackageUp finds ao-core, but dist/index.js is missing
     mockExistsSync
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(false);
     await expect(preflight.checkBuilt("/web")).rejects.toThrow(
-      "Packages not built. Run: pnpm build",
+      "Packages not built",
     );
   });
 });
 
 describe("preflight.checkTmux", () => {
-  it("passes when tmux is installed", async () => {
+  it("passes when tmux is already installed", async () => {
     mockExec.mockResolvedValue({ stdout: "tmux 3.3a", stderr: "" });
     await expect(preflight.checkTmux()).resolves.toBeUndefined();
     expect(mockExec).toHaveBeenCalledWith("tmux", ["-V"]);
   });
 
-  it("throws when tmux is not installed", async () => {
+  it("throws with install instructions when tmux is missing", async () => {
     mockExec.mockRejectedValue(new Error("ENOENT"));
-    await expect(preflight.checkTmux()).rejects.toThrow(
-      "tmux is not installed",
-    );
-  });
-
-  it("includes install instruction in error", async () => {
-    mockExec.mockRejectedValue(new Error("ENOENT"));
-    await expect(preflight.checkTmux()).rejects.toThrow("brew install tmux");
+    const err = await preflight.checkTmux().catch((e: Error) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toContain("tmux is not installed");
+    expect(err.message).toContain("Install it:");
+    expect(mockExec).toHaveBeenCalledTimes(1);
+    expect(mockExec).toHaveBeenCalledWith("tmux", ["-V"]);
   });
 });
 

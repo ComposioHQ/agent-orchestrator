@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useEffect, useRef, type ReactNode } from "react";
+import { useState, useEffect, useRef, useMemo, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
+import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
 import { type DashboardSession, type DashboardPR, isPRMergeReady } from "@/lib/types";
 import { CI_STATUS } from "@composio/ao-core/types";
 import { cn } from "@/lib/cn";
 import { CICheckList } from "./CIBadge";
 import { DirectTerminal } from "./DirectTerminal";
+import { MobileBottomNav } from "./MobileBottomNav";
 
 interface OrchestratorZones {
   merge: number;
@@ -21,6 +23,7 @@ interface SessionDetailProps {
   session: DashboardSession;
   isOrchestrator?: boolean;
   orchestratorZones?: OrchestratorZones;
+  projectOrchestratorId?: string | null;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -56,6 +59,18 @@ function buildGitHubBranchUrl(pr: DashboardPR): string {
   return `https://github.com/${pr.owner}/${pr.repo}/tree/${pr.branch}`;
 }
 
+function activityStateClass(activityLabel: string): string {
+  const normalized = activityLabel.toLowerCase();
+  if (normalized === "active") return "session-detail-status-pill--active";
+  if (normalized === "ready") return "session-detail-status-pill--ready";
+  if (normalized === "idle") return "session-detail-status-pill--idle";
+  if (normalized === "waiting for input") return "session-detail-status-pill--waiting";
+  if (normalized === "blocked" || normalized === "exited") {
+    return "session-detail-status-pill--error";
+  }
+  return "session-detail-status-pill--neutral";
+}
+
 function SessionTopStrip({
   headline,
   activityLabel,
@@ -63,6 +78,9 @@ function SessionTopStrip({
   branch,
   pr,
   isOrchestrator = false,
+  crumbHref,
+  crumbLabel,
+  mobileSimple = false,
   rightSlot,
 }: {
   headline: string;
@@ -71,13 +89,16 @@ function SessionTopStrip({
   branch: string | null;
   pr: DashboardPR | null;
   isOrchestrator?: boolean;
+  crumbHref: string;
+  crumbLabel: string;
+  mobileSimple?: boolean;
   rightSlot?: ReactNode;
 }) {
   return (
-    <section className="session-page-header">
+    <section className={`session-page-header${mobileSimple ? " session-page-header--mobile" : ""}`}>
       <div className="session-page-header__crumbs">
         <a
-          href="/"
+          href={crumbHref}
           className="flex items-center gap-1 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-text-primary)] hover:no-underline"
         >
           <svg
@@ -89,13 +110,17 @@ function SessionTopStrip({
           >
             <path d="M15 18l-6-6 6-6" />
           </svg>
-          Orchestrator
+          {crumbLabel}
         </a>
         <span className="text-[var(--color-border-strong)]">/</span>
-        <span className="font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]">
-          {headline}
-        </span>
-        {isOrchestrator ? <span className="session-page-header__mode">orchestrator</span> : null}
+        {!mobileSimple ? (
+          <span className="font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]">
+            {headline}
+          </span>
+        ) : null}
+        {isOrchestrator && !mobileSimple ? (
+          <span className="session-page-header__mode">orchestrator</span>
+        ) : null}
       </div>
       <div className="session-page-header__main">
         <div className="session-page-header__identity">
@@ -104,13 +129,19 @@ function SessionTopStrip({
           </h1>
           <div className="session-page-header__meta">
             <div
-              className="flex items-center gap-1.5 border px-2.5 py-1"
+              className={cn(
+                "session-detail-status-pill flex items-center gap-1.5 border px-2.5 py-1",
+                activityStateClass(activityLabel),
+              )}
               style={{
                 background: `color-mix(in srgb, ${activityColor} 12%, transparent)`,
                 border: `1px solid color-mix(in srgb, ${activityColor} 20%, transparent)`,
               }}
             >
-              <span className="h-1.5 w-1.5 shrink-0" style={{ background: activityColor }} />
+              <span
+                className="session-detail-status-pill__dot h-1.5 w-1.5 shrink-0"
+                style={{ background: activityColor }}
+              />
               <span className="text-[11px] font-semibold" style={{ color: activityColor }}>
                 {activityLabel}
               </span>
@@ -121,7 +152,7 @@ function SessionTopStrip({
                   href={buildGitHubBranchUrl(pr)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="session-detail-link-pill font-[var(--font-mono)] text-[10px] hover:no-underline"
+                  className="session-detail-link-pill session-detail-link-pill--link font-[var(--font-mono)] text-[10px] hover:no-underline"
                 >
                   {branch}
                 </a>
@@ -136,7 +167,7 @@ function SessionTopStrip({
                 href={pr.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="session-detail-link-pill session-detail-link-pill--accent hover:no-underline"
+                className="session-detail-link-pill session-detail-link-pill--link session-detail-link-pill--accent hover:no-underline"
               >
                 PR #{pr.number}
               </a>
@@ -181,6 +212,8 @@ function OrchestratorStatusStrip({
   activityColor,
   branch,
   pr,
+  crumbHref,
+  crumbLabel,
 }: {
   zones: OrchestratorZones;
   createdAt: string;
@@ -189,6 +222,8 @@ function OrchestratorStatusStrip({
   activityColor: string;
   branch: string | null;
   pr: DashboardPR | null;
+  crumbHref: string;
+  crumbLabel: string;
 }) {
   const [uptime, setUptime] = useState<string>("");
 
@@ -225,6 +260,8 @@ function OrchestratorStatusStrip({
         branch={branch}
         pr={pr}
         isOrchestrator
+        crumbHref={crumbHref}
+        crumbLabel={crumbLabel}
         rightSlot={
           <div className="flex flex-wrap items-center gap-3 lg:justify-end">
             <div className="flex items-baseline gap-1.5 mr-2">
@@ -282,8 +319,10 @@ export function SessionDetail({
   session,
   isOrchestrator = false,
   orchestratorZones,
+  projectOrchestratorId = null,
 }: SessionDetailProps) {
   const searchParams = useSearchParams();
+  const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
   const startFullscreen = searchParams.get("fullscreen") === "true";
   const pr = session.pr;
   const activity = (session.activity && activityMeta[session.activity]) ?? {
@@ -305,10 +344,19 @@ export function SessionDetail({
   const reloadCommand = opencodeSessionId
     ? `/exit\nopencode --session ${opencodeSessionId}\n`
     : undefined;
+  const dashboardHref = session.projectId ? `/?project=${encodeURIComponent(session.projectId)}` : "/";
+  const prsHref = session.projectId ? `/prs?project=${encodeURIComponent(session.projectId)}` : "/prs";
+  const crumbHref = dashboardHref;
+  const crumbLabel = isOrchestrator ? "Orchestrator" : "Dashboard";
+  const orchestratorHref = useMemo(() => {
+    if (isOrchestrator) return `/sessions/${encodeURIComponent(session.id)}`;
+    if (!projectOrchestratorId) return null;
+    return `/sessions/${encodeURIComponent(projectOrchestratorId)}`;
+  }, [isOrchestrator, projectOrchestratorId, session.id]);
 
   return (
     <div className="session-detail-page min-h-screen bg-[var(--color-bg-base)]">
-      {isOrchestrator && orchestratorZones && (
+      {isOrchestrator && orchestratorZones && !isMobile && (
         <OrchestratorStatusStrip
           zones={orchestratorZones}
           createdAt={session.createdAt}
@@ -317,22 +365,29 @@ export function SessionDetail({
           activityColor={activity.color}
           branch={session.branch}
           pr={pr}
+          crumbHref={crumbHref}
+          crumbLabel={crumbLabel}
         />
       )}
 
-      <div className="mx-auto max-w-[1180px] px-5 py-5 lg:px-8">
+      <div className="dashboard-main mx-auto max-w-[1180px] px-5 py-5 lg:px-8">
         <main className="min-w-0">
-          {!isOrchestrator && (
+          {(!isOrchestrator || isMobile) && (
             <SessionTopStrip
               headline={headline}
               activityLabel={activity.label}
               activityColor={activity.color}
               branch={session.branch}
               pr={pr}
+              isOrchestrator={isOrchestrator}
+              crumbHref={crumbHref}
+              crumbLabel={crumbLabel}
+              mobileSimple={isMobile}
             />
           )}
 
           <section className="mt-5">
+            <div id="session-terminal-section" aria-hidden="true" />
             <div className="mb-3 flex items-center gap-2">
               <div
                 className="h-3 w-0.5"
@@ -353,19 +408,29 @@ export function SessionDetail({
           </section>
 
           {pr ? (
-            <section className="mt-6">
-              <PRCard pr={pr} sessionId={session.id} />
+            <section id="session-pr-section" className="mt-6">
+              <SessionDetailPRCard pr={pr} sessionId={session.id} />
             </section>
           ) : null}
         </main>
       </div>
+      {isMobile ? (
+        <MobileBottomNav
+          ariaLabel="Session navigation"
+          activeTab={isOrchestrator ? "orchestrator" : undefined}
+          dashboardHref={dashboardHref}
+          prsHref={prsHref}
+          showOrchestrator={orchestratorHref !== null}
+          orchestratorHref={orchestratorHref}
+        />
+      ) : null}
     </div>
   );
 }
 
-// ── PR Card ───────────────────────────────────────────────────────────
+// ── Session detail PR card ────────────────────────────────────────────
 
-function PRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
+function SessionDetailPRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
   const [sendingComments, setSendingComments] = useState<Set<string>>(new Set());
   const [sentComments, setSentComments] = useState<Set<string>>(new Set());
   const [errorComments, setErrorComments] = useState<Set<string>>(new Set());

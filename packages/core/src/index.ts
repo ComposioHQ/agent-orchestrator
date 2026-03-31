@@ -19,7 +19,13 @@ export {
 } from "./config.js";
 
 // Plugin registry
-export { createPluginRegistry } from "./plugin-registry.js";
+export {
+  createPluginRegistry,
+  isPluginModule,
+  normalizeImportedPluginModule,
+  resolveLocalPluginEntrypoint,
+  resolvePackageExportsEntry,
+} from "./plugin-registry.js";
 
 // Metadata — flat-file session metadata read/write
 export {
@@ -131,6 +137,7 @@ export {
 export type {
   ObservabilityMetricName,
   ObservabilityHealthStatus,
+  ObservabilityLevel,
   ObservabilitySummary,
   ProjectObserver,
 } from "./observability.js";

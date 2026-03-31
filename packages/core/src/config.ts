@@ -181,12 +181,40 @@ const DefaultPluginsSchema = z.object({
   worker: RoleAgentDefaultsSchema,
 });
 
+const InstalledPluginConfigSchema = z
+  .object({
+    name: z.string(),
+    source: z.enum(["registry", "npm", "local"]),
+    package: z.string().optional(),
+    version: z.string().optional(),
+    path: z.string().optional(),
+    enabled: z.boolean().default(true),
+  })
+  .superRefine((value, ctx) => {
+    if (value.source === "local" && !value.path) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["path"],
+        message: "Local plugins require a path",
+      });
+    }
+
+    if ((value.source === "registry" || value.source === "npm") && !value.package) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["package"],
+        message: "Registry and npm plugins require a package name",
+      });
+    }
+  });
+
 const OrchestratorConfigSchema = z.object({
   port: z.number().default(3000),
   terminalPort: z.number().optional(),
   directTerminalPort: z.number().optional(),
   readyThresholdMs: z.number().nonnegative().default(300_000),
   defaults: DefaultPluginsSchema.default({}),
+  plugins: z.array(InstalledPluginConfigSchema).default([]),
   projects: z.record(ProjectConfigSchema),
   notifiers: z.record(NotifierConfigSchema).default({}),
   notificationRouting: z.record(z.array(z.string())).default({
@@ -214,6 +242,12 @@ function expandHome(filepath: string): string {
 function expandPaths(config: OrchestratorConfig): OrchestratorConfig {
   for (const project of Object.values(config.projects)) {
     project.path = expandHome(project.path);
+  }
+
+  for (const plugin of config.plugins ?? []) {
+    if (plugin.path) {
+      plugin.path = expandHome(plugin.path);
+    }
   }
 
   return config;
