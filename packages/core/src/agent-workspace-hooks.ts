@@ -95,10 +95,18 @@ update_ao_metadata() {
 
   local metadata_file="\$ao_dir/\$ao_session"
 
-  # Resolve and verify the file is still within ao_dir
+  # Resolve symlinks and verify canonicalized paths are still within trusted roots
   local real_dir real_ao_dir
   real_ao_dir="\$(cd "\$ao_dir" 2>/dev/null && pwd -P)" || return 0
   real_dir="\$(cd "\$(dirname "\$metadata_file")" 2>/dev/null && pwd -P)" || return 0
+
+  # Re-validate real_ao_dir against trusted roots after canonicalization
+  # (prevents /tmp/../../home/user from escaping the allowlist)
+  case "\$real_ao_dir" in
+    "\$HOME"/.ao/* | "\$HOME"/.ao | "\$HOME"/.agent-orchestrator/* | "\$HOME"/.agent-orchestrator | /tmp/*) ;;
+    *) return 0 ;;
+  esac
+
   [[ "\$real_dir" == "\$real_ao_dir"* ]] || return 0
 
   [[ -f "\$metadata_file" ]] || return 0
