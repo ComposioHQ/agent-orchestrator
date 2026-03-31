@@ -22,6 +22,7 @@ export const DEFAULT_REMOTE_MARKETPLACE_REGISTRY_URL =
   "https://raw.githubusercontent.com/ComposioHQ/agent-orchestrator/main/packages/cli/src/assets/plugin-registry.json";
 
 const MARKETPLACE_CACHE_FILE = "plugin-registry.json";
+const MARKETPLACE_FETCH_TIMEOUT_MS = 30_000;
 
 function isPluginSlot(value: unknown): value is PluginSlot {
   return (
@@ -112,7 +113,7 @@ export function loadMarketplaceCatalog(): MarketplacePluginEntry[] {
 export async function refreshMarketplaceCatalog(
   url = process.env["AO_PLUGIN_REGISTRY_URL"] ?? DEFAULT_REMOTE_MARKETPLACE_REGISTRY_URL,
 ): Promise<MarketplacePluginEntry[]> {
-  const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+  const response = await fetch(url, { signal: AbortSignal.timeout(MARKETPLACE_FETCH_TIMEOUT_MS) });
   if (!response.ok) {
     throw new Error(`Failed to fetch marketplace registry from ${url} (HTTP ${response.status}).`);
   }
