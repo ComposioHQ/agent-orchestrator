@@ -77,6 +77,20 @@ function defaultForgejoHost(): string | undefined {
   return envHost;
 }
 
+function projectConfiguredHost(project: ProjectConfig): string | undefined {
+  const trackerHost = (project.tracker as Record<string, unknown> | undefined)?.["host"];
+  if (typeof trackerHost === "string" && trackerHost.trim().length > 0) {
+    return trackerHost.trim();
+  }
+
+  const scmHost = (project.scm as Record<string, unknown> | undefined)?.["host"];
+  if (typeof scmHost === "string" && scmHost.trim().length > 0) {
+    return scmHost.trim();
+  }
+
+  return repoHost(project.repo) ?? defaultForgejoHost();
+}
+
 function getErrorText(err: unknown): string {
   if (!(err instanceof Error)) return "";
 
@@ -214,15 +228,22 @@ async function forgejoApi(
 // ---------------------------------------------------------------------------
 
 function createForgejoTracker(config?: Record<string, unknown>): Tracker {
-  const hostname = typeof config?.host === "string" ? config.host : undefined;
+  const configuredHost = typeof config?.host === "string" ? config.host : undefined;
   const token = resolveForgejoToken();
-  const useRest = Boolean(hostname && token);
+
+  function resolveHost(project: ProjectConfig): string | undefined {
+    if (configuredHost && configuredHost.trim().length > 0) {
+      return configuredHost.trim();
+    }
+    return projectConfiguredHost(project);
+  }
 
   return {
     name: "forgejo",
 
     async getIssue(identifier: string, project: ProjectConfig): Promise<Issue> {
-      if (useRest && hostname && token) {
+      const hostname = resolveHost(project);
+      if (hostname && token) {
         const issueNumber = Number(identifier.replace(/^#/, ""));
         const [owner, repo] = parseProjectRepo(project.repo);
         const data = (await forgejoApi(
@@ -259,7 +280,8 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
     },
 
     async isCompleted(identifier: string, project: ProjectConfig): Promise<boolean> {
-      if (useRest && hostname && token) {
+      const hostname = resolveHost(project);
+      if (hostname && token) {
         const issue = await this.getIssue(identifier, project);
         return issue.state === "closed" || issue.state === "cancelled";
       }
@@ -279,7 +301,7 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
 
     issueUrl(identifier: string, project: ProjectConfig): string {
       const num = identifier.replace(/^#/, "");
-      const host = hostname ?? repoHost(project.repo) ?? defaultForgejoHost() ?? "forgejo.example";
+      const host = resolveHost(project) ?? "forgejo.example";
       return `https://${host}/${stripHost(project.repo)}/issues/${num}`;
     },
 
@@ -326,7 +348,8 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
     },
 
     async listIssues(filters: IssueFilters, project: ProjectConfig): Promise<Issue[]> {
-      if (useRest && hostname && token) {
+      const hostname = resolveHost(project);
+      if (hostname && token) {
         const [owner, repo] = parseProjectRepo(project.repo);
         const state =
           filters.state === "all" ? "all" : filters.state === "closed" ? "closed" : "open";
@@ -399,7 +422,8 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
       update: IssueUpdate,
       project: ProjectConfig,
     ): Promise<void> {
-      if (useRest && hostname && token) {
+      const hostname = resolveHost(project);
+      if (hostname && token) {
         const issueNumber = Number(identifier.replace(/^#/, ""));
         const [owner, repo] = parseProjectRepo(project.repo);
 
@@ -532,7 +556,8 @@ function createForgejoTracker(config?: Record<string, unknown>): Tracker {
     },
 
     async createIssue(input: CreateIssueInput, project: ProjectConfig): Promise<Issue> {
-      if (useRest && hostname && token) {
+      const hostname = resolveHost(project);
+      if (hostname && token) {
         const [owner, repo] = parseProjectRepo(project.repo);
         const data = (await forgejoApi(
           hostname,

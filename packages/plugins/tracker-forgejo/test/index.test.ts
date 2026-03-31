@@ -27,6 +27,14 @@ const project: ProjectConfig = {
   sessionPrefix: "test",
 };
 
+const projectWithForgejoHost: ProjectConfig = {
+  ...project,
+  tracker: {
+    plugin: "forgejo",
+    host: "git.rankworld.games",
+  },
+};
+
 function mockGh(result: unknown) {
   ghMock.mockResolvedValueOnce({ stdout: JSON.stringify(result) });
 }
@@ -86,6 +94,15 @@ describe("tracker-forgejo plugin", () => {
 
       const options = ghMock.mock.calls[0]?.[2] as { env?: Record<string, string> };
       expect(options?.env?.["GH_HOST"]).toBe("forgejo.acme.internal");
+    });
+
+    it("uses tracker.host from project config when plugin host is not set", async () => {
+      mockGh(sampleIssue);
+
+      await tracker.getIssue("123", projectWithForgejoHost);
+
+      const options = ghMock.mock.calls[0]?.[2] as { env?: Record<string, string> };
+      expect(options?.env?.["GH_HOST"]).toBe("git.rankworld.games");
     });
   });
 
