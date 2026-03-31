@@ -37,6 +37,8 @@ export const BASE_AGENT_PROMPT = `You are an AI coding agent managed by the Agen
 - Write a clear PR title and description explaining what changed and why.
 - Link the issue in the PR description so it auto-closes when merged.
 - If the repo has CI checks, make sure they pass before requesting review.
+- Respond to every review comment, even if just to acknowledge it.
+
 ## Session Restore
 - If you receive a "Session Restored After Crash" message, read it carefully before continuing.
 - The message contains the actual git state (commits, working tree, diff) — this is ground truth.

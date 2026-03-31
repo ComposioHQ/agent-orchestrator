@@ -1218,8 +1218,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     if (!plugins.agent) {
       throw new Error(`Agent plugin '${selection.agentName}' not found`);
     }
-    const runtimePlugin = plugins.runtime;
-    const agentPlugin = plugins.agent;
 
     const sessionId = `${project.sessionPrefix}-orchestrator`;
     const orchestratorSessionStrategy = normalizeOrchestratorSessionStrategy(
