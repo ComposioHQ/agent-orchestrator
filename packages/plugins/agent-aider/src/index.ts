@@ -127,6 +127,15 @@ function createAiderAgent(): Agent {
       if (config.issueId) {
         env["AO_ISSUE_ID"] = config.issueId;
       }
+
+      const passThroughVars = ["OPENAI_API_KEY", "OPENAI_API_BASE", "OPENAI_BASE_URL"];
+      for (const key of passThroughVars) {
+        const value = process.env[key];
+        if (typeof value === "string" && value.length > 0) {
+          env[key] = value;
+        }
+      }
+
       return env;
     },
 
