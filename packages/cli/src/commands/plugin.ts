@@ -494,7 +494,8 @@ export function registerPlugin(program: Command): void {
       const config = loadConfig(configPath);
       const { descriptor, specifier, setupAction } = buildPluginDescriptor(reference, configPath);
       const verifiedDescriptor = await installOrVerifyPlugin(config, descriptor, specifier);
-      const nextPlugins = upsertInstalledPlugin(config.plugins ?? [], verifiedDescriptor);
+      const previousPlugins = config.plugins ?? [];
+      const nextPlugins = upsertInstalledPlugin(previousPlugins, verifiedDescriptor);
       writePluginsConfig(configPath, nextPlugins);
 
       console.log(chalk.green(formatInstallSummary(verifiedDescriptor, configPath)));
@@ -503,7 +504,15 @@ export function registerPlugin(program: Command): void {
         // Always run setup — interactive in TTY, auto-detect in non-TTY.
         // Non-interactive setup will auto-detect OpenClaw on localhost if
         // no --url is given and the gateway is reachable.
-        await runSetupAction({ url: opts.url, token: opts.token });
+        try {
+          await runSetupAction({ url: opts.url, token: opts.token });
+        } catch (err) {
+          // Rollback: restore previous plugin list so a failed setup
+          // doesn't leave a half-configured notifier enabled in config.
+          writePluginsConfig(configPath, previousPlugins);
+          console.log(chalk.dim("Rolled back plugin config after setup failure."));
+          throw err;
+        }
       }
     });
 

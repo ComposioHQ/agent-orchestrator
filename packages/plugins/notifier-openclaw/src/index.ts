@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -82,7 +82,9 @@ function readHealthSummary(path: string): OpenClawHealthSummary {
 function writeHealthSummary(path: string, summary: OpenClawHealthSummary): void {
   try {
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, JSON.stringify(summary, null, 2) + "\n");
+    const tempPath = `${path}.tmp.${process.pid}`;
+    writeFileSync(tempPath, JSON.stringify(summary, null, 2) + "\n");
+    renameSync(tempPath, path);
   } catch {
     // Health telemetry is best-effort and must never block notifications.
   }

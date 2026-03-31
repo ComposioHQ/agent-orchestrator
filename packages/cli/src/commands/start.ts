@@ -907,12 +907,18 @@ async function runStartup(
   }
   await warnAboutOpenClawStatus(config);
 
-  // Populate process.env with API keys from OpenClaw config so spawned
-  // agent sessions inherit them (tmux sessions inherit the parent env).
-  const injectedKeys = applyOpenClawCredentials();
-  if (injectedKeys.length > 0) {
-    const names = injectedKeys.map((k) => k.key).join(", ");
-    console.log(chalk.dim(`  Resolved from OpenClaw config: ${names}`));
+  // Only inject OpenClaw credentials when the project actually uses OpenClaw.
+  // This avoids exposing API keys to projects/plugins that don't need them.
+  const openclawNotifier = config.notifiers?.["openclaw"];
+  const hasOpenClaw =
+    openclawNotifier !== null && openclawNotifier !== undefined &&
+    typeof openclawNotifier === "object" && openclawNotifier.plugin === "openclaw";
+  if (hasOpenClaw) {
+    const injectedKeys = applyOpenClawCredentials();
+    if (injectedKeys.length > 0) {
+      const names = injectedKeys.map((k) => k.key).join(", ");
+      console.log(chalk.dim(`  Resolved from OpenClaw config: ${names}`));
+    }
   }
 
   const sessionId = `${project.sessionPrefix}-orchestrator`;
