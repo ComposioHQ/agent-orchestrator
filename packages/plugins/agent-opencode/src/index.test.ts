@@ -718,31 +718,33 @@ describe("getActivityState", () => {
 
   it("refreshes opencode session list cache after TTL", async () => {
     const nowSpy = vi.spyOn(Date, "now");
-    let now = Date.UTC(2026, 0, 1, 0, 0, 0);
-    nowSpy.mockImplementation(() => now);
+    try {
+      let now = Date.UTC(2026, 0, 1, 0, 0, 0);
+      nowSpy.mockImplementation(() => now);
 
-    mockOpencodeSessionList(new Date(now - 10_000).toISOString());
-    await agent.getActivityState(
-      makeSession({
-        runtimeHandle: makeTmuxHandle(),
-        metadata: { opencodeSessionId: "ses_abc123" },
-      }),
-      60_000,
-    );
+      mockOpencodeSessionList(new Date(now - 10_000).toISOString());
+      await agent.getActivityState(
+        makeSession({
+          runtimeHandle: makeTmuxHandle(),
+          metadata: { opencodeSessionId: "ses_abc123" },
+        }),
+        60_000,
+      );
 
-    now += OPENCODE_SESSION_LIST_CACHE_TTL_MS + 1;
-    await agent.getActivityState(
-      makeSession({
-        runtimeHandle: makeTmuxHandle(),
-        metadata: { opencodeSessionId: "ses_abc123" },
-      }),
-      60_000,
-    );
+      now += OPENCODE_SESSION_LIST_CACHE_TTL_MS + 1;
+      await agent.getActivityState(
+        makeSession({
+          runtimeHandle: makeTmuxHandle(),
+          metadata: { opencodeSessionId: "ses_abc123" },
+        }),
+        60_000,
+      );
 
-    const opencodeCalls = mockExecFileAsync.mock.calls.filter(([cmd]) => cmd === "opencode");
-    expect(opencodeCalls).toHaveLength(2);
-
-    nowSpy.mockRestore();
+      const opencodeCalls = mockExecFileAsync.mock.calls.filter(([cmd]) => cmd === "opencode");
+      expect(opencodeCalls).toHaveLength(2);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 });
 
