@@ -235,13 +235,13 @@ describe("isProcessRunning", () => {
   });
 
   it("returns true when node copilot found on tmux pane TTY", async () => {
-    // The ps command returns args with node + copilot path
+    // The ps command returns args with node + copilot path (matches /copilot at end)
     mockExecFileAsync.mockImplementation((cmd: string) => {
       if (cmd === "tmux") return Promise.resolve({ stdout: "/dev/ttys003\n", stderr: "" });
       if (cmd === "ps") {
         return Promise.resolve({
           stdout:
-            "  PID TT       ARGS\n  789 ttys003  node /usr/lib/node_modules/copilot/index.js\n",
+            "  PID TT       ARGS\n  789 ttys003  node /usr/lib/node_modules/@github/copilot -p test\n",
           stderr: "",
         });
       }
@@ -304,6 +304,34 @@ describe("isProcessRunning", () => {
     });
     expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(true);
   });
+
+  it("does not false-positive match github-copilot-language-server", async () => {
+    mockExecFileAsync.mockImplementation((cmd: string) => {
+      if (cmd === "tmux") return Promise.resolve({ stdout: "/dev/ttys003\n", stderr: "" });
+      if (cmd === "ps") {
+        return Promise.resolve({
+          stdout: "  PID TT ARGS\n  789 ttys003  node github-copilot-language-server\n",
+          stderr: "",
+        });
+      }
+      return Promise.reject(new Error("unexpected"));
+    });
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
+  });
+
+  it("does not false-positive match paths containing copilot substring", async () => {
+    mockExecFileAsync.mockImplementation((cmd: string) => {
+      if (cmd === "tmux") return Promise.resolve({ stdout: "/dev/ttys003\n", stderr: "" });
+      if (cmd === "ps") {
+        return Promise.resolve({
+          stdout: "  PID TT ARGS\n  789 ttys003  cat /var/log/copilot-extension.log\n",
+          stderr: "",
+        });
+      }
+      return Promise.reject(new Error("unexpected"));
+    });
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
+  });
 });
 
 describe("detectActivity — terminal output classification", () => {
@@ -327,6 +355,11 @@ describe("detectActivity — terminal output classification", () => {
 
   it("returns idle for generic prompt pattern", () => {
     expect(agent.detectActivity("> ")).toBe("idle");
+  });
+
+  it("returns idle for generic prompt after other output (multi-line)", () => {
+    const output = "Processing files...\nDone!\n> ";
+    expect(agent.detectActivity(output)).toBe("idle");
   });
 
   it("returns waiting_input for approval prompt", () => {

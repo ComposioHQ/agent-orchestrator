@@ -6,6 +6,7 @@ import {
   type ActivityDetection,
   type ActivityState,
   type PluginModule,
+  type ProjectConfig,
   type RuntimeHandle,
   type Session,
 } from "@composio/ao-core";
@@ -84,7 +85,7 @@ function createCopilotAgent(): Agent {
       // Check for Copilot's input prompt patterns
       // Match "copilot> " or "> " at end of output (prompt waiting for input)
       if (/copilot>\s*$/.test(tail)) return "idle";
-      if (/^>\s*$/.test(tail)) return "idle";
+      if (/(^|\n)>\s*$/.test(tail)) return "idle";
 
       // Check for approval/permission prompts
       if (/allow this action/i.test(tail)) return "waiting_input";
@@ -133,8 +134,8 @@ function createCopilotAgent(): Agent {
             timeout: 30_000,
           });
           const ttySet = new Set(ttys.map((t) => t.replace(/^\/dev\//, "")));
-          // Match copilot process - could be "copilot" or "node .../copilot" (since it's a Node CLI)
-          const processRe = /copilot/i;
+          // Match copilot process - use word boundary to avoid false positives
+          const processRe = /(?:^|\/)copilot(?:\s|$)/;
           for (const line of psOut.split("\n")) {
             const cols = line.trimStart().split(/\s+/);
             if (cols.length < 3 || !ttySet.has(cols[1] ?? "")) continue;
@@ -172,7 +173,10 @@ function createCopilotAgent(): Agent {
       return null;
     },
 
-    async getRestoreCommand(_session: Session): Promise<string | null> {
+    async getRestoreCommand(
+      _session: Session,
+      _project: ProjectConfig,
+    ): Promise<string | null> {
       // Copilot CLI supports session resumption via /resume command
       // but doesn't expose persistent session IDs externally.
       // For now, we fall back to standard launch (no resume support).
