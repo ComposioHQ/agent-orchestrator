@@ -16,5 +16,11 @@ export default defineConfig({
       ),
       "@composio/ao-plugin-scm-github": resolve(__dirname, "../plugins/scm-github/src/index.ts"),
     },
+    coverage: {
+      provider: "v8",
+      reporter: ["lcov"],
+      include: ["src/**/*.ts"],
+      exclude: ["src/__tests__/**", "src/index.ts", "src/recovery/index.ts"],
+    },
   },
 });
