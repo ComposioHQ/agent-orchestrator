@@ -4,10 +4,25 @@ import { writeMetadata } from "../metadata.js";
 import type { OrchestratorConfig, PluginRegistry, Agent } from "../types.js";
 import { setupTestContext, teardownTestContext, makeHandle, type TestContext } from "./test-utils.js";
 
-// Mock child_process module
-vi.mock("node:child_process", () => ({
-  execFile: vi.fn(),
-}));
+// Mock child_process module with custom promisify
+vi.mock("node:child_process", () => {
+  const execFileMock = vi.fn();
+  // Implement custom promisify to return { stdout, stderr } objects
+  execFileMock[Symbol.for("nodejs.util.promisify.custom")] = (...args: any[]) => {
+    return new Promise((resolve, reject) => {
+      execFileMock(...args, (error: any, stdout: string, stderr: string) => {
+        if (error) {
+          reject(Object.assign(error, { stdout, stderr }));
+        } else {
+          resolve({ stdout, stderr });
+        }
+      });
+    });
+  };
+  return {
+    execFile: execFileMock,
+  };
+});
 
 let ctx: TestContext;
 let tmpDir: string;
@@ -77,9 +92,9 @@ describe("deleteSession retry loop", () => {
       const argsArray = Array.isArray(args) ? args : [];
       if (argsArray[1] === "delete") {
         deleteCallCount++;
-        cb(mockError, null, null);
+        cb(mockError, "", "");
       } else if (argsArray[1] === "list") {
-        cb(null, { stdout: "[]", stderr: "" }, null);
+        cb(null, "[]", "");
       }
       return null as any;
     }) as any);
@@ -117,9 +132,9 @@ describe("deleteSession retry loop", () => {
       const argsArray = Array.isArray(args) ? args : [];
       if (argsArray[1] === "delete") {
         callTimes.push(Date.now());
-        cb(mockError, null, null);
+        cb(mockError, "", "");
       } else if (argsArray[1] === "list") {
-        cb(null, { stdout: "[]", stderr: "" }, null);
+        cb(null, "[]", "");
       }
       return null as any;
     }) as any);
@@ -168,9 +183,9 @@ describe("deleteSession retry loop", () => {
       if (argsArray[1] === "delete") {
         deleteCallCount++;
         const error = deleteCallCount === 3 ? lastError : new Error(`Error ${deleteCallCount}`);
-        cb(error, null, null);
+        cb(error, "", "");
       } else if (argsArray[1] === "list") {
-        cb(null, { stdout: "[]", stderr: "" }, null);
+        cb(null, "[]", "");
       }
       return null as any;
     }) as any);
@@ -209,13 +224,13 @@ describe("deleteSession retry loop", () => {
         deleteCallCount++;
         if (deleteCallCount === 1) {
           // First attempt fails
-          cb(new Error("First attempt failed"), null, null);
+          cb(new Error("First attempt failed"), "", "");
         } else {
           // Second attempt succeeds
-          cb(null, { stdout: "", stderr: "" }, null);
+          cb(null, "", "");
         }
       } else if (argsArray[1] === "list") {
-        cb(null, { stdout: "[]", stderr: "" }, null);
+        cb(null, "[]", "");
       }
       return null as any;
     }) as any);
@@ -255,9 +270,9 @@ describe("deleteSession retry loop", () => {
       const argsArray = Array.isArray(args) ? args : [];
       if (argsArray[1] === "delete") {
         deleteCallCount++;
-        cb(notFoundError, null, null);
+        cb(notFoundError, "", "");
       } else if (argsArray[1] === "list") {
-        cb(null, { stdout: "[]", stderr: "" }, null);
+        cb(null, "[]", "");
       }
       return null as any;
     }) as any);
