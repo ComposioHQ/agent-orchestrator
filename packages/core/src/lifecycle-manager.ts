@@ -848,6 +848,148 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
   }
 
+  /**
+   * Format CI check failures into a human-readable message for the agent.
+   * Includes check names, statuses, and links for debugging.
+   */
+  function formatCIFailureMessage(failedChecks: Array<{ name: string; status: string; url?: string; conclusion?: string }>): string {
+    const lines = [
+      "CI checks are failing on your PR. Here are the failed checks:",
+      "",
+    ];
+    for (const check of failedChecks) {
+      const status = check.conclusion ?? check.status;
+      const link = check.url ? ` — ${check.url}` : "";
+      lines.push(`- **${check.name}**: ${status}${link}`);
+    }
+    lines.push(
+      "",
+      "Investigate the failures, fix the issues, and push again.",
+    );
+    return lines.join("\n");
+  }
+
+  /**
+   * Dispatch CI failure details to the agent session when new or changed
+   * failures are detected. Follows the same fingerprinting/deduplication
+   * pattern as maybeDispatchReviewBacklog().
+   */
+  async function maybeDispatchCIFailureDetails(
+    session: Session,
+    _oldStatus: SessionStatus,
+    newStatus: SessionStatus,
+    transitionReaction?: { key: string; result: ReactionResult | null },
+  ): Promise<void> {
+    const project = config.projects[session.projectId];
+    if (!project || !session.pr) return;
+
+    const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    if (!scm) return;
+
+    const ciReactionKey = "ci-failed";
+
+    // Clear tracking when PR is closed/merged
+    if (newStatus === "merged" || newStatus === "killed") {
+      clearReactionTracker(session.id, ciReactionKey);
+      updateSessionMetadata(session, {
+        lastCIFailureFingerprint: "",
+        lastCIFailureDispatchHash: "",
+        lastCIFailureDispatchAt: "",
+      });
+      return;
+    }
+
+    // Only dispatch CI details when in ci_failed state
+    if (newStatus !== "ci_failed") {
+      // CI is no longer failing — clear tracking so next failure is dispatched fresh
+      const lastFingerprint = session.metadata["lastCIFailureFingerprint"] ?? "";
+      if (lastFingerprint) {
+        clearReactionTracker(session.id, ciReactionKey);
+        updateSessionMetadata(session, {
+          lastCIFailureFingerprint: "",
+          lastCIFailureDispatchHash: "",
+          lastCIFailureDispatchAt: "",
+        });
+      }
+      return;
+    }
+
+    // Fetch individual CI checks for failure details
+    let checks: Array<{ name: string; status: string; url?: string; conclusion?: string }>;
+    try {
+      checks = await scm.getCIChecks(session.pr);
+    } catch {
+      // Failed to fetch checks — skip this cycle
+      return;
+    }
+
+    const failedChecks = checks.filter(
+      (c) => c.status === "failed" || c.conclusion?.toUpperCase() === "FAILURE",
+    );
+    if (failedChecks.length === 0) return;
+
+    const ciFingerprint = makeFingerprint(
+      failedChecks.map((c) => `${c.name}:${c.status}:${c.conclusion ?? ""}`),
+    );
+    const lastCIFingerprint = session.metadata["lastCIFailureFingerprint"] ?? "";
+    const lastCIDispatchHash = session.metadata["lastCIFailureDispatchHash"] ?? "";
+
+    // Reset reaction tracker when failure set changes
+    if (ciFingerprint !== lastCIFingerprint && transitionReaction?.key !== ciReactionKey) {
+      clearReactionTracker(session.id, ciReactionKey);
+    }
+    if (ciFingerprint !== lastCIFingerprint) {
+      updateSessionMetadata(session, {
+        lastCIFailureFingerprint: ciFingerprint,
+      });
+    }
+
+    // If transition already sent a ci-failed reaction with the static message,
+    // skip this cycle but do NOT record dispatch hash — the next poll will send
+    // the detailed CI failure info with check names and URLs.
+    if (
+      transitionReaction?.key === ciReactionKey &&
+      transitionReaction.result?.success
+    ) {
+      return;
+    }
+
+    // Skip if we already dispatched this exact failure set
+    if (ciFingerprint === lastCIDispatchHash) return;
+
+    // Dispatch CI failure details
+    const reactionConfig = getReactionConfigForSession(session, ciReactionKey);
+    if (
+      reactionConfig &&
+      reactionConfig.action &&
+      (reactionConfig.auto !== false || reactionConfig.action === "notify")
+    ) {
+      // Build a detailed message with failure information, falling back to the
+      // configured static message when check details are available
+      const detailedMessage = formatCIFailureMessage(failedChecks);
+      const messageToSend = detailedMessage;
+
+      // Create a reaction config clone with the detailed message
+      const reactionWithDetails: ReactionConfig = {
+        ...reactionConfig,
+        message: messageToSend,
+      };
+
+      const result = await executeReaction(
+        session.id,
+        session.projectId,
+        ciReactionKey,
+        reactionWithDetails,
+      );
+      if (result.success) {
+        updateSessionMetadata(session, {
+          lastCIFailureDispatchHash: ciFingerprint,
+          lastCIFailureDispatchAt: new Date().toISOString(),
+        });
+      }
+    }
+  }
+
   /** Send a notification to all configured notifiers. */
   async function notifyHuman(event: OrchestratorEvent, priority: EventPriority): Promise<void> {
     const eventWithPriority = { ...event, priority };
@@ -953,7 +1095,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       states.set(session.id, newStatus);
     }
 
-    await maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction);
+    await Promise.all([
+      maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction),
+      maybeDispatchCIFailureDetails(session, oldStatus, newStatus, transitionReaction),
+    ]);
   }
 
   /** Run one polling cycle across all sessions. */
