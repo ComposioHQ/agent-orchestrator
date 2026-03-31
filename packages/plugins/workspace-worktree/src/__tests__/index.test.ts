@@ -446,6 +446,118 @@ describe("workspace.create()", () => {
       { cwd: "/repo/path" },
     );
   });
+
+  it("uses baseBranch instead of defaultBranch when provided (with origin)", async () => {
+    const ws = create();
+
+    mockOriginRemote();
+    mockGitSuccess(""); // git rev-parse --verify --quiet origin/develop
+    mockGitSuccess(""); // worktree add
+
+    await ws.create(makeCreateConfig({ baseBranch: "develop" }));
+
+    // Should check origin/develop first (baseBranch)
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      ["rev-parse", "--verify", "--quiet", "origin/develop"],
+      { cwd: "/repo/path" },
+    );
+
+    // Should create worktree from origin/develop
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      [
+        "worktree",
+        "add",
+        "-b",
+        "feat/TEST-1",
+        "/mock-home/.worktrees/myproject/session-1",
+        "origin/develop",
+      ],
+      { cwd: "/repo/path" },
+    );
+  });
+
+  it("uses baseBranch and falls back to refs/heads when origin ref does not exist", async () => {
+    const ws = create();
+
+    mockOriginRemote();
+    mockGitError("fatal: invalid reference"); // git rev-parse --verify --quiet origin/develop fails
+    mockGitSuccess(""); // git rev-parse --verify --quiet refs/heads/develop succeeds
+    mockGitSuccess(""); // worktree add
+
+    await ws.create(makeCreateConfig({ baseBranch: "develop" }));
+
+    // Should try origin/develop first
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      ["rev-parse", "--verify", "--quiet", "origin/develop"],
+      { cwd: "/repo/path" },
+    );
+
+    // Should fall back to refs/heads/develop (using baseBranch as the new default)
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      ["rev-parse", "--verify", "--quiet", "refs/heads/develop"],
+      { cwd: "/repo/path" },
+    );
+
+    // Should create worktree from refs/heads/develop
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      [
+        "worktree",
+        "add",
+        "-b",
+        "feat/TEST-1",
+        "/mock-home/.worktrees/myproject/session-1",
+        "refs/heads/develop",
+      ],
+      { cwd: "/repo/path" },
+    );
+  });
+
+  it("uses baseBranch with refs/heads/ prefix when origin is missing", async () => {
+    const ws = create();
+
+    mockGitError("fatal: not a git repository"); // git remote get-url origin fails
+    mockGitSuccess(""); // git rev-parse --verify --quiet refs/heads/develop
+    mockGitSuccess(""); // worktree add
+
+    await ws.create(makeCreateConfig({ baseBranch: "develop" }));
+
+    // Should check refs/heads/develop (using baseBranch as defaultBranch)
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      ["rev-parse", "--verify", "--quiet", "refs/heads/develop"],
+      { cwd: "/repo/path" },
+    );
+
+    // Should create worktree from refs/heads/develop
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      [
+        "worktree",
+        "add",
+        "-b",
+        "feat/TEST-1",
+        "/mock-home/.worktrees/myproject/session-1",
+        "refs/heads/develop",
+      ],
+      { cwd: "/repo/path" },
+    );
+  });
+
+  it("baseBranch overrides defaultBranch for error messages", async () => {
+    const ws = create();
+
+    mockGitError("fatal: not a git repository"); // git remote get-url origin fails
+    mockGitError("fatal: invalid reference"); // git rev-parse --verify --quiet refs/heads/custom fails
+
+    await expect(ws.create(makeCreateConfig({ baseBranch: "custom" }))).rejects.toThrow(
+      'Unable to resolve base ref for default branch "custom"',
+    );
+  });
 });
 
 describe("workspace.restore()", () => {
