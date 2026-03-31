@@ -90,6 +90,7 @@ async function spawnSession(
   openTab?: boolean,
   agent?: string,
   claimOptions?: SpawnClaimOptions,
+  baseBranch?: string,
 ): Promise<string> {
   const spinner = ora("Creating session").start();
 
@@ -101,6 +102,7 @@ async function spawnSession(
       projectId,
       issueId,
       agent,
+      baseBranch,
     });
 
     let branchStr = session.branch ?? "";
@@ -163,6 +165,7 @@ export function registerSpawn(program: Command): void {
     .argument("[second]", "", /* hidden second arg to catch old two-arg usage */)
     .option("--open", "Open session in terminal tab")
     .option("--agent <name>", "Override the agent plugin (e.g. codex, claude-code)")
+    .option("--base-branch <branch>", "Base branch to spawn from (default: project default branch)")
     .option("--claim-pr <pr>", "Immediately claim an existing PR for the spawned session")
     .option("--assign-on-github", "Assign the claimed PR to the authenticated GitHub user")
     .option("--decompose", "Decompose issue into subtasks before spawning")
@@ -174,6 +177,7 @@ export function registerSpawn(program: Command): void {
         opts: {
           open?: boolean;
           agent?: string;
+          baseBranch?: string;
           claimPr?: string;
           assignOnGithub?: boolean;
           decompose?: boolean;
@@ -253,7 +257,15 @@ export function registerSpawn(program: Command): void {
 
             if (leaves.length <= 1) {
               console.log(chalk.yellow("Task is atomic — spawning directly."));
-              await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions);
+              await spawnSession(
+                config,
+                projectId,
+                issueId,
+                opts.open,
+                opts.agent,
+                claimOptions,
+                opts.baseBranch,
+              );
             } else {
               // Create child issues and spawn sessions with lineage context
               const sm = await getSessionManager(config);
@@ -269,6 +281,7 @@ export function registerSpawn(program: Command): void {
                     lineage: leaf.lineage,
                     siblings,
                     agent: opts.agent,
+                    baseBranch: opts.baseBranch,
                   });
                   console.log(`  ${chalk.green("✓")} ${session.id} — ${leaf.description}`);
                 } catch (err) {
@@ -280,7 +293,15 @@ export function registerSpawn(program: Command): void {
               }
             }
           } else {
-            await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions);
+            await spawnSession(
+              config,
+              projectId,
+              issueId,
+              opts.open,
+              opts.agent,
+              claimOptions,
+              opts.baseBranch,
+            );
           }
         } catch (err) {
           console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));

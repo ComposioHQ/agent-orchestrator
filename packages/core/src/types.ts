@@ -186,6 +186,7 @@ export interface SessionSpawnConfig {
   projectId: string;
   issueId?: string;
   branch?: string;
+  baseBranch?: string;
   prompt?: string;
   /** Override the agent plugin for this session (e.g. "codex", "claude-code") */
   agent?: string;
@@ -435,6 +436,7 @@ export interface WorkspaceCreateConfig {
   project: ProjectConfig;
   sessionId: SessionId;
   branch: string;
+  baseBranch?: string;
 }
 
 export interface WorkspaceInfo {
