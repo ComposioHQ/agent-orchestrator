@@ -697,6 +697,16 @@ describe("spawn", () => {
     );
   });
 
+  it("forwards baseBranch to workspace.create", async () => {
+    const sm = createSessionManager({ config, registry: mockRegistry });
+
+    await sm.spawn({ projectId: "my-app", baseBranch: "custom-branch" });
+
+    expect(mockWorkspace.create).toHaveBeenCalledWith(
+      expect.objectContaining({ baseBranch: "custom-branch" }),
+    );
+  });
+
   it("validates issue exists when issueId provided", async () => {
     const mockTracker: Tracker = {
       name: "mock-tracker",
