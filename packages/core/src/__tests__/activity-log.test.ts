@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   checkActivityLogState,
   classifyTerminalActivity,
+  readLastActivityEntry,
   recordTerminalActivity,
   ACTIVITY_INPUT_STALENESS_MS,
 } from "../activity-log.js";
@@ -56,11 +57,19 @@ describe("checkActivityLogState", () => {
     expect(result?.state).toBe("waiting_input");
   });
 
+  it("returns blocked when entry is fresh", () => {
+    const result = checkActivityLogState({
+      entry: { ts: new Date().toISOString(), state: "blocked", source: "terminal" },
+      modifiedAt: new Date(),
+    });
+    expect(result?.state).toBe("blocked");
+  });
+
   it("returns null for stale waiting_input entry", () => {
     const staleTs = new Date(Date.now() - ACTIVITY_INPUT_STALENESS_MS - 1000).toISOString();
     const result = checkActivityLogState({
       entry: { ts: staleTs, state: "waiting_input", source: "terminal" },
-      modifiedAt: new Date(), // mtime is fresh but entry.ts is stale
+      modifiedAt: new Date(),
     });
     expect(result).toBeNull();
   });
@@ -70,6 +79,21 @@ describe("checkActivityLogState", () => {
       entry: { ts: new Date().toISOString(), state: "active", source: "terminal" },
       modifiedAt: new Date(),
     });
+    expect(result).toBeNull();
+  });
+
+  it("returns null for invalid entry.ts", () => {
+    const result = checkActivityLogState({
+      entry: { ts: "not-a-date", state: "waiting_input", source: "terminal" },
+      modifiedAt: new Date(),
+    });
+    expect(result).toBeNull();
+  });
+});
+
+describe("readLastActivityEntry", () => {
+  it("returns null when file does not exist", async () => {
+    const result = await readLastActivityEntry("/nonexistent/path");
     expect(result).toBeNull();
   });
 });
