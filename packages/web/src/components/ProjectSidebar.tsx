@@ -354,7 +354,7 @@ function ProjectSidebarInner({
   if (collapsed) {
     return (
       <>
-        <aside className="project-sidebar project-sidebar--collapsed flex h-full w-[56px] flex-col items-center py-2">
+        <aside className="project-sidebar project-sidebar--collapsed flex min-h-0 flex-1 w-[56px] flex-col items-center py-2">
           <div className="mb-1 flex w-full shrink-0 justify-center px-1">{filterPopover}</div>
           <div className="flex flex-1 flex-col items-center gap-3 overflow-y-auto">
             {projects.map((project) => {
@@ -448,7 +448,7 @@ function ProjectSidebarInner({
 
   return (
     <>
-      <aside className="project-sidebar flex h-full w-[244px] flex-col">
+      <aside className="project-sidebar flex min-h-0 flex-1 w-[244px] flex-col">
         <div className="flex items-center justify-between gap-2 border-b border-[var(--color-border-subtle)] px-3 py-1.5">
           <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--color-text-tertiary)]">
             Projects
