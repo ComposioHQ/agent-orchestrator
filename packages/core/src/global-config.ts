@@ -22,7 +22,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
-import { resolve, join, dirname } from "node:path";
+import { resolve, join, dirname, sep } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
@@ -282,8 +282,13 @@ export function loadGlobalConfig(): GlobalConfig | null {
   }
 
   // One-time migration: move inline shadows to per-project files.
-  // Only triggers if inline behavior fields are actually detected.
-  migrateInlineShadowsToFiles();
+  // Wrapped in try/catch so malformed YAML doesn't bypass the friendly
+  // validation error below.
+  try {
+    migrateInlineShadowsToFiles();
+  } catch {
+    // Migration failed — continue to validation which will report the error
+  }
 
   const raw = readFileSync(path, "utf-8");
   const parsed = parseYaml(raw);
@@ -678,7 +683,7 @@ export function matchProjectByCwd(
   let bestMatch: { id: string; pathLen: number } | null = null;
   for (const [id, entry] of Object.entries(globalConfig.projects)) {
     const resolvedPath = resolve(expandHome(entry.path));
-    if (resolvedCwd === resolvedPath || resolvedCwd.startsWith(resolvedPath + "/")) {
+    if (resolvedCwd === resolvedPath || resolvedCwd.startsWith(resolvedPath + sep)) {
       // Prefer the longest (most specific) matching path
       if (!bestMatch || resolvedPath.length > bestMatch.pathLen) {
         bestMatch = { id, pathLen: resolvedPath.length };
