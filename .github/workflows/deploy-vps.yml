@@ -18,12 +18,25 @@ jobs:
       github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
     steps:
+      - name: Verify SHA is current tip of main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          DEPLOY_SHA="${{ github.event.workflow_run.head_sha }}"
+          MAIN_SHA=$(gh api repos/${{ github.repository }}/git/ref/heads/main --jq '.object.sha')
+          if [ "$DEPLOY_SHA" != "$MAIN_SHA" ]; then
+            echo "Skipping: CI SHA $DEPLOY_SHA is not the current tip of main ($MAIN_SHA). Likely a stale rerun."
+            exit 0
+          fi
+          echo "SHA verified: $DEPLOY_SHA is the current tip of main."
+
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.2.2
         with:
           host: ${{ secrets.VPS_HOST }}
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
+          fingerprint: SHA256:mlWd4p7TXI+SnxXMr7THgQprWOk936qRQQdB4P2WsqA
           script: |
             set -e
             DEPLOY_SHA="${{ github.event.workflow_run.head_sha }}"
