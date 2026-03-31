@@ -224,12 +224,15 @@ export function generateConfigFromUrl(options: GenerateConfigOptions): Record<st
       : { plugin: platform !== "unknown" ? platform : "github" };
 
   // Tracker — same platform as SCM for known hosts, github as fallback
-  projectConfig.tracker = {
-    plugin:
-      platform === "github" || platform === "gitlab" || platform === "forgejo"
-        ? platform
-        : "github",
-  };
+  projectConfig.tracker =
+    platform === "forgejo"
+      ? { plugin: "forgejo", host: parsed.host }
+      : {
+          plugin:
+            platform === "github" || platform === "gitlab" || platform === "forgejo"
+              ? platform
+              : "github",
+        };
 
   // Post-create commands based on detected package manager (JS ecosystem only)
   const JS_PACKAGE_MANAGERS: Record<string, string> = {

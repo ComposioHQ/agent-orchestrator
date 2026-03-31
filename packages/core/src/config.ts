@@ -275,15 +275,29 @@ function applyProjectDefaults(config: OrchestratorConfig): OrchestratorConfig {
     }
 
     const inferredPlugin = inferScmPlugin(project);
+    const scmHost =
+      project.scm && typeof project.scm.host === "string" && project.scm.host.length > 0
+        ? project.scm.host
+        : undefined;
+    const trackerHost =
+      project.tracker && typeof project.tracker.host === "string" && project.tracker.host.length > 0
+        ? project.tracker.host
+        : undefined;
 
     // Infer SCM from repo if not set
     if (!project.scm && project.repo.includes("/")) {
-      project.scm = { plugin: inferredPlugin };
+      project.scm =
+        inferredPlugin === "forgejo" && trackerHost
+          ? { plugin: "forgejo", host: trackerHost }
+          : { plugin: inferredPlugin };
     }
 
     // Infer tracker from repo if not set (default to github issues)
     if (!project.tracker) {
-      project.tracker = { plugin: inferredPlugin };
+      project.tracker =
+        inferredPlugin === "forgejo" && scmHost
+          ? { plugin: "forgejo", host: scmHost }
+          : { plugin: inferredPlugin };
     }
   }
 

@@ -599,7 +599,36 @@ describe("Config Defaults", () => {
 
     const validated = validateConfig(config);
     expect(validated.projects.proj1.scm).toEqual({ plugin: "forgejo", host: "git.rankworld.games" });
-    expect(validated.projects.proj1.tracker).toEqual({ plugin: "forgejo" });
+    expect(validated.projects.proj1.tracker).toEqual({
+      plugin: "forgejo",
+      host: "git.rankworld.games",
+    });
+  });
+
+  it("infers Forgejo scm host from tracker host", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: {
+            plugin: "forgejo",
+            host: "forgejo.company.internal",
+          },
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.projects.proj1.tracker).toEqual({
+      plugin: "forgejo",
+      host: "forgejo.company.internal",
+    });
+    expect(validated.projects.proj1.scm).toEqual({
+      plugin: "forgejo",
+      host: "forgejo.company.internal",
+    });
   });
 
   it("keeps explicit github plugin even when host contains forgejo", () => {

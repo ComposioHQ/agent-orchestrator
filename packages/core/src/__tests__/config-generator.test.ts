@@ -299,7 +299,7 @@ describe("generateConfigFromUrl", () => {
     const projects = config.projects as Record<string, Record<string, unknown>>;
     const project = projects["my-project"];
     expect(project.scm).toEqual({ plugin: "forgejo", host: "forgejo.example.com" });
-    expect(project.tracker).toEqual({ plugin: "forgejo" });
+    expect(project.tracker).toEqual({ plugin: "forgejo", host: "forgejo.example.com" });
   });
 
   it("falls back to github for unknown hosts", () => {
