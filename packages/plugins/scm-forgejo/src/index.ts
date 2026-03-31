@@ -93,6 +93,50 @@ async function git(args: string[], cwd: string): Promise<string> {
   return execCli("git", args, cwd);
 }
 
+function resolveForgejoToken(): string | undefined {
+  const candidates = [
+    process.env["FORGEJO_TOKEN"],
+    process.env["GITEA_TOKEN"],
+    process.env["GH_TOKEN"],
+    process.env["GITHUB_TOKEN"],
+  ];
+  return candidates.find((v) => typeof v === "string" && v.trim().length > 0)?.trim();
+}
+
+async function forgejoApi(
+  hostname: string,
+  token: string,
+  method: string,
+  path: string,
+  query?: Record<string, string | number | boolean | undefined>,
+  body?: unknown,
+): Promise<unknown> {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query ?? {})) {
+    if (value === undefined) continue;
+    params.set(key, String(value));
+  }
+
+  const url = `https://${hostname}/api/v1${path}${params.size > 0 ? `?${params.toString()}` : ""}`;
+  const response = await fetch(url, {
+    method,
+    headers: {
+      Authorization: `token ${token}`,
+      Accept: "application/json",
+      ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+    },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`Forgejo API ${method} ${path} failed: ${response.status} ${text}`);
+  }
+
+  if (response.status === 204) return null;
+  return response.json();
+}
+
 function parseProjectRepo(projectRepo: string): [string, string] {
   const parts = projectRepo.split("/");
   if (parts.length !== 2 || !parts[0] || !parts[1]) {
@@ -460,6 +504,8 @@ function parseDate(val: string | undefined | null): Date {
 
 function createForgejoSCM(config?: Record<string, unknown>): SCM {
   const hostname = typeof config?.host === "string" ? config.host : undefined;
+  const token = resolveForgejoToken();
+  const useRest = Boolean(hostname && token);
   const gh = (args: string[]) => ghExec(args, hostname);
   const ghInDir = (args: string[], cwd: string) => ghExecInDir(args, cwd, hostname);
 
@@ -528,7 +574,43 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
 
     async detectPR(session: Session, project: ProjectConfig): Promise<PRInfo | null> {
       if (!session.branch) return null;
-      parseProjectRepo(project.repo);
+      const [owner, repo] = parseProjectRepo(project.repo);
+
+      if (useRest && hostname && token) {
+        try {
+          const pulls = (await forgejoApi(
+            hostname,
+            token,
+            "GET",
+            `/repos/${owner}/${repo}/pulls`,
+            {
+              state: "open",
+              limit: 50,
+            },
+          )) as Array<Record<string, unknown>>;
+
+          const match = pulls.find((pr) => {
+            const head = pr["head"] as Record<string, unknown> | undefined;
+            return (head?.["ref"] as string | undefined) === session.branch;
+          });
+
+          if (!match) return null;
+
+          return {
+            number: Number(match["number"]),
+            url: String(match["html_url"] ?? ""),
+            title: String(match["title"] ?? ""),
+            owner,
+            repo,
+            branch: String((match["head"] as Record<string, unknown> | undefined)?.["ref"] ?? ""),
+            baseBranch: String((match["base"] as Record<string, unknown> | undefined)?.["ref"] ?? ""),
+            isDraft: Boolean(match["draft"]),
+          };
+        } catch {
+          return null;
+        }
+      }
+
       try {
         const raw = await gh([
           "pr",
@@ -561,6 +643,32 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
     },
 
     async resolvePR(reference: string, project: ProjectConfig): Promise<PRInfo> {
+      if (useRest && hostname && token) {
+        const [owner, repo] = parseProjectRepo(project.repo);
+        const numberMatch = reference.match(/(\d+)$/);
+        if (!numberMatch) {
+          throw new Error(`Unsupported PR reference for Forgejo REST mode: ${reference}`);
+        }
+        const prNumber = Number(numberMatch[1]);
+        const data = (await forgejoApi(
+          hostname,
+          token,
+          "GET",
+          `/repos/${owner}/${repo}/pulls/${prNumber}`,
+        )) as Record<string, unknown>;
+
+        return {
+          number: Number(data["number"]),
+          url: String(data["html_url"] ?? ""),
+          title: String(data["title"] ?? ""),
+          owner,
+          repo,
+          branch: String((data["head"] as Record<string, unknown> | undefined)?.["ref"] ?? ""),
+          baseBranch: String((data["base"] as Record<string, unknown> | undefined)?.["ref"] ?? ""),
+          isDraft: Boolean(data["draft"]),
+        };
+      }
+
       const raw = await gh([
         "pr",
         "view",
@@ -584,6 +692,21 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
     },
 
     async assignPRToCurrentUser(pr: PRInfo): Promise<void> {
+      if (useRest && hostname && token) {
+        const user = (await forgejoApi(hostname, token, "GET", "/user")) as Record<string, unknown>;
+        const login = String(user["login"] ?? "");
+        if (!login) throw new Error("Unable to determine current Forgejo user login");
+        await forgejoApi(
+          hostname,
+          token,
+          "POST",
+          `/repos/${pr.owner}/${pr.repo}/issues/${pr.number}/assignees`,
+          undefined,
+          { assignees: [login] },
+        );
+        return;
+      }
+
       await gh(["pr", "edit", String(pr.number), "--repo", repoFlag(pr), "--add-assignee", "@me"]);
     },
 
@@ -603,6 +726,19 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
     },
 
     async getPRState(pr: PRInfo): Promise<PRState> {
+      if (useRest && hostname && token) {
+        const data = (await forgejoApi(
+          hostname,
+          token,
+          "GET",
+          `/repos/${pr.owner}/${pr.repo}/pulls/${pr.number}`,
+        )) as Record<string, unknown>;
+        if (Boolean(data["merged"])) return "merged";
+        const state = String(data["state"] ?? "").toUpperCase();
+        if (state === "CLOSED") return "closed";
+        return "open";
+      }
+
       const raw = await gh([
         "pr",
         "view",
@@ -620,6 +756,24 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
     },
 
     async getPRSummary(pr: PRInfo) {
+      if (useRest && hostname && token) {
+        const data = (await forgejoApi(
+          hostname,
+          token,
+          "GET",
+          `/repos/${pr.owner}/${pr.repo}/pulls/${pr.number}`,
+        )) as Record<string, unknown>;
+        const merged = Boolean(data["merged"]);
+        const stateRaw = String(data["state"] ?? "").toUpperCase();
+        const state: PRState = merged ? "merged" : stateRaw === "CLOSED" ? "closed" : "open";
+        return {
+          state,
+          title: String(data["title"] ?? ""),
+          additions: Number(data["additions"] ?? 0),
+          deletions: Number(data["deletions"] ?? 0),
+        };
+      }
+
       const raw = await gh([
         "pr",
         "view",
@@ -646,16 +800,74 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
     },
 
     async mergePR(pr: PRInfo, method: MergeMethod = "squash"): Promise<void> {
+      if (useRest && hostname && token) {
+        const doMethod = method === "rebase" ? "rebase" : method === "merge" ? "merge" : "squash";
+        await forgejoApi(
+          hostname,
+          token,
+          "POST",
+          `/repos/${pr.owner}/${pr.repo}/pulls/${pr.number}/merge`,
+          undefined,
+          { Do: doMethod, do: doMethod },
+        );
+        return;
+      }
+
       const flag = method === "rebase" ? "--rebase" : method === "merge" ? "--merge" : "--squash";
 
       await gh(["pr", "merge", String(pr.number), "--repo", repoFlag(pr), flag, "--delete-branch"]);
     },
 
     async closePR(pr: PRInfo): Promise<void> {
+      if (useRest && hostname && token) {
+        await forgejoApi(
+          hostname,
+          token,
+          "PATCH",
+          `/repos/${pr.owner}/${pr.repo}/pulls/${pr.number}`,
+          undefined,
+          { state: "closed" },
+        );
+        return;
+      }
+
       await gh(["pr", "close", String(pr.number), "--repo", repoFlag(pr)]);
     },
 
     async getCIChecks(pr: PRInfo): Promise<CICheck[]> {
+      if (useRest && hostname && token) {
+        const prData = (await forgejoApi(
+          hostname,
+          token,
+          "GET",
+          `/repos/${pr.owner}/${pr.repo}/pulls/${pr.number}`,
+        )) as Record<string, unknown>;
+        const sha = String((prData["head"] as Record<string, unknown> | undefined)?.["sha"] ?? "");
+        if (!sha) return [];
+
+        const statusData = (await forgejoApi(
+          hostname,
+          token,
+          "GET",
+          `/repos/${pr.owner}/${pr.repo}/commits/${sha}/status`,
+        )) as Record<string, unknown>;
+        const statuses = Array.isArray(statusData["statuses"])
+          ? (statusData["statuses"] as Array<Record<string, unknown>>)
+          : [];
+
+        return statuses.map((row) => {
+          const rawState = String(row["state"] ?? "").toUpperCase();
+          return {
+            name: String(row["context"] ?? row["target_url"] ?? "status"),
+            status: mapRawCheckStateToStatus(rawState),
+            url: (row["target_url"] as string | undefined) || undefined,
+            conclusion: rawState || undefined,
+            startedAt: row["created_at"] ? new Date(String(row["created_at"])) : undefined,
+            completedAt: row["updated_at"] ? new Date(String(row["updated_at"])) : undefined,
+          } satisfies CICheck;
+        });
+      }
+
       try {
         const raw = await gh([
           "pr",
@@ -730,6 +942,32 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
     },
 
     async getReviews(pr: PRInfo): Promise<Review[]> {
+      if (useRest && hostname && token) {
+        const data = (await forgejoApi(
+          hostname,
+          token,
+          "GET",
+          `/repos/${pr.owner}/${pr.repo}/pulls/${pr.number}/reviews`,
+        )) as Array<Record<string, unknown>>;
+
+        return data.map((r) => {
+          const s = String(r["state"] ?? "").toUpperCase();
+          let state: Review["state"];
+          if (s === "APPROVED") state = "approved";
+          else if (s === "CHANGES_REQUESTED") state = "changes_requested";
+          else if (s === "DISMISSED") state = "dismissed";
+          else if (s === "PENDING") state = "pending";
+          else state = "commented";
+
+          return {
+            author: String((r["user"] as Record<string, unknown> | undefined)?.["login"] ?? "unknown"),
+            state,
+            body: (r["body"] as string | undefined) || undefined,
+            submittedAt: parseDate((r["submitted_at"] as string | undefined) ?? null),
+          };
+        });
+      }
+
       const raw = await gh([
         "pr",
         "view",
@@ -767,6 +1005,18 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
     },
 
     async getReviewDecision(pr: PRInfo): Promise<ReviewDecision> {
+      if (useRest && hostname && token) {
+        const reviews = await this.getReviews(pr);
+        const latestByAuthor = new Map<string, Review>();
+        for (const review of reviews) {
+          latestByAuthor.set(review.author, review);
+        }
+        const latest = Array.from(latestByAuthor.values());
+        if (latest.some((r) => r.state === "changes_requested")) return "changes_requested";
+        if (latest.some((r) => r.state === "approved")) return "approved";
+        return latest.length > 0 ? "pending" : "none";
+      }
+
       const raw = await gh([
         "pr",
         "view",
@@ -787,6 +1037,56 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
 
     async getPendingComments(pr: PRInfo): Promise<ReviewComment[]> {
       try {
+        if (useRest && hostname && token) {
+          const perPage = 100;
+          const comments: Array<{
+            id: number;
+            user: { login: string } | null;
+            body: string;
+            path: string | null;
+            line: number | null;
+            in_reply_to_id?: number | null;
+            created_at: string;
+            html_url: string;
+          }> = [];
+
+          for (let page = 1; ; page++) {
+            const pageComments = (await forgejoApi(
+              hostname,
+              token,
+              "GET",
+              `/repos/${pr.owner}/${pr.repo}/pulls/${pr.number}/comments`,
+              { per_page: perPage, page },
+            )) as Array<{
+              id: number;
+              user: { login: string } | null;
+              body: string;
+              path: string | null;
+              line: number | null;
+              in_reply_to_id?: number | null;
+              created_at: string;
+              html_url: string;
+            }>;
+
+            if (pageComments.length === 0) break;
+            comments.push(...pageComments);
+            if (pageComments.length < perPage) break;
+          }
+
+          return comments
+            .filter((c) => !BOT_AUTHORS.has(c.user?.login ?? "") && c.in_reply_to_id == null)
+            .map((c) => ({
+              id: String(c.id),
+              author: c.user?.login ?? "unknown",
+              body: c.body,
+              path: c.path || undefined,
+              line: c.line ?? undefined,
+              isResolved: false,
+              createdAt: parseDate(c.created_at),
+              url: c.html_url,
+            }));
+        }
+
         const perPage = 100;
         const comments: Array<{
           id: number;
@@ -846,6 +1146,75 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
 
     async getAutomatedComments(pr: PRInfo): Promise<AutomatedComment[]> {
       try {
+        if (useRest && hostname && token) {
+          const perPage = 100;
+          const comments: Array<{
+            id: number;
+            user: { login: string };
+            body: string;
+            path: string;
+            line: number | null;
+            original_line: number | null;
+            created_at: string;
+            html_url: string;
+          }> = [];
+
+          for (let page = 1; ; page++) {
+            const pageComments = (await forgejoApi(
+              hostname,
+              token,
+              "GET",
+              `/repos/${pr.owner}/${pr.repo}/pulls/${pr.number}/comments`,
+              { per_page: perPage, page },
+            )) as Array<{
+              id: number;
+              user: { login: string };
+              body: string;
+              path: string;
+              line: number | null;
+              original_line: number | null;
+              created_at: string;
+              html_url: string;
+            }>;
+
+            if (pageComments.length === 0) break;
+            comments.push(...pageComments);
+            if (pageComments.length < perPage) break;
+          }
+
+          return comments
+            .filter((c) => BOT_AUTHORS.has(c.user?.login ?? ""))
+            .map((c) => {
+              let severity: AutomatedComment["severity"] = "info";
+              const bodyLower = c.body.toLowerCase();
+              if (
+                bodyLower.includes("error") ||
+                bodyLower.includes("bug") ||
+                bodyLower.includes("critical") ||
+                bodyLower.includes("potential issue")
+              ) {
+                severity = "error";
+              } else if (
+                bodyLower.includes("warning") ||
+                bodyLower.includes("suggest") ||
+                bodyLower.includes("consider")
+              ) {
+                severity = "warning";
+              }
+
+              return {
+                id: String(c.id),
+                botName: c.user?.login ?? "unknown",
+                body: c.body,
+                path: c.path || undefined,
+                line: c.line ?? c.original_line ?? undefined,
+                severity,
+                createdAt: parseDate(c.created_at),
+                url: c.html_url,
+              };
+            });
+        }
+
         const perPage = 100;
         const comments: Array<{
           id: number;
@@ -941,23 +1310,24 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
         };
       }
 
-      // Fetch PR details with merge state
-      const raw = await gh([
-        "pr",
-        "view",
-        String(pr.number),
-        "--repo",
-        repoFlag(pr),
-        "--json",
-        "mergeable,reviewDecision,mergeStateStatus,isDraft",
-      ]);
-
-      const data: {
-        mergeable: string;
-        reviewDecision: string;
-        mergeStateStatus: string;
-        isDraft: boolean;
-      } = JSON.parse(raw);
+      const data = useRest && hostname && token
+        ? ((await forgejoApi(
+            hostname,
+            token,
+            "GET",
+            `/repos/${pr.owner}/${pr.repo}/pulls/${pr.number}`,
+          )) as Record<string, unknown>)
+        : (JSON.parse(
+            await gh([
+              "pr",
+              "view",
+              String(pr.number),
+              "--repo",
+              repoFlag(pr),
+              "--json",
+              "mergeable,reviewDecision,mergeStateStatus,isDraft",
+            ]),
+          ) as Record<string, unknown>);
 
       // CI
       const ciStatus = await this.getCISummary(pr);
@@ -967,7 +1337,9 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
       }
 
       // Reviews
-      const reviewDecision = (data.reviewDecision ?? "").toUpperCase();
+      const reviewDecision = useRest
+        ? ((await this.getReviewDecision(pr)) as string).toUpperCase()
+        : String(data["reviewDecision"] ?? "").toUpperCase();
       const approved = reviewDecision === "APPROVED";
       if (reviewDecision === "CHANGES_REQUESTED") {
         blockers.push("Changes requested in review");
@@ -976,8 +1348,14 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
       }
 
       // Conflicts / merge state
-      const mergeable = (data.mergeable ?? "").toUpperCase();
-      const mergeState = (data.mergeStateStatus ?? "").toUpperCase();
+      const mergeableRaw = data["mergeable"];
+      const mergeable =
+        typeof mergeableRaw === "boolean"
+          ? mergeableRaw
+            ? "MERGEABLE"
+            : "CONFLICTING"
+          : String(mergeableRaw ?? "").toUpperCase();
+      const mergeState = String(data["mergeStateStatus"] ?? "").toUpperCase();
       const noConflicts = mergeable === "MERGEABLE";
       if (mergeable === "CONFLICTING") {
         blockers.push("Merge conflicts");
@@ -993,7 +1371,7 @@ function createForgejoSCM(config?: Record<string, unknown>): SCM {
       }
 
       // Draft
-      if (data.isDraft) {
+      if (Boolean(data["isDraft"] ?? data["draft"])) {
         blockers.push("PR is still a draft");
       }
 
