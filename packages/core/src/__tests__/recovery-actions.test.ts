@@ -294,6 +294,7 @@ describe("cleanupSession", () => {
       list: vi.fn().mockReturnValue([]),
       loadBuiltins: vi.fn().mockResolvedValue(undefined),
       loadFromConfig: vi.fn().mockResolvedValue(undefined),
+      loadExternals: vi.fn().mockResolvedValue(undefined),
     };
     const assessment = makeAssessment({
       action: "cleanup",
@@ -349,6 +350,7 @@ describe("cleanupSession", () => {
       list: vi.fn().mockReturnValue([]),
       loadBuiltins: vi.fn().mockResolvedValue(undefined),
       loadFromConfig: vi.fn().mockResolvedValue(undefined),
+      loadExternals: vi.fn().mockResolvedValue(undefined),
     };
     const assessment = makeAssessment({
       action: "cleanup",
