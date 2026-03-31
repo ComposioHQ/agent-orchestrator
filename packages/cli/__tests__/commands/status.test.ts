@@ -217,6 +217,8 @@ import { registerStatus } from "../../src/commands/status.js";
 let program: Command;
 let consoleSpy: ReturnType<typeof vi.spyOn>;
 let setIntervalSpy: ReturnType<typeof vi.spyOn> | undefined;
+let clearIntervalSpy: ReturnType<typeof vi.spyOn> | undefined;
+let processOnceSpy: ReturnType<typeof vi.spyOn> | undefined;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "ao-status-test-"));
@@ -292,6 +294,10 @@ beforeEach(() => {
 afterEach(() => {
   setIntervalSpy?.mockRestore();
   setIntervalSpy = undefined;
+  clearIntervalSpy?.mockRestore();
+  clearIntervalSpy = undefined;
+  processOnceSpy?.mockRestore();
+  processOnceSpy = undefined;
   rmSync(tmpDir, { recursive: true, force: true });
   vi.restoreAllMocks();
 });
@@ -604,6 +610,30 @@ describe("status command", () => {
 
     const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
     expect(output).toContain("Refreshing every 3s. Press Ctrl+C to exit.");
+  });
+
+  it("cleans up the watch timer on shutdown signals", async () => {
+    mockTmux.mockResolvedValue(null);
+
+    const watchTimer = { id: "watch-timer" } as unknown as ReturnType<typeof setInterval>;
+    setIntervalSpy = vi.spyOn(globalThis, "setInterval").mockImplementation(() => watchTimer);
+    clearIntervalSpy = vi.spyOn(globalThis, "clearInterval").mockImplementation(() => undefined);
+
+    const signalHandlers = new Map<string, () => void>();
+    processOnceSpy = vi.spyOn(process, "once").mockImplementation((event, listener) => {
+      if (event === "SIGINT" || event === "SIGTERM") {
+        signalHandlers.set(event, listener as () => void);
+      }
+      return process;
+    });
+
+    await program.parseAsync(["node", "test", "status", "--watch"]);
+
+    expect(signalHandlers.has("SIGINT")).toBe(true);
+    expect(signalHandlers.has("SIGTERM")).toBe(true);
+
+    expect(() => signalHandlers.get("SIGINT")?.()).toThrow("process.exit(0)");
+    expect(clearIntervalSpy).toHaveBeenCalledWith(watchTimer);
   });
 
   it("falls back to PR number from metadata URL when SCM fails", async () => {
