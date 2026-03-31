@@ -112,7 +112,7 @@ export function loadMarketplaceCatalog(): MarketplacePluginEntry[] {
 export async function refreshMarketplaceCatalog(
   url = process.env["AO_PLUGIN_REGISTRY_URL"] ?? DEFAULT_REMOTE_MARKETPLACE_REGISTRY_URL,
 ): Promise<MarketplacePluginEntry[]> {
-  const response = await fetch(url);
+  const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
   if (!response.ok) {
     throw new Error(`Failed to fetch marketplace registry from ${url} (HTTP ${response.status}).`);
   }

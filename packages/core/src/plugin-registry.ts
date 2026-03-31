@@ -136,14 +136,15 @@ export function resolvePackageExportsEntry(exportsField: unknown): string | null
 export function resolveLocalPluginEntrypoint(pluginPath: string): string | null {
   if (!existsSync(pluginPath)) return null;
 
-  const stat = statSync(pluginPath);
-  if (stat.isFile()) {
-    return pluginPath;
-  }
-
-  if (!stat.isDirectory()) {
+  let stat;
+  try {
+    stat = statSync(pluginPath);
+  } catch {
     return null;
   }
+
+  if (stat.isFile()) return pluginPath;
+  if (!stat.isDirectory()) return null;
 
   const packageJsonPath = join(pluginPath, "package.json");
   if (existsSync(packageJsonPath)) {
