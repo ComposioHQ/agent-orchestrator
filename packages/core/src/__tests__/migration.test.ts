@@ -276,6 +276,44 @@ describe("buildEffectiveConfig", () => {
     expect(config.projects["ao"].configMode).toBe("global-only");
   });
 
+  it("falls back to shadow when local config is invalid", () => {
+    // Write invalid local config
+    writeFileSync(join(projectDir, "agent-orchestrator.yaml"), "{{invalid yaml", "utf-8");
+
+    saveShadowFile("ao", { repo: "org/shadow", agent: "codex", defaultBranch: "main" });
+
+    const globalConfig: GlobalConfig = {
+      port: 3000,
+      readyThresholdMs: 300000,
+      defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+      projects: { ao: { name: "AO", path: projectDir } },
+      notifiers: {},
+      notificationRouting: {},
+      reactions: {},
+    };
+
+    const config = buildEffectiveConfig(globalConfig, findGlobalConfigPath());
+    // Should fall back to shadow
+    expect(config.projects["ao"].repo).toBe("org/shadow");
+  });
+
+  it("handles project with missing path gracefully", () => {
+    const globalConfig: GlobalConfig = {
+      port: 3000,
+      readyThresholdMs: 300000,
+      defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+      projects: { ao: { name: "AO", path: "/nonexistent/path" } },
+      notifiers: {},
+      notificationRouting: {},
+      reactions: {},
+    };
+
+    // Should not throw
+    const config = buildEffectiveConfig(globalConfig, findGlobalConfigPath());
+    expect(config.projects["ao"]).toBeDefined();
+    expect(config.projects["ao"].configMode).toBe("global-only");
+  });
+
   it("sets globalConfigPath on returned config", () => {
     const globalConfig: GlobalConfig = {
       port: 4000,
