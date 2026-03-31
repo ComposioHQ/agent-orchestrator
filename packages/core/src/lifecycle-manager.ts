@@ -28,6 +28,7 @@ import {
   type Runtime,
   type Agent,
   type SCM,
+  type CICheck,
   type Notifier,
   type Session,
   type EventPriority,
@@ -697,6 +698,100 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     return [...ids].sort().join(",");
   }
 
+  function makeCiRunFingerprint(checks: CICheck[] | null): string {
+    if (!checks || checks.length === 0) return "ci-failing";
+    return checks
+      .map((check) => {
+        const startedAt = check.startedAt ? check.startedAt.toISOString() : "";
+        const completedAt = check.completedAt ? check.completedAt.toISOString() : "";
+        const conclusion = check.conclusion ?? "";
+        const url = check.url ?? "";
+        return `${check.name}|${check.status}|${conclusion}|${startedAt}|${completedAt}|${url}`;
+      })
+      .sort()
+      .join(",");
+  }
+
+  async function maybeDispatchCiFailureBacklog(
+    session: Session,
+    oldStatus: SessionStatus,
+    newStatus: SessionStatus,
+    transitionReaction?: { key: string; result: ReactionResult | null },
+  ): Promise<void> {
+    const project = config.projects[session.projectId];
+    if (!project) return;
+
+    const ciReactionKey = "ci-failed";
+    if (newStatus !== "ci_failed" || !session.pr) {
+      clearReactionTracker(session.id, ciReactionKey);
+      updateSessionMetadata(session, {
+        lastCiFailureFingerprint: "",
+        lastCiFailureDispatchHash: "",
+        lastCiFailureDispatchAt: "",
+      });
+      return;
+    }
+
+    const reactionConfig = getReactionConfigForSession(session, ciReactionKey);
+    if (
+      !reactionConfig ||
+      !reactionConfig.action ||
+      (reactionConfig.auto === false && reactionConfig.action !== "notify")
+    ) {
+      return;
+    }
+
+    const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    if (!scm) return;
+
+    let checks: CICheck[] | null = null;
+    try {
+      checks = await scm.getCIChecks(session.pr);
+    } catch {
+      // Best effort fingerprinting. If checks can't be fetched, keep retrying
+      // against a stable fallback fingerprint for the currently failing run.
+    }
+
+    const ciFingerprint = makeCiRunFingerprint(checks);
+    const lastFingerprint = session.metadata["lastCiFailureFingerprint"] ?? "";
+    const lastDispatchHash = session.metadata["lastCiFailureDispatchHash"] ?? "";
+
+    if (ciFingerprint !== lastFingerprint) {
+      clearReactionTracker(session.id, ciReactionKey);
+      updateSessionMetadata(session, {
+        lastCiFailureFingerprint: ciFingerprint,
+      });
+    }
+
+    if (transitionReaction?.key === ciReactionKey && transitionReaction.result?.success) {
+      if (lastDispatchHash !== ciFingerprint) {
+        updateSessionMetadata(session, {
+          lastCiFailureDispatchHash: ciFingerprint,
+          lastCiFailureDispatchAt: new Date().toISOString(),
+        });
+      }
+      return;
+    }
+
+    if (
+      !(oldStatus !== newStatus && newStatus === "ci_failed") &&
+      ciFingerprint !== lastDispatchHash
+    ) {
+      const result = await executeReaction(
+        session.id,
+        session.projectId,
+        ciReactionKey,
+        reactionConfig,
+      );
+      if (result.success) {
+        updateSessionMetadata(session, {
+          lastCiFailureDispatchHash: ciFingerprint,
+          lastCiFailureDispatchAt: new Date().toISOString(),
+        });
+      }
+    }
+  }
+
   async function maybeDispatchReviewBacklog(
     session: Session,
     oldStatus: SessionStatus,
@@ -953,6 +1048,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       states.set(session.id, newStatus);
     }
 
+    await maybeDispatchCiFailureBacklog(session, oldStatus, newStatus, transitionReaction);
     await maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction);
   }
 

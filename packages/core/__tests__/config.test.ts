@@ -116,6 +116,48 @@ projects:
     it("should throw error if config not found", () => {
       expect(() => loadConfig()).toThrow(ConfigNotFoundError);
     });
+
+    it("applies default ci-failed reaction with 5 retries before escalation", () => {
+      const configPath = join(testDir, "defaults-config.yaml");
+      writeFileSync(
+        configPath,
+        `
+projects:
+  test-project:
+    repo: test/repo
+    path: ${testDir}
+`,
+      );
+
+      const config = loadConfig(configPath);
+      expect(config.reactions["ci-failed"]).toEqual(
+        expect.objectContaining({
+          auto: true,
+          action: "send-to-agent",
+          retries: 5,
+          escalateAfter: 5,
+        }),
+      );
+    });
+
+    it("preserves explicit ci-failed retry override", () => {
+      const configPath = join(testDir, "override-config.yaml");
+      writeFileSync(
+        configPath,
+        `
+projects:
+  test-project:
+    repo: test/repo
+    path: ${testDir}
+reactions:
+  ci-failed:
+    retries: 7
+`,
+      );
+
+      const config = loadConfig(configPath);
+      expect(config.reactions["ci-failed"]?.retries).toBe(7);
+    });
   });
 
   describe("Config Discovery Priority", () => {
