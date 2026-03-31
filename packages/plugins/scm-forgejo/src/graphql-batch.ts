@@ -379,7 +379,7 @@ async function checkPRListETag(
   // Build gh CLI args for REST API call
   const url = `repos/${owner}/${repo}/pulls?state=open&sort=updated&direction=desc&per_page=1`;
   const args = hostname
-    ? ["--hostname", hostname, "api", "--method", "GET", url, "-i"]
+    ? ["api", "--hostname", hostname, "--method", "GET", url, "-i"]
     : ["api", "--method", "GET", url, "-i"]; // -i includes headers
 
   // Add If-None-Match header if we have a cached ETag
@@ -442,7 +442,7 @@ async function checkCommitStatusETag(
   // Build gh CLI args for REST API call
   const url = `repos/${owner}/${repo}/commits/${sha}/status`;
   const args = hostname
-    ? ["--hostname", hostname, "api", "--method", "GET", url, "-i"]
+    ? ["api", "--hostname", hostname, "--method", "GET", url, "-i"]
     : ["api", "--method", "GET", url, "-i"]; // -i includes headers
 
   // Add If-None-Match header if we have a cached ETag
@@ -593,7 +593,7 @@ async function executeBatchQuery(
   }
 
   const args = hostname
-    ? ["--hostname", hostname, "api", "graphql", ...varArgs, "-f", `query=${query}`]
+    ? ["api", "--hostname", hostname, "graphql", ...varArgs, "-f", `query=${query}`]
     : ["api", "graphql", ...varArgs, "-f", `query=${query}`];
 
   // Scale timeout based on batch size to prevent large batches from timing out

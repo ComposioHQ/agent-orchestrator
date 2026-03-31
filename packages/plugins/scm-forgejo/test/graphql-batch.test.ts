@@ -1281,7 +1281,7 @@ describe("enrichSessionsPRBatch hostname propagation", () => {
     );
     expect(graphQlCall).toBeDefined();
     expect(graphQlCall?.[1]).toEqual(
-      expect.arrayContaining(["--hostname", "forgejo.example", "api", "graphql"]),
+      expect.arrayContaining(["api", "--hostname", "forgejo.example", "graphql"]),
     );
   });
 
