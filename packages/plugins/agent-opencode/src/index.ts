@@ -351,19 +351,12 @@ function createOpenCodeAgent(): Agent {
         }
       }
 
-      // 3. Fallback: use JSONL file mtime for active/ready/idle when session list
-      //    is unavailable (e.g. opencode session list fails or session not found).
-      //    This works because recordActivity only writes on state transitions
-      //    (not every poll cycle), so mtime reflects the last real state change.
+      // 3. Fallback: use JSONL entry state directly when session list is unavailable.
+      //    The entry already contains the detected state from terminal output —
+      //    no need to re-derive from mtime (which is unreliable due to dedup writes).
       if (activityResult) {
-        const ageMs = Math.max(0, Date.now() - activityResult.modifiedAt.getTime());
-        if (ageMs <= activeWindowMs) {
-          return { state: "active", timestamp: activityResult.modifiedAt };
-        }
-        if (ageMs <= threshold) {
-          return { state: "ready", timestamp: activityResult.modifiedAt };
-        }
-        return { state: "idle", timestamp: activityResult.modifiedAt };
+        const entryTs = new Date(activityResult.entry.ts);
+        return { state: activityResult.entry.state, timestamp: entryTs };
       }
 
       return null;

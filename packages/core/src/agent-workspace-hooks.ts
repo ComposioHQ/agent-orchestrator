@@ -324,19 +324,10 @@ export async function setupPathWrapperWorkspace(workspacePath: string): Promise<
     await atomicWriteFile(markerPath, WRAPPER_VERSION, 0o644);
   }
 
-  // 2. Append ao section to AGENTS.md (create if missing, skip if already present)
-  const agentsMdPath = join(workspacePath, "AGENTS.md");
-  let existingContent = "";
-  try {
-    existingContent = await readFile(agentsMdPath, "utf-8");
-  } catch {
-    // File doesn't exist yet
-  }
-
-  if (!existingContent.includes("Agent Orchestrator (ao) Session")) {
-    const content = existingContent
-      ? existingContent.trimEnd() + "\n" + AO_AGENTS_MD_SECTION
-      : AO_AGENTS_MD_SECTION.trimStart();
-    await writeFile(agentsMdPath, content, "utf-8");
-  }
+  // 2. Write AO session context to .ao/AGENTS.md (gitignored) so agents
+  //    can discover they're in a managed session. We don't modify the
+  //    repo-tracked AGENTS.md to avoid polluting worktrees with dirty state.
+  const aoAgentsMdPath = join(workspacePath, ".ao", "AGENTS.md");
+  await mkdir(join(workspacePath, ".ao"), { recursive: true });
+  await writeFile(aoAgentsMdPath, AO_AGENTS_MD_SECTION.trimStart(), "utf-8");
 }

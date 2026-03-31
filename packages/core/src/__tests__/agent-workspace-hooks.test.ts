@@ -68,9 +68,9 @@ describe("setupPathWrapperWorkspace", () => {
     await setupPathWrapperWorkspace("/workspace");
     // atomicWriteFile writes to .tmp then renames
     expect(mockRename).toHaveBeenCalled();
-    // AGENTS.md is written directly
+    // .ao/AGENTS.md is written directly
     const agentsMdWrites = mockWriteFile.mock.calls.filter(
-      (c: unknown[]) => String(c[0]).endsWith("AGENTS.md"),
+      (c: unknown[]) => String(c[0]).includes(".ao/AGENTS.md"),
     );
     expect(agentsMdWrites).toHaveLength(1);
   });
@@ -88,24 +88,11 @@ describe("setupPathWrapperWorkspace", () => {
     expect(renamedPaths.filter((p: string) => p.includes("/git."))).toHaveLength(0);
   });
 
-  it("skips AGENTS.md when section already exists", async () => {
-    mockReadFile
-      .mockRejectedValueOnce(new Error("ENOENT")) // version marker
-      .mockResolvedValueOnce("# Existing\n\n## Agent Orchestrator (ao) Session\nAlready here");
-
+  it("writes .ao/AGENTS.md with session context", async () => {
     await setupPathWrapperWorkspace("/workspace");
 
     const agentsMdWrites = mockWriteFile.mock.calls.filter(
-      (c: unknown[]) => String(c[0]).endsWith("AGENTS.md"),
-    );
-    expect(agentsMdWrites).toHaveLength(0);
-  });
-
-  it("creates AGENTS.md when it does not exist", async () => {
-    await setupPathWrapperWorkspace("/workspace");
-
-    const agentsMdWrites = mockWriteFile.mock.calls.filter(
-      (c: unknown[]) => String(c[0]).endsWith("AGENTS.md"),
+      (c: unknown[]) => String(c[0]).includes(".ao/AGENTS.md"),
     );
     expect(agentsMdWrites).toHaveLength(1);
     expect(String(agentsMdWrites[0][1])).toContain("Agent Orchestrator");

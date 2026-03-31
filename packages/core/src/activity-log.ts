@@ -192,15 +192,13 @@ export async function recordTerminalActivity(
 ): Promise<void> {
   const { state, trigger } = classifyTerminalActivity(terminalOutput, detectActivity);
 
-  // Deduplicate writes to avoid refreshing file mtime every poll cycle (~30s),
-  // which would prevent mtime-based fallbacks from reaching "ready" or "idle".
-  // The window (60s) must exceed the poll interval so mtime can age past the
-  // active window (30s) between writes, allowing "ready" to be reached.
+  // Deduplicate writes to reduce I/O. Skip when the state hasn't changed
+  // and the last entry is recent (<20s). Actionable states always write.
   if (state !== "waiting_input" && state !== "blocked") {
     const lastEntry = await readLastActivityEntry(workspacePath);
     if (lastEntry && lastEntry.entry.state === state) {
       const entryAgeMs = Date.now() - lastEntry.modifiedAt.getTime();
-      if (entryAgeMs < 60_000) return;
+      if (entryAgeMs < 20_000) return;
     }
   }
 
