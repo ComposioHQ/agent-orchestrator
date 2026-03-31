@@ -36,7 +36,6 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
-          fingerprint: SHA256:mlWd4p7TXI+SnxXMr7THgQprWOk936qRQQdB4P2WsqA
           script: |
             set -e
             DEPLOY_SHA="${{ github.event.workflow_run.head_sha }}"
