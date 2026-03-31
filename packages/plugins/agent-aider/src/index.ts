@@ -5,6 +5,7 @@ import {
   setupPathWrapperWorkspace,
   readLastActivityEntry,
   checkActivityLogState,
+  getActivityFallbackState,
   recordTerminalActivity,
   PREFERRED_GH_PATH,
   DEFAULT_READY_THRESHOLD_MS,
@@ -208,13 +209,10 @@ function createAiderAgent(): Agent {
         return { state: "idle", timestamp: chatMtime };
       }
 
-      // 4. Fallback: use JSONL entry state directly when chat history is unavailable
-      //    (e.g. early session startup). The entry already contains the detected
-      //    state from terminal output — no need to re-derive from mtime.
-      if (activityResult) {
-        const entryTs = new Date(activityResult.entry.ts);
-        return { state: activityResult.entry.state, timestamp: entryTs };
-      }
+      // 4. Fallback: use JSONL entry with age-based decay when chat history is unavailable.
+      const activeWindowMs = Math.min(DEFAULT_ACTIVE_WINDOW_MS, threshold);
+      const fallback = getActivityFallbackState(activityResult, activeWindowMs, threshold);
+      if (fallback) return fallback;
 
       return null;
     },

@@ -117,6 +117,7 @@ export {
   appendActivityEntry,
   readLastActivityEntry,
   checkActivityLogState,
+  getActivityFallbackState,
   classifyTerminalActivity,
   recordTerminalActivity,
 } from "./activity-log.js";

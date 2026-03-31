@@ -8,6 +8,7 @@ import {
   setupPathWrapperWorkspace,
   readLastActivityEntry,
   checkActivityLogState,
+  getActivityFallbackState,
   recordTerminalActivity,
   PREFERRED_GH_PATH,
   type Agent,
@@ -467,12 +468,11 @@ function createCodexAgent(): Agent {
       const activityState = checkActivityLogState(activityResult);
       if (activityState) return activityState;
 
-      // 3. Fallback: use JSONL entry state directly when native session file
-      //    is missing or unparseable. The entry already contains the detected state.
-      if (activityResult) {
-        const entryTs = new Date(activityResult.entry.ts);
-        return { state: activityResult.entry.state, timestamp: entryTs };
-      }
+      // 3. Fallback: use JSONL entry with age-based decay when native session file
+      //    is missing or unparseable.
+      const activeWindowMs = Math.min(DEFAULT_ACTIVE_WINDOW_MS, threshold);
+      const fallback = getActivityFallbackState(activityResult, activeWindowMs, threshold);
+      if (fallback) return fallback;
 
       // 4. Last resort: native session file exists but nothing else — use its mtime
       if (sessionFile) {

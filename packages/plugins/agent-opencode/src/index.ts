@@ -5,6 +5,7 @@ import {
   buildAgentPath,
   readLastActivityEntry,
   checkActivityLogState,
+  getActivityFallbackState,
   recordTerminalActivity,
   setupPathWrapperWorkspace,
   PREFERRED_GH_PATH,
@@ -351,13 +352,9 @@ function createOpenCodeAgent(): Agent {
         }
       }
 
-      // 3. Fallback: use JSONL entry state directly when session list is unavailable.
-      //    The entry already contains the detected state from terminal output —
-      //    no need to re-derive from mtime (which is unreliable due to dedup writes).
-      if (activityResult) {
-        const entryTs = new Date(activityResult.entry.ts);
-        return { state: activityResult.entry.state, timestamp: entryTs };
-      }
+      // 3. Fallback: use JSONL entry with age-based decay when session list is unavailable.
+      const fallback = getActivityFallbackState(activityResult, activeWindowMs, threshold);
+      if (fallback) return fallback;
 
       return null;
     },

@@ -160,6 +160,37 @@ export function checkActivityLogState(
 }
 
 /**
+ * Derive an activity state from the JSONL entry with age-based decay.
+ *
+ * Unlike `checkActivityLogState` (which only returns actionable states),
+ * this returns any state — but reclassifies `active`/`ready` entries as
+ * `ready`/`idle` if they've aged past the active window / threshold.
+ * Use this as a last-resort fallback when native signals are unavailable.
+ */
+export function getActivityFallbackState(
+  activityResult: { entry: ActivityLogEntry; modifiedAt: Date } | null,
+  activeWindowMs: number,
+  thresholdMs: number,
+): ActivityDetection | null {
+  if (!activityResult) return null;
+
+  const { entry } = activityResult;
+  const entryTs = new Date(entry.ts);
+  if (Number.isNaN(entryTs.getTime())) return null;
+
+  // Actionable states don't decay — they're handled by checkActivityLogState
+  if (entry.state === "waiting_input" || entry.state === "blocked") {
+    return { state: entry.state, timestamp: entryTs };
+  }
+
+  // Reclassify based on age: active→ready→idle
+  const ageMs = Math.max(0, Date.now() - entryTs.getTime());
+  if (ageMs <= activeWindowMs) return { state: "active", timestamp: entryTs };
+  if (ageMs <= thresholdMs) return { state: "ready", timestamp: entryTs };
+  return { state: "idle", timestamp: entryTs };
+}
+
+/**
  * Build the arguments for `appendActivityEntry` from terminal output.
  *
  * Classifies terminal output via the provided `detectActivity` function and

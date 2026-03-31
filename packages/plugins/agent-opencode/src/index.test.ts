@@ -1052,11 +1052,11 @@ describe("getActivityState with activity JSONL", () => {
     expect(result?.state).toBe("active");
   });
 
-  it("falls back to JSONL entry state for idle when session list fails", async () => {
+  it("falls back to JSONL entry with age decay — old entry becomes idle", async () => {
     mockTmuxWithProcess("opencode");
     mockReadLastActivityEntry.mockResolvedValueOnce({
-      entry: { ts: new Date().toISOString(), state: "idle", source: "terminal" },
-      modifiedAt: new Date(),
+      entry: { ts: new Date(Date.now() - 120_000).toISOString(), state: "active", source: "terminal" },
+      modifiedAt: new Date(Date.now() - 120_000),
     });
     mockExecFileAsync.mockImplementation((cmd: string) => {
       if (cmd === "tmux") return Promise.resolve({ stdout: "/dev/ttys003\n", stderr: "" });
