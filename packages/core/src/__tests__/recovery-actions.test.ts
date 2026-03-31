@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { readMetadataRaw } from "../metadata.js";
-import { getSessionsDir } from "../paths.js";
+import { getSessionsDir, getProjectBaseDir } from "../paths.js";
 import { cleanupSession, escalateSession, recoverSession } from "../recovery/actions.js";
 import { runRecovery } from "../recovery/manager.js";
 import { getRecoveryLogPath, scanAllSessions } from "../recovery/scanner.js";
@@ -101,6 +101,12 @@ describe("recoverSession", () => {
 
   afterEach(() => {
     if (rootDir) {
+      const configPath = join(rootDir, "agent-orchestrator.yaml");
+      const projectPath = join(rootDir, "project");
+      const projectBaseDir = getProjectBaseDir(configPath, projectPath);
+      if (existsSync(projectBaseDir)) {
+        rmSync(projectBaseDir, { recursive: true, force: true });
+      }
       rmSync(rootDir, { recursive: true, force: true });
     }
   });
@@ -215,6 +221,12 @@ describe("escalateSession", () => {
 
   afterEach(() => {
     if (rootDir) {
+      const configPath = join(rootDir, "agent-orchestrator.yaml");
+      const projectPath = join(rootDir, "project");
+      const projectBaseDir = getProjectBaseDir(configPath, projectPath);
+      if (existsSync(projectBaseDir)) {
+        rmSync(projectBaseDir, { recursive: true, force: true });
+      }
       rmSync(rootDir, { recursive: true, force: true });
     }
   });
@@ -247,6 +259,12 @@ describe("cleanupSession", () => {
 
   afterEach(() => {
     if (rootDir) {
+      const configPath = join(rootDir, "agent-orchestrator.yaml");
+      const projectPath = join(rootDir, "project");
+      const projectBaseDir = getProjectBaseDir(configPath, projectPath);
+      if (existsSync(projectBaseDir)) {
+        rmSync(projectBaseDir, { recursive: true, force: true });
+      }
       rmSync(rootDir, { recursive: true, force: true });
     }
   });
@@ -359,6 +377,12 @@ describe("recovery manager and scanner", () => {
 
   afterEach(() => {
     if (rootDir) {
+      const configPath = join(rootDir, "agent-orchestrator.yaml");
+      const projectPath = join(rootDir, "project");
+      const projectBaseDir = getProjectBaseDir(configPath, projectPath);
+      if (existsSync(projectBaseDir)) {
+        rmSync(projectBaseDir, { recursive: true, force: true });
+      }
       rmSync(rootDir, { recursive: true, force: true });
     }
   });
