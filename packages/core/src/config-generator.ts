@@ -228,10 +228,7 @@ export function generateConfigFromUrl(options: GenerateConfigOptions): Record<st
     platform === "forgejo"
       ? { plugin: "forgejo", host: parsed.host }
       : {
-          plugin:
-            platform === "github" || platform === "gitlab" || platform === "forgejo"
-              ? platform
-              : "github",
+          plugin: platform === "github" || platform === "gitlab" ? platform : "github",
         };
 
   // Post-create commands based on detected package manager (JS ecosystem only)
