@@ -6,7 +6,7 @@ import { setupTestContext, teardownTestContext, makeHandle, type TestContext } f
 
 // Mock child_process module with custom promisify
 vi.mock("node:child_process", () => {
-  const execFileMock = vi.fn();
+  const execFileMock = vi.fn() as any;
   // Implement custom promisify to return { stdout, stderr } objects
   execFileMock[Symbol.for("nodejs.util.promisify.custom")] = (...args: any[]) => {
     return new Promise((resolve, reject) => {
@@ -51,7 +51,7 @@ beforeEach(() => {
     if (slot === "agent" && name === "opencode") {
       return opencodeAgent;
     }
-    return originalGet(slot, name);
+    return (originalGet as any)(slot, name);
   });
 
   // Set project to use opencode agent
