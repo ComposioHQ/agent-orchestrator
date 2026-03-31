@@ -216,6 +216,7 @@ import { registerStatus } from "../../src/commands/status.js";
 
 let program: Command;
 let consoleSpy: ReturnType<typeof vi.spyOn>;
+let setIntervalSpy: ReturnType<typeof vi.spyOn> | undefined;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "ao-status-test-"));
@@ -289,6 +290,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  setIntervalSpy?.mockRestore();
+  setIntervalSpy = undefined;
   rmSync(tmpDir, { recursive: true, force: true });
   vi.restoreAllMocks();
 });
@@ -565,6 +568,42 @@ describe("status command", () => {
     expect(parsed[0].ciStatus).toBe("passing");
     expect(parsed[0].reviewDecision).toBe("pending");
     expect(parsed[0].pendingThreads).toBe(0);
+  });
+
+  it("rejects --watch with --json", async () => {
+    await expect(program.parseAsync(["node", "test", "status", "--watch", "--json"])).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => c[0])
+      .join("\n");
+    expect(errors).toContain("--watch cannot be used with --json");
+  });
+
+  it("rejects non-positive watch intervals", async () => {
+    await expect(program.parseAsync(["node", "test", "status", "--watch", "--interval", "0"])).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => c[0])
+      .join("\n");
+    expect(errors).toContain("--interval must be a positive integer");
+  });
+
+  it("schedules watch refreshes with the requested interval", async () => {
+    mockTmux.mockResolvedValue(null);
+    setIntervalSpy = vi.spyOn(globalThis, "setInterval").mockImplementation(() => 1 as never);
+
+    await program.parseAsync(["node", "test", "status", "--watch", "--interval", "3"]);
+
+    expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 3000);
+
+    const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(output).toContain("Refreshing every 3s. Press Ctrl+C to exit.");
   });
 
   it("falls back to PR number from metadata URL when SCM fails", async () => {

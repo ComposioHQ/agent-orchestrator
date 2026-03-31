@@ -44,6 +44,30 @@ interface SessionInfo {
   activity: ActivityState | null;
 }
 
+interface StatusOptions {
+  project?: string;
+  json?: boolean;
+  watch?: boolean;
+  interval?: string;
+}
+
+const DEFAULT_WATCH_INTERVAL_SECONDS = 5;
+
+function parseWatchIntervalSeconds(value?: string): number {
+  if (!value) return DEFAULT_WATCH_INTERVAL_SECONDS;
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isNaN(parsed) || parsed <= 0) {
+    throw new Error("--interval must be a positive integer number of seconds.");
+  }
+  return parsed;
+}
+
+function maybeClearScreen(): void {
+  if (process.stdout.isTTY) {
+    process.stdout.write("\x1Bc");
+  }
+}
+
 async function gatherSessionInfo(
   session: Session,
   agent: Agent,
@@ -210,154 +234,215 @@ export function registerStatus(program: Command): void {
     .description("Show all sessions with branch, activity, PR, and CI status")
     .option("-p, --project <id>", "Filter by project ID")
     .option("--json", "Output as JSON")
-    .action(async (opts: { project?: string; json?: boolean }) => {
-      let config: ReturnType<typeof loadConfig>;
-      try {
-        config = loadConfig();
-      } catch {
-        console.log(chalk.yellow("No config found. Run `ao init` first."));
-        console.log(chalk.dim("Falling back to session discovery...\n"));
-        await showFallbackStatus();
-        return;
-      }
-
-      if (opts.project && !config.projects[opts.project]) {
-        console.error(chalk.red(`Unknown project: ${opts.project}`));
+    .option("-w, --watch", "Refresh the status view continuously")
+    .option("--interval <seconds>", "Refresh interval in seconds (default: 5)")
+    .action(async (opts: StatusOptions) => {
+      if (opts.watch && opts.json) {
+        console.error(chalk.red("--watch cannot be used with --json."));
         process.exit(1);
       }
 
-      // Use session manager to list sessions (metadata-based, not tmux-based)
-      const sm = await getSessionManager(config);
-      const registry = await getPluginRegistry(config);
-      const sessions = await sm.list(opts.project);
-
-      if (!opts.json) {
-        console.log(banner("AGENT ORCHESTRATOR STATUS"));
-        console.log();
+      let watchIntervalSeconds = DEFAULT_WATCH_INTERVAL_SECONDS;
+      try {
+        watchIntervalSeconds = parseWatchIntervalSeconds(opts.interval);
+      } catch (err) {
+        console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+        process.exit(1);
       }
 
-      // Group sessions by project
-      const byProject = new Map<string, Session[]>();
-      for (const s of sessions) {
-        const list = byProject.get(s.projectId) ?? [];
-        list.push(s);
-        byProject.set(s.projectId, list);
-      }
+      const renderStatus = async (refreshing = false): Promise<void> => {
+        if (refreshing) {
+          maybeClearScreen();
+        }
 
-      // Show projects that have no sessions too (if not filtered)
-      const projectIds = opts.project ? [opts.project] : Object.keys(config.projects);
-      const jsonOutput: SessionInfo[] = [];
-      let totalWorkers = 0;
-      let totalOrchestrators = 0;
+        let config: ReturnType<typeof loadConfig>;
+        try {
+          config = loadConfig();
+        } catch {
+          console.log(chalk.yellow("No config found. Run `ao init` first."));
+          console.log(chalk.dim("Falling back to session discovery...\n"));
+          await showFallbackStatus();
+          return;
+        }
 
-      for (const projectId of projectIds) {
-        const projectConfig = config.projects[projectId];
-        if (!projectConfig) continue;
+        if (opts.project && !config.projects[opts.project]) {
+          console.error(chalk.red(`Unknown project: ${opts.project}`));
+          process.exit(1);
+        }
 
-        const projectSessions = (byProject.get(projectId) ?? []).sort((a, b) =>
-          a.id.localeCompare(b.id),
-        );
-
-        // Resolve agent and SCM for this project
-        const agentName = projectConfig.agent ?? config.defaults.agent;
-        const agent = getAgentByNameFromRegistry(registry, agentName);
-        const scm = getSCMFromRegistry(registry, config, projectId);
+        // Use session manager to list sessions (metadata-based, not tmux-based)
+        const sm = await getSessionManager(config);
+        const registry = await getPluginRegistry(config);
+        const sessions = await sm.list(opts.project);
 
         if (!opts.json) {
-          console.log(header(projectConfig.name || projectId));
-        }
-
-        if (projectSessions.length === 0) {
-          if (!opts.json) {
-            console.log(chalk.dim("  (no active sessions)"));
+          console.log(banner("AGENT ORCHESTRATOR STATUS"));
+          if (opts.watch) {
+            console.log(
+              chalk.dim(
+                `Refreshing every ${watchIntervalSeconds}s. Press Ctrl+C to exit.`,
+              ),
+            );
+            console.log();
+          } else {
             console.log();
           }
-          continue;
         }
 
-        // Gather all session info in parallel
-        const infoPromises = projectSessions.map((s) => gatherSessionInfo(s, agent, scm, config));
-        const sessionInfos = await Promise.all(infoPromises);
+        // Group sessions by project
+        const byProject = new Map<string, Session[]>();
+        for (const s of sessions) {
+          const list = byProject.get(s.projectId) ?? [];
+          list.push(s);
+          byProject.set(s.projectId, list);
+        }
 
-        const orchestrators = sessionInfos.filter((info) => info.role === "orchestrator");
-        const workers = sessionInfos.filter((info) => info.role === "worker");
+        // Show projects that have no sessions too (if not filtered)
+        const projectIds = opts.project ? [opts.project] : Object.keys(config.projects);
+        const jsonOutput: SessionInfo[] = [];
+        let totalWorkers = 0;
+        let totalOrchestrators = 0;
 
-        totalWorkers += workers.length;
-        totalOrchestrators += orchestrators.length;
+        for (const projectId of projectIds) {
+          const projectConfig = config.projects[projectId];
+          if (!projectConfig) continue;
 
-        for (const info of sessionInfos) {
-          if (opts.json) {
-            jsonOutput.push(info);
+          const projectSessions = (byProject.get(projectId) ?? []).sort((a, b) =>
+            a.id.localeCompare(b.id),
+          );
+
+          // Resolve agent and SCM for this project via the shared registry
+          const agentName = projectConfig.agent ?? config.defaults.agent;
+          const agent = getAgentByNameFromRegistry(registry, agentName);
+          const scm = getSCMFromRegistry(registry, config, projectId);
+
+          if (!opts.json) {
+            console.log(header(projectConfig.name || projectId));
           }
-        }
 
-        if (opts.json) {
-          continue;
-        }
-
-        if (orchestrators.length > 0) {
-          for (const info of orchestrators) {
-            printOrchestratorRow(info);
+          if (projectSessions.length === 0) {
+            if (!opts.json) {
+              console.log(chalk.dim("  (no active sessions)"));
+              console.log();
+            }
+            continue;
           }
-        }
 
-        if (workers.length === 0) {
-          console.log(chalk.dim("  (no active sessions)"));
-          console.log();
-          continue;
-        }
+          // Gather all session info in parallel
+          const infoPromises = projectSessions.map((s) => gatherSessionInfo(s, agent, scm, config));
+          const sessionInfos = await Promise.all(infoPromises);
 
-        printTableHeader();
-        for (const info of workers) {
-          printSessionRow(info);
-        }
-        console.log();
-      }
+          const orchestrators = sessionInfos.filter((info) => info.role === "orchestrator");
+          const workers = sessionInfos.filter((info) => info.role === "worker");
 
-      if (opts.json) {
-        console.log(JSON.stringify(jsonOutput, null, 2));
-      } else {
-        console.log(
-          chalk.dim(
-            `  ${totalWorkers} active session${totalWorkers !== 1 ? "s" : ""} across ${projectIds.length} project${projectIds.length !== 1 ? "s" : ""}` +
-              (totalOrchestrators > 0
-                ? ` · ${totalOrchestrators} orchestrator${totalOrchestrators !== 1 ? "s" : ""}`
-                : ""),
-          ),
-        );
+          totalWorkers += workers.length;
+          totalOrchestrators += orchestrators.length;
 
-        // Check for issues awaiting verification across all projects
-        try {
-          let unverifiedTotal = 0;
-          for (const projectId of projectIds) {
-            const project: ProjectConfig | undefined = config.projects[projectId];
-            if (!project?.tracker) continue;
-            const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
-            if (!tracker?.listIssues) continue;
-            try {
-              const issues = await tracker.listIssues(
-                { state: "open", labels: ["merged-unverified"], limit: 20 },
-                project,
-              );
-              unverifiedTotal += issues.length;
-            } catch {
-              // Tracker query failed — not critical
+          for (const info of sessionInfos) {
+            if (opts.json) {
+              jsonOutput.push(info);
             }
           }
 
-          if (unverifiedTotal > 0) {
-            console.log(
-              chalk.yellow(
-                `  ⚠ ${unverifiedTotal} issue${unverifiedTotal !== 1 ? "s" : ""} awaiting verification (use \`ao verify --list\` to see them)`,
-              ),
-            );
+          if (opts.json) {
+            continue;
           }
-        } catch {
-          // Plugin registry or tracker unavailable — skip silently
+
+          if (orchestrators.length > 0) {
+            for (const info of orchestrators) {
+              printOrchestratorRow(info);
+            }
+          }
+
+          if (workers.length === 0) {
+            console.log(chalk.dim("  (no active sessions)"));
+            console.log();
+            continue;
+          }
+
+          printTableHeader();
+          for (const info of workers) {
+            printSessionRow(info);
+          }
+          console.log();
         }
 
-        console.log();
+        if (opts.json) {
+          console.log(JSON.stringify(jsonOutput, null, 2));
+        } else {
+          console.log(
+            chalk.dim(
+              `  ${totalWorkers} active session${totalWorkers !== 1 ? "s" : ""} across ${projectIds.length} project${projectIds.length !== 1 ? "s" : ""}` +
+                (totalOrchestrators > 0
+                  ? ` · ${totalOrchestrators} orchestrator${totalOrchestrators !== 1 ? "s" : ""}`
+                  : ""),
+            ),
+          );
+
+          // Check for issues awaiting verification across all projects
+          try {
+            let unverifiedTotal = 0;
+            for (const projectId of projectIds) {
+              const project: ProjectConfig | undefined = config.projects[projectId];
+              if (!project?.tracker) continue;
+              const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
+              if (!tracker?.listIssues) continue;
+              try {
+                const issues = await tracker.listIssues(
+                  { state: "open", labels: ["merged-unverified"], limit: 20 },
+                  project,
+                );
+                unverifiedTotal += issues.length;
+              } catch {
+                // Tracker query failed — not critical
+              }
+            }
+
+            if (unverifiedTotal > 0) {
+              console.log(
+                chalk.yellow(
+                  `  ⚠ ${unverifiedTotal} issue${unverifiedTotal !== 1 ? "s" : ""} awaiting verification (use \`ao verify --list\` to see them)`,
+                ),
+              );
+            }
+          } catch {
+            // Plugin registry or tracker unavailable — skip silently
+          }
+
+          console.log();
+        }
+      };
+
+      await renderStatus();
+
+      if (!opts.watch) {
+        return;
       }
+
+      let rendering = false;
+      const watchTimer = setInterval(() => {
+        if (rendering) return;
+        rendering = true;
+        void renderStatus(true)
+          .catch((err) => {
+            console.error(
+              chalk.red(
+                `Watch refresh failed: ${err instanceof Error ? err.message : String(err)}`,
+              ),
+            );
+          })
+          .finally(() => {
+            rendering = false;
+          });
+      }, watchIntervalSeconds * 1000);
+
+      const shutdown = (): void => {
+        clearInterval(watchTimer);
+        process.exit(0);
+      };
+
+      process.once("SIGINT", shutdown);
+      process.once("SIGTERM", shutdown);
     });
 }
 

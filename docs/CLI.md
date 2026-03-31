@@ -10,6 +10,7 @@ ao start <url>                         # Clone repo, auto-configure, and start
 ao start ~/other-repo                  # Add a new project and start
 ao stop                                # Stop everything (dashboard, orchestrator, lifecycle worker)
 ao status                              # Overview of all sessions
+ao status --watch                      # Live-updating terminal status view
 ao dashboard                           # Open web dashboard in browser
 ```
 
