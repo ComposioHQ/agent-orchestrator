@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Session, RuntimeHandle, AgentLaunchConfig } from "@composio/ao-core";
+import {
+  resetProcessListCache,
+  type Session,
+  type RuntimeHandle,
+  type AgentLaunchConfig,
+} from "@composio/ao-core";
 
 const mockExecFileAsync = vi.fn();
 vi.mock("node:child_process", () => ({
@@ -72,6 +77,7 @@ function mockTmuxWithProcess(processName: string, found = true) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetProcessListCache();
 });
 
 describe("plugin manifest & exports", () => {

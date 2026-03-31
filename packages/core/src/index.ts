@@ -84,7 +84,6 @@ export type {
 export { generateOrchestratorPrompt } from "./orchestrator-prompt.js";
 export type { OrchestratorPromptConfig } from "./orchestrator-prompt.js";
 
-
 // Global pause constants and utilities
 export {
   GLOBAL_PAUSE_UNTIL_KEY,
@@ -103,6 +102,8 @@ export {
   readLastJsonlEntry,
   resolveProjectIdForSessionId,
 } from "./utils.js";
+export { isAgentProcessRunning, resetProcessListCache } from "./process-detection.js";
+export type { AgentProcessDetectionOptions } from "./process-detection.js";
 export {
   getWebhookHeader,
   parseWebhookJsonObject,
