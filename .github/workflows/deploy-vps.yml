@@ -1,0 +1,57 @@
+name: Deploy to VPS
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify SHA is current tip of main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          DEPLOY_SHA="${{ github.event.workflow_run.head_sha }}"
+          MAIN_SHA=$(gh api repos/${{ github.repository }}/git/ref/heads/main --jq '.object.sha')
+          if [ "$DEPLOY_SHA" != "$MAIN_SHA" ]; then
+            echo "Skipping: CI SHA $DEPLOY_SHA is not the current tip of main ($MAIN_SHA). Likely a stale rerun."
+            exit 0
+          fi
+          echo "SHA verified: $DEPLOY_SHA is the current tip of main."
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: root
+          key: ${{ secrets.VPS_SSH_KEY }}
+          fingerprint: SHA256:mlWd4p7TXI+SnxXMr7THgQprWOk936qRQQdB4P2WsqA
+          script: |
+            set -e
+            DEPLOY_SHA="${{ github.event.workflow_run.head_sha }}"
+            cd /root/agent-orchestrator
+            echo "==> Fetching latest changes..."
+            git fetch origin main
+            echo "==> Current: $(git rev-parse --short HEAD)"
+            echo "==> Deploying CI-passed SHA: ${DEPLOY_SHA:0:7}"
+            git checkout "$DEPLOY_SHA"
+            echo "==> Updated: $(git rev-parse --short HEAD)"
+            echo "==> Installing dependencies..."
+            pnpm install --frozen-lockfile
+            echo "==> Building..."
+            pnpm build
+            echo "==> Restarting services..."
+            pm2 restart ao --update-env
+            pm2 restart openclaw-gateway --update-env || true
+            echo "==> Deploy complete: $(git rev-parse --short HEAD)"
