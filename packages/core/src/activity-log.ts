@@ -178,9 +178,16 @@ export function getActivityFallbackState(
   const entryTs = new Date(entry.ts);
   if (Number.isNaN(entryTs.getTime())) return null;
 
-  // Actionable states don't decay — they're handled by checkActivityLogState
+  // Actionable states use the same staleness cap as checkActivityLogState.
+  // If the entry is stale, fall through to age-based decay instead of
+  // re-surfacing a waiting_input/blocked that checkActivityLogState already filtered.
   if (entry.state === "waiting_input" || entry.state === "blocked") {
-    return { state: entry.state, timestamp: entryTs };
+    const ageMs = Date.now() - entryTs.getTime();
+    if (ageMs <= ACTIVITY_INPUT_STALENESS_MS) {
+      return { state: entry.state, timestamp: entryTs };
+    }
+    // Stale actionable entry — treat as idle
+    return { state: "idle", timestamp: entryTs };
   }
 
   // Reclassify based on age: active→ready→idle
