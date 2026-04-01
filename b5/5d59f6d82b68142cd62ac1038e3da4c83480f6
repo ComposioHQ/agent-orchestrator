@@ -1,0 +1,27 @@
+packages/web/src/lib/portfolio-services.ts
+  5dde8a415f306ae4 43-49,116
+packages/web/src/lib/project-registration.ts
+  5dde8a415f306ae4 8,18,21
+packages/web/src/app/api/projects/[id]/resources/route.ts
+  5dde8a415f306ae4 35-45,52-88,111,142,152-153
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.3",
+  "base_commit_sha": "b55d59f6d82b68142cd62ac1038e3da4c83480f6",
+  "prompts": {
+    "5dde8a415f306ae4": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d4a93-2ca8-7b20-a778-4bc5ef0d7b9e",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 65,
+      "total_deletions": 18,
+      "accepted_lines": 65,
+      "overriden_lines": 0
+    }
+  }
+}
