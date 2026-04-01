@@ -171,6 +171,19 @@ describe("migrateToMultiProject", () => {
     expect(result.warnings.some((w) => w.includes("apiToken"))).toBe(true);
   });
 
+  it("handles project with nonexistent path gracefully", () => {
+    const configPath = writeOldConfig({
+      "ghost": {
+        name: "Ghost",
+        repo: "org/ghost",
+        path: "/nonexistent/ghost/project",
+      },
+    });
+    const result = migrateToMultiProject(configPath);
+    expect(result.migrated).toBe(true);
+    expect(result.warnings.some((w) => w.includes("does not exist"))).toBe(true);
+  });
+
   it("preserves existing global config projects", () => {
     // Pre-create a global config with an existing project
     const globalDir = join(testDir, ".agent-orchestrator");

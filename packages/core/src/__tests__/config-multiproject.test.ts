@@ -116,6 +116,23 @@ describe("loadConfig — multi-project path", () => {
     expect(config.projects["local"]).toBeDefined();
     expect(config.projects["ao"]).toBeUndefined();
   });
+
+  it("falls back to global config when explicit path has Zod error", () => {
+    setupGlobalConfig({ ao: { name: "AO", path: projectDir } });
+    saveShadowFile("ao", { repo: "org/ao", defaultBranch: "main" });
+
+    // Write a flat local config (not valid old-format) at a known path
+    const flatPath = join(projectDir, "flat.yaml");
+    writeFileSync(flatPath, stringifyYaml({ repo: "org/ao" }), "utf-8");
+
+    // loadConfig with the flat file should fall back to global config
+    const config = loadConfig(flatPath);
+    expect(config.projects["ao"]).toBeDefined();
+  });
+
+  it("throws I/O error when explicit path does not exist", () => {
+    expect(() => loadConfig("/nonexistent/path.yaml")).toThrow();
+  });
 });
 
 describe("loadConfigWithPath — multi-project path", () => {

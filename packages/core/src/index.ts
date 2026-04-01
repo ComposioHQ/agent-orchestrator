@@ -38,6 +38,7 @@ export {
   loadShadowFile,
   saveShadowFile,
   deleteShadowFile,
+  filterSecrets,
   migrateInlineShadowsToFiles,
   isOldConfigFormat,
   matchProjectByCwd,

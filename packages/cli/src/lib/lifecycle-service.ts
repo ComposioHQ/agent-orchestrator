@@ -120,11 +120,13 @@ export function getLifecycleWorkerStatus(
     clearLifecycleWorkerPid(config, projectId, pid);
   }
 
-  // Also check poll-all worker — if running, it covers this project
+  // Also check poll-all worker — if running, it covers this project.
+  // Report running=true but keep pid=null so callers don't kill the
+  // shared poll-all worker when stopping a single project.
   const allPidFile = join(getGlobalDataDir(), "lifecycle-all.pid");
   const allPid = readPid(allPidFile);
   if (allPid !== null && isProcessRunning(allPid)) {
-    return { running: true, pid: allPid, pidFile: allPidFile, logFile };
+    return { running: true, pid: null, pidFile, logFile };
   }
 
   return { running: false, pid: null, pidFile, logFile };

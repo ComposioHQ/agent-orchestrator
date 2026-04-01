@@ -46,6 +46,7 @@ import {
   expandHome,
   saveShadowFile,
   loadShadowFile,
+  filterSecrets,
   type OrchestratorConfig,
   type ProjectConfig,
   type ParsedRepoUrl,
@@ -103,8 +104,9 @@ async function handleMultiProjectStart(
 ): Promise<{ config: OrchestratorConfig; projectId: string } | null> {
   const resolvedDir = resolve(workingDir);
 
-  // 1. Check for old format migration
-  const localConfigPath = findConfigFile(resolvedDir);
+  // 1. Check for old format migration — search locally only, don't use
+  // findConfigFile which checks AO_CONFIG_PATH and could target another repo.
+  const localConfigPath = findLocalConfigPath(resolvedDir);
   if (localConfigPath && needsMigration(localConfigPath)) {
     console.log(chalk.yellow("\nDetected single-project config format."));
     console.log(chalk.dim("Migrating to multi-project...\n"));
@@ -1428,11 +1430,11 @@ export function registerStart(program: Command): void {
                   saveGlobalConfig(updated);
                   // Copy shadow from original project — try shadow file first,
                   // fall back to in-memory config for hybrid projects without shadow
-                  let origShadow = loadShadowFile(projectId);
-                  if (!origShadow) {
-                    // Build shadow from in-memory effective config
+                  const existingShadow = loadShadowFile(projectId);
+                  const shadowToCopy: Record<string, unknown> = existingShadow ?? (() => {
+                    // Build shadow from in-memory effective config, filtering secrets
                     const p = origProject;
-                    origShadow = {
+                    const raw: Record<string, unknown> = {
                       repo: p.repo,
                       defaultBranch: p.defaultBranch,
                       ...(p.agent ? { agent: p.agent } : {}),
@@ -1440,8 +1442,9 @@ export function registerStart(program: Command): void {
                       ...(p.workspace ? { workspace: p.workspace } : {}),
                       ...(p.agentConfig ? { agentConfig: p.agentConfig } : {}),
                     };
-                  }
-                  saveShadowFile(newId, origShadow);
+                    return filterSecrets(raw, [], "project");
+                  })();
+                  saveShadowFile(newId, shadowToCopy);
                 } else {
                   // Legacy single-file mode: edit YAML directly
                   const rawYaml = readFileSync(config.configPath, "utf-8");
