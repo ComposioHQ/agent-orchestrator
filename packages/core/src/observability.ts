@@ -18,7 +18,6 @@ export type ObservabilityMetricName =
   | "api_request"
   | "claim_pr"
   | "cleanup"
-  | "graphql_batch"
   | "kill"
   | "lifecycle_poll"
   | "restore"

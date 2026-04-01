@@ -17,6 +17,7 @@ import {
   isRepoAlreadyCloned,
   resolveCloneTarget,
   sanitizeProjectId,
+  readOriginRemoteUrl,
 } from "../config-generator.js";
 
 // =============================================================================
@@ -505,5 +506,69 @@ describe("resolveCloneTarget", () => {
     const parsed = parseRepoUrl("https://github.com/owner/my-app");
     const result = resolveCloneTarget(parsed, tmpDir);
     expect(result).toBe(join(tmpDir, "my-app"));
+  });
+});
+
+// =============================================================================
+// readOriginRemoteUrl
+// =============================================================================
+
+describe("readOriginRemoteUrl", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "ao-test-origin-"));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns null for non-git directory", () => {
+    expect(readOriginRemoteUrl(tmpDir)).toBeNull();
+  });
+
+  it("returns null when .git/config has no origin remote", () => {
+    mkdirSync(join(tmpDir, ".git"), { recursive: true });
+    writeFileSync(
+      join(tmpDir, ".git", "config"),
+      '[core]\n\trepositoryformatversion = 0\n\tbare = false\n',
+    );
+    expect(readOriginRemoteUrl(tmpDir)).toBeNull();
+  });
+
+  it("returns HTTPS origin URL", () => {
+    mkdirSync(join(tmpDir, ".git"), { recursive: true });
+    writeFileSync(
+      join(tmpDir, ".git", "config"),
+      '[core]\n\tbare = false\n[remote "origin"]\n\turl = https://github.com/owner/repo.git\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n',
+    );
+    expect(readOriginRemoteUrl(tmpDir)).toBe("https://github.com/owner/repo.git");
+  });
+
+  it("returns SSH origin URL", () => {
+    mkdirSync(join(tmpDir, ".git"), { recursive: true });
+    writeFileSync(
+      join(tmpDir, ".git", "config"),
+      '[core]\n\tbare = false\n[remote "origin"]\n\turl = git@github.com:owner/repo.git\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n',
+    );
+    expect(readOriginRemoteUrl(tmpDir)).toBe("git@github.com:owner/repo.git");
+  });
+
+  it("picks origin when multiple remotes exist", () => {
+    mkdirSync(join(tmpDir, ".git"), { recursive: true });
+    writeFileSync(
+      join(tmpDir, ".git", "config"),
+      [
+        '[remote "upstream"]',
+        "\turl = https://github.com/upstream/repo.git",
+        "\tfetch = +refs/heads/*:refs/remotes/upstream/*",
+        '[remote "origin"]',
+        "\turl = https://github.com/myuser/repo.git",
+        "\tfetch = +refs/heads/*:refs/remotes/origin/*",
+        "",
+      ].join("\n"),
+    );
+    expect(readOriginRemoteUrl(tmpDir)).toBe("https://github.com/myuser/repo.git");
   });
 });

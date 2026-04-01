@@ -19,9 +19,6 @@ describe("Config Loading", () => {
     originalCwd = process.cwd();
     originalEnv = { ...process.env };
 
-    // Clear AO_CONFIG_PATH to ensure test isolation
-    delete process.env.AO_CONFIG_PATH;
-
     // Change to test directory
     process.chdir(testDir);
   });
@@ -70,6 +67,25 @@ describe("Config Loading", () => {
     it("should return null if no config found", () => {
       const found = findConfigFile();
       expect(found).toBeNull();
+    });
+
+    it("should skip flat local configs (no projects: wrapper) when searching up tree", () => {
+      // Write a flat behavior-only config (post-migration format)
+      const flatConfig = join(testDir, "agent-orchestrator.yaml");
+      writeFileSync(flatConfig, "repo: org/my-project\nagent: claude-code\nruntime: tmux\n");
+
+      // Should NOT return the flat config — it has no `projects:` key
+      const found = findConfigFile();
+      expect(found).toBeNull();
+    });
+
+    it("should return an old-format config that has a projects: wrapper", () => {
+      const oldFormatConfig = join(testDir, "agent-orchestrator.yaml");
+      writeFileSync(oldFormatConfig, `projects:\n  my-project:\n    repo: org/repo\n    path: ${testDir}\n`);
+
+      const found = findConfigFile();
+      expect(found).not.toBeNull();
+      expect(realpathSync(found!)).toBe(realpathSync(oldFormatConfig));
     });
   });
 

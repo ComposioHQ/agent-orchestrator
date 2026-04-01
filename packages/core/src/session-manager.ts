@@ -666,8 +666,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     );
     for (let attempts = 0; attempts < 10_000; attempts++) {
       const sessionId = `${project.sessionPrefix}-${num}`;
-      const tmuxName = config.configPath
-        ? generateTmuxName(config.configPath, project.sessionPrefix, num)
+      const tmuxName = project.path
+        ? generateTmuxName(project.path, project.sessionPrefix, num)
         : undefined;
 
       if (!usedNumbers.has(num) && reserveSessionId(sessionsDir, sessionId)) {
@@ -1280,6 +1280,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       role: "orchestrator",
       project,
       defaults: config.defaults,
+      spawnAgentOverride: orchestratorConfig.agent,
     });
     const plugins = resolvePlugins(project, selection.agentName);
     if (!plugins.runtime) {

@@ -343,7 +343,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
     }
   }
-
   /** Check if idle time exceeds the agent-stuck threshold. */
   function isIdleBeyondThreshold(session: Session, idleTimestamp: Date): boolean {
     const stuckReaction = getReactionConfigForSession(session, "agent-stuck");
@@ -494,43 +493,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     // 4. Check PR state if PR exists
     if (session.pr && scm) {
       try {
-        // Try to use cached enrichment data from batch GraphQL query
-        const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
-        const cachedData = prEnrichmentCache.get(prKey);
-
-        if (cachedData) {
-          // Use cached enrichment data - avoids individual API calls
-          if (cachedData.state === PR_STATE.MERGED) return "merged";
-          if (cachedData.state === PR_STATE.CLOSED) return "killed";
-
-          // Check CI
-          if (cachedData.ciStatus === CI_STATUS.FAILING) return "ci_failed";
-
-          // Check reviews
-          if (cachedData.reviewDecision === "changes_requested")
-            return "changes_requested";
-          if (cachedData.reviewDecision === "approved" || cachedData.reviewDecision === "none") {
-            // Check merge readiness — treat "none" (no reviewers required)
-            // as "approved" so CI-green PRs reach "mergeable" status
-            // and fire the merge.ready event / approved-and-green reaction.
-            if (cachedData.mergeable) return "mergeable";
-            if (cachedData.reviewDecision === "approved") return "approved";
-          }
-          if (cachedData.reviewDecision === "pending") return "review_pending";
-
-          // 4b. Post-PR stuck detection: agent has a PR open but is idle beyond
-          // threshold. This catches the case where step 2's stuck check was
-          // bypassed (getActivityState returned null) or the idle timestamp
-          // wasn't available during step 2 but the session has been at pr_open
-          // for a long time. Without this, sessions get stuck at "pr_open" forever.
-          if (detectedIdleTimestamp && isIdleBeyondThreshold(session, detectedIdleTimestamp)) {
-            return "stuck";
-          }
-
-          return "pr_open";
-        }
-
-        // Fall back to individual API calls if no cached data
         const prState = await scm.getPRState(session.pr);
         if (prState === PR_STATE.MERGED) return "merged";
         if (prState === PR_STATE.CLOSED) return "killed";
@@ -544,7 +506,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         if (reviewDecision === "changes_requested") return "changes_requested";
         if (reviewDecision === "approved" || reviewDecision === "none") {
           // Check merge readiness — treat "none" (no reviewers required)
-          // as "approved" so CI-green PRs reach "mergeable" status
+          // the same as "approved" so CI-green PRs reach "mergeable" status
           // and fire the merge.ready event / approved-and-green reaction.
           const mergeReady = await scm.getMergeability(session.pr);
           if (mergeReady.mergeable) return "mergeable";
@@ -1337,10 +1299,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const tracked = states.get(s.id);
         return tracked !== undefined && tracked !== s.status;
       });
-
-      // Populate PR enrichment cache using batch GraphQL queries
-      // This reduces API calls from N×3 to 1 per poll cycle
-      await populatePREnrichmentCache(sessionsToCheck);
 
       // Poll all sessions concurrently
       await Promise.allSettled(sessionsToCheck.map((s) => checkSession(s)));
