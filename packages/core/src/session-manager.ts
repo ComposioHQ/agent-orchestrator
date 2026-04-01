@@ -1073,7 +1073,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           AO_CALLER_TYPE: "agent",
           AO_PROJECT_ID: spawnConfig.projectId,
           AO_CONFIG_PATH: config.configPath,
-          ...(config.port !== undefined && config.port !== null && { AO_PORT: String(config.port) }),
+          ...(config.port !== undefined &&
+            config.port !== null && { AO_PORT: String(config.port) }),
         },
       });
     } catch (err) {
@@ -1124,6 +1125,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         issue: spawnConfig.issueId,
         project: spawnConfig.projectId,
         agent: selection.agentName, // Persist agent name for lifecycle manager
+        permissions: selection.permissions,
+        model: selection.model,
         createdAt: new Date().toISOString(),
         runtimeHandle: JSON.stringify(handle),
         opencodeSessionId: reusedOpenCodeSessionId,
@@ -1372,7 +1375,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         AO_CALLER_TYPE: "orchestrator",
         AO_PROJECT_ID: orchestratorConfig.projectId,
         AO_CONFIG_PATH: config.configPath,
-        ...(config.port !== undefined && config.port !== null && { AO_PORT: String(config.port) })
+        ...(config.port !== undefined && config.port !== null && { AO_PORT: String(config.port) }),
       },
     });
 
@@ -1404,6 +1407,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         tmuxName,
         project: orchestratorConfig.projectId,
         agent: selection.agentName,
+        permissions: "permissionless",
+        model: selection.model,
         createdAt: new Date().toISOString(),
         runtimeHandle: JSON.stringify(handle),
         opencodeSessionId: reusableOpenCodeSessionId,
@@ -2278,8 +2283,11 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         summary: raw["summary"],
         project: raw["project"],
         agent: raw["agent"],
+        permissions: raw["permissions"],
+        model: raw["model"],
         createdAt: raw["createdAt"],
         runtimeHandle: raw["runtimeHandle"],
+        restoredAt: raw["restoredAt"],
         opencodeSessionId: raw["opencodeSessionId"],
       });
     }

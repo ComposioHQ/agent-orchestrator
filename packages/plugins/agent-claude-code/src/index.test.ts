@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Session, RuntimeHandle, AgentLaunchConfig, WorkspaceHooksConfig } from "@composio/ao-core";
+import type {
+  Session,
+  RuntimeHandle,
+  AgentLaunchConfig,
+  WorkspaceHooksConfig,
+} from "@composio/ao-core";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks — available inside vi.mock factories
@@ -50,7 +55,13 @@ vi.mock("node:os", () => ({
   homedir: mockHomedir,
 }));
 
-import { create, manifest, default as defaultExport, resetPsCache, METADATA_UPDATER_SCRIPT } from "./index.js";
+import {
+  create,
+  manifest,
+  default as defaultExport,
+  resetPsCache,
+  METADATA_UPDATER_SCRIPT,
+} from "./index.js";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -263,6 +274,72 @@ describe("getEnvironment", () => {
   it("does not set AO_ISSUE_ID when not provided", () => {
     const env = agent.getEnvironment(makeLaunchConfig());
     expect(env["AO_ISSUE_ID"]).toBeUndefined();
+  });
+});
+
+// =========================================================================
+// getRestoreCommand
+// =========================================================================
+describe("getRestoreCommand", () => {
+  const agent = create();
+
+  beforeEach(() => {
+    mockJsonlFiles("{}\n", ["session-abc123.jsonl"]);
+  });
+
+  it("prefers persisted metadata over current project config", async () => {
+    const session = makeSession({
+      metadata: {
+        permissions: "permissionless",
+        model: "claude-opus-4-6",
+      },
+    });
+
+    const cmd = await agent.getRestoreCommand!(
+      session,
+      makeLaunchConfig({
+        projectConfig: {
+          name: "my-project",
+          repo: "owner/repo",
+          path: "/workspace/repo",
+          defaultBranch: "main",
+          sessionPrefix: "my",
+          agentConfig: {
+            permissions: "default",
+            model: "claude-sonnet-4-20250514",
+          },
+        },
+      }).projectConfig,
+    );
+
+    expect(cmd).toBe(
+      "claude --resume 'session-abc123' --dangerously-skip-permissions --model 'claude-opus-4-6'",
+    );
+  });
+
+  it("falls back to current project config for older sessions without persisted metadata", async () => {
+    const session = makeSession();
+
+    const cmd = await agent.getRestoreCommand!(
+      session,
+      makeLaunchConfig({
+        projectConfig: {
+          name: "my-project",
+          repo: "owner/repo",
+          path: "/workspace/repo",
+          defaultBranch: "main",
+          sessionPrefix: "my",
+          agentConfig: {
+            permissions: "auto-edit",
+            model: "claude-sonnet-4-20250514",
+          },
+        },
+      }).projectConfig,
+    );
+
+    expect(cmd).toBe(
+      "claude --resume 'session-abc123' --dangerously-skip-permissions --model 'claude-sonnet-4-20250514'",
+    );
   });
 });
 
@@ -720,12 +797,8 @@ describe("METADATA_UPDATER_SCRIPT content", () => {
   it("does NOT use ^-anchored regexes directly on $command for gh/git detection", () => {
     // The old buggy patterns matched $command with ^ anchor.
     // After the fix, ^ is still used but on $clean_command (which has cd stripped).
-    expect(METADATA_UPDATER_SCRIPT).not.toMatch(
-      /"\$command"\s*=~\s*\^gh/,
-    );
-    expect(METADATA_UPDATER_SCRIPT).not.toMatch(
-      /"\$command"\s*=~\s*\^git/,
-    );
+    expect(METADATA_UPDATER_SCRIPT).not.toMatch(/"\$command"\s*=~\s*\^gh/);
+    expect(METADATA_UPDATER_SCRIPT).not.toMatch(/"\$command"\s*=~\s*\^git/);
   });
 
   it("strips cd prefixes with both && and ; delimiters", () => {
@@ -737,21 +810,15 @@ describe("METADATA_UPDATER_SCRIPT content", () => {
   });
 
   it("detects gh pr create on clean_command", () => {
-    expect(METADATA_UPDATER_SCRIPT).toMatch(
-      /"\$clean_command"\s*=~\s*\^gh\[/,
-    );
+    expect(METADATA_UPDATER_SCRIPT).toMatch(/"\$clean_command"\s*=~\s*\^gh\[/);
   });
 
   it("detects git checkout -b on clean_command", () => {
-    expect(METADATA_UPDATER_SCRIPT).toMatch(
-      /"\$clean_command"\s*=~\s*\^git\[.*checkout/,
-    );
+    expect(METADATA_UPDATER_SCRIPT).toMatch(/"\$clean_command"\s*=~\s*\^git\[.*checkout/);
   });
 
   it("detects gh pr merge on clean_command", () => {
-    expect(METADATA_UPDATER_SCRIPT).toMatch(
-      /"\$clean_command"\s*=~\s*\^gh\[.*merge/,
-    );
+    expect(METADATA_UPDATER_SCRIPT).toMatch(/"\$clean_command"\s*=~\s*\^gh\[.*merge/);
   });
 });
 
