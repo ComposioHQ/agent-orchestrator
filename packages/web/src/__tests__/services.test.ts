@@ -7,6 +7,7 @@ const {
   mockRegistry,
   tmuxPlugin,
   claudePlugin,
+  codexPlugin,
   opencodePlugin,
   worktreePlugin,
   scmPlugin,
@@ -31,6 +32,7 @@ const {
     mockRegistry,
     tmuxPlugin: { manifest: { name: "tmux" } },
     claudePlugin: { manifest: { name: "claude-code" } },
+    codexPlugin: { manifest: { name: "codex" } },
     opencodePlugin: { manifest: { name: "opencode" } },
     worktreePlugin: { manifest: { name: "worktree" } },
     scmPlugin: { manifest: { name: "github" } },
@@ -41,6 +43,7 @@ const {
 
 vi.mock("@composio/ao-core", () => ({
   loadConfig: mockLoadConfig,
+  getGlobalConfigPath: vi.fn(() => "/tmp/.agent-orchestrator/config.yaml"),
   createPluginRegistry: () => mockRegistry,
   createSessionManager: mockCreateSessionManager,
   createLifecycleManager: () => ({
@@ -59,6 +62,7 @@ vi.mock("@composio/ao-core", () => ({
 
 vi.mock("@composio/ao-plugin-runtime-tmux", () => ({ default: tmuxPlugin }));
 vi.mock("@composio/ao-plugin-agent-claude-code", () => ({ default: claudePlugin }));
+vi.mock("@composio/ao-plugin-agent-codex", () => ({ default: codexPlugin }));
 vi.mock("@composio/ao-plugin-agent-opencode", () => ({ default: opencodePlugin }));
 vi.mock("@composio/ao-plugin-workspace-worktree", () => ({ default: worktreePlugin }));
 vi.mock("@composio/ao-plugin-scm-github", () => ({ default: scmPlugin }));
@@ -97,6 +101,14 @@ describe("services", () => {
     await getServices();
 
     expect(mockRegister).toHaveBeenCalledWith(opencodePlugin);
+  });
+
+  it("registers the Codex agent plugin with web services", async () => {
+    const { getServices } = await import("../lib/services");
+
+    await getServices();
+
+    expect(mockRegister).toHaveBeenCalledWith(codexPlugin);
   });
 
   it("caches initialized services across repeated calls", async () => {
