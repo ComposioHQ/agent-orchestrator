@@ -79,7 +79,7 @@ describe("SessionDetail mobile navbar", () => {
     expect(screen.getByRole("link", { name: "PRs" })).toHaveAttribute("href", "/prs?project=my-app");
     expect(screen.getAllByRole("link", { name: "Orchestrator" }).at(-1)).toHaveAttribute(
       "href",
-      "/sessions/my-app-orchestrator",
+      "/projects/my-app/sessions/my-app-orchestrator",
     );
   });
 

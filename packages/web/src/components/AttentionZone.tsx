@@ -6,6 +6,7 @@ import {
   type AttentionLevel,
   isPRMergeReady,
 } from "@/lib/types";
+import { getProjectSessionHref } from "@/lib/project-utils";
 import { SessionCard } from "./SessionCard";
 import { getSessionTitle } from "@/lib/format";
 
@@ -259,7 +260,7 @@ function MobileSessionRow({
       <div className="mobile-session-row__side">
         <SessionStateChip session={session} level={level} />
         <a
-          href={`/sessions/${encodeURIComponent(session.id)}`}
+          href={getProjectSessionHref(session.projectId, session.id)}
           className="mobile-session-row__open"
           aria-label={`Go to ${getSessionTitle(session)}`}
         >

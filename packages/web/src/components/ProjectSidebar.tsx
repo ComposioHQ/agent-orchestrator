@@ -7,6 +7,8 @@ import type { ProjectInfo } from "@/lib/project-name";
 import { getAttentionLevel, type DashboardSession, type AttentionLevel } from "@/lib/types";
 import { isOrchestratorSession } from "@composio/ao-core/types";
 import { getSessionTitle } from "@/lib/format";
+import { getProjectSessionHref } from "@/lib/project-utils";
+import { ProjectAvatar } from "./ProjectAvatar";
 
 interface ProjectSidebarProps {
   projects: ProjectInfo[];
@@ -170,7 +172,6 @@ function ProjectSidebarInner({
               const entry = sessionsByProject.map.get(project.id);
               const health = entry ? computeProjectHealth(entry.all) : ("gray" as ProjectHealth);
               const isActive = activeProjectId === project.id;
-              const initial = project.name.charAt(0).toUpperCase();
               return (
                 <button
                   key={project.id}
@@ -182,7 +183,7 @@ function ProjectSidebarInner({
                   )}
                   title={project.name}
                 >
-                  <span className="project-sidebar__avatar">{initial}</span>
+                  <ProjectAvatar projectId={project.id} name={project.name} size={24} />
                   {health !== "gray" && (
                     <span
                       className={cn(
@@ -360,7 +361,7 @@ function ProjectSidebarInner({
                           {sessionToneLabel[level]}
                         </span>
                         <a
-                          href={`/sessions/${encodeURIComponent(session.id)}`}
+                          href={getProjectSessionHref(project.id, session.id)}
                           onClick={(e) => e.stopPropagation()}
                           className="project-sidebar__session-id shrink-0 font-mono text-[9px] hover:underline"
                           title={session.id}

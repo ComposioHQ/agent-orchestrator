@@ -1,118 +1,62 @@
-import { act, render } from "@testing-library/react";
-import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-import type { DashboardSession } from "@/lib/types";
+import { describe, expect, it, vi } from "vitest";
 
-const sessionDetailSpy = vi.fn();
+// sessions/[id]/page.tsx is now a redirect-only server component.
+// It redirects to /projects/:projectId/sessions/:id based on portfolio lookup.
+
+const mockRedirect = vi.fn((url: string) => {
+  throw new Error(`REDIRECT:${url}`);
+});
 
 vi.mock("next/navigation", () => ({
-  useParams: () => ({ id: "worker-1" }),
+  redirect: (url: string) => mockRedirect(url),
 }));
 
-vi.mock("@/components/SessionDetail", () => ({
-  SessionDetail: (props: unknown) => {
-    sessionDetailSpy(props);
-    return <div data-testid="session-detail" />;
-  },
+const mockGetPortfolioServices = vi.fn();
+const mockGetCachedPortfolioSessions = vi.fn();
+
+vi.mock("@/lib/portfolio-services", () => ({
+  getPortfolioServices: () => mockGetPortfolioServices(),
+  getCachedPortfolioSessions: () => mockGetCachedPortfolioSessions(),
 }));
 
-function makeWorkerSession(): DashboardSession {
-  return {
-    id: "worker-1",
-    projectId: "my-app",
-    status: "working",
-    activity: "active",
-    branch: "feat/test",
-    issueId: "https://linear.app/test/issue/INT-100",
-    issueUrl: "https://linear.app/test/issue/INT-100",
-    issueLabel: "INT-100",
-    summary: "Test worker session",
-    summaryIsFallback: false,
-    createdAt: new Date().toISOString(),
-    lastActivityAt: new Date().toISOString(),
-    pr: null,
-    metadata: {},
-  };
-}
+describe("LegacySessionPage redirects", () => {
+  it("redirects to /projects/:projectId/sessions/:id when session is found in portfolio", async () => {
+    mockGetPortfolioServices.mockReturnValue({ portfolio: [] });
+    mockGetCachedPortfolioSessions.mockResolvedValue([
+      {
+        session: { id: "worker-1" },
+        project: { id: "my-app" },
+      },
+    ]);
 
-async function flushAsyncWork(): Promise<void> {
-  await act(async () => {
-    await Promise.resolve();
-  });
-}
+    const { default: LegacySessionPage } = await import("./page");
 
-describe("SessionPage project polling", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    sessionDetailSpy.mockClear();
+    await expect(
+      LegacySessionPage({ params: Promise.resolve({ id: "worker-1" }) }),
+    ).rejects.toThrow("REDIRECT:/projects/my-app/sessions/worker-1");
   });
 
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.restoreAllMocks();
-  });
-
-  it("resolves orchestrator nav once for non-orchestrator pages and skips repeated project polling", async () => {
-    const workerSession = makeWorkerSession();
-
-    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url === "/api/sessions/worker-1") {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => workerSession,
-        } as Response;
-      }
-
-      if (url === "/api/sessions?project=my-app&orchestratorOnly=true") {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({
-            orchestratorId: "my-app-orchestrator",
-            orchestrators: [
-              {
-                id: "my-app-orchestrator",
-                projectId: "my-app",
-                projectName: "My App",
-              },
-            ],
-          }),
-        } as Response;
-      }
-
-      throw new Error(`Unexpected fetch: ${url}`);
-    }) as typeof fetch;
-
-    const { default: SessionPage } = await import("./page");
-
-    render(<SessionPage />);
-    await flushAsyncWork();
-
-    expect(fetch).toHaveBeenCalledWith("/api/sessions/worker-1");
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(2_000);
+  it("redirects using session prefix when session is not in cached list", async () => {
+    mockGetPortfolioServices.mockReturnValue({
+      portfolio: [{ id: "my-app", sessionPrefix: "worker" }],
     });
-    await flushAsyncWork();
+    mockGetCachedPortfolioSessions.mockResolvedValue([]);
 
-    expect(fetch).toHaveBeenCalledWith("/api/sessions?project=my-app&orchestratorOnly=true");
+    const { default: LegacySessionPage } = await import("./page");
 
-    expect(
-      vi.mocked(fetch).mock.calls.filter(
-        ([url]) => url === "/api/sessions?project=my-app&orchestratorOnly=true",
-      ),
-    ).toHaveLength(1);
+    await expect(
+      LegacySessionPage({ params: Promise.resolve({ id: "worker-5" }) }),
+    ).rejects.toThrow("REDIRECT:/projects/my-app/sessions/worker-5");
+  });
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(5_000);
-    });
-    await flushAsyncWork();
+  it("redirects to / when nothing matches", async () => {
+    mockGetPortfolioServices.mockReturnValue({ portfolio: [] });
+    mockGetCachedPortfolioSessions.mockResolvedValue([]);
 
-    expect(
-      vi.mocked(fetch).mock.calls.filter(
-        ([url]) => url === "/api/sessions?project=my-app&orchestratorOnly=true",
-      ),
-    ).toHaveLength(1);
+    const { default: LegacySessionPage } = await import("./page");
+
+    await expect(
+      LegacySessionPage({ params: Promise.resolve({ id: "unknown-99" }) }),
+    ).rejects.toThrow("REDIRECT:/");
   });
 });
