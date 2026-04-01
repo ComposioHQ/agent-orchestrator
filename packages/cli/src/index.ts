@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
-import packageJson from "../package.json" with { type: "json" };
+import { createRequire } from "node:module";
 import { registerInit } from "./commands/init.js";
 import { registerStatus } from "./commands/status.js";
 import { registerSpawn, registerBatchSpawn } from "./commands/spawn.js";
@@ -19,6 +19,8 @@ import { registerSetup } from "./commands/setup.js";
 import { registerPlugin } from "./commands/plugin.js";
 import { getConfigInstruction } from "./lib/config-instruction.js";
 
+const require = createRequire(import.meta.url);
+const packageJson = require("../package.json") as { version: string };
 const program = new Command();
 
 program
