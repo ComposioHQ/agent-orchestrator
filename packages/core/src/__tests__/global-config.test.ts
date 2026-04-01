@@ -3,11 +3,11 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
-import { stringify as stringifyYaml, parse as parseYaml } from "yaml";
+import { stringify as stringifyYaml } from "yaml";
 
 // We test functions via direct import since they use env vars for paths
 import {
@@ -19,14 +19,12 @@ import {
   unregisterProject,
   detectConfigMode,
   syncShadow,
-  isOldConfigFormat,
   matchProjectByCwd,
   getShadowDir,
   getShadowFilePath,
   loadShadowFile,
   saveShadowFile,
   deleteShadowFile,
-  migrateInlineShadowsToFiles,
   isSecretField,
   filterSecrets,
   type GlobalConfig,
@@ -234,25 +232,6 @@ describe("syncShadow", () => {
   });
 });
 
-describe("isOldConfigFormat", () => {
-  it("detects old format with path + repo inline", () => {
-    expect(isOldConfigFormat({
-      projects: { app: { path: "/tmp/app", repo: "org/app" } },
-    })).toBe(true);
-  });
-
-  it("rejects identity-only entries", () => {
-    expect(isOldConfigFormat({
-      projects: { app: { path: "/tmp/app", name: "App" } },
-    })).toBe(false);
-  });
-
-  it("rejects non-object input", () => {
-    expect(isOldConfigFormat(null)).toBe(false);
-    expect(isOldConfigFormat("string")).toBe(false);
-  });
-});
-
 describe("matchProjectByCwd", () => {
   it("matches exact path", () => {
     const config: GlobalConfig = {
@@ -299,52 +278,6 @@ describe("matchProjectByCwd", () => {
       notifiers: {}, notificationRouting: {}, reactions: {},
     };
     expect(matchProjectByCwd(config, testDir)).toBeNull();
-  });
-});
-
-describe("migrateInlineShadowsToFiles", () => {
-  it("extracts inline behavior to shadow files", () => {
-    writeConfig({
-      projects: {
-        ao: { name: "AO", path: "/tmp/ao", repo: "org/ao", agent: "claude-code" },
-      },
-    });
-
-    const migrated = migrateInlineShadowsToFiles();
-    expect(migrated).toBe(true);
-
-    // Shadow file created
-    const shadow = loadShadowFile("ao");
-    expect(shadow).not.toBeNull();
-    expect(shadow!["repo"]).toBe("org/ao");
-    expect(shadow!["agent"]).toBe("claude-code");
-
-    // Config file now identity-only
-    const raw = parseYaml(readFileSync(join(testDir, "config.yaml"), "utf-8")) as any;
-    expect(raw.projects.ao.repo).toBeUndefined();
-    expect(raw.projects.ao.name).toBe("AO");
-    expect(raw.projects.ao.path).toBe("/tmp/ao");
-  });
-
-  it("skips when no inline behavior exists", () => {
-    writeConfig({
-      projects: {
-        ao: { name: "AO", path: "/tmp/ao" },
-      },
-    });
-    expect(migrateInlineShadowsToFiles()).toBe(false);
-  });
-
-  it("does not overwrite existing shadow files", () => {
-    saveShadowFile("ao", { repo: "existing/repo" });
-    writeConfig({
-      projects: {
-        ao: { name: "AO", path: "/tmp/ao", repo: "new/repo" },
-      },
-    });
-    migrateInlineShadowsToFiles();
-    const shadow = loadShadowFile("ao");
-    expect(shadow!["repo"]).toBe("existing/repo");
   });
 });
 

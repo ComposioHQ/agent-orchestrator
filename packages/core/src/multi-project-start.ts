@@ -20,11 +20,7 @@ import {
   matchProjectByCwd,
   findGlobalConfigPath,
 } from "./global-config.js";
-import {
-  needsMigration,
-  migrateToMultiProject,
-  buildEffectiveConfig,
-} from "./migration.js";
+import { buildEffectiveConfig } from "./migration.js";
 import { generateSessionPrefix, generateProjectId, expandHome } from "./paths.js";
 
 export interface MultiProjectStartResult {
@@ -46,26 +42,7 @@ export function resolveMultiProjectStart(
   const resolvedDir = resolve(workingDir);
   const messages: MultiProjectStartResult["messages"] = [];
 
-  // 1. Check for old format migration — search locally only
-  const migrationConfigPath = findLocalConfigPath(resolvedDir);
-  if (migrationConfigPath && needsMigration(migrationConfigPath)) {
-    const result = migrateToMultiProject(migrationConfigPath);
-    if (result.migrated) {
-      messages.push({ level: "success", text: `Created global config at ${result.globalConfigPath}` });
-      for (const id of result.registeredProjects) {
-        const sessions = result.sessionCounts[id] ?? 0;
-        messages.push({
-          level: "success",
-          text: `Registered project "${id}"${sessions > 0 ? ` (${sessions} sessions preserved)` : ""}`,
-        });
-      }
-      for (const w of result.warnings) {
-        messages.push({ level: "warn", text: w });
-      }
-    }
-  }
-
-  // 2. Load global config
+  // Load global config
   let globalConfig = loadGlobalConfig();
   if (!globalConfig) {
     return null;

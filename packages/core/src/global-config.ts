@@ -283,16 +283,6 @@ export function loadGlobalConfig(): GlobalConfig | null {
     return null;
   }
 
-  // One-time migration: move inline shadows to per-project files.
-  // This re-reads the file, but fast-paths when no inline behavior fields exist.
-  // Wrapped in try/catch so malformed YAML doesn't bypass the friendly
-  // validation error below.
-  try {
-    migrateInlineShadowsToFiles();
-  } catch {
-    // Migration failed — continue to validation which will report the error
-  }
-
   const raw = readFileSync(path, "utf-8");
   const parsed = parseYaml(raw);
 
@@ -476,59 +466,6 @@ export function deleteShadowFile(projectId: string): void {
   }
 }
 
-/**
- * Migrate inline shadow data from global config to per-project files.
- * Called on loadGlobalConfig when inline behavior fields are detected.
- * This is a one-time transparent migration from the old inline format.
- */
-export function migrateInlineShadowsToFiles(): boolean {
-  const path = findGlobalConfigPath();
-  if (!existsSync(path)) return false;
-
-  const raw = readFileSync(path, "utf-8");
-  const parsed = parseYaml(raw) as Record<string, unknown>;
-  const projects = parsed["projects"] as Record<string, Record<string, unknown>> | undefined;
-  if (!projects) return false;
-
-  const identityKeys = new Set(["name", "path"]);
-  let migrated = false;
-
-  for (const [id, entry] of Object.entries(projects)) {
-    if (typeof entry !== "object" || entry === null) continue;
-
-    // Check if this entry has any non-identity keys (behavior fields)
-    const behaviorKeys = Object.keys(entry).filter((k) => !identityKeys.has(k));
-    if (behaviorKeys.length === 0) continue;
-
-    // Don't overwrite an existing shadow file
-    if (existsSync(getShadowFilePath(id))) continue;
-
-    // Extract behavior fields into a shadow file
-    const shadow: Record<string, unknown> = {};
-    for (const key of behaviorKeys) {
-      shadow[key] = entry[key];
-    }
-    saveShadowFile(id, shadow);
-
-    // Strip behavior fields from inline entry (mutating parsed object)
-    for (const key of behaviorKeys) {
-      delete entry[key]; // eslint-disable-line @typescript-eslint/no-dynamic-delete
-    }
-    migrated = true;
-  }
-
-  if (migrated) {
-    // Rewrite config.yaml with identity-only entries
-    const yaml = stringifyYaml(parsed, { lineWidth: 0 });
-    const dir = dirname(path);
-    const tmpPath = join(dir, `.config-${randomBytes(6).toString("hex")}.yaml.tmp`);
-    writeFileSync(tmpPath, yaml, "utf-8");
-    renameSync(tmpPath, path);
-  }
-
-  return migrated;
-}
-
 // =============================================================================
 // MODE DETECTION
 // =============================================================================
@@ -640,44 +577,6 @@ export function filterSecrets(
     }
   }
   return result;
-}
-
-// =============================================================================
-// EFFECTIVE CONFIG RESOLUTION
-// =============================================================================
-
-/**
- * Detect if raw YAML content is the old single-project format.
- * Old format: `projects:` key with entries containing both identity (path)
- * and behavior fields (repo) inline. New format: identity-only entries
- * (behavior is in separate shadow files).
- */
-export function isOldConfigFormat(raw: unknown): boolean {
-  if (typeof raw !== "object" || raw === null) return false;
-  const obj = raw as Record<string, unknown>;
-
-  if (!obj["projects"] || typeof obj["projects"] !== "object") return false;
-
-  const projects = obj["projects"] as Record<string, unknown>;
-  for (const entry of Object.values(projects)) {
-    if (typeof entry !== "object" || entry === null) continue;
-    const e = entry as Record<string, unknown>;
-    // Old format has `repo` inline (behavior mixed with identity)
-    if ("path" in e && "repo" in e) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
- * Check if raw YAML content is the new flat local config format.
- * Flat format has `repo` at the top level, no `projects:` wrapper.
- */
-export function isFlatLocalConfig(raw: unknown): boolean {
-  if (typeof raw !== "object" || raw === null) return false;
-  const obj = raw as Record<string, unknown>;
-  return "repo" in obj && !("projects" in obj);
 }
 
 /**

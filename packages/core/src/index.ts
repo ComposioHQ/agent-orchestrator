@@ -39,8 +39,6 @@ export {
   saveShadowFile,
   deleteShadowFile,
   filterSecrets,
-  migrateInlineShadowsToFiles,
-  isOldConfigFormat,
   matchProjectByCwd,
 } from "./global-config.js";
 export type {
@@ -50,13 +48,8 @@ export type {
   LocalProjectConfig,
 } from "./global-config.js";
 
-// Migration — single-project → multi-project
-export {
-  needsMigration,
-  migrateToMultiProject,
-  buildEffectiveConfig,
-} from "./migration.js";
-export type { MigrationResult } from "./migration.js";
+// Effective config builder — merges global registry + shadow files
+export { buildEffectiveConfig } from "./migration.js";
 
 // Multi-project start — registration, sync, config building
 export { resolveMultiProjectStart } from "./multi-project-start.js";
