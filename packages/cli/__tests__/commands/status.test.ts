@@ -27,6 +27,7 @@ const {
   mockGetReviewDecision,
   mockGetPendingComments,
   mockSessionManager,
+  mockGetPluginRegistry,
   sessionsDirRef,
 } = vi.hoisted(() => ({
   mockTmux: vi.fn(),
@@ -48,6 +49,7 @@ const {
     send: vi.fn(),
     claimPR: vi.fn(),
   },
+  mockGetPluginRegistry: vi.fn(),
   sessionsDirRef: { current: "" },
 }));
 
@@ -205,7 +207,7 @@ function makeSession(overrides: Partial<Session> & { id: string; projectId: stri
 
 vi.mock("../../src/lib/create-session-manager.js", () => ({
   getSessionManager: async (): Promise<SessionManager> => mockSessionManager as SessionManager,
-  getPluginRegistry: async () => ({ get: vi.fn(), list: vi.fn(), register: vi.fn() }),
+  getPluginRegistry: (...args: unknown[]) => mockGetPluginRegistry(...args),
 }));
 
 let tmpDir: string;
@@ -216,6 +218,9 @@ import { registerStatus } from "../../src/commands/status.js";
 
 let program: Command;
 let consoleSpy: ReturnType<typeof vi.spyOn>;
+let setIntervalSpy: ReturnType<typeof vi.spyOn> | undefined;
+let clearIntervalSpy: ReturnType<typeof vi.spyOn> | undefined;
+let processOnceSpy: ReturnType<typeof vi.spyOn> | undefined;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "ao-status-test-"));
@@ -281,6 +286,9 @@ beforeEach(() => {
   mockSessionManager.get.mockReset();
   mockSessionManager.spawn.mockReset();
   mockSessionManager.send.mockReset();
+  mockGetPluginRegistry.mockReset();
+  // Default registry: no tracker
+  mockGetPluginRegistry.mockResolvedValue({ get: vi.fn().mockReturnValue(null), list: vi.fn(), register: vi.fn() });
 
   // Default: list reads from sessionsDir
   mockSessionManager.list.mockImplementation(async () => {
@@ -289,6 +297,12 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  setIntervalSpy?.mockRestore();
+  setIntervalSpy = undefined;
+  clearIntervalSpy?.mockRestore();
+  clearIntervalSpy = undefined;
+  processOnceSpy?.mockRestore();
+  processOnceSpy = undefined;
   rmSync(tmpDir, { recursive: true, force: true });
   vi.restoreAllMocks();
 });
@@ -565,6 +579,81 @@ describe("status command", () => {
     expect(parsed[0].ciStatus).toBe("passing");
     expect(parsed[0].reviewDecision).toBe("pending");
     expect(parsed[0].pendingThreads).toBe(0);
+  });
+
+  it("rejects --watch with --json", async () => {
+    await expect(program.parseAsync(["node", "test", "status", "--watch", "--json"])).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => c[0])
+      .join("\n");
+    expect(errors).toContain("--watch cannot be used with --json");
+  });
+
+  it("rejects non-positive watch intervals", async () => {
+    await expect(program.parseAsync(["node", "test", "status", "--watch", "--interval", "0"])).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => c[0])
+      .join("\n");
+    expect(errors).toContain("--interval must be a positive integer");
+  });
+
+  it("ignores --interval entirely when --watch is not set", async () => {
+    mockTmux.mockResolvedValue(null);
+    mockSessionManager.list.mockResolvedValue([]);
+
+    // Invalid value (0) should NOT cause an error without --watch
+    await expect(
+      program.parseAsync(["node", "test", "status", "--interval", "0"]),
+    ).resolves.not.toThrow();
+
+    // Valid value should also be silently ignored without --watch
+    await expect(
+      program.parseAsync(["node", "test", "status", "--interval", "10"]),
+    ).resolves.not.toThrow();
+  });
+
+  it("schedules watch refreshes with the requested interval", async () => {
+    mockTmux.mockResolvedValue(null);
+    setIntervalSpy = vi.spyOn(globalThis, "setInterval").mockImplementation(() => 1 as never);
+
+    await program.parseAsync(["node", "test", "status", "--watch", "--interval", "3"]);
+
+    expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 3000);
+
+    const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(output).toContain("Refreshing every 3s. Press Ctrl+C to exit.");
+  });
+
+  it("cleans up the watch timer on shutdown signals", async () => {
+    mockTmux.mockResolvedValue(null);
+
+    const watchTimer = { id: "watch-timer" } as unknown as ReturnType<typeof setInterval>;
+    setIntervalSpy = vi.spyOn(globalThis, "setInterval").mockImplementation(() => watchTimer);
+    clearIntervalSpy = vi.spyOn(globalThis, "clearInterval").mockImplementation(() => undefined);
+
+    const signalHandlers = new Map<string, () => void>();
+    processOnceSpy = vi.spyOn(process, "once").mockImplementation((event, listener) => {
+      if (event === "SIGINT" || event === "SIGTERM") {
+        signalHandlers.set(event, listener as () => void);
+      }
+      return process;
+    });
+
+    await program.parseAsync(["node", "test", "status", "--watch"]);
+
+    expect(signalHandlers.has("SIGINT")).toBe(true);
+    expect(signalHandlers.has("SIGTERM")).toBe(true);
+
+    expect(() => signalHandlers.get("SIGINT")?.()).toThrow("process.exit(0)");
+    expect(clearIntervalSpy).toHaveBeenCalledWith(watchTimer);
   });
 
   it("falls back to PR number from metadata URL when SCM fails", async () => {
@@ -855,6 +944,222 @@ describe("status command", () => {
     expect(parsed.find((entry: { name: string }) => entry.name === "app-1")).toMatchObject({
       role: "worker",
       project: "my-app",
+    });
+  });
+
+  // ── lines 262-266: loadConfig() throws → fallback to tmux discovery ───────
+  it("falls back to tmux session discovery when loadConfig throws", async () => {
+    // The vi.mock for @composio/ao-core uses `() => mockConfigRef.current`.
+    // Setting current to a throwing getter makes loadConfig throw.
+    // Simpler: use a Proxy-based trick — but easiest is a getter that throws.
+    const originalCurrent = mockConfigRef.current;
+    Object.defineProperty(mockConfigRef, "current", {
+      get() {
+        throw new Error("no config file");
+      },
+      configurable: true,
+    });
+
+    // No tmux sessions — fallback should print the banner with "No config found"
+    mockTmux.mockImplementation(async (...args: string[]) => {
+      if (args[0] === "list-sessions") return null;
+      return null;
+    });
+    mockIntrospect.mockResolvedValue(null);
+
+    try {
+      await program.parseAsync(["node", "test", "status"]);
+    } finally {
+      // Restore mockConfigRef.current to a plain data property
+      Object.defineProperty(mockConfigRef, "current", {
+        value: originalCurrent,
+        writable: true,
+        configurable: true,
+      });
+    }
+
+    const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(output).toContain("No config found");
+    expect(output).toContain("Falling back to session discovery");
+  });
+
+  // ── lines 269-271: unknown --project flag ───────────────────────────────
+  it("exits with error when --project refers to an unknown project", async () => {
+    mockTmux.mockResolvedValue(null);
+    mockSessionManager.list.mockResolvedValue([]);
+
+    await expect(
+      program.parseAsync(["node", "test", "status", "--project", "no-such-project"]),
+    ).rejects.toThrow("process.exit(1)");
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => c[0])
+      .join("\n");
+    expect(errors).toContain("Unknown project: no-such-project");
+  });
+
+  // ── lines 388, 390-396, 402-405: tracker unverified-issues warning ────────
+  it("shows unverified issues warning when tracker returns merged-unverified issues", async () => {
+    const mockListIssues = vi.fn().mockResolvedValue([{ id: "ISS-1" }, { id: "ISS-2" }]);
+    const mockTracker = { listIssues: mockListIssues };
+
+    mockConfigRef.current = {
+      ...(mockConfigRef.current as Record<string, unknown>),
+      projects: {
+        "my-app": {
+          name: "My App",
+          repo: "org/my-app",
+          path: join(tmpDir, "main-repo"),
+          defaultBranch: "main",
+          sessionPrefix: "app",
+          scm: { plugin: "github" },
+          tracker: { plugin: "linear" },
+        },
+      },
+    } as Record<string, unknown>;
+
+    // Use the hoisted mockGetPluginRegistry fn to surface our tracker
+    mockGetPluginRegistry.mockResolvedValueOnce({
+      get: vi.fn().mockReturnValue(mockTracker),
+      list: vi.fn(),
+      register: vi.fn(),
+    });
+
+    mockSessionManager.list.mockResolvedValue([]);
+    mockTmux.mockResolvedValue(null);
+
+    await program.parseAsync(["node", "test", "status"]);
+
+    const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(output).toContain("awaiting verification");
+    expect(mockListIssues).toHaveBeenCalledWith(
+      { state: "open", labels: ["merged-unverified"], limit: 20 },
+      expect.objectContaining({ tracker: { plugin: "linear" } }),
+    );
+  });
+
+  // ── line 398: tracker listIssues() rejects → swallowed silently ───────────
+  it("handles tracker listIssues failure gracefully without crashing", async () => {
+    const mockListIssues = vi.fn().mockRejectedValue(new Error("tracker down"));
+    const mockTracker = { listIssues: mockListIssues };
+
+    mockConfigRef.current = {
+      ...(mockConfigRef.current as Record<string, unknown>),
+      projects: {
+        "my-app": {
+          name: "My App",
+          repo: "org/my-app",
+          path: join(tmpDir, "main-repo"),
+          defaultBranch: "main",
+          sessionPrefix: "app",
+          scm: { plugin: "github" },
+          tracker: { plugin: "linear" },
+        },
+      },
+    } as Record<string, unknown>;
+
+    mockGetPluginRegistry.mockResolvedValueOnce({
+      get: vi.fn().mockReturnValue(mockTracker),
+      list: vi.fn(),
+      register: vi.fn(),
+    });
+
+    mockSessionManager.list.mockResolvedValue([]);
+    mockTmux.mockResolvedValue(null);
+
+    // Must not throw
+    await expect(program.parseAsync(["node", "test", "status"])).resolves.not.toThrow();
+  });
+
+  // ── lines 65-69 (isTTY branch) + 255-256 (maybeClearScreen on refresh) ───
+  it("writes clear-screen escape when stdout is a TTY during watch refresh", async () => {
+    mockTmux.mockResolvedValue(null);
+    mockSessionManager.list.mockResolvedValue([]);
+
+    const writeSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const originalIsTTY = process.stdout.isTTY;
+    Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+
+    let capturedCallback: (() => void) | undefined;
+    setIntervalSpy = vi.spyOn(globalThis, "setInterval").mockImplementation((fn) => {
+      capturedCallback = fn as () => void;
+      return 77 as never;
+    });
+    clearIntervalSpy = vi
+      .spyOn(globalThis, "clearInterval")
+      .mockImplementation(() => undefined);
+    processOnceSpy = vi.spyOn(process, "once").mockImplementation((_e, _l) => process);
+
+    await program.parseAsync(["node", "test", "status", "--watch", "--interval", "5"]);
+
+    expect(capturedCallback).toBeDefined();
+    // Fire interval callback — this calls renderStatus(true) which calls maybeClearScreen()
+    capturedCallback!();
+    // Allow promises to settle
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(writeSpy).toHaveBeenCalledWith("\x1Bc");
+
+    Object.defineProperty(process.stdout, "isTTY", {
+      value: originalIsTTY,
+      configurable: true,
+    });
+    writeSpy.mockRestore();
+  });
+
+  // ── lines 424-425: watch guard skips render when already in progress ──────
+  it("skips a watch refresh when the previous render is still in progress", async () => {
+    let renderCount = 0;
+    let unblockSlowRender!: () => void;
+    const slowRenderFinished = new Promise<void>((res) => {
+      unblockSlowRender = res;
+    });
+
+    mockSessionManager.list.mockImplementation(async () => {
+      renderCount++;
+      if (renderCount === 2) {
+        // First watch-refresh (second overall list call) — block deliberately
+        await slowRenderFinished;
+      }
+      return [];
+    });
+
+    mockTmux.mockResolvedValue(null);
+
+    let capturedCallback: (() => void) | undefined;
+    setIntervalSpy = vi.spyOn(globalThis, "setInterval").mockImplementation((fn) => {
+      capturedCallback = fn as () => void;
+      return 55 as never;
+    });
+    clearIntervalSpy = vi
+      .spyOn(globalThis, "clearInterval")
+      .mockImplementation(() => undefined);
+    processOnceSpy = vi.spyOn(process, "once").mockImplementation((_e, _l) => process);
+
+    const originalIsTTY = process.stdout.isTTY;
+    Object.defineProperty(process.stdout, "isTTY", { value: false, configurable: true });
+
+    await program.parseAsync(["node", "test", "status", "--watch"]);
+
+    // First interval tick — starts a slow render
+    capturedCallback!();
+    await new Promise((r) => setTimeout(r, 0));
+
+    const countAfterFirst = renderCount;
+
+    // Second tick while first is still pending — `rendering` guard should block it
+    capturedCallback!();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(renderCount).toBe(countAfterFirst); // no additional list() call
+
+    // Unblock slow render
+    unblockSlowRender();
+    await new Promise((r) => setTimeout(r, 20));
+
+    Object.defineProperty(process.stdout, "isTTY", {
+      value: originalIsTTY,
+      configurable: true,
     });
   });
 });

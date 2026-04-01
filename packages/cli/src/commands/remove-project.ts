@@ -70,12 +70,14 @@ export function registerRemoveProject(program: Command): void {
           }
         }
 
-        // Stop lifecycle worker for this project
+        // Stop per-project lifecycle worker if one exists.
+        // If a poll-all worker is running instead, we intentionally don't stop it
+        // since it covers other projects too.
         try {
           const config = loadConfig();
           await stopLifecycleWorker(config, projectId);
         } catch {
-          // Not critical — worker may not be running
+          // Not critical — worker may not be running or may be poll-all
         }
 
         // Remove from global config, then clean up shadow file
