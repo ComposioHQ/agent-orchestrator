@@ -4,6 +4,10 @@ import type { Command } from "commander";
 import { resolve } from "node:path";
 import {
   loadConfig,
+  validateConfig,
+  loadGlobalConfig,
+  buildEffectiveProjectConfig,
+  getGlobalConfigPath,
   TERMINAL_STATUSES,
   type OrchestratorConfig,
 } from "@aoagents/ao-core";
@@ -14,6 +18,45 @@ import { getSessionManager } from "../lib/create-session-manager.js";
 import { preflight } from "../lib/preflight.js";
 import { findProjectForDirectory } from "../lib/project-resolution.js";
 import { getRunning } from "../lib/running-state.js";
+
+function buildConfigFromGlobalRegistry(projectId: string): OrchestratorConfig {
+  const globalConfig = loadGlobalConfig();
+  if (!globalConfig) {
+    throw new Error(
+      `No global registry found at ${getGlobalConfigPath()}.\n` +
+        "Run `ao start` in a project directory first.",
+    );
+  }
+
+  const effectiveProject = buildEffectiveProjectConfig(projectId, globalConfig);
+  if (!effectiveProject) {
+    throw new Error(
+      `Project "${projectId}" is not registered.\n` +
+        "Run `ao start` in that project's directory to register it.",
+    );
+  }
+
+  const rawConfig = {
+    port: globalConfig.port,
+    terminalPort: globalConfig.terminalPort,
+    directTerminalPort: globalConfig.directTerminalPort,
+    readyThresholdMs: globalConfig.readyThresholdMs,
+    defaults: globalConfig.defaults,
+    notifiers: globalConfig.notifiers,
+    notificationRouting: globalConfig.notificationRouting,
+    reactions: globalConfig.reactions,
+    projects: {
+      [projectId]: {
+        ...effectiveProject,
+        repo: (effectiveProject as Record<string, unknown>)["repo"] ?? "",
+      },
+    },
+  };
+
+  const config = validateConfig(rawConfig);
+  config.configPath = getGlobalConfigPath();
+  return config;
+}
 
 /**
  * Auto-detect the project ID from the config.
@@ -192,6 +235,7 @@ export function registerSpawn(program: Command): void {
     .description("Spawn a single agent session")
     .argument("[first]", "Issue identifier (project is auto-detected)")
     .argument("[second]", "" /* hidden second arg to catch old two-arg usage */)
+    .option("--project <id>", "Target project by ID (works from any directory)")
     .option("--open", "Open session in terminal tab")
     .option("--agent <name>", "Override the agent plugin (e.g. codex, claude-code)")
     .option("--claim-pr <pr>", "Immediately claim an existing PR for the spawned session")
@@ -202,6 +246,7 @@ export function registerSpawn(program: Command): void {
         first: string | undefined,
         second: string | undefined,
         opts: {
+          project?: string;
           open?: boolean;
           agent?: string;
           claimPr?: string;
@@ -214,28 +259,28 @@ export function registerSpawn(program: Command): void {
           console.warn(
             chalk.yellow(
               `⚠ 'ao spawn <project> <issue>' is no longer supported.\n` +
-                `  The project is now auto-detected. Use:\n\n` +
-                `    ao spawn ${second}    # spawn with issue ${second}\n` +
-                `    ao spawn              # spawn without an issue\n`,
+                `  Use --project to target a specific project:\n\n` +
+                `    ao spawn --project ${first} ${second}\n` +
+                `    ao spawn ${second}    # auto-detect from cwd\n`,
             ),
           );
           process.exit(1);
         }
 
-        const config = loadConfig();
+        let config: OrchestratorConfig;
         let projectId: string;
-        let issueId: string | undefined;
+        const issueId: string | undefined = first;
 
-        if (first) {
-          issueId = first;
+        if (opts.project) {
           try {
-            projectId = autoDetectProject(config);
+            config = buildConfigFromGlobalRegistry(opts.project);
+            projectId = opts.project;
           } catch (err) {
             console.error(chalk.red(err instanceof Error ? err.message : String(err)));
             process.exit(1);
           }
         } else {
-          // No args: auto-detect project, no issue
+          config = loadConfig();
           try {
             projectId = autoDetectProject(config);
           } catch (err) {

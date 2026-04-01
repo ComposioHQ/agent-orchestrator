@@ -46,6 +46,7 @@ interface SessionInfo {
 
 interface StatusOptions {
   project?: string;
+  portfolio?: boolean;
   json?: boolean;
   watch?: boolean;
   interval?: string;
@@ -237,6 +238,7 @@ export function registerStatus(program: Command): void {
     .command("status")
     .description("Show all sessions with branch, activity, PR, and CI status")
     .option("-p, --project <id>", "Filter by project ID")
+    .option("--portfolio", "Show status across all portfolio projects")
     .option("--json", "Output as JSON")
     .option("-w, --watch", "Refresh the status view continuously")
     .option("--interval <seconds>", "Refresh interval in seconds (default: 5)")
@@ -244,6 +246,67 @@ export function registerStatus(program: Command): void {
       if (opts.watch && opts.json) {
         console.error(chalk.red("--watch cannot be used with --json."));
         process.exit(1);
+      }
+
+      if (opts.portfolio) {
+        try {
+          const { getPortfolio, getPortfolioSessionCounts } = await import("@aoagents/ao-core");
+          const portfolio = getPortfolio();
+
+          if (portfolio.length === 0) {
+            console.log(chalk.dim("No projects in portfolio."));
+            console.log(
+              chalk.dim("Run `ao start` in a project or `ao project add <path>` to register one."),
+            );
+            return;
+          }
+
+          const counts = await getPortfolioSessionCounts(portfolio);
+
+          if (opts.json) {
+            console.log(
+              JSON.stringify(
+                portfolio.map((p) => ({
+                  id: p.id,
+                  name: p.name,
+                  enabled: p.enabled,
+                  degraded: p.degraded,
+                  source: p.source,
+                  sessions: counts[p.id] || { total: 0, active: 0 },
+                })),
+                null,
+                2,
+              ),
+            );
+            return;
+          }
+
+          console.log(banner("PORTFOLIO STATUS"));
+          console.log();
+          for (const p of portfolio) {
+            const count = counts[p.id] || { total: 0, active: 0 };
+            const status = p.degraded
+              ? chalk.red("degraded")
+              : !p.enabled
+                ? chalk.dim("disabled")
+                : count.active > 0
+                  ? chalk.green(`${count.active} active`)
+                  : chalk.dim("idle");
+            const name = p.name !== p.id ? ` ${chalk.dim(`(${p.name})`)}` : "";
+            console.log(`  ${chalk.bold(p.id)}${name}  ${status}  ${count.total} sessions`);
+            if (p.degraded && p.degradedReason) {
+              console.log(`    ${chalk.red(p.degradedReason)}`);
+            }
+          }
+          console.log();
+          return;
+        } catch (err) {
+          console.error(
+            chalk.red("Failed to load portfolio:"),
+            err instanceof Error ? err.message : String(err),
+          );
+          process.exit(1);
+        }
       }
 
       let watchIntervalSeconds = DEFAULT_WATCH_INTERVAL_SECONDS;

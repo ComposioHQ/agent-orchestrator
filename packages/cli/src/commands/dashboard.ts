@@ -20,8 +20,9 @@ export function registerDashboard(program: Command): void {
     .option("-p, --port <port>", "Port to listen on")
     .option("--no-open", "Don't open browser automatically")
     .option("--rebuild", "Clean stale build artifacts and rebuild before starting")
+    .option("--project <id>", "Open dashboard to a specific portfolio project")
     /* c8 ignore start -- process-spawning startup code, tested via integration/onboarding */
-    .action(async (opts: { port?: string; open?: boolean; rebuild?: boolean }) => {
+    .action(async (opts: { port?: string; open?: boolean; rebuild?: boolean; project?: string }) => {
       const config = loadConfig();
       const port = opts.port ? parseInt(opts.port, 10) : (config.port ?? DEFAULT_PORT);
 
@@ -97,7 +98,8 @@ export function registerDashboard(program: Command): void {
 
       if (opts.open !== false) {
         openAbort = new AbortController();
-        void waitForPortAndOpen(port, `http://localhost:${port}`, openAbort.signal);
+        const openPath = opts.project ? `/projects/${opts.project}` : "";
+        void waitForPortAndOpen(port, `http://localhost:${port}${openPath}`, openAbort.signal);
       }
 
       child.on("exit", (code) => {
