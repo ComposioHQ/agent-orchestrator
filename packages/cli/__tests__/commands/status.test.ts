@@ -605,6 +605,21 @@ describe("status command", () => {
     expect(errors).toContain("--interval must be a positive integer");
   });
 
+  it("ignores --interval entirely when --watch is not set", async () => {
+    mockTmux.mockResolvedValue(null);
+    mockSessionManager.list.mockResolvedValue([]);
+
+    // Invalid value (0) should NOT cause an error without --watch
+    await expect(
+      program.parseAsync(["node", "test", "status", "--interval", "0"]),
+    ).resolves.not.toThrow();
+
+    // Valid value should also be silently ignored without --watch
+    await expect(
+      program.parseAsync(["node", "test", "status", "--interval", "10"]),
+    ).resolves.not.toThrow();
+  });
+
   it("schedules watch refreshes with the requested interval", async () => {
     mockTmux.mockResolvedValue(null);
     setIntervalSpy = vi.spyOn(globalThis, "setInterval").mockImplementation(() => 1 as never);

@@ -243,11 +243,13 @@ export function registerStatus(program: Command): void {
       }
 
       let watchIntervalSeconds = DEFAULT_WATCH_INTERVAL_SECONDS;
-      try {
-        watchIntervalSeconds = parseWatchIntervalSeconds(opts.interval);
-      } catch (err) {
-        console.error(chalk.red(err instanceof Error ? err.message : String(err)));
-        process.exit(1);
+      if (opts.watch) {
+        try {
+          watchIntervalSeconds = parseWatchIntervalSeconds(opts.interval);
+        } catch (err) {
+          console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+          process.exit(1);
+        }
       }
 
       const renderStatus = async (refreshing = false): Promise<void> => {
