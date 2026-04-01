@@ -63,7 +63,7 @@ export async function PUT(
       ...preferences.projects[id],
       ...(parsed.data.pinned !== undefined ? { pinned: parsed.data.pinned } : {}),
       ...(parsed.data.enabled !== undefined ? { enabled: parsed.data.enabled } : {}),
-      ...(parsed.data.displayName ? { displayName: parsed.data.displayName } : {}),
+      ...(parsed.data.displayName !== undefined ? { displayName: parsed.data.displayName } : {}),
     };
 
     savePreferences(preferences);

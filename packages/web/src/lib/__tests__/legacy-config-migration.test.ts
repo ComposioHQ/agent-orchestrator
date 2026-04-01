@@ -15,7 +15,11 @@ function makeTempDir(name: string): string {
 }
 
 afterEach(() => {
-  process.env.AO_GLOBAL_CONFIG = originalGlobalConfig;
+  if (originalGlobalConfig === undefined) {
+    delete process.env.AO_GLOBAL_CONFIG;
+  } else {
+    process.env.AO_GLOBAL_CONFIG = originalGlobalConfig;
+  }
   for (const dir of createdDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -113,15 +113,20 @@ export function migrateLegacyConfigForPortfolioRegistration(
   const [project] = matchingProjects;
   const flatConfigPath = join(normalizedRepoPath, basename(configPath));
 
-  writeFlatLocalConfig(flatConfigPath, project.behavior);
+  try {
+    writeFlatLocalConfig(flatConfigPath, project.behavior);
 
-  const localConfig = loadLocalProjectConfig(normalizedRepoPath);
-  if (!localConfig) {
-    throw new Error(`Failed to migrate legacy config at ${normalizedRepoPath}.`);
+    const localConfig = loadLocalProjectConfig(normalizedRepoPath);
+    if (!localConfig) {
+      throw new Error(`Failed to migrate legacy config at ${normalizedRepoPath}.`);
+    }
+
+    registerProjectInGlobalConfig(project.key, project.name, normalizedRepoPath, localConfig);
+    preserveSessionPrefix(project.key, project.sessionPrefix);
+  } catch (error) {
+    writeFileSync(configPath, rawContent, "utf-8");
+    throw error;
   }
-
-  registerProjectInGlobalConfig(project.key, project.name, normalizedRepoPath, localConfig);
-  preserveSessionPrefix(project.key, project.sessionPrefix);
 
   return {
     migrated: true,

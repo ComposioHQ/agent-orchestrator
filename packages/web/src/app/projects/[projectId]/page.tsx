@@ -1,9 +1,7 @@
 import type { Metadata } from "next";
 export const dynamic = "force-dynamic";
 
-import { homedir } from "node:os";
 import { Dashboard } from "@/components/Dashboard";
-import { DashboardShell } from "@/components/DashboardShell";
 import type { DashboardSession } from "@/lib/types";
 import { getServices, getSCM } from "@/lib/services";
 import {
@@ -17,7 +15,6 @@ import { prCache, prCacheKey } from "@/lib/cache";
 import { getAllProjects } from "@/lib/project-name";
 import { filterProjectSessions, filterWorkerSessions } from "@/lib/project-utils";
 import { resolveGlobalPause, type GlobalPauseState } from "@/lib/global-pause";
-import { loadPortfolioPageData } from "@/lib/portfolio-page-data";
 import { ensureProjectOrchestrator } from "@/lib/ensure-project-orchestrator";
 
 export async function generateMetadata(props: {
@@ -36,30 +33,21 @@ export default async function ProjectPage(props: {
   const params = await props.params;
   const projectFilter = params.projectId;
 
-  const [{ projectSummaries }, pageData] = await Promise.all([
-    loadPortfolioPageData(),
-    loadProjectPageData(projectFilter),
-  ]);
+  const pageData = await loadProjectPageData(projectFilter);
 
   const projects = getAllProjects();
   const project = projects.find(p => p.id === projectFilter);
   const projectName = project?.name ?? projectFilter;
 
   return (
-    <DashboardShell
-      projects={projectSummaries}
-      activeProjectId={projectFilter}
-      defaultLocation={homedir()}
-    >
-      <Dashboard
-        initialSessions={pageData.sessions}
-        projectId={projectFilter}
-        projectName={projectName}
-        projects={projects}
-        initialGlobalPause={pageData.globalPause}
-        orchestrators={pageData.orchestrators}
-      />
-    </DashboardShell>
+    <Dashboard
+      initialSessions={pageData.sessions}
+      projectId={projectFilter}
+      projectName={projectName}
+      projects={projects}
+      initialGlobalPause={pageData.globalPause}
+      orchestrators={pageData.orchestrators}
+    />
   );
 }
 
