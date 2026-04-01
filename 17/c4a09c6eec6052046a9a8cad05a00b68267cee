@@ -1,0 +1,78 @@
+packages/core/src/portfolio-registry.ts
+  d1937d38142f07ac 78-88
+packages/web/src/app/api/projects/route.ts
+  9652e8f66d275678 19,128
+packages/plugins/scm-gitlab/src/index.ts
+  d1937d38142f07ac 450
+packages/core/src/index.ts
+  d1937d38142f07ac 219
+packages/web/src/app/api/settings/preferences/route.ts
+  d1937d38142f07ac 2,21-25,27-33,36,40-41
+packages/web/src/lib/__tests__/filesystem-access.test.ts
+  9652e8f66d275678 1-36
+packages/web/src/components/UnifiedSidebar.tsx
+  d7824f8dec3363d1 3-11,785,822,1055,1135
+packages/web/src/app/api/projects/clone/route.ts
+  9652e8f66d275678 15,70
+packages/core/src/agent-selection.ts
+  d1937d38142f07ac 43-49
+packages/web/next-env.d.ts
+  d7824f8dec3363d1 3
+packages/web/src/app/api/projects/[id]/route.ts
+  d1937d38142f07ac 5,59-67,70,75
+  d7824f8dec3363d1 13-24,27-29,32-34,100-102
+packages/plugins/scm-github/src/index.ts
+  d1937d38142f07ac 518
+packages/web/src/app/api/browse-directory/route.ts
+  9652e8f66d275678 5,18
+packages/web/src/lib/project-registration.ts
+  d1937d38142f07ac 5,47-53
+packages/web/src/lib/filesystem-access.ts
+  9652e8f66d275678 1-43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.3",
+  "base_commit_sha": "17c4a09c6eec6052046a9a8cad05a00b68267cee",
+  "prompts": {
+    "9652e8f66d275678": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d4987-0963-7933-b6eb-d477bf1ef241",
+        "model": "unknown"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 85,
+      "total_deletions": 3,
+      "accepted_lines": 85,
+      "overriden_lines": 0
+    },
+    "d1937d38142f07ac": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cbb89ab6-e0ab-4d0e-a326-edd106c202fb",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 57,
+      "total_deletions": 43,
+      "accepted_lines": 57,
+      "overriden_lines": 0
+    },
+    "d7824f8dec3363d1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d488f-b186-7d91-83c8-e8283aafdff3",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 38,
+      "total_deletions": 31,
+      "accepted_lines": 37,
+      "overriden_lines": 0
+    }
+  }
+}
