@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { readdir, stat } from "node:fs/promises";
+import { readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 
 export const dynamic = "force-dynamic";
 
@@ -11,10 +11,28 @@ const MAX_ENTRIES = 200;
 /** Directories to hide from the browser (dot-prefixed are already excluded). */
 const HIDDEN_NAMES = new Set(["node_modules", "__pycache__", ".git"]);
 
+function isWithinDirectory(parentPath: string, childPath: string): boolean {
+  const rel = relative(parentPath, childPath);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
 export async function GET(request: NextRequest) {
   try {
     const rawPath = request.nextUrl.searchParams.get("path");
-    const dirPath = resolve(rawPath || homedir());
+    const homePath = await realpath(homedir()).catch(() => resolve(homedir()));
+    const requestedPath = rawPath
+      ? isAbsolute(rawPath)
+        ? rawPath
+        : join(homePath, rawPath)
+      : homePath;
+    const dirPath = await realpath(resolve(requestedPath)).catch(() => resolve(requestedPath));
+
+    if (!isWithinDirectory(homePath, dirPath)) {
+      return NextResponse.json(
+        { error: `Path is outside the allowed directory: ${homePath}` },
+        { status: 403 },
+      );
+    }
 
     const dirStat = await stat(dirPath).catch(() => null);
     if (!dirStat?.isDirectory()) {
@@ -57,7 +75,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       path: dirPath,
-      parent: dirPath === "/" ? null : resolve(dirPath, ".."),
+      parent: dirPath === homePath ? null : resolve(dirPath, ".."),
       directories,
       isGitRepo: hasGit,
       hasConfig,

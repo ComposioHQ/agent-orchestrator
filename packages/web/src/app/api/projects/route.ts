@@ -17,6 +17,7 @@ import { getAllProjects } from "@/lib/project-name";
 import { RegisterProjectSchema } from "@/lib/api-schemas";
 import { getPortfolioServices } from "@/lib/portfolio-services";
 import { migrateLegacyConfigForPortfolioRegistration } from "@/lib/legacy-config-migration";
+import { buildFlatLocalConfig, extractFlatLocalConfig } from "@/lib/local-project-config";
 import { registerAndResolveProject } from "@/lib/project-registration";
 import { getServices } from "@/lib/services";
 
@@ -29,35 +30,6 @@ function hasLocalConfigFile(dirPath: string): string | null {
     if (existsSync(configPath)) return configPath;
   }
   return null;
-}
-
-function buildFlatLocalConfig(projectName: string, repo?: string) {
-  return {
-    ...(repo ? { repo } : {}),
-    defaultBranch: "main",
-    runtime: "tmux",
-    agent: "claude-code",
-    workspace: "worktree",
-  };
-}
-
-function extractFlatLocalConfig(config: Record<string, unknown>, projectKey: string): Record<string, unknown> {
-  const projects = config["projects"];
-  if (!projects || typeof projects !== "object") {
-    return {};
-  }
-
-  const project = (projects as Record<string, unknown>)[projectKey];
-  if (!project || typeof project !== "object") {
-    return {};
-  }
-
-  const flat: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(project)) {
-    if (key === "name" || key === "path" || key === "sessionPrefix") continue;
-    flat[key] = value;
-  }
-  return flat;
 }
 
 async function ensureGitRepo(dirPath: string): Promise<void> {
@@ -146,7 +118,7 @@ export async function POST(request: NextRequest) {
         await ensureGitRepo(dirPath);
         await writeFile(
           join(dirPath, "agent-orchestrator.yaml"),
-          configToYaml(buildFlatLocalConfig(inferredName)),
+          configToYaml(buildFlatLocalConfig()),
           "utf-8",
         );
         localConfig = join(dirPath, "agent-orchestrator.yaml");
@@ -158,7 +130,7 @@ export async function POST(request: NextRequest) {
 
           await writeFile(
             join(dirPath, "agent-orchestrator.yaml"),
-            configToYaml(buildFlatLocalConfig(inferredName)),
+            configToYaml(buildFlatLocalConfig()),
             "utf-8",
           );
           localConfig = join(dirPath, "agent-orchestrator.yaml");
