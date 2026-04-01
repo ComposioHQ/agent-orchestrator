@@ -34,14 +34,19 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
   const [newTerminalModalOpen, setNewTerminalModalOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const hasLoadedOnce = useRef(false);
+  const keyboardNavRef = useRef(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, sidebarCollapsed ? "1" : "0");
   }, [sidebarCollapsed]);
 
-  // Close mobile sidebar on navigation
+  // Close mobile sidebar on navigation, unless triggered by keyboard shortcut
   useEffect(() => {
+    if (keyboardNavRef.current) {
+      keyboardNavRef.current = false;
+      return;
+    }
     setMobileSidebarOpen(false);
   }, [pathname]);
 
@@ -185,6 +190,7 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
       }
 
       const nextItem = navItems[nextIndex];
+      keyboardNavRef.current = true;
       if (nextItem.type === "session") {
         router.push(`/sessions/${encodeURIComponent(nextItem.id)}`);
       } else if (nextItem.type === "terminal") {
