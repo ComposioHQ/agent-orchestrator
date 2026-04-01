@@ -41,14 +41,16 @@ import {
   readSidecar,
   removeSidecar,
 } from "./utils.js";
+import { validatePublish } from "./guards.js";
 
 export interface ArtifactServiceConfig {
   artifactsDir: string;
   sessionsDir?: string;
+  worktreePath?: string;
 }
 
 export function createArtifactService(config: ArtifactServiceConfig): ArtifactService {
-  const { artifactsDir, sessionsDir } = config;
+  const { artifactsDir, sessionsDir, worktreePath } = config;
 
   function getSessionDir(sessionId: string): string {
     return join(artifactsDir, sessionId);
@@ -124,9 +126,9 @@ export function createArtifactService(config: ArtifactServiceConfig): ArtifactSe
       result = result.filter((e) => new Date(e.createdAt).getTime() <= before);
     }
     if (filter.lastN !== undefined && filter.lastN > 0) {
-      // Get unique session IDs sorted by most recent artifact
+      // Get unique session IDs sorted by most recent artifact (from filtered results)
       const sessionLastActivity = new Map<string, number>();
-      for (const e of entries) {
+      for (const e of result) {
         const t = new Date(e.createdAt).getTime();
         const existing = sessionLastActivity.get(e.sessionId) ?? 0;
         if (t > existing) sessionLastActivity.set(e.sessionId, t);
@@ -140,6 +142,22 @@ export function createArtifactService(config: ArtifactServiceConfig): ArtifactSe
     }
 
     return result;
+  }
+
+  function resolveEntryId(entries: ArtifactEntry[], artifactId: string): ArtifactEntry | null {
+    // Try exact match first
+    const exact = entries.find((e) => e.id === artifactId);
+    if (exact) return exact;
+
+    // Try prefix match
+    const matches = entries.filter((e) => e.id.startsWith(artifactId));
+    if (matches.length === 1) return matches[0];
+    if (matches.length > 1) {
+      throw new Error(
+        `Ambiguous artifact ID prefix "${artifactId}" matches ${matches.length} entries. Use a longer prefix.`,
+      );
+    }
+    return null;
   }
 
   function updateSessionMetadata(sessionId: string, manifest: ArtifactManifest): void {
@@ -186,17 +204,13 @@ export function createArtifactService(config: ArtifactServiceConfig): ArtifactSe
     ): Promise<ArtifactEntry> {
       const resolvedPath = resolve(filePath);
 
-      // Validate — only if we can determine a worktree path
-      // When called from CLI inside a worktree, the file is validated
-      if (meta.path === undefined) {
-        // No explicit override path — validate the source exists
-        if (!existsSync(resolvedPath)) {
-          throw new Error(`File not found: ${filePath}`);
-        }
-      }
-
       if (!existsSync(resolvedPath)) {
         throw new Error(`File not found: ${filePath}`);
+      }
+
+      // Enforce publish guards (sensitive file blocking, path traversal prevention)
+      if (worktreePath) {
+        validatePublish(resolvedPath, worktreePath);
       }
 
       const filename = meta.filename ?? basename(resolvedPath);
@@ -313,7 +327,7 @@ export function createArtifactService(config: ArtifactServiceConfig): ArtifactSe
       artifactId: string,
     ): Promise<{ entry: ArtifactEntry; absolutePath: string | null } | null> {
       const manifest = await ensureManifest();
-      const entry = manifest.entries.find((e) => e.id === artifactId);
+      const entry = resolveEntryId(manifest.entries, artifactId);
       if (!entry) return null;
 
       const absolutePath = entry.isReference
@@ -396,7 +410,7 @@ export function createArtifactService(config: ArtifactServiceConfig): ArtifactSe
 
       await withManifestLock(artifactsDir, async () => {
         const manifest = readManifest(artifactsDir);
-        const entry = manifest.entries.find((e) => e.id === artifactId);
+        const entry = resolveEntryId(manifest.entries, artifactId);
         if (!entry) throw new Error(`Artifact not found: ${artifactId}`);
 
         if (updates.status !== undefined) entry.status = updates.status;
@@ -423,8 +437,9 @@ export function createArtifactService(config: ArtifactServiceConfig): ArtifactSe
     ): Promise<void> {
       await withManifestLock(artifactsDir, async () => {
         const manifest = readManifest(artifactsDir);
-        const idx = manifest.entries.findIndex((e) => e.id === artifactId);
-        if (idx === -1) throw new Error(`Artifact not found: ${artifactId}`);
+        const resolved = resolveEntryId(manifest.entries, artifactId);
+        if (!resolved) throw new Error(`Artifact not found: ${artifactId}`);
+        const idx = manifest.entries.indexOf(resolved);
 
         const entry = manifest.entries[idx];
         const filePath = join(artifactsDir, entry.path);

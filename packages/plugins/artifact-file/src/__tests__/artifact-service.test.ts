@@ -258,6 +258,25 @@ describe("artifact-service", () => {
       expect(last1.length).toBe(1);
       expect(last1[0].sessionId).toBe("ao-3");
     });
+
+    it("lastN uses filtered entries, not raw manifest", async () => {
+      const service = createService();
+      await service.init();
+
+      const f1 = writeTestFile("a.md", "A");
+      const f2 = writeTestFile("b.md", "B");
+      const f3 = writeTestFile("c.md", "C");
+      await service.publish("ao-1", f1, { category: "document" });
+      await service.publish("ao-2", f2, { category: "test-report" });
+      await service.publish("ao-3", f3, { category: "document" });
+
+      // lastN=1 with category filter should return the most recent session
+      // that has "document" artifacts — ao-3 (not ao-2 which is test-report)
+      const filtered = await service.list({ category: "document", lastN: 1 });
+      expect(filtered.length).toBe(1);
+      expect(filtered[0].sessionId).toBe("ao-3");
+      expect(filtered[0].category).toBe("document");
+    });
   });
 
   describe("get", () => {
@@ -531,6 +550,133 @@ describe("artifact-service", () => {
       expect(all.length).toBe(1);
       expect(all[0].filename).toBe("orphan.md");
       expect(all[0].category).toBe("other"); // default when no sidecar
+    });
+  });
+
+  describe("publish guards", () => {
+    it("blocks .env files when worktreePath is set", async () => {
+      const service = createArtifactService({
+        artifactsDir,
+        worktreePath: worktreeDir,
+      });
+      await service.init();
+
+      const filePath = writeTestFile(".env", "SECRET=abc123");
+      await expect(
+        service.publish("ao-1", filePath, { category: "other" }),
+      ).rejects.toThrow("security filter");
+    });
+
+    it("blocks credentials files when worktreePath is set", async () => {
+      const service = createArtifactService({
+        artifactsDir,
+        worktreePath: worktreeDir,
+      });
+      await service.init();
+
+      const filePath = writeTestFile("credentials.json", '{"key":"secret"}');
+      await expect(
+        service.publish("ao-1", filePath, { category: "other" }),
+      ).rejects.toThrow("security filter");
+    });
+
+    it("blocks path traversal outside worktree", async () => {
+      const service = createArtifactService({
+        artifactsDir,
+        worktreePath: worktreeDir,
+      });
+      await service.init();
+
+      // Write file outside worktree
+      const outsidePath = join(tmpDir, "outside.md");
+      writeFileSync(outsidePath, "outside content");
+      await expect(
+        service.publish("ao-1", outsidePath, { category: "document" }),
+      ).rejects.toThrow("outside worktree");
+    });
+
+    it("allows safe files when worktreePath is set", async () => {
+      const service = createArtifactService({
+        artifactsDir,
+        worktreePath: worktreeDir,
+      });
+      await service.init();
+
+      const filePath = writeTestFile("design.md", "Safe content");
+      const entry = await service.publish("ao-1", filePath, { category: "document" });
+      expect(entry.filename).toBe("design.md");
+    });
+
+    it("skips guards when worktreePath is not set", async () => {
+      const service = createService();
+      await service.init();
+
+      // Without worktreePath, file outside artifacts dir is allowed
+      const outsidePath = join(tmpDir, "outside.md");
+      writeFileSync(outsidePath, "outside content");
+      const entry = await service.publish("ao-1", outsidePath, { category: "document" });
+      expect(entry.filename).toBe("outside.md");
+    });
+  });
+
+  describe("prefix ID matching", () => {
+    it("resolves artifact by ID prefix", async () => {
+      const service = createService();
+      await service.init();
+
+      const f = writeTestFile("doc.md", "content");
+      const entry = await service.publish("ao-1", f, { category: "document" });
+      const prefix = entry.id.slice(0, 8);
+
+      const result = await service.get(prefix);
+      expect(result).not.toBeNull();
+      expect(result!.entry.id).toBe(entry.id);
+    });
+
+    it("resolves artifact by full ID", async () => {
+      const service = createService();
+      await service.init();
+
+      const f = writeTestFile("doc.md", "content");
+      const entry = await service.publish("ao-1", f, { category: "document" });
+
+      const result = await service.get(entry.id);
+      expect(result).not.toBeNull();
+      expect(result!.entry.id).toBe(entry.id);
+    });
+
+    it("returns null for non-matching prefix", async () => {
+      const service = createService();
+      await service.init();
+
+      const result = await service.get("xxxxxxxx");
+      expect(result).toBeNull();
+    });
+
+    it("update works with ID prefix", async () => {
+      const service = createService();
+      await service.init();
+
+      const f = writeTestFile("doc.md", "content");
+      const entry = await service.publish("ao-1", f, { category: "document" });
+      const prefix = entry.id.slice(0, 8);
+
+      const updated = await service.update(prefix, { description: "new desc" });
+      expect(updated.description).toBe("new desc");
+      expect(updated.id).toBe(entry.id);
+    });
+
+    it("delete works with ID prefix", async () => {
+      const service = createService();
+      await service.init();
+
+      const f = writeTestFile("doc.md", "content");
+      const entry = await service.publish("ao-1", f, { category: "document" });
+      const prefix = entry.id.slice(0, 8);
+
+      await service.delete(prefix);
+      const all = await service.list();
+      expect(all.length).toBe(0);
     });
   });
 

@@ -50,7 +50,9 @@ function resolveArtifactsDir(opts: { project?: string }): {
 
 function getService(opts: { project?: string }): ArtifactService {
   const { artifactsDir, sessionsDir } = resolveArtifactsDir(opts);
-  return createArtifactService({ artifactsDir, sessionsDir });
+  // In agent context, use cwd as worktree for publish guards
+  const worktreePath = process.env.AO_ARTIFACTS_DIR ? process.cwd() : undefined;
+  return createArtifactService({ artifactsDir, sessionsDir, worktreePath });
 }
 
 function defaultSession(): string {
