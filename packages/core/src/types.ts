@@ -70,8 +70,23 @@ export interface ActivityDetection {
   timestamp?: Date;
 }
 
+/** A single entry in the AO activity JSONL log, written by agent plugins. */
+export interface ActivityLogEntry {
+  /** ISO 8601 timestamp */
+  ts: string;
+  /** Activity state derived from terminal output or agent-native data */
+  state: ActivityState;
+  /** What triggered this state classification */
+  source: "terminal" | "native";
+  /** Raw terminal snippet that caused waiting_input/blocked (for debugging) */
+  trigger?: string;
+}
+
 /** Default threshold (ms) before a "ready" session becomes "idle". */
 export const DEFAULT_READY_THRESHOLD_MS = 300_000; // 5 minutes
+
+/** Default window (ms) for "active" state — activity newer than this is "active", older is "ready". */
+export const DEFAULT_ACTIVE_WINDOW_MS = 30_000; // 30 seconds
 
 /** Session status constants */
 export const SESSION_STATUS = {
@@ -362,6 +377,19 @@ export interface Agent {
    * run git/gh commands. Without this, PRs created by agents never show up.
    */
   setupWorkspaceHooks?(workspacePath: string, config: WorkspaceHooksConfig): Promise<void>;
+
+  /**
+   * Optional: Record an activity observation to the session's JSONL activity log.
+   * Called by the lifecycle manager during each poll cycle with captured terminal output.
+   *
+   * Plugins classify the terminal output (via detectActivity) and append a JSONL entry
+   * to `{session.workspacePath}/.ao/activity.jsonl`. The next `getActivityState()` call
+   * reads from this file to detect states like `waiting_input` and `blocked`.
+   *
+   * Agents with native JSONL (Claude Code, Codex) should NOT implement this — their
+   * `getActivityState` already reads richer data from the agent's own session files.
+   */
+  recordActivity?(session: Session, terminalOutput: string): Promise<void>;
 }
 
 export interface AgentLaunchConfig {

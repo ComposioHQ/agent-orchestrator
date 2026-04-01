@@ -267,10 +267,17 @@ describe("Claude Code Activity Detection", () => {
       });
 
       it("custom threshold applies to active types too", async () => {
-        // 2 minutes old
+        // 2 minutes old — past active window (30s), within 300s threshold → ready
         writeJsonl([{ type: "user" }], 120_000);
 
         expect((await agent.getActivityState(makeSession(), 60_000))?.state).toBe("idle");
+        expect((await agent.getActivityState(makeSession(), 300_000))?.state).toBe("ready");
+      });
+
+      it("active types within 30s window return active", async () => {
+        // 10 seconds old — within active window → active
+        writeJsonl([{ type: "user" }], 10_000);
+
         expect((await agent.getActivityState(makeSession(), 300_000))?.state).toBe("active");
       });
     });

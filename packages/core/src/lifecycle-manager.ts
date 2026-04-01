@@ -366,6 +366,25 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     // 2. Check agent activity — prefer JSONL-based detection (runtime-agnostic)
     if (agent && session.runtimeHandle) {
       try {
+        // If the agent implements recordActivity, capture terminal output and record
+        // BEFORE calling getActivityState so the JSONL has fresh data to read.
+        if (agent.recordActivity && session.workspacePath) {
+          try {
+            const runtime = registry.get<Runtime>(
+              "runtime",
+              project.runtime ?? config.defaults.runtime,
+            );
+            const terminalOutput = runtime
+              ? await runtime.getOutput(session.runtimeHandle, 10)
+              : "";
+            if (terminalOutput) {
+              await agent.recordActivity(session, terminalOutput);
+            }
+          } catch {
+            // Non-fatal — activity recording is best-effort
+          }
+        }
+
         // Try JSONL-based activity detection first (reads agent's session files directly)
         const activityState = await agent.getActivityState(session, config.readyThresholdMs);
         if (activityState) {
