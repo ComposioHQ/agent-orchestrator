@@ -18,6 +18,10 @@ describe("Config Loading", () => {
     // Save original state
     originalCwd = process.cwd();
     originalEnv = { ...process.env };
+    process.env["HOME"] = testDir;
+    process.env["XDG_CONFIG_HOME"] = join(testDir, ".config");
+    delete process.env["AO_CONFIG_PATH"];
+    delete process.env["AO_GLOBAL_CONFIG"];
 
     // Change to test directory
     process.chdir(testDir);
@@ -86,6 +90,34 @@ describe("Config Loading", () => {
       const found = findConfigFile();
       expect(found).not.toBeNull();
       expect(realpathSync(found!)).toBe(realpathSync(oldFormatConfig));
+    });
+
+    it("should honor startDir only when it contains a wrapped config", () => {
+      const startDir = join(testDir, "nested");
+      mkdirSync(startDir, { recursive: true });
+      writeFileSync(join(startDir, "agent-orchestrator.yaml"), "repo: org/repo\nagent: codex\n");
+      expect(findConfigFile(startDir)).toBeNull();
+
+      writeFileSync(join(startDir, "agent-orchestrator.yaml"), "projects: {}\n");
+      expect(realpathSync(findConfigFile(startDir)!)).toBe(
+        realpathSync(join(startDir, "agent-orchestrator.yaml")),
+      );
+    });
+
+    it("should prefer AO_GLOBAL_CONFIG path before legacy home config paths", () => {
+      const globalConfig = join(testDir, "global-config.yaml");
+      writeFileSync(globalConfig, "projects: {}\n");
+      process.env["AO_GLOBAL_CONFIG"] = globalConfig;
+
+      const legacyDir = join(testDir, "home");
+      mkdirSync(join(legacyDir, ".config", "agent-orchestrator"), { recursive: true });
+      process.env["HOME"] = legacyDir;
+      writeFileSync(
+        join(legacyDir, ".config", "agent-orchestrator", "config.yaml"),
+        "projects: {}\n",
+      );
+
+      expect(findConfigFile()).toBe(globalConfig);
     });
   });
 

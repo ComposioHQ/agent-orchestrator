@@ -36,6 +36,13 @@ async function gh(args: string[]): Promise<string> {
   }
 }
 
+function requireProjectRepo(project: ProjectConfig): string {
+  if (!project.repo) {
+    throw new Error(`Project "${project.name}" does not define a GitHub repo`);
+  }
+  return project.repo;
+}
+
 function getErrorText(err: unknown): string {
   if (!(err instanceof Error)) return "";
 
@@ -61,6 +68,7 @@ function isUnknownJsonFieldError(err: unknown, fieldName: string): boolean {
 }
 
 async function ghIssueViewJson(identifier: string, project: ProjectConfig): Promise<string> {
+  const repo = requireProjectRepo(project);
   const fieldsWithStateReason = "number,title,body,url,state,stateReason,labels,assignees";
   try {
     return await gh([
@@ -68,7 +76,7 @@ async function ghIssueViewJson(identifier: string, project: ProjectConfig): Prom
       "view",
       identifier,
       "--repo",
-      project.repo,
+      repo,
       "--json",
       fieldsWithStateReason,
     ]);
@@ -79,7 +87,7 @@ async function ghIssueViewJson(identifier: string, project: ProjectConfig): Prom
       "view",
       identifier,
       "--repo",
-      project.repo,
+      repo,
       "--json",
       "number,title,body,url,state,labels,assignees",
     ]);
@@ -143,12 +151,13 @@ function createGitHubTracker(): Tracker {
     },
 
     async isCompleted(identifier: string, project: ProjectConfig): Promise<boolean> {
+      const repo = requireProjectRepo(project);
       const raw = await gh([
         "issue",
         "view",
         identifier,
         "--repo",
-        project.repo,
+        repo,
         "--json",
         "state",
       ]);
@@ -157,8 +166,9 @@ function createGitHubTracker(): Tracker {
     },
 
     issueUrl(identifier: string, project: ProjectConfig): string {
+      const repo = requireProjectRepo(project);
       const num = identifier.replace(/^#/, "");
-      return `https://github.com/${project.repo}/issues/${num}`;
+      return `https://github.com/${repo}/issues/${num}`;
     },
 
     issueLabel(url: string, _project: ProjectConfig): string {
@@ -204,11 +214,12 @@ function createGitHubTracker(): Tracker {
     },
 
     async listIssues(filters: IssueFilters, project: ProjectConfig): Promise<Issue[]> {
+      const repo = requireProjectRepo(project);
       const args = [
         "issue",
         "list",
         "--repo",
-        project.repo,
+        repo,
         "--limit",
         String(filters.limit ?? 30),
       ];
@@ -257,12 +268,13 @@ function createGitHubTracker(): Tracker {
       update: IssueUpdate,
       project: ProjectConfig,
     ): Promise<void> {
+      const repo = requireProjectRepo(project);
       // Handle state change — GitHub Issues only supports open/closed.
       // "in_progress" is not a GitHub state, so it is intentionally a no-op.
       if (update.state === "closed") {
-        await gh(["issue", "close", identifier, "--repo", project.repo]);
+        await gh(["issue", "close", identifier, "--repo", repo]);
       } else if (update.state === "open") {
-        await gh(["issue", "reopen", identifier, "--repo", project.repo]);
+        await gh(["issue", "reopen", identifier, "--repo", repo]);
       }
 
       // Handle label removal
@@ -272,7 +284,7 @@ function createGitHubTracker(): Tracker {
           "edit",
           identifier,
           "--repo",
-          project.repo,
+          repo,
           "--remove-label",
           update.removeLabels.join(","),
         ]);
@@ -285,7 +297,7 @@ function createGitHubTracker(): Tracker {
           "edit",
           identifier,
           "--repo",
-          project.repo,
+          repo,
           "--add-label",
           update.labels.join(","),
         ]);
@@ -298,7 +310,7 @@ function createGitHubTracker(): Tracker {
           "edit",
           identifier,
           "--repo",
-          project.repo,
+          repo,
           "--add-assignee",
           update.assignee,
         ]);
@@ -311,7 +323,7 @@ function createGitHubTracker(): Tracker {
           "comment",
           identifier,
           "--repo",
-          project.repo,
+          repo,
           "--body",
           update.comment,
         ]);
@@ -319,11 +331,12 @@ function createGitHubTracker(): Tracker {
     },
 
     async createIssue(input: CreateIssueInput, project: ProjectConfig): Promise<Issue> {
+      const repo = requireProjectRepo(project);
       const args = [
         "issue",
         "create",
         "--repo",
-        project.repo,
+        repo,
         "--title",
         input.title,
         "--body",

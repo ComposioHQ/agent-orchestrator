@@ -449,9 +449,12 @@ function createGitLabSCM(config?: Record<string, unknown>): SCM {
     async detectPR(session: Session, project: ProjectConfig): Promise<PRInfo | null> {
       if (!session.branch) return null;
 
-      const parts = project.repo.split("/");
+      const projectRepo = project.repo;
+      if (!projectRepo) return null;
+
+      const parts = projectRepo.split("/");
       if (parts.length < 2 || !parts[0] || !parts[1]) {
-        throw new Error(`Invalid repo format "${project.repo}", expected "owner/repo"`);
+        throw new Error(`Invalid repo format "${projectRepo}", expected "owner/repo"`);
       }
       const owner = parts.slice(0, -1).join("/");
       const repo = parts[parts.length - 1];
@@ -464,7 +467,7 @@ function createGitLabSCM(config?: Record<string, unknown>): SCM {
             "--source-branch",
             session.branch,
             "--repo",
-            project.repo,
+            projectRepo,
             "-F",
             "json",
             "-P",

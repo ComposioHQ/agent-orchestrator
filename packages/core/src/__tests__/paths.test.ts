@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   generateConfigHash,
+  generateProjectHash,
   generateProjectId,
   generateInstanceId,
   generateSessionPrefix,
@@ -98,6 +99,35 @@ describe("Hash Generation", () => {
 
     expect(hashSymlink).toBe(hashReal);
   });
+
+  it("falls back to resolve() when the config file does not exist", () => {
+    const missingConfig = join(tmpDir, "missing", "agent-orchestrator.yaml");
+    const hash = generateConfigHash(missingConfig);
+
+    expect(hash).toHaveLength(12);
+    expect(hash).toMatch(/^[a-f0-9]{12}$/);
+  });
+});
+
+describe("Project Hash Generation", () => {
+  it("matches config-based hashing for a project-local config path", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "project-hash-test-"));
+    try {
+      const projectDir = join(tmpDir, "demo");
+      mkdirSync(projectDir, { recursive: true });
+      const configPath = join(projectDir, "agent-orchestrator.yaml");
+      writeFileSync(configPath, "projects: {}");
+
+      expect(generateProjectHash(projectDir)).toBe(generateConfigHash(configPath));
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("handles non-existent project paths", () => {
+    const hash = generateProjectHash(join(tmpdir(), `missing-project-${Date.now()}`));
+    expect(hash).toHaveLength(12);
+  });
 });
 
 describe("Project ID Generation", () => {
@@ -173,6 +203,12 @@ describe("Instance ID Generation", () => {
     expect(id1).toBe(id2);
 
     rmSync(otherDir, { recursive: true, force: true });
+  });
+
+  it("ignores config path changes when generating instance ids", () => {
+    expect(generateInstanceId("/tmp/global.yaml", "/repos/integrator")).toBe(
+      generateInstanceId("/repos/integrator/agent-orchestrator.yaml", "/repos/integrator"),
+    );
   });
 });
 
@@ -460,6 +496,14 @@ describe("Origin File Management", () => {
     // .origin should now contain the current config path
     const stored = readFileSync(originPath, "utf-8").trim();
     expect(stored).toBe(realpathSync(configPath));
+  });
+
+  it("stores a resolved path even when the config file does not exist yet", () => {
+    const missingConfigPath = join(tmpDir, "global.yaml");
+    validateAndStoreOrigin(missingConfigPath, projectPath);
+
+    const originPath = getOriginFilePath(missingConfigPath, projectPath);
+    expect(readFileSync(originPath, "utf-8").trim()).toBe(missingConfigPath);
   });
 
   it("creates parent directory if needed", () => {

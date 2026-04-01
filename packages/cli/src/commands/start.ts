@@ -1218,8 +1218,12 @@ export function registerStart(program: Command): void {
               console.log("  2. Start new orchestrator on this project");
               console.log("  3. Override — restart everything");
               console.log("  4. Quit\n");
-              const choice = await rl.question("  Choice [1-4]: ");
-              rl.close();
+              let choice: string;
+              try {
+                choice = await rl.question("  Choice [1-4]: ");
+              } finally {
+                rl.close();
+              }
 
               if (choice.trim() === "1") {
                 const url = `http://localhost:${running.port}`;

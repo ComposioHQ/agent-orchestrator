@@ -42,6 +42,13 @@ function toIssue(data: GitLabIssueData): Issue {
   };
 }
 
+function requireProjectRepo(project: ProjectConfig): string {
+  if (!project.repo) {
+    throw new Error(`Project "${project.name}" does not define a GitLab repo`);
+  }
+  return project.repo;
+}
+
 // ---------------------------------------------------------------------------
 // Tracker implementation
 // ---------------------------------------------------------------------------
@@ -54,16 +61,18 @@ function createGitLabTracker(config?: Record<string, unknown>): Tracker {
     name: "gitlab",
 
     async getIssue(identifier: string, project: ProjectConfig): Promise<Issue> {
+      const repo = requireProjectRepo(project);
       const raw = await glab(
-        ["issue", "view", identifier, "--repo", project.repo, "-F", "json"],
+        ["issue", "view", identifier, "--repo", repo, "-F", "json"],
         hostname,
       );
       return toIssue(parseJSON<GitLabIssueData>(raw, `getIssue for issue ${identifier}`));
     },
 
     async isCompleted(identifier: string, project: ProjectConfig): Promise<boolean> {
+      const repo = requireProjectRepo(project);
       const raw = await glab(
-        ["issue", "view", identifier, "--repo", project.repo, "-F", "json"],
+        ["issue", "view", identifier, "--repo", repo, "-F", "json"],
         hostname,
       );
       const data = parseJSON<{ state: string }>(raw, `isCompleted for issue ${identifier}`);
@@ -71,9 +80,10 @@ function createGitLabTracker(config?: Record<string, unknown>): Tracker {
     },
 
     issueUrl(identifier: string, project: ProjectConfig): string {
+      const repo = requireProjectRepo(project);
       const num = identifier.replace(/^#/, "");
-      const host = extractHost(project.repo) ?? defaultHost;
-      return `https://${host}/${stripHost(project.repo)}/-/issues/${num}`;
+      const host = extractHost(repo) ?? defaultHost;
+      return `https://${host}/${stripHost(repo)}/-/issues/${num}`;
     },
 
     issueLabel(url: string, _project: ProjectConfig): string {
@@ -113,11 +123,12 @@ function createGitLabTracker(config?: Record<string, unknown>): Tracker {
     },
 
     async listIssues(filters: IssueFilters, project: ProjectConfig): Promise<Issue[]> {
+      const repo = requireProjectRepo(project);
       const args = [
         "issue",
         "list",
         "--repo",
-        project.repo,
+        repo,
         "-O",
         "json",
         "-P",
@@ -150,33 +161,35 @@ function createGitLabTracker(config?: Record<string, unknown>): Tracker {
       update: IssueUpdate,
       project: ProjectConfig,
     ): Promise<void> {
+      const repo = requireProjectRepo(project);
       if (update.state === "closed") {
-        await glab(["issue", "close", identifier, "--repo", project.repo], hostname);
+        await glab(["issue", "close", identifier, "--repo", repo], hostname);
       } else if (update.state === "open") {
-        await glab(["issue", "reopen", identifier, "--repo", project.repo], hostname);
+        await glab(["issue", "reopen", identifier, "--repo", repo], hostname);
       }
 
       if (update.labels && update.labels.length > 0) {
         await glab(
-          ["issue", "update", identifier, "--repo", project.repo, "--label", update.labels.join(",")],
+          ["issue", "update", identifier, "--repo", repo, "--label", update.labels.join(",")],
           hostname,
         );
       }
 
       if (update.comment) {
         await glab(
-          ["issue", "note", identifier, "--repo", project.repo, "-m", update.comment],
+          ["issue", "note", identifier, "--repo", repo, "-m", update.comment],
           hostname,
         );
       }
     },
 
     async createIssue(input: CreateIssueInput, project: ProjectConfig): Promise<Issue> {
+      const repo = requireProjectRepo(project);
       const args = [
         "issue",
         "create",
         "--repo",
-        project.repo,
+        repo,
         "--title",
         input.title,
         "--description",

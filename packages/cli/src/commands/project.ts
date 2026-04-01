@@ -10,6 +10,11 @@ import {
   savePreferences,
   loadLocalProjectConfig,
 } from "@composio/ao-core";
+import {
+  formatPortfolioDegradedReason,
+  formatPortfolioProjectName,
+  formatPortfolioProjectStatus,
+} from "../lib/portfolio-display.js";
 
 export function registerProject_cmd(program: Command): void {
   const project = program
@@ -37,22 +42,17 @@ export function registerProject_cmd(program: Command): void {
       for (const p of portfolio) {
         const count = counts[p.id] || { total: 0, active: 0 };
         const isDefault = prefs.defaultProjectId === p.id;
-        const status = p.degraded
-          ? chalk.red("degraded")
-          : !p.enabled
-            ? chalk.dim("disabled")
-            : count.active > 0
-              ? chalk.green(`${count.active} active`)
-              : chalk.dim("idle");
+        const status = formatPortfolioProjectStatus(p, count);
 
         const pin = p.pinned ? chalk.yellow("*") : " ";
         const def = isDefault ? chalk.cyan(" (default)") : "";
-        const name = p.name !== p.id ? ` ${chalk.dim(`(${p.name})`)}` : "";
+        const name = formatPortfolioProjectName(p);
+        const degradedReason = formatPortfolioDegradedReason(p);
 
         console.log(`  ${pin} ${chalk.bold(p.id)}${name}${def}`);
         console.log(`    ${status} | ${count.total} sessions | ${chalk.dim(p.source)}`);
-        if (p.degraded && p.degradedReason) {
-          console.log(`    ${chalk.red(p.degradedReason)}`);
+        if (degradedReason) {
+          console.log(`    ${degradedReason}`);
         }
       }
 

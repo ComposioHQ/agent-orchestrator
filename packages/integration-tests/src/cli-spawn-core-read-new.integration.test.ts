@@ -100,7 +100,7 @@ describe.skipIf(!tmuxOk)("CLI-Core integration (hash-based architecture)", () =>
   }, 30_000);
 
   it("sessions are stored in hash-based project-specific directory", () => {
-    // Calculate expected directory — hash is based on project path, not config path
+    // Session directories are keyed by project path, not global config location.
     const hash = generateProjectHash(repoPath);
     const sessionsDir = getSessionsDir(configPath, repoPath);
 

@@ -1008,8 +1008,8 @@ export interface ProjectConfig {
   /** Display name */
   name: string;
 
-  /** GitHub repo in "owner/repo" format */
-  repo: string;
+  /** GitHub repo in "owner/repo" format (optional for local-only projects) */
+  repo?: string;
 
   /** Local path to the repo */
   path: string;

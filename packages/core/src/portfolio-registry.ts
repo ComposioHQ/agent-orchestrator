@@ -199,12 +199,11 @@ export function unregisterProject(projectId: string): void {
   const globalConfig = loadGlobalConfig();
   if (!globalConfig?.projects[projectId]) return;
 
-  delete globalConfig.projects[projectId];
+  const { [projectId]: _removedProject, ...remainingProjects } = globalConfig.projects;
+  globalConfig.projects = remainingProjects;
   if (globalConfig.projectOrder) {
-    globalConfig.projectOrder = globalConfig.projectOrder.filter((id) => id !== projectId);
-    if (globalConfig.projectOrder.length === 0) {
-      delete globalConfig.projectOrder;
-    }
+    const nextProjectOrder = globalConfig.projectOrder.filter((id) => id !== projectId);
+    globalConfig.projectOrder = nextProjectOrder.length > 0 ? nextProjectOrder : undefined;
   }
 
   saveGlobalConfig(globalConfig);
