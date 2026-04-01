@@ -1,0 +1,118 @@
+packages/web/src/app/api/agents/route.ts
+  8a80f09c72617952 1-21
+packages/web/src/components/__tests__/ActivityFeedPage.test.tsx
+  8a80f09c72617952 104
+packages/web/src/lib/scm-webhooks.ts
+  8a80f09c72617952 50
+packages/web/src/components/UnifiedSidebar.tsx
+  8a80f09c72617952 68,120-168,214-215,217-221,232,238,240-241,243,509-525,805-811,1009,1013,1177-1192,1195-1203
+packages/web/src/components/ProjectAvatar.tsx
+  5bac91f801b5b4e7 15-20,25-33,35-37,45-53,56-70,73-77
+packages/web/public/agent-icons/codex.svg
+  8a80f09c72617952 1-4
+packages/web/src/lib/project-registration.ts
+  8a80f09c72617952 8,21-25,35,55
+packages/core/src/portfolio-registry.ts
+  8a80f09c72617952 2,4-6,9-10,22-27,30,32-33,36,50,78-82,102,114-116,118-136,138-158,160-166,169-176,178-180,182,185,187-191,193-194,197,199-200,202-207,209-210,213-216
+packages/web/src/app/api/projects/[id]/route.ts
+  8a80f09c72617952 9,70,100-102,104
+packages/web/src/components/ActivityFeedPage.tsx
+  8a80f09c72617952 136
+packages/web/src/components/Skeleton.tsx
+  8a80f09c72617952 27-28
+packages/core/src/config.ts
+  8a80f09c72617952 23,148,242
+packages/web/src/components/__tests__/Dashboard.emptyState.test.tsx
+  8a80f09c72617952 29,56-85
+packages/web/src/app/projects/[projectId]/page.tsx
+  8a80f09c72617952 21,82-88
+packages/web/src/app/api/spawn/route.ts
+  8a80f09c72617952 42-48,75
+packages/web/src/lib/services.ts
+  8a80f09c72617952 13,16,42,78-96,98,104
+packages/web/src/app/api/projects/route.ts
+  8a80f09c72617952 2,5-6,14,19,21,23,34-78,141,143-150,152-191,193-196,205-234,241
+packages/web/src/app/api/settings/preferences/route.ts
+  8a80f09c72617952 4,35
+packages/web/tsconfig.json
+  8a80f09c72617952 4-8,20-22,31-42
+packages/cli/src/commands/project.ts
+  8a80f09c72617952 11,70
+packages/cli/src/commands/start.ts
+  8a80f09c72617952 161
+docs/multi-project-guide.md
+  8a80f09c72617952 1-142
+packages/web/src/components/Dashboard.tsx
+  8a80f09c72617952 427-432,434-435,625,678
+packages/web/src/__tests__/api-routes.test.ts
+  8a80f09c72617952 197,227-248,572-584
+packages/web/package.json
+  8a80f09c72617952 16,25,32,47
+packages/web/src/components/AddProjectModal.tsx
+  8a80f09c72617952 4,10,27-58,60,84-85,144-146,152-158,165-167,178-183,209,212-223,229-310,353-378,383-387,405,441,444,447-450,452-453,455,460,462,464,466,497,500,502-503,505,507-533
+packages/web/src/lib/legacy-config-migration.ts
+  8a80f09c72617952 1-130
+packages/web/src/app/api/projects/clone/route.ts
+  8a80f09c72617952 19-37,87-91
+.gitignore
+  8a80f09c72617952 5
+packages/web/src/components/PortfolioPage.tsx
+  8a80f09c72617952 194,198
+packages/core/src/__tests__/portfolio-registry.test.ts
+  8a80f09c72617952 1-129
+packages/core/src/prompt-builder.ts
+  8a80f09c72617952 79-81
+packages/plugins/runtime-tmux/src/index.ts
+  8a80f09c72617952 19,59-74,129
+packages/web/src/components/DashboardShell.tsx
+  8a80f09c72617952 58
+packages/web/next.config.js
+  8a80f09c72617952 3
+packages/web/src/__tests__/services.test.ts
+  8a80f09c72617952 10,35,46,65,106-111
+packages/core/src/portfolio-projects.ts
+  8a80f09c72617952 9-14,21-53
+packages/plugins/runtime-tmux/src/__tests__/index.test.ts
+  8a80f09c72617952 26-29,106,145,150,152,156-173,182,239
+packages/core/src/orchestrator-prompt.ts
+  8a80f09c72617952 45
+packages/web/src/lib/__tests__/legacy-config-migration.test.ts
+  8a80f09c72617952 1-93
+packages/web/next-env.d.ts
+  8a80f09c72617952 3
+packages/web/src/lib/ensure-project-orchestrator.ts
+  8a80f09c72617952 1-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.3",
+  "base_commit_sha": "9e6d05a6a4c7c4dc7f656c0fb747949dbb5e7116",
+  "prompts": {
+    "5bac91f801b5b4e7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d47cc-61da-7703-b7ca-ef9ef516ef59",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 47,
+      "total_deletions": 31,
+      "accepted_lines": 47,
+      "overriden_lines": 0
+    },
+    "8a80f09c72617952": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d491f-6862-7150-a0f2-d05058a857e0",
+        "model": "unknown"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 1453,
+      "total_deletions": 1113,
+      "accepted_lines": 1451,
+      "overriden_lines": 0
+    }
+  }
+}
