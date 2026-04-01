@@ -472,7 +472,6 @@ export function DirectTerminal({
         // Intercept Cmd+C (Mac) and Ctrl+Shift+C (Linux/Win) for copy.
         // Paste (Cmd+V / Ctrl+Shift+V) is handled natively by xterm.js
         // via its internal textarea — no custom handler needed.
-        // Also intercept Ctrl+` to allow WorkspaceLayout to toggle terminal panel.
         terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
           if (e.type !== "keydown") return true;
 
@@ -484,11 +483,6 @@ export function DirectTerminal({
             navigator.clipboard?.writeText(terminal.getSelection()).catch(() => {});
             // Clear selection so the terminal resumes receiving output
             terminal.clearSelection();
-            return false;
-          }
-
-          // Ctrl+` — toggle terminal panel (only ctrlKey, not metaKey)
-          if (e.ctrlKey && !e.metaKey && e.key === "`") {
             return false;
           }
 

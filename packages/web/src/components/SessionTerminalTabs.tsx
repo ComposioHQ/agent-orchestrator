@@ -162,15 +162,15 @@ export function SessionTerminalTabs({
     [sessionId, loadSubs],
   );
 
-  // Sub-session tab navigation shortcuts — Cmd+Shift+ArrowRight/Left
+  // Sub-session tab navigation shortcuts — Cmd+Shift+L/H (vim right/left)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (!((e.metaKey || e.ctrlKey) && e.shiftKey)) return;
 
       if (!subs || subs.length === 0) return;
 
-      const isRight = e.key === "ArrowRight";
-      const isLeft = e.key === "ArrowLeft";
+      const isRight = e.key === "L";
+      const isLeft = e.key === "H";
 
       if (!isRight && !isLeft) return;
 

@@ -154,7 +154,7 @@ export function CompactTopBar({ session, collapsed, toggleCollapsed, verticalLay
         {[
           { idx: 0, icon: "📁", label: "Files", shortcut: "⌘⇧F" },
           { idx: 1, icon: "📄", label: "Preview", shortcut: "⌘⇧P" },
-          { idx: 2, icon: "▶", label: "Terminal", shortcut: "⌃`" },
+          { idx: 2, icon: "▶", label: "Terminal", shortcut: "⌘⇧Z" },
         ].map(({ idx, icon, label, shortcut }) => {
           const active = !collapsed[idx];
           return (
@@ -185,7 +185,7 @@ export function CompactTopBar({ session, collapsed, toggleCollapsed, verticalLay
         <div style={{ width: "1px", height: "16px", background: "var(--color-border-subtle)", margin: "0 4px" }} />
         <button
           onClick={onToggleVertical}
-          title={`Toggle layout (⌘⇧L) — ${verticalLayout ? "Horizontal layout" : "Vertical layout"}`}
+          title={`Toggle layout — ${verticalLayout ? "Horizontal layout" : "Vertical layout"}`}
           style={{
             background: "none",
             border: "none",

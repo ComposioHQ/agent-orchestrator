@@ -6,9 +6,11 @@ import { ProjectSidebar } from "@/components/ProjectSidebar";
 import { SidebarContext } from "@/components/workspace/SidebarContext";
 import { NewTerminalModal } from "@/components/NewTerminalModal";
 import { cn } from "@/lib/cn";
-import type { DashboardOrchestratorLink, DashboardSession } from "@/lib/types";
+import { isKilledSession, getAttentionLevel, type DashboardOrchestratorLink, type DashboardSession } from "@/lib/types";
 import type { ProjectInfo } from "@/lib/project-name";
 import type { StandaloneTerminal } from "@/lib/standalone-terminals";
+import { useShowKilledSessions } from "@/hooks/useShowKilledSessions";
+import { useShowDoneSessions } from "@/hooks/useShowDoneSessions";
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "ao:web:sidebar-collapsed";
 
@@ -126,7 +128,16 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
     return undefined;
   }, [pathname]);
 
-  // Sidebar navigation shortcuts — Cmd+Shift+ArrowDown/Up
+  const [showKilled] = useShowKilledSessions();
+  const [showDone] = useShowDoneSessions();
+
+  function sidebarSessionRowVisible(session: DashboardSession): boolean {
+    if (isKilledSession(session)) return showKilled;
+    if (getAttentionLevel(session) === "done") return showDone;
+    return true;
+  }
+
+  // Sidebar navigation shortcuts — Cmd+Shift+J/K (vim down/up)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (!((e.metaKey || e.ctrlKey) && e.shiftKey)) return;
@@ -134,9 +145,11 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
       // Build navigable list: sessions grouped by project, then global terminals
       const navItems: Array<{ type: "session" | "terminal"; id: string; projectId?: string }> = [];
 
-      // For each project, add its sessions
+      // For each project, add its visible sessions
       for (const project of projects) {
-        const projectSessions = sessions.filter((s) => s.projectId === project.id);
+        const projectSessions = sessions
+          .filter((s) => s.projectId === project.id)
+          .filter((s) => sidebarSessionRowVisible(s));
         for (const session of projectSessions) {
           navItems.push({ type: "session", id: session.id, projectId: project.id });
         }
@@ -157,8 +170,8 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
         currentIndex = navItems.findIndex((item) => item.type === "terminal" && item.id === activeTerminalName);
       }
 
-      const isDown = e.key === "ArrowDown";
-      const isUp = e.key === "ArrowUp";
+      const isDown = e.key === "J";
+      const isUp = e.key === "K";
 
       let nextIndex: number;
       if (isDown) {
@@ -181,7 +194,7 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
 
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [projects, sessions, terminals, activeSessionId, activeTerminalName, router]);
+  }, [projects, sessions, terminals, activeSessionId, activeTerminalName, router, showKilled, showDone]);
 
   const _toggleMobileSidebar = useCallback(() => {
     setMobileSidebarOpen((v) => !v);
