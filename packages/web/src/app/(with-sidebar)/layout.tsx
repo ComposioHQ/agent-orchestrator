@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useSearchParams, useRouter } from "next/navigation";
 import { ProjectSidebar } from "@/components/ProjectSidebar";
 import { SidebarContext } from "@/components/workspace/SidebarContext";
@@ -30,6 +30,8 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
   });
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [newTerminalModalOpen, setNewTerminalModalOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const hasLoadedOnce = useRef(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -70,21 +72,33 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
           const data = (await terminalsRes.json()) as { terminals?: TerminalWithAlive[] };
           setTerminals(data.terminals ?? []);
         }
-      } catch {
-        if (!cancelled) {
-          setProjects([]);
-          setSessions([]);
-          setOrchestrators([]);
-          setTerminals([]);
+
+        if (!hasLoadedOnce.current) {
+          hasLoadedOnce.current = true;
+          setIsLoading(false);
         }
+      } catch {
+        if (!hasLoadedOnce.current) {
+          setIsLoading(false);
+        }
+        // Don't reset existing data — stale data is better than blank
       }
     }
 
     void loadSidebarData();
     const intervalId = setInterval(loadSidebarData, 10_000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        void loadSidebarData();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+
     return () => {
       cancelled = true;
       clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, []);
 
@@ -111,6 +125,63 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
     if (match?.[1]) return decodeURIComponent(match[1]);
     return undefined;
   }, [pathname]);
+
+  // Sidebar navigation shortcuts — Cmd+Shift+ArrowDown/Up
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!((e.metaKey || e.ctrlKey) && e.shiftKey)) return;
+
+      // Build navigable list: sessions grouped by project, then global terminals
+      const navItems: Array<{ type: "session" | "terminal"; id: string; projectId?: string }> = [];
+
+      // For each project, add its sessions
+      for (const project of projects) {
+        const projectSessions = sessions.filter((s) => s.projectId === project.id);
+        for (const session of projectSessions) {
+          navItems.push({ type: "session", id: session.id, projectId: project.id });
+        }
+      }
+
+      // Add global terminals at the end
+      for (const terminal of terminals) {
+        navItems.push({ type: "terminal", id: terminal.tmuxName });
+      }
+
+      if (navItems.length === 0) return;
+
+      // Determine current active item index
+      let currentIndex = -1;
+      if (activeSessionId) {
+        currentIndex = navItems.findIndex((item) => item.type === "session" && item.id === activeSessionId);
+      } else if (activeTerminalName) {
+        currentIndex = navItems.findIndex((item) => item.type === "terminal" && item.id === activeTerminalName);
+      }
+
+      const isDown = e.key === "ArrowDown";
+      const isUp = e.key === "ArrowUp";
+
+      let nextIndex: number;
+      if (isDown) {
+        e.preventDefault();
+        nextIndex = (currentIndex + 1) % navItems.length;
+      } else if (isUp) {
+        e.preventDefault();
+        nextIndex = (currentIndex - 1 + navItems.length) % navItems.length;
+      } else {
+        return;
+      }
+
+      const nextItem = navItems[nextIndex];
+      if (nextItem.type === "session") {
+        router.push(`/sessions/${encodeURIComponent(nextItem.id)}`);
+      } else if (nextItem.type === "terminal") {
+        router.push(`/terminals/${encodeURIComponent(nextItem.id)}`);
+      }
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [projects, sessions, terminals, activeSessionId, activeTerminalName, router]);
 
   const _toggleMobileSidebar = useCallback(() => {
     setMobileSidebarOpen((v) => !v);
@@ -278,6 +349,7 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
               activeSessionId={activeSessionId}
               collapsed={sidebarCollapsed}
               onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
+              isLoading={isLoading}
             />
             {sidebarCollapsed ? <TerminalsSidebarSectionCollapsed /> : <TerminalsSidebarSection />}
           </div>
@@ -296,6 +368,7 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
                   activeSessionId={activeSessionId}
                   collapsed={false}
                   onToggleCollapsed={() => setMobileSidebarOpen(false)}
+                  isLoading={isLoading}
                 />
                 <TerminalsSidebarSection />
               </div>
