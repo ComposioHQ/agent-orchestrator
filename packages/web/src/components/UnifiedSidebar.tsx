@@ -583,7 +583,11 @@ function SidebarContent({
                       degraded={project.degraded}
                     />
 
-                    <div className="min-w-0 flex-1 transition-[padding-right] duration-100 group-hover/row:pr-[84px] group-focus-within/row:pr-[84px]">
+<<<<<<< HEAD
+                    <div className="min-w-0 flex-1">
+=======
+                    <div className="min-w-0 flex-1">
+>>>>>>> 2e8cdc27 (fix(web): harden multi-dashboard interactions)
                       <span className="block truncate text-[13px] font-medium tracking-[-0.02em]">
                         {project.name}
                       </span>
