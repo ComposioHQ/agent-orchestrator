@@ -1196,7 +1196,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       states.set(session.id, newStatus);
     }
 
-    await Promise.all([
+    await Promise.allSettled([
       maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction),
       maybeDispatchCIFailureDetails(session, oldStatus, newStatus, transitionReaction),
       maybeDispatchMergeConflicts(session, newStatus),
