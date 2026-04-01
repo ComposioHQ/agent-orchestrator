@@ -1,0 +1,41 @@
+packages/plugins/scm-gitlab/src/index.ts
+  714094fc0b70a132 452-455,457,470
+packages/web/src/lib/scm-webhooks.test.ts
+  714094fc0b70a132 51-63
+packages/plugins/tracker-github/src/index.ts
+  714094fc0b70a132 39-45,71,79,90,154,160,169,171,217,222,271,275,277,287,300,313,326,334,339
+packages/plugins/scm-github/test/index.test.ts
+  714094fc0b70a132 426-432,478-482
+packages/plugins/tracker-gitlab/src/index.ts
+  714094fc0b70a132 45-51,64,66,73,75,83,85-86,126,131,164,166,168,173,180,187,192
+packages/plugins/tracker-gitlab/test/index.test.ts
+  714094fc0b70a132 130-137
+packages/web/src/lib/scm-webhooks.ts
+  714094fc0b70a132 47
+packages/plugins/scm-github/src/index.ts
+  714094fc0b70a132 519-522,528,548,555-559,565,579
+packages/plugins/tracker-github/test/index.test.ts
+  714094fc0b70a132 166-173
+packages/plugins/scm-gitlab/test/index.test.ts
+  714094fc0b70a132 354-360
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.3",
+  "base_commit_sha": "b8e42dfb60f034e68df3d12ad006ad2eeae497de",
+  "prompts": {
+    "714094fc0b70a132": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d49a6-6571-7a43-83a8-e7ef8a32def9",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 19917,
+      "total_deletions": 31,
+      "accepted_lines": 19917,
+      "overriden_lines": 0
+    }
+  }
+}
