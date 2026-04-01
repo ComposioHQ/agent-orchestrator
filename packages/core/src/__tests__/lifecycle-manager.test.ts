@@ -971,11 +971,12 @@ describe("reactions", () => {
     };
 
     const getCISummaryMock = vi.fn().mockResolvedValue("failing");
+    const getCIChecksMock = vi.fn().mockResolvedValue([
+      { name: "lint", status: "failed", conclusion: "FAILURE" },
+    ]);
     const mockSCM = createMockSCM({
       getCISummary: getCISummaryMock,
-      getCIChecks: vi.fn().mockResolvedValue([
-        { name: "lint", status: "failed", conclusion: "FAILURE" },
-      ]),
+      getCIChecks: getCIChecksMock,
     });
     const registry = createMockRegistry({
       runtime: plugins.runtime,
@@ -985,31 +986,25 @@ describe("reactions", () => {
 
     vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
 
-    // Pre-set metadata to simulate previous CI failure dispatch
-    writeMetadata(env.sessionsDir, "app-1", {
-      worktree: "/tmp",
-      branch: "feat/test",
-      status: "ci_failed",
-      project: "my-app",
-      lastCIFailureFingerprint: "old-fingerprint",
-      lastCIFailureDispatchHash: "old-hash",
-    });
-
-    vi.mocked(mockSessionManager.get).mockResolvedValue(
-      makeSession({ status: "ci_failed", pr: makePR() }),
-    );
-
-    const lm = createLifecycleManager({
-      config,
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "pr_open", pr: makePR() }),
       registry,
-      sessionManager: mockSessionManager,
     });
+
+    // First: transition to ci_failed, then dispatch details
+    await lm.check("app-1");
+    await lm.check("app-1");
+
+    // Verify tracking was set
+    let metadata = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(metadata?.["lastCIFailureDispatchHash"]).toBeTruthy();
 
     // CI recovers
     getCISummaryMock.mockResolvedValue("passing");
+    getCIChecksMock.mockResolvedValue([]);
     await lm.check("app-1");
 
-    const metadata = readMetadataRaw(env.sessionsDir, "app-1");
+    metadata = readMetadataRaw(env.sessionsDir, "app-1");
     expect(metadata?.["lastCIFailureFingerprint"]).toBeFalsy();
     expect(metadata?.["lastCIFailureDispatchHash"]).toBeFalsy();
   });
