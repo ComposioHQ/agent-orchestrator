@@ -22,7 +22,7 @@ import {
   createSessionManager,
   createPluginRegistry,
   type OrchestratorConfig,
-  generateConfigHash,
+  generateProjectHash,
   getSessionsDir,
   generateTmuxName,
 } from "@composio/ao-core";
@@ -100,8 +100,8 @@ describe.skipIf(!tmuxOk)("CLI-Core integration (hash-based architecture)", () =>
   }, 30_000);
 
   it("sessions are stored in hash-based project-specific directory", () => {
-    // Calculate expected directory
-    const hash = generateConfigHash(configPath);
+    // Session directories are keyed by project path, not global config location.
+    const hash = generateProjectHash(repoPath);
     const sessionsDir = getSessionsDir(configPath, repoPath);
 
     expect(sessionsDir).toMatch(new RegExp(`\\.agent-orchestrator/${hash}-test-repo/sessions$`));
@@ -112,7 +112,7 @@ describe.skipIf(!tmuxOk)("CLI-Core integration (hash-based architecture)", () =>
     mkdirSync(sessionsDir, { recursive: true });
 
     // Write metadata as CLI would do
-    const tmuxName = generateTmuxName(configPath, sessionPrefix, 1);
+    const tmuxName = generateTmuxName(repoPath, sessionPrefix, 1);
     const metadataPath = join(sessionsDir, sessionName);
     const metadata = [
       `worktree=${tmpDir}`,
@@ -139,7 +139,7 @@ describe.skipIf(!tmuxOk)("CLI-Core integration (hash-based architecture)", () =>
     mkdirSync(sessionsDir, { recursive: true });
 
     // Write metadata
-    const tmuxName = generateTmuxName(configPath, sessionPrefix, 1);
+    const tmuxName = generateTmuxName(repoPath, sessionPrefix, 1);
     const metadataPath = join(sessionsDir, sessionName);
     const metadata = [
       `worktree=${tmpDir}`,
@@ -199,8 +199,8 @@ describe.skipIf(!tmuxOk)("CLI-Core integration (hash-based architecture)", () =>
   });
 
   it("tmux name includes hash for global uniqueness", () => {
-    const hash = generateConfigHash(configPath);
-    const tmuxName = generateTmuxName(configPath, sessionPrefix, 1);
+    const hash = generateProjectHash(repoPath);
+    const tmuxName = generateTmuxName(repoPath, sessionPrefix, 1);
 
     expect(tmuxName).toMatch(new RegExp(`^${hash}-${sessionPrefix}-1$`));
     expect(tmuxName).not.toBe(sessionName); // User-facing name is different

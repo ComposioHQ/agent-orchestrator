@@ -48,6 +48,19 @@ describe("eventMatchesProject", () => {
 
     expect(eventMatchesProject(event, project)).toBe(false);
   });
+
+  it("does not match when project repo is missing", () => {
+    const event: SCMWebhookEvent = {
+      provider: "github",
+      kind: "pull_request",
+      action: "opened",
+      rawEventType: "pull_request",
+      repository: { owner: "acme", name: "my-app" },
+      data: {},
+    };
+
+    expect(eventMatchesProject(event, { ...project, repo: undefined })).toBe(false);
+  });
 });
 
 describe("findAffectedSessions", () => {

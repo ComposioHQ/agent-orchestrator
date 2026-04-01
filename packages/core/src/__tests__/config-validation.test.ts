@@ -341,7 +341,7 @@ describe("Config Schema Validation", () => {
     expect(() => validateConfig(config)).toThrow();
   });
 
-  it("requires path, repo, and defaultBranch for each project", () => {
+  it("requires path and defaults defaultBranch while allowing local-only projects", () => {
     const missingPath = {
       projects: {
         proj1: {
@@ -373,7 +373,7 @@ describe("Config Schema Validation", () => {
     };
 
     expect(() => validateConfig(missingPath)).toThrow();
-    expect(() => validateConfig(missingRepo)).toThrow();
+    expect(() => validateConfig(missingRepo)).not.toThrow();
     // missingBranch should work (defaults to "main")
     expect(() => validateConfig(missingBranch)).not.toThrow();
   });

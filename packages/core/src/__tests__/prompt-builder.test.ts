@@ -55,6 +55,16 @@ describe("buildPrompt", () => {
     expect(result).toContain("main");
   });
 
+  it("describes local-only workspaces when no repository is configured", () => {
+    project.repo = undefined;
+    const result = buildPrompt({
+      project,
+      projectId: "test-app",
+      issueId: "INT-1343",
+    });
+    expect(result).toContain("local-only workspace (no remote configured yet)");
+  });
+
   it("includes issue ID in task section", () => {
     const result = buildPrompt({
       project,

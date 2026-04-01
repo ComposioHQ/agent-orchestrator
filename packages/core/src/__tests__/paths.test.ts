@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   generateConfigHash,
+  generateProjectHash,
   generateProjectId,
   generateInstanceId,
   generateSessionPrefix,
@@ -98,6 +99,35 @@ describe("Hash Generation", () => {
 
     expect(hashSymlink).toBe(hashReal);
   });
+
+  it("falls back to resolve() when the config file does not exist", () => {
+    const missingConfig = join(tmpDir, "missing", "agent-orchestrator.yaml");
+    const hash = generateConfigHash(missingConfig);
+
+    expect(hash).toHaveLength(12);
+    expect(hash).toMatch(/^[a-f0-9]{12}$/);
+  });
+});
+
+describe("Project Hash Generation", () => {
+  it("matches config-based hashing for a project-local config path", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "project-hash-test-"));
+    try {
+      const projectDir = join(tmpDir, "demo");
+      mkdirSync(projectDir, { recursive: true });
+      const configPath = join(projectDir, "agent-orchestrator.yaml");
+      writeFileSync(configPath, "projects: {}");
+
+      expect(generateProjectHash(projectDir)).toBe(generateConfigHash(configPath));
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("handles non-existent project paths", () => {
+    const hash = generateProjectHash(join(tmpdir(), `missing-project-${Date.now()}`));
+    expect(hash).toHaveLength(12);
+  });
 });
 
 describe("Project ID Generation", () => {
@@ -149,21 +179,17 @@ describe("Instance ID Generation", () => {
     expect(id1).toBe(id2);
   });
 
-  it("same config + different projects = different instance IDs with same hash", () => {
+  it("same config + different projects = different instance IDs", () => {
     const id1 = generateInstanceId(configPath, "/repos/integrator");
     const id2 = generateInstanceId(configPath, "/repos/backend");
 
-    // Extract hash prefix
-    const hash1 = id1.split("-")[0];
-    const hash2 = id2.split("-")[0];
-
-    expect(hash1).toBe(hash2); // Same hash
-    expect(id1).not.toBe(id2); // Different instance IDs
+    // Different project paths → different hashes and instance IDs
+    expect(id1).not.toBe(id2);
     expect(id1).toContain("integrator");
     expect(id2).toContain("backend");
   });
 
-  it("different config + same project = different instance IDs", () => {
+  it("different config + same project = same instance IDs (hash is project-path-based)", () => {
     const otherDir = join(tmpdir(), "other-config-test");
     mkdirSync(otherDir, { recursive: true });
     const config2Path = join(otherDir, "agent-orchestrator.yaml");
@@ -172,9 +198,17 @@ describe("Instance ID Generation", () => {
     const id1 = generateInstanceId(configPath, "/repos/integrator");
     const id2 = generateInstanceId(config2Path, "/repos/integrator");
 
-    expect(id1).not.toBe(id2);
+    // Instance ID is now based on projectPath, so same project = same ID
+    // regardless of config location (needed for local→global config migration)
+    expect(id1).toBe(id2);
 
     rmSync(otherDir, { recursive: true, force: true });
+  });
+
+  it("ignores config path changes when generating instance ids", () => {
+    expect(generateInstanceId("/tmp/global.yaml", "/repos/integrator")).toBe(
+      generateInstanceId("/repos/integrator/agent-orchestrator.yaml", "/repos/integrator"),
+    );
   });
 });
 
@@ -351,13 +385,13 @@ describe("Tmux Naming", () => {
   });
 
   it("generateTmuxName format is {hash}-{prefix}-{num}", () => {
-    const tmuxName = generateTmuxName(configPath, "int", 1);
+    const tmuxName = generateTmuxName(tmpDir, "int", 1);
 
     expect(tmuxName).toMatch(/^[a-f0-9]{12}-int-1$/);
   });
 
   it("ALWAYS includes hash for global uniqueness", () => {
-    const tmuxName = generateTmuxName(configPath, "int", 1);
+    const tmuxName = generateTmuxName(tmpDir, "int", 1);
 
     expect(tmuxName).toMatch(/^[a-f0-9]{12}-/);
   });
@@ -401,7 +435,7 @@ describe("Tmux Naming", () => {
 
   it("user-facing name does NOT include hash", () => {
     const userFacing = generateSessionName("int", 1);
-    const tmuxName = generateTmuxName(configPath, "int", 1);
+    const tmuxName = generateTmuxName(tmpDir, "int", 1);
 
     expect(userFacing).toBe("int-1");
     expect(tmuxName).toMatch(/^[a-f0-9]{12}-int-1$/);
@@ -446,34 +480,30 @@ describe("Origin File Management", () => {
     }).not.toThrow();
   });
 
-  it("call with different config path throws hash collision error", () => {
+  it("call with different config path updates .origin (config migration)", () => {
     // First config
     validateAndStoreOrigin(configPath, projectPath);
 
-    // Create second config that would have same hash (simulate collision)
-    // This is hard to simulate naturally, so we'll manually edit .origin
+    // Simulate config migration: .origin still has old path
     const originPath = getOriginFilePath(configPath, projectPath);
     writeFileSync(originPath, "/fake/other/config/path");
 
+    // Should NOT throw — gracefully updates .origin to new config path
     expect(() => {
       validateAndStoreOrigin(configPath, projectPath);
-    }).toThrow(/Hash collision detected/);
+    }).not.toThrow();
+
+    // .origin should now contain the current config path
+    const stored = readFileSync(originPath, "utf-8").trim();
+    expect(stored).toBe(realpathSync(configPath));
   });
 
-  it("error message includes both config paths", () => {
-    validateAndStoreOrigin(configPath, projectPath);
+  it("stores a resolved path even when the config file does not exist yet", () => {
+    const missingConfigPath = join(tmpDir, "global.yaml");
+    validateAndStoreOrigin(missingConfigPath, projectPath);
 
-    const originPath = getOriginFilePath(configPath, projectPath);
-    writeFileSync(originPath, "/fake/other/path");
-
-    try {
-      validateAndStoreOrigin(configPath, projectPath);
-      expect.fail("Should have thrown");
-    } catch (err) {
-      const message = (err as Error).message;
-      expect(message).toContain("/fake/other/path");
-      expect(message).toContain(realpathSync(configPath));
-    }
+    const originPath = getOriginFilePath(missingConfigPath, projectPath);
+    expect(readFileSync(originPath, "utf-8").trim()).toBe(missingConfigPath);
   });
 
   it("creates parent directory if needed", () => {

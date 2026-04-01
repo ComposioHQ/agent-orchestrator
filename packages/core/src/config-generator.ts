@@ -297,6 +297,48 @@ export function isRepoAlreadyCloned(dir: string, expectedCloneUrl: string): bool
 }
 
 /**
+ * Read the origin remote URL from a local git repo's .git/config.
+ * Returns null if the directory is not a git repo or has no origin remote.
+ */
+export function readOriginRemoteUrl(repoDir: string): string | null {
+  const gitDir = join(repoDir, ".git");
+  if (!existsSync(gitDir)) return null;
+
+  const configPath = join(gitDir, "config");
+  if (!existsSync(configPath)) return null;
+
+  let gitConfig: string;
+  try {
+    gitConfig = readFileSync(configPath, "utf-8");
+  } catch {
+    return null;
+  }
+
+  // Parse ini-style git config: find [remote "origin"] section and extract url
+  const lines = gitConfig.split("\n");
+  let inOriginSection = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    // Section header
+    if (trimmed.startsWith("[")) {
+      inOriginSection = /^\[remote\s+"origin"\]$/i.test(trimmed);
+      continue;
+    }
+
+    if (inOriginSection) {
+      const urlMatch = trimmed.match(/^url\s*=\s*(.+)$/);
+      if (urlMatch) {
+        return urlMatch[1].trim();
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
  * Determine the target directory for cloning a repo.
  * If CWD matches the repo, return CWD. Otherwise return CWD/repo-name.
  */

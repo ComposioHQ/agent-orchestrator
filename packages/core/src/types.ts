@@ -216,6 +216,8 @@ export interface SessionSpawnConfig {
 export interface OrchestratorSpawnConfig {
   projectId: string;
   systemPrompt?: string;
+  /** Override the agent plugin for this orchestrator (e.g. "codex", "claude-code", "opencode") */
+  agent?: string;
 }
 
 // =============================================================================
@@ -639,6 +641,59 @@ export interface SCM {
   enrichSessionsPRBatch?(prs: PRInfo[], observer?: BatchObserver): Promise<Map<string, PREnrichmentData>>;
 }
 
+/**
+ * Batch enrichment data returned by SCM plugins.
+ * Contains all the information the orchestrator needs for status detection.
+ */
+export interface PREnrichmentData {
+  /** Current PR state */
+  state: PRState;
+  /** Overall CI status */
+  ciStatus: CIStatus;
+  /** Review decision */
+  reviewDecision: ReviewDecision;
+  /** Whether the PR is mergeable based on CI, reviews, and merge state */
+  mergeable: boolean;
+  /** PR title */
+  title?: string;
+  /** Number of additions */
+  additions?: number;
+  /** Number of deletions */
+  deletions?: number;
+  /** Whether PR is a draft */
+  isDraft?: boolean;
+  /** Whether PR has merge conflicts */
+  hasConflicts?: boolean;
+  /** Whether PR is behind base branch */
+  isBehind?: boolean;
+  /** List of blockers preventing merge */
+  blockers?: string[];
+}
+
+/**
+ * Observer for GraphQL batch PR enrichment operations.
+ * Used by SCM plugins to report batch success/failure to the observability system.
+ */
+export interface BatchObserver {
+  /** Record a successful batch enrichment */
+  recordSuccess(data: {
+    batchIndex: number;
+    totalBatches: number;
+    prCount: number;
+    durationMs: number;
+  }): void;
+  /** Record a failed batch enrichment */
+  recordFailure(data: {
+    batchIndex: number;
+    totalBatches: number;
+    prCount: number;
+    error: string;
+    durationMs: number;
+  }): void;
+  /** Log a message at a specific level */
+  log(level: ObservabilityLevel, message: string): void;
+}
+
 // --- PR Types ---
 
 export interface PRInfo {
@@ -761,59 +816,6 @@ export interface MergeReadiness {
   approved: boolean;
   noConflicts: boolean;
   blockers: string[];
-}
-
-/**
- * Batch enrichment data returned by SCM plugins.
- * Contains all the information the orchestrator needs for status detection.
- */
-export interface PREnrichmentData {
-  /** Current PR state */
-  state: PRState;
-  /** Overall CI status */
-  ciStatus: CIStatus;
-  /** Review decision */
-  reviewDecision: ReviewDecision;
-  /** Whether the PR is mergeable based on CI, reviews, and merge state */
-  mergeable: boolean;
-  /** PR title */
-  title?: string;
-  /** Number of additions */
-  additions?: number;
-  /** Number of deletions */
-  deletions?: number;
-  /** Whether PR is a draft */
-  isDraft?: boolean;
-  /** Whether PR has merge conflicts */
-  hasConflicts?: boolean;
-  /** Whether PR is behind base branch */
-  isBehind?: boolean;
-  /** List of blockers preventing merge */
-  blockers?: string[];
-}
-
-/**
- * Observer for GraphQL batch PR enrichment operations.
- * Used by SCM plugins to report batch success/failure to the observability system.
- */
-export interface BatchObserver {
-  /** Record a successful batch enrichment */
-  recordSuccess(data: {
-    batchIndex: number;
-    totalBatches: number;
-    prCount: number;
-    durationMs: number;
-  }): void;
-  /** Record a failed batch enrichment */
-  recordFailure(data: {
-    batchIndex: number;
-    totalBatches: number;
-    prCount: number;
-    error: string;
-    durationMs: number;
-  }): void;
-  /** Log a message at a specific level */
-  log(level: ObservabilityLevel, message: string): void;
 }
 
 // =============================================================================
@@ -1059,8 +1061,8 @@ export interface ProjectConfig {
   /** Display name */
   name: string;
 
-  /** GitHub repo in "owner/repo" format */
-  repo: string;
+  /** GitHub repo in "owner/repo" format (optional for local-only projects) */
+  repo?: string;
 
   /** Local path to the repo */
   path: string;
@@ -1440,4 +1442,54 @@ export class ConfigNotFoundError extends Error {
     super(message ?? "No agent-orchestrator.yaml found. Run `ao start` to create one.");
     this.name = "ConfigNotFoundError";
   }
+}
+
+// =============================================================================
+// PORTFOLIO — Cross-project aggregation
+// =============================================================================
+
+/** A project entry in the portfolio index (merged from discovery + registration + preferences) */
+export interface PortfolioProject {
+  id: string;                          // Stable portfolio identity (configProjectKey, with collision suffix if needed)
+  name: string;                        // Human-readable display name
+  configPath: string;                  // Absolute path to agent-orchestrator.yaml
+  configProjectKey: string;            // Key in config.projects map
+  repoPath: string;                    // Absolute local filesystem path
+  repo?: string;                       // "owner/repo" for SCM
+  defaultBranch?: string;
+  sessionPrefix: string;
+  source: "discovered" | "registered" | "config"; // How this entry was found
+  enabled: boolean;                    // User can disable without removing
+  pinned: boolean;                     // User preference for ordering
+  lastSeenAt: string;                  // ISO timestamp
+  degraded?: boolean;                  // True if config can't be loaded
+  degradedReason?: string;             // Why it's degraded
+}
+
+/** User preferences overlay (canonical, small file) */
+export interface PortfolioPreferences {
+  version: 1;
+  defaultProjectId?: string;
+  projectOrder?: string[];             // Ordered project IDs for display
+  projects?: Record<string, {          // Per-project preferences
+    pinned?: boolean;
+    enabled?: boolean;
+    displayName?: string;
+  }>;
+}
+
+/** Registered projects (explicit `ao project add`) */
+export interface PortfolioRegistered {
+  version: 1;
+  projects: Array<{
+    path: string;                      // Repo path
+    configProjectKey?: string;         // Key in config if multi-project YAML
+    addedAt: string;                   // ISO timestamp
+  }>;
+}
+
+/** Aggregated portfolio session with project context */
+export interface PortfolioSession {
+  session: Session;
+  project: PortfolioProject;
 }

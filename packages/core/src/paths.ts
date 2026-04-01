@@ -2,25 +2,56 @@
  * Path utilities for hash-based directory structure.
  *
  * Architecture:
- * - Config location determines hash: sha256(dirname(configPath)).slice(0, 12)
+ * - Project path determines hash: sha256(projectPath).slice(0, 12)
  * - Each project gets directory: ~/.agent-orchestrator/{hash}-{projectId}/
  * - Sessions inside: sessions/{sessionName} (no hash prefix, already namespaced)
  * - Tmux names include hash for global uniqueness: {hash}-{prefix}-{num}
+ * - Both session dirs and tmux names use generateProjectHash(projectPath) for consistency
  */
 
 import { createHash } from "node:crypto";
-import { dirname, basename, join } from "node:path";
+import { dirname, basename, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { realpathSync, existsSync, writeFileSync, readFileSync, mkdirSync } from "node:fs";
 
 /**
  * Generate a 12-character hash from a config directory path.
- * Always resolves symlinks before hashing to ensure consistency.
+ *
+ * The hash is derived from dirname(configPath), which equals the project root
+ * directory when configPath is <project>/agent-orchestrator.yaml.
+ *
+ * Handles non-existent paths gracefully (e.g. synthesized paths in remote/
+ * Docker mode where no local config file exists) by falling back to
+ * resolve() when realpathSync fails.
  */
 export function generateConfigHash(configPath: string): string {
-  const resolved = realpathSync(configPath);
+  let resolved: string;
+  try {
+    resolved = realpathSync(configPath);
+  } catch {
+    // File may not exist (remote mode, Docker, pre-creation) — use resolved path
+    resolved = resolve(configPath);
+  }
   const configDir = dirname(resolved);
   const hash = createHash("sha256").update(configDir).digest("hex");
+  return hash.slice(0, 12);
+}
+
+/**
+ * Generate a 12-character hash directly from a project directory path.
+ *
+ * Equivalent to generateConfigHash(<project>/agent-orchestrator.yaml) but
+ * does not require a config file to exist. Used in remote / Docker / shadow
+ * mode where the local config is absent.
+ */
+export function generateProjectHash(projectPath: string): string {
+  let resolved: string;
+  try {
+    resolved = realpathSync(projectPath);
+  } catch {
+    resolved = resolve(projectPath);
+  }
+  const hash = createHash("sha256").update(resolved).digest("hex");
   return hash.slice(0, 12);
 }
 
@@ -36,9 +67,17 @@ export function generateProjectId(projectPath: string): string {
  * Generate instance ID combining hash and project ID.
  * Format: {hash}-{projectId}
  * Example: "a3b4c5d6e7f8-integrator"
+ *
+ * Uses generateProjectHash(projectPath) so the hash is stable regardless of
+ * where the config file lives.  When the config was local
+ * (<project>/agent-orchestrator.yaml), dirname(configPath) === projectPath,
+ * so the two hash functions produced the same value.  After migration to the
+ * global config (~/.agent-orchestrator/config.yaml), generateConfigHash would
+ * produce a different (wrong) hash.  Keying on projectPath keeps existing
+ * session directories reachable.
  */
-export function generateInstanceId(configPath: string, projectPath: string): string {
-  const hash = generateConfigHash(configPath);
+export function generateInstanceId(_configPath: string, projectPath: string): string {
+  const hash = generateProjectHash(projectPath);
   const projectId = generateProjectId(projectPath);
   return `${hash}-${projectId}`;
 }
@@ -148,9 +187,16 @@ export function generateSessionName(prefix: string, num: number): string {
  * Generate tmux session name (globally unique).
  * Format: {hash}-{prefix}-{num}
  * Example: "a3b4c5d6e7f8-int-1"
+ *
+ * Uses generateProjectHash(projectPath) so the hash matches the session
+ * directory hash from generateInstanceId.  When the config was local
+ * (<project>/agent-orchestrator.yaml), dirname(configPath) === projectPath,
+ * so the values were identical.  After migration to the global config,
+ * generateConfigHash would hash ~/.agent-orchestrator/ — a completely
+ * different value, breaking the mapping between session dirs and tmux names.
  */
-export function generateTmuxName(configPath: string, prefix: string, num: number): string {
-  const hash = generateConfigHash(configPath);
+export function generateTmuxName(projectPath: string, prefix: string, num: number): string {
+  const hash = generateProjectHash(projectPath);
   return `${hash}-${prefix}-${num}`;
 }
 
@@ -183,24 +229,49 @@ export function expandHome(filepath: string): string {
   return filepath;
 }
 
+/** Get the base AO directory (~/.agent-orchestrator/) */
+export function getAoBaseDir(): string {
+  return expandHome("~/.agent-orchestrator");
+}
+
+/** Get the portfolio directory (~/.agent-orchestrator/portfolio/) */
+export function getPortfolioDir(): string {
+  return join(getAoBaseDir(), "portfolio");
+}
+
+/** Get the portfolio preferences file path */
+export function getPreferencesPath(): string {
+  return join(getPortfolioDir(), "preferences.json");
+}
+
+/** Get the portfolio registered projects file path */
+export function getRegisteredPath(): string {
+  return join(getPortfolioDir(), "registered.json");
+}
+
 /**
  * Validate and store the .origin file for a project.
- * Throws if a hash collision is detected (different config, same hash).
+ *
+ * When the stored config path differs from the current one (e.g. after
+ * migrating from a local config to the global hybrid config), the .origin
+ * file is updated to the new path.  A true SHA-256 hash collision on 12 hex
+ * chars (1 in 2^48) is astronomically unlikely and not worth blocking a
+ * legitimate config migration.
  */
 export function validateAndStoreOrigin(configPath: string, projectPath: string): void {
   const originPath = getOriginFilePath(configPath, projectPath);
-  const resolvedConfigPath = realpathSync(configPath);
+  let resolvedConfigPath: string;
+  try {
+    resolvedConfigPath = realpathSync(configPath);
+  } catch {
+    resolvedConfigPath = resolve(configPath);
+  }
 
   if (existsSync(originPath)) {
     const stored = readFileSync(originPath, "utf-8").trim();
     if (stored !== resolvedConfigPath) {
-      throw new Error(
-        `Hash collision detected!\n` +
-          `Directory: ${getProjectBaseDir(configPath, projectPath)}\n` +
-          `Expected config: ${resolvedConfigPath}\n` +
-          `Actual config: ${stored}\n` +
-          `This is a rare hash collision. Please move one of the configs to a different directory.`,
-      );
+      // Config path changed (local → global migration). Update .origin.
+      writeFileSync(originPath, resolvedConfigPath, "utf-8");
     }
   } else {
     // Create project base directory and .origin file

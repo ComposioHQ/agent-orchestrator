@@ -66,4 +66,14 @@ describe("generateOrchestratorPrompt", () => {
     expect(prompt).toContain("Never claim a PR into `app-orchestrator`");
     expect(prompt).toContain("Delegate implementation, test execution, or PR claiming");
   });
+
+  it("describes local-only workspaces when no repo is configured", () => {
+    const prompt = generateOrchestratorPrompt({
+      config,
+      projectId: "my-app",
+      project: { ...config.projects["my-app"]!, repo: undefined },
+    });
+
+    expect(prompt).toContain("local-only workspace (no remote configured yet)");
+  });
 });

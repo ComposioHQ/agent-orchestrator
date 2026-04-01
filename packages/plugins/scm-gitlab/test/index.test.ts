@@ -351,6 +351,13 @@ describe("scm-gitlab plugin", () => {
       expect(glabMock).not.toHaveBeenCalled();
     });
 
+    it("returns null when project has no repo configured", async () => {
+      const repoLessProject = { ...project, repo: undefined };
+      const result = await scm.detectPR(makeSession(), repoLessProject);
+      expect(result).toBeNull();
+      expect(glabMock).not.toHaveBeenCalled();
+    });
+
     it("returns null and warns on glab CLI error", async () => {
       mockGlabError("glab: not found");
       const result = await scm.detectPR(makeSession(), project);
