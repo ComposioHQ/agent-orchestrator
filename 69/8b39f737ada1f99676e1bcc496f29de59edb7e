@@ -1,0 +1,21 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.3",
+  "base_commit_sha": "698b39f737ada1f99676e1bcc496f29de59edb7e",
+  "prompts": {
+    "714094fc0b70a132": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d49a6-6571-7a43-83a8-e7ef8a32def9",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 19799,
+      "overriden_lines": 0
+    }
+  }
+}
