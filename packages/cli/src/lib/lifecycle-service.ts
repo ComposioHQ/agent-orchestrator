@@ -138,9 +138,9 @@ export function getLifecycleWorkerStatus(
   return { running: false, pid: null, pidFile, logFile };
 }
 
-function resolveLifecycleWorkerLaunch(projectId: string): { command: string; args: string[] } {
+function resolveLifecycleWorkerLaunch(projectId?: string): { command: string; args: string[] } {
   const entry = process.argv[1];
-  const workerArgs = ["lifecycle-worker", projectId];
+  const workerArgs = projectId ? ["lifecycle-worker", projectId] : ["lifecycle-worker"];
 
   if (entry && /\.(?:c|m)?js$/i.test(entry)) {
     return {
