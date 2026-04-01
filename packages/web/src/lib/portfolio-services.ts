@@ -40,6 +40,13 @@ const globalForPortfolio = globalThis as typeof globalThis & {
   _aoPortfolioRefreshTimer?: ReturnType<typeof setInterval>;
 };
 
+export function stopPortfolioBackgroundRefresh(): void {
+  if (globalForPortfolio._aoPortfolioRefreshTimer) {
+    clearInterval(globalForPortfolio._aoPortfolioRefreshTimer);
+    globalForPortfolio._aoPortfolioRefreshTimer = undefined;
+  }
+}
+
 function isCacheFresh(): boolean {
   const cached = globalForPortfolio._aoPortfolioCache;
   if (!cached) return false;
@@ -106,6 +113,7 @@ function ensureBackgroundRefresh(): void {
       // Background refresh failure is non-fatal
     }
   }, BACKGROUND_REFRESH_MS);
+  globalForPortfolio._aoPortfolioRefreshTimer.unref?.();
 }
 
 /** Get portfolio services (cached, non-blocking after first call). */

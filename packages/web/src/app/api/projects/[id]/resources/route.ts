@@ -32,10 +32,60 @@ interface IssueResource {
   assignee?: string;
 }
 
+const BRANCH_FIELD_DELIMITER = "\u001f";
+
+interface GitHubPullRequestListItem {
+  number: number;
+  title: string;
+  author?: { login?: string };
+  headRefName: string;
+  url: string;
+  updatedAt?: string;
+}
+
 function matchesQuery(values: Array<string | undefined>, query: string): boolean {
   if (!query) return true;
   const normalized = query.toLowerCase();
   return values.some((value) => value?.toLowerCase().includes(normalized));
+}
+
+function isGitHubPullRequestListItem(value: unknown): value is GitHubPullRequestListItem {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  const author = record["author"];
+  return (
+    typeof record["number"] === "number" &&
+    typeof record["title"] === "string" &&
+    typeof record["headRefName"] === "string" &&
+    typeof record["url"] === "string" &&
+    (record["updatedAt"] === undefined || typeof record["updatedAt"] === "string") &&
+    (author === undefined ||
+      (typeof author === "object" &&
+        author !== null &&
+        (((author as Record<string, unknown>)["login"] === undefined) ||
+          typeof (author as Record<string, unknown>)["login"] === "string")))
+  );
+}
+
+function parsePullRequests(stdout: string): GitHubPullRequestListItem[] {
+  const parsed: unknown = JSON.parse(stdout);
+  if (!Array.isArray(parsed)) {
+    throw new Error("Expected GitHub CLI to return an array of pull requests");
+  }
+  return parsed.filter(isGitHubPullRequestListItem);
+}
+
+function parseBranchLine(line: string): BranchResource | null {
+  const [name, author, updatedAt, ...rest] = line.split(BRANCH_FIELD_DELIMITER);
+  if (!name || rest.length > 0) {
+    return null;
+  }
+  return {
+    id: name,
+    name,
+    author: author || undefined,
+    updatedAt: updatedAt || undefined,
+  };
 }
 
 async function listPullRequests(repo?: string, query = ""): Promise<PullRequestResource[]> {
@@ -58,14 +108,7 @@ async function listPullRequests(repo?: string, query = ""): Promise<PullRequestR
       ],
       { timeout: 15_000 },
     );
-    const prs = JSON.parse(stdout) as Array<{
-      number: number;
-      title: string;
-      author?: { login?: string };
-      headRefName: string;
-      url: string;
-      updatedAt?: string;
-    }>;
+    const prs = parsePullRequests(stdout);
 
     return prs
       .map((pr) => ({
@@ -96,7 +139,7 @@ async function listBranches(repoPath: string, query = ""): Promise<BranchResourc
         "-C",
         repoPath,
         "for-each-ref",
-        "--format=%(refname:short)|%(authorname)|%(committerdate:iso8601)",
+        `--format=%(refname:short)${BRANCH_FIELD_DELIMITER}%(authorname)${BRANCH_FIELD_DELIMITER}%(committerdate:iso8601)`,
         "refs/heads",
       ],
       { timeout: 10_000 },
@@ -106,15 +149,8 @@ async function listBranches(repoPath: string, query = ""): Promise<BranchResourc
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean)
-      .map((line) => {
-        const [name, author, updatedAt] = line.split("|");
-        return {
-          id: name,
-          name,
-          author: author || undefined,
-          updatedAt: updatedAt || undefined,
-        };
-      })
+      .map(parseBranchLine)
+      .filter((branch): branch is BranchResource => branch !== null)
       .filter((branch) => matchesQuery([branch.name, branch.author], query));
   } catch {
     return [];
