@@ -8,45 +8,43 @@ import {
   clearLifecycleWorkerPid,
   getLifecycleWorkerStatus,
   writeLifecycleWorkerPid,
+  isProcessRunning,
 } from "../lib/lifecycle-service.js";
 
-// Stable PID file for poll-all mode, located in the global data dir
-// rather than under a project dir (which would be unstable across config changes).
-// Uses getGlobalDataDir() to respect XDG_DATA_HOME and other env overrides.
-const ALL_PROJECTS_PID_FILE = join(getGlobalDataDir(), "lifecycle-all.pid");
+// Lazy PID file path — only computed when poll-all mode is actually used,
+// not on every CLI command import.
+let _allPidFile: string | null = null;
+function getAllPidFile(): string {
+  if (!_allPidFile) {
+    _allPidFile = join(getGlobalDataDir(), "lifecycle-all.pid");
+  }
+  return _allPidFile;
+}
 
 function readAllPid(): number | null {
   try {
-    if (!existsSync(ALL_PROJECTS_PID_FILE)) return null;
-    const raw = readFileSync(ALL_PROJECTS_PID_FILE, "utf-8").trim();
+    const pidFile = getAllPidFile();
+    if (!existsSync(pidFile)) return null;
+    const raw = readFileSync(pidFile, "utf-8").trim();
     const pid = Number.parseInt(raw, 10);
     return Number.isFinite(pid) && pid > 0 ? pid : null;
   } catch { return null; }
 }
 
-function isProcessRunning(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err: unknown) {
-    // EPERM means the process exists but we lack permission to signal it
-    if (err && typeof err === "object" && "code" in err && err.code === "EPERM") return true;
-    return false;
-  }
-}
-
 function writeAllPid(pid: number): void {
-  mkdirSync(dirname(ALL_PROJECTS_PID_FILE), { recursive: true });
-  writeFileSync(ALL_PROJECTS_PID_FILE, `${pid}\n`, "utf-8");
+  const pidFile = getAllPidFile();
+  mkdirSync(dirname(pidFile), { recursive: true });
+  writeFileSync(pidFile, `${pid}\n`, "utf-8");
 }
 
 function clearAllPid(pid?: number): void {
-  if (!existsSync(ALL_PROJECTS_PID_FILE)) return;
+  const pidFile = getAllPidFile();
+  if (!existsSync(pidFile)) return;
   if (pid !== undefined) {
     const stored = readAllPid();
     if (stored !== null && stored !== pid) return;
   }
-  try { unlinkSync(ALL_PROJECTS_PID_FILE); } catch { /* best effort */ }
+  try { unlinkSync(pidFile); } catch { /* best effort */ }
 }
 
 function parseInterval(value: string): number {
