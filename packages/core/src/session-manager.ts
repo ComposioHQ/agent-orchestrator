@@ -1960,7 +1960,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
 
       try {
-        const restored = await restore(sessionId);
+        const restored = await restoreInternal(sessionId, { injectCheckpointSummary: false });
         await waitForRestoredSessionReady(runtimePlugin, agentPlugin, restored);
         return restored;
       } catch (err) {
@@ -2212,7 +2212,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return discovered;
   }
 
-  async function restore(sessionId: SessionId): Promise<Session> {
+  async function restoreInternal(
+    sessionId: SessionId,
+    options?: { injectCheckpointSummary?: boolean },
+  ): Promise<Session> {
     // 1. Find session metadata across all projects (active first, then archive)
     let raw: Record<string, string> | null = null;
     let sessionsDir: string | null = null;
@@ -2445,19 +2448,25 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     // Inject checkpoint summary so the agent has ground truth about workspace state.
     // This prevents the "confused agent" problem where the agent's conversation
     // history doesn't match the actual git state after a mid-task crash.
-    try {
-      const checkpointSummary = await buildCheckpointSummary(sessionId, sessionsDir, workspacePath);
-      if (checkpointSummary) {
-        // Wait for agent to be ready before sending
-        await waitForRestoredSessionReady(runtimePlugin, agentPlugin, restoredSession);
-        await runtimePlugin.sendMessage(handle, checkpointSummary);
+    if (options?.injectCheckpointSummary !== false) {
+      try {
+        const checkpointSummary = await buildCheckpointSummary(sessionId, sessionsDir, workspacePath);
+        if (checkpointSummary) {
+          // Wait for agent to be ready before sending
+          await waitForRestoredSessionReady(runtimePlugin, agentPlugin, restoredSession);
+          await runtimePlugin.sendMessage(handle, checkpointSummary);
+        }
+      } catch {
+        // Non-fatal — agent is running, just didn't get the checkpoint context.
+        // The CI feedback loop will catch any issues reactively.
       }
-    } catch {
-      // Non-fatal — agent is running, just didn't get the checkpoint context.
-      // The CI feedback loop will catch any issues reactively.
     }
 
     return restoredSession;
+  }
+
+  async function restore(sessionId: SessionId): Promise<Session> {
+    return restoreInternal(sessionId, { injectCheckpointSummary: true });
   }
 
   return { spawn, spawnOrchestrator, restore, list, get, kill, cleanup, send, claimPR, remap };
