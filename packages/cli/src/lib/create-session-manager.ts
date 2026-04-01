@@ -15,8 +15,10 @@ import {
   type OpenCodeSessionManager,
   type PluginRegistry,
   type LifecycleManager,
+  type ArtifactService,
 } from "@composio/ao-core";
 import { importPluginModuleFromSource } from "./plugin-store.js";
+import { createArtifactService } from "@composio/ao-plugin-artifact-file/artifact-service";
 
 const registryPromises = new Map<string, Promise<PluginRegistry>>();
 
@@ -50,6 +52,11 @@ export async function getPluginRegistry(config: OrchestratorConfig): Promise<Plu
   return registryPromise;
 }
 
+/** Factory for creating ArtifactService instances with project-specific paths. */
+function artifactServiceFactory(cfg: { artifactsDir: string; sessionsDir: string }): ArtifactService {
+  return createArtifactService(cfg);
+}
+
 /**
  * Create a SessionManager backed by core's implementation.
  * Initializes the plugin registry from config and wires everything up.
@@ -58,7 +65,7 @@ export async function getSessionManager(
   config: OrchestratorConfig,
 ): Promise<OpenCodeSessionManager> {
   const registry = await getPluginRegistry(config);
-  return createSessionManager({ config, registry });
+  return createSessionManager({ config, registry, createArtifactService: artifactServiceFactory });
 }
 
 /**
@@ -70,6 +77,6 @@ export async function getLifecycleManager(
   projectId?: string,
 ): Promise<LifecycleManager> {
   const registry = await getPluginRegistry(config);
-  const sessionManager = createSessionManager({ config, registry });
+  const sessionManager = createSessionManager({ config, registry, createArtifactService: artifactServiceFactory });
   return createLifecycleManager({ config, registry, sessionManager, projectId });
 }

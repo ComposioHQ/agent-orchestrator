@@ -112,6 +112,14 @@ export function getWorktreesDir(configPath: string, projectPath: string): string
 }
 
 /**
+ * Get the artifacts directory for a project.
+ * Format: ~/.agent-orchestrator/{hash}-{projectId}/artifacts
+ */
+export function getArtifactsDir(configPath: string, projectPath: string): string {
+  return join(getProjectBaseDir(configPath, projectPath), "artifacts");
+}
+
+/**
  * Get the feedback reports directory for a project.
  * Format: ~/.agent-orchestrator/{hash}-{projectId}/feedback-reports
  */

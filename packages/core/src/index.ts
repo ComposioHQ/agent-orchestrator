@@ -162,6 +162,9 @@ export type {
   PersistedFeedbackReport,
 } from "./feedback-tools.js";
 
+// Artifact prompt — Layer 5 artifact context
+export { buildArtifactLayer, buildOrchestratorArtifactSection } from "./artifact-prompt.js";
+
 // Path utilities — hash-based directory structure
 export {
   generateConfigHash,
@@ -171,6 +174,7 @@ export {
   getProjectBaseDir,
   getSessionsDir,
   getWorktreesDir,
+  getArtifactsDir,
   getFeedbackReportsDir,
   getObservabilityBaseDir,
   getArchiveDir,

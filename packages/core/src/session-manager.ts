@@ -58,11 +58,13 @@ import { buildPrompt } from "./prompt-builder.js";
 import {
   getSessionsDir,
   getWorktreesDir,
+  getArtifactsDir,
   getProjectBaseDir,
   generateTmuxName,
   generateConfigHash,
   validateAndStoreOrigin,
 } from "./paths.js";
+import type { ArtifactService } from "./types.js";
 import { asValidOpenCodeSessionId } from "./opencode-session-id.js";
 import { normalizeOrchestratorSessionStrategy } from "./orchestrator-session-strategy.js";
 import {
@@ -260,11 +262,13 @@ function metadataToSession(
 export interface SessionManagerDeps {
   config: OrchestratorConfig;
   registry: PluginRegistry;
+  /** Optional factory to create an ArtifactService for a project. */
+  createArtifactService?: (cfg: { artifactsDir: string; sessionsDir: string }) => ArtifactService;
 }
 
 /** Create a SessionManager instance. */
 export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionManager {
-  const { config, registry } = deps;
+  const { config, registry, createArtifactService: artifactFactory } = deps;
 
   interface LocatedSession {
     raw: Record<string, string>;
@@ -718,6 +722,21 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return { runtime, agent, workspace, tracker, scm };
   }
 
+  /**
+   * Create an ArtifactService for a project with correct project-specific paths.
+   * Uses the injected factory from SessionManagerDeps.
+   */
+  function resolveArtifactService(project: ProjectConfig): ArtifactService | null {
+    if (!artifactFactory) return null;
+    try {
+      const artDir = getArtifactsDir(config.configPath, project.path);
+      const sesDir = getSessionsDir(config.configPath, project.path);
+      return artifactFactory({ artifactsDir: artDir, sessionsDir: sesDir });
+    } catch {
+      return null;
+    }
+  }
+
   function resolveSelectionForSession(
     project: ProjectConfig,
     sessionId: string,
@@ -1019,6 +1038,27 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     }
 
+    // Initialize artifacts if available
+    const artifactsDir = getArtifactsDir(config.configPath, project.path);
+    let artifactContext: { artifactsDir: string; totalArtifacts: number; totalSessions: number } | undefined;
+    const artifactService = resolveArtifactService(project);
+    if (artifactService) {
+      try {
+        if (!(await artifactService.isInitialized())) {
+          await artifactService.init();
+        }
+        const allArtifacts = await artifactService.list();
+        const sessionIds = new Set(allArtifacts.map((a) => a.sessionId));
+        artifactContext = {
+          artifactsDir,
+          totalArtifacts: allArtifacts.length,
+          totalSessions: sessionIds.size,
+        };
+      } catch {
+        // Non-fatal: continue without artifact context
+      }
+    }
+
     const composedPrompt = buildPrompt({
       project,
       projectId: spawnConfig.projectId,
@@ -1027,6 +1067,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       userPrompt: spawnConfig.prompt,
       lineage: spawnConfig.lineage,
       siblings: spawnConfig.siblings,
+      artifactContext,
     });
 
     // Get agent launch config and create runtime — clean up workspace on failure
@@ -1074,6 +1115,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           AO_PROJECT_ID: spawnConfig.projectId,
           AO_CONFIG_PATH: config.configPath,
           ...(config.port !== undefined && config.port !== null && { AO_PORT: String(config.port) }),
+          ...(artifactContext && { AO_ARTIFACTS_DIR: artifactsDir }),
+          AO_ISSUE_ID: spawnConfig.issueId ?? "",
         },
       });
     } catch (err) {
