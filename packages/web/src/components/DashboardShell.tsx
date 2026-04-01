@@ -25,7 +25,7 @@ interface DashboardShellProps {
   sessions?: DashboardSession[];
   activeProjectId?: string;
   activeSessionId?: string;
-  defaultLocation: string;
+  defaultLocation?: string;
   children: ReactNode;
 }
 
@@ -40,7 +40,7 @@ export function DashboardShell({
   sessions,
   activeProjectId,
   activeSessionId,
-  defaultLocation,
+  defaultLocation = "",
   children,
 }: DashboardShellProps) {
   const router = useRouter();

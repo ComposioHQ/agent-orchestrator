@@ -1,4 +1,3 @@
-import { homedir } from "node:os";
 import { DashboardShell } from "@/components/DashboardShell";
 import { ProjectSessionPageClient } from "@/components/ProjectSessionPageClient";
 import { loadPortfolioPageData } from "@/lib/portfolio-page-data";
@@ -16,7 +15,6 @@ export default async function ProjectSessionPage(props: {
       projects={projectSummaries}
       activeProjectId={params.projectId}
       activeSessionId={params.sessionId}
-      defaultLocation={homedir()}
     >
       <ProjectSessionPageClient projectId={params.projectId} sessionId={params.sessionId} />
     </DashboardShell>

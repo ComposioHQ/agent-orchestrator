@@ -49,6 +49,7 @@ export function ProjectSessionPageClient({
 }: ProjectSessionPageClientProps) {
   const [session, setSession] = useState<DashboardSession | null>(null);
   const [zoneCounts, setZoneCounts] = useState<ZoneCounts | null>(null);
+  const [projectOrchestratorId, setProjectOrchestratorId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const sessionIsOrchestrator = session ? isOrchestratorSession(session) : false;
@@ -71,6 +72,11 @@ export function ProjectSessionPageClient({
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as DashboardSession;
+      if (data.projectId !== projectId) {
+        setError("Session not found");
+        setLoading(false);
+        return;
+      }
       setSession(data);
       setError(null);
     } catch (err) {
@@ -86,8 +92,12 @@ export function ProjectSessionPageClient({
     try {
       const res = await fetch(`/api/sessions?project=${encodeURIComponent(projectId)}`);
       if (!res.ok) return;
-      const body = (await res.json()) as { sessions: DashboardSession[] };
+      const body = (await res.json()) as {
+        sessions: DashboardSession[];
+        orchestratorId?: string | null;
+      };
       const sessions = body.sessions ?? [];
+      setProjectOrchestratorId(body.orchestratorId ?? null);
       const counts: ZoneCounts = {
         merge: 0,
         respond: 0,
@@ -152,6 +162,7 @@ export function ProjectSessionPageClient({
       session={session}
       isOrchestrator={sessionIsOrchestrator}
       orchestratorZones={zoneCounts ?? undefined}
+      projectOrchestratorId={projectOrchestratorId}
     />
   );
 }

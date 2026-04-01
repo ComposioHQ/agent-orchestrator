@@ -212,7 +212,11 @@ function SidebarContent({
     setRemoving(true);
     try {
       const projectId = removeTarget.id;
-      await fetch(`/api/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" });
+      const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error || "Failed to remove project");
+      }
       setRemoveTarget(null);
       const viewingDeletedProject =
         activeProjectId === projectId || pathname.startsWith(`/projects/${encodeURIComponent(projectId)}`);
@@ -443,8 +447,7 @@ function SidebarContent({
                   <span className="absolute inset-y-1 left-0 w-[2px] rounded-full bg-[var(--color-accent)]" />
                 ) : null}
 
-                <Link
-                  href={`/projects/${encodeURIComponent(project.id)}`}
+                <div
                   className={cn(
                     "flex min-h-[44px] items-center gap-3 px-3 py-2 text-[13px] tracking-[-0.011em] hover:no-underline",
                     isActive
@@ -452,31 +455,35 @@ function SidebarContent({
                       : "text-[var(--color-text-secondary)]",
                   )}
                 >
-                  <ProjectAvatar
-                    projectId={project.id}
-                    name={project.name}
-                    degraded={project.degraded}
-                  />
+                  <Link
+                    href={`/projects/${encodeURIComponent(project.id)}`}
+                    className="flex min-w-0 flex-1 items-center gap-3 hover:no-underline"
+                  >
+                    <ProjectAvatar
+                      projectId={project.id}
+                      name={project.name}
+                      degraded={project.degraded}
+                    />
 
-                  <div className="min-w-0 flex-1">
-                    <span className="block truncate text-[13px] font-medium tracking-[-0.02em]">
-                      {project.name}
-                    </span>
-                    {/* Attention pills — always visible when there's activity */}
-                    {attentionPills.length > 0 ? (
-                      <div className="mt-0.5 flex items-center gap-1">
-                        {attentionPills.map(({ level, count, color, bgColor }) => (
-                          <span
-                            key={level}
-                            className="inline-flex items-center rounded-[var(--radius-sm)] px-1.5 py-px text-[9px] font-medium tabular-nums"
-                            style={{ color, backgroundColor: bgColor }}
-                          >
-                            {count}{level[0]}
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
+                    <div className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] font-medium tracking-[-0.02em]">
+                        {project.name}
+                      </span>
+                      {attentionPills.length > 0 ? (
+                        <div className="mt-0.5 flex items-center gap-1">
+                          {attentionPills.map(({ level, count, color, bgColor }) => (
+                            <span
+                              key={level}
+                              className="inline-flex items-center rounded-[var(--radius-sm)] px-1.5 py-px text-[9px] font-medium tabular-nums"
+                              style={{ color, backgroundColor: bgColor }}
+                            >
+                              {count}{level[0]}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  </Link>
 
                   {/* Action buttons — visible on hover/focus-within for keyboard accessibility */}
                   <div
@@ -533,7 +540,7 @@ function SidebarContent({
                       <TrashIcon />
                     </SidebarIconButton>
                   </div>
-                </Link>
+                </div>
               </div>
             );
           })}
@@ -1154,14 +1161,6 @@ function FolderOpenIcon() {
     <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
       <path d="M3.75 7.5A1.75 1.75 0 0 1 5.5 5.75h4.1l1.75 1.75h7.15A1.75 1.75 0 0 1 20.25 9.25v.25" />
       <path d="M3.08 12.25a1.25 1.25 0 0 1 1.22-1h15.4a1.25 1.25 0 0 1 1.22 1.53l-1.5 6a1.25 1.25 0 0 1-1.22.97H5.5a1.75 1.75 0 0 1-1.75-1.75l-.67-5.75Z" />
-    </svg>
-  );
-}
-
-function ZapIcon() {
-  return (
-    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M13 2 4.094 12.688c-.35.418-.525.627-.523.804a.5.5 0 0 0 .185.397c.138.111.41.111.955.111H12l-1 8 8.906-10.688c.35-.418.525-.627.523-.804a.5.5 0 0 0-.185-.397c-.138-.111-.41-.111-.955-.111H12l1-8Z" />
     </svg>
   );
 }

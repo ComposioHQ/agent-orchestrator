@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { ActivityFeedPage } from "@/components/ActivityFeedPage";
 import type { PortfolioActivityItem, PortfolioProjectSummary } from "@/lib/types";
@@ -57,6 +57,15 @@ function makeActivityItem(
 }
 
 describe("ActivityFeedPage", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-27T12:00:00.000Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("renders grouped activity rows on the activity page", () => {
     render(
       <ActivityFeedPage
@@ -70,7 +79,7 @@ describe("ActivityFeedPage", () => {
             projectName: "agent-orchestrator",
             sessionId: "ao-1",
             session: {
-              lastActivityAt: new Date().toISOString(),
+              lastActivityAt: "2026-03-27T10:30:00.000Z",
               summary: "Improve project",
               branch: "shanghai",
             },
@@ -80,7 +89,7 @@ describe("ActivityFeedPage", () => {
             projectName: "docs",
             sessionId: "docs-1",
             session: {
-              lastActivityAt: new Date(Date.now() - 3 * 86_400_000).toISOString(),
+              lastActivityAt: "2026-03-24T10:30:00.000Z",
               summary: "Write architecture",
               branch: "perth-v1",
             },

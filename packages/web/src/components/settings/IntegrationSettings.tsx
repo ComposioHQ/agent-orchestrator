@@ -11,14 +11,25 @@ interface IntegrationStatus {
 export function IntegrationSettings() {
   const [integrations, setIntegrations] = useState<IntegrationStatus[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/integrations")
-      .then((res) => res.json())
-      .then((data: { integrations?: IntegrationStatus[] }) => {
-        setIntegrations(data.integrations ?? []);
+      .then(async (res) => {
+        const data = (await res.json().catch(() => null)) as
+          | { integrations?: IntegrationStatus[]; error?: string }
+          | null;
+        if (!res.ok) {
+          throw new Error(data?.error || "Failed to load integrations");
+        }
+        return data;
       })
-      .catch(() => {})
+      .then((data: { integrations?: IntegrationStatus[] } | null) => {
+        setIntegrations(data?.integrations ?? []);
+      })
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : "Failed to load integrations");
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -33,6 +44,8 @@ export function IntegrationSettings() {
 
       {loading ? (
         <div className="text-[13px] text-[var(--color-text-tertiary)]">Checking connections...</div>
+      ) : error ? (
+        <div className="text-[13px] text-[var(--color-status-error)]">{error}</div>
       ) : (
         <div className="space-y-3">
           {integrations.map((integration) => (

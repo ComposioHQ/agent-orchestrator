@@ -190,9 +190,7 @@ export function WorkspaceResourcesModal({
         throw new Error(body?.error || "Failed to create thread");
       }
 
-      if (mode === "thread") {
-        router.push(getProjectSessionHref(project.id, body.session.id));
-      }
+      router.push(getProjectSessionHref(project.id, body.session.id));
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create session");
