@@ -228,6 +228,18 @@ export function toClaudeProjectPath(workspacePath: string): string {
   return normalized.replace(/:/g, "").replace(/[/.]/g, "-");
 }
 
+/**
+ * Wrap a claude command with a background auto-accept for the bypass permissions
+ * confirmation prompt. Only applies when running inside tmux ($TMUX is set).
+ * Claude Code's --dangerously-skip-permissions shows an interactive prompt that
+ * blocks non-interactive sessions. This sends Down + Enter via tmux send-keys
+ * after a short delay to auto-accept it.
+ */
+function wrapWithBypassAutoAccept(cmd: string, isBypassMode: boolean): string {
+  if (!isBypassMode) return cmd;
+  return `([ -n "\$TMUX" ] && sleep 3 && tmux send-keys -t "\${AO_TMUX_NAME:-\${AO_SESSION_NAME}}" Down Enter 2>/dev/null) & ${cmd}`;
+}
+
 /** Find the most recently modified .jsonl session file in a directory */
 async function findLatestSessionFile(projectDir: string): Promise<string | null> {
   let entries: string[];
@@ -658,11 +670,13 @@ function createClaudeCodeAgent(): Agent {
 
     getLaunchCommand(config: AgentLaunchConfig): string {
       // Note: CLAUDECODE is unset via getEnvironment() (set to ""), not here.
-      // This command must be safe for both shell and execFile contexts.
+      // In bypass mode, the command uses shell syntax (subshell + background job)
+      // and requires a shell runtime (e.g. tmux). Non-bypass commands remain execFile-safe.
       const parts: string[] = ["claude"];
 
       const permissionMode = normalizePermissionMode(config.permissions);
-      if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
+      const isBypassMode = permissionMode === "permissionless" || permissionMode === "auto-edit";
+      if (isBypassMode) {
         parts.push("--dangerously-skip-permissions");
       }
 
@@ -683,7 +697,7 @@ function createClaudeCodeAgent(): Agent {
       // runtime.sendMessage() to keep Claude in interactive mode.
       // Using -p causes one-shot mode (Claude exits after responding).
 
-      return parts.join(" ");
+      return wrapWithBypassAutoAccept(parts.join(" "), isBypassMode);
     },
 
     getEnvironment(config: AgentLaunchConfig): Record<string, string> {
@@ -822,7 +836,8 @@ function createClaudeCodeAgent(): Agent {
       const parts: string[] = ["claude", "--resume", shellEscape(sessionUuid)];
 
       const permissionMode = normalizePermissionMode(project.agentConfig?.permissions);
-      if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
+      const isBypassMode = permissionMode === "permissionless" || permissionMode === "auto-edit";
+      if (isBypassMode) {
         parts.push("--dangerously-skip-permissions");
       }
 
@@ -830,7 +845,7 @@ function createClaudeCodeAgent(): Agent {
         parts.push("--model", shellEscape(project.agentConfig.model as string));
       }
 
-      return parts.join(" ");
+      return wrapWithBypassAutoAccept(parts.join(" "), isBypassMode);
     },
 
     async setupWorkspaceHooks(workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
