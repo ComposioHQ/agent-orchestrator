@@ -25,6 +25,7 @@ interface ProjectSidebarProps {
   activeSessionId: string | undefined;
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
+  isLoading?: boolean;
 }
 
 type ProjectHealth = "red" | "yellow" | "green" | "gray";
@@ -107,7 +108,52 @@ function HealthDot({ health }: { health: ProjectHealth }) {
   );
 }
 
+function SidebarSkeleton({ collapsed }: { collapsed: boolean }) {
+  if (collapsed) {
+    return (
+      <aside className="project-sidebar project-sidebar--collapsed flex min-h-0 flex-1 w-[56px] flex-col items-center py-2">
+        <div className="flex flex-1 flex-col items-center gap-3 pt-4">
+          {[1, 2, 3].map((i) => (
+            <div
+              key={i}
+              className="h-8 w-8 animate-pulse rounded-md"
+              style={{ background: "var(--color-bg-hover)" }}
+            />
+          ))}
+        </div>
+      </aside>
+    );
+  }
+  return (
+    <aside className="project-sidebar flex min-h-0 flex-1 w-[244px] flex-col">
+      <div className="px-4 py-4">
+        <div
+          className="mb-4 h-3 w-20 animate-pulse rounded"
+          style={{ background: "var(--color-bg-hover)" }}
+        />
+        {[1, 2, 3, 4].map((i) => (
+          <div
+            key={i}
+            className="mb-3 flex items-center gap-2"
+          >
+            <div
+              className="h-3 animate-pulse rounded"
+              style={{
+                background: "var(--color-bg-hover)",
+                width: `${50 + i * 15}%`,
+              }}
+            />
+          </div>
+        ))}
+      </div>
+    </aside>
+  );
+}
+
 export function ProjectSidebar(props: ProjectSidebarProps) {
+  if (props.isLoading && props.projects.length === 0) {
+    return <SidebarSkeleton collapsed={props.collapsed ?? false} />;
+  }
   if (props.projects.length <= 1) {
     return null;
   }
@@ -308,7 +354,7 @@ function ProjectSidebarInner({
   if (collapsed) {
     return (
       <>
-        <aside className="project-sidebar project-sidebar--collapsed flex h-full w-[56px] flex-col items-center py-2">
+        <aside className="project-sidebar project-sidebar--collapsed flex min-h-0 flex-1 w-[56px] flex-col items-center py-2">
           <div className="mb-1 flex w-full shrink-0 justify-center px-1">{filterPopover}</div>
           <div className="flex flex-1 flex-col items-center gap-3 overflow-y-auto">
             {projects.map((project) => {
@@ -402,7 +448,7 @@ function ProjectSidebarInner({
 
   return (
     <>
-      <aside className="project-sidebar flex h-full w-[244px] flex-col">
+      <aside className="project-sidebar flex min-h-0 flex-1 w-[244px] flex-col">
         <div className="flex items-center justify-between gap-2 border-b border-[var(--color-border-subtle)] px-3 py-1.5">
           <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--color-text-tertiary)]">
             Projects

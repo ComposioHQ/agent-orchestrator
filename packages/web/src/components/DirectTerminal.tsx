@@ -74,6 +74,8 @@ interface DirectTerminalProps {
   /** When set, renders a pane-header-style label at the start of the chrome bar,
    *  merging the label bar and chrome bar into a single row. */
   headerLabel?: string;
+  /** When true, automatically focus the terminal after it mounts. */
+  autoFocus?: boolean;
 }
 
 interface DirectTerminalLocation {
@@ -198,6 +200,7 @@ export function DirectTerminal({
   isOpenCodeSession = false,
   reloadCommand,
   headerLabel,
+  autoFocus = false,
 }: DirectTerminalProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -398,6 +401,10 @@ export function DirectTerminal({
         // Open terminal in DOM
         terminal.open(terminalRef.current);
         terminalInstance.current = terminal;
+
+        if (autoFocus) {
+          terminal.focus();
+        }
 
         const viewport = terminal.element?.querySelector<HTMLElement>(".xterm-viewport") ?? null;
 

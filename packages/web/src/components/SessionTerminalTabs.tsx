@@ -137,6 +137,7 @@ export function SessionTerminalTabs({
     saveSessionTerminalTabState(sessionId, activeId);
   }, [sessionId, activeId, subs]);
 
+
   const selectTab = useCallback(
     async (sub: SubSessionJson) => {
       setError(null);
@@ -160,6 +161,40 @@ export function SessionTerminalTabs({
     },
     [sessionId, loadSubs],
   );
+
+  // Sub-session tab navigation shortcuts — Cmd+Shift+L/H (vim right/left)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!((e.metaKey || e.ctrlKey) && e.shiftKey)) return;
+
+      if (!subs || subs.length === 0) return;
+
+      const isRight = e.key === "L";
+      const isLeft = e.key === "H";
+
+      if (!isRight && !isLeft) return;
+
+      const currentIdx = subs.findIndex((s) => s.id === activeId);
+      if (currentIdx === -1) return;
+
+      e.preventDefault();
+
+      let nextIdx: number;
+      if (isRight) {
+        nextIdx = (currentIdx + 1) % subs.length;
+      } else {
+        nextIdx = (currentIdx - 1 + subs.length) % subs.length;
+      }
+
+      const nextSub = subs[nextIdx];
+      if (nextSub) {
+        void selectTab(nextSub);
+      }
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [subs, activeId, selectTab]);
 
   const addTerminal = useCallback(async () => {
     setCreating(true);
@@ -240,6 +275,7 @@ export function SessionTerminalTabs({
           headerLabel="Terminal"
           isOpenCodeSession={showOpenCodeTools}
           reloadCommand={showOpenCodeTools ? reloadCommand : undefined}
+          autoFocus={true}
         />
       </div>
     </div>

@@ -129,19 +129,40 @@ export function WorkspaceLayout({ session, children }: WorkspaceLayoutProps) {
   const diffMode = showChangedOnly && !!selectedFile;
 
   // CMD+P / Ctrl+P → open quick file search
+  // Cmd+Shift+F / Ctrl+Shift+F → toggle file tree
+  // Cmd+Shift+P / Ctrl+Shift+P → toggle preview
+  // Cmd+Shift+Z / Ctrl+Shift+Z → toggle terminal
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "p") {
+      const mod = e.metaKey || e.ctrlKey;
+
+      // Cmd+P / Ctrl+P → quick open (lowercase p without shift)
+      if (mod && !e.shiftKey && e.key === "p") {
         e.preventDefault();
         setQuickOpenVisible((v) => !v);
+      }
+
+      // Cmd+Shift+F / Ctrl+Shift+F → toggle file tree
+      if (mod && e.shiftKey && e.key === "F") {
+        e.preventDefault();
+        toggleCollapsed(0);
+      }
+
+      // Cmd+Shift+P / Ctrl+Shift+P → toggle preview
+      if (mod && e.shiftKey && e.key === "P") {
+        e.preventDefault();
+        toggleCollapsed(1);
+      }
+
+      // Cmd+Shift+Z / Ctrl+Shift+Z → toggle terminal
+      if (mod && e.shiftKey && e.key === "Z") {
+        e.preventDefault();
+        toggleCollapsed(2);
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, []);
-
-  // Auto-collapse file tree when a file is selected (respects per-source settings).
-  // Only clear fileSelectSourceRef after handling a transition so async URL updates still see the source.
+  }, [toggleCollapsed]);
   useEffect(() => {
     const prev = prevFileRef.current;
     if (selectedFile && selectedFile !== prev && !collapsed[0]) {

@@ -45,6 +45,7 @@ export default function StandaloneTerminalPage() {
         <DirectTerminal
           sessionId={decodeURIComponent(name)}
           height="100%"
+          autoFocus={true}
         />
       </div>
     </div>

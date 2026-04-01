@@ -1,14 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useSearchParams, useRouter } from "next/navigation";
 import { ProjectSidebar } from "@/components/ProjectSidebar";
 import { SidebarContext } from "@/components/workspace/SidebarContext";
 import { NewTerminalModal } from "@/components/NewTerminalModal";
 import { cn } from "@/lib/cn";
-import type { DashboardOrchestratorLink, DashboardSession } from "@/lib/types";
+import { isKilledSession, getAttentionLevel, type DashboardOrchestratorLink, type DashboardSession } from "@/lib/types";
 import type { ProjectInfo } from "@/lib/project-name";
 import type { StandaloneTerminal } from "@/lib/standalone-terminals";
+import { useShowKilledSessions } from "@/hooks/useShowKilledSessions";
+import { useShowDoneSessions } from "@/hooks/useShowDoneSessions";
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "ao:web:sidebar-collapsed";
 
@@ -30,14 +32,21 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
   });
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [newTerminalModalOpen, setNewTerminalModalOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const hasLoadedOnce = useRef(false);
+  const keyboardNavRef = useRef(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, sidebarCollapsed ? "1" : "0");
   }, [sidebarCollapsed]);
 
-  // Close mobile sidebar on navigation
+  // Close mobile sidebar on navigation, unless triggered by keyboard shortcut
   useEffect(() => {
+    if (keyboardNavRef.current) {
+      keyboardNavRef.current = false;
+      return;
+    }
     setMobileSidebarOpen(false);
   }, [pathname]);
 
@@ -70,21 +79,33 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
           const data = (await terminalsRes.json()) as { terminals?: TerminalWithAlive[] };
           setTerminals(data.terminals ?? []);
         }
-      } catch {
-        if (!cancelled) {
-          setProjects([]);
-          setSessions([]);
-          setOrchestrators([]);
-          setTerminals([]);
+
+        if (!hasLoadedOnce.current) {
+          hasLoadedOnce.current = true;
+          setIsLoading(false);
         }
+      } catch {
+        if (!hasLoadedOnce.current) {
+          setIsLoading(false);
+        }
+        // Don't reset existing data — stale data is better than blank
       }
     }
 
     void loadSidebarData();
     const intervalId = setInterval(loadSidebarData, 10_000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        void loadSidebarData();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+
     return () => {
       cancelled = true;
       clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, []);
 
@@ -111,6 +132,75 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
     if (match?.[1]) return decodeURIComponent(match[1]);
     return undefined;
   }, [pathname]);
+
+  const [showKilled] = useShowKilledSessions();
+  const [showDone] = useShowDoneSessions();
+
+  function sidebarSessionRowVisible(session: DashboardSession): boolean {
+    if (isKilledSession(session)) return showKilled;
+    if (getAttentionLevel(session) === "done") return showDone;
+    return true;
+  }
+
+  // Sidebar navigation shortcuts — Cmd+Shift+J/K (vim down/up)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!((e.metaKey || e.ctrlKey) && e.shiftKey)) return;
+
+      // Build navigable list: sessions grouped by project, then global terminals
+      const navItems: Array<{ type: "session" | "terminal"; id: string; projectId?: string }> = [];
+
+      // For each project, add its visible sessions
+      for (const project of projects) {
+        const projectSessions = sessions
+          .filter((s) => s.projectId === project.id)
+          .filter((s) => sidebarSessionRowVisible(s));
+        for (const session of projectSessions) {
+          navItems.push({ type: "session", id: session.id, projectId: project.id });
+        }
+      }
+
+      // Add global terminals at the end
+      for (const terminal of terminals) {
+        navItems.push({ type: "terminal", id: terminal.tmuxName });
+      }
+
+      if (navItems.length === 0) return;
+
+      // Determine current active item index
+      let currentIndex = -1;
+      if (activeSessionId) {
+        currentIndex = navItems.findIndex((item) => item.type === "session" && item.id === activeSessionId);
+      } else if (activeTerminalName) {
+        currentIndex = navItems.findIndex((item) => item.type === "terminal" && item.id === activeTerminalName);
+      }
+
+      const isDown = e.key === "J";
+      const isUp = e.key === "K";
+
+      let nextIndex: number;
+      if (isDown) {
+        e.preventDefault();
+        nextIndex = (currentIndex + 1) % navItems.length;
+      } else if (isUp) {
+        e.preventDefault();
+        nextIndex = (currentIndex - 1 + navItems.length) % navItems.length;
+      } else {
+        return;
+      }
+
+      const nextItem = navItems[nextIndex];
+      keyboardNavRef.current = true;
+      if (nextItem.type === "session") {
+        router.push(`/sessions/${encodeURIComponent(nextItem.id)}`);
+      } else if (nextItem.type === "terminal") {
+        router.push(`/terminals/${encodeURIComponent(nextItem.id)}`);
+      }
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [projects, sessions, terminals, activeSessionId, activeTerminalName, router, showKilled, showDone]);
 
   const _toggleMobileSidebar = useCallback(() => {
     setMobileSidebarOpen((v) => !v);
@@ -269,7 +359,7 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
       <div className="dashboard-shell flex" style={{ height: "100dvh" }}>
         {/* Desktop sidebar — hidden on mobile via CSS */}
         <div className="dashboard-sidebar-desktop">
-          <div className="flex h-full flex-col">
+          <div className="sidebar-column flex h-full flex-col">
             <ProjectSidebar
               projects={projects}
               sessions={sessions}
@@ -278,6 +368,7 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
               activeSessionId={activeSessionId}
               collapsed={sidebarCollapsed}
               onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
+              isLoading={isLoading}
             />
             {sidebarCollapsed ? <TerminalsSidebarSectionCollapsed /> : <TerminalsSidebarSection />}
           </div>
@@ -287,7 +378,7 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
         {mobileSidebarOpen && (
           <div className="dashboard-sidebar-overlay" onClick={() => setMobileSidebarOpen(false)}>
             <div className="dashboard-sidebar-mobile" onClick={(e) => e.stopPropagation()}>
-              <div className="flex h-full flex-col">
+              <div className="sidebar-column flex h-full flex-col">
                 <ProjectSidebar
                   projects={projects}
                   sessions={sessions}
@@ -296,6 +387,7 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
                   activeSessionId={activeSessionId}
                   collapsed={false}
                   onToggleCollapsed={() => setMobileSidebarOpen(false)}
+                  isLoading={isLoading}
                 />
                 <TerminalsSidebarSection />
               </div>
