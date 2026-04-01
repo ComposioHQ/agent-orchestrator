@@ -74,6 +74,8 @@ interface DirectTerminalProps {
   /** When set, renders a pane-header-style label at the start of the chrome bar,
    *  merging the label bar and chrome bar into a single row. */
   headerLabel?: string;
+  /** When true, automatically focus the terminal after it mounts. */
+  autoFocus?: boolean;
 }
 
 interface DirectTerminalLocation {
@@ -198,6 +200,7 @@ export function DirectTerminal({
   isOpenCodeSession = false,
   reloadCommand,
   headerLabel,
+  autoFocus = false,
 }: DirectTerminalProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -399,6 +402,10 @@ export function DirectTerminal({
         terminal.open(terminalRef.current);
         terminalInstance.current = terminal;
 
+        if (autoFocus) {
+          terminal.focus();
+        }
+
         const viewport = terminal.element?.querySelector<HTMLElement>(".xterm-viewport") ?? null;
 
         // Fit terminal to container
@@ -465,6 +472,7 @@ export function DirectTerminal({
         // Intercept Cmd+C (Mac) and Ctrl+Shift+C (Linux/Win) for copy.
         // Paste (Cmd+V / Ctrl+Shift+V) is handled natively by xterm.js
         // via its internal textarea — no custom handler needed.
+        // Also intercept Ctrl+` to allow WorkspaceLayout to toggle terminal panel.
         terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
           if (e.type !== "keydown") return true;
 
@@ -476,6 +484,11 @@ export function DirectTerminal({
             navigator.clipboard?.writeText(terminal.getSelection()).catch(() => {});
             // Clear selection so the terminal resumes receiving output
             terminal.clearSelection();
+            return false;
+          }
+
+          // Ctrl+` — toggle terminal panel (only ctrlKey, not metaKey)
+          if (e.ctrlKey && !e.metaKey && e.key === "`") {
             return false;
           }
 

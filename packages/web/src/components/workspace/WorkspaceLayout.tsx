@@ -129,19 +129,47 @@ export function WorkspaceLayout({ session, children }: WorkspaceLayoutProps) {
   const diffMode = showChangedOnly && !!selectedFile;
 
   // CMD+P / Ctrl+P → open quick file search
+  // Cmd+Shift+F / Ctrl+Shift+F → toggle file tree
+  // Cmd+Shift+P / Ctrl+Shift+P → toggle preview
+  // Ctrl+` → toggle terminal
+  // Cmd+Shift+L / Ctrl+Shift+L → toggle layout orientation
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "p") {
+      const mod = e.metaKey || e.ctrlKey;
+
+      // Cmd+P / Ctrl+P → quick open (lowercase p without shift)
+      if (mod && !e.shiftKey && e.key === "p") {
         e.preventDefault();
         setQuickOpenVisible((v) => !v);
+      }
+
+      // Cmd+Shift+F / Ctrl+Shift+F → toggle file tree
+      if (mod && e.shiftKey && e.key === "f") {
+        e.preventDefault();
+        toggleCollapsed(0);
+      }
+
+      // Cmd+Shift+P / Ctrl+Shift+P → toggle preview
+      if (mod && e.shiftKey && e.key === "p") {
+        e.preventDefault();
+        toggleCollapsed(1);
+      }
+
+      // Cmd+Shift+L / Ctrl+Shift+L → toggle layout
+      if (mod && e.shiftKey && e.key === "l") {
+        e.preventDefault();
+        setVerticalLayout(!verticalLayout);
+      }
+
+      // Ctrl+` → toggle terminal (note: only ctrlKey, not metaKey on Mac)
+      if (e.ctrlKey && !e.metaKey && e.key === "`") {
+        e.preventDefault();
+        toggleCollapsed(2);
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, []);
-
-  // Auto-collapse file tree when a file is selected (respects per-source settings).
-  // Only clear fileSelectSourceRef after handling a transition so async URL updates still see the source.
+  }, [toggleCollapsed, verticalLayout, setVerticalLayout]);
   useEffect(() => {
     const prev = prevFileRef.current;
     if (selectedFile && selectedFile !== prev && !collapsed[0]) {
