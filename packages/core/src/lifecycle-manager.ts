@@ -992,6 +992,104 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
   }
 
+  /**
+   * Dispatch merge conflict notifications to the agent session.
+   * Conflicts are detected from the PR enrichment cache or getMergeability()
+   * and dispatched independently of the session status (conflicts can coexist
+   * with ci_failed, changes_requested, etc.).
+   */
+  async function maybeDispatchMergeConflicts(
+    session: Session,
+    newStatus: SessionStatus,
+  ): Promise<void> {
+    const project = config.projects[session.projectId];
+    if (!project || !session.pr) return;
+
+    const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    if (!scm) return;
+
+    const conflictReactionKey = "merge-conflicts";
+
+    // Clear tracking when PR is closed/merged
+    if (newStatus === "merged" || newStatus === "killed") {
+      clearReactionTracker(session.id, conflictReactionKey);
+      updateSessionMetadata(session, {
+        lastMergeConflictDispatched: "",
+      });
+      return;
+    }
+
+    // Only check for conflicts on open PRs
+    if (
+      newStatus !== "pr_open" &&
+      newStatus !== "ci_failed" &&
+      newStatus !== "review_pending" &&
+      newStatus !== "changes_requested" &&
+      newStatus !== "approved" &&
+      newStatus !== "mergeable"
+    ) {
+      return;
+    }
+
+    // Check for conflicts using cached enrichment data or fallback to individual call
+    let hasConflicts = false;
+    const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
+    const cachedData = prEnrichmentCache.get(prKey);
+
+    if (cachedData) {
+      hasConflicts = cachedData.hasConflicts === true;
+    } else {
+      try {
+        const mergeReadiness = await scm.getMergeability(session.pr);
+        hasConflicts = !mergeReadiness.noConflicts;
+      } catch {
+        return;
+      }
+    }
+
+    const lastDispatched = session.metadata["lastMergeConflictDispatched"] ?? "";
+
+    if (hasConflicts) {
+      // Already dispatched for current conflict state — skip
+      if (lastDispatched === "true") return;
+
+      const reactionConfig = getReactionConfigForSession(session, conflictReactionKey);
+      if (
+        reactionConfig &&
+        reactionConfig.action &&
+        (reactionConfig.auto !== false || reactionConfig.action === "notify")
+      ) {
+        try {
+          if (reactionConfig.action === "send-to-agent") {
+            const message =
+              reactionConfig.message ??
+              "Your branch has merge conflicts. Rebase on the default branch and resolve them.";
+            await sessionManager.send(session.id, message);
+          } else {
+            const event = createEvent("merge.conflicts", {
+              sessionId: session.id,
+              projectId: session.projectId,
+              message: `${session.id}: PR has merge conflicts`,
+            });
+            await notifyHuman(event, reactionConfig.priority ?? "warning");
+          }
+
+          updateSessionMetadata(session, {
+            lastMergeConflictDispatched: "true",
+          });
+        } catch {
+          // Send failed — will retry on next poll cycle
+        }
+      }
+    } else if (lastDispatched === "true") {
+      // Conflicts resolved — clear so we can re-dispatch if they recur
+      clearReactionTracker(session.id, conflictReactionKey);
+      updateSessionMetadata(session, {
+        lastMergeConflictDispatched: "",
+      });
+    }
+  }
+
   /** Send a notification to all configured notifiers. */
   async function notifyHuman(event: OrchestratorEvent, priority: EventPriority): Promise<void> {
     const eventWithPriority = { ...event, priority };
@@ -1100,6 +1198,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     await Promise.all([
       maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction),
       maybeDispatchCIFailureDetails(session, oldStatus, newStatus, transitionReaction),
+      maybeDispatchMergeConflicts(session, newStatus),
     ]);
   }
 

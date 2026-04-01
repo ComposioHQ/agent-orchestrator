@@ -961,6 +961,190 @@ describe("reactions", () => {
     expect(metadata?.["lastCIFailureDispatchHash"]).toBeFalsy();
   });
 
+  it("dispatches merge conflict notification when PR has conflicts", async () => {
+    config.reactions = {
+      "merge-conflicts": {
+        auto: true,
+        action: "send-to-agent",
+        message: "Your branch has merge conflicts. Rebase and resolve them.",
+      },
+    };
+
+    const mockSCM = createMockSCM({
+      getMergeability: vi.fn().mockResolvedValue({
+        mergeable: false,
+        ciPassing: true,
+        approved: false,
+        noConflicts: false,
+        blockers: ["Merge conflicts"],
+      }),
+    });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "pr_open", pr: makePR() }),
+      registry,
+    });
+
+    await lm.check("app-1");
+    expect(mockSessionManager.send).toHaveBeenCalledWith(
+      "app-1",
+      "Your branch has merge conflicts. Rebase and resolve them.",
+    );
+  });
+
+  it("does not re-dispatch merge conflict notification when already dispatched", async () => {
+    config.reactions = {
+      "merge-conflicts": {
+        auto: true,
+        action: "send-to-agent",
+        message: "Resolve merge conflicts.",
+      },
+    };
+
+    const mockSCM = createMockSCM({
+      getMergeability: vi.fn().mockResolvedValue({
+        mergeable: false,
+        ciPassing: true,
+        approved: false,
+        noConflicts: false,
+        blockers: ["Merge conflicts"],
+      }),
+    });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "pr_open", pr: makePR() }),
+      registry,
+    });
+
+    await lm.check("app-1");
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+
+    vi.mocked(mockSessionManager.send).mockClear();
+
+    // Second check — same conflicts, should not re-send
+    await lm.check("app-1");
+    expect(mockSessionManager.send).not.toHaveBeenCalled();
+  });
+
+  it("re-dispatches merge conflict notification after conflicts are resolved and recur", async () => {
+    config.reactions = {
+      "merge-conflicts": {
+        auto: true,
+        action: "send-to-agent",
+        message: "Resolve merge conflicts.",
+      },
+    };
+
+    const getMergeabilityMock = vi.fn().mockResolvedValue({
+      mergeable: false,
+      ciPassing: true,
+      approved: false,
+      noConflicts: false,
+      blockers: ["Merge conflicts"],
+    });
+    const mockSCM = createMockSCM({
+      getMergeability: getMergeabilityMock,
+    });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "pr_open", pr: makePR() }),
+      registry,
+    });
+
+    // First: conflicts detected, notification sent
+    await lm.check("app-1");
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+    vi.mocked(mockSessionManager.send).mockClear();
+
+    // Second: conflicts resolved
+    getMergeabilityMock.mockResolvedValue({
+      mergeable: true,
+      ciPassing: true,
+      approved: false,
+      noConflicts: true,
+      blockers: [],
+    });
+    await lm.check("app-1");
+    expect(mockSessionManager.send).not.toHaveBeenCalled();
+
+    const metadata = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(metadata?.["lastMergeConflictDispatched"]).toBeFalsy();
+
+    // Third: conflicts recur — should re-dispatch
+    getMergeabilityMock.mockResolvedValue({
+      mergeable: false,
+      ciPassing: true,
+      approved: false,
+      noConflicts: false,
+      blockers: ["Merge conflicts"],
+    });
+    await lm.check("app-1");
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears merge conflict tracking when PR is merged", async () => {
+    config.reactions = {
+      "merge-conflicts": {
+        auto: true,
+        action: "send-to-agent",
+        message: "Resolve merge conflicts.",
+      },
+    };
+
+    const mockSCM = createMockSCM({
+      getMergeability: vi.fn().mockResolvedValue({
+        mergeable: false,
+        ciPassing: true,
+        approved: false,
+        noConflicts: false,
+        blockers: ["Merge conflicts"],
+      }),
+    });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
+
+    const lm = setupCheck("app-1", {
+      session: makeSession({ status: "pr_open", pr: makePR() }),
+      registry,
+    });
+
+    await lm.check("app-1");
+
+    // Now PR is merged
+    vi.mocked(mockSCM.getPRState).mockResolvedValue("merged");
+
+    await lm.check("app-1");
+
+    const metadata = readMetadataRaw(env.sessionsDir, "app-1");
+    expect(metadata?.["lastMergeConflictDispatched"]).toBeFalsy();
+  });
+
   it("notifies humans on significant transitions without reaction config", async () => {
     const notifier = createMockNotifier();
     const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("merged") });
