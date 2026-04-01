@@ -49,6 +49,8 @@ describe("writeMetadata + readMetadata", () => {
       prAutoDetect: "off",
       summary: "Implementing feature X",
       project: "my-app",
+      permissions: "auto-edit",
+      model: "claude-sonnet-4-20250514",
       createdAt: "2025-01-01T00:00:00.000Z",
       runtimeHandle: '{"id":"tmux-1","runtimeName":"tmux"}',
     });
@@ -60,6 +62,8 @@ describe("writeMetadata + readMetadata", () => {
     expect(meta!.prAutoDetect).toBe("off");
     expect(meta!.summary).toBe("Implementing feature X");
     expect(meta!.project).toBe("my-app");
+    expect(meta!.permissions).toBe("auto-edit");
+    expect(meta!.model).toBe("claude-sonnet-4-20250514");
     expect(meta!.createdAt).toBe("2025-01-01T00:00:00.000Z");
     expect(meta!.runtimeHandle).toBe('{"id":"tmux-1","runtimeName":"tmux"}');
   });
