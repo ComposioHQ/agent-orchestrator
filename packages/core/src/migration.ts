@@ -111,6 +111,8 @@ export function buildEffectiveConfig(
     defaults: globalConfig.defaults as DefaultPlugins,
     projects,
     projectOrder: globalConfig.projectOrder,
+    // These are global infrastructure settings (which channels exist, how
+    // priorities route). Per-project reaction overrides are on ProjectConfig.
     notifiers: {},
     notificationRouting: {
       urgent: ["desktop", "composio"],

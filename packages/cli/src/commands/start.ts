@@ -1283,7 +1283,12 @@ export function registerStart(program: Command): void {
                   newId = `${projectId}-${suffix}`;
                 } while (existingIds.has(newId));
 
-                if (!config.globalConfigPath) {
+                if (config.globalConfigPath) {
+                  // Multi-project mode: force a fresh orchestrator session
+                  // by overriding the strategy to "delete" (kills old, creates new)
+                  project = { ...project, orchestratorSessionStrategy: "delete" };
+                  console.log(chalk.green(`\n✓ Will create new orchestrator for "${projectId}"\n`));
+                } else {
                   // Legacy single-file mode: add a new project entry
                   const rawYaml = readFileSync(config.configPath, "utf-8");
                   const rawConfig = yamlParse(rawYaml);
@@ -1300,9 +1305,6 @@ export function registerStart(program: Command): void {
                   projectId = newId;
                   project = config.projects[newId];
                 }
-                // In multi-project mode, just start a new orchestrator session
-                // for the same project — no need to create a duplicate project entry.
-                // Continue to startup below
               } else if (choice === "restart") {
                 try { process.kill(running.pid, "SIGTERM"); } catch { /* already dead */ }
                 if (!(await waitForExit(running.pid, 5000))) {
