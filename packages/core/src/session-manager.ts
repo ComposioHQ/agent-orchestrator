@@ -43,6 +43,7 @@ import {
   type Issue,
   isOrchestratorSession,
   PR_STATE,
+  type ArtifactService,
 } from "./types.js";
 import {
   readMetadataRaw,
@@ -64,7 +65,6 @@ import {
   generateConfigHash,
   validateAndStoreOrigin,
 } from "./paths.js";
-import type { ArtifactService } from "./types.js";
 import { asValidOpenCodeSessionId } from "./opencode-session-id.js";
 import { normalizeOrchestratorSessionStrategy } from "./orchestrator-session-strategy.js";
 import {

@@ -20,14 +20,15 @@ import {
   readdirSync,
 } from "node:fs";
 import { join, basename, resolve } from "node:path";
-import type {
-  ArtifactService,
-  ArtifactEntry,
-  ArtifactManifest,
-  ArtifactFilter,
-  ArtifactSearchResult,
-  ArtifactStatus,
-  ArtifactCategory,
+import {
+  updateMetadata,
+  type ArtifactService,
+  type ArtifactEntry,
+  type ArtifactManifest,
+  type ArtifactFilter,
+  type ArtifactSearchResult,
+  type ArtifactStatus,
+  type ArtifactCategory,
 } from "@composio/ao-core";
 import {
   generateArtifactId,
@@ -40,7 +41,6 @@ import {
   readSidecar,
   removeSidecar,
 } from "./utils.js";
-import { validatePublish } from "./guards.js";
 
 export interface ArtifactServiceConfig {
   artifactsDir: string;
@@ -145,8 +145,6 @@ export function createArtifactService(config: ArtifactServiceConfig): ArtifactSe
   function updateSessionMetadata(sessionId: string, manifest: ArtifactManifest): void {
     if (!sessionsDir) return;
     try {
-      // Dynamically import to avoid hard dependency
-      const { updateMetadata } = require("@composio/ao-core");
       const sessionEntries = manifest.entries.filter(
         (e) => e.sessionId === sessionId && e.status !== "deleted",
       );
