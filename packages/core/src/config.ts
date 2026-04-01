@@ -520,7 +520,8 @@ export function loadConfig(configPath?: string): OrchestratorConfig {
       if (globalConfig) {
         const globalPath = findGlobalConfigPath();
         const config = buildEffectiveConfig(globalConfig, globalPath);
-        let effective = applyProjectDefaults(config);
+        let effective = expandPaths(config);
+        effective = applyProjectDefaults(effective);
         effective = applyDefaultReactions(effective);
         validateProjectUniqueness(effective);
         return effective;
@@ -535,8 +536,8 @@ export function loadConfig(configPath?: string): OrchestratorConfig {
   if (globalConfig) {
     const globalPath = findGlobalConfigPath();
     const config = buildEffectiveConfig(globalConfig, globalPath);
-    // Apply defaults, reactions, and uniqueness validation
-    let effective = applyProjectDefaults(config);
+    let effective = expandPaths(config);
+    effective = applyProjectDefaults(effective);
     effective = applyDefaultReactions(effective);
     validateProjectUniqueness(effective);
     return effective;
@@ -571,6 +572,7 @@ export function loadConfigWithPath(configPath?: string): {
     if (globalConfig) {
       const globalPath = findGlobalConfigPath();
       let config = buildEffectiveConfig(globalConfig, globalPath);
+      config = expandPaths(config);
       config = applyProjectDefaults(config);
       config = applyDefaultReactions(config);
       validateProjectUniqueness(config);

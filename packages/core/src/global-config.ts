@@ -284,6 +284,7 @@ export function loadGlobalConfig(): GlobalConfig | null {
   }
 
   // One-time migration: move inline shadows to per-project files.
+  // This re-reads the file, but fast-paths when no inline behavior fields exist.
   // Wrapped in try/catch so malformed YAML doesn't bypass the friendly
   // validation error below.
   try {
