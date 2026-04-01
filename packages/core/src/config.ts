@@ -505,6 +505,23 @@ export function findConfig(startDir?: string): string | null {
  *    → If found, build effective config from global + local configs
  * 3. Fall back to local config search (old single-file format)
  */
+/**
+ * Build effective config from global registry + shadow files.
+ * Shared pipeline used by all multi-project loading paths.
+ */
+function loadFromGlobalConfig(): OrchestratorConfig | null {
+  const globalConfig = loadGlobalConfig();
+  if (!globalConfig) return null;
+
+  const globalPath = findGlobalConfigPath();
+  const config = buildEffectiveConfig(globalConfig, globalPath);
+  let effective = expandPaths(config);
+  effective = applyProjectDefaults(effective);
+  effective = applyDefaultReactions(effective);
+  validateProjectUniqueness(effective);
+  return effective;
+}
+
 export function loadConfig(configPath?: string): OrchestratorConfig {
   // 1. Explicit param — try old single-file format first, then global config
   if (configPath) {
@@ -516,32 +533,16 @@ export function loadConfig(configPath?: string): OrchestratorConfig {
       // Re-throw I/O errors immediately.
       if (!(err instanceof z.ZodError)) throw err;
 
-      const globalConfig = loadGlobalConfig();
-      if (globalConfig) {
-        const globalPath = findGlobalConfigPath();
-        const config = buildEffectiveConfig(globalConfig, globalPath);
-        let effective = expandPaths(config);
-        effective = applyProjectDefaults(effective);
-        effective = applyDefaultReactions(effective);
-        validateProjectUniqueness(effective);
-        return effective;
-      }
+      const effective = loadFromGlobalConfig();
+      if (effective) return effective;
       // No global config — re-throw the original validation error
       throw err;
     }
   }
 
   // 2. Try global config (multi-project mode)
-  const globalConfig = loadGlobalConfig();
-  if (globalConfig) {
-    const globalPath = findGlobalConfigPath();
-    const config = buildEffectiveConfig(globalConfig, globalPath);
-    let effective = expandPaths(config);
-    effective = applyProjectDefaults(effective);
-    effective = applyDefaultReactions(effective);
-    validateProjectUniqueness(effective);
-    return effective;
-  }
+  const effective = loadFromGlobalConfig();
+  if (effective) return effective;
 
   // 3. Fall back to local config search
   const path = findConfigFile();
@@ -568,15 +569,9 @@ export function loadConfigWithPath(configPath?: string): {
 } {
   // Try global config (multi-project mode)
   if (!configPath) {
-    const globalConfig = loadGlobalConfig();
-    if (globalConfig) {
-      const globalPath = findGlobalConfigPath();
-      let config = buildEffectiveConfig(globalConfig, globalPath);
-      config = expandPaths(config);
-      config = applyProjectDefaults(config);
-      config = applyDefaultReactions(config);
-      validateProjectUniqueness(config);
-      return { config, path: globalPath };
+    const effective = loadFromGlobalConfig();
+    if (effective) {
+      return { config: effective, path: findGlobalConfigPath() };
     }
   }
 
