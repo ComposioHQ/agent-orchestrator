@@ -131,5 +131,47 @@ describe("checkpoint", () => {
       expect(summary).toContain("Last Checkpoint");
       expect(summary).toContain("deadbeef");
     });
+
+    it("shows checkpoint age indicator", async () => {
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      writeFileSync(
+        join(sessionsDir, "ao-10.checkpoint"),
+        JSON.stringify({
+          sessionId: "ao-10",
+          timestamp: fiveMinutesAgo,
+          lastCommitHash: "abc1234",
+          lastCommitMessage: "test commit",
+          branch: "main",
+          stagedFiles: [],
+          modifiedFiles: [],
+          untrackedFiles: [],
+          hasUncommittedChanges: false,
+        }),
+      );
+      const summary = await buildCheckpointSummary("ao-10", sessionsDir, repoDir);
+      expect(summary).not.toBeNull();
+      expect(summary).toContain("5 minutes ago");
+    });
+
+    it("truncates long file lists", async () => {
+      const manyFiles = Array.from({ length: 15 }, (_, i) => `file${i}.ts`);
+      writeFileSync(
+        join(sessionsDir, "ao-11.checkpoint"),
+        JSON.stringify({
+          sessionId: "ao-11",
+          timestamp: new Date().toISOString(),
+          lastCommitHash: "def5678",
+          lastCommitMessage: "test",
+          branch: "main",
+          stagedFiles: manyFiles,
+          modifiedFiles: [],
+          untrackedFiles: [],
+          hasUncommittedChanges: true,
+        }),
+      );
+      const summary = await buildCheckpointSummary("ao-11", sessionsDir, repoDir);
+      expect(summary).not.toBeNull();
+      expect(summary).toContain("... and 5 more");
+    });
   });
 });

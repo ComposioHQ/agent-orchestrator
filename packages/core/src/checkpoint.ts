@@ -206,6 +206,39 @@ function readCheckpoint(
   }
 }
 
+/**
+ * Format a file list, truncating to maxItems if longer.
+ * e.g. ["a.ts", "b.ts", ... and 48 more]
+ */
+function formatFileList(files: string[], maxItems = 10): string {
+  if (files.length <= maxItems) return files.join(", ");
+  const shown = files.slice(0, maxItems).join(", ");
+  return `${shown}, ... and ${files.length - maxItems} more`;
+}
+
+/**
+ * Format a human-readable relative time string (e.g. "5 minutes ago").
+ */
+function formatTimeAgo(isoTimestamp: string): string {
+  const then = new Date(isoTimestamp).getTime();
+  if (Number.isNaN(then)) return "unknown time ago";
+
+  const diffMs = Date.now() - then;
+  if (diffMs < 0) return "just now";
+
+  const seconds = Math.floor(diffMs / 1000);
+  if (seconds < 60) return `${seconds} seconds ago`;
+
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
@@ -290,22 +323,23 @@ export async function buildCheckpointSummary(
 
   // If a periodic checkpoint exists, include it so agent can spot discrepancies
   if (saved) {
+    const age = formatTimeAgo(saved.timestamp);
     lines.push(
       "",
       "### Last Checkpoint (captured before crash)",
-      `- **At:** ${saved.timestamp}`,
+      `- **At:** ${saved.timestamp} (${age})`,
       `- **Commit:** \`${saved.lastCommitHash}\` ${saved.lastCommitMessage}`,
       `- **Branch:** ${saved.branch}`,
     );
 
     if (saved.stagedFiles.length > 0) {
-      lines.push(`- **Staged:** ${saved.stagedFiles.join(", ")}`);
+      lines.push(`- **Staged:** ${formatFileList(saved.stagedFiles)}`);
     }
     if (saved.modifiedFiles.length > 0) {
-      lines.push(`- **Modified:** ${saved.modifiedFiles.join(", ")}`);
+      lines.push(`- **Modified:** ${formatFileList(saved.modifiedFiles)}`);
     }
     if (saved.untrackedFiles.length > 0) {
-      lines.push(`- **Untracked:** ${saved.untrackedFiles.join(", ")}`);
+      lines.push(`- **Untracked:** ${formatFileList(saved.untrackedFiles)}`);
     }
     if (saved.hasUncommittedChanges) {
       lines.push(
