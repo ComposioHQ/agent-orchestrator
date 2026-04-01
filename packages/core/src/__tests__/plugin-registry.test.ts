@@ -188,6 +188,26 @@ describe("loadBuiltins", () => {
     );
   });
 
+  it("registers forgejo tracker and scm plugins from importFn", async () => {
+    const registry = createPluginRegistry();
+
+    const fakeTracker = makePlugin("tracker", "forgejo");
+    const fakeScm = makePlugin("scm", "forgejo");
+
+    await registry.loadBuiltins(undefined, async (pkg: string) => {
+      if (pkg === "@composio/ao-plugin-tracker-forgejo") return fakeTracker;
+      if (pkg === "@composio/ao-plugin-scm-forgejo") return fakeScm;
+      throw new Error(`Not found: ${pkg}`);
+    });
+
+    expect(registry.list("tracker")).toContainEqual(
+      expect.objectContaining({ name: "forgejo", slot: "tracker" }),
+    );
+    expect(registry.list("scm")).toContainEqual(
+      expect.objectContaining({ name: "forgejo", slot: "scm" }),
+    );
+  });
+
   it("passes configured notifier plugin config to create()", async () => {
     const registry = createPluginRegistry();
     const fakeWebhookNotifier = makePlugin("notifier", "webhook");

@@ -9,7 +9,9 @@ const {
   claudePlugin,
   opencodePlugin,
   worktreePlugin,
+  scmForgejoPlugin,
   scmPlugin,
+  trackerForgejoPlugin,
   trackerGithubPlugin,
   trackerLinearPlugin,
 } = vi.hoisted(() => {
@@ -33,7 +35,9 @@ const {
     claudePlugin: { manifest: { name: "claude-code" } },
     opencodePlugin: { manifest: { name: "opencode" } },
     worktreePlugin: { manifest: { name: "worktree" } },
+    scmForgejoPlugin: { manifest: { name: "forgejo" } },
     scmPlugin: { manifest: { name: "github" } },
+    trackerForgejoPlugin: { manifest: { name: "forgejo" } },
     trackerGithubPlugin: { manifest: { name: "github" } },
     trackerLinearPlugin: { manifest: { name: "linear" } },
   };
@@ -61,7 +65,9 @@ vi.mock("@composio/ao-plugin-runtime-tmux", () => ({ default: tmuxPlugin }));
 vi.mock("@composio/ao-plugin-agent-claude-code", () => ({ default: claudePlugin }));
 vi.mock("@composio/ao-plugin-agent-opencode", () => ({ default: opencodePlugin }));
 vi.mock("@composio/ao-plugin-workspace-worktree", () => ({ default: worktreePlugin }));
+vi.mock("@composio/ao-plugin-scm-forgejo", () => ({ default: scmForgejoPlugin }));
 vi.mock("@composio/ao-plugin-scm-github", () => ({ default: scmPlugin }));
+vi.mock("@composio/ao-plugin-tracker-forgejo", () => ({ default: trackerForgejoPlugin }));
 vi.mock("@composio/ao-plugin-tracker-github", () => ({ default: trackerGithubPlugin }));
 vi.mock("@composio/ao-plugin-tracker-linear", () => ({ default: trackerLinearPlugin }));
 
