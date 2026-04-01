@@ -76,7 +76,9 @@ function buildConfigLayer(config: PromptBuildConfig): string {
 
   lines.push("## Project Context");
   lines.push(`- Project: ${project.name ?? projectId}`);
-  lines.push(`- Repository: ${project.repo}`);
+  lines.push(
+    `- Repository: ${project.repo ?? "local-only workspace (no remote configured yet)"}`,
+  );
   lines.push(`- Default branch: ${project.defaultBranch}`);
 
   if (project.tracker) {

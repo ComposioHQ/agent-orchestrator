@@ -47,7 +47,7 @@ export function eventMatchesProject(event: SCMWebhookEvent, project: ProjectConf
   if (!event.repository) return false;
   return (
     `${event.repository.owner}/${event.repository.name}`.toLowerCase() ===
-    project.repo.toLowerCase()
+    project.repo?.toLowerCase()
   );
 }
 

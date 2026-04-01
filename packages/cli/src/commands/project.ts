@@ -8,8 +8,7 @@ import {
   unregisterProject,
   loadPreferences,
   savePreferences,
-  findConfigFile,
-  getGlobalConfigPath,
+  loadLocalProjectConfig,
 } from "@composio/ao-core";
 
 export function registerProject_cmd(program: Command): void {
@@ -68,10 +67,7 @@ export function registerProject_cmd(program: Command): void {
     .action((path: string, opts: { key?: string }) => {
       const resolvedPath = resolve(path);
 
-      // Verify the path has a local config (not just the global registry or a parent dir's config)
-      const configPath = findConfigFile(resolvedPath);
-      const globalConfigPath = getGlobalConfigPath();
-      if (!configPath || configPath === globalConfigPath || !configPath.startsWith(resolvedPath)) {
+      if (!loadLocalProjectConfig(resolvedPath)) {
         console.error(chalk.red(`No agent-orchestrator.yaml found at ${resolvedPath}`));
         process.exit(1);
       }
@@ -94,16 +90,6 @@ export function registerProject_cmd(program: Command): void {
 
       unregisterProject(id);
       console.log(chalk.green(`Removed project "${id}" from portfolio`));
-
-      // If the project was discovered (not registered), disabling via preferences
-      // is the only way to suppress it from reappearing
-      if (found.source === "discovered") {
-        const prefs = loadPreferences();
-        if (!prefs.projects) prefs.projects = {};
-        prefs.projects[id] = { ...prefs.projects[id], enabled: false };
-        savePreferences(prefs);
-        console.log(chalk.dim("Project is auto-discovered — disabled in preferences. Remove session directories to fully remove."));
-      }
     });
 
   // ao project set-default <id>

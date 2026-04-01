@@ -85,7 +85,7 @@ describe("Dashboard mobile layout", () => {
 
     expect(screen.getByRole("link", { name: /go to need approval to proceed/i })).toHaveAttribute(
       "href",
-      "/sessions/respond-1",
+      "/projects/my-app/sessions/respond-1",
     );
 
     await act(async () => {
@@ -152,62 +152,8 @@ describe("Dashboard mobile layout", () => {
 
     render(<Dashboard initialSessions={sessions} />);
 
+    // PR cards are no longer embedded in the Dashboard (they moved to /prs)
     expect(screen.queryByRole("link", { name: /#87 add login flow/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "PRs" })).toHaveAttribute("href", "/prs?project=all");
-  });
-
-  it("renders the mobile bottom nav with dashboard, PRs, and orchestrator", () => {
-    render(
-      <Dashboard
-        initialSessions={[makeSession()]}
-        projectId="my-app"
-        orchestrators={[
-          { id: "my-app-orchestrator", projectId: "my-app", projectName: "My App" },
-        ]}
-      />,
-    );
-
-    expect(screen.getByRole("navigation", { name: /dashboard navigation/i })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("link", { name: "PRs" })).toHaveAttribute("href", "/prs?project=my-app");
-    expect(screen.getByRole("link", { name: "Orchestrator" })).toHaveAttribute(
-      "href",
-      "/sessions/my-app-orchestrator",
-    );
-  });
-
-  it("hides orchestrator nav item in all-projects view", () => {
-    render(
-      <Dashboard
-        initialSessions={[makeSession()]}
-        projects={[{ id: "my-app", name: "My App" }, { id: "docs", name: "Docs" }]}
-      />,
-    );
-
-    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", "/?project=all");
-    expect(screen.getByRole("link", { name: "PRs" })).toHaveAttribute("href", "/prs?project=all");
-    expect(screen.queryByRole("link", { name: "Orchestrator" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Orchestrator" })).not.toBeInTheDocument();
-  });
-
-  it("routes the PR nav item to the dedicated PR page", () => {
-    render(
-      <Dashboard
-        initialSessions={[
-          makeSession({
-            id: "merge-2",
-            status: "approved",
-            pr: makePR({ number: 91, title: "Polish mobile nav" }),
-          }),
-        ]}
-        projectId="my-app"
-      />,
-    );
-
-    expect(screen.getByRole("link", { name: "PRs" })).toHaveAttribute(
-      "href",
-      "/prs?project=my-app",
-    );
   });
 
   it("filters the mobile board by selected attention bucket", () => {

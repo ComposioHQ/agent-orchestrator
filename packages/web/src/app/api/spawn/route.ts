@@ -1,5 +1,5 @@
 import { type NextRequest } from "next/server";
-import { validateIdentifier, validateConfiguredProject } from "@/lib/validation";
+import { validateIdentifier, validateString, stripControlChars, validateConfiguredProject } from "@/lib/validation";
 import { getServices } from "@/lib/services";
 import { sessionToDashboard } from "@/lib/serialize";
 import { getCorrelationId, jsonWithCorrelation, recordApiObservation } from "@/lib/observability";
@@ -22,6 +22,27 @@ export async function POST(request: NextRequest) {
     const issueErr = validateIdentifier(body.issueId, "issueId");
     if (issueErr) {
       return jsonWithCorrelation({ error: issueErr }, { status: 400 }, correlationId);
+    }
+  }
+
+  if (body.branch !== undefined && body.branch !== null) {
+    const branchErr = validateString(body.branch, "branch", 255);
+    if (branchErr) {
+      return jsonWithCorrelation({ error: branchErr }, { status: 400 }, correlationId);
+    }
+  }
+
+  if (body.prompt !== undefined && body.prompt !== null) {
+    const promptErr = validateString(body.prompt, "prompt", 20_000);
+    if (promptErr) {
+      return jsonWithCorrelation({ error: promptErr }, { status: 400 }, correlationId);
+    }
+  }
+
+  if (body.agent !== undefined && body.agent !== null) {
+    const agentErr = validateString(body.agent, "agent", 255);
+    if (agentErr) {
+      return jsonWithCorrelation({ error: agentErr }, { status: 400 }, correlationId);
     }
   }
 
@@ -48,6 +69,10 @@ export async function POST(request: NextRequest) {
     const session = await sessionManager.spawn({
       projectId,
       issueId: (body.issueId as string) ?? undefined,
+      branch: typeof body.branch === "string" ? body.branch.trim() : undefined,
+      prompt:
+        typeof body.prompt === "string" ? stripControlChars(body.prompt).trim() || undefined : undefined,
+      agent: typeof body.agent === "string" ? body.agent.trim() || undefined : undefined,
     });
 
     recordApiObservation({

@@ -50,8 +50,8 @@
   /* Text */
   --color-text-primary: #1b1b1f;
   --color-text-secondary: #5e5e66;
-  --color-text-tertiary: #8b8b93;
-  --color-text-muted: #8b8b93;
+  --color-text-tertiary: #737380;
+  --color-text-muted: #737380;
   --color-text-inverse: #ffffff;
 
   /* Interactive accent */
@@ -590,6 +590,18 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   background: inherit;
   will-change: transform, opacity;
   animation: dot-ring 2s ease-in-out infinite;
+}
+
+/* ── Reduced motion ──────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* ── Kanban card entrance ─────────────────────────────────────────────── */
@@ -1813,18 +1825,6 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   border-color: color-mix(in srgb, var(--color-accent) 35%, var(--color-border-default));
   background: color-mix(in srgb, var(--color-accent) 8%, var(--color-bg-elevated));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 12%, transparent);
-}
-
-.project-sidebar__avatar {
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1;
-  color: var(--color-text-secondary);
-  user-select: none;
-}
-
-.project-sidebar__collapsed-project--active .project-sidebar__avatar {
-  color: var(--color-accent);
 }
 
 .project-sidebar__health-indicator {

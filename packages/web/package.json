@@ -13,7 +13,7 @@
   ],
   "scripts": {
     "dev": "concurrently \"npm:dev:next\" \"npm:dev:terminal\" \"npm:dev:direct-terminal\"",
-    "dev:next": "next dev -p ${PORT:-3000}",
+    "dev:next": "AO_NEXT_DIST_DIR=.next-dev next dev -p ${PORT:-3000}",
     "dev:terminal": "tsx watch server/terminal-websocket.ts",
     "dev:direct-terminal": "tsx watch server/direct-terminal-ws.ts",
     "build": "next build && tsc -p tsconfig.server.json",
@@ -22,13 +22,14 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "clean": "rm -rf .next dist-server",
+    "clean": "rm -rf .next .next-dev dist-server",
     "screenshot": "tsx e2e/screenshot.ts",
     "screenshot:install": "npx playwright install chromium"
   },
   "dependencies": {
     "@composio/ao-core": "workspace:*",
     "@composio/ao-plugin-agent-claude-code": "workspace:*",
+    "@composio/ao-plugin-agent-codex": "workspace:*",
     "@composio/ao-plugin-agent-opencode": "workspace:*",
     "@composio/ao-plugin-runtime-tmux": "workspace:*",
     "@composio/ao-plugin-scm-github": "workspace:*",
@@ -42,7 +43,9 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "ws": "^8.19.0",
-    "xterm": "^5.3.0"
+    "xterm": "^5.3.0",
+    "yaml": "^2.7.0",
+    "zod": "^3.24.0"
   },
   "optionalDependencies": {
     "node-pty": "^1.1.0"

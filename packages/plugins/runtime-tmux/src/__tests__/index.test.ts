@@ -23,6 +23,10 @@ vi.mock("node:fs", () => ({
   unlinkSync: vi.fn(),
 }));
 
+vi.mock("node:timers/promises", () => ({
+  setTimeout: vi.fn(async () => undefined),
+}));
+
 // Get reference to the promisify-custom mock — this is what the plugin actually calls
 const mockExecFileCustom = (childProcess.execFile as any)[
   Symbol.for("nodejs.util.promisify.custom")
@@ -83,8 +87,6 @@ describe("runtime.create()", () => {
   it("calls new-session with correct args", async () => {
     const runtime = create();
 
-    // 1: new-session, 2: send-keys (launch command)
-    mockTmuxSuccess();
     mockTmuxSuccess();
 
     const handle = await runtime.create({
@@ -101,7 +103,7 @@ describe("runtime.create()", () => {
     // First call: new-session
     expect(mockExecFileCustom).toHaveBeenCalledWith(
       "tmux",
-      ["new-session", "-d", "-s", "test-session", "-c", "/tmp/workspace"],
+      ["new-session", "-d", "-s", "test-session", "-c", "/tmp/workspace", "sh", "-lc", "echo hello"],
       expectedTmuxOptions,
     );
   });
@@ -109,7 +111,6 @@ describe("runtime.create()", () => {
   it("includes -e KEY=VALUE flags for environment variables", async () => {
     const runtime = create();
 
-    mockTmuxSuccess();
     mockTmuxSuccess();
 
     await runtime.create({
@@ -131,7 +132,6 @@ describe("runtime.create()", () => {
     const runtime = create();
 
     mockTmuxSuccess();
-    mockTmuxSuccess();
 
     await runtime.create({
       sessionId: "launch-test",
@@ -140,23 +140,37 @@ describe("runtime.create()", () => {
       environment: {},
     });
 
-    // Second call: send-keys with the launch command
     expect(mockExecFileCustom).toHaveBeenCalledWith(
       "tmux",
-      ["send-keys", "-t", "launch-test", "claude --session abc", "Enter"],
+      ["new-session", "-d", "-s", "launch-test", "-c", "/tmp/ws", "sh", "-lc", "claude --session abc"],
       expectedTmuxOptions,
     );
   });
 
-  it("cleans up session if send-keys fails", async () => {
+  it("passes long launch commands directly to new-session", async () => {
+    const runtime = create();
+    const longCommand = "x".repeat(250);
+
+    mockTmuxSuccess();
+
+    await runtime.create({
+      sessionId: "long-launch",
+      workspacePath: "/tmp/ws",
+      launchCommand: longCommand,
+      environment: {},
+    });
+
+    expect(mockExecFileCustom).toHaveBeenCalledWith(
+      "tmux",
+      ["new-session", "-d", "-s", "long-launch", "-c", "/tmp/ws", "sh", "-lc", longCommand],
+      expectedTmuxOptions,
+    );
+  });
+
+  it("surfaces tmux startup errors", async () => {
     const runtime = create();
 
-    // 1: new-session succeeds
-    mockTmuxSuccess();
-    // 2: send-keys fails
-    mockTmuxError("send-keys failed");
-    // 3: kill-session (cleanup attempt)
-    mockTmuxSuccess();
+    mockTmuxError("new-session failed");
 
     await expect(
       runtime.create({
@@ -165,14 +179,7 @@ describe("runtime.create()", () => {
         launchCommand: "bad-command",
         environment: {},
       }),
-    ).rejects.toThrow('Failed to send launch command to session "fail-session"');
-
-    // Verify kill-session was called for cleanup
-    expect(mockExecFileCustom).toHaveBeenCalledWith(
-      "tmux",
-      ["kill-session", "-t", "fail-session"],
-      expectedTmuxOptions,
-    );
+    ).rejects.toThrow("new-session failed");
   });
 
   it("rejects invalid session IDs with special characters", async () => {
@@ -205,7 +212,6 @@ describe("runtime.create()", () => {
     const runtime = create();
 
     mockTmuxSuccess();
-    mockTmuxSuccess();
 
     const handle = await runtime.create({
       sessionId: "valid-session_123",
@@ -221,7 +227,6 @@ describe("runtime.create()", () => {
     const runtime = create();
 
     mockTmuxSuccess();
-    mockTmuxSuccess();
 
     await runtime.create({
       sessionId: "no-env",
@@ -231,7 +236,7 @@ describe("runtime.create()", () => {
 
     // First call should not contain -e flags
     const firstCallArgs = mockExecFileCustom.mock.calls[0][1] as string[];
-    expect(firstCallArgs).toEqual(["new-session", "-d", "-s", "no-env", "-c", "/tmp/ws"]);
+    expect(firstCallArgs).toEqual(["new-session", "-d", "-s", "no-env", "-c", "/tmp/ws", "sh", "-lc", "echo hi"]);
   });
 });
 

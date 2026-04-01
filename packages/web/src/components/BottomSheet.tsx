@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { getAttentionLevel, type DashboardSession } from "@/lib/types";
 import { getSessionTitle } from "@/lib/format";
+import { getProjectSessionHref } from "@/lib/project-utils";
 
 function getRelativeTime(dateStr: string): string {
   const now = Date.now();
@@ -205,7 +206,7 @@ export function BottomSheet({
           ) : (
             <>
               <a
-                href={`/sessions/${encodeURIComponent(session.id)}`}
+                href={getProjectSessionHref(session.projectId, session.id)}
                 className="bottom-sheet__btn bottom-sheet__btn--primary"
               >
                 Open session

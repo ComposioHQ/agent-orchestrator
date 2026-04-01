@@ -16,6 +16,7 @@ import type {
 
 const execFileAsync = promisify(execFile);
 const TMUX_COMMAND_TIMEOUT_MS = 5_000;
+const SHELL_READY_DELAY_MS = 300;
 
 export const manifest = {
   name: "tmux",
@@ -55,43 +56,22 @@ export function create(): Runtime {
         envArgs.push("-e", `${key}=${value}`);
       }
 
-      // Create tmux session in detached mode
-      await tmux("new-session", "-d", "-s", sessionName, "-c", config.workspacePath, ...envArgs);
-
-      // Send the launch command — clean up the session if this fails.
-      // Use load-buffer + paste-buffer for long commands to avoid tmux/zsh
-      // truncation issues (commands >200 chars get mangled by send-keys).
-      try {
-        if (config.launchCommand.length > 200) {
-          const bufferName = `ao-launch-${randomUUID().slice(0, 8)}`;
-          const tmpPath = join(tmpdir(), `ao-launch-${randomUUID()}.txt`);
-          writeFileSync(tmpPath, config.launchCommand, { encoding: "utf-8", mode: 0o600 });
-          try {
-            await tmux("load-buffer", "-b", bufferName, tmpPath);
-            await tmux("paste-buffer", "-b", bufferName, "-t", sessionName, "-d");
-          } finally {
-            try {
-              unlinkSync(tmpPath);
-            } catch {
-              /* ignore cleanup errors */
-            }
-          }
-          await sleep(300);
-          await tmux("send-keys", "-t", sessionName, "Enter");
-        } else {
-          await tmux("send-keys", "-t", sessionName, config.launchCommand, "Enter");
-        }
-      } catch (err: unknown) {
-        try {
-          await tmux("kill-session", "-t", sessionName);
-        } catch {
-          // Best-effort cleanup
-        }
-        const msg = err instanceof Error ? err.message : String(err);
-        throw new Error(`Failed to send launch command to session "${sessionName}": ${msg}`, {
-          cause: err,
-        });
-      }
+      // Run the launch command as the session's initial command in a plain POSIX
+      // shell rather than the user's interactive shell. This avoids prompt/startup
+      // noise and zsh-specific parsing/globbing failures for long bootstrap commands
+      // (notably OpenCode).
+      await tmux(
+        "new-session",
+        "-d",
+        "-s",
+        sessionName,
+        "-c",
+        config.workspacePath,
+        ...envArgs,
+        "sh",
+        "-lc",
+        config.launchCommand,
+      );
 
       return {
         id: sessionName,
@@ -146,7 +126,7 @@ export function create(): Runtime {
 
       // Small delay to let tmux process the pasted text before pressing Enter.
       // Without this, Enter can arrive before the text is fully rendered.
-      await sleep(300);
+      await sleep(SHELL_READY_DELAY_MS);
       await tmux("send-keys", "-t", handle.id, "Enter");
     },
 

@@ -42,7 +42,7 @@ Your role is to coordinate and manage worker agent sessions. You do NOT write co
   sections.push(`## Project Info
 
 - **Name**: ${project.name}
-- **Repository**: ${project.repo}
+${project.repo ? `- **Repository**: ${project.repo}` : "- **Repository**: local-only workspace (no remote configured yet)"}
 - **Default Branch**: ${project.defaultBranch}
 - **Session Prefix**: ${project.sessionPrefix}
 - **Local Path**: ${project.path}

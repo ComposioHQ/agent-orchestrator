@@ -10,12 +10,12 @@ import {
 } from "@/lib/types";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
 import { ProjectSidebar } from "./ProjectSidebar";
-import { ThemeToggle } from "./ThemeToggle";
+
 import { DynamicFavicon } from "./DynamicFavicon";
 import { PRCard, PRTableRow } from "./PRStatus";
 import { MobileBottomNav } from "./MobileBottomNav";
 import type { ProjectInfo } from "@/lib/project-name";
-import { getProjectScopedHref } from "@/lib/project-utils";
+import { getProjectScopedHref, getProjectSessionHref } from "@/lib/project-utils";
 
 interface PullRequestsPageProps {
   initialSessions: DashboardSession[];
@@ -60,7 +60,7 @@ export function PullRequestsPage({
   const dashboardHref = getProjectScopedHref("/", projectId);
   const prsHref = getProjectScopedHref("/prs", projectId);
   const orchestratorHref = currentProjectOrchestrator
-    ? `/sessions/${encodeURIComponent(currentProjectOrchestrator.id)}`
+    ? getProjectSessionHref(currentProjectOrchestrator.projectId, currentProjectOrchestrator.id)
     : null;
 
   useEffect(() => {
@@ -125,9 +125,6 @@ export function PullRequestsPage({
             </div>
 
             <div className="dashboard-hero__meta">
-              <div className="flex items-center gap-3">
-                <ThemeToggle />
-              </div>
             </div>
           </div>
         </section>

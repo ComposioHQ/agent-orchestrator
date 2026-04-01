@@ -158,7 +158,7 @@ async function resolveProjectByRepo(
   // Try to match by repo field (e.g. "owner/repo")
   for (const id of projectIds) {
     const project = config.projects[id];
-    if (project.repo === parsed.ownerRepo) {
+    if (project.repo && project.repo === parsed.ownerRepo) {
       return { projectId: id, project };
     }
   }
