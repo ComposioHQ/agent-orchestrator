@@ -12,9 +12,11 @@
  */
 
 import { execFile } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { promisify } from "node:util";
+
+import { atomicWriteFileSync } from "./atomic-write.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -132,20 +134,16 @@ async function captureGitState(
 }
 
 /**
- * Atomic write: write to a .tmp file first, then rename into place.
- * Prevents a half-written checkpoint from being read on restore.
+ * Atomic write via atomicWriteFileSync (unique temp path per write).
  * Falls back to a direct write if rename fails (e.g. cross-device).
  */
 function safeWriteJson(filePath: string, data: unknown): void {
-  const tmp = `${filePath}.tmp`;
   const json = JSON.stringify(data, null, 2);
 
   try {
     mkdirSync(dirname(filePath), { recursive: true });
-    writeFileSync(tmp, json, "utf-8");
-    renameSync(tmp, filePath); // atomic on POSIX — single syscall
+    atomicWriteFileSync(filePath, json);
   } catch {
-    // Fallback: direct write (non-atomic but better than nothing)
     try {
       writeFileSync(filePath, json, "utf-8");
     } catch {
@@ -154,9 +152,15 @@ function safeWriteJson(filePath: string, data: unknown): void {
   }
 }
 
+function stringArrayField(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((x): x is string => typeof x === "string");
+}
+
 /**
  * Read and parse a checkpoint file.
  * Returns null on any failure — missing file, corrupted JSON, wrong schema.
+ * Normalizes optional / array fields so consumers never see undefined where arrays are required.
  */
 function readCheckpoint(
   sessionsDir: string,
@@ -167,14 +171,36 @@ function readCheckpoint(
 
   try {
     const raw = readFileSync(path, "utf-8");
-    const parsed = JSON.parse(raw) as CheckpointData;
+    const parsed = JSON.parse(raw) as Partial<CheckpointData> & Record<string, unknown>;
 
-    // Minimal schema check — if key fields are missing, treat as corrupted
-    if (!parsed.sessionId || !parsed.timestamp || !parsed.lastCommitHash) {
+    if (
+      typeof parsed.sessionId !== "string" ||
+      typeof parsed.timestamp !== "string" ||
+      typeof parsed.lastCommitHash !== "string"
+    ) {
       return null;
     }
 
-    return parsed;
+    const stagedFiles = stringArrayField(parsed.stagedFiles);
+    const modifiedFiles = stringArrayField(parsed.modifiedFiles);
+    const untrackedFiles = stringArrayField(parsed.untrackedFiles);
+
+    const hasUncommittedChanges =
+      typeof parsed.hasUncommittedChanges === "boolean"
+        ? parsed.hasUncommittedChanges
+        : stagedFiles.length > 0 || modifiedFiles.length > 0;
+
+    return {
+      sessionId: parsed.sessionId,
+      timestamp: parsed.timestamp,
+      lastCommitHash: parsed.lastCommitHash,
+      lastCommitMessage: typeof parsed.lastCommitMessage === "string" ? parsed.lastCommitMessage : "",
+      branch: typeof parsed.branch === "string" ? parsed.branch : "",
+      stagedFiles,
+      modifiedFiles,
+      untrackedFiles,
+      hasUncommittedChanges,
+    };
   } catch {
     return null;
   }

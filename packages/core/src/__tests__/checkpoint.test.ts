@@ -115,5 +115,21 @@ describe("checkpoint", () => {
       expect(summary).not.toBeNull();
       expect(summary).toContain("No periodic checkpoint found");
     });
+
+    it("handles checkpoint missing array fields without losing live git summary", async () => {
+      writeFileSync(
+        join(sessionsDir, "ao-9.checkpoint"),
+        JSON.stringify({
+          sessionId: "ao-9",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          lastCommitHash: "deadbeef",
+        }),
+      );
+      const summary = await buildCheckpointSummary("ao-9", sessionsDir, repoDir);
+      expect(summary).not.toBeNull();
+      expect(summary).toContain("Current Git State");
+      expect(summary).toContain("Last Checkpoint");
+      expect(summary).toContain("deadbeef");
+    });
   });
 });

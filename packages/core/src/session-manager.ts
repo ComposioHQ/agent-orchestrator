@@ -243,6 +243,54 @@ async function getTmuxForegroundCommand(sessionName: string): Promise<string | n
   }
 }
 
+/**
+ * Poll until the runtime reports alive + foreground ready + (process running or non-empty output),
+ * or until timeout. Shared by send-after-restore and checkpoint injection after restore.
+ */
+async function waitForRestoredSessionReady(
+  runtimePlugin: Runtime,
+  agentPlugin: Agent,
+  session: Session,
+): Promise<void> {
+  const handle = session.runtimeHandle;
+  if (!handle) {
+    return;
+  }
+
+  const captureOutput = async (h: RuntimeHandle): Promise<string> => {
+    try {
+      return (await runtimePlugin.getOutput(h, SEND_CONFIRMATION_OUTPUT_LINES)) ?? "";
+    } catch {
+      return "";
+    }
+  };
+
+  const deadline = Date.now() + SEND_RESTORE_READY_TIMEOUT_MS;
+  while (true) {
+    const [runtimeAlive, processRunning, output, foregroundCommand] = await Promise.all([
+      runtimePlugin.isAlive(handle).catch(() => true),
+      agentPlugin.isProcessRunning(handle).catch(() => true),
+      captureOutput(handle),
+      handle.runtimeName === "tmux"
+        ? getTmuxForegroundCommand(handle.id)
+        : Promise.resolve(agentPlugin.processName),
+    ]);
+
+    const foregroundReady =
+      foregroundCommand === null || foregroundCommand === agentPlugin.processName;
+
+    if (runtimeAlive && foregroundReady && (processRunning || output.trim().length > 0)) {
+      return;
+    }
+
+    if (Date.now() >= deadline) {
+      return;
+    }
+
+    await sleep(SEND_RESTORE_READY_POLL_MS);
+  }
+}
+
 /** Reconstruct a Session object from raw metadata key=value pairs. */
 function metadataToSession(
   sessionId: SessionId,
@@ -1906,38 +1954,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     };
 
-    const waitForRestoredSession = async (restoredSession: Session): Promise<void> => {
-      const handle = restoredSession.runtimeHandle;
-      if (!handle) {
-        return;
-      }
-
-      const deadline = Date.now() + SEND_RESTORE_READY_TIMEOUT_MS;
-      while (true) {
-        const [runtimeAlive, processRunning, output, foregroundCommand] = await Promise.all([
-          runtimePlugin.isAlive(handle).catch(() => true),
-          agentPlugin.isProcessRunning(handle).catch(() => true),
-          captureOutput(handle),
-          handle.runtimeName === "tmux"
-            ? getTmuxForegroundCommand(handle.id)
-            : Promise.resolve(agentPlugin.processName),
-        ]);
-
-        const foregroundReady =
-          foregroundCommand === null || foregroundCommand === agentPlugin.processName;
-
-        if (runtimeAlive && foregroundReady && (processRunning || output.trim().length > 0)) {
-          return;
-        }
-
-        if (Date.now() >= deadline) {
-          return;
-        }
-
-        await sleep(SEND_RESTORE_READY_POLL_MS);
-      }
-    };
-
     const restoreForDelivery = async (reason: string, session: Session): Promise<Session> => {
       if (NON_RESTORABLE_STATUSES.has(session.status)) {
         throw new Error(`Cannot send to session ${sessionId}: ${reason}`);
@@ -1945,7 +1961,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
       try {
         const restored = await restore(sessionId);
-        await waitForRestoredSession(restored);
+        await waitForRestoredSessionReady(runtimePlugin, agentPlugin, restored);
         return restored;
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err);
@@ -2406,41 +2422,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       restoredAt: new Date(now),
     };
 
-    const waitUntilRestoredSessionReady = async (sessionToWaitOn: Session): Promise<void> => {
-      const sessionHandle = sessionToWaitOn.runtimeHandle;
-      if (!sessionHandle) {
-        return;
-      }
-
-      const deadline = Date.now() + SEND_RESTORE_READY_TIMEOUT_MS;
-      while (true) {
-        const [runtimeAlive, processRunning, output, foregroundCommand] = await Promise.all([
-          runtimePlugin.isAlive(sessionHandle).catch(() => true),
-          agentPlugin.isProcessRunning(sessionHandle).catch(() => true),
-          runtimePlugin
-            .getOutput(sessionHandle, SEND_CONFIRMATION_OUTPUT_LINES)
-            .then((value: string | undefined) => value ?? "")
-            .catch(() => ""),
-          sessionHandle.runtimeName === "tmux"
-            ? getTmuxForegroundCommand(sessionHandle.id)
-            : Promise.resolve(agentPlugin.processName),
-        ]);
-
-        const foregroundReady =
-          foregroundCommand === null || foregroundCommand === agentPlugin.processName;
-
-        if (runtimeAlive && foregroundReady && (processRunning || output.trim().length > 0)) {
-          return;
-        }
-
-        if (Date.now() >= deadline) {
-          return;
-        }
-
-        await sleep(SEND_RESTORE_READY_POLL_MS);
-      }
-    };
-
     if (plugins.agent.postLaunchSetup) {
       try {
         const metadataBeforePostLaunch = { ...(restoredSession.metadata ?? {}) };
@@ -2468,7 +2449,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       const checkpointSummary = await buildCheckpointSummary(sessionId, sessionsDir, workspacePath);
       if (checkpointSummary) {
         // Wait for agent to be ready before sending
-        await waitUntilRestoredSessionReady(restoredSession);
+        await waitForRestoredSessionReady(runtimePlugin, agentPlugin, restoredSession);
         await runtimePlugin.sendMessage(handle, checkpointSummary);
       }
     } catch {
