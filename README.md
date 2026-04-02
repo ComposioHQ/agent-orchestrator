@@ -55,7 +55,7 @@ npm install -g @composio/ao
 <details>
 <summary>Permission denied? Try npx? Install from source?</summary>
 
-If `npm install -g` fails with EACCES, **do not use sudo**. Fix your npm prefix instead:
+If `npm install -g` fails with EACCES, fix your npm prefix:
 
 ```bash
 mkdir -p ~/.npm-global

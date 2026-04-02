@@ -68,7 +68,7 @@ ao --version
 
 This installs the `ao` CLI globally along with all default plugins and the web dashboard.
 
-**Permission denied (EACCES)?** This is common on macOS. **Do not use sudo.** Two options:
+**Permission denied (EACCES)?** This is common on macOS. Two options:
 
 ```bash
 # Option 1: Fix npm permissions permanently (recommended)

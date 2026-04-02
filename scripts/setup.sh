@@ -143,8 +143,14 @@ if [ ! -w "$NPM_PREFIX" ] 2>/dev/null; then
   USER_NPM_DIR="$HOME/.npm-global"
   echo "  npm prefix ($NPM_PREFIX) is not user-writable."
   echo "  Configuring user-local prefix: $USER_NPM_DIR"
-  mkdir -p "$USER_NPM_DIR"
-  npm config set prefix "$USER_NPM_DIR"
+  if ! mkdir -p "$USER_NPM_DIR" || ! npm config set prefix "$USER_NPM_DIR"; then
+    echo "ERROR: Failed to configure user-local npm prefix."
+    echo "  Fix manually:"
+    echo "    mkdir -p ~/.npm-global"
+    echo "    npm config set prefix '~/.npm-global'"
+    echo "    export PATH=\"\$HOME/.npm-global/bin:\$PATH\""
+    exit 1
+  fi
   NPM_PREFIX="$USER_NPM_DIR"
   NEEDS_SHELL_RELOAD=true
 
@@ -167,6 +173,9 @@ if [ ! -w "$NPM_PREFIX" ] 2>/dev/null; then
     echo "  Add this to your shell profile:"
     echo "    export PATH=\"\$HOME/.npm-global/bin:\$PATH\""
   fi
+
+  # Make link work in this script by updating PATH for subprocess
+  export PATH="$USER_NPM_DIR/bin:$PATH"
 fi
 
 cd packages/ao
@@ -191,8 +200,12 @@ echo "    ao start ~/path/to/another-repo"
 echo ""
 
 # ─── Reload shell if npm prefix was reconfigured ────────────────────────────
+# Only exec a new shell in interactive terminals; non-interactive callers
+# (CI, parent scripts) should not be replaced with a login shell.
 
-if [ "${NEEDS_SHELL_RELOAD:-}" = true ]; then
+if [ "${NEEDS_SHELL_RELOAD:-}" = true ] && [ "$INTERACTIVE" = true ]; then
   echo "Restarting shell to pick up new PATH..."
   exec "$SHELL" -l
+elif [ "${NEEDS_SHELL_RELOAD:-}" = true ]; then
+  echo "NOTE: Restart your terminal or run: source ~/.zshrc"
 fi
