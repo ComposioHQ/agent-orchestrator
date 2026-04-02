@@ -1,0 +1,27 @@
+packages/web/src/app/api/projects/[id]/route.ts
+  714094fc0b70a132 5,59-67,70,101-103
+packages/web/src/app/api/settings/preferences/route.ts
+  714094fc0b70a132 2,20-24,26-32,35
+packages/web/src/lib/project-registration.ts
+  714094fc0b70a132 5,50-56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "73017a2adcc12f19ad5ce3d027f3bb6d740df9c5",
+  "prompts": {
+    "714094fc0b70a132": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d49a6-6571-7a43-83a8-e7ef8a32def9",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 38,
+      "total_deletions": 40,
+      "accepted_lines": 38,
+      "overriden_lines": 0
+    }
+  }
+}
