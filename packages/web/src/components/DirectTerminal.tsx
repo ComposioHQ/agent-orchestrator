@@ -5,6 +5,7 @@ import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
 import { cn } from "@/lib/cn";
 import { attachTouchScroll } from "@/lib/terminal-touch-scroll";
+import { TerminalSkeleton } from "./Skeleton";
 
 const SCROLLBAR_WIDTH = 5; // matches .xterm-viewport::-webkit-scrollbar { width: 5px }
 const FONT_SIZE_KEY = "ao:web:terminal-font-size";
@@ -726,26 +727,10 @@ export function DirectTerminal({
     const parent = container.parentElement;
     parent?.addEventListener("transitionend", handleTransitionEnd);
 
-    // Backup timers in case RAF polling doesn't work
-    const timer1 = setTimeout(() => {
-      if (cancelled) return;
-      resizeAttempts = 0;
-      lastHeight = -1;
-      resizeTerminal();
-    }, 300);
-    const timer2 = setTimeout(() => {
-      if (cancelled) return;
-      resizeAttempts = 0;
-      lastHeight = -1;
-      resizeTerminal();
-    }, 600);
-
     return () => {
       cancelled = true;
       cancelAnimationFrame(rafId);
       parent?.removeEventListener("transitionend", handleTransitionEnd);
-      clearTimeout(timer1);
-      clearTimeout(timer2);
     };
   }, [fullscreen]);
 
@@ -921,6 +906,11 @@ export function DirectTerminal({
       </div>
       {/* Terminal area */}
       <div className="relative flex-1" style={{ minHeight: 0 }}>
+        {status === "connecting" && (
+          <div className="absolute inset-0 z-10">
+            <TerminalSkeleton />
+          </div>
+        )}
         {!followOutput ? (
           <button
             type="button"

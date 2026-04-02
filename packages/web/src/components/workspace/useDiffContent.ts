@@ -55,6 +55,7 @@ export function useDiffContent(sessionId: string, filePath: string | null) {
       const res = await fetch(diffUrl(sessionId, filePath), { headers });
 
       if (res.status === 304) {
+        setState((prev) => (prev.loading ? { ...prev, loading: false } : prev));
         return;
       }
 

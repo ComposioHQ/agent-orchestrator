@@ -69,9 +69,31 @@ export function FilePreview({ sessionId, selectedFile }: FilePreviewProps) {
 
   if (loading) {
     return (
-      <div className="workspace-empty-state">
-        <span className="workspace-empty-icon">⏳</span>
-        <p>Loading...</p>
+      <div className="flex h-full flex-col">
+        <div className="border-b border-[var(--color-border-subtle)] px-4 py-2">
+          <span className="font-mono text-[12px] text-[var(--color-text-secondary)]">
+            {selectedFile}
+          </span>
+        </div>
+        <div className="flex-1 p-4">
+          <div className="space-y-2">
+            {Array.from({ length: 12 }, (_, i) => (
+              <div key={i} className="flex items-center gap-3">
+                <div
+                  className="h-3 w-8 shrink-0 animate-pulse rounded bg-[var(--color-border-subtle)]"
+                  style={{ animationDelay: `${i * 50}ms` }}
+                />
+                <div
+                  className="h-3 animate-pulse rounded bg-[var(--color-border-subtle)]"
+                  style={{
+                    animationDelay: `${i * 50}ms`,
+                    width: `${30 + Math.abs(Math.sin(i * 1.5)) * 55}%`,
+                  }}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     );
   }

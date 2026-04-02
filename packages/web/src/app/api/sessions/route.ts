@@ -12,9 +12,9 @@ import { getCorrelationId, jsonWithCorrelation, recordApiObservation } from "@/l
 import { resolveGlobalPause } from "@/lib/global-pause";
 import { filterProjectSessions } from "@/lib/project-utils";
 
-const METADATA_ENRICH_TIMEOUT_MS = 3_000;
-const PR_ENRICH_TIMEOUT_MS = 4_000;
-const PER_PR_ENRICH_TIMEOUT_MS = 1_500;
+const METADATA_ENRICH_TIMEOUT_MS = 1_500;
+const PR_ENRICH_TIMEOUT_MS = 2_000;
+const PER_PR_ENRICH_TIMEOUT_MS = 800;
 
 async function settlesWithin(promise: Promise<unknown>, timeoutMs: number): Promise<boolean> {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;

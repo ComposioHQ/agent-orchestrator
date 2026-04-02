@@ -12,15 +12,23 @@ const DISCONNECTED_GRACE_PERIOD_MS = 4000;
 
 type ConnectionStatus = "connected" | "reconnecting" | "disconnected";
 
+interface TerminalStatus {
+  id: string;
+  tmuxName: string;
+  label: string;
+  alive: boolean;
+}
+
 interface State {
   sessions: DashboardSession[];
   globalPause: GlobalPauseState | null;
   connectionStatus: ConnectionStatus;
+  terminals: TerminalStatus[];
 }
 
 type Action =
   | { type: "reset"; sessions: DashboardSession[]; globalPause: GlobalPauseState | null }
-  | { type: "snapshot"; patches: SSESnapshotEvent["sessions"] }
+  | { type: "snapshot"; patches: SSESnapshotEvent["sessions"]; terminals?: TerminalStatus[] }
   | { type: "setConnection"; status: ConnectionStatus };
 
 function reducer(state: State, action: Action): State {
@@ -50,7 +58,9 @@ function reducer(state: State, action: Action): State {
           lastActivityAt: patch.lastActivityAt,
         };
       });
-      return changed ? { ...state, sessions: next } : state;
+      const nextTerminals = action.terminals ?? state.terminals;
+      const terminalsChanged = action.terminals !== undefined;
+      return (changed || terminalsChanged) ? { ...state, sessions: next, terminals: nextTerminals } : state;
     }
   }
 }
@@ -73,6 +83,7 @@ export function useSessionEvents(
     sessions: initialSessions,
     globalPause: initialGlobalPause ?? null,
     connectionStatus: "connected" as ConnectionStatus,
+    terminals: [],
   });
   const sessionsRef = useRef(state.sessions);
   const refreshingRef = useRef(false);
@@ -170,8 +181,8 @@ export function useSessionEvents(
       try {
         const data = JSON.parse(event.data as string) as { type: string };
         if (data.type === "snapshot") {
-          const snapshot = data as SSESnapshotEvent;
-          dispatch({ type: "snapshot", patches: snapshot.sessions });
+          const snapshot = data as SSESnapshotEvent & { terminals?: TerminalStatus[] };
+          dispatch({ type: "snapshot", patches: snapshot.sessions, terminals: snapshot.terminals });
 
           const currentMembershipKey = createMembershipKey(sessionsRef.current);
           const snapshotMembershipKey = createMembershipKey(snapshot.sessions);

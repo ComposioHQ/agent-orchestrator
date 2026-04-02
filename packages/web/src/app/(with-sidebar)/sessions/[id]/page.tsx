@@ -93,12 +93,11 @@ export default function SessionPage() {
     }
   }, [id]);
 
-
   useEffect(() => {
     void fetchSession();
     const interval = setInterval(() => {
       void fetchSession();
-    }, 5000);
+    }, 10_000);
     return () => clearInterval(interval);
   }, [fetchSession]);
 

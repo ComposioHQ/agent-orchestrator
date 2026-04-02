@@ -54,46 +54,54 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
     let cancelled = false;
 
     async function loadSidebarData(): Promise<void> {
-      try {
-        const [projectsRes, sessionsRes, terminalsRes] = await Promise.all([
-          fetch("/api/projects"),
-          fetch("/api/sessions"),
-          fetch("/api/terminals"),
-        ]);
+      const results = await Promise.allSettled([
+        fetch("/api/projects"),
+        fetch("/api/sessions/light"),
+        fetch("/api/terminals"),
+      ]);
 
-        if (!cancelled && projectsRes.ok) {
-          const data = (await projectsRes.json()) as { projects?: ProjectInfo[] };
-          setProjects(data.projects ?? []);
-        }
+      const [projectsResult, sessionsResult, terminalsResult] = results;
 
-        if (!cancelled && sessionsRes.ok) {
-          const data = (await sessionsRes.json()) as {
-            sessions?: DashboardSession[];
-            orchestrators?: DashboardOrchestratorLink[];
-          };
-          setSessions(data.sessions ?? []);
-          setOrchestrators(data.orchestrators ?? []);
-        }
-
-        if (!cancelled && terminalsRes.ok) {
-          const data = (await terminalsRes.json()) as { terminals?: TerminalWithAlive[] };
-          setTerminals(data.terminals ?? []);
-        }
-
+      if (!cancelled && projectsResult.status === "fulfilled" && projectsResult.value.ok) {
+        const data = (await projectsResult.value.json()) as { projects?: ProjectInfo[] };
+        setProjects(data.projects ?? []);
         if (!hasLoadedOnce.current) {
           hasLoadedOnce.current = true;
           setIsLoading(false);
         }
-      } catch {
+      }
+
+      if (!cancelled && sessionsResult.status === "fulfilled" && sessionsResult.value.ok) {
+        const data = (await sessionsResult.value.json()) as {
+          sessions?: DashboardSession[];
+          orchestrators?: DashboardOrchestratorLink[];
+        };
+        setSessions(data.sessions ?? []);
+        setOrchestrators(data.orchestrators ?? []);
         if (!hasLoadedOnce.current) {
+          hasLoadedOnce.current = true;
           setIsLoading(false);
         }
-        // Don't reset existing data — stale data is better than blank
+      }
+
+      if (!cancelled && terminalsResult.status === "fulfilled" && terminalsResult.value.ok) {
+        const data = (await terminalsResult.value.json()) as { terminals?: TerminalWithAlive[] };
+        setTerminals(data.terminals ?? []);
+        if (!hasLoadedOnce.current) {
+          hasLoadedOnce.current = true;
+          setIsLoading(false);
+        }
+      }
+
+      // If all failed and we haven't loaded yet, still clear loading state
+      if (!hasLoadedOnce.current && results.every((r) => r.status === "rejected")) {
+        hasLoadedOnce.current = true;
+        setIsLoading(false);
       }
     }
 
     void loadSidebarData();
-    const intervalId = setInterval(loadSidebarData, 10_000);
+    const intervalId = setInterval(loadSidebarData, 30_000);
 
     const handleVisibility = () => {
       if (document.visibilityState === "visible") {
@@ -218,6 +226,10 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
   const sidebarContextValue = useMemo(() => ({
     onToggleSidebar: toggleSidebar,
   }), [toggleSidebar]);
+
+  const handleSessionCreated = useCallback((stub: DashboardSession) => {
+    setSessions((prev) => [stub, ...prev]);
+  }, []);
 
   const removeTerminal = useCallback(async (id: string) => {
     try {
@@ -369,6 +381,7 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
               collapsed={sidebarCollapsed}
               onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
               isLoading={isLoading}
+              onSessionCreated={handleSessionCreated}
             />
             {sidebarCollapsed ? <TerminalsSidebarSectionCollapsed /> : <TerminalsSidebarSection />}
           </div>
@@ -388,6 +401,7 @@ export default function WithSidebarLayout({ children }: { children: React.ReactN
                   collapsed={false}
                   onToggleCollapsed={() => setMobileSidebarOpen(false)}
                   isLoading={isLoading}
+                  onSessionCreated={handleSessionCreated}
                 />
                 <TerminalsSidebarSection />
               </div>
