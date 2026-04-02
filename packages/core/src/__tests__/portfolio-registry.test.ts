@@ -1,15 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   getPortfolio,
   loadGlobalConfig,
+  loadPreferences,
+  loadRegistered,
   registerProject,
   saveGlobalConfig,
   savePreferences,
   unregisterProject,
 } from "../index.js";
+import { getPreferencesPath, getRegisteredPath } from "../paths.js";
 
 describe("portfolio-registry", () => {
   let tempRoot: string;
@@ -125,5 +128,29 @@ describe("portfolio-registry", () => {
 
     const updated = loadGlobalConfig();
     expect(updated?.projects["demo"]).toBeUndefined();
+  });
+
+  it("falls back when registered.json has an unexpected shape", () => {
+    mkdirSync(dirname(getRegisteredPath()), { recursive: true });
+    writeFileSync(
+      getRegisteredPath(),
+      JSON.stringify({ version: 1, projects: [{ path: 42, addedAt: "nope" }] }),
+    );
+
+    expect(loadRegistered()).toEqual({ version: 1, projects: [] });
+  });
+
+  it("falls back when preferences.json has an unexpected shape", () => {
+    mkdirSync(dirname(getPreferencesPath()), { recursive: true });
+    writeFileSync(
+      getPreferencesPath(),
+      JSON.stringify({
+        version: 1,
+        defaultProjectId: 123,
+        projects: { alpha: { pinned: "yes" } },
+      }),
+    );
+
+    expect(loadPreferences()).toEqual({ version: 1 });
   });
 });

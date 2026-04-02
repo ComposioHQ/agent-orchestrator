@@ -23,6 +23,11 @@ import {
   reviewDecisionIcon,
   padCol,
 } from "../lib/format.js";
+import {
+  formatPortfolioDegradedReason,
+  formatPortfolioProjectName,
+  formatPortfolioProjectStatus,
+} from "../lib/portfolio-display.js";
 import { getAgentByName, getAgentByNameFromRegistry, getSCMFromRegistry } from "../lib/plugins.js";
 import { getPluginRegistry, getSessionManager } from "../lib/create-session-manager.js";
 
@@ -285,17 +290,12 @@ export function registerStatus(program: Command): void {
           console.log();
           for (const p of portfolio) {
             const count = counts[p.id] || { total: 0, active: 0 };
-            const status = p.degraded
-              ? chalk.red("degraded")
-              : !p.enabled
-                ? chalk.dim("disabled")
-                : count.active > 0
-                  ? chalk.green(`${count.active} active`)
-                  : chalk.dim("idle");
-            const name = p.name !== p.id ? ` ${chalk.dim(`(${p.name})`)}` : "";
+            const status = formatPortfolioProjectStatus(p, count);
+            const name = formatPortfolioProjectName(p);
+            const degradedReason = formatPortfolioDegradedReason(p);
             console.log(`  ${chalk.bold(p.id)}${name}  ${status}  ${count.total} sessions`);
-            if (p.degraded && p.degradedReason) {
-              console.log(`    ${chalk.red(p.degradedReason)}`);
+            if (degradedReason) {
+              console.log(`    ${degradedReason}`);
             }
           }
           console.log();
