@@ -618,6 +618,9 @@ importers:
       '@aoagents/ao-plugin-agent-claude-code':
         specifier: workspace:*
         version: link:../plugins/agent-claude-code
+      '@aoagents/ao-plugin-agent-codex':
+        specifier: workspace:*
+        version: link:../plugins/agent-codex
       '@aoagents/ao-plugin-agent-cursor':
         specifier: workspace:*
         version: link:../plugins/agent-cursor
@@ -666,6 +669,12 @@ importers:
       xterm:
         specifier: ^5.3.0
         version: 5.3.0
+      yaml:
+        specifier: ^2.7.0
+        version: 2.8.2
+      zod:
+        specifier: ^3.24.0
+        version: 3.25.76
     optionalDependencies:
       node-pty:
         specifier: ^1.1.0

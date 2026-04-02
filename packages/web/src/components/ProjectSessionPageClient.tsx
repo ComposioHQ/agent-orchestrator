@@ -85,7 +85,7 @@ export function ProjectSessionPageClient({
     } finally {
       setLoading(false);
     }
-  }, [sessionId]);
+  }, [projectId, sessionId]);
 
   const fetchZoneCounts = useCallback(async () => {
     if (!sessionIsOrchestrator) return;
