@@ -422,7 +422,7 @@ function mergeExternalPlugins(
     seen.add(key);
 
     // Generate a temporary name - will be replaced with manifest.name during loading
-    const tempName = entry.expectedPluginName ?? entry.package ?? entry.path ?? "unknown";
+    const tempName = entry.expectedPluginName ?? generateTempPluginName(entry.package, entry.path);
 
     plugins.push({
       name: tempName,
