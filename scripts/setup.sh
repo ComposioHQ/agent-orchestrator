@@ -146,9 +146,7 @@ if [ ! -w "$NPM_PREFIX" ] 2>/dev/null; then
   mkdir -p "$USER_NPM_DIR"
   npm config set prefix "$USER_NPM_DIR"
   NPM_PREFIX="$USER_NPM_DIR"
-
-  # Add to PATH in current session
-  export PATH="$USER_NPM_DIR/bin:$PATH"
+  NEEDS_SHELL_RELOAD=true
 
   # Persist to shell profile
   SHELL_RC=""
@@ -178,12 +176,17 @@ cd "$REPO_ROOT"
 # ─── Verify ao is in PATH ────────────────────────────────────────────────────
 
 echo ""
-if command -v ao &> /dev/null; then
+if [ "${NEEDS_SHELL_RELOAD:-}" = true ]; then
+  echo "[ok] 'ao' linked to $NPM_PREFIX/bin/ao"
+  echo ""
+  echo "  Your npm prefix was reconfigured. Reload your shell to use 'ao':"
+  echo "    source ~/.zshrc   # or: source ~/.bashrc"
+elif command -v ao &> /dev/null; then
   echo "[ok] 'ao' command is available in PATH"
 else
   NPM_BIN="$NPM_PREFIX/bin"
   echo "WARNING: 'ao' is not in your PATH yet."
-  echo "  Restart your terminal or run:"
+  echo "  Add to your shell profile and restart:"
   echo ""
   echo "    export PATH=\"$NPM_BIN:\$PATH\""
 fi
