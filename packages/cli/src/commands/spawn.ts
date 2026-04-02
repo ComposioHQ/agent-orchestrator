@@ -89,6 +89,7 @@ async function spawnSession(
   openTab?: boolean,
   agent?: string,
   claimOptions?: SpawnClaimOptions,
+  prompt?: string,
 ): Promise<string> {
   const spinner = ora("Creating session").start();
 
@@ -100,6 +101,7 @@ async function spawnSession(
       projectId,
       issueId,
       agent,
+      prompt,
     });
 
     let branchStr = session.branch ?? "";
@@ -166,6 +168,7 @@ export function registerSpawn(program: Command): void {
     .option("--assign-on-github", "Assign the claimed PR to the authenticated GitHub user")
     .option("--decompose", "Decompose issue into subtasks before spawning")
     .option("--max-depth <n>", "Max decomposition depth (default: 3)")
+    .option("--prompt <text>", "Initial prompt to send to the agent after spawning")
     .action(
       async (
         first: string | undefined,
@@ -177,6 +180,7 @@ export function registerSpawn(program: Command): void {
           assignOnGithub?: boolean;
           decompose?: boolean;
           maxDepth?: string;
+          prompt?: string;
         },
       ) => {
         // Catch old two-arg usage: ao spawn <project> <issue>
@@ -252,7 +256,7 @@ export function registerSpawn(program: Command): void {
 
             if (leaves.length <= 1) {
               console.log(chalk.yellow("Task is atomic — spawning directly."));
-              await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions);
+              await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions, opts.prompt);
             } else {
               // Create child issues and spawn sessions with lineage context
               const sm = await getSessionManager(config);
@@ -279,7 +283,7 @@ export function registerSpawn(program: Command): void {
               }
             }
           } else {
-            await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions);
+            await spawnSession(config, projectId, issueId, opts.open, opts.agent, claimOptions, opts.prompt);
           }
         } catch (err) {
           console.error(chalk.red(`✗ ${err instanceof Error ? err.message : String(err)}`));
@@ -295,7 +299,8 @@ export function registerBatchSpawn(program: Command): void {
     .description("Spawn sessions for multiple issues with duplicate detection")
     .argument("<issues...>", "Issue identifiers (project is auto-detected)")
     .option("--open", "Open sessions in terminal tabs")
-    .action(async (issues: string[], opts: { open?: boolean }) => {
+    .option("--prompt <text>", "Initial prompt to send to each agent after spawning")
+    .action(async (issues: string[], opts: { open?: boolean; prompt?: string }) => {
       const config = loadConfig();
       let projectId: string;
 
@@ -363,7 +368,7 @@ export function registerBatchSpawn(program: Command): void {
         }
 
         try {
-          const session = await sm.spawn({ projectId, issueId: issue });
+          const session = await sm.spawn({ projectId, issueId: issue, prompt: opts.prompt });
           created.push({ session: session.id, issue });
           spawnedIssues.add(issue.toLowerCase());
           console.log(chalk.green(`  Created ${session.id} for ${issue}`));

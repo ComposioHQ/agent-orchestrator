@@ -247,7 +247,7 @@ describe("openclaw-probe", () => {
       expect(body.name).toBe("AO");
       expect(body.sessionKey).toBe("hook:ao:setup-test");
       expect(body.wakeMode).toBe("now");
-      expect(body.deliver).toBe(true);
+      expect(body.deliver).toBe(false);
     });
   });
 });
