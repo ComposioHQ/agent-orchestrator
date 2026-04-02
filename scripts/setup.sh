@@ -136,16 +136,43 @@ pnpm build
 
 echo ""
 echo "Linking CLI globally..."
-cd packages/ao
-if npm link 2>/dev/null; then
-  :
-elif [ "$INTERACTIVE" = true ]; then
-  echo "  Permission denied. Retrying with sudo..."
-  sudo npm link
-else
-  echo "ERROR: Permission denied. Run manually: cd packages/ao && sudo npm link"
-  exit 1
+
+# Ensure npm global prefix is user-writable (avoid sudo)
+NPM_PREFIX="$(npm config get prefix)"
+if [ ! -w "$NPM_PREFIX" ] 2>/dev/null; then
+  USER_NPM_DIR="$HOME/.npm-global"
+  echo "  npm prefix ($NPM_PREFIX) is not user-writable."
+  echo "  Configuring user-local prefix: $USER_NPM_DIR"
+  mkdir -p "$USER_NPM_DIR"
+  npm config set prefix "$USER_NPM_DIR"
+  NPM_PREFIX="$USER_NPM_DIR"
+
+  # Add to PATH in current session
+  export PATH="$USER_NPM_DIR/bin:$PATH"
+
+  # Persist to shell profile
+  SHELL_RC=""
+  if [ -f "$HOME/.zshrc" ]; then
+    SHELL_RC="$HOME/.zshrc"
+  elif [ -f "$HOME/.bashrc" ]; then
+    SHELL_RC="$HOME/.bashrc"
+  fi
+
+  if [ -n "$SHELL_RC" ]; then
+    if ! grep -q 'npm-global/bin' "$SHELL_RC" 2>/dev/null; then
+      echo '' >> "$SHELL_RC"
+      echo '# npm user-local global bin (added by AO setup)' >> "$SHELL_RC"
+      echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> "$SHELL_RC"
+      echo "  Added PATH entry to $SHELL_RC"
+    fi
+  else
+    echo "  Add this to your shell profile:"
+    echo "    export PATH=\"\$HOME/.npm-global/bin:\$PATH\""
+  fi
 fi
+
+cd packages/ao
+npm link
 cd "$REPO_ROOT"
 
 # ─── Verify ao is in PATH ────────────────────────────────────────────────────
@@ -154,13 +181,11 @@ echo ""
 if command -v ao &> /dev/null; then
   echo "[ok] 'ao' command is available in PATH"
 else
-  NPM_BIN="$(npm bin -g 2>/dev/null || npm config get prefix)/bin"
-  echo "WARNING: 'ao' is not in your PATH."
-  echo "  Add this to your shell profile (~/.zshrc or ~/.bashrc):"
+  NPM_BIN="$NPM_PREFIX/bin"
+  echo "WARNING: 'ao' is not in your PATH yet."
+  echo "  Restart your terminal or run:"
   echo ""
   echo "    export PATH=\"$NPM_BIN:\$PATH\""
-  echo ""
-  echo "  Then restart your terminal or run: source ~/.zshrc"
 fi
 
 # ─── Done ─────────────────────────────────────────────────────────────────────
