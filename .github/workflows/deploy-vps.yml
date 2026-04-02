@@ -19,6 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Verify SHA is current tip of main
+        id: verify_sha
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -26,17 +27,21 @@ jobs:
           MAIN_SHA=$(gh api repos/${{ github.repository }}/git/ref/heads/main --jq '.object.sha')
           if [ "$DEPLOY_SHA" != "$MAIN_SHA" ]; then
             echo "Skipping: CI SHA $DEPLOY_SHA is not the current tip of main ($MAIN_SHA). Likely a stale rerun."
+            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "SHA verified: $DEPLOY_SHA is the current tip of main."
+          echo "should_deploy=true" >> "$GITHUB_OUTPUT"
 
       - name: Deploy via SSH
+        if: steps.verify_sha.outputs.should_deploy == 'true'
         uses: appleboy/ssh-action@v1.2.2
         with:
           host: ${{ secrets.VPS_HOST }}
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
-          fingerprint: SHA256:Yat7fObKrTBZGxr0HGlN40oWhC/LlLN9SpjzPifsLzw
+          # Optional: set VPS_HOST_FINGERPRINT to enforce host key pinning.
+          fingerprint: ${{ secrets.VPS_HOST_FINGERPRINT }}
           script: |
             set -e
             DEPLOY_SHA="${{ github.event.workflow_run.head_sha }}"
