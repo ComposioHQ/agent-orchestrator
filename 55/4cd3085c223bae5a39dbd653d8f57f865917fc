@@ -1,0 +1,25 @@
+packages/web/src/components/PortfolioPage.tsx
+  23c5d64b04ae6f61 119
+packages/web/src/app/projects/[projectId]/sessions/[sessionId]/page.tsx
+  23c5d64b04ae6f61 3,19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "554cd3085c223bae5a39dbd653d8f57f865917fc",
+  "prompts": {
+    "23c5d64b04ae6f61": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d4c54-8466-7133-b061-5dd0271c0503",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 1,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  }
+}
