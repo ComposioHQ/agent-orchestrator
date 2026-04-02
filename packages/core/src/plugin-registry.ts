@@ -61,78 +61,56 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
   { slot: "terminal", name: "web", pkg: "@composio/ao-plugin-terminal-web" },
 ];
 
+/** Extract plugin-specific config from orchestrator config */
 function extractPluginConfig(
   slot: PluginSlot,
   name: string,
   config: OrchestratorConfig,
 ): Record<string, unknown> | undefined {
-  // 1. Handle Notifier Slot
+  // Notifiers are configured under config.notifiers.<id>.
+  // Match by key (e.g. "openclaw") or explicit plugin field.
   if (slot === "notifier") {
-    for (const [notifierId, notifierConfig] of Object.entries(config.notifiers ?? {})) {
+    for (const [notifierName, notifierConfig] of Object.entries(config.notifiers ?? {})) {
       if (!notifierConfig || typeof notifierConfig !== "object") continue;
       const configuredPlugin = (notifierConfig as Record<string, unknown>)["plugin"];
       const hasExplicitPlugin = typeof configuredPlugin === "string" && configuredPlugin.length > 0;
-      const matches = hasExplicitPlugin ? configuredPlugin === name : notifierId === name;
-
+      const matches = hasExplicitPlugin ? configuredPlugin === name : notifierName === name;
       if (matches) {
-        return prepareConfig(slot, name, notifierId, notifierConfig, config.configPath);
-      }
-    }
-  }
+        const rawConfig = notifierConfig as Record<string, unknown>;
 
-  // 2. Handle Tracker and SCM Slots (Project-level)
-  if (slot === "tracker" || slot === "scm") {
-    for (const [projectId, project] of Object.entries(config.projects)) {
-      const entry = slot === "tracker" ? project.tracker : project.scm;
-      if (!entry || typeof entry !== "object") continue;
+        // Explicitly check for reserved fields to prevent silent stripping/collision.
+        // 'path' is reserved for local resolution; 'package' is reserved for npm resolution.
+        if ("package" in rawConfig && "path" in rawConfig) {
+          throw new Error(
+            `In notifier "${notifierName}": both "package" and "path" are specified. ` +
+              `Use "package" for npm plugins or "path" for local plugins, not both.`
+          );
+        }
 
-      const configuredPlugin = (entry as Record<string, unknown>)["plugin"];
-      const hasExplicitPlugin = typeof configuredPlugin === "string" && configuredPlugin.length > 0;
-      const matches = hasExplicitPlugin ? configuredPlugin === name : false;
+        // If loading via built-in name or npm package, 'path' is a collision.
+        // We detect this by checking if 'package' is present OR if no 'path' was 
+        // intended for local resolution (i.e. name refers to a built-in).
+        const isBuiltin = BUILTIN_PLUGINS.some((b) => b.slot === slot && b.name === name);
+        if ((rawConfig.package || isBuiltin) && "path" in rawConfig) {
+          throw new Error(
+            `In notifier "${notifierName}": "path" is reserved for plugin loading. ` +
+              `Rename your configuration field to something else (e.g., "apiPath").`
+          );
+        }
 
-      if (matches) {
-        const sourceId = `projects.${projectId}.${slot}`;
-        return prepareConfig(slot, name, sourceId, entry as Record<string, unknown>, config.configPath);
+        // Strip loading metadata fields (plugin, package, path) from config passed to plugin.
+        const {
+          plugin: _plugin,
+          package: _package,
+          path: _path,
+          ...rest
+        } = rawConfig;
+        return config.configPath ? { ...rest, configPath: config.configPath } : rest;
       }
     }
   }
 
   return undefined;
-}
-
-/**
- * Internal helper to validate and strip loading metadata from a plugin configuration.
- */
-function prepareConfig(
-  slot: string,
-  name: string,
-  sourceId: string,
-  rawConfig: Record<string, unknown>,
-  configPath?: string,
-): Record<string, unknown> {
-  // Explicitly check for reserved fields to prevent silent stripping/collision.
-  // 'path' is reserved for local resolution; 'package' is reserved for npm resolution.
-  if ("package" in rawConfig && "path" in rawConfig) {
-    throw new Error(
-      `In ${slot} "${sourceId}": both "package" and "path" are specified. ` +
-        `Use "package" for npm plugins or "path" for local plugins, not both.`,
-    );
-  }
-
-  // If loading via built-in name or npm package, 'path' is a collision.
-  // We detect this by checking if 'package' is present OR if no 'path' was 
-  // intended for local resolution (i.e. name refers to a built-in).
-  const isBuiltin = BUILTIN_PLUGINS.some((b) => b.slot === slot && b.name === name);
-  if ((rawConfig.package || isBuiltin) && "path" in rawConfig) {
-    throw new Error(
-      `In ${slot} "${sourceId}": "path" is reserved for plugin loading. ` +
-        `Rename your configuration field to something else (e.g., "apiPath").`,
-    );
-  }
-
-  // Strip loading metadata fields (plugin, package, path) from config passed to plugin.
-  const { plugin: _plugin, package: _package, path: _path, ...rest } = rawConfig;
-  return configPath ? { ...rest, configPath } : rest;
 }
 
 /**
