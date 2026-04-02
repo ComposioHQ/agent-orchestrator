@@ -55,26 +55,43 @@ describe("preflight.checkPort", () => {
 });
 
 describe("preflight.checkBuilt", () => {
-  it("passes when ao-core and dist exist (pnpm symlink or npm hoisted)", async () => {
+  it("returns immediately when require.resolve succeeds (package installed and built)", async () => {
     mockCreateRequire.mockReturnValue({
       resolve: vi.fn().mockReturnValue("/path/to/ao-core/dist/index.js"),
     });
-    mockExistsSync.mockReturnValue(true);
     await expect(preflight.checkBuilt("/web")).resolves.toBeUndefined();
     const mockReq = mockCreateRequire.mock.results[0].value;
     expect(mockReq.resolve).toHaveBeenCalledWith("@composio/ao-core");
+    // existsSync should NOT be called — require.resolve success proves the file exists
+    expect(mockExistsSync).not.toHaveBeenCalled();
   });
 
-  it("finds ao-core when hoisted to parent node_modules (npm global install)", async () => {
+  it("works for npm global install with hoisted ao-core", async () => {
     mockCreateRequire.mockReturnValue({
       resolve: vi
         .fn()
         .mockReturnValue("/usr/local/lib/node_modules/@composio/ao-core/dist/index.js"),
     });
-    mockExistsSync.mockReturnValue(true);
     await expect(
       preflight.checkBuilt("/usr/local/lib/node_modules/@composio/ao-web"),
     ).resolves.toBeUndefined();
+    expect(mockExistsSync).not.toHaveBeenCalled();
+  });
+
+  it("throws 'not built' when require.resolve fails but package dir exists without dist", async () => {
+    mockCreateRequire.mockReturnValue({
+      resolve: vi.fn().mockImplementation(() => {
+        throw new Error("Cannot find module");
+      }),
+    });
+    // findPackageUp checks node_modules/@composio/ao-core — found
+    // then existsSync checks dist/index.js inside it — not found
+    mockExistsSync.mockImplementation((p: string) => {
+      if (p.endsWith("/web/node_modules/@composio/ao-core")) return true;
+      if (p.endsWith("/dist/index.js")) return false;
+      return false;
+    });
+    await expect(preflight.checkBuilt("/web")).rejects.toThrow("Packages not built");
   });
 
   it("throws npm hint when ao-core not found in global install", async () => {
@@ -83,6 +100,7 @@ describe("preflight.checkBuilt", () => {
         throw new Error("Cannot find module");
       }),
     });
+    mockExistsSync.mockReturnValue(false);
     await expect(
       preflight.checkBuilt("/usr/local/lib/node_modules/@composio/ao-web"),
     ).rejects.toThrow("npm install -g @composio/ao@latest");
@@ -94,17 +112,25 @@ describe("preflight.checkBuilt", () => {
         throw new Error("Cannot find module");
       }),
     });
+    mockExistsSync.mockReturnValue(false);
     await expect(
       preflight.checkBuilt("/home/user/agent-orchestrator/packages/web"),
     ).rejects.toThrow("pnpm install && pnpm build");
   });
 
-  it("throws 'pnpm build' when ao-core dist/index.js is missing", async () => {
+  it("passes when require.resolve fails but findPackageUp finds dir with dist", async () => {
     mockCreateRequire.mockReturnValue({
-      resolve: vi.fn().mockReturnValue("/path/to/ao-core/dist/index.js"),
+      resolve: vi.fn().mockImplementation(() => {
+        throw new Error("Cannot find module");
+      }),
     });
-    mockExistsSync.mockReturnValue(false);
-    await expect(preflight.checkBuilt("/web")).rejects.toThrow("Packages not built");
+    // findPackageUp finds the directory, and dist/index.js exists inside it
+    mockExistsSync.mockImplementation((p: string) => {
+      if (p.endsWith("/web/node_modules/@composio/ao-core")) return true;
+      if (p.endsWith("/dist/index.js")) return true;
+      return false;
+    });
+    await expect(preflight.checkBuilt("/web")).resolves.toBeUndefined();
   });
 });
 

@@ -50,19 +50,21 @@ function findPackageUp(startDir: string): string | null {
  * handles npm/yarn hoisting in global installs.
  */
 async function checkBuilt(webDir: string): Promise<void> {
-  let corePkgDir: string | null;
-  let needsBuild = false;
-
+  // Primary: use Node's module resolution. require.resolve() both locates the
+  // package AND verifies the entry file exists on disk — if it returns without
+  // throwing, the package is installed and built.
   try {
     const require = createRequire(resolve(webDir, "package.json"));
-    const coreEntry = require.resolve("@composio/ao-core");
-    corePkgDir = resolve(coreEntry, "..");
+    require.resolve("@composio/ao-core");
+    return;
   } catch {
-    corePkgDir = findPackageUp(webDir);
-    if (corePkgDir) {
-      needsBuild = true;
-    }
+    // Fall through to manual lookup
   }
+
+  // Fallback: walk up from webDir looking for the package directory.
+  // This handles the case where require.resolve throws MODULE_NOT_FOUND
+  // because dist/index.js doesn't exist yet (installed but not built).
+  const corePkgDir = findPackageUp(webDir);
 
   if (!corePkgDir) {
     const hint = webDir.includes("node_modules")
@@ -71,13 +73,7 @@ async function checkBuilt(webDir: string): Promise<void> {
     throw new Error(`Dependencies not installed. ${hint}`);
   }
 
-  if (needsBuild) {
-    const hint = webDir.includes("node_modules")
-      ? "Run: npm install -g @composio/ao@latest"
-      : "Run: pnpm build";
-    throw new Error(`Packages not built. ${hint}`);
-  }
-
+  // Package directory exists but require.resolve failed — check if it needs building
   const coreEntry = resolve(corePkgDir, "dist", "index.js");
   if (!existsSync(coreEntry)) {
     const hint = webDir.includes("node_modules")
@@ -85,6 +81,9 @@ async function checkBuilt(webDir: string): Promise<void> {
       : "Run: pnpm build";
     throw new Error(`Packages not built. ${hint}`);
   }
+
+  // Package exists and dist exists but require.resolve still failed — unusual
+  // but not a blocker. The package is usable.
 }
 
 /**
