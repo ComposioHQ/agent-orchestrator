@@ -7,7 +7,6 @@ export default async function LegacySessionPage(props: {
   params: Promise<{ id: string }>;
 }) {
   const params = await props.params;
-  const { portfolio } = getPortfolioServices();
   const sessions = await getCachedPortfolioSessions().catch(() => []);
   const match = sessions.find((entry) => entry.session.id === params.id);
 
@@ -17,6 +16,7 @@ export default async function LegacySessionPage(props: {
     );
   }
 
+  const { portfolio } = getPortfolioServices();
   const projectFromPrefix = portfolio.find(
     (project) => project.sessionPrefix && params.id.startsWith(project.sessionPrefix + "-"),
   );

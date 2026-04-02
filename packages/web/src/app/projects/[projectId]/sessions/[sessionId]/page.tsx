@@ -18,7 +18,7 @@ export default async function ProjectSessionPage(props: {
   return (
     <DashboardShell
       projects={projectSummaries}
-      sessions={projectPageData.sessions}
+      sessions={projectPageData.sidebarSessions}
       activeProjectId={params.projectId}
       activeSessionId={params.sessionId}
       defaultLocation={getDefaultCloneLocation()}

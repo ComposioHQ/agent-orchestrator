@@ -1,3 +1,4 @@
+import { isOrchestratorSession } from "@composio/ao-core";
 import type { DashboardSession, GlobalPauseState } from "@/lib/types";
 import { getServices, getSCM } from "@/lib/services";
 import {
@@ -8,12 +9,13 @@ import {
   sessionToDashboard,
 } from "@/lib/serialize";
 import { prCache, prCacheKey } from "@/lib/cache";
-import { filterProjectSessions, filterWorkerSessions } from "@/lib/project-utils";
+import { filterProjectSessions } from "@/lib/project-utils";
 import { resolveGlobalPause } from "@/lib/global-pause";
 import { ensureProjectOrchestrator } from "@/lib/ensure-project-orchestrator";
 
 export interface ProjectPageData {
   sessions: DashboardSession[];
+  sidebarSessions: DashboardSession[];
   globalPause: GlobalPauseState | null;
   orchestrators: Array<{ id: string; projectId: string; projectName: string }>;
 }
@@ -21,6 +23,7 @@ export interface ProjectPageData {
 export async function loadProjectPageData(projectFilter: string): Promise<ProjectPageData> {
   const pageData: ProjectPageData = {
     sessions: [],
+    sidebarSessions: [],
     globalPause: null,
     orchestrators: [],
   };
@@ -39,45 +42,53 @@ export async function loadProjectPageData(projectFilter: string): Promise<Projec
     pageData.globalPause = resolveGlobalPause(allSessions);
     const visibleSessions = filterProjectSessions(allSessions, projectFilter, config.projects);
     pageData.orchestrators = listDashboardOrchestrators(visibleSessions, config.projects);
-    const coreSessions = filterWorkerSessions(allSessions, projectFilter, config.projects);
-    pageData.sessions = coreSessions.map(sessionToDashboard);
+    pageData.sidebarSessions = visibleSessions.map(sessionToDashboard);
 
     const metaTimeout = new Promise<void>((resolve) => setTimeout(resolve, 3_000));
     await Promise.race([
-      enrichSessionsMetadata(coreSessions, pageData.sessions, config, registry),
+      enrichSessionsMetadata(visibleSessions, pageData.sidebarSessions, config, registry),
       metaTimeout,
     ]);
 
+    const workerSessions: DashboardSession[] = [];
+    const workerEntries = visibleSessions
+      .map((core, index) => ({ core, dashboard: pageData.sidebarSessions[index] }))
+      .filter((entry) => !isOrchestratorSession(entry.core));
+    for (const entry of workerEntries) {
+      workerSessions.push(entry.dashboard);
+    }
+    pageData.sessions = workerSessions;
+
     const terminalStatuses = new Set(["merged", "killed", "cleanup", "done", "terminated"]);
-    const enrichPromises = coreSessions.map((core, i) => {
+    const enrichPromises = workerEntries.map(({ core, dashboard }) => {
       if (!core.pr) return Promise.resolve();
       const cacheKey = prCacheKey(core.pr.owner, core.pr.repo, core.pr.number);
       const cached = prCache.get(cacheKey);
 
       if (cached) {
-        if (pageData.sessions[i].pr) {
-          pageData.sessions[i].pr.state = cached.state;
-          pageData.sessions[i].pr.title = cached.title;
-          pageData.sessions[i].pr.additions = cached.additions;
-          pageData.sessions[i].pr.deletions = cached.deletions;
-          pageData.sessions[i].pr.ciStatus = cached.ciStatus as
+        if (dashboard.pr) {
+          dashboard.pr.state = cached.state;
+          dashboard.pr.title = cached.title;
+          dashboard.pr.additions = cached.additions;
+          dashboard.pr.deletions = cached.deletions;
+          dashboard.pr.ciStatus = cached.ciStatus as
             | "none"
             | "pending"
             | "passing"
             | "failing";
-          pageData.sessions[i].pr.reviewDecision = cached.reviewDecision as
+          dashboard.pr.reviewDecision = cached.reviewDecision as
             | "none"
             | "pending"
             | "approved"
             | "changes_requested";
-          pageData.sessions[i].pr.ciChecks = cached.ciChecks.map((c) => ({
+          dashboard.pr.ciChecks = cached.ciChecks.map((c) => ({
             name: c.name,
             status: c.status as "pending" | "running" | "passed" | "failed" | "skipped",
             url: c.url,
           }));
-          pageData.sessions[i].pr.mergeability = cached.mergeability;
-          pageData.sessions[i].pr.unresolvedThreads = cached.unresolvedThreads;
-          pageData.sessions[i].pr.unresolvedComments = cached.unresolvedComments;
+          dashboard.pr.mergeability = cached.mergeability;
+          dashboard.pr.unresolvedThreads = cached.unresolvedThreads;
+          dashboard.pr.unresolvedComments = cached.unresolvedComments;
         }
         if (
           terminalStatuses.has(core.status) ||
@@ -91,12 +102,13 @@ export async function loadProjectPageData(projectFilter: string): Promise<Projec
       const project = resolveProject(core, config.projects);
       const scm = getSCM(registry, project);
       if (!scm) return Promise.resolve();
-      return enrichSessionPR(pageData.sessions[i], scm, core.pr);
+      return enrichSessionPR(dashboard, scm, core.pr);
     });
     const enrichTimeout = new Promise<void>((resolve) => setTimeout(resolve, 4_000));
     await Promise.race([Promise.allSettled(enrichPromises), enrichTimeout]);
   } catch {
     pageData.sessions = [];
+    pageData.sidebarSessions = [];
     pageData.globalPause = null;
     pageData.orchestrators = [];
   }
