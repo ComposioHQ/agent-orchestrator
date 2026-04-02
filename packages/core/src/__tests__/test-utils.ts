@@ -16,6 +16,8 @@ import type {
   Notifier,
   ActivityState,
   PRInfo,
+  RuntimeHandle,
+  SubSession,
 } from "../types.js";
 
 // ---------------------------------------------------------------------------
@@ -248,5 +250,58 @@ export function createMockSessionManager(): SessionManager {
       githubAssigned: true,
       takenOverFrom: [],
     }),
-  } as SessionManager;
+    createSubSession: vi.fn().mockResolvedValue(makeSubSession()),
+    listSubSessions: vi.fn().mockResolvedValue([]),
+    killSubSession: vi.fn().mockResolvedValue(undefined),
+    restoreTerminalSubSession: vi.fn().mockResolvedValue(makeSubSession()),
+  } as unknown as SessionManager;
+}
+
+// ---------------------------------------------------------------------------
+// Runtime handle factory
+// ---------------------------------------------------------------------------
+
+export function makeHandle(id: string): RuntimeHandle {
+  return { id, runtimeName: "mock", data: {} };
+}
+
+// ---------------------------------------------------------------------------
+// Sub-session factory
+// ---------------------------------------------------------------------------
+
+export function makeSubSession(overrides: Partial<SubSession> = {}): SubSession {
+  return {
+    id: "sub-1",
+    parentId: "app-1",
+    type: "primary",
+    tmuxName: "ao_app-1_primary",
+    workspacePath: "/tmp/ws",
+    runtimeHandle: null,
+    alive: true,
+    ...overrides,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Test context helpers (used by session-manager.test.ts)
+// ---------------------------------------------------------------------------
+
+export interface TestContext {
+  tmpDir: string;
+  configPath: string;
+  sessionsDir: string;
+  config: OrchestratorConfig;
+  mockRegistry: PluginRegistry;
+  cleanup: () => void;
+}
+
+export function setupTestContext(): TestContext {
+  const env = createTestEnvironment();
+  const plugins = createMockPlugins();
+  const mockRegistry = createMockRegistry({ runtime: plugins.runtime, agent: plugins.agent });
+  return { ...env, mockRegistry };
+}
+
+export function teardownTestContext(ctx: TestContext): void {
+  ctx.cleanup();
 }
