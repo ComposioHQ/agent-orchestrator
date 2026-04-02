@@ -25,7 +25,7 @@ if [ ! -w "$NPM_PREFIX" ] 2>/dev/null; then
     echo "    mkdir -p ~/.npm-global"
     echo "    npm config set prefix '~/.npm-global'"
     echo '    export PATH="$HOME/.npm-global/bin:$PATH"'
-    exit 1
+    return 1
   fi
   NPM_PREFIX="$USER_NPM_DIR"
   NEEDS_SHELL_RELOAD=true

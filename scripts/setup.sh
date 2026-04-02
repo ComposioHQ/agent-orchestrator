@@ -170,5 +170,5 @@ if [ "${NEEDS_SHELL_RELOAD:-}" = true ] && [ "$INTERACTIVE" = true ]; then
   echo "Restarting shell to pick up new PATH..."
   exec "$SHELL" -l
 elif [ "${NEEDS_SHELL_RELOAD:-}" = true ]; then
-  echo "NOTE: Restart your terminal or run: source ~/.zshrc"
+  echo "NOTE: Restart your terminal or run: source ${SHELL_RC:-~/.zshrc}"
 fi

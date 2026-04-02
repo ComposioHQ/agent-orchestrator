@@ -127,4 +127,8 @@ if [ "$SKIP_SMOKE" = false ]; then
   run_smoke_tests
 fi
 
+if [ "${NEEDS_SHELL_RELOAD:-}" = true ]; then
+  printf '\nNOTE: npm prefix was reconfigured. Restart your terminal or run: source %s\n' "${SHELL_RC:-~/.zshrc}"
+fi
+
 printf '\nUpdate complete.\n'
