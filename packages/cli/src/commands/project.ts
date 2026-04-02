@@ -29,7 +29,7 @@ import {
   type GlobalProjectEntry,
 } from "@composio/ao-core";
 import { getSessionManager } from "../lib/create-session-manager.js";
-import { stopLifecycleWorker } from "../lib/lifecycle-service.js";
+import { getRunning } from "../lib/running-state.js";
 import { promptConfirm } from "../lib/prompts.js";
 import { isHumanCaller } from "../lib/caller-context.js";
 
@@ -193,14 +193,6 @@ export function registerProjectCommand(program: Command): void {
           }
         }
 
-        // Stop per-project lifecycle worker if one exists
-        try {
-          const config = loadConfig();
-          await stopLifecycleWorker(config, projectId);
-        } catch {
-          // Not critical — worker may not be running or may be poll-all
-        }
-
         // Remove from global config, then clean up shadow file
         const updated = unregisterProject(globalConfig, projectId);
         saveGlobalConfig(updated);
@@ -209,6 +201,20 @@ export function registerProjectCommand(program: Command): void {
         console.log(chalk.green(`✓ Removed "${projectId}" from global config`));
         console.log(chalk.dim("  Local config (if any) was NOT deleted."));
         console.log(chalk.dim("  Session data was NOT deleted."));
+
+        // Warn if a daemon is running — the lifecycle manager lives in the
+        // `ao start` process and cannot be stopped cross-process. The project
+        // has been removed from config so no new sessions will be created, but
+        // existing polls will continue until the daemon is restarted.
+        try {
+          const running = await getRunning();
+          if (running) {
+            console.log(chalk.yellow(`\n  ⚠ ao start is running (PID ${running.pid}). Restart it to stop lifecycle polling for "${projectId}".`));
+            console.log(chalk.dim(`    Run: ao stop && ao start`));
+          }
+        } catch {
+          // Not critical — running.json may not exist
+        }
       } catch (err) {
         console.error(chalk.red(err instanceof Error ? err.message : String(err)));
         process.exit(1);

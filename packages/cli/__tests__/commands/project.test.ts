@@ -24,7 +24,7 @@ const {
   mockGenerateProjectId,
   mockExpandHome,
   mockSessionManager,
-  mockStopLifecycleWorker,
+  mockGetRunning,
   mockPromptConfirm,
   mockIsHumanCaller,
 } = vi.hoisted(() => ({
@@ -54,7 +54,7 @@ const {
     send: vi.fn(),
     claimPR: vi.fn(),
   },
-  mockStopLifecycleWorker: vi.fn().mockResolvedValue(false),
+  mockGetRunning: vi.fn().mockResolvedValue(null),
   mockPromptConfirm: vi.fn().mockResolvedValue(true),
   mockIsHumanCaller: vi.fn().mockReturnValue(false),
 }));
@@ -87,8 +87,8 @@ vi.mock("../../src/lib/create-session-manager.js", () => ({
   getSessionManager: async (): Promise<SessionManager> => mockSessionManager as unknown as SessionManager,
 }));
 
-vi.mock("../../src/lib/lifecycle-service.js", () => ({
-  stopLifecycleWorker: (...args: unknown[]) => mockStopLifecycleWorker(...args),
+vi.mock("../../src/lib/running-state.js", () => ({
+  getRunning: () => mockGetRunning(),
 }));
 
 vi.mock("../../src/lib/prompts.js", () => ({
@@ -275,7 +275,7 @@ describe("ao project add", () => {
 describe("ao project remove", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockStopLifecycleWorker.mockResolvedValue(false);
+    mockGetRunning.mockResolvedValue(null);
     mockPromptConfirm.mockResolvedValue(true);
     mockIsHumanCaller.mockReturnValue(false);
     mockSessionManager.list.mockResolvedValue([]);
@@ -354,17 +354,21 @@ describe("ao project remove", () => {
     expect(mockSaveGlobalConfig).toHaveBeenCalled();
   });
 
-  it("stops lifecycle worker before removing", async () => {
+  it("warns when ao start daemon is running after removal", async () => {
     mockLoadGlobalConfig.mockReturnValue(makeGlobalConfig(["my-project"]));
+    mockGetRunning.mockResolvedValue({ pid: 12345, configPath: "/tmp/config.yaml", port: 3000, startedAt: "", projects: ["my-project"] });
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     await runCommand(["project", "remove", "my-project", "--force"]);
 
-    expect(mockStopLifecycleWorker).toHaveBeenCalledWith(expect.anything(), "my-project");
+    const output = spy.mock.calls.map((c: unknown[]) => c.join(" ")).join("\n");
+    expect(output).toContain("12345");
+    spy.mockRestore();
   });
 
-  it("proceeds even when stopLifecycleWorker throws", async () => {
+  it("proceeds even when getRunning throws", async () => {
     mockLoadGlobalConfig.mockReturnValue(makeGlobalConfig(["my-project"]));
-    mockStopLifecycleWorker.mockRejectedValue(new Error("worker error"));
+    mockGetRunning.mockRejectedValue(new Error("no running.json"));
 
     await runCommand(["project", "remove", "my-project", "--force"]);
 

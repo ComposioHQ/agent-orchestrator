@@ -1390,7 +1390,10 @@ export function registerStart(program: Command): void {
                 console.log(chalk.dim(`  ✓ Saved to ${config.configPath}\n`));
               }
             }
-            config = loadConfig();
+            // Pass configPath so loadConfig() reads from the same source we
+            // just wrote to, instead of preferring the global config which
+            // wouldn't have the just-saved agent overrides.
+            config = loadConfig(config.configPath);
             project = config.projects[projectId];
           }
 
