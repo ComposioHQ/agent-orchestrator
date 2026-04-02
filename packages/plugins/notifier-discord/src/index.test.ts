@@ -162,8 +162,8 @@ describe("notifier-discord", () => {
     });
     await notifier.notify(makeEvent());
 
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(body.thread_id).toBe("1234567890");
+    const url = fetchMock.mock.calls[0][0];
+    expect(url).toContain("thread_id=1234567890");
   });
 
   it("is a no-op when webhookUrl not configured", async () => {

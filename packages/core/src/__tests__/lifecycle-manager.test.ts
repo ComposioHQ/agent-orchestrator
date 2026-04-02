@@ -6,10 +6,8 @@ import type {
   OrchestratorConfig,
   PluginRegistry,
   SessionManager,
-  Runtime,
   Agent,
   ActivityState,
-  SCM,
 } from "../types.js";
 import {
   createTestEnvironment,

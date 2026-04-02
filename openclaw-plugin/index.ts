@@ -259,7 +259,7 @@ export function parseStringArraySetting(output: string): string[] | null {
 
   try {
     const parsed = JSON.parse(trimmed);
-    if (parsed == null) return [];
+    if (parsed === null || parsed === undefined) return [];
     if (Array.isArray(parsed)) {
       return parsed.filter((value): value is string => typeof value === "string");
     }
@@ -500,7 +500,51 @@ function isWorkRelated(message: string): boolean {
 // Plugin entry point
 // ---------------------------------------------------------------------------
 
-export default function (api: any) {
+interface PluginApi {
+  pluginConfig?: PluginConfig;
+  logger: { info: (msg: string) => void; warn: (msg: string) => void };
+  on?: (name: string, handler: (event: OpenClawEvent) => Promise<void>, opts?: Record<string, unknown>) => void;
+  registerHook?: (name: string, handler: (event: OpenClawEvent) => Promise<void>, opts?: Record<string, unknown>) => void;
+  registerCommand: (cmd: PluginCommand) => void;
+  registerAgent: (agent: PluginAgent) => void;
+}
+
+interface OpenClawEvent {
+  sessionKey?: string;
+  sessionId?: string;
+  channelId?: string;
+  message?: { text?: string; content?: string };
+  text?: string;
+  content?: string;
+  appendSystemContext?: (context: string) => void;
+  prependContext?: (context: string) => void;
+  context?: Record<string, unknown>;
+  messages?: Array<{ role: string; content: string }>;
+}
+
+interface PluginCommand {
+  name: string;
+  description: string;
+  acceptsArgs: boolean;
+  requireAuth: boolean;
+  handler: (ctx: CommandContext) => Promise<CommandResult>;
+}
+
+interface CommandContext {
+  args?: string;
+}
+
+interface CommandResult {
+  text: string;
+}
+
+interface PluginAgent {
+  name: string;
+  description: string;
+  execute: (params: Record<string, unknown>) => Promise<unknown>;
+}
+
+export default function (api: PluginApi) {
   const config: PluginConfig = (api.pluginConfig as PluginConfig) || {};
 
   // =========================================================================
@@ -566,12 +610,12 @@ export default function (api: any) {
     }
   }
 
-  function getSessionKey(event: any): string {
+  function getSessionKey(event: OpenClawEvent): string {
     return event?.sessionKey || event?.sessionId || event?.channelId || "default";
   }
 
   // Hook 1: message_received — detect work-related inbound messages
-  const onMessageReceived = async (event: any) => {
+  const onMessageReceived = async (event: OpenClawEvent) => {
     const message =
       event?.message?.text || event?.message?.content || event?.text || event?.content || "";
 
@@ -583,7 +627,7 @@ export default function (api: any) {
   };
 
   // Hook 2: before_prompt_build — inject AO routing context + live data
-  const onBeforePromptBuild = async (event: any) => {
+  const onBeforePromptBuild = async (event: OpenClawEvent) => {
     const key = getSessionKey(event);
 
     // Inform the model that AO is available and what it offers.
@@ -622,7 +666,7 @@ export default function (api: any) {
   };
 
   // Register hooks using the correct OpenClaw event names
-  const register = (name: string, handler: (event: any) => Promise<void>) => {
+  const register = (name: string, handler: (event: OpenClawEvent) => Promise<void>) => {
     try {
       if (typeof api.on === "function") {
         api.on(name, handler, { priority: 10 });
@@ -649,7 +693,7 @@ export default function (api: any) {
       "Agent Orchestrator — /ao sessions | status | spawn | issues | batch-spawn | retry | kill | doctor",
     acceptsArgs: true,
     requireAuth: true,
-    handler: async (ctx: any) => {
+    handler: async (ctx: CommandContext) => {
       const raw = (ctx.args || "").trim();
       const parts = raw.split(/\s+/);
       const subcommand = parts[0]?.toLowerCase() || "help";
