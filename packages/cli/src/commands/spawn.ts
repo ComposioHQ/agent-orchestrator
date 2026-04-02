@@ -62,10 +62,6 @@ function buildConfigFromGlobalRegistry(projectId: string): OrchestratorConfig {
     projects: {
       [projectId]: {
         ...effectiveProject,
-        // repo is required by ProjectConfigSchema; fall back to empty string if
-        // shadow was registered without a local config (identity-only entry).
-        // Must come AFTER spread so it isn't overwritten by an undefined repo.
-        repo: (effectiveProject as Record<string, unknown>)["repo"] ?? "",
       },
     },
   };

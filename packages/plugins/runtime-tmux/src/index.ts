@@ -93,8 +93,17 @@ export function create(): Runtime {
       }
 
       await tmux("new-session", "-d", "-s", sessionName, "-c", config.workspacePath, ...envArgs);
-      await sleep(SHELL_READY_DELAY_MS);
-      await sendCommand(sessionName, config.launchCommand, { clearInput: false });
+      try {
+        await sleep(SHELL_READY_DELAY_MS);
+        await sendCommand(sessionName, config.launchCommand, { clearInput: false });
+      } catch (error) {
+        try {
+          await tmux("kill-session", "-t", sessionName);
+        } catch {
+          // Best-effort cleanup; preserve the original launch failure.
+        }
+        throw error;
+      }
 
       return {
         id: sessionName,

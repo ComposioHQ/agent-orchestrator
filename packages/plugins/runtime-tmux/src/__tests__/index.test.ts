@@ -218,6 +218,30 @@ describe("runtime.create()", () => {
     ).rejects.toThrow("new-session failed");
   });
 
+  it("kills the tmux session if sending the launch command fails", async () => {
+    const runtime = create();
+
+    mockTmuxSuccess(); // new-session
+    mockTmuxError("send-keys failed"); // send command
+    mockTmuxSuccess(); // kill-session cleanup
+
+    await expect(
+      runtime.create({
+        sessionId: "cleanup-session",
+        workspacePath: "/tmp/ws",
+        launchCommand: "bad-command",
+        environment: {},
+      }),
+    ).rejects.toThrow("send-keys failed");
+
+    expect(mockExecFileCustom).toHaveBeenNthCalledWith(
+      3,
+      "tmux",
+      ["kill-session", "-t", "cleanup-session"],
+      expectedTmuxOptions,
+    );
+  });
+
   it("rejects invalid session IDs with special characters", async () => {
     const runtime = create();
 
