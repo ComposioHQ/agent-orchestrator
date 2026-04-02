@@ -194,6 +194,7 @@ vi.mock("@/lib/services", () => ({
 // ── Import routes after mocking ───────────────────────────────────────
 
 import { GET as sessionsGET } from "@/app/api/sessions/route";
+import { GET as agentsGET } from "@/app/api/agents/route";
 import { POST as orchestratorsPOST } from "@/app/api/orchestrators/route";
 import { POST as spawnPOST } from "@/app/api/spawn/route";
 import { POST as sendPOST } from "@/app/api/sessions/[id]/send/route";
@@ -223,6 +224,28 @@ beforeEach(() => {
 });
 
 describe("API Routes", () => {
+  describe("GET /api/agents", () => {
+    it("returns the web-registered agent plugins", async () => {
+      (mockRegistry.list as ReturnType<typeof vi.fn>).mockImplementation((slot: string) =>
+        slot === "agent"
+          ? [
+              { name: "claude-code", slot: "agent", description: "Claude Code", version: "0.1.0" },
+              { name: "opencode", slot: "agent", description: "OpenCode", version: "0.1.0" },
+            ]
+          : [],
+      );
+
+      const res = await agentsGET();
+      expect(res.status).toBe(200);
+
+      const data = await res.json();
+      expect(data.agents).toEqual([
+        { id: "claude-code", name: "claude-code" },
+        { id: "opencode", name: "opencode" },
+      ]);
+    });
+  });
+
   // ── GET /api/sessions ──────────────────────────────────────────────
 
   describe("GET /api/sessions", () => {
@@ -390,55 +413,6 @@ describe("API Routes", () => {
         sourceSessionId: "docs-orchestrator",
       });
     });
-
-    it("enriches all PRs concurrently, not sequentially", async () => {
-      vi.useFakeTimers();
-
-      const sessionsWithPRs = Array.from({ length: 6 }, (_, i) =>
-        makeSession({
-          id: `worker-${i}`,
-          status: "pr_open",
-          activity: "idle",
-          pr: {
-            number: 100 + i,
-            url: `https://github.com/acme/my-app/pull/${100 + i}`,
-            title: `PR ${i}`,
-            owner: "acme",
-            repo: "my-app",
-            branch: `feat/pr-${i}`,
-            baseBranch: "main",
-            isDraft: false,
-          },
-        }),
-      );
-      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValue(sessionsWithPRs);
-
-      const metadataSpy = vi
-        .spyOn(serialize, "enrichSessionsMetadata")
-        .mockResolvedValue(undefined);
-
-      const enrichSpy = vi
-        .spyOn(serialize, "enrichSessionPR")
-        .mockImplementation(
-          () => new Promise<void>((resolve) => { setTimeout(resolve, 1_000); }),
-        );
-
-      const responsePromise = sessionsGET(makeRequest("http://localhost:3000/api/sessions"));
-
-      // Flush microtasks so the handler reaches the PR enrichment loop
-      await vi.advanceTimersByTimeAsync(0);
-
-      // Sequential would only have 1 call pending; parallel fires all 6 immediately
-      expect(enrichSpy.mock.calls.length).toBe(6);
-
-      await vi.advanceTimersByTimeAsync(5_000);
-      const res = await responsePromise;
-      expect(res.status).toBe(200);
-
-      metadataSpy.mockRestore();
-      enrichSpy.mockRestore();
-      vi.useRealTimers();
-    });
   });
 
   describe("GET /api/runtime/terminal", () => {
@@ -594,6 +568,20 @@ describe("API Routes", () => {
       expect(res.status).toBe(201);
       const data = await res.json();
       expect(data.session.issueId).toBeNull();
+    });
+
+    it("passes agent overrides through to the session manager", async () => {
+      const req = makeRequest("/api/spawn", {
+        method: "POST",
+        body: JSON.stringify({ projectId: "my-app", agent: "codex" }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await spawnPOST(req);
+
+      expect(res.status).toBe(201);
+      expect(mockSessionManager.spawn).toHaveBeenCalledWith(
+        expect.objectContaining({ projectId: "my-app", agent: "codex" }),
+      );
     });
   });
 

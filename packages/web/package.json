@@ -29,6 +29,7 @@
   "dependencies": {
     "@composio/ao-core": "workspace:*",
     "@composio/ao-plugin-agent-claude-code": "workspace:*",
+    "@composio/ao-plugin-agent-codex": "workspace:*",
     "@composio/ao-plugin-agent-opencode": "workspace:*",
     "@composio/ao-plugin-runtime-tmux": "workspace:*",
     "@composio/ao-plugin-scm-github": "workspace:*",
@@ -42,7 +43,9 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "ws": "^8.19.0",
-    "xterm": "^5.3.0"
+    "xterm": "^5.3.0",
+    "yaml": "^2.8.1",
+    "zod": "^3.25.76"
   },
   "optionalDependencies": {
     "node-pty": "^1.1.0"

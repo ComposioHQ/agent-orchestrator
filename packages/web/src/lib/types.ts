@@ -258,3 +258,48 @@ export function getAttentionLevel(session: DashboardSession): AttentionLevel {
   // ── Working: agents doing their thing ─────────────────────────────
   return "working";
 }
+
+// =============================================================================
+// Portfolio types
+// =============================================================================
+
+/** Portfolio-level session summary for the attention center */
+export interface PortfolioActionItem {
+  session: DashboardSession;
+  projectId: string;
+  projectName: string;
+  attentionLevel: AttentionLevel;
+  triageRank: number; // Lower = more urgent
+}
+
+export interface PortfolioActivityItem {
+  session: DashboardSession;
+  projectId: string;
+  projectName: string;
+}
+
+/** Portfolio project summary for the project rail */
+export interface PortfolioProjectSummary {
+  id: string;
+  name: string;
+  repo?: string;
+  sessionCount: number;
+  activeCount: number;
+  attentionCounts: Record<AttentionLevel, number>;
+  degraded?: boolean;
+  degradedReason?: string;
+}
+
+/** Triage ranking for portfolio attention center — lower = more urgent */
+const TRIAGE_RANK: Record<AttentionLevel, number> = {
+  merge: 0,
+  respond: 1,
+  review: 2,
+  pending: 3,
+  working: 4,
+  done: 5,
+};
+
+export function getTriageRank(level: AttentionLevel): number {
+  return TRIAGE_RANK[level] ?? 5;
+}

@@ -245,12 +245,12 @@ describe("resolveProject", () => {
     expect(resolveProject(session, projects)).toBe(projects.lib);
   });
 
-  it("should fall back to first project when nothing matches", () => {
+  it("should return undefined when nothing matches", () => {
     const projects = {
       app: makeProject({ name: "app", sessionPrefix: "app" }),
     };
     const session = createCoreSession({ id: "other-1", projectId: "unknown" });
-    expect(resolveProject(session, projects)).toBe(projects.app);
+    expect(resolveProject(session, projects)).toBeUndefined();
   });
 
   it("should return undefined for empty projects", () => {

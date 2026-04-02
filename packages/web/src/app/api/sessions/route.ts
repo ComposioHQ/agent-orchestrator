@@ -1,5 +1,6 @@
-import { ACTIVITY_STATE, isOrchestratorSession } from "@composio/ao-core";
+import { ACTIVITY_STATE, isOrchestratorSession, resolveProjectConfig } from "@composio/ao-core";
 import { getServices, getSCM } from "@/lib/services";
+import { getPortfolioServices, getCachedPortfolioSessions } from "@/lib/portfolio-services";
 import {
   sessionToDashboard,
   resolveProject,
@@ -11,6 +12,7 @@ import {
 import { getCorrelationId, jsonWithCorrelation, recordApiObservation } from "@/lib/observability";
 import { resolveGlobalPause } from "@/lib/global-pause";
 import { filterProjectSessions } from "@/lib/project-utils";
+import { getAttentionLevel, getTriageRank, type PortfolioActionItem, type DashboardSession } from "@/lib/types";
 
 const METADATA_ENRICH_TIMEOUT_MS = 3_000;
 const PR_ENRICH_TIMEOUT_MS = 4_000;
@@ -31,14 +33,91 @@ async function settlesWithin(promise: Promise<unknown>, timeoutMs: number): Prom
   }
 }
 
+/** Handle scope=portfolio: aggregate sessions across all portfolio projects */
+async function handlePortfolioScope(correlationId: string, _startedAt: number) {
+  const { portfolio } = getPortfolioServices();
+  const portfolioSessions = await getCachedPortfolioSessions();
+
+  const dashboardSessions: DashboardSession[] = [];
+  const actionItems: PortfolioActionItem[] = [];
+
+  for (const ps of portfolioSessions) {
+    if (isOrchestratorSession(ps.session)) continue;
+    const dashSession = sessionToDashboard(ps.session);
+    dashboardSessions.push(dashSession);
+    const level = getAttentionLevel(dashSession);
+    actionItems.push({
+      session: dashSession,
+      projectId: ps.project.id,
+      projectName: ps.project.name,
+      attentionLevel: level,
+      triageRank: getTriageRank(level),
+    });
+  }
+
+  // Enrich PRs with live data (best-effort, with timeout)
+  try {
+    const { registry } = await getServices();
+    const enrichPromises: Promise<unknown>[] = [];
+    for (const ps of portfolioSessions) {
+      if (isOrchestratorSession(ps.session) || !ps.session.pr) continue;
+      const resolved = resolveProjectConfig(ps.project);
+      if (!resolved) continue;
+      const scm = getSCM(registry, resolved.project);
+      if (!scm) continue;
+      const dashSession = dashboardSessions.find(d => d.id === ps.session.id);
+      if (!dashSession) continue;
+      enrichPromises.push(enrichSessionPR(dashSession, scm, ps.session.pr));
+    }
+    await settlesWithin(Promise.allSettled(enrichPromises), PR_ENRICH_TIMEOUT_MS);
+
+    // Recompute attention levels after enrichment
+    for (const item of actionItems) {
+      item.attentionLevel = getAttentionLevel(item.session);
+      item.triageRank = getTriageRank(item.attentionLevel);
+    }
+  } catch {
+    // Enrichment failure is non-fatal
+  }
+
+  actionItems.sort((a, b) => {
+    if (a.triageRank !== b.triageRank) return a.triageRank - b.triageRank;
+    return new Date(b.session.lastActivityAt).getTime() - new Date(a.session.lastActivityAt).getTime();
+  });
+
+  const projectSummaries = portfolio.map(p => ({
+    id: p.id,
+    name: p.name,
+    degraded: p.degraded,
+    degradedReason: p.degradedReason,
+  }));
+
+  return jsonWithCorrelation(
+    {
+      sessions: dashboardSessions,
+      actionItems,
+      stats: computeStats(dashboardSessions),
+      projectSummaries,
+    },
+    { status: 200 },
+    correlationId,
+  );
+}
+
 export async function GET(request: Request) {
   const correlationId = getCorrelationId(request);
   const startedAt = Date.now();
   try {
     const { searchParams } = new URL(request.url);
+    const scope = searchParams.get("scope");
     const projectFilter = searchParams.get("project");
     const activeOnly = searchParams.get("active") === "true";
     const orchestratorOnly = searchParams.get("orchestratorOnly") === "true";
+
+    // Portfolio scope: aggregate across all portfolio projects
+    if (scope === "portfolio") {
+      return await handlePortfolioScope(correlationId, startedAt);
+    }
 
     const { config, registry, sessionManager } = await getServices();
     const requestedProjectId =
@@ -94,27 +173,20 @@ export async function GET(request: Request) {
     );
 
     if (metadataSettled) {
-      const prEnrichPromises: Promise<boolean>[] = [];
-
-      for (let i = 0; i < workerSessions.length; i++) {
-        const core = workerSessions[i];
-        if (!core?.pr) continue;
+      const enrichPromises = workerSessions.map((core, i) => {
+        if (!core?.pr) return Promise.resolve();
 
         const project = resolveProject(core, config.projects);
         const scm = getSCM(registry, project);
-        if (!scm) continue;
+        if (!scm) return Promise.resolve();
 
-        prEnrichPromises.push(
-          settlesWithin(
-            enrichSessionPR(dashboardSessions[i], scm, core.pr),
-            PER_PR_ENRICH_TIMEOUT_MS,
-          ),
+        return settlesWithin(
+          enrichSessionPR(dashboardSessions[i], scm, core.pr),
+          PER_PR_ENRICH_TIMEOUT_MS,
         );
-      }
+      });
 
-      if (prEnrichPromises.length > 0) {
-        await settlesWithin(Promise.allSettled(prEnrichPromises), PR_ENRICH_TIMEOUT_MS);
-      }
+      await settlesWithin(Promise.allSettled(enrichPromises), PR_ENRICH_TIMEOUT_MS);
     }
 
     recordApiObservation({
