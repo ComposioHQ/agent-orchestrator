@@ -221,7 +221,7 @@ export function Dashboard({
     }
   }, []);
 
-  const handleSpawnOrchestrator = async (project: ProjectInfo) => {
+  const handleSpawnOrchestrator = useCallback(async (project: ProjectInfo) => {
     setSpawningProjectIds((current) =>
       current.includes(project.id) ? current : [...current, project.id],
     );
@@ -257,7 +257,7 @@ export function Dashboard({
     } finally {
       setSpawningProjectIds((current) => current.filter((id) => id !== project.id));
     }
-  };
+  }, []);
 
   const hasAnySessions = kanbanLevels.some((level) => grouped[level].length > 0);
 

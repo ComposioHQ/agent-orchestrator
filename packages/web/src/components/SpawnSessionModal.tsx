@@ -3,12 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/cn";
+import type { DashboardSession } from "@/lib/types";
 
 export interface SpawnSessionModalProps {
   projectId: string;
   open: boolean;
   onClose: () => void;
   onSpawned?: (sessionId: string) => void;
+  onSessionCreated?: (session: DashboardSession) => void;
 }
 
 export function SpawnSessionModal({
@@ -16,6 +18,7 @@ export function SpawnSessionModal({
   open,
   onClose,
   onSpawned,
+  onSessionCreated,
 }: SpawnSessionModalProps) {
   const router = useRouter();
   const [issueId, setIssueId] = useState("");
@@ -70,17 +73,45 @@ export function SpawnSessionModal({
     async (e: React.FormEvent) => {
       e.preventDefault();
       setError(null);
-      setSubmitting(true);
-      try {
-        const body: { projectId: string; issueId?: string; agent?: string; prompt?: string } = {
-          projectId,
-        };
-        const trimmedIssue = issueId.trim();
-        if (trimmedIssue) body.issueId = trimmedIssue;
-        if (agent.trim()) body.agent = agent.trim();
-        const trimmedPrompt = introPrompt.trim();
-        if (trimmedPrompt) body.prompt = trimmedPrompt;
 
+      // Build request body before closing dialog (capture form state)
+      const body: { projectId: string; issueId?: string; agent?: string; prompt?: string } = {
+        projectId,
+      };
+      const trimmedIssue = issueId.trim();
+      if (trimmedIssue) body.issueId = trimmedIssue;
+      if (agent.trim()) body.agent = agent.trim();
+      const trimmedPrompt = introPrompt.trim();
+      if (trimmedPrompt) body.prompt = trimmedPrompt;
+
+      // Optimistic: close dialog immediately, show stub in sidebar
+      // Navigation happens AFTER spawn returns the real session ID
+      const stubId = `spawning-${Date.now()}`;
+      const stub: DashboardSession = {
+        id: stubId,
+        projectId,
+        status: "working",
+        activity: null,
+        branch: null,
+        issueId: trimmedIssue || null,
+        issueUrl: null,
+        issueLabel: null,
+        issueTitle: null,
+        summary: null,
+        summaryIsFallback: false,
+        createdAt: new Date().toISOString(),
+        lastActivityAt: new Date().toISOString(),
+        pr: null,
+        metadata: {},
+      };
+
+      onSessionCreated?.(stub);
+      onClose();
+      setIssueId("");
+      setIntroPrompt("");
+
+      // Spawn in background — navigate to real session when ready
+      try {
         const res = await fetch("/api/spawn", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -90,22 +121,19 @@ export function SpawnSessionModal({
           | { session?: { id: string }; error?: string }
           | null;
         if (!res.ok) {
-          throw new Error(data?.error ?? `HTTP ${res.status}`);
+          console.error("[SpawnSession] Spawn failed:", data?.error ?? `HTTP ${res.status}`);
+          return;
         }
-        const sid = data?.session?.id;
-        if (!sid) throw new Error("Missing session id in response");
-        onSpawned?.(sid);
-        onClose();
-        setIssueId("");
-        setIntroPrompt("");
-        router.push(`/sessions/${encodeURIComponent(sid)}?project=${encodeURIComponent(projectId)}`);
+        const realId = data?.session?.id;
+        if (realId) {
+          onSpawned?.(realId);
+          router.push(`/sessions/${encodeURIComponent(realId)}?project=${encodeURIComponent(projectId)}`);
+        }
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Spawn failed");
-      } finally {
-        setSubmitting(false);
+        console.error("[SpawnSession] Spawn error:", err);
       }
     },
-    [projectId, issueId, introPrompt, agent, onClose, onSpawned, router],
+    [projectId, issueId, introPrompt, agent, onClose, onSpawned, onSessionCreated, router],
   );
 
   if (!open) return null;

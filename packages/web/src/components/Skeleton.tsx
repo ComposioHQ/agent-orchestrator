@@ -1,3 +1,30 @@
+// ── Terminal Loading Skeleton ─────────────────────────────────────────
+
+export function TerminalSkeleton() {
+  return (
+    <div className="flex h-full w-full flex-col bg-[#0a0a0f] p-4 font-mono text-sm">
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <div className="h-3 w-16 animate-pulse rounded bg-[var(--color-accent)]/20" />
+          <div className="h-3 w-48 animate-pulse rounded bg-white/5" />
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="h-3 w-16 animate-pulse rounded bg-[var(--color-accent)]/20" style={{ animationDelay: "150ms" }} />
+          <div className="h-3 w-64 animate-pulse rounded bg-white/5" style={{ animationDelay: "150ms" }} />
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="h-3 w-16 animate-pulse rounded bg-[var(--color-accent)]/20" style={{ animationDelay: "300ms" }} />
+          <div className="h-3 w-36 animate-pulse rounded bg-white/5" style={{ animationDelay: "300ms" }} />
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="h-3 w-16 animate-pulse rounded bg-[var(--color-accent)]/20" style={{ animationDelay: "450ms" }} />
+          <div className="h-4 w-2 animate-[pulse_1s_ease-in-out_infinite] bg-[var(--color-accent)]/60" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── State UI ──────────────────────────────────────────────────────────
 
 interface EmptyStateProps {

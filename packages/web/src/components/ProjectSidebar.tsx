@@ -26,6 +26,7 @@ interface ProjectSidebarProps {
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
   isLoading?: boolean;
+  onSessionCreated?: (session: DashboardSession) => void;
 }
 
 type ProjectHealth = "red" | "yellow" | "green" | "gray";
@@ -169,6 +170,7 @@ function ProjectSidebarInner({
   activeSessionId,
   collapsed = false,
   onToggleCollapsed: _onToggleCollapsed,
+  onSessionCreated,
 }: ProjectSidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -348,6 +350,7 @@ function ProjectSidebarInner({
         projectId={spawnModalProjectId}
         open
         onClose={() => setSpawnModalProjectId(null)}
+        onSessionCreated={onSessionCreated}
       />
     ) : null;
 

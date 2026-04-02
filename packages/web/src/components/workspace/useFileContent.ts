@@ -51,6 +51,7 @@ export function useFileContent(sessionId: string, filePath: string | null) {
 
       // 304 Not Modified - content hasn't changed
       if (res.status === 304) {
+        setState((prev) => (prev.loading ? { ...prev, loading: false } : prev));
         return;
       }
 
@@ -87,11 +88,6 @@ export function useFileContent(sessionId: string, filePath: string | null) {
     }
   }, [sessionId, filePath]);
 
-  // Initial fetch
-  useEffect(() => {
-    fetchFileContent();
-  }, [fetchFileContent]);
-
   // Poll for updates every 5 seconds
   useEffect(() => {
     if (!filePath) {
@@ -99,15 +95,18 @@ export function useFileContent(sessionId: string, filePath: string | null) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
       }
+      setState({ data: null, error: null, loading: false });
       return;
     }
 
-    // Initial fetch
-    fetchFileContent();
+    // Clear old content immediately when switching files
+    etagRef.current = null;
+    setState({ data: null, error: null, loading: true });
 
-    // Set up polling
+    void fetchFileContent();
+
     intervalRef.current = setInterval(() => {
-      fetchFileContent();
+      void fetchFileContent();
     }, 5000);
 
     return () => {

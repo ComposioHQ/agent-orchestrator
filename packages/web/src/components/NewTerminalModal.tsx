@@ -39,7 +39,8 @@ export function NewTerminalModal({ open, onClose }: NewTerminalModalProps) {
       setShowSuggestions(true);
       void fetchSuggestions();
       // Focus input after modal opens
-      setTimeout(() => inputRef.current?.focus(), 100);
+      const t = requestAnimationFrame(() => inputRef.current?.focus());
+      return () => cancelAnimationFrame(t);
     }
   }, [open, fetchSuggestions]);
 

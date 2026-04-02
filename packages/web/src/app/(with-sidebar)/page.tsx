@@ -67,7 +67,10 @@ export default async function Home(props: { searchParams: Promise<{ project?: st
     >;
     pageData.sessions = prAwareSessions.map(sessionToDashboard);
 
-    const metaTimeout = new Promise<void>((resolve) => setTimeout(resolve, 3_000));
+    // Enrichment: use aggressive timeouts (1s metadata, 1.5s PR) — SSE patches in updates
+    // and the sidebar already uses /api/sessions/light (no enrichment). This SSR enrichment
+    // is best-effort to pre-populate the Kanban cards with issue titles and PR status.
+    const metaTimeout = new Promise<void>((resolve) => setTimeout(resolve, 1_000));
     await Promise.race([
       enrichSessionsMetadata(coreSessions, pageData.sessions, config, registry),
       metaTimeout,
@@ -120,7 +123,7 @@ export default async function Home(props: { searchParams: Promise<{ project?: st
       if (!scm) return Promise.resolve();
       return enrichSessionPR(pageData.sessions[i], scm, core.pr);
     });
-    const enrichTimeout = new Promise<void>((resolve) => setTimeout(resolve, 4_000));
+    const enrichTimeout = new Promise<void>((resolve) => setTimeout(resolve, 1_500));
     await Promise.race([Promise.allSettled(enrichPromises), enrichTimeout]);
   } catch {
     pageData.sessions = [];

@@ -2,6 +2,8 @@ import { getServices } from "@/lib/services";
 import { sessionToDashboard } from "@/lib/serialize";
 import { getAttentionLevel } from "@/lib/types";
 import { filterWorkerSessions } from "@/lib/project-utils";
+import { loadTerminals } from "@/lib/standalone-terminals";
+import { execFileSync } from "node:child_process";
 import {
   createCorrelationId,
   createProjectObserver,
@@ -9,6 +11,32 @@ import {
 } from "@composio/ao-core";
 
 export const dynamic = "force-dynamic";
+
+function findTmux(): string {
+  const candidates = [
+    "/opt/homebrew/bin/tmux",
+    "/usr/local/bin/tmux",
+    "/usr/bin/tmux",
+  ];
+  for (const p of candidates) {
+    try {
+      execFileSync(p, ["-V"], { timeout: 5000 });
+      return p;
+    } catch {
+      continue;
+    }
+  }
+  return "tmux";
+}
+
+function isTmuxSessionAlive(tmuxPath: string, tmuxName: string): boolean {
+  try {
+    execFileSync(tmuxPath, ["has-session", "-t", `=${tmuxName}`], { timeout: 5000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * GET /api/events — SSE stream for real-time lifecycle events
@@ -81,6 +109,20 @@ export async function GET(request: Request): Promise<Response> {
           const dashboardSessions = workerSessions.map(sessionToDashboard);
           const projectObserver = ensureObserver(config);
 
+          let terminalStatuses: Array<{ id: string; tmuxName: string; label: string; alive: boolean }> = [];
+          try {
+            const terminals = loadTerminals();
+            const tmuxPath = findTmux();
+            terminalStatuses = terminals.map((t) => ({
+              id: t.id,
+              tmuxName: t.tmuxName,
+              label: t.label,
+              alive: isTmuxSessionAlive(tmuxPath, t.tmuxName),
+            }));
+          } catch {
+            // ignore terminal fetch errors
+          }
+
           const initialEvent = {
             type: "snapshot",
             correlationId,
@@ -92,6 +134,7 @@ export async function GET(request: Request): Promise<Response> {
               attentionLevel: getAttentionLevel(s),
               lastActivityAt: s.lastActivityAt,
             })),
+            terminals: terminalStatuses,
           };
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(initialEvent)}\n\n`));
           if (projectObserver && observerProjectId) {
@@ -125,7 +168,7 @@ export async function GET(request: Request): Promise<Response> {
         }
       }, 15000);
 
-      // Poll for session state changes every 5 seconds
+      // Poll for session state changes every 3 seconds
       updates = setInterval(() => {
         void (async () => {
           let dashboardSessions;
@@ -154,6 +197,20 @@ export async function GET(request: Request): Promise<Response> {
               });
             }
 
+            let terminalStatuses: Array<{ id: string; tmuxName: string; label: string; alive: boolean }> = [];
+            try {
+              const terminals = loadTerminals();
+              const tmuxPath = findTmux();
+              terminalStatuses = terminals.map((t) => ({
+                id: t.id,
+                tmuxName: t.tmuxName,
+                label: t.label,
+                alive: isTmuxSessionAlive(tmuxPath, t.tmuxName),
+              }));
+            } catch {
+              // ignore terminal fetch errors
+            }
+
             try {
               const event = {
                 type: "snapshot",
@@ -166,6 +223,7 @@ export async function GET(request: Request): Promise<Response> {
                   attentionLevel: getAttentionLevel(s),
                   lastActivityAt: s.lastActivityAt,
                 })),
+                terminals: terminalStatuses,
               };
               controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
               if (projectObserver && observerProjectId) {
@@ -189,7 +247,7 @@ export async function GET(request: Request): Promise<Response> {
             return;
           }
         })();
-      }, 5000);
+      }, 3000);
     },
     cancel() {
       clearInterval(heartbeat);
