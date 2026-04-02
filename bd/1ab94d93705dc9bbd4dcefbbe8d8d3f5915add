@@ -1,0 +1,38 @@
+packages/web/src/app/api/browse-directory/route.ts
+  a271ef70a2607a42 40
+packages/web/src/components/SessionPageClient.tsx
+  a271ef70a2607a42 84
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "bd1ab94d93705dc9bbd4dcefbbe8d8d3f5915add",
+  "prompts": {
+    "7064f878900378bd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c73f694c-52df-494e-affe-49d068456f52",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 89,
+      "total_deletions": 46,
+      "accepted_lines": 33,
+      "overriden_lines": 0
+    },
+    "a271ef70a2607a42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3be41795-6f73-4d51-9697-61db44b5ab6b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 4,
+      "total_deletions": 4,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    }
+  }
+}
