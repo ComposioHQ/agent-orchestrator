@@ -29,6 +29,7 @@ try {
 }
 import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
 import { createObserverContext, inferProjectId } from "./terminal-observability.js";
+import { attachMuxWebSocket } from "./mux-websocket.js";
 
 interface TerminalSession {
   sessionId: string;
@@ -339,6 +340,8 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
     }
     server.close();
   }
+
+  attachMuxWebSocket(server, TMUX);
 
   return { server, wss, activeSessions, shutdown };
 }
