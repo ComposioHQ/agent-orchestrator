@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { getRelativeTime } from "@/lib/relative-time";
 import type { PortfolioActionItem, AttentionLevel } from "@/lib/types";
 import { InlineMessageInput } from "./InlineMessageInput";
 
@@ -19,17 +20,6 @@ const LEVEL_STYLES: Record<AttentionLevel, { tone: string; tint: string }> = {
   working: { tone: "var(--color-status-working)", tint: "var(--color-tint-blue)" },
   done: { tone: "var(--color-text-tertiary)", tint: "var(--color-tint-neutral)" },
 };
-
-function timeAgo(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const minutes = Math.floor(diff / 60000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
 
 function getStatusText(level: AttentionLevel): string {
   switch (level) {
@@ -135,7 +125,7 @@ export function ActionItemRow({ item, onSend, onKill, onMerge }: ActionItemRowPr
           className="shrink-0 text-[11px] tabular-nums text-[var(--color-text-tertiary)]"
           style={{ fontFamily: "var(--font-mono)" }}
         >
-          {timeAgo(session.lastActivityAt)}
+          {getRelativeTime(session.lastActivityAt, { minUnit: "minute" })}
         </span>
 
         {/* Action buttons */}

@@ -123,9 +123,6 @@ export function PullRequestsPage({
                 </div>
               </div>
             </div>
-
-            <div className="dashboard-hero__meta">
-            </div>
           </div>
         </section>
 
