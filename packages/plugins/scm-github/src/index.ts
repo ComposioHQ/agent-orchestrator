@@ -515,14 +515,17 @@ function createGitHubSCM(): SCM {
     },
 
     async detectPR(session: Session, project: ProjectConfig): Promise<PRInfo | null> {
-      if (!session.branch || !project.repo) return null;
-      parseProjectRepo(project.repo);
+      if (!session.branch) return null;
+      const projectRepo = project.repo;
+      if (!projectRepo) return null;
+
+      parseProjectRepo(projectRepo);
       try {
         const raw = await gh([
           "pr",
           "list",
           "--repo",
-          project.repo,
+          projectRepo,
           "--head",
           session.branch,
           "--json",
@@ -542,22 +545,23 @@ function createGitHubSCM(): SCM {
 
         if (prs.length === 0) return null;
 
-        return prInfoFromView(prs[0], project.repo);
+        return prInfoFromView(prs[0], projectRepo);
       } catch {
         return null;
       }
     },
 
     async resolvePR(reference: string, project: ProjectConfig): Promise<PRInfo> {
-      if (!project.repo) {
-        throw new Error("Cannot resolve PR: project has no repo configured");
+      const projectRepo = project.repo;
+      if (!projectRepo) {
+        throw new Error(`Project "${project.name}" does not define a GitHub repo`);
       }
       const raw = await gh([
         "pr",
         "view",
         reference,
         "--repo",
-        project.repo,
+        projectRepo,
         "--json",
         "number,url,title,headRefName,baseRefName,isDraft",
       ]);
@@ -571,7 +575,7 @@ function createGitHubSCM(): SCM {
         isDraft: boolean;
       } = JSON.parse(raw);
 
-      return prInfoFromView(data, project.repo);
+      return prInfoFromView(data, projectRepo);
     },
 
     async assignPRToCurrentUser(pr: PRInfo): Promise<void> {

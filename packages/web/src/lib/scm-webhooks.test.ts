@@ -49,8 +49,7 @@ describe("eventMatchesProject", () => {
     expect(eventMatchesProject(event, project)).toBe(false);
   });
 
-  it("returns false when project has no repo configured", () => {
-    const noRepoProject: ProjectConfig = { ...project, repo: undefined };
+  it("does not match when project repo is missing", () => {
     const event: SCMWebhookEvent = {
       provider: "github",
       kind: "pull_request",
@@ -60,7 +59,7 @@ describe("eventMatchesProject", () => {
       data: {},
     };
 
-    expect(eventMatchesProject(event, noRepoProject)).toBe(false);
+    expect(eventMatchesProject(event, { ...project, repo: undefined })).toBe(false);
   });
 });
 

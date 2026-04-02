@@ -127,6 +127,14 @@ describe("tracker-gitlab plugin", () => {
       glabMock.mockResolvedValueOnce({ stdout: "not json{" });
       await expect(tracker.getIssue("123", project)).rejects.toThrow();
     });
+
+    it("throws when project has no repo configured", async () => {
+      const repoLessProject = { ...project, repo: undefined };
+      await expect(tracker.getIssue("123", repoLessProject)).rejects.toThrow(
+        'Project "test" does not define a GitLab repo',
+      );
+      expect(glabMock).not.toHaveBeenCalled();
+    });
   });
 
   // ---- isCompleted -------------------------------------------------------

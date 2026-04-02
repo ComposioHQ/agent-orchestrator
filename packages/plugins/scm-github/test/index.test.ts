@@ -423,6 +423,13 @@ describe("scm-github plugin", () => {
       expect(ghMock).not.toHaveBeenCalled();
     });
 
+    it("returns null when project has no repo configured", async () => {
+      const repoLessProject = { ...project, repo: undefined };
+      const result = await scm.detectPR(makeSession(), repoLessProject);
+      expect(result).toBeNull();
+      expect(ghMock).not.toHaveBeenCalled();
+    });
+
     it("returns null on gh CLI error", async () => {
       mockGhError("gh: not found");
       const result = await scm.detectPR(makeSession(), project);
@@ -466,6 +473,13 @@ describe("scm-github plugin", () => {
 
       const result = await scm.resolvePR?.("42", project);
       expect(result).toEqual(pr);
+    });
+
+    it("throws when resolving a PR without a configured repo", async () => {
+      const repoLessProject = { ...project, repo: undefined };
+      await expect(scm.resolvePR?.("42", repoLessProject)).rejects.toThrow(
+        'Project "test" does not define a GitHub repo',
+      );
     });
 
     it("assigns PR to current user", async () => {

@@ -46,8 +46,7 @@ export function findWebhookProjects(
 }
 
 export function eventMatchesProject(event: SCMWebhookEvent, project: ProjectConfig): boolean {
-  if (!event.repository) return false;
-  if (!project.repo) return false;
+  if (!event.repository || !project.repo) return false;
   return (
     `${event.repository.owner}/${event.repository.name}`.toLowerCase() ===
     project.repo?.toLowerCase()
