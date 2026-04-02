@@ -61,37 +61,78 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
   { slot: "terminal", name: "web", pkg: "@composio/ao-plugin-terminal-web" },
 ];
 
-/** Extract plugin-specific config from orchestrator config */
 function extractPluginConfig(
   slot: PluginSlot,
   name: string,
   config: OrchestratorConfig,
 ): Record<string, unknown> | undefined {
-  // Notifiers are configured under config.notifiers.<id>.
-  // Match by key (e.g. "openclaw") or explicit plugin field.
+  // 1. Handle Notifier Slot
   if (slot === "notifier") {
-    for (const [notifierName, notifierConfig] of Object.entries(config.notifiers ?? {})) {
+    for (const [notifierId, notifierConfig] of Object.entries(config.notifiers ?? {})) {
       if (!notifierConfig || typeof notifierConfig !== "object") continue;
       const configuredPlugin = (notifierConfig as Record<string, unknown>)["plugin"];
       const hasExplicitPlugin = typeof configuredPlugin === "string" && configuredPlugin.length > 0;
-      const matches = hasExplicitPlugin ? configuredPlugin === name : notifierName === name;
+      const matches = hasExplicitPlugin ? configuredPlugin === name : notifierId === name;
+
       if (matches) {
-        // Strip loading metadata fields (plugin, package, path) from config passed to plugin.
-        // These are used for plugin resolution, not plugin-specific configuration.
-        // The path field is particularly important to strip since plugins may use it
-        // for their own purposes (e.g., API endpoint path).
-        const {
-          plugin: _plugin,
-          package: _package,
-          path: _path,
-          ...rest
-        } = notifierConfig as Record<string, unknown>;
-        return config.configPath ? { ...rest, configPath: config.configPath } : rest;
+        return prepareConfig(slot, name, notifierId, notifierConfig, config.configPath);
+      }
+    }
+  }
+
+  // 2. Handle Tracker and SCM Slots (Project-level)
+  if (slot === "tracker" || slot === "scm") {
+    for (const [projectId, project] of Object.entries(config.projects)) {
+      const entry = slot === "tracker" ? project.tracker : project.scm;
+      if (!entry || typeof entry !== "object") continue;
+
+      const configuredPlugin = (entry as Record<string, unknown>)["plugin"];
+      const hasExplicitPlugin = typeof configuredPlugin === "string" && configuredPlugin.length > 0;
+      const matches = hasExplicitPlugin ? configuredPlugin === name : false;
+
+      if (matches) {
+        const sourceId = `projects.${projectId}.${slot}`;
+        return prepareConfig(slot, name, sourceId, entry as Record<string, unknown>, config.configPath);
       }
     }
   }
 
   return undefined;
+}
+
+/**
+ * Internal helper to validate and strip loading metadata from a plugin configuration.
+ */
+function prepareConfig(
+  slot: string,
+  name: string,
+  sourceId: string,
+  rawConfig: Record<string, unknown>,
+  configPath?: string,
+): Record<string, unknown> {
+  // Explicitly check for reserved fields to prevent silent stripping/collision.
+  // 'path' is reserved for local resolution; 'package' is reserved for npm resolution.
+  if ("package" in rawConfig && "path" in rawConfig) {
+    throw new Error(
+      `In ${slot} "${sourceId}": both "package" and "path" are specified. ` +
+        `Use "package" for npm plugins or "path" for local plugins, not both.`,
+    );
+  }
+
+  // If loading via built-in name or npm package, 'path' is a collision.
+  // We detect this by checking if 'package' is present OR if no 'path' was 
+  // intended for local resolution (i.e. name refers to a built-in).
+  const isBuiltin = BUILTIN_PLUGINS.some((b) => b.slot === slot && b.name === name);
+  if ((rawConfig.package || isBuiltin) && "path" in rawConfig) {
+    throw new Error(
+      `In ${slot} "${sourceId}": "path" is reserved for plugin loading. ` +
+        `Rename your configuration field to something else (e.g., "apiPath").`,
+    );
+  }
+
+  // Strip loading metadata fields (plugin, package, path) from config passed to plugin.
+  const { plugin: _plugin, package: _package, path: _path, ...rest } = rawConfig;
+  return configPath ? { ...rest, configPath } : rest;
 }
 
 /**
@@ -328,16 +369,25 @@ export function createPluginRegistry(): PluginRegistry {
     ): Promise<void> {
       const doImport = importFn ?? ((pkg: string) => import(pkg));
       for (const builtin of BUILTIN_PLUGINS) {
+        let mod;
         try {
-          const mod = normalizeImportedPluginModule(await doImport(builtin.pkg));
-          if (mod) {
+          mod = normalizeImportedPluginModule(await doImport(builtin.pkg));
+        } catch {
+          // Plugin not installed — that's fine, only load what's available
+          continue;
+        }
+
+        if (mod) {
+          try {
             const pluginConfig = orchestratorConfig
               ? extractPluginConfig(builtin.slot, builtin.name, orchestratorConfig)
               : undefined;
             this.register(mod, pluginConfig);
+          } catch (error) {
+            process.stderr.write(
+              `[plugin-registry] Failed to load built-in plugin "${builtin.name}": ${error}\n`,
+            );
           }
-        } catch {
-          // Plugin not installed — that's fine, only load what's available
         }
       }
     },
@@ -365,13 +415,10 @@ export function createPluginRegistry(): PluginRegistry {
           const mod = normalizeImportedPluginModule(await doImport(specifier));
           if (!mod) continue;
 
-          // Register the plugin FIRST, before validating individual project configs.
-          // This ensures the plugin is available even if some projects have misconfigurations.
-          const pluginConfig = extractPluginConfig(mod.manifest.slot, mod.manifest.name, config);
-          this.register(mod, pluginConfig);
-
-          // Check if this plugin was auto-added from inline tracker/scm/notifier config
-          // Multiple projects may share the same external plugin, so find ALL matching entries
+          // Check if this plugin was auto-added from inline tracker/scm/notifier config.
+          // Multiple projects may share the same external plugin, so find ALL matching entries.
+          // We validate and update configs FIRST, before extracting plugin config, because
+          // extractPluginConfig looks up by manifest.name which may differ from the temp name.
           const matchingEntries = findAllExternalPluginEntries(plugin, externalEntries);
           for (const externalEntry of matchingEntries) {
             try {
@@ -388,6 +435,12 @@ export function createPluginRegistry(): PluginRegistry {
               );
             }
           }
+
+          // Extract plugin config AFTER updating configs with manifest.name.
+          // This ensures extractPluginConfig can find the config by manifest.name
+          // (e.g., manifest "ms-teams" after config was updated from temp "teams").
+          const pluginConfig = extractPluginConfig(mod.manifest.slot, mod.manifest.name, config);
+          this.register(mod, pluginConfig);
         } catch (error) {
           process.stderr.write(`[plugin-registry] Failed to load plugin "${specifier}": ${error}\n`);
         }

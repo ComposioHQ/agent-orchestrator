@@ -293,7 +293,7 @@ describe("loadBuiltins", () => {
     });
   });
 
-  it("throws when path is used alongside plugin name in notifier config", async () => {
+  it("warns and skips when path is used alongside plugin name in notifier config", async () => {
     const registry = createPluginRegistry();
     const fakeWebhook = makePlugin("notifier", "webhook");
     const cfg = makeOrchestratorConfig({
@@ -305,12 +305,18 @@ describe("loadBuiltins", () => {
       },
     });
 
-    await expect(
-      registry.loadBuiltins(cfg, async (pkg: string) => {
-        if (pkg === "@composio/ao-plugin-notifier-webhook") return fakeWebhook;
-        return null;
-      })
-    ).rejects.toThrow(/path" is reserved/);
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    await registry.loadBuiltins(cfg, async (pkg: string) => {
+      if (pkg === "@composio/ao-plugin-notifier-webhook") return fakeWebhook;
+      return null;
+    });
+
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('path" is reserved'));
+    stderrSpy.mockRestore();
+
+    // Plugin should not be registered due to config error
+    expect(registry.get("notifier", "webhook")).toBeNull();
   });
 
   it("does not match notifier key when explicit plugin points to another notifier", async () => {
