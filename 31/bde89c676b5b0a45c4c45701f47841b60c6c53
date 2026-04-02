@@ -1,0 +1,27 @@
+packages/web/src/components/ActionItemRow.tsx
+  23c5d64b04ae6f61 4,128
+packages/web/src/components/BottomSheet.tsx
+  23c5d64b04ae6f61 4
+packages/web/src/lib/relative-time.ts
+  23c5d64b04ae6f61 1-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "31bde89c676b5b0a45c4c45701f47841b60c6c53",
+  "prompts": {
+    "23c5d64b04ae6f61": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d4c54-8466-7133-b061-5dd0271c0503",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 30,
+      "total_deletions": 29,
+      "accepted_lines": 30,
+      "overriden_lines": 0
+    }
+  }
+}
