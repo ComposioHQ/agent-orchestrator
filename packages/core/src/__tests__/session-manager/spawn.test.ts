@@ -1,11 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import {
-  chmodSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-  existsSync,
-} from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { createSessionManager } from "../../session-manager.js";
 import { validateConfig } from "../../config.js";
@@ -26,7 +20,12 @@ import type {
   Tracker,
   RuntimeHandle,
 } from "../../types.js";
-import { setupTestContext, teardownTestContext, makeHandle, type TestContext } from "../test-utils.js";
+import {
+  setupTestContext,
+  teardownTestContext,
+  makeHandle,
+  type TestContext,
+} from "../test-utils.js";
 import { installMockOpencode, installMockGit } from "./opencode-helpers.js";
 
 let ctx: TestContext;
@@ -41,7 +40,16 @@ let originalPath: string | undefined;
 
 beforeEach(() => {
   ctx = setupTestContext();
-  ({ tmpDir, sessionsDir, mockRuntime, mockAgent, mockWorkspace, mockRegistry, config, originalPath } = ctx);
+  ({
+    tmpDir,
+    sessionsDir,
+    mockRuntime,
+    mockAgent,
+    mockWorkspace,
+    mockRegistry,
+    config,
+    originalPath,
+  } = ctx);
 });
 
 afterEach(() => {
@@ -942,7 +950,8 @@ describe("spawn", () => {
 
     const sm = createSessionManager({ config, registry: registryWithFailingSend });
     const spawnPromise = sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
-    await vi.advanceTimersByTimeAsync(5_000);
+    // With retry logic (3 attempts at 3s, 6s, 9s delays before each attempt), need to advance 18s for all retries
+    await vi.advanceTimersByTimeAsync(18_000);
     const session = await spawnPromise;
 
     // Session should still be returned successfully despite sendMessage failure
@@ -950,8 +959,10 @@ describe("spawn", () => {
     expect(session.status).toBe("spawning");
     // Runtime should NOT have been destroyed
     expect(failingRuntime.destroy).not.toHaveBeenCalled();
+    // Verify promptDelivered is set to false in metadata
+    expect(session.metadata.promptDelivered).toBe("false");
     vi.useRealTimers();
-  });
+  }, 30_000);
 
   it("waits before sending post-launch prompt", async () => {
     vi.useFakeTimers();
@@ -972,16 +983,16 @@ describe("spawn", () => {
     const sm = createSessionManager({ config, registry: registryWithPostLaunch });
     const spawnPromise = sm.spawn({ projectId: "my-app", prompt: "Fix the bug" });
 
-    // Advance only 4s — not enough, message should not have been sent yet
-    await vi.advanceTimersByTimeAsync(4_000);
+    // Advance only 2s — not enough, message should not have been sent yet
+    await vi.advanceTimersByTimeAsync(2_000);
     expect(mockRuntime.sendMessage).not.toHaveBeenCalled();
 
-    // Advance the remaining 1s — now it should fire
+    // Advance the remaining 1s — now the first attempt should fire (3s total = 3000 * 1)
     await vi.advanceTimersByTimeAsync(1_000);
     await spawnPromise;
     expect(mockRuntime.sendMessage).toHaveBeenCalled();
     vi.useRealTimers();
-  });
+  }, 20_000);
 
   describe("spawnOrchestrator", () => {
     it("blocks orchestrator spawn while the project is globally paused", async () => {
@@ -1996,4 +2007,3 @@ describe("spawn", () => {
     });
   });
 });
-

@@ -1073,7 +1073,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           AO_CALLER_TYPE: "agent",
           AO_PROJECT_ID: spawnConfig.projectId,
           AO_CONFIG_PATH: config.configPath,
-          ...(config.port !== undefined && config.port !== null && { AO_PORT: String(config.port) }),
+          ...(config.port !== undefined &&
+            config.port !== null && { AO_PORT: String(config.port) }),
         },
       });
     } catch (err) {
@@ -1179,15 +1180,42 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     // exits after -p, so we send the prompt after it starts in interactive mode).
     // This is intentionally outside the try/catch above — a prompt delivery failure
     // should NOT destroy the session. The agent is running; user can retry with `ao send`.
+    let promptDelivered = false;
     if (plugins.agent.promptDelivery === "post-launch" && agentLaunchConfig.prompt) {
-      try {
-        // Wait for agent to start and be ready for input
-        await new Promise((resolve) => setTimeout(resolve, 5_000));
-        await plugins.runtime.sendMessage(handle, agentLaunchConfig.prompt);
-      } catch {
-        // Non-fatal: agent is running but didn't receive the initial prompt.
-        // User can retry with `ao send`.
+      const maxRetries = 3;
+      const baseDelayMs = 3_000;
+      let lastError: Error | undefined;
+
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          // Wait for agent to start and be ready for input
+          // Use exponential backoff: 3s, 6s, 9s between attempts
+          await new Promise((resolve) => setTimeout(resolve, baseDelayMs * attempt));
+          await plugins.runtime.sendMessage(handle, agentLaunchConfig.prompt);
+          promptDelivered = true;
+          break;
+        } catch (err) {
+          lastError = err instanceof Error ? err : new Error(String(err));
+          console.error(
+            `[session-manager] Prompt delivery attempt ${attempt}/${maxRetries} failed: ${lastError.message}`,
+          );
+        }
       }
+
+      if (!promptDelivered) {
+        console.error(
+          `[session-manager] FAILED to deliver prompt to session ${sessionId} after ${maxRetries} attempts. ` +
+            `User must send manually with 'ao send'. Last error: ${lastError?.message}`,
+        );
+      }
+
+      session.metadata["promptDelivered"] = String(promptDelivered);
+    } else if (agentLaunchConfig.prompt) {
+      session.metadata["promptDelivered"] = "true";
+    }
+
+    if (session.metadata["promptDelivered"]) {
+      updateMetadata(sessionsDir, sessionId, session.metadata);
     }
 
     return session;
@@ -1374,7 +1402,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         AO_CALLER_TYPE: "orchestrator",
         AO_PROJECT_ID: orchestratorConfig.projectId,
         AO_CONFIG_PATH: config.configPath,
-        ...(config.port !== undefined && config.port !== null && { AO_PORT: String(config.port) })
+        ...(config.port !== undefined && config.port !== null && { AO_PORT: String(config.port) }),
       },
     });
 

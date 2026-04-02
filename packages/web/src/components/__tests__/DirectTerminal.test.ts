@@ -125,11 +125,21 @@ describe("buildTerminalThemes", () => {
     expect(dark.background).toBe("#0a0a0f");
   });
 
-  it("variant changes cursor color between agent and orchestrator", () => {
+  it("orchestrator variant reuses the shared design-system accent", () => {
     const agent = buildTerminalThemes("agent");
     const orch = buildTerminalThemes("orchestrator");
-    expect(agent.dark.cursor).not.toBe(orch.dark.cursor);
-    expect(agent.light.cursor).not.toBe(orch.light.cursor);
+    expect(agent.dark.cursor).toBe(orch.dark.cursor);
+    expect(agent.light.cursor).toBe(orch.light.cursor);
+    expect(agent.dark.selectionBackground).toBe(orch.dark.selectionBackground);
+    expect(agent.light.selectionBackground).toBe(orch.light.selectionBackground);
+  });
+
+  it("keeps ANSI magenta distinct from ANSI blue", () => {
+    const { dark, light } = buildTerminalThemes("agent");
+    expect(dark.magenta).not.toBe(dark.blue);
+    expect(dark.brightMagenta).not.toBe(dark.brightBlue);
+    expect(light.magenta).not.toBe(light.blue);
+    expect(light.brightMagenta).not.toBe(light.brightBlue);
   });
 
   it("selection colors differ between dark and light themes", () => {
