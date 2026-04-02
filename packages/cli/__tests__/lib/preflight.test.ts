@@ -18,12 +18,22 @@ vi.mock("node:fs", () => ({
   existsSync: mockExistsSync,
 }));
 
+vi.mock("node:module", () => ({
+  createRequire: vi.fn().mockImplementation(() => ({
+    resolve: vi.fn(),
+  })),
+}));
+
 import { preflight } from "../../src/lib/preflight.js";
+import { createRequire } from "node:module";
+
+const mockCreateRequire = createRequire as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   mockExec.mockReset();
   mockIsPortAvailable.mockReset();
   mockExistsSync.mockReset();
+  mockCreateRequire.mockClear();
 });
 
 describe("preflight.checkPort", () => {
@@ -35,9 +45,7 @@ describe("preflight.checkPort", () => {
 
   it("throws when port is in use", async () => {
     mockIsPortAvailable.mockResolvedValue(false);
-    await expect(preflight.checkPort(3000)).rejects.toThrow(
-      "Port 3000 is already in use",
-    );
+    await expect(preflight.checkPort(3000)).rejects.toThrow("Port 3000 is already in use");
   });
 
   it("includes port number in error message", async () => {
@@ -47,46 +55,56 @@ describe("preflight.checkPort", () => {
 });
 
 describe("preflight.checkBuilt", () => {
-  it("passes when ao-core and dist exist at webDir level (pnpm layout)", async () => {
-    // findPackageUp finds ao-core on first check (pnpm symlink in webDir/node_modules)
+  it("passes when ao-core and dist exist (pnpm symlink or npm hoisted)", async () => {
+    mockCreateRequire.mockReturnValue({
+      resolve: vi.fn().mockReturnValue("/path/to/ao-core/dist/index.js"),
+    });
     mockExistsSync.mockReturnValue(true);
     await expect(preflight.checkBuilt("/web")).resolves.toBeUndefined();
-    expect(mockExistsSync).toHaveBeenCalled();
+    const mockReq = mockCreateRequire.mock.results[0].value;
+    expect(mockReq.resolve).toHaveBeenCalledWith("@composio/ao-core");
   });
 
-  it("finds ao-core when hoisted one level up (npm global install layout)", async () => {
-    // /web/node_modules/@composio/ao-core     — miss
-    // /node_modules/@composio/ao-core         — hit
-    // /node_modules/@composio/ao-core/dist/index.js — exists
-    mockExistsSync
-      .mockReturnValueOnce(false)
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(true);
-    await expect(preflight.checkBuilt("/web")).resolves.toBeUndefined();
+  it("finds ao-core when hoisted to parent node_modules (npm global install)", async () => {
+    mockCreateRequire.mockReturnValue({
+      resolve: vi
+        .fn()
+        .mockReturnValue("/usr/local/lib/node_modules/@composio/ao-core/dist/index.js"),
+    });
+    mockExistsSync.mockReturnValue(true);
+    await expect(
+      preflight.checkBuilt("/usr/local/lib/node_modules/@composio/ao-web"),
+    ).resolves.toBeUndefined();
   });
 
   it("throws npm hint when ao-core not found in global install", async () => {
-    mockExistsSync.mockReturnValue(false);
+    mockCreateRequire.mockReturnValue({
+      resolve: vi.fn().mockImplementation(() => {
+        throw new Error("Cannot find module");
+      }),
+    });
     await expect(
       preflight.checkBuilt("/usr/local/lib/node_modules/@composio/ao-web"),
     ).rejects.toThrow("npm install -g @composio/ao@latest");
   });
 
   it("throws pnpm hint when ao-core not found in monorepo", async () => {
-    mockExistsSync.mockReturnValue(false);
+    mockCreateRequire.mockReturnValue({
+      resolve: vi.fn().mockImplementation(() => {
+        throw new Error("Cannot find module");
+      }),
+    });
     await expect(
       preflight.checkBuilt("/home/user/agent-orchestrator/packages/web"),
     ).rejects.toThrow("pnpm install && pnpm build");
   });
 
-  it("throws 'pnpm build' when ao-core exists but dist is missing", async () => {
-    // findPackageUp finds ao-core, but dist/index.js is missing
-    mockExistsSync
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(false);
-    await expect(preflight.checkBuilt("/web")).rejects.toThrow(
-      "Packages not built",
-    );
+  it("throws 'pnpm build' when ao-core dist/index.js is missing", async () => {
+    mockCreateRequire.mockReturnValue({
+      resolve: vi.fn().mockReturnValue("/path/to/ao-core/dist/index.js"),
+    });
+    mockExistsSync.mockReturnValue(false);
+    await expect(preflight.checkBuilt("/web")).rejects.toThrow("Packages not built");
   });
 });
 
@@ -118,34 +136,25 @@ describe("preflight.checkGhAuth", () => {
 
   it("throws 'not installed' when gh is missing (ENOENT)", async () => {
     mockExec.mockRejectedValue(new Error("ENOENT"));
-    await expect(preflight.checkGhAuth()).rejects.toThrow(
-      "GitHub CLI (gh) is not installed",
-    );
-    // Should only call --version, not auth status
+    await expect(preflight.checkGhAuth()).rejects.toThrow("GitHub CLI (gh) is not installed");
     expect(mockExec).toHaveBeenCalledTimes(1);
     expect(mockExec).toHaveBeenCalledWith("gh", ["--version"]);
   });
 
   it("throws 'not authenticated' when gh exists but auth fails", async () => {
     mockExec
-      .mockResolvedValueOnce({ stdout: "gh version 2.40", stderr: "" }) // --version succeeds
-      .mockRejectedValueOnce(new Error("not logged in")); // auth status fails
-    await expect(preflight.checkGhAuth()).rejects.toThrow(
-      "GitHub CLI is not authenticated",
-    );
+      .mockResolvedValueOnce({ stdout: "gh version 2.40", stderr: "" })
+      .mockRejectedValueOnce(new Error("not logged in"));
+    await expect(preflight.checkGhAuth()).rejects.toThrow("GitHub CLI is not authenticated");
     expect(mockExec).toHaveBeenCalledTimes(2);
   });
 
   it("includes correct fix instructions for each failure", async () => {
-    // Not installed → install link
     mockExec.mockRejectedValue(new Error("ENOENT"));
-    await expect(preflight.checkGhAuth()).rejects.toThrow(
-      "https://cli.github.com/",
-    );
+    await expect(preflight.checkGhAuth()).rejects.toThrow("https://cli.github.com/");
 
     mockExec.mockReset();
 
-    // Not authenticated → auth login
     mockExec
       .mockResolvedValueOnce({ stdout: "gh version 2.40", stderr: "" })
       .mockRejectedValueOnce(new Error("not logged in"));
