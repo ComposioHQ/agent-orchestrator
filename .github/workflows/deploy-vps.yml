@@ -1,6 +1,12 @@
 name: Deploy to VPS
 
 on:
+  workflow_dispatch:
+    inputs:
+      deploy_sha:
+        description: Optional exact commit SHA to deploy. Defaults to the head of the dispatched ref.
+        required: false
+        type: string
   workflow_run:
     workflows: [CI]
     types: [completed]
@@ -13,28 +19,47 @@ concurrency:
 jobs:
   deploy:
     if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'main'
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main'
+      )
     runs-on: ubuntu-latest
     steps:
-      - name: Verify SHA is current tip of main
-        id: verify_sha
+      - name: Resolve deploy target
+        id: resolve_deploy
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            DEPLOY_SHA="${{ inputs.deploy_sha }}"
+            if [ -z "$DEPLOY_SHA" ]; then
+              DEPLOY_SHA="${GITHUB_SHA}"
+            fi
+            echo "Manual dispatch: deploying SHA $DEPLOY_SHA from ref ${GITHUB_REF_NAME}."
+            echo "deploy_sha=$DEPLOY_SHA" >> "$GITHUB_OUTPUT"
+            echo "fetch_ref=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           DEPLOY_SHA="${{ github.event.workflow_run.head_sha }}"
           MAIN_SHA=$(gh api repos/${{ github.repository }}/git/ref/heads/main --jq '.object.sha')
           if [ "$DEPLOY_SHA" != "$MAIN_SHA" ]; then
             echo "Skipping: CI SHA $DEPLOY_SHA is not the current tip of main ($MAIN_SHA). Likely a stale rerun."
+            echo "deploy_sha=$DEPLOY_SHA" >> "$GITHUB_OUTPUT"
+            echo "fetch_ref=main" >> "$GITHUB_OUTPUT"
             echo "should_deploy=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "SHA verified: $DEPLOY_SHA is the current tip of main."
+          echo "deploy_sha=$DEPLOY_SHA" >> "$GITHUB_OUTPUT"
+          echo "fetch_ref=main" >> "$GITHUB_OUTPUT"
           echo "should_deploy=true" >> "$GITHUB_OUTPUT"
 
       - name: Deploy via SSH
-        if: steps.verify_sha.outputs.should_deploy == 'true'
+        if: steps.resolve_deploy.outputs.should_deploy == 'true'
         uses: appleboy/ssh-action@v1.2.2
         with:
           host: ${{ secrets.VPS_HOST }}
@@ -44,12 +69,13 @@ jobs:
           fingerprint: ${{ secrets.VPS_HOST_FINGERPRINT }}
           script: |
             set -e
-            DEPLOY_SHA="${{ github.event.workflow_run.head_sha }}"
+            DEPLOY_SHA="${{ steps.resolve_deploy.outputs.deploy_sha }}"
+            FETCH_REF="${{ steps.resolve_deploy.outputs.fetch_ref }}"
             cd /root/agent-orchestrator
-            echo "==> Fetching latest changes..."
-            git fetch origin main
+            echo "==> Fetching latest changes for $FETCH_REF..."
+            git fetch origin "$FETCH_REF"
             echo "==> Current: $(git rev-parse --short HEAD)"
-            echo "==> Deploying CI-passed SHA: ${DEPLOY_SHA:0:7}"
+            echo "==> Deploying target SHA: ${DEPLOY_SHA:0:7}"
             git checkout "$DEPLOY_SHA"
             echo "==> Updated: $(git rev-parse --short HEAD)"
             echo "==> Installing dependencies..."
