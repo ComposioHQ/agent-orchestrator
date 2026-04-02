@@ -215,6 +215,7 @@ interface LinearIssueNode {
   description: string | null;
   url: string;
   priority: number;
+  branchName?: string | null;
   state: {
     name: string;
     type: string; // "triage" | "backlog" | "unstarted" | "started" | "completed" | "canceled"
@@ -260,6 +261,7 @@ const ISSUE_FIELDS = `
   description
   url
   priority
+  branchName
   state { name type }
   labels { nodes { name } }
   assignee { name displayName }
@@ -294,6 +296,7 @@ function createLinearTracker(query: GraphQLTransport): Tracker {
         labels: node.labels.nodes.map((l) => l.name),
         assignee: node.assignee?.displayName ?? node.assignee?.name,
         priority: node.priority,
+        ...(node.branchName ? { branchName: node.branchName } : {}),
       };
     },
 
@@ -426,6 +429,7 @@ function createLinearTracker(query: GraphQLTransport): Tracker {
         labels: node.labels.nodes.map((l) => l.name),
         assignee: node.assignee?.displayName ?? node.assignee?.name,
         priority: node.priority,
+        ...(node.branchName ? { branchName: node.branchName } : {}),
       }));
     },
 
