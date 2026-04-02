@@ -80,6 +80,36 @@ describe("spawn", () => {
     expect(session.issueId).toBe("INT-100");
   });
 
+  it("prefers tracker-provided Issue.branchName over tracker.branchName()", async () => {
+    const mockTracker: Tracker = {
+      name: "mock-tracker",
+      getIssue: vi.fn().mockResolvedValue({ branchName: "ABC-1234" }),
+      isCompleted: vi.fn().mockResolvedValue(false),
+      issueUrl: vi.fn().mockReturnValue(""),
+      branchName: vi.fn().mockReturnValue("custom/INT-100-my-feature"),
+      generatePrompt: vi.fn().mockResolvedValue(""),
+    };
+
+    const registryWithTracker: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "workspace") return mockWorkspace;
+        if (slot === "tracker") return mockTracker;
+        return null;
+      }),
+    };
+
+    const sm = createSessionManager({
+      config,
+      registry: registryWithTracker,
+    });
+
+    const session = await sm.spawn({ projectId: "my-app", issueId: "INT-100" });
+    expect(session.branch).toBe("ABC-1234");
+  });
+
   it("sanitizes free-text issueId into a valid branch slug", async () => {
     const sm = createSessionManager({ config, registry: mockRegistry });
 
