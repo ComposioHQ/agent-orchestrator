@@ -60,6 +60,10 @@ async function getTracker(
   const registry = createPluginRegistry();
   await registry.loadFromConfig(config, importPluginModuleFromSource);
 
+  if (!project.tracker.plugin) {
+    console.error(chalk.red("Project tracker plugin not configured."));
+    process.exit(1);
+  }
   const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
   if (!tracker) {
     console.error(chalk.red(`Tracker plugin "${project.tracker.plugin}" not found.`));

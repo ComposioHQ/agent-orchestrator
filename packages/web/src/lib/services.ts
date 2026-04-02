@@ -160,7 +160,7 @@ async function labelIssuesForVerification(
   for (const session of mergedSessions) {
     const key = `${session.projectId}:${session.issueId}`;
     const project = config.projects[session.projectId];
-    if (!project?.tracker) {
+    if (!project?.tracker?.plugin) {
       processedIssues.add(key);
       continue;
     }
@@ -197,7 +197,7 @@ async function relabelReopenedIssues(
   registry: PluginRegistry,
 ): Promise<void> {
   for (const [, project] of Object.entries(config.projects)) {
-    if (!project.tracker) continue;
+    if (!project.tracker?.plugin) continue;
     const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
     if (!tracker?.listIssues || !tracker.updateIssue) continue;
 
@@ -255,7 +255,7 @@ export async function pollBacklog(): Promise<void> {
 
     for (const [projectId, project] of Object.entries(config.projects)) {
       if (availableSlots <= 0) break;
-      if (!project.tracker) continue;
+      if (!project.tracker?.plugin) continue;
 
       const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
       if (!tracker?.listIssues) continue;
@@ -367,7 +367,7 @@ export async function getBacklogIssues(): Promise<Array<Issue & { projectId: str
   try {
     const { config, registry } = await getServices();
     for (const [projectId, project] of Object.entries(config.projects)) {
-      if (!project.tracker) continue;
+      if (!project.tracker?.plugin) continue;
       const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
       if (!tracker?.listIssues) continue;
 
@@ -395,7 +395,7 @@ export async function getVerifyIssues(): Promise<Array<Issue & { projectId: stri
   try {
     const { config, registry } = await getServices();
     for (const [projectId, project] of Object.entries(config.projects)) {
-      if (!project.tracker) continue;
+      if (!project.tracker?.plugin) continue;
       const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
       if (!tracker?.listIssues) continue;
 
@@ -419,6 +419,6 @@ export async function getVerifyIssues(): Promise<Array<Issue & { projectId: stri
 
 /** Resolve the SCM plugin for a project. Returns null if not configured. */
 export function getSCM(registry: PluginRegistry, project: ProjectConfig | undefined): SCM | null {
-  if (!project?.scm) return null;
+  if (!project?.scm?.plugin) return null;
   return registry.get<SCM>("scm", project.scm.plugin);
 }

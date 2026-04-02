@@ -386,7 +386,7 @@ export function registerStatus(program: Command): void {
             let unverifiedTotal = 0;
             for (const projectId of projectIds) {
               const project: ProjectConfig | undefined = config.projects[projectId];
-              if (!project?.tracker) continue;
+              if (!project?.tracker?.plugin) continue;
               const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
               if (!tracker?.listIssues) continue;
               try {
