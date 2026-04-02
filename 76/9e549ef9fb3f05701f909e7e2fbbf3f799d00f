@@ -1,0 +1,25 @@
+packages/web/src/middleware.ts
+  5dde8a415f306ae4 23-24,27
+packages/web/src/app/api/projects/clone/route.ts
+  5dde8a415f306ae4 9,53,62,64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "769e549ef9fb3f05701f909e7e2fbbf3f799d00f",
+  "prompts": {
+    "5dde8a415f306ae4": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d4a93-2ca8-7b20-a778-4bc5ef0d7b9e",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 7,
+      "total_deletions": 16,
+      "accepted_lines": 7,
+      "overriden_lines": 0
+    }
+  }
+}
