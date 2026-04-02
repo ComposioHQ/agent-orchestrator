@@ -172,6 +172,7 @@ export {
   getSessionsDir,
   getWorktreesDir,
   getFeedbackReportsDir,
+  getIdentitiesDir,
   getObservabilityBaseDir,
   getArchiveDir,
   getOriginFilePath,
@@ -181,6 +182,25 @@ export {
   expandHome,
   validateAndStoreOrigin,
 } from "./paths.js";
+
+// Agent identity — cryptographic identity for orchestrated sub-agents
+export {
+  computeFingerprint,
+  generateAgentIdentity,
+  signClaim,
+  verifyClaim,
+  computeTrustScore,
+  saveAgentIdentityKey,
+  loadAgentIdentityKey,
+  loadAgentIdentity,
+} from "./agent-identity.js";
+export type {
+  AgentIdentity,
+  AgentIdentityWithKey,
+  AgentClaim,
+  TrustOutcome,
+  TrustScore,
+} from "./agent-identity.js";
 
 // Config generator — auto-generate config from repo URL
 export {
