@@ -1,0 +1,40 @@
+packages/web/src/components/CloneFromUrlModal.tsx
+  23c5d64b04ae6f61 104
+packages/web/src/components/ProjectSessionPageClient.tsx
+  23c5d64b04ae6f61 88
+packages/web/package.json
+  970d8daa9e4cc063 32,46-48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.3",
+  "base_commit_sha": "f809155942658e850cfbc9460f18f4036eb6277c",
+  "prompts": {
+    "23c5d64b04ae6f61": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d4c54-8466-7133-b061-5dd0271c0503",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 2,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    },
+    "970d8daa9e4cc063": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d4c5b-4096-7030-9a95-85e832b80b78",
+        "model": "unknown"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 4,
+      "total_deletions": 1,
+      "accepted_lines": 4,
+      "overriden_lines": 0
+    }
+  }
+}
