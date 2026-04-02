@@ -78,8 +78,7 @@ function extractPluginConfig(
       if (matches) {
         const rawConfig = notifierConfig as Record<string, unknown>;
 
-        // Explicitly check for reserved fields to prevent silent stripping/collision.
-        // 'path' is reserved for local resolution; 'package' is reserved for npm resolution.
+        // Explicitly check for reserved fields to prevent silent stripping/collision
         if ("package" in rawConfig && "path" in rawConfig) {
           throw new Error(
             `In notifier "${notifierName}": both "package" and "path" are specified. ` +
@@ -87,15 +86,13 @@ function extractPluginConfig(
           );
         }
 
-        // If loading via built-in name or npm package, 'path' is a collision.
-        // We detect this by checking if 'package' is present OR if no 'path' was 
-        // intended for local resolution (i.e. name refers to a built-in).
-        const isBuiltin = BUILTIN_PLUGINS.some((b) => b.slot === slot && b.name === name);
-        if ((rawConfig.package || isBuiltin) && "path" in rawConfig) {
-          throw new Error(
-            `In notifier "${notifierName}": "path" is reserved for plugin loading. ` +
-              `Rename your configuration field to something else (e.g., "apiPath").`
-          );
+        if (hasExplicitPlugin || rawConfig.package) {
+          if ("path" in rawConfig) {
+            throw new Error(
+              `In notifier "${notifierName}": "path" is reserved for plugin loading. ` +
+                `Rename your configuration field to something else (e.g., "apiPath").`
+            );
+          }
         }
 
         // Strip loading metadata fields (plugin, package, path) from config passed to plugin.
@@ -347,19 +344,16 @@ export function createPluginRegistry(): PluginRegistry {
     ): Promise<void> {
       const doImport = importFn ?? ((pkg: string) => import(pkg));
       for (const builtin of BUILTIN_PLUGINS) {
-        let mod;
         try {
-          mod = normalizeImportedPluginModule(await doImport(builtin.pkg));
+          const mod = normalizeImportedPluginModule(await doImport(builtin.pkg));
+          if (mod) {
+            const pluginConfig = orchestratorConfig
+              ? extractPluginConfig(builtin.slot, builtin.name, orchestratorConfig)
+              : undefined;
+            this.register(mod, pluginConfig);
+          }
         } catch {
           // Plugin not installed — that's fine, only load what's available
-          continue;
-        }
-
-        if (mod) {
-          const pluginConfig = orchestratorConfig
-            ? extractPluginConfig(builtin.slot, builtin.name, orchestratorConfig)
-            : undefined;
-          this.register(mod, pluginConfig);
         }
       }
     },
