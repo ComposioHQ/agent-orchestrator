@@ -7,11 +7,6 @@ on:
         description: Optional exact commit SHA to deploy. Defaults to the head of the dispatched ref.
         required: false
         type: string
-      print_host_rsa_fingerprint:
-        description: Temporary recovery mode to print the VPS RSA host fingerprint and exit.
-        required: false
-        default: false
-        type: boolean
   workflow_run:
     workflows: [CI]
     types: [completed]
@@ -36,19 +31,18 @@ jobs:
         id: resolve_deploy
         env:
           GH_TOKEN: ${{ github.token }}
+          DEPLOY_SHA_INPUT: ${{ inputs.deploy_sha }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            if [ "${{ inputs.print_host_rsa_fingerprint }}" = "true" ]; then
-              echo "print_host_rsa_fingerprint=true" >> "$GITHUB_OUTPUT"
-              echo "should_deploy=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            DEPLOY_SHA="${{ inputs.deploy_sha }}"
+            DEPLOY_SHA="$DEPLOY_SHA_INPUT"
             if [ -z "$DEPLOY_SHA" ]; then
               DEPLOY_SHA="${GITHUB_SHA}"
             fi
+            if ! printf '%s' "$DEPLOY_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+              echo "Invalid deploy_sha: expected a 40-character lowercase hex SHA, got '$DEPLOY_SHA'." >&2
+              exit 1
+            fi
             echo "Manual dispatch: deploying SHA $DEPLOY_SHA from ref ${GITHUB_REF_NAME}."
-            echo "print_host_rsa_fingerprint=false" >> "$GITHUB_OUTPUT"
             echo "deploy_sha=$DEPLOY_SHA" >> "$GITHUB_OUTPUT"
             echo "fetch_ref=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
             echo "should_deploy=true" >> "$GITHUB_OUTPUT"
@@ -65,35 +59,34 @@ jobs:
             exit 0
           fi
           echo "SHA verified: $DEPLOY_SHA is the current tip of main."
-          echo "print_host_rsa_fingerprint=false" >> "$GITHUB_OUTPUT"
           echo "deploy_sha=$DEPLOY_SHA" >> "$GITHUB_OUTPUT"
           echo "fetch_ref=main" >> "$GITHUB_OUTPUT"
           echo "should_deploy=true" >> "$GITHUB_OUTPUT"
 
-      - name: Read runner-visible VPS host fingerprints
-        if: steps.resolve_deploy.outputs.print_host_rsa_fingerprint == 'true'
+      - name: Require VPS host fingerprint
         env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_HOST_FINGERPRINT: ${{ secrets.VPS_HOST_FINGERPRINT }}
         run: |
           set -e
-          for type in rsa ecdsa ed25519; do
-            echo "==> $type"
-            ssh-keyscan -T 10 -t "$type" "$VPS_HOST" 2>/dev/null | ssh-keygen -lf - -E sha256
-          done
+          if [ -z "$VPS_HOST_FINGERPRINT" ]; then
+            echo "VPS_HOST_FINGERPRINT secret is required for host key verification." >&2
+            exit 1
+          fi
 
       - name: Deploy via SSH
         if: steps.resolve_deploy.outputs.should_deploy == 'true'
+        env:
+          DEPLOY_SHA: ${{ steps.resolve_deploy.outputs.deploy_sha }}
+          FETCH_REF: ${{ steps.resolve_deploy.outputs.fetch_ref }}
         uses: appleboy/ssh-action@v1.2.2
         with:
           host: ${{ secrets.VPS_HOST }}
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
-          # Optional: set VPS_HOST_FINGERPRINT to enforce host key pinning.
           fingerprint: ${{ secrets.VPS_HOST_FINGERPRINT }}
+          envs: DEPLOY_SHA,FETCH_REF
           script: |
             set -e
-            DEPLOY_SHA="${{ steps.resolve_deploy.outputs.deploy_sha }}"
-            FETCH_REF="${{ steps.resolve_deploy.outputs.fetch_ref }}"
             cd /root/agent-orchestrator
             echo "==> Ensuring full worktree..."
             if [ "$(git config --bool core.sparseCheckout || echo false)" = "true" ]; then
