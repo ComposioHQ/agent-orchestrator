@@ -102,18 +102,24 @@ export function AddProjectModal({ open, onClose, onProjectAdded }: AddProjectMod
   const [browseError, setBrowseError] = useState<string | null>(null);
   const [pathInput, setPathInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const homePathRef = useRef(homePath);
 
-  const browse = useCallback(async (dirPath?: string) => {
+  useEffect(() => {
+    homePathRef.current = homePath;
+  }, [homePath]);
+
+  const browse = useCallback(async (dirPath?: string, options?: { selectCurrent?: boolean }) => {
     setBrowsing(true);
     setBrowseError(null);
     try {
-      if (dirPath && !homePath) {
+      const currentHomePath = homePathRef.current;
+      if (dirPath && !currentHomePath) {
         throw new Error("Loading your home directory. Try again in a moment.");
       }
       const normalizedPath =
-        dirPath && homePath ? normalizePathForBrowse(dirPath, homePath) : dirPath;
-      if (dirPath && homePath && !normalizedPath) {
-        throw new Error(`Path must stay within ${homePath}`);
+        dirPath && currentHomePath ? normalizePathForBrowse(dirPath, currentHomePath) : dirPath;
+      if (dirPath && currentHomePath && !normalizedPath) {
+        throw new Error(`Path must stay within ${currentHomePath}`);
       }
 
       const params = normalizedPath ? `?path=${encodeURIComponent(normalizedPath)}` : "";
@@ -122,8 +128,10 @@ export function AddProjectModal({ open, onClose, onProjectAdded }: AddProjectMod
       if (!res.ok) throw new Error(data.error || "Failed to browse");
       setBrowseResult(data as BrowseResult);
       setPathInput(data.path);
-      setSelectedPath(data.path);
-      if (!homePath) {
+      if (options?.selectCurrent ?? Boolean(dirPath)) {
+        setSelectedPath(data.path);
+      }
+      if (!currentHomePath) {
         setHomePath(data.path);
       }
       setError(null);
@@ -139,7 +147,7 @@ export function AddProjectModal({ open, onClose, onProjectAdded }: AddProjectMod
   // Load home directory when modal opens
   useEffect(() => {
     if (open) {
-      void browse();
+      void browse(undefined, { selectCurrent: false });
     }
   }, [open, browse]);
 
