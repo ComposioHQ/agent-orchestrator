@@ -269,7 +269,30 @@ describe("SessionCard", () => {
     expect(onMerge).toHaveBeenCalledWith(42);
   });
 
-  it("shows CI failing alert", () => {
+  it("does not show ask-to-fix when pr.ciStatus is not failing (session status ignored)", () => {
+    // Button visibility is driven by pr.ciStatus (GitHub data), not session.status.
+    // Even when session.status is ci_failed, if pr.ciStatus isn't failing yet
+    // (e.g. enrichment hasn't run), the button should NOT show.
+    const pr = makePR({
+      state: "open",
+      ciStatus: "none", // PR enrichment not yet loaded
+      ciChecks: [],
+      reviewDecision: "none",
+      mergeability: {
+        mergeable: false,
+        ciPassing: false,
+        approved: false,
+        noConflicts: true,
+        blockers: ["Data not loaded"],
+      },
+    });
+    const session = makeSession({ status: "ci_failed", activity: "idle", pr });
+    render(<SessionCard session={session} />);
+    // No button until pr.ciStatus is updated to "failing" via SSE snapshot patch
+    expect(screen.queryByText("ask to fix")).not.toBeInTheDocument();
+  });
+
+  it("shows CI failing alert with count when checks are available", () => {
     const pr = makePR({
       state: "open",
       ciStatus: "failing",
@@ -291,13 +314,13 @@ describe("SessionCard", () => {
     expect(screen.getByText("1 CI check failing")).toBeInTheDocument();
   });
 
-  it("shows CI status unknown when ciStatus is failing but no failed checks", () => {
-    // This happens when GitHub API fails - getCISummary returns "failing"
-    // but getCIChecks returns empty array
+  it("shows CI failing with ask-to-fix even when no check details are available", () => {
+    // pr.ciStatus="failing" is the authoritative GitHub signal — show the action
+    // button even when ciChecks is empty (API inconsistency or enrichment lag).
     const pr = makePR({
       state: "open",
       ciStatus: "failing",
-      ciChecks: [], // Empty - API failed to fetch checks
+      ciChecks: [], // Empty - API failed to fetch individual checks
       reviewDecision: "none",
       mergeability: {
         mergeable: false,
@@ -307,13 +330,34 @@ describe("SessionCard", () => {
         blockers: ["CI is failing"],
       },
     });
-    const session = makeSession({ status: "ci_failed", activity: "idle", pr });
+    const session = makeSession({ status: "working", activity: "active", pr });
     render(<SessionCard session={session} />);
-    expect(screen.getByText("CI unknown")).toBeInTheDocument();
+    // pr.ciStatus is the GitHub signal — show "CI failing" with action button
+    expect(screen.getByText("CI failing")).toBeInTheDocument();
+    expect(screen.getByText("ask to fix")).toBeInTheDocument();
     // Should NOT show "0 CI check failing"
     expect(screen.queryByText(/0.*CI check.*failing/i)).not.toBeInTheDocument();
-    // Should NOT show "ask to fix" action for unknown CI
-    expect(screen.queryByText("ask to fix")).not.toBeInTheDocument();
+  });
+
+  it("shows ask-to-fix based on pr.ciStatus regardless of session status", () => {
+    // Button is shown when pr.ciStatus=failing even when session is "working"
+    // (agent already handling it) — human override remains available while CI is red.
+    const pr = makePR({
+      state: "open",
+      ciStatus: "failing",
+      ciChecks: [{ name: "test", status: "failed" }],
+      reviewDecision: "approved",
+      mergeability: {
+        mergeable: false,
+        ciPassing: false,
+        approved: true,
+        noConflicts: true,
+        blockers: [],
+      },
+    });
+    const session = makeSession({ status: "working", activity: "active", pr });
+    render(<SessionCard session={session} />);
+    expect(screen.getByText("ask to fix")).toBeInTheDocument();
   });
 
   it("shows changes requested alert", () => {

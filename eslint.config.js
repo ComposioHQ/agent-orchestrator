@@ -11,6 +11,7 @@ export default tseslint.config(
       "**/node_modules/**",
       "**/.next/**",
       "**/coverage/**",
+      "packages/web/dist-server/**",
       "packages/web/next-env.d.ts",
       "packages/web/next.config.js",
       "packages/web/postcss.config.mjs",
@@ -68,6 +69,26 @@ export default tseslint.config(
       "no-console": "off",
       "@typescript-eslint/no-explicit-any": "off",
       "@typescript-eslint/no-non-null-assertion": "off",
+    },
+  },
+
+  // Plugin packages and CLI run in Node.js — declare standard Node.js globals
+  {
+    files: ["packages/plugins/**/*.ts", "packages/cli/**/*.ts"],
+    languageOptions: {
+      globals: {
+        console: "readonly",
+        process: "readonly",
+        setTimeout: "readonly",
+        clearTimeout: "readonly",
+        setInterval: "readonly",
+        clearInterval: "readonly",
+        URL: "readonly",
+        URLSearchParams: "readonly",
+        Buffer: "readonly",
+        __dirname: "readonly",
+        __filename: "readonly",
+      },
     },
   },
 

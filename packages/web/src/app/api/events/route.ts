@@ -1,5 +1,5 @@
-import { getServices } from "@/lib/services";
-import { sessionToDashboard } from "@/lib/serialize";
+import { getServices, getSCM } from "@/lib/services";
+import { sessionToDashboard, enrichSessionPR, resolveProject } from "@/lib/serialize";
 import { getAttentionLevel } from "@/lib/types";
 import { filterWorkerSessions } from "@/lib/project-utils";
 import {
@@ -71,7 +71,7 @@ export async function GET(request: Request): Promise<Response> {
         }
 
         try {
-          const { config, sessionManager } = await getServices();
+          const { config, registry, sessionManager } = await getServices();
           const requestedProjectId =
             projectFilter && projectFilter !== "all" && config.projects[projectFilter]
               ? projectFilter
@@ -79,6 +79,18 @@ export async function GET(request: Request): Promise<Response> {
           const sessions = await sessionManager.list(requestedProjectId);
           const workerSessions = filterWorkerSessions(sessions, projectFilter, config.projects);
           const dashboardSessions = workerSessions.map(sessionToDashboard);
+
+          // Enrich PR CI data from cache only — no GitHub API calls, just cache lookups.
+          // This keeps the snapshot current with the latest CI status without adding latency.
+          for (let i = 0; i < workerSessions.length; i++) {
+            const core = workerSessions[i];
+            if (!core?.pr) continue;
+            const project = resolveProject(core, config.projects);
+            const scm = getSCM(registry, project);
+            if (!scm) continue;
+            await enrichSessionPR(dashboardSessions[i], scm, core.pr, { cacheOnly: true });
+          }
+
           const projectObserver = ensureObserver(config);
 
           const initialEvent = {
@@ -91,6 +103,8 @@ export async function GET(request: Request): Promise<Response> {
               activity: s.activity,
               attentionLevel: getAttentionLevel(s),
               lastActivityAt: s.lastActivityAt,
+              prCiStatus: s.pr?.ciStatus ?? null,
+              prCiChecks: s.pr?.ciChecks ?? null,
             })),
           };
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(initialEvent)}\n\n`));
@@ -130,7 +144,7 @@ export async function GET(request: Request): Promise<Response> {
         void (async () => {
           let dashboardSessions;
           try {
-            const { config, sessionManager } = await getServices();
+            const { config, registry, sessionManager } = await getServices();
             const requestedProjectId =
               projectFilter && projectFilter !== "all" && config.projects[projectFilter]
                 ? projectFilter
@@ -138,6 +152,17 @@ export async function GET(request: Request): Promise<Response> {
             const sessions = await sessionManager.list(requestedProjectId);
             const workerSessions = filterWorkerSessions(sessions, projectFilter, config.projects);
             dashboardSessions = workerSessions.map(sessionToDashboard);
+
+            // Enrich PR CI data from cache only — no GitHub API calls, just cache lookups.
+            for (let i = 0; i < workerSessions.length; i++) {
+              const core = workerSessions[i];
+              if (!core?.pr) continue;
+              const project = resolveProject(core, config.projects);
+              const scm = getSCM(registry, project);
+              if (!scm) continue;
+              await enrichSessionPR(dashboardSessions[i], scm, core.pr, { cacheOnly: true });
+            }
+
             const projectObserver = ensureObserver(config);
 
             if (projectObserver && observerProjectId) {
@@ -165,6 +190,8 @@ export async function GET(request: Request): Promise<Response> {
                   activity: s.activity,
                   attentionLevel: getAttentionLevel(s),
                   lastActivityAt: s.lastActivityAt,
+                  prCiStatus: s.pr?.ciStatus ?? null,
+                  prCiChecks: s.pr?.ciChecks ?? null,
                 })),
               };
               controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));

@@ -724,16 +724,27 @@ function getAlerts(session: DashboardSession): Alert[] {
 
   const alerts: Alert[] = [];
 
+  // Button visibility is driven solely by GitHub CI data (pr.ciStatus), not by
+  // session lifecycle status. pr.ciStatus is kept current via SSE snapshot patches
+  // (cache-only enrichment on every 5s poll), so the button reflects the actual
+  // GitHub state without waiting for the 15s+ stale full-refresh cycle.
   if (pr.ciStatus === CI_STATUS.FAILING) {
     const failedCheck = pr.ciChecks.find((c) => c.status === "failed");
     const failCount = pr.ciChecks.filter((c) => c.status === "failed").length;
     if (failCount === 0) {
+      // GitHub reports CI as failing but individual check details aren't available
+      // (API inconsistency or enrichment lag). Still offer the action button since
+      // pr.ciStatus is the authoritative GitHub signal that CI is red.
       alerts.push({
-        key: "ci-unknown",
-        label: "CI unknown",
+        key: "ci-fail",
+        label: "CI failing",
         className: "",
-        color: "var(--color-alert-ci-unknown)",
+        color: "var(--color-alert-ci)",
+        borderColor: "var(--color-alert-ci)",
         url: pr.url + "/checks",
+        actionLabel: "ask to fix",
+        actionMessage: `Please fix the failing CI checks on ${pr.url}`,
+        actionClassName: "bg-[var(--color-alert-ci-bg)] text-white hover:brightness-110",
       });
     } else {
       alerts.push({
