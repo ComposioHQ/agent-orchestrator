@@ -1,0 +1,23 @@
+CLAUDE.md
+  0cf02f1f3ffbf637 470-489
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "2884b3ec2ccb4cc44cf0b6919ec474150f33e131",
+  "prompts": {
+    "0cf02f1f3ffbf637": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "281edf6b-12de-4e06-a800-ffd45a0381fa",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 20,
+      "total_deletions": 0,
+      "accepted_lines": 20,
+      "overriden_lines": 0
+    }
+  }
+}
