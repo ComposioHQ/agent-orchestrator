@@ -1,13 +1,14 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { CI_STATUS, isRestorable } from "@composio/ao-core/types";
+import { useState, useEffect, useRef, useMemo, type ReactNode } from "react";
+import { useSearchParams } from "next/navigation";
+import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
 import { type DashboardSession, type DashboardPR, isPRMergeReady } from "@/lib/types";
+import { CI_STATUS } from "@composio/ao-core/types";
 import { cn } from "@/lib/cn";
-import { getSessionTitle } from "@/lib/format";
 import { CICheckList } from "./CIBadge";
 import { DirectTerminal } from "./DirectTerminal";
+import { MobileBottomNav } from "./MobileBottomNav";
 
 interface OrchestratorZones {
   merge: number;
@@ -22,6 +23,7 @@ interface SessionDetailProps {
   session: DashboardSession;
   isOrchestrator?: boolean;
   orchestratorZones?: OrchestratorZones;
+  projectOrchestratorId?: string | null;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -34,6 +36,10 @@ const activityMeta: Record<string, { label: string; color: string }> = {
   blocked: { label: "Blocked", color: "var(--color-status-error)" },
   exited: { label: "Exited", color: "var(--color-status-error)" },
 };
+
+function getSessionHeadline(session: DashboardSession): string {
+  return session.issueTitle ?? session.summary ?? session.id;
+}
 
 function cleanBugbotComment(body: string): { title: string; description: string } {
   const isBugbot = body.includes("<!-- DESCRIPTION START -->") || body.includes("### ");
@@ -53,6 +59,18 @@ function buildGitHubBranchUrl(pr: DashboardPR): string {
   return `https://github.com/${pr.owner}/${pr.repo}/tree/${pr.branch}`;
 }
 
+function activityStateClass(activityLabel: string): string {
+  const normalized = activityLabel.toLowerCase();
+  if (normalized === "active") return "session-detail-status-pill--active";
+  if (normalized === "ready") return "session-detail-status-pill--ready";
+  if (normalized === "idle") return "session-detail-status-pill--idle";
+  if (normalized === "waiting for input") return "session-detail-status-pill--waiting";
+  if (normalized === "blocked" || normalized === "exited") {
+    return "session-detail-status-pill--error";
+  }
+  return "session-detail-status-pill--neutral";
+}
+
 function SessionTopStrip({
   headline,
   activityLabel,
@@ -60,6 +78,9 @@ function SessionTopStrip({
   branch,
   pr,
   isOrchestrator = false,
+  crumbHref,
+  crumbLabel,
+  mobileSimple = false,
   rightSlot,
 }: {
   headline: string;
@@ -68,13 +89,16 @@ function SessionTopStrip({
   branch: string | null;
   pr: DashboardPR | null;
   isOrchestrator?: boolean;
+  crumbHref: string;
+  crumbLabel: string;
+  mobileSimple?: boolean;
   rightSlot?: ReactNode;
 }) {
   return (
-    <section className="session-page-header">
+    <section className={`session-page-header${mobileSimple ? " session-page-header--mobile" : ""}`}>
       <div className="session-page-header__crumbs">
         <a
-          href="/"
+          href={crumbHref}
           className="flex items-center gap-1 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-text-primary)] hover:no-underline"
         >
           <svg
@@ -86,13 +110,17 @@ function SessionTopStrip({
           >
             <path d="M15 18l-6-6 6-6" />
           </svg>
-          Orchestrator
+          {crumbLabel}
         </a>
         <span className="text-[var(--color-border-strong)]">/</span>
-        <span className="font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]">
-          {headline}
-        </span>
-        {isOrchestrator ? <span className="session-page-header__mode">orchestrator</span> : null}
+        {!mobileSimple ? (
+          <span className="font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]">
+            {headline}
+          </span>
+        ) : null}
+        {isOrchestrator && !mobileSimple ? (
+          <span className="session-page-header__mode">orchestrator</span>
+        ) : null}
       </div>
       <div className="session-page-header__main">
         <div className="session-page-header__identity">
@@ -101,13 +129,19 @@ function SessionTopStrip({
           </h1>
           <div className="session-page-header__meta">
             <div
-              className="flex items-center gap-1.5 border px-2.5 py-1"
+              className={cn(
+                "session-detail-status-pill flex items-center gap-1.5 border px-2.5 py-1",
+                activityStateClass(activityLabel),
+              )}
               style={{
                 background: `color-mix(in srgb, ${activityColor} 12%, transparent)`,
                 border: `1px solid color-mix(in srgb, ${activityColor} 20%, transparent)`,
               }}
             >
-              <span className="h-1.5 w-1.5 shrink-0" style={{ background: activityColor }} />
+              <span
+                className="session-detail-status-pill__dot h-1.5 w-1.5 shrink-0"
+                style={{ background: activityColor }}
+              />
               <span className="text-[11px] font-semibold" style={{ color: activityColor }}>
                 {activityLabel}
               </span>
@@ -118,7 +152,7 @@ function SessionTopStrip({
                   href={buildGitHubBranchUrl(pr)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="session-detail-link-pill font-[var(--font-mono)] text-[10px] hover:no-underline"
+                  className="session-detail-link-pill session-detail-link-pill--link font-[var(--font-mono)] text-[10px] hover:no-underline"
                 >
                   {branch}
                 </a>
@@ -133,7 +167,7 @@ function SessionTopStrip({
                 href={pr.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="session-detail-link-pill session-detail-link-pill--accent hover:no-underline"
+                className="session-detail-link-pill session-detail-link-pill--link session-detail-link-pill--accent hover:no-underline"
               >
                 PR #{pr.number}
               </a>
@@ -178,6 +212,8 @@ function OrchestratorStatusStrip({
   activityColor,
   branch,
   pr,
+  crumbHref,
+  crumbLabel,
 }: {
   zones: OrchestratorZones;
   createdAt: string;
@@ -186,6 +222,8 @@ function OrchestratorStatusStrip({
   activityColor: string;
   branch: string | null;
   pr: DashboardPR | null;
+  crumbHref: string;
+  crumbLabel: string;
 }) {
   const [uptime, setUptime] = useState<string>("");
 
@@ -222,6 +260,8 @@ function OrchestratorStatusStrip({
         branch={branch}
         pr={pr}
         isOrchestrator
+        crumbHref={crumbHref}
+        crumbLabel={crumbLabel}
         rightSlot={
           <div className="flex flex-wrap items-center gap-3 lg:justify-end">
             <div className="flex items-baseline gap-1.5 mr-2">
@@ -279,17 +319,17 @@ export function SessionDetail({
   session,
   isOrchestrator = false,
   orchestratorZones,
+  projectOrchestratorId = null,
 }: SessionDetailProps) {
-  const router = useRouter();
   const searchParams = useSearchParams();
+  const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
   const startFullscreen = searchParams.get("fullscreen") === "true";
-  const [restoring, setRestoring] = useState(false);
   const pr = session.pr;
   const activity = (session.activity && activityMeta[session.activity]) ?? {
     label: session.activity ?? "unknown",
     color: "var(--color-text-muted)",
   };
-  const headline = getSessionTitle(session);
+  const headline = getSessionHeadline(session);
 
   const accentColor = "var(--color-accent)";
   const terminalVariant = isOrchestrator ? "orchestrator" : "agent";
@@ -304,27 +344,19 @@ export function SessionDetail({
   const reloadCommand = opencodeSessionId
     ? `/exit\nopencode --session ${opencodeSessionId}\n`
     : undefined;
-
-  const handleRestore = useCallback(async () => {
-    if (!confirm(`Restore session ${session.id}?`)) return;
-    setRestoring(true);
-    try {
-      const res = await fetch(`/api/sessions/${encodeURIComponent(session.id)}/restore`, {
-        method: "POST",
-      });
-      if (!res.ok) {
-        console.error("Restore failed:", await res.text());
-        return;
-      }
-      router.refresh();
-    } finally {
-      setRestoring(false);
-    }
-  }, [router, session.id]);
+  const dashboardHref = session.projectId ? `/?project=${encodeURIComponent(session.projectId)}` : "/";
+  const prsHref = session.projectId ? `/prs?project=${encodeURIComponent(session.projectId)}` : "/prs";
+  const crumbHref = dashboardHref;
+  const crumbLabel = isOrchestrator ? "Orchestrator" : "Dashboard";
+  const orchestratorHref = useMemo(() => {
+    if (isOrchestrator) return `/sessions/${encodeURIComponent(session.id)}`;
+    if (!projectOrchestratorId) return null;
+    return `/sessions/${encodeURIComponent(projectOrchestratorId)}`;
+  }, [isOrchestrator, projectOrchestratorId, session.id]);
 
   return (
     <div className="session-detail-page min-h-screen bg-[var(--color-bg-base)]">
-      {isOrchestrator && orchestratorZones && (
+      {isOrchestrator && orchestratorZones && !isMobile && (
         <OrchestratorStatusStrip
           zones={orchestratorZones}
           createdAt={session.createdAt}
@@ -333,43 +365,29 @@ export function SessionDetail({
           activityColor={activity.color}
           branch={session.branch}
           pr={pr}
+          crumbHref={crumbHref}
+          crumbLabel={crumbLabel}
         />
       )}
 
-      <div className="mx-auto max-w-[1180px] px-5 py-5 lg:px-8">
+      <div className="dashboard-main mx-auto max-w-[1180px] px-5 py-5 lg:px-8">
         <main className="min-w-0">
-          {!isOrchestrator && (
+          {(!isOrchestrator || isMobile) && (
             <SessionTopStrip
               headline={headline}
               activityLabel={activity.label}
               activityColor={activity.color}
               branch={session.branch}
               pr={pr}
+              isOrchestrator={isOrchestrator}
+              crumbHref={crumbHref}
+              crumbLabel={crumbLabel}
+              mobileSimple={isMobile}
             />
           )}
 
-          {!isOrchestrator && isRestorable(session) ? (
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border border-[color-mix(in_srgb,var(--color-status-error)_22%,transparent)] bg-[color-mix(in_srgb,var(--color-status-error)_8%,transparent)] px-3.5 py-3">
-              <p className="text-[12px] text-[var(--color-text-secondary)]">
-                <span className="font-semibold text-[var(--color-status-error)]">
-                  {session.status === "killed"
-                    ? "This session is killed."
-                    : "This session has stopped."}
-                </span>{" "}
-                Restore to resume the agent in this workspace.
-              </p>
-              <button
-                type="button"
-                onClick={() => void handleRestore()}
-                disabled={restoring}
-                className="shrink-0 rounded border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] px-3 py-1.5 text-[11px] font-semibold text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-bg-hover)] disabled:cursor-wait disabled:opacity-60"
-              >
-                {restoring ? "Restoring…" : "Restore session"}
-              </button>
-            </div>
-          ) : null}
-
           <section className="mt-5">
+            <div id="session-terminal-section" aria-hidden="true" />
             <div className="mb-3 flex items-center gap-2">
               <div
                 className="h-3 w-0.5"
@@ -390,19 +408,29 @@ export function SessionDetail({
           </section>
 
           {pr ? (
-            <section className="mt-6">
-              <PRCard pr={pr} sessionId={session.id} />
+            <section id="session-pr-section" className="mt-6">
+              <SessionDetailPRCard pr={pr} sessionId={session.id} metadata={session.metadata} />
             </section>
           ) : null}
         </main>
       </div>
+      {isMobile ? (
+        <MobileBottomNav
+          ariaLabel="Session navigation"
+          activeTab={isOrchestrator ? "orchestrator" : undefined}
+          dashboardHref={dashboardHref}
+          prsHref={prsHref}
+          showOrchestrator={orchestratorHref !== null}
+          orchestratorHref={orchestratorHref}
+        />
+      ) : null}
     </div>
   );
 }
 
-// ── PR Card ───────────────────────────────────────────────────────────
+// ── Session detail PR card ────────────────────────────────────────────
 
-function PRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
+function SessionDetailPRCard({ pr, sessionId, metadata }: { pr: DashboardPR; sessionId: string; metadata: Record<string, string> }) {
   const [sendingComments, setSendingComments] = useState<Set<string>>(new Set());
   const [sentComments, setSentComments] = useState<Set<string>>(new Set());
   const [errorComments, setErrorComments] = useState<Set<string>>(new Set());
@@ -510,7 +538,10 @@ function PRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
               <span className="text-[var(--color-text-tertiary)]">&middot;</span>
               <span
                 className="px-2 py-0.5 text-[10px] font-semibold"
-                style={{ color: "#a371f7", background: "rgba(163,113,247,0.12)" }}
+                style={{
+                  color: "var(--color-text-secondary)",
+                  background: "var(--color-chip-bg)",
+                }}
               >
                 Merged
               </span>
@@ -538,7 +569,7 @@ function PRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
             </span>
           </div>
         ) : (
-          <IssuesList pr={pr} />
+          <IssuesList pr={pr} metadata={metadata} />
         )}
 
         {/* CI Checks */}
@@ -603,7 +634,7 @@ function PRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
                         onClick={() => handleAskAgentToFix(c)}
                         disabled={sendingComments.has(c.url)}
                         className={cn(
-                          "mt-1.5 px-3 py-1 text-[11px] font-semibold transition-all",
+                          "mt-1.5 px-3 py-1 text-[11px] font-semibold transition-colors duration-150",
                           sentComments.has(c.url)
                             ? "bg-[var(--color-status-ready)] text-white"
                             : errorComments.has(c.url)
@@ -633,10 +664,24 @@ function PRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
 
 // ── Issues list (pre-merge blockers) ─────────────────────────────────
 
-function IssuesList({ pr }: { pr: DashboardPR }) {
-  const issues: Array<{ icon: string; color: string; text: string }> = [];
+function IssuesList({ pr, metadata }: { pr: DashboardPR; metadata: Record<string, string> }) {
+  const issues: Array<{ icon: string; color: string; text: string; notified?: boolean }> = [];
 
-  if (pr.ciStatus === CI_STATUS.FAILING) {
+  const ciNotified = Boolean(metadata["lastCIFailureDispatchHash"]);
+  const conflictNotified = metadata["lastMergeConflictDispatched"] === "true";
+  const reviewNotified = Boolean(metadata["lastPendingReviewDispatchHash"]);
+
+  // The lifecycle manager's status is the most up-to-date source of truth.
+  // PR enrichment data can be stale (5-min cache) or unavailable (rate limit/timeout).
+  // Use lifecycle status as fallback when PR data hasn't caught up yet.
+  const lifecycleStatus = metadata["status"];
+
+  const ciIsFailing = pr.ciStatus === CI_STATUS.FAILING || lifecycleStatus === "ci_failed";
+  const hasChangesRequested =
+    pr.reviewDecision === "changes_requested" || lifecycleStatus === "changes_requested";
+  const hasConflicts = pr.state !== "merged" && !pr.mergeability.noConflicts;
+
+  if (ciIsFailing) {
     const failCount = pr.ciChecks.filter((c) => c.status === "failed").length;
     issues.push({
       icon: "✗",
@@ -645,13 +690,19 @@ function IssuesList({ pr }: { pr: DashboardPR }) {
         failCount > 0
           ? `CI failing — ${failCount} check${failCount !== 1 ? "s" : ""} failed`
           : "CI failing",
+      notified: ciNotified,
     });
   } else if (pr.ciStatus === CI_STATUS.PENDING) {
     issues.push({ icon: "●", color: "var(--color-status-attention)", text: "CI pending" });
   }
 
-  if (pr.reviewDecision === "changes_requested") {
-    issues.push({ icon: "✗", color: "var(--color-status-error)", text: "Changes requested" });
+  if (hasChangesRequested) {
+    issues.push({
+      icon: "✗",
+      color: "var(--color-status-error)",
+      text: "Changes requested",
+      notified: reviewNotified,
+    });
   } else if (!pr.mergeability.approved) {
     issues.push({
       icon: "○",
@@ -660,8 +711,13 @@ function IssuesList({ pr }: { pr: DashboardPR }) {
     });
   }
 
-  if (pr.state !== "merged" && !pr.mergeability.noConflicts) {
-    issues.push({ icon: "✗", color: "var(--color-status-error)", text: "Merge conflicts" });
+  if (hasConflicts) {
+    issues.push({
+      icon: "✗",
+      color: "var(--color-status-error)",
+      text: "Merge conflicts",
+      notified: conflictNotified,
+    });
   }
 
   if (!pr.mergeability.mergeable && issues.length === 0) {
@@ -693,6 +749,11 @@ function IssuesList({ pr }: { pr: DashboardPR }) {
             {issue.icon}
           </span>
           <span className="text-[var(--color-text-secondary)]">{issue.text}</span>
+          {issue.notified && (
+            <span className="text-[10px] text-[var(--color-text-tertiary)]">
+              · agent notified
+            </span>
+          )}
         </div>
       ))}
     </div>
