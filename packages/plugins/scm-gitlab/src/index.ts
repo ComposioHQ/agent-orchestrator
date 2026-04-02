@@ -450,8 +450,6 @@ function createGitLabSCM(config?: Record<string, unknown>): SCM {
       if (!session.branch || !project.repo) return null;
 
       const projectRepo = project.repo;
-      if (!projectRepo) return null;
-
       const parts = projectRepo.split("/");
       if (parts.length < 2 || !parts[0] || !parts[1]) {
         throw new Error(`Invalid repo format "${projectRepo}", expected "owner/repo"`);

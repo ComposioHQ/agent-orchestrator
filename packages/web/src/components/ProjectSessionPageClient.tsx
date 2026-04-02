@@ -108,7 +108,6 @@ export function ProjectSessionPageClient({
       setProjectOrchestratorId(body.orchestratorId ?? null);
       if (!isOrchestrator) return;
       const sessions = body.sessions ?? [];
-      setProjectOrchestratorId(body.orchestratorId ?? null);
       const counts: ZoneCounts = {
         merge: 0,
         respond: 0,
