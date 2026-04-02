@@ -9,6 +9,7 @@ import type {
   Agent,
   ActivityState,
   SessionStatus,
+  BatchObserver,
   PREnrichmentData,
 } from "../types.js";
 import {
@@ -145,6 +146,55 @@ describe("start / stop", () => {
     expect(mockSCM.getCISummary).not.toHaveBeenCalled();
     expect(mockSCM.getReviewDecision).not.toHaveBeenCalled();
     expect(mockSCM.getMergeability).not.toHaveBeenCalled();
+  });
+
+  it("deduplicates PRs before batch enrichment and records batch observability", async () => {
+    const pr = makePR({ number: 7, url: "https://github.com/org/repo/pull/7" });
+    const enrichSessionsPRBatch = vi.fn<
+      (prs: typeof pr[], observer?: BatchObserver) => Promise<Map<string, PREnrichmentData>>
+    >().mockImplementation(async (_prs: typeof pr[], observer?: BatchObserver) => {
+      observer?.recordSuccess({
+        batchIndex: 0,
+        totalBatches: 1,
+        prCount: 1,
+        durationMs: 12,
+      });
+      observer?.log("info", "batch ok");
+      return new Map([
+        ["org/repo#7", { state: "open", ciStatus: "passing", reviewDecision: "none", mergeable: false }],
+      ]);
+    });
+    const mockSCM = createMockSCM({
+      enrichSessionsPRBatch,
+      getPRState: vi.fn(),
+      getCISummary: vi.fn(),
+      getReviewDecision: vi.fn(),
+      getMergeability: vi.fn(),
+    });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+    const sessions = [
+      makeSession({ id: "app-1", status: "pr_open", pr }),
+      makeSession({ id: "app-2", status: "pr_open", pr }),
+    ];
+    vi.mocked(mockSessionManager.list).mockResolvedValue(sessions);
+
+    const lm = createLifecycleManager({
+      config,
+      registry,
+      sessionManager: mockSessionManager,
+    });
+
+    lm.start(60_000);
+    await Promise.resolve();
+    await Promise.resolve();
+    lm.stop();
+
+    expect(enrichSessionsPRBatch).toHaveBeenCalledTimes(1);
+    expect(enrichSessionsPRBatch.mock.calls[0]?.[0]).toEqual([pr]);
   });
 });
 
