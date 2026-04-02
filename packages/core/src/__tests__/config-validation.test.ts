@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { validateConfig, collectExternalPluginConfigs } from "../config.js";
+import { validateConfig } from "../config.js";
 
 describe("Config Validation - Project Uniqueness", () => {
   it("rejects duplicate project IDs (same basename)", () => {
@@ -761,7 +761,10 @@ describe("Config Validation - External Plugin Schema", () => {
 });
 
 describe("collectExternalPluginConfigs", () => {
-  it("collects tracker with package", () => {
+  // Note: validateConfig() internally calls collectExternalPluginConfigs() and stores
+  // the results in config._externalPluginEntries. We test this by checking the stored entries.
+
+  it("collects tracker with explicit plugin (validates manifest.name)", () => {
     const config = validateConfig({
       projects: {
         proj1: {
@@ -776,17 +779,19 @@ describe("collectExternalPluginConfigs", () => {
       },
     });
 
-    const entries = collectExternalPluginConfigs(config);
+    // Check entries stored by validateConfig
+    const entries = config._externalPluginEntries ?? [];
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
       source: "projects.proj1.tracker",
+      location: { kind: "project", projectId: "proj1", configType: "tracker" },
       slot: "tracker",
       package: "@acme/ao-plugin-tracker-jira",
-      expectedPluginName: "jira",
+      expectedPluginName: "jira", // User explicitly specified plugin - will be validated
     });
   });
 
-  it("collects scm with path", () => {
+  it("collects scm with path (no explicit plugin - infers from manifest)", () => {
     const config = validateConfig({
       projects: {
         proj1: {
@@ -800,17 +805,21 @@ describe("collectExternalPluginConfigs", () => {
       },
     });
 
-    const entries = collectExternalPluginConfigs(config);
+    // Check entries stored by validateConfig
+    const entries = config._externalPluginEntries ?? [];
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
       source: "projects.proj1.scm",
+      location: { kind: "project", projectId: "proj1", configType: "scm" },
       slot: "scm",
       path: "./plugins/my-scm",
-      expectedPluginName: "my-scm", // auto-generated
     });
+    // expectedPluginName should be undefined when plugin is not explicitly specified
+    // This allows any manifest.name to be accepted
+    expect(entries[0].expectedPluginName).toBeUndefined();
   });
 
-  it("collects notifier with package", () => {
+  it("collects notifier with package (no explicit plugin - infers from manifest)", () => {
     const config = validateConfig({
       projects: {
         proj1: {
@@ -826,14 +835,17 @@ describe("collectExternalPluginConfigs", () => {
       },
     });
 
-    const entries = collectExternalPluginConfigs(config);
+    // Check entries stored by validateConfig
+    const entries = config._externalPluginEntries ?? [];
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
       source: "notifiers.teams",
+      location: { kind: "notifier", notifierId: "teams" },
       slot: "notifier",
       package: "@acme/ao-plugin-notifier-teams",
-      expectedPluginName: "teams", // auto-generated
     });
+    // expectedPluginName should be undefined when plugin is not explicitly specified
+    expect(entries[0].expectedPluginName).toBeUndefined();
   });
 
   it("collects multiple external plugins", () => {
@@ -858,7 +870,8 @@ describe("collectExternalPluginConfigs", () => {
       },
     });
 
-    const entries = collectExternalPluginConfigs(config);
+    // Check entries stored by validateConfig
+    const entries = config._externalPluginEntries ?? [];
     expect(entries).toHaveLength(3);
   });
 
@@ -879,7 +892,8 @@ describe("collectExternalPluginConfigs", () => {
       },
     });
 
-    const entries = collectExternalPluginConfigs(config);
+    // No external plugins when only plugin name is specified (no package/path)
+    const entries = config._externalPluginEntries ?? [];
     expect(entries).toHaveLength(0);
   });
 
@@ -1017,5 +1031,59 @@ describe("External Plugin Name Generation", () => {
     });
 
     expect(config.projects.proj1.tracker?.plugin).toBe("my-custom-name");
+  });
+
+  it("handles local path without slashes correctly", () => {
+    const config = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: {
+            path: "my-tracker",
+          },
+        },
+      },
+    });
+
+    // Should use the path as-is (not split by hyphens like npm packages)
+    expect(config.projects.proj1.tracker?.plugin).toBe("my-tracker");
+  });
+
+  it("preserves multi-word plugin names from scoped npm packages", () => {
+    const config = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: {
+            package: "@acme/ao-plugin-tracker-jira-cloud",
+          },
+        },
+      },
+    });
+
+    // Should extract "jira-cloud" not just "cloud"
+    expect(config.projects.proj1.tracker?.plugin).toBe("jira-cloud");
+  });
+
+  it("preserves multi-word plugin names from unscoped npm packages", () => {
+    const config = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          scm: {
+            package: "ao-plugin-scm-azure-devops",
+          },
+        },
+      },
+    });
+
+    // Should extract "azure-devops" not just "devops"
+    expect(config.projects.proj1.scm?.plugin).toBe("azure-devops");
   });
 });

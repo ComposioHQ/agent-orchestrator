@@ -310,25 +310,43 @@ function expandPaths(config: OrchestratorConfig): OrchestratorConfig {
 /**
  * Generate a temporary plugin name from a package or path specifier.
  * This name is used until the actual manifest.name is discovered during plugin loading.
- * Format: extract the last segment from the package/path, removing common prefixes.
+ * Format: extract the plugin name from the package/path, removing common prefixes.
  * e.g., "@acme/ao-plugin-tracker-jira" -> "jira"
+ * e.g., "@acme/ao-plugin-tracker-jira-cloud" -> "jira-cloud"
  * e.g., "./plugins/my-tracker" -> "my-tracker"
+ * e.g., "my-tracker" (local path without slashes) -> "my-tracker"
  */
 function generateTempPluginName(pkg?: string, path?: string): string {
-  const specifier = pkg ?? path ?? "unknown";
-
-  // For npm packages, extract the last part after the last hyphen or slash
+  // Handle npm packages: extract the plugin name after the slot prefix
   // @acme/ao-plugin-tracker-jira -> jira
+  // @acme/ao-plugin-tracker-jira-cloud -> jira-cloud (preserves multi-word names)
   // @composio/ao-plugin-scm-gitlab -> gitlab
-  if (specifier.startsWith("@") || !specifier.includes("/")) {
-    const parts = specifier.split(/[-/]/);
-    return parts[parts.length - 1] ?? specifier;
+  if (pkg) {
+    // First get the package name without scope: "@acme/ao-plugin-tracker-jira" -> "ao-plugin-tracker-jira"
+    const slashParts = pkg.split("/");
+    const packageName = slashParts[slashParts.length - 1] ?? pkg;
+
+    // Try to extract name after common prefix pattern: ao-plugin-{slot}-{name}
+    // This preserves multi-word names like "jira-cloud"
+    const prefixMatch = packageName.match(/^ao-plugin-(?:runtime|agent|workspace|tracker|scm|notifier|terminal)-(.+)$/);
+    if (prefixMatch?.[1]) {
+      return prefixMatch[1];
+    }
+
+    // Fallback: split by hyphens and take last segment
+    const parts = packageName.split("-");
+    return parts[parts.length - 1] ?? packageName;
   }
 
-  // For local paths, use the basename
+  // Handle local paths: use the basename
   // ./plugins/my-tracker -> my-tracker
-  const segments = specifier.split("/").filter((s) => s && s !== "." && s !== "..");
-  return segments[segments.length - 1] ?? specifier;
+  // my-tracker -> my-tracker (no slashes is still a valid path)
+  if (path) {
+    const segments = path.split("/").filter((s) => s && s !== "." && s !== "..");
+    return segments[segments.length - 1] ?? path;
+  }
+
+  return "unknown";
 }
 
 /**
@@ -337,6 +355,10 @@ function generateTempPluginName(pkg?: string, path?: string): string {
  *
  * Also sets a temporary plugin name on configs that only have package/path,
  * so that resolvePlugins() can look up the plugin by name.
+ *
+ * IMPORTANT: Only sets expectedPluginName when user explicitly specified `plugin`.
+ * When plugin is auto-generated, expectedPluginName is left undefined so that
+ * any manifest.name is accepted and the config is updated with it.
  */
 export function collectExternalPluginConfigs(config: OrchestratorConfig): ExternalPluginEntryRef[] {
   const entries: ExternalPluginEntryRef[] = [];
@@ -344,6 +366,14 @@ export function collectExternalPluginConfigs(config: OrchestratorConfig): Extern
   // Collect from project tracker configs
   for (const [projectId, project] of Object.entries(config.projects)) {
     if (project.tracker && (project.tracker.package || project.tracker.path)) {
+      // Expand home paths (~/...) for consistency with config.plugins
+      if (project.tracker.path) {
+        project.tracker.path = expandHome(project.tracker.path);
+      }
+
+      // Track if user explicitly specified plugin name (for validation)
+      const userSpecifiedPlugin = project.tracker.plugin;
+
       // If plugin name not specified, generate a temporary one from package/path
       if (!project.tracker.plugin) {
         project.tracker.plugin = generateTempPluginName(
@@ -353,24 +383,36 @@ export function collectExternalPluginConfigs(config: OrchestratorConfig): Extern
       }
       entries.push({
         source: `projects.${projectId}.tracker`,
+        location: { kind: "project", projectId, configType: "tracker" },
         slot: "tracker",
         package: project.tracker.package,
         path: project.tracker.path,
-        expectedPluginName: project.tracker.plugin,
+        // Only validate manifest.name when user explicitly specified plugin
+        expectedPluginName: userSpecifiedPlugin,
       });
     }
 
     if (project.scm && (project.scm.package || project.scm.path)) {
+      // Expand home paths (~/...) for consistency with config.plugins
+      if (project.scm.path) {
+        project.scm.path = expandHome(project.scm.path);
+      }
+
+      // Track if user explicitly specified plugin name (for validation)
+      const userSpecifiedPlugin = project.scm.plugin;
+
       // If plugin name not specified, generate a temporary one from package/path
       if (!project.scm.plugin) {
         project.scm.plugin = generateTempPluginName(project.scm.package, project.scm.path);
       }
       entries.push({
         source: `projects.${projectId}.scm`,
+        location: { kind: "project", projectId, configType: "scm" },
         slot: "scm",
         package: project.scm.package,
         path: project.scm.path,
-        expectedPluginName: project.scm.plugin,
+        // Only validate manifest.name when user explicitly specified plugin
+        expectedPluginName: userSpecifiedPlugin,
       });
     }
   }
@@ -378,6 +420,14 @@ export function collectExternalPluginConfigs(config: OrchestratorConfig): Extern
   // Collect from global notifier configs
   for (const [notifierId, notifierConfig] of Object.entries(config.notifiers ?? {})) {
     if (notifierConfig && (notifierConfig.package || notifierConfig.path)) {
+      // Expand home paths (~/...) for consistency with config.plugins
+      if (notifierConfig.path) {
+        notifierConfig.path = expandHome(notifierConfig.path);
+      }
+
+      // Track if user explicitly specified plugin name (for validation)
+      const userSpecifiedPlugin = notifierConfig.plugin;
+
       // If plugin name not specified, generate a temporary one from package/path
       if (!notifierConfig.plugin) {
         notifierConfig.plugin = generateTempPluginName(
@@ -387,10 +437,12 @@ export function collectExternalPluginConfigs(config: OrchestratorConfig): Extern
       }
       entries.push({
         source: `notifiers.${notifierId}`,
+        location: { kind: "notifier", notifierId },
         slot: "notifier",
         package: notifierConfig.package,
         path: notifierConfig.path,
-        expectedPluginName: notifierConfig.plugin,
+        // Only validate manifest.name when user explicitly specified plugin
+        expectedPluginName: userSpecifiedPlugin,
       });
     }
   }
@@ -422,7 +474,7 @@ function mergeExternalPlugins(
     seen.add(key);
 
     // Generate a temporary name - will be replaced with manifest.name during loading
-    const tempName = entry.expectedPluginName ?? generateTempPluginName(entry.package, entry.path);
+    const tempName = entry.expectedPluginName ?? entry.package ?? entry.path ?? "unknown";
 
     plugins.push({
       name: tempName,
