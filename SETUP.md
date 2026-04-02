@@ -344,6 +344,8 @@ gh auth status
          teamId: "your-team-id"
    ```
 
+**Branch names:** On `ao spawn <issue>` with the Linear tracker, AO **prefers** Linear’s branch name (same as **Copy git branch name**, API field `branchName`). If that value is missing, it **falls back** to the previous convention: `feat/<ISSUE-ID>` (e.g. `feat/INT-123`). To change how Linear generates `branchName`, use **Linear → Settings → Integrations → GitHub → Branch format**.
+
 **Verification:**
 
 ```bash
