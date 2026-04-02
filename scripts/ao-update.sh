@@ -115,18 +115,10 @@ if [ "$SMOKE_ONLY" = false ]; then
   run_cmd pnpm --filter @composio/ao-web build
 
   printf '\nRefreshing ao launcher...\n'
-  (
-    cd "$REPO_ROOT/packages/ao"
-    if npm link 2>/dev/null; then
-      :
-    elif [ -t 0 ]; then
-      printf '  Permission denied. Retrying with sudo...\n'
-      sudo npm link
-    else
-      printf 'ERROR: Permission denied. Run manually: cd %s/packages/ao && sudo npm link\n' "$REPO_ROOT"
-      exit 1
-    fi
-  )
+  # Ensure npm global prefix is user-writable (shared logic — single source of truth)
+  # shellcheck source=./ensure-npm-prefix.sh
+  source "$(dirname "${BASH_SOURCE[0]}")/ensure-npm-prefix.sh"
+  (cd "$REPO_ROOT/packages/ao" && npm link)
 
   ensure_repo_clean "Update modified tracked files. Inspect git status, review the changes, and rerun after restoring a clean checkout if needed."
 fi
