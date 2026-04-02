@@ -340,34 +340,50 @@ function validateProjectUniqueness(config: OrchestratorConfig): void {
   }
 }
 
+/**
+ * Default messages for send-to-agent reactions.
+ * Exported so lifecycle-manager can use them as fallbacks when a user overrides
+ * a reaction config without providing a message field, keeping both in sync.
+ */
+export const DEFAULT_SEND_TO_AGENT_MESSAGES: Record<string, string> = {
+  "ci-failed":
+    "CI is failing on your PR. Run `gh pr checks` to see the failures, fix them, and push.",
+  "changes-requested":
+    "There are review comments on your PR. Check with `gh pr view --comments` and `gh api` for inline comments. Address each one, push fixes, and reply.",
+  "bugbot-comments":
+    "Automated review comments found on your PR. Fix the issues flagged by the bot.",
+  "merge-conflicts":
+    "Your branch has merge conflicts. Rebase on the default branch and resolve them.",
+  "agent-idle":
+    "You appear to be idle. If your task is not complete, continue working — write the code, commit, push, and create a PR. If you are blocked, explain what is blocking you.",
+};
+
 /** Apply default reactions */
 function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
   const defaults: Record<string, (typeof config.reactions)[string]> = {
     "ci-failed": {
       auto: true,
       action: "send-to-agent",
-      message:
-        "CI is failing on your PR. Run `gh pr checks` to see the failures, fix them, and push.",
+      message: DEFAULT_SEND_TO_AGENT_MESSAGES["ci-failed"],
       retries: 2,
       escalateAfter: 2,
     },
     "changes-requested": {
       auto: true,
       action: "send-to-agent",
-      message:
-        "There are review comments on your PR. Check with `gh pr view --comments` and `gh api` for inline comments. Address each one, push fixes, and reply.",
+      message: DEFAULT_SEND_TO_AGENT_MESSAGES["changes-requested"],
       escalateAfter: "30m",
     },
     "bugbot-comments": {
       auto: true,
       action: "send-to-agent",
-      message: "Automated review comments found on your PR. Fix the issues flagged by the bot.",
+      message: DEFAULT_SEND_TO_AGENT_MESSAGES["bugbot-comments"],
       escalateAfter: "30m",
     },
     "merge-conflicts": {
       auto: true,
       action: "send-to-agent",
-      message: "Your branch has merge conflicts. Rebase on the default branch and resolve them.",
+      message: DEFAULT_SEND_TO_AGENT_MESSAGES["merge-conflicts"],
       escalateAfter: "15m",
     },
     "approved-and-green": {
@@ -379,8 +395,7 @@ function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
     "agent-idle": {
       auto: true,
       action: "send-to-agent",
-      message:
-        "You appear to be idle. If your task is not complete, continue working — write the code, commit, push, and create a PR. If you are blocked, explain what is blocking you.",
+      message: DEFAULT_SEND_TO_AGENT_MESSAGES["agent-idle"],
       retries: 2,
       escalateAfter: "15m",
     },
