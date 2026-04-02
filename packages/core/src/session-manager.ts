@@ -710,10 +710,11 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       "workspace",
       project.workspace ?? config.defaults.workspace,
     );
-    const tracker = project.tracker
-      ? registry.get<Tracker>("tracker", project.tracker.plugin)
-      : null;
-    const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    // After config validation, plugin is always set if tracker/scm exists
+    // (either from user config or auto-generated from package/path)
+    const tracker =
+      project.tracker?.plugin ? registry.get<Tracker>("tracker", project.tracker.plugin) : null;
+    const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
 
     return { runtime, agent, workspace, tracker, scm };
   }

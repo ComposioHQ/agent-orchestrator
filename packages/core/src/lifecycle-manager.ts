@@ -235,7 +235,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const [owner, repo] = p.repo.split("/");
         return owner === pr.owner && repo === pr.repo;
       });
-      if (!project?.scm) continue;
+      if (!project?.scm?.plugin) continue;
 
       const pluginKey = project.scm.plugin;
       if (!prsByPlugin.has(pluginKey)) {
@@ -350,7 +350,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       persistedAgent: session.metadata["agent"],
     }).agentName;
     const agent = registry.get<Agent>("agent", agentName);
-    const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
 
     // Track activity state across steps so stuck detection can run after PR checks
     let detectedIdleTimestamp: Date | null = null;
@@ -726,7 +726,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const project = config.projects[session.projectId];
     if (!project || !session.pr) return;
 
-    const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
     if (!scm) return;
 
     const humanReactionKey = "changes-requested";
@@ -903,7 +903,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const project = config.projects[session.projectId];
     if (!project || !session.pr) return;
 
-    const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
     if (!scm) return;
 
     const ciReactionKey = "ci-failed";
@@ -1025,7 +1025,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const project = config.projects[session.projectId];
     if (!project || !session.pr) return;
 
-    const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
     if (!scm) return;
 
     const conflictReactionKey = "merge-conflicts";

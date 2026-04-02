@@ -15,7 +15,7 @@ import { resolve, join, basename } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
-import { ConfigNotFoundError, type OrchestratorConfig } from "./types.js";
+import { ConfigNotFoundError, type ExternalPluginEntryRef, type OrchestratorConfig } from "./types.js";
 import { generateSessionPrefix } from "./paths.js";
 
 function inferScmPlugin(project: {
@@ -63,13 +63,33 @@ const ReactionConfigSchema = z.object({
 
 const TrackerConfigSchema = z
   .object({
-    plugin: z.string(),
+    plugin: z.string().optional(),
+    package: z.string().optional(),
+    path: z.string().optional(),
   })
-  .passthrough();
+  .passthrough()
+  .superRefine((value, ctx) => {
+    // Must have either plugin or package/path
+    if (!value.plugin && !value.package && !value.path) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Tracker config requires either 'plugin' (for built-ins) or 'package'/'path' (for external plugins)",
+      });
+    }
+    // Cannot have both package and path
+    if (value.package && value.path) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Tracker config cannot have both 'package' and 'path' - use one or the other",
+      });
+    }
+  });
 
 const SCMConfigSchema = z
   .object({
-    plugin: z.string(),
+    plugin: z.string().optional(),
+    package: z.string().optional(),
+    path: z.string().optional(),
     webhook: z
       .object({
         enabled: z.boolean().default(true),
@@ -82,13 +102,47 @@ const SCMConfigSchema = z
       })
       .optional(),
   })
-  .passthrough();
+  .passthrough()
+  .superRefine((value, ctx) => {
+    // Must have either plugin or package/path
+    if (!value.plugin && !value.package && !value.path) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "SCM config requires either 'plugin' (for built-ins) or 'package'/'path' (for external plugins)",
+      });
+    }
+    // Cannot have both package and path
+    if (value.package && value.path) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "SCM config cannot have both 'package' and 'path' - use one or the other",
+      });
+    }
+  });
 
 const NotifierConfigSchema = z
   .object({
-    plugin: z.string(),
+    plugin: z.string().optional(),
+    package: z.string().optional(),
+    path: z.string().optional(),
   })
-  .passthrough();
+  .passthrough()
+  .superRefine((value, ctx) => {
+    // Must have either plugin or package/path
+    if (!value.plugin && !value.package && !value.path) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Notifier config requires either 'plugin' (for built-ins) or 'package'/'path' (for external plugins)",
+      });
+    }
+    // Cannot have both package and path
+    if (value.package && value.path) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Notifier config cannot have both 'package' and 'path' - use one or the other",
+      });
+    }
+  });
 
 const AgentPermissionSchema = z
   .enum(["permissionless", "default", "auto-edit", "suggest", "skip"])
@@ -251,6 +305,135 @@ function expandPaths(config: OrchestratorConfig): OrchestratorConfig {
   }
 
   return config;
+}
+
+/**
+ * Generate a temporary plugin name from a package or path specifier.
+ * This name is used until the actual manifest.name is discovered during plugin loading.
+ * Format: extract the last segment from the package/path, removing common prefixes.
+ * e.g., "@acme/ao-plugin-tracker-jira" -> "jira"
+ * e.g., "./plugins/my-tracker" -> "my-tracker"
+ */
+function generateTempPluginName(pkg?: string, path?: string): string {
+  const specifier = pkg ?? path ?? "unknown";
+
+  // For npm packages, extract the last part after the last hyphen or slash
+  // @acme/ao-plugin-tracker-jira -> jira
+  // @composio/ao-plugin-scm-gitlab -> gitlab
+  if (specifier.startsWith("@") || !specifier.includes("/")) {
+    const parts = specifier.split(/[-/]/);
+    return parts[parts.length - 1] ?? specifier;
+  }
+
+  // For local paths, use the basename
+  // ./plugins/my-tracker -> my-tracker
+  const segments = specifier.split("/").filter((s) => s && s !== "." && s !== "..");
+  return segments[segments.length - 1] ?? specifier;
+}
+
+/**
+ * Collect external plugin configs from tracker, scm, and notifier inline configs.
+ * These will be auto-added to config.plugins for loading.
+ *
+ * Also sets a temporary plugin name on configs that only have package/path,
+ * so that resolvePlugins() can look up the plugin by name.
+ */
+export function collectExternalPluginConfigs(config: OrchestratorConfig): ExternalPluginEntryRef[] {
+  const entries: ExternalPluginEntryRef[] = [];
+
+  // Collect from project tracker configs
+  for (const [projectId, project] of Object.entries(config.projects)) {
+    if (project.tracker && (project.tracker.package || project.tracker.path)) {
+      // If plugin name not specified, generate a temporary one from package/path
+      if (!project.tracker.plugin) {
+        project.tracker.plugin = generateTempPluginName(
+          project.tracker.package,
+          project.tracker.path,
+        );
+      }
+      entries.push({
+        source: `projects.${projectId}.tracker`,
+        slot: "tracker",
+        package: project.tracker.package,
+        path: project.tracker.path,
+        expectedPluginName: project.tracker.plugin,
+      });
+    }
+
+    if (project.scm && (project.scm.package || project.scm.path)) {
+      // If plugin name not specified, generate a temporary one from package/path
+      if (!project.scm.plugin) {
+        project.scm.plugin = generateTempPluginName(project.scm.package, project.scm.path);
+      }
+      entries.push({
+        source: `projects.${projectId}.scm`,
+        slot: "scm",
+        package: project.scm.package,
+        path: project.scm.path,
+        expectedPluginName: project.scm.plugin,
+      });
+    }
+  }
+
+  // Collect from global notifier configs
+  for (const [notifierId, notifierConfig] of Object.entries(config.notifiers ?? {})) {
+    if (notifierConfig && (notifierConfig.package || notifierConfig.path)) {
+      // If plugin name not specified, generate a temporary one from package/path
+      if (!notifierConfig.plugin) {
+        notifierConfig.plugin = generateTempPluginName(
+          notifierConfig.package,
+          notifierConfig.path,
+        );
+      }
+      entries.push({
+        source: `notifiers.${notifierId}`,
+        slot: "notifier",
+        package: notifierConfig.package,
+        path: notifierConfig.path,
+        expectedPluginName: notifierConfig.plugin,
+      });
+    }
+  }
+
+  return entries;
+}
+
+/**
+ * Generate InstalledPluginConfig entries from external plugin entries.
+ * Merges with existing plugins, avoiding duplicates by package/path.
+ */
+function mergeExternalPlugins(
+  existingPlugins: OrchestratorConfig["plugins"],
+  externalEntries: ExternalPluginEntryRef[],
+): OrchestratorConfig["plugins"] {
+  const plugins = [...(existingPlugins ?? [])];
+  const seen = new Set<string>();
+
+  // Track existing plugins by package/path
+  for (const plugin of plugins) {
+    if (plugin.package) seen.add(`package:${plugin.package}`);
+    if (plugin.path) seen.add(`path:${plugin.path}`);
+  }
+
+  // Add external entries that aren't already present
+  for (const entry of externalEntries) {
+    const key = entry.package ? `package:${entry.package}` : `path:${entry.path}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    // Generate a temporary name - will be replaced with manifest.name during loading
+    const tempName = entry.expectedPluginName ?? entry.package ?? entry.path ?? "unknown";
+
+    plugins.push({
+      name: tempName,
+      source: entry.package ? "npm" : "local",
+      package: entry.package,
+      path: entry.path,
+      enabled: true,
+    });
+  }
+
+  return plugins;
 }
 
 /** Apply defaults to project configs */
@@ -543,6 +726,15 @@ export function validateConfig(raw: unknown): OrchestratorConfig {
   config = expandPaths(config);
   config = applyProjectDefaults(config);
   config = applyDefaultReactions(config);
+
+  // Collect external plugin configs from inline tracker/scm/notifier configs
+  // and merge them into config.plugins for loading
+  const externalPluginEntries = collectExternalPluginConfigs(config);
+  if (externalPluginEntries.length > 0) {
+    config.plugins = mergeExternalPlugins(config.plugins, externalPluginEntries);
+    // Store entries for manifest validation during plugin loading
+    config._externalPluginEntries = externalPluginEntries;
+  }
 
   // Validate project uniqueness and prefix collisions
   validateProjectUniqueness(config);

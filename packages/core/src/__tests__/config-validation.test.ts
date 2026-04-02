@@ -1,9 +1,9 @@
 /**
- * Unit tests for config validation (project uniqueness, prefix collisions).
+ * Unit tests for config validation (project uniqueness, prefix collisions, external plugins).
  */
 
 import { describe, it, expect } from "vitest";
-import { validateConfig } from "../config.js";
+import { validateConfig, collectExternalPluginConfigs } from "../config.js";
 
 describe("Config Validation - Project Uniqueness", () => {
   it("rejects duplicate project IDs (same basename)", () => {
@@ -580,5 +580,442 @@ describe("Config Defaults", () => {
     const validated = validateConfig(config);
     expect(validated.projects.proj1.tracker).toEqual({ plugin: "gitlab", host: "gitlab.com" });
     expect(validated.projects.proj1.scm).toEqual({ plugin: "gitlab" });
+  });
+});
+
+describe("Config Validation - External Plugin Schema", () => {
+  it("accepts tracker with plugin only (built-in)", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: {
+            plugin: "github",
+          },
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.projects.proj1.tracker?.plugin).toBe("github");
+  });
+
+  it("accepts tracker with package only (external npm)", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: {
+            package: "@acme/ao-plugin-tracker-jira",
+            teamId: "TEAM-123",
+          },
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    // Plugin name should be auto-generated from package
+    expect(validated.projects.proj1.tracker?.plugin).toBe("jira");
+    expect(validated.projects.proj1.tracker?.package).toBe("@acme/ao-plugin-tracker-jira");
+  });
+
+  it("accepts tracker with path only (local plugin)", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: {
+            path: "./plugins/my-tracker",
+          },
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    // Plugin name should be auto-generated from path
+    expect(validated.projects.proj1.tracker?.plugin).toBe("my-tracker");
+    expect(validated.projects.proj1.tracker?.path).toBe("./plugins/my-tracker");
+  });
+
+  it("accepts tracker with both plugin and package (explicit naming)", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: {
+            plugin: "jira",
+            package: "@acme/ao-plugin-tracker-jira",
+          },
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.projects.proj1.tracker?.plugin).toBe("jira");
+    expect(validated.projects.proj1.tracker?.package).toBe("@acme/ao-plugin-tracker-jira");
+  });
+
+  it("rejects tracker with neither plugin nor package/path", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: {
+            teamId: "TEAM-123",
+          },
+        },
+      },
+    };
+
+    expect(() => validateConfig(config)).toThrow(/plugin.*package.*path/i);
+  });
+
+  it("rejects tracker with both package and path", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: {
+            package: "@acme/ao-plugin-tracker-jira",
+            path: "./plugins/my-tracker",
+          },
+        },
+      },
+    };
+
+    expect(() => validateConfig(config)).toThrow(/cannot have both/i);
+  });
+
+  it("accepts scm with package only", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          scm: {
+            package: "@acme/ao-plugin-scm-bitbucket",
+          },
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.projects.proj1.scm?.plugin).toBe("bitbucket");
+  });
+
+  it("accepts notifier with package only", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+        },
+      },
+      notifiers: {
+        teams: {
+          package: "@acme/ao-plugin-notifier-teams",
+          webhookUrl: "https://teams.webhook.url",
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.notifiers["teams"]?.plugin).toBe("teams");
+    expect(validated.notifiers["teams"]?.package).toBe("@acme/ao-plugin-notifier-teams");
+  });
+
+  it("preserves plugin-specific config alongside package", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: {
+            package: "@acme/ao-plugin-tracker-jira",
+            host: "https://jira.company.com",
+            teamId: "TEAM-123",
+          },
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.projects.proj1.tracker?.host).toBe("https://jira.company.com");
+    expect(validated.projects.proj1.tracker?.teamId).toBe("TEAM-123");
+  });
+});
+
+describe("collectExternalPluginConfigs", () => {
+  it("collects tracker with package", () => {
+    const config = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: {
+            plugin: "jira",
+            package: "@acme/ao-plugin-tracker-jira",
+          },
+        },
+      },
+    });
+
+    const entries = collectExternalPluginConfigs(config);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      source: "projects.proj1.tracker",
+      slot: "tracker",
+      package: "@acme/ao-plugin-tracker-jira",
+      expectedPluginName: "jira",
+    });
+  });
+
+  it("collects scm with path", () => {
+    const config = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          scm: {
+            path: "./plugins/my-scm",
+          },
+        },
+      },
+    });
+
+    const entries = collectExternalPluginConfigs(config);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      source: "projects.proj1.scm",
+      slot: "scm",
+      path: "./plugins/my-scm",
+      expectedPluginName: "my-scm", // auto-generated
+    });
+  });
+
+  it("collects notifier with package", () => {
+    const config = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+        },
+      },
+      notifiers: {
+        teams: {
+          package: "@acme/ao-plugin-notifier-teams",
+        },
+      },
+    });
+
+    const entries = collectExternalPluginConfigs(config);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      source: "notifiers.teams",
+      slot: "notifier",
+      package: "@acme/ao-plugin-notifier-teams",
+      expectedPluginName: "teams", // auto-generated
+    });
+  });
+
+  it("collects multiple external plugins", () => {
+    const config = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: {
+            package: "@acme/ao-plugin-tracker-jira",
+          },
+          scm: {
+            path: "./plugins/my-scm",
+          },
+        },
+      },
+      notifiers: {
+        teams: {
+          package: "@acme/ao-plugin-notifier-teams",
+        },
+      },
+    });
+
+    const entries = collectExternalPluginConfigs(config);
+    expect(entries).toHaveLength(3);
+  });
+
+  it("ignores built-in plugins (plugin only)", () => {
+    const config = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: {
+            plugin: "github",
+          },
+          scm: {
+            plugin: "github",
+          },
+        },
+      },
+    });
+
+    const entries = collectExternalPluginConfigs(config);
+    expect(entries).toHaveLength(0);
+  });
+
+  it("auto-generates plugins array entries from external plugin configs", () => {
+    const config = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: {
+            package: "@acme/ao-plugin-tracker-jira",
+          },
+        },
+      },
+    });
+
+    // plugins array should be auto-populated
+    expect(config.plugins).toBeDefined();
+    expect(config.plugins).toContainEqual(
+      expect.objectContaining({
+        source: "npm",
+        package: "@acme/ao-plugin-tracker-jira",
+        enabled: true,
+      }),
+    );
+  });
+
+  it("stores external plugin entries on config for validation", () => {
+    const config = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: {
+            plugin: "jira",
+            package: "@acme/ao-plugin-tracker-jira",
+          },
+        },
+      },
+    });
+
+    expect(config._externalPluginEntries).toBeDefined();
+    expect(config._externalPluginEntries).toHaveLength(1);
+    expect(config._externalPluginEntries?.[0]).toMatchObject({
+      source: "projects.proj1.tracker",
+      expectedPluginName: "jira",
+    });
+  });
+});
+
+describe("External Plugin Name Generation", () => {
+  it("extracts plugin name from scoped npm package", () => {
+    const config = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: {
+            package: "@acme/ao-plugin-tracker-jira",
+          },
+        },
+      },
+    });
+
+    expect(config.projects.proj1.tracker?.plugin).toBe("jira");
+  });
+
+  it("extracts plugin name from unscoped npm package", () => {
+    const config = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: {
+            package: "ao-plugin-tracker-jira",
+          },
+        },
+      },
+    });
+
+    expect(config.projects.proj1.tracker?.plugin).toBe("jira");
+  });
+
+  it("extracts plugin name from local path", () => {
+    const config = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: {
+            path: "./plugins/my-custom-tracker",
+          },
+        },
+      },
+    });
+
+    expect(config.projects.proj1.tracker?.plugin).toBe("my-custom-tracker");
+  });
+
+  it("extracts plugin name from absolute path", () => {
+    const config = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: {
+            path: "/home/user/plugins/custom-tracker",
+          },
+        },
+      },
+    });
+
+    expect(config.projects.proj1.tracker?.plugin).toBe("custom-tracker");
+  });
+
+  it("does not override explicit plugin name", () => {
+    const config = validateConfig({
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          tracker: {
+            plugin: "my-custom-name",
+            package: "@acme/ao-plugin-tracker-jira",
+          },
+        },
+      },
+    });
+
+    expect(config.projects.proj1.tracker?.plugin).toBe("my-custom-name");
   });
 });

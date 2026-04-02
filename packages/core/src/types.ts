@@ -1038,6 +1038,29 @@ export interface OrchestratorConfig {
 
   /** Default reaction configs */
   reactions: Record<string, ReactionConfig>;
+
+  /**
+   * Internal: External plugin entries collected from inline tracker/scm/notifier configs.
+   * Used by plugin-registry for manifest validation. Set automatically during config validation.
+   */
+  _externalPluginEntries?: ExternalPluginEntryRef[];
+}
+
+/**
+ * Reference to an external plugin config (from inline tracker/scm/notifier configs).
+ * Used for manifest.name validation during plugin loading.
+ */
+export interface ExternalPluginEntryRef {
+  /** Where this config came from (for error messages) */
+  source: string;
+  /** The slot this plugin fills */
+  slot: "tracker" | "scm" | "notifier";
+  /** npm package name (if specified) */
+  package?: string;
+  /** Local path (if specified) */
+  path?: string;
+  /** Expected plugin name (manifest.name), if specified */
+  expectedPluginName?: string;
 }
 
 export interface DefaultPlugins {
@@ -1160,13 +1183,31 @@ export interface ProjectConfig {
 }
 
 export interface TrackerConfig {
-  plugin: string;
+  /**
+   * Plugin name (manifest.name). Required when using built-in plugins.
+   * Optional when `package` or `path` is specified (will be inferred from manifest).
+   * When both plugin and package/path are specified, manifest.name must match plugin.
+   */
+  plugin?: string;
+  /** npm package name for external plugins (e.g. "@acme/ao-plugin-tracker-jira") */
+  package?: string;
+  /** Local filesystem path for external plugins (relative to config file or absolute) */
+  path?: string;
   /** Plugin-specific config (e.g. teamId for Linear) */
   [key: string]: unknown;
 }
 
 export interface SCMConfig {
-  plugin: string;
+  /**
+   * Plugin name (manifest.name). Required when using built-in plugins.
+   * Optional when `package` or `path` is specified (will be inferred from manifest).
+   * When both plugin and package/path are specified, manifest.name must match plugin.
+   */
+  plugin?: string;
+  /** npm package name for external plugins (e.g. "@acme/ao-plugin-scm-bitbucket") */
+  package?: string;
+  /** Local filesystem path for external plugins (relative to config file or absolute) */
+  path?: string;
   webhook?: SCMWebhookConfig;
   [key: string]: unknown;
 }
@@ -1182,7 +1223,16 @@ export interface SCMWebhookConfig {
 }
 
 export interface NotifierConfig {
-  plugin: string;
+  /**
+   * Plugin name (manifest.name). Required when using built-in plugins.
+   * Optional when `package` or `path` is specified (will be inferred from manifest).
+   * When both plugin and package/path are specified, manifest.name must match plugin.
+   */
+  plugin?: string;
+  /** npm package name for external plugins (e.g. "@acme/ao-plugin-notifier-teams") */
+  package?: string;
+  /** Local filesystem path for external plugins (relative to config file or absolute) */
+  path?: string;
   [key: string]: unknown;
 }
 
