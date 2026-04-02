@@ -33,6 +33,7 @@ import {
   type EventPriority,
   type ProjectConfig as _ProjectConfig,
   type PREnrichmentData,
+  type CICheck,
 } from "./types.js";
 import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
@@ -867,6 +868,248 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
   }
 
+  /**
+   * Format CI check failures into a human-readable message for the agent.
+   * Includes check names, statuses, and links for debugging.
+   */
+  function formatCIFailureMessage(failedChecks: CICheck[]): string {
+    const lines = [
+      "CI checks are failing on your PR. Here are the failed checks:",
+      "",
+    ];
+    for (const check of failedChecks) {
+      const status = check.conclusion ?? check.status;
+      const link = check.url ? ` — ${check.url}` : "";
+      lines.push(`- **${check.name}**: ${status}${link}`);
+    }
+    lines.push(
+      "",
+      "Investigate the failures, fix the issues, and push again.",
+    );
+    return lines.join("\n");
+  }
+
+  /**
+   * Dispatch CI failure details to the agent session when new or changed
+   * failures are detected. Follows the same fingerprinting/deduplication
+   * pattern as maybeDispatchReviewBacklog().
+   */
+  async function maybeDispatchCIFailureDetails(
+    session: Session,
+    _oldStatus: SessionStatus,
+    newStatus: SessionStatus,
+    transitionReaction?: { key: string; result: ReactionResult | null },
+  ): Promise<void> {
+    const project = config.projects[session.projectId];
+    if (!project || !session.pr) return;
+
+    const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    if (!scm) return;
+
+    const ciReactionKey = "ci-failed";
+
+    // Clear tracking when PR is closed/merged
+    if (newStatus === "merged" || newStatus === "killed") {
+      clearReactionTracker(session.id, ciReactionKey);
+      updateSessionMetadata(session, {
+        lastCIFailureFingerprint: "",
+        lastCIFailureDispatchHash: "",
+        lastCIFailureDispatchAt: "",
+      });
+      return;
+    }
+
+    // Only dispatch CI details when in ci_failed state
+    if (newStatus !== "ci_failed") {
+      // CI is no longer failing — clear tracking so next failure is dispatched fresh
+      const lastFingerprint = session.metadata["lastCIFailureFingerprint"] ?? "";
+      if (lastFingerprint) {
+        clearReactionTracker(session.id, ciReactionKey);
+        updateSessionMetadata(session, {
+          lastCIFailureFingerprint: "",
+          lastCIFailureDispatchHash: "",
+          lastCIFailureDispatchAt: "",
+        });
+      }
+      return;
+    }
+
+    // Fetch individual CI checks for failure details
+    let checks: CICheck[];
+    try {
+      checks = await scm.getCIChecks(session.pr);
+    } catch {
+      // Failed to fetch checks — skip this cycle
+      return;
+    }
+
+    const failedChecks = checks.filter(
+      (c) => c.status === "failed" || c.conclusion?.toUpperCase() === "FAILURE",
+    );
+    if (failedChecks.length === 0) return;
+
+    const ciFingerprint = makeFingerprint(
+      failedChecks.map((c) => `${c.name}:${c.status}:${c.conclusion ?? ""}`),
+    );
+    const lastCIFingerprint = session.metadata["lastCIFailureFingerprint"] ?? "";
+    const lastCIDispatchHash = session.metadata["lastCIFailureDispatchHash"] ?? "";
+
+    // Reset reaction tracker when failure set changes
+    if (ciFingerprint !== lastCIFingerprint && transitionReaction?.key !== ciReactionKey) {
+      clearReactionTracker(session.id, ciReactionKey);
+    }
+    if (ciFingerprint !== lastCIFingerprint) {
+      updateSessionMetadata(session, {
+        lastCIFailureFingerprint: ciFingerprint,
+      });
+    }
+
+    // If transition already sent a ci-failed reaction with the static message,
+    // skip this cycle but do NOT record dispatch hash — the next poll will send
+    // the detailed CI failure info with check names and URLs.
+    if (
+      transitionReaction?.key === ciReactionKey &&
+      transitionReaction.result?.success
+    ) {
+      return;
+    }
+
+    // Skip if we already dispatched this exact failure set
+    if (ciFingerprint === lastCIDispatchHash) return;
+
+    // Dispatch CI failure details directly via sessionManager.send() rather than
+    // executeReaction() to avoid consuming the ci-failed reaction's retry budget.
+    // The transition reaction owns escalation; this is a follow-up info delivery.
+    const reactionConfig = getReactionConfigForSession(session, ciReactionKey);
+    if (
+      reactionConfig &&
+      reactionConfig.action &&
+      (reactionConfig.auto !== false || reactionConfig.action === "notify")
+    ) {
+      const detailedMessage = formatCIFailureMessage(failedChecks);
+
+      try {
+        if (reactionConfig.action === "send-to-agent") {
+          await sessionManager.send(session.id, detailedMessage);
+        } else {
+          // For "notify" action, send to human notifiers instead
+          const event = createEvent("ci.failing", {
+            sessionId: session.id,
+            projectId: session.projectId,
+            message: detailedMessage,
+            data: { failedChecks: failedChecks.map((c) => c.name) },
+          });
+          await notifyHuman(event, reactionConfig.priority ?? "warning");
+        }
+
+        updateSessionMetadata(session, {
+          lastCIFailureDispatchHash: ciFingerprint,
+          lastCIFailureDispatchAt: new Date().toISOString(),
+        });
+      } catch {
+        // Send failed — will retry on next poll cycle
+      }
+    }
+  }
+
+  /**
+   * Dispatch merge conflict notifications to the agent session.
+   * Conflicts are detected from the PR enrichment cache or getMergeability()
+   * and dispatched independently of the session status (conflicts can coexist
+   * with ci_failed, changes_requested, etc.).
+   */
+  async function maybeDispatchMergeConflicts(
+    session: Session,
+    newStatus: SessionStatus,
+  ): Promise<void> {
+    const project = config.projects[session.projectId];
+    if (!project || !session.pr) return;
+
+    const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    if (!scm) return;
+
+    const conflictReactionKey = "merge-conflicts";
+
+    // Clear tracking when PR is closed/merged
+    if (newStatus === "merged" || newStatus === "killed") {
+      clearReactionTracker(session.id, conflictReactionKey);
+      updateSessionMetadata(session, {
+        lastMergeConflictDispatched: "",
+      });
+      return;
+    }
+
+    // Only check for conflicts on open PRs
+    if (
+      newStatus !== "pr_open" &&
+      newStatus !== "ci_failed" &&
+      newStatus !== "review_pending" &&
+      newStatus !== "changes_requested" &&
+      newStatus !== "approved" &&
+      newStatus !== "mergeable"
+    ) {
+      return;
+    }
+
+    // Check for conflicts using cached enrichment data or fallback to individual call
+    const prKey = `${session.pr.owner}/${session.pr.repo}#${session.pr.number}`;
+    const cachedData = prEnrichmentCache.get(prKey);
+
+    let hasConflicts: boolean;
+    if (cachedData && cachedData.hasConflicts !== undefined) {
+      hasConflicts = cachedData.hasConflicts;
+    } else {
+      try {
+        const mergeReadiness = await scm.getMergeability(session.pr);
+        hasConflicts = !mergeReadiness.noConflicts;
+      } catch {
+        return;
+      }
+    }
+
+    const lastDispatched = session.metadata["lastMergeConflictDispatched"] ?? "";
+
+    if (hasConflicts) {
+      // Already dispatched for current conflict state — skip
+      if (lastDispatched === "true") return;
+
+      const reactionConfig = getReactionConfigForSession(session, conflictReactionKey);
+      if (
+        reactionConfig &&
+        reactionConfig.action &&
+        (reactionConfig.auto !== false || reactionConfig.action === "notify")
+      ) {
+        try {
+          if (reactionConfig.action === "send-to-agent") {
+            const message =
+              reactionConfig.message ??
+              "Your branch has merge conflicts. Rebase on the default branch and resolve them.";
+            await sessionManager.send(session.id, message);
+          } else {
+            const event = createEvent("merge.conflicts", {
+              sessionId: session.id,
+              projectId: session.projectId,
+              message: `${session.id}: PR has merge conflicts`,
+            });
+            await notifyHuman(event, reactionConfig.priority ?? "warning");
+          }
+
+          updateSessionMetadata(session, {
+            lastMergeConflictDispatched: "true",
+          });
+        } catch {
+          // Send failed — will retry on next poll cycle
+        }
+      }
+    } else if (lastDispatched === "true") {
+      // Conflicts resolved — clear so we can re-dispatch if they recur
+      clearReactionTracker(session.id, conflictReactionKey);
+      updateSessionMetadata(session, {
+        lastMergeConflictDispatched: "",
+      });
+    }
+  }
+
   /** Send a notification to all configured notifiers. */
   async function notifyHuman(event: OrchestratorEvent, priority: EventPriority): Promise<void> {
     const eventWithPriority = { ...event, priority };
@@ -972,7 +1215,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       states.set(session.id, newStatus);
     }
 
-    await maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction);
+    await Promise.allSettled([
+      maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction),
+      maybeDispatchCIFailureDetails(session, oldStatus, newStatus, transitionReaction),
+      maybeDispatchMergeConflicts(session, newStatus),
+    ]);
   }
 
   /** Run one polling cycle across all sessions. */

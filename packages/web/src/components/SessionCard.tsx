@@ -537,6 +537,9 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
                       </>
                     )}
                     {alert.label}
+                    {alert.notified && (
+                      <span className="ml-1 opacity-60" title="Agent has been notified"> · notified</span>
+                    )}
                   </a>
                   {alert.actionLabel && (
                     <button
@@ -712,6 +715,7 @@ interface Alert {
   borderColor?: string;
   url: string;
   count?: number;
+  notified?: boolean;
   actionLabel?: string;
   actionMessage?: string;
   actionClassName?: string;
@@ -722,12 +726,37 @@ function getAlerts(session: DashboardSession): Alert[] {
   if (!pr || pr.state !== "open") return [];
   if (isPRRateLimited(pr)) return [];
 
+  const meta = session.metadata;
   const alerts: Alert[] = [];
 
-  if (pr.ciStatus === CI_STATUS.FAILING) {
+  // The lifecycle manager's status is the most up-to-date source of truth.
+  // PR enrichment data can be stale (5-min cache) or unavailable (rate limit/timeout).
+  // Use lifecycle status as fallback when PR data hasn't caught up yet.
+  const lifecycleStatus = meta["status"];
+
+  const ciIsFailing = pr.ciStatus === CI_STATUS.FAILING || lifecycleStatus === "ci_failed";
+  const hasChangesRequested =
+    pr.reviewDecision === "changes_requested" || lifecycleStatus === "changes_requested";
+  const hasConflicts = !pr.mergeability.noConflicts;
+
+  if (ciIsFailing) {
     const failedCheck = pr.ciChecks.find((c) => c.status === "failed");
     const failCount = pr.ciChecks.filter((c) => c.status === "failed").length;
-    if (failCount === 0) {
+    if (failCount === 0 && pr.ciStatus !== CI_STATUS.FAILING) {
+      // Lifecycle says ci_failed but PR enrichment hasn't caught up — show generic alert
+      alerts.push({
+        key: "ci-fail",
+        label: "CI failing",
+        className: "",
+        color: "var(--color-alert-ci)",
+        borderColor: "var(--color-alert-ci)",
+        url: pr.url + "/checks",
+        notified: Boolean(meta["lastCIFailureDispatchHash"]),
+        actionLabel: "ask to fix",
+        actionMessage: `Please fix the failing CI checks on ${pr.url}`,
+        actionClassName: "bg-[var(--color-alert-ci-bg)] text-white hover:brightness-110",
+      });
+    } else if (failCount === 0) {
       alerts.push({
         key: "ci-unknown",
         label: "CI unknown",
@@ -743,6 +772,7 @@ function getAlerts(session: DashboardSession): Alert[] {
         color: "var(--color-alert-ci)",
         borderColor: "var(--color-alert-ci)",
         url: failedCheck?.url ?? pr.url + "/checks",
+        notified: Boolean(meta["lastCIFailureDispatchHash"]),
         actionLabel: "ask to fix",
         actionMessage: `Please fix the failing CI checks on ${pr.url}`,
         actionClassName: "bg-[var(--color-alert-ci-bg)] text-white hover:brightness-110",
@@ -750,13 +780,14 @@ function getAlerts(session: DashboardSession): Alert[] {
     }
   }
 
-  if (pr.reviewDecision === "changes_requested") {
+  if (hasChangesRequested) {
     alerts.push({
       key: "changes",
       label: "changes requested",
       className: "",
       color: "var(--color-alert-changes)",
       url: pr.url,
+      notified: Boolean(meta["lastPendingReviewDispatchHash"]),
       actionLabel: "ask to address",
       actionMessage: `Please address the requested changes on ${pr.url}`,
       actionClassName: "bg-[var(--color-alert-changes-bg)] text-white hover:brightness-110",
@@ -774,13 +805,14 @@ function getAlerts(session: DashboardSession): Alert[] {
     });
   }
 
-  if (!pr.mergeability.noConflicts) {
+  if (hasConflicts) {
     alerts.push({
       key: "conflict",
       label: "merge conflict",
       className: "",
       color: "var(--color-alert-conflict)",
       url: pr.url,
+      notified: meta["lastMergeConflictDispatched"] === "true",
       actionLabel: "ask to fix",
       actionMessage: `Please resolve the merge conflicts on ${pr.url} by rebasing on the base branch`,
       actionClassName: "bg-[var(--color-alert-conflict-bg)] text-white hover:brightness-110",

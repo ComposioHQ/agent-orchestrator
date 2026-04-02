@@ -131,6 +131,18 @@ async function spawnSession(
     if (branchStr) console.log(`  Branch:   ${chalk.dim(branchStr)}`);
     if (claimedPrUrl) console.log(`  PR:       ${chalk.dim(claimedPrUrl)}`);
 
+    // Warn if prompt delivery failed (for post-launch agents like Claude Code)
+    const promptDelivered = session.metadata?.promptDelivered;
+    if (promptDelivered === "false") {
+      console.log();
+      console.warn(
+        chalk.yellow(
+          `  ⚠ Prompt delivery failed — agent may be idle.\n` +
+            `    Use '${chalk.cyan("ao send " + session.id + ' "message..."')}' to send instructions manually.`,
+        ),
+      );
+    }
+
     // Show the tmux name for attaching (stored in metadata or runtimeHandle)
     const tmuxTarget = session.runtimeHandle?.id ?? session.id;
     console.log(`  Attach:   ${chalk.dim(`tmux attach -t ${tmuxTarget}`)}`);
@@ -159,7 +171,7 @@ export function registerSpawn(program: Command): void {
     .command("spawn")
     .description("Spawn a single agent session")
     .argument("[first]", "Issue identifier (project is auto-detected)")
-    .argument("[second]", "", /* hidden second arg to catch old two-arg usage */)
+    .argument("[second]", "" /* hidden second arg to catch old two-arg usage */)
     .option("--open", "Open session in terminal tab")
     .option("--agent <name>", "Override the agent plugin (e.g. codex, claude-code)")
     .option("--claim-pr <pr>", "Immediately claim an existing PR for the spawned session")
