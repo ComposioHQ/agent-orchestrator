@@ -43,6 +43,7 @@ const sampleIssueNode = {
   description: "Users can't log in with SSO",
   url: "https://linear.app/acme/issue/INT-123",
   priority: 2,
+  branchName: "feat/INT-123",
   state: { name: "In Progress", type: "started" },
   labels: { nodes: [{ name: "bug" }, { name: "high-priority" }] },
   assignee: { name: "Alice Smith", displayName: "Alice" },
@@ -189,6 +190,7 @@ describe("tracker-linear plugin", () => {
         labels: ["bug", "high-priority"],
         assignee: "Alice",
         priority: 2,
+        branchName: "feat/INT-123",
       });
     });
 
