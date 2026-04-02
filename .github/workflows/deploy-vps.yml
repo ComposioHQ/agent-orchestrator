@@ -70,16 +70,16 @@ jobs:
           echo "fetch_ref=main" >> "$GITHUB_OUTPUT"
           echo "should_deploy=true" >> "$GITHUB_OUTPUT"
 
-      - name: Read VPS RSA host fingerprint
+      - name: Read runner-visible VPS host fingerprints
         if: steps.resolve_deploy.outputs.print_host_rsa_fingerprint == 'true'
-        uses: appleboy/ssh-action@v1.2.2
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: root
-          key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
-            set -e
-            ssh-keygen -lf /etc/ssh/ssh_host_rsa_key.pub -E sha256 | awk '{print $2}'
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          set -e
+          for type in rsa ecdsa ed25519; do
+            echo "==> $type"
+            ssh-keyscan -T 10 -t "$type" "$VPS_HOST" 2>/dev/null | ssh-keygen -lf - -E sha256
+          done
 
       - name: Deploy via SSH
         if: steps.resolve_deploy.outputs.should_deploy == 'true'
