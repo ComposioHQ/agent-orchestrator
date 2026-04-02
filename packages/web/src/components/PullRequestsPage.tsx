@@ -10,7 +10,6 @@ import {
   getAttentionLevel,
 } from "@/lib/types";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
-import { useMuxOptional } from "@/providers/MuxProvider";
 import { ProjectSidebar } from "./ProjectSidebar";
 import { ThemeToggle } from "./ThemeToggle";
 import { DynamicFavicon } from "./DynamicFavicon";
@@ -37,7 +36,6 @@ export function PullRequestsPage({
   orchestrators,
 }: PullRequestsPageProps) {
   const orchestratorLinks = orchestrators ?? EMPTY_ORCHESTRATORS;
-  const mux = useMuxOptional();
   const initialAttentionLevels = useMemo(() => {
     const levels: Record<string, ReturnType<typeof getAttentionLevel>> = {};
     for (const s of initialSessions) {
@@ -45,12 +43,7 @@ export function PullRequestsPage({
     }
     return levels;
   }, [initialSessions]);
-  const { sessions, sseAttentionLevels } = useSessionEvents(
-    initialSessions,
-    projectId,
-    mux?.status === "connected" ? mux.sessions : undefined,
-    initialAttentionLevels,
-  );
+  const { sessions, sseAttentionLevels } = useSessionEvents(initialSessions, null, projectId, initialAttentionLevels);
   const searchParams = useSearchParams();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);

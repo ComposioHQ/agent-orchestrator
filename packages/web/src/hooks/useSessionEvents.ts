@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useReducer, useRef, useCallback } from "react";
-import {
-  getAttentionLevel,
-  type AttentionLevel,
-  type DashboardSession,
-  type SSESnapshotEvent,
+import { useEffect, useReducer, useRef } from "react";
+import type {
+  AttentionLevel,
+  DashboardSession,
+  GlobalPauseState,
+  SSESnapshotEvent,
 } from "@/lib/types";
 
 /** Debounce before fetching full session list after membership change. */
@@ -23,13 +23,14 @@ export type SSEAttentionMap = Readonly<Record<string, AttentionLevel>>;
 
 interface State {
   sessions: DashboardSession[];
+  globalPause: GlobalPauseState | null;
   connectionStatus: ConnectionStatus;
   /** Attention levels from the latest SSE snapshot (server-computed, includes PR state). */
   sseAttentionLevels: SSEAttentionMap;
 }
 
 type Action =
-  | { type: "reset"; sessions: DashboardSession[]; sseAttentionLevels?: SSEAttentionMap }
+  | { type: "reset"; sessions: DashboardSession[]; globalPause: GlobalPauseState | null; sseAttentionLevels?: SSEAttentionMap }
   | { type: "snapshot"; patches: SSESnapshotEvent["sessions"] }
   | { type: "setConnection"; status: ConnectionStatus };
 
@@ -39,6 +40,7 @@ function reducer(state: State, action: Action): State {
       return {
         ...state,
         sessions: action.sessions,
+        globalPause: action.globalPause,
         ...(action.sseAttentionLevels !== undefined
           ? { sseAttentionLevels: action.sseAttentionLevels }
           : {}),
@@ -59,7 +61,12 @@ function reducer(state: State, action: Action): State {
           return s;
         }
         changed = true;
-        return { ...s, status: patch.status, activity: patch.activity, lastActivityAt: patch.lastActivityAt };
+        return {
+          ...s,
+          status: patch.status,
+          activity: patch.activity,
+          lastActivityAt: patch.lastActivityAt,
+        };
       });
 
       // Build attention level map from server-computed values
@@ -95,12 +102,13 @@ function createMembershipKey(
 
 export function useSessionEvents(
   initialSessions: DashboardSession[],
+  initialGlobalPause?: GlobalPauseState | null,
   project?: string,
-  muxSessions?: Array<{ id: string; status: string; activity: string | null; attentionLevel: string; lastActivityAt: string }>,
   initialAttentionLevels?: SSEAttentionMap,
 ): State {
   const [state, dispatch] = useReducer(reducer, {
     sessions: initialSessions,
+    globalPause: initialGlobalPause ?? null,
     connectionStatus: "connected" as ConnectionStatus,
     sseAttentionLevels: initialAttentionLevels ?? ({} as SSEAttentionMap),
   });
@@ -110,11 +118,9 @@ export function useSessionEvents(
   const refreshingRef = useRef(false);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingMembershipKeyRef = useRef<string | null>(null);
-  const lastRefreshAtRef = useRef(0);
+  const lastRefreshAtRef = useRef(Date.now());
   const disconnectedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const activeRefreshControllerRef = useRef<AbortController | null>(null);
 
-  // Reset state when server-rendered props change (e.g. full page refresh)
   useEffect(() => {
     sessionsRef.current = state.sessions;
   }, [state.sessions]);
@@ -123,137 +129,16 @@ export function useSessionEvents(
     dispatch({
       type: "reset",
       sessions: initialSessions,
+      globalPause: initialGlobalPause ?? null,
       sseAttentionLevels: initialAttentionLevelsRef.current ?? ({} as SSEAttentionMap),
     });
-  }, [initialSessions]);
-
-  // Stable boolean — only changes when mux transitions between present/absent,
-  // not on every new snapshot array reference. Used in the SSE effect deps so
-  // SSE setup/teardown runs only on that transition, not every mux update.
-  const muxActive = muxSessions !== undefined;
-
-  // Define scheduleRefresh with useCallback so both effects can use it
-  const scheduleRefresh = useCallback(() => {
-    if (refreshingRef.current || refreshTimerRef.current) return;
-    refreshTimerRef.current = setTimeout(() => {
-      refreshTimerRef.current = null;
-      refreshingRef.current = true;
-      const requestedMembershipKey = pendingMembershipKeyRef.current;
-      const refreshController = new AbortController();
-      activeRefreshControllerRef.current = refreshController;
-
-      const sessionsUrl = project
-        ? `/api/sessions?project=${encodeURIComponent(project)}`
-        : "/api/sessions";
-
-      void fetch(sessionsUrl, { signal: refreshController.signal })
-        .then((res) => (res.ok ? res.json() : null))
-        .then(
-          (updated: { sessions?: DashboardSession[] } | null) => {
-            if (refreshController.signal.aborted || !updated?.sessions) {
-              // Update timestamp even for non-OK responses to prevent retry storms
-              if (!refreshController.signal.aborted) {
-                lastRefreshAtRef.current = Date.now();
-              }
-              return;
-            }
-
-            lastRefreshAtRef.current = Date.now();
-            const sseAttentionLevels = Object.fromEntries(
-              updated.sessions.map((s) => [s.id, getAttentionLevel(s)]),
-            ) as SSEAttentionMap;
-            dispatch({
-              type: "reset",
-              sessions: updated.sessions,
-              sseAttentionLevels,
-            });
-          },
-        )
-        .catch((err: unknown) => {
-          if (err instanceof DOMException && err.name === "AbortError") return;
-          console.warn("[useSessionEvents] refresh failed:", err);
-          // Update timestamp on failure to prevent retry loops on every SSE snapshot
-          lastRefreshAtRef.current = Date.now();
-        })
-        .finally(() => {
-          if (activeRefreshControllerRef.current === refreshController) {
-            activeRefreshControllerRef.current = null;
-          }
-          if (refreshController.signal.aborted) {
-            refreshingRef.current = false;
-            // If there's still a pending membership change, reschedule so it isn't lost
-            if (pendingMembershipKeyRef.current !== null) {
-              scheduleRefresh();
-            }
-            return;
-          }
-
-          refreshingRef.current = false;
-
-          if (
-            pendingMembershipKeyRef.current !== null &&
-            pendingMembershipKeyRef.current !== requestedMembershipKey
-          ) {
-            scheduleRefresh();
-            return;
-          }
-
-          pendingMembershipKeyRef.current = null;
-        });
-    }, MEMBERSHIP_REFRESH_DELAY_MS);
-  }, [project]);
-
-  // Mux-based session updates (replaces SSE when available)
-  useEffect(() => {
-    if (!muxSessions) return;
-    // Note: empty array is intentional — it means all sessions were removed and we
-    // must still run the membership-key comparison to trigger scheduleRefresh().
-
-    dispatch({ type: "snapshot", patches: muxSessions as SSESnapshotEvent["sessions"] });
-
-    const currentMembershipKey = createMembershipKey(sessionsRef.current);
-    const snapshotMembershipKey = createMembershipKey(muxSessions);
-
-    if (currentMembershipKey !== snapshotMembershipKey) {
-      pendingMembershipKeyRef.current = snapshotMembershipKey;
-      scheduleRefresh();
-    } else if (Date.now() - lastRefreshAtRef.current >= STALE_REFRESH_INTERVAL_MS) {
-      scheduleRefresh();
-    }
-
-    return () => {
-      // Only abort in-flight requests — do NOT clear the debounce timer.
-      // Cancelling the timer here would prevent the membership-change refresh
-      // from completing when muxSessions updates arrive in rapid succession.
-      activeRefreshControllerRef.current?.abort();
-      activeRefreshControllerRef.current = null;
-    };
-  }, [muxSessions, scheduleRefresh]);
+  }, [initialSessions, initialGlobalPause]);
 
   useEffect(() => {
-    // Skip SSE if mux sessions are available
-    if (muxActive) {
-      dispatch({ type: "setConnection", status: "connected" });
-      return () => {
-        // Clear timer and reset all refresh state so the aborted fetch's
-        // .finally() handler doesn't reschedule after unmount.
-        if (refreshTimerRef.current) {
-          clearTimeout(refreshTimerRef.current);
-          refreshTimerRef.current = null;
-        }
-        pendingMembershipKeyRef.current = null;
-        refreshingRef.current = false;
-        activeRefreshControllerRef.current?.abort();
-        activeRefreshControllerRef.current = null;
-      };
-    }
-
-    // Reset so the new project gets an immediate first refresh on its first SSE snapshot
-    lastRefreshAtRef.current = 0;
-
     const url = project ? `/api/events?project=${encodeURIComponent(project)}` : "/api/events";
     const es = new EventSource(url);
     let disposed = false;
+    let activeRefreshController: AbortController | null = null;
 
     const clearRefreshTimer = () => {
       if (refreshTimerRef.current) {
@@ -267,6 +152,63 @@ export function useSessionEvents(
         clearTimeout(disconnectedTimerRef.current);
         disconnectedTimerRef.current = null;
       }
+    };
+
+    const scheduleRefresh = () => {
+      if (disposed) return;
+      if (refreshingRef.current || refreshTimerRef.current) return;
+      refreshTimerRef.current = setTimeout(() => {
+        if (disposed) return;
+        refreshTimerRef.current = null;
+        refreshingRef.current = true;
+        const requestedMembershipKey = pendingMembershipKeyRef.current;
+        const refreshController = new AbortController();
+        activeRefreshController = refreshController;
+
+        const sessionsUrl = project
+          ? `/api/sessions?project=${encodeURIComponent(project)}`
+          : "/api/sessions";
+
+        void fetch(sessionsUrl, { signal: refreshController.signal })
+          .then((res) => (res.ok ? res.json() : null))
+          .then(
+            (updated: { sessions?: DashboardSession[]; globalPause?: GlobalPauseState } | null) => {
+              if (disposed || refreshController.signal.aborted || !updated?.sessions) return;
+
+              lastRefreshAtRef.current = Date.now();
+              dispatch({
+                type: "reset",
+                sessions: updated.sessions,
+                globalPause: updated.globalPause ?? null,
+              });
+            },
+          )
+          .catch((err: unknown) => {
+            if (err instanceof DOMException && err.name === "AbortError") return;
+            console.warn("[useSessionEvents] refresh failed:", err);
+          })
+          .finally(() => {
+            if (activeRefreshController === refreshController) {
+              activeRefreshController = null;
+            }
+            if (disposed || refreshController.signal.aborted) {
+              refreshingRef.current = false;
+              return;
+            }
+
+            refreshingRef.current = false;
+
+            if (
+              pendingMembershipKeyRef.current !== null &&
+              pendingMembershipKeyRef.current !== requestedMembershipKey
+            ) {
+              scheduleRefresh();
+              return;
+            }
+
+            pendingMembershipKeyRef.current = null;
+          });
+      }, MEMBERSHIP_REFRESH_DELAY_MS);
     };
 
     es.onmessage = (event: MessageEvent) => {
@@ -322,15 +264,15 @@ export function useSessionEvents(
 
     return () => {
       disposed = true;
-      activeRefreshControllerRef.current?.abort();
-      activeRefreshControllerRef.current = null;
+      activeRefreshController?.abort();
+      activeRefreshController = null;
       refreshingRef.current = false;
       pendingMembershipKeyRef.current = null;
       clearRefreshTimer();
       clearDisconnectedTimer();
       es.close();
     };
-  }, [project, muxActive, scheduleRefresh]);
+  }, [project]);
 
   return state;
 }
