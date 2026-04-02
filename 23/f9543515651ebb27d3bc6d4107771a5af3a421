@@ -1,0 +1,53 @@
+packages/web/src/lib/path-security.ts
+  23c5d64b04ae6f61 1-35
+packages/web/src/app/projects/[projectId]/page.tsx
+  23c5d64b04ae6f61 36,43-50
+packages/web/src/lib/project-registration.ts
+  23c5d64b04ae6f61 8,18,21
+packages/web/package.json
+  23c5d64b04ae6f61 32,47-48
+packages/web/src/lib/local-project-config.ts
+  23c5d64b04ae6f61 1-31
+packages/web/src/app/api/projects/[id]/favicon/route.ts
+  23c5d64b04ae6f61 1,4,38-44,47-52
+packages/web/src/lib/legacy-config-migration.ts
+  23c5d64b04ae6f61 116-117,119-122,124-128
+packages/web/src/app/api/projects/[id]/route.ts
+  23c5d64b04ae6f61 66
+packages/web/src/app/api/browse-directory/route.ts
+  23c5d64b04ae6f61 4,16,18-23,66
+packages/web/src/app/api/projects/route.ts
+  23c5d64b04ae6f61 20-21,100,122,134
+packages/web/src/lib/portfolio-services.ts
+  23c5d64b04ae6f61 29,34,42-48,56-57,83-84,97,115,131,143
+packages/web/src/app/api/projects/[id]/resources/route.ts
+  23c5d64b04ae6f61 35-45,52-88,111,142,152-153
+packages/web/src/app/api/projects/clone/route.ts
+  23c5d64b04ae6f61 15-16,52
+.gitignore
+  23c5d64b04ae6f61 5
+packages/web/src/lib/__tests__/legacy-config-migration.test.ts
+  23c5d64b04ae6f61 18-22
+packages/web/src/app/api/sessions/route.ts
+  23c5d64b04ae6f61 176-177,181,183,185,187-189
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.3",
+  "base_commit_sha": "23f9543515651ebb27d3bc6d4107771a5af3a421",
+  "prompts": {
+    "23c5d64b04ae6f61": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d4c54-8466-7133-b061-5dd0271c0503",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 212,
+      "total_deletions": 183,
+      "accepted_lines": 212,
+      "overriden_lines": 0
+    }
+  }
+}
