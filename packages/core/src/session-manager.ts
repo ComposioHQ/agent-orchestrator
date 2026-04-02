@@ -1210,6 +1210,12 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
 
       session.metadata["promptDelivered"] = String(promptDelivered);
+    } else if (agentLaunchConfig.prompt) {
+      session.metadata["promptDelivered"] = "true";
+    }
+
+    if (session.metadata["promptDelivered"]) {
+      updateMetadata(sessionsDir, sessionId, session.metadata);
     }
 
     return session;

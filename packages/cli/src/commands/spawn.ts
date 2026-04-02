@@ -132,8 +132,8 @@ async function spawnSession(
     if (claimedPrUrl) console.log(`  PR:       ${chalk.dim(claimedPrUrl)}`);
 
     // Warn if prompt delivery failed (for post-launch agents like Claude Code)
-    const promptDelivered = session.metadata?.promptDelivered === "true";
-    if (!promptDelivered) {
+    const promptDelivered = session.metadata?.promptDelivered;
+    if (promptDelivered === "false") {
       console.log();
       console.warn(
         chalk.yellow(
