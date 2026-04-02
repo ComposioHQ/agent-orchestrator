@@ -1065,6 +1065,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         workspacePath,
         launchCommand,
         environment: {
+          ...config.defaults.env,
+          ...project.env,
           ...environment,
           AO_SESSION: sessionId,
           AO_DATA_DIR: sessionsDir, // Pass sessions directory (not root dataDir)
@@ -1364,6 +1366,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       workspacePath: project.path,
       launchCommand,
       environment: {
+        ...config.defaults.env,
+        ...project.env,
         ...environment,
         AO_SESSION: sessionId,
         AO_DATA_DIR: sessionsDir,
@@ -2374,6 +2378,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       workspacePath,
       launchCommand,
       environment: {
+        ...config.defaults.env,
+        ...project.env,
         ...environment,
         AO_SESSION: sessionId,
         AO_DATA_DIR: sessionsDir,
