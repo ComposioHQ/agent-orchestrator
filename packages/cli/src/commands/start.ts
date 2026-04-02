@@ -938,6 +938,20 @@ async function runStartup(
   // Start dashboard (unless --no-dashboard)
   if (opts?.dashboard !== false) {
     if (!(await isPortAvailable(port))) {
+      // Port is busy — attempt to stop an orphaned dashboard from a previous
+      // crashed AO instance. This uses lsof to find and kill processes on the
+      // port. Safe here because the user explicitly chose this port for AO.
+      console.log(chalk.yellow(`Port ${port} is busy — attempting cleanup...`));
+      try {
+        await stopDashboard(port);
+        // Wait briefly for port to free up
+        await new Promise((r) => setTimeout(r, 500));
+      } catch {
+        // Best effort — fall through to port scan
+      }
+    }
+
+    if (!(await isPortAvailable(port))) {
       const newPort = await findFreePort(port + 1);
       if (newPort === null) {
         throw new Error(

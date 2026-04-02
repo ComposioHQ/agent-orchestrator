@@ -191,6 +191,7 @@ export async function ensureLifecycleWorker(
         ...process.env,
         AO_LIFECYCLE_PROJECT: projectId,
         AO_CONFIG_PATH: config.configPath,
+        AO_PARENT_PID: `${process.pid}`,
       },
     });
 

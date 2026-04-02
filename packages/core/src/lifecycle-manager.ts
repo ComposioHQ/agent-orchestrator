@@ -180,6 +180,8 @@ export interface LifecycleManagerDeps {
   sessionManager: SessionManager;
   /** When set, only poll sessions belonging to this project. */
   projectId?: string;
+  /** Called when all active sessions die in a single poll cycle (runtime server crash). */
+  onAllSessionsKilled?: () => void;
 }
 
 /** Track attempt counts for reactions per session. */
@@ -190,7 +192,7 @@ interface ReactionTracker {
 
 /** Create a LifecycleManager instance. */
 export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleManager {
-  const { config, registry, sessionManager, projectId: scopedProjectId } = deps;
+  const { config, registry, sessionManager, projectId: scopedProjectId, onAllSessionsKilled } = deps;
   const observer = createProjectObserver(config, "lifecycle-manager");
 
   const states = new Map<SessionId, SessionStatus>();
@@ -358,7 +360,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     if (session.runtimeHandle) {
       const runtime = registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime);
       if (runtime) {
-        const alive = await runtime.isAlive(session.runtimeHandle).catch(() => true);
+        const alive = await runtime.isAlive(session.runtimeHandle).catch(() => false);
         if (!alive) return "killed";
       }
     }
@@ -884,8 +886,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
   }
 
-  /** Poll a single session and handle state transitions. */
-  async function checkSession(session: Session): Promise<void> {
+  /** Poll a single session and handle state transitions. Returns true if session transitioned to killed. */
+  async function checkSession(session: Session): Promise<boolean> {
     // Use tracked state if available; otherwise use the persisted metadata status
     // (not session.status, which list() may have already overwritten for dead runtimes).
     // This ensures transitions are detected after a lifecycle manager restart.
@@ -973,6 +975,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     }
 
     await maybeDispatchReviewBacklog(session, oldStatus, newStatus, transitionReaction);
+
+    return newStatus === "killed" && oldStatus !== "killed";
   }
 
   /** Run one polling cycle across all sessions. */
@@ -1000,7 +1004,27 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       await populatePREnrichmentCache(sessionsToCheck);
 
       // Poll all sessions concurrently
-      await Promise.allSettled(sessionsToCheck.map((s) => checkSession(s)));
+      const checkResults = await Promise.allSettled(sessionsToCheck.map((s) => checkSession(s)));
+
+      // Detect runtime server death: all active sessions killed in a single cycle.
+      // Require > 1 session to avoid false positives from a single agent crash.
+      if (onAllSessionsKilled && sessionsToCheck.length > 1) {
+        const killedThisCycle = checkResults.filter(
+          (r) => r.status === "fulfilled" && r.value === true,
+        ).length;
+        if (killedThisCycle === sessionsToCheck.length) {
+          observer.recordOperation({
+            metric: "lifecycle_poll",
+            operation: "lifecycle.runtime_server_dead",
+            outcome: "failure",
+            correlationId,
+            projectId: scopedProjectId,
+            reason: `All ${killedThisCycle} active sessions killed in a single poll cycle — runtime server appears dead`,
+            level: "error",
+          });
+          onAllSessionsKilled();
+        }
+      }
 
       // Prune stale entries from states and reactionTrackers for sessions
       // that no longer appear in the session list (e.g., after kill/cleanup)
