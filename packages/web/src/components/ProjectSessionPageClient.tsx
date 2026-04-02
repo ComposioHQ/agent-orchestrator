@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { isOrchestratorSession } from "@composio/ao-core/types";
 import { SessionDetail } from "@/components/SessionDetail";
 import { activityIcon } from "@/lib/activity-icons";
@@ -53,6 +53,11 @@ export function ProjectSessionPageClient({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const sessionIsOrchestrator = session ? isOrchestratorSession(session) : false;
+  const sessionIsOrchestratorRef = useRef(sessionIsOrchestrator);
+
+  useEffect(() => {
+    sessionIsOrchestratorRef.current = sessionIsOrchestrator;
+  }, [sessionIsOrchestrator]);
 
   useEffect(() => {
     if (session) {
@@ -89,8 +94,9 @@ export function ProjectSessionPageClient({
 
   const fetchProjectContext = useCallback(async () => {
     try {
+      const isOrchestrator = sessionIsOrchestratorRef.current;
       const params = new URLSearchParams({ project: projectId });
-      if (!sessionIsOrchestrator) {
+      if (!isOrchestrator) {
         params.set("orchestratorOnly", "true");
       }
       const res = await fetch(`/api/sessions?${params.toString()}`);
@@ -100,7 +106,7 @@ export function ProjectSessionPageClient({
         orchestratorId?: string | null;
       };
       setProjectOrchestratorId(body.orchestratorId ?? null);
-      if (!sessionIsOrchestrator) return;
+      if (!isOrchestrator) return;
 
       const sessions = body.sessions ?? [];
       const counts: ZoneCounts = {
@@ -120,7 +126,7 @@ export function ProjectSessionPageClient({
     } catch {
       // non-critical
     }
-  }, [sessionIsOrchestrator, projectId]);
+  }, [projectId]);
 
   useEffect(() => {
     void fetchSession();
