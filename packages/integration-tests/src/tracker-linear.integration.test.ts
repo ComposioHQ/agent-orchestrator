@@ -217,6 +217,10 @@ describe.skipIf(!canRun)("tracker-linear (integration)", () => {
     expect(issue.state).toBe("open");
     expect(Array.isArray(issue.labels)).toBe(true);
     expect(issue.priority).toBe(4);
+
+    expect(issue.branchName).toBeDefined();
+    expect(typeof issue.branchName).toBe("string");
+    expect(issue.branchName).toContain(issueIdentifier);
   });
 
   it("isCompleted returns false for an open issue", async () => {
