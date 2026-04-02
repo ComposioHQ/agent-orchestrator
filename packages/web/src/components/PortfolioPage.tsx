@@ -116,7 +116,7 @@ function ProjectCard({ project }: { project: PortfolioProjectSummary }) {
 
   return (
     <Link
-      href={`/projects/${project.id}`}
+      href={`/projects/${encodeURIComponent(project.id)}`}
       className="group flex flex-col rounded-[2px] border border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)] p-4 shadow-[var(--card-shadow)] transition duration-150 hover:border-[var(--color-border-default)] hover:shadow-[var(--card-shadow-hover)]"
     >
       <div className="flex items-center justify-between">
