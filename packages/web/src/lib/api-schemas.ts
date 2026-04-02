@@ -29,23 +29,3 @@ export const UpdatePreferencesSchema = z.object({
   defaultProject: z.string().optional(),
 });
 export type UpdatePreferencesInput = z.infer<typeof UpdatePreferencesSchema>;
-
-/** PUT /api/settings/projects/[id] — update project config */
-export const UpdateProjectConfigSchema = z.object({
-  name: z.string().optional(),
-  defaultBranch: z.string().optional(),
-  sessionPrefix: z.string().optional(),
-  agent: z.string().optional(),
-  permissions: z.enum(["permissionless", "default", "auto-edit", "suggest"]).optional(),
-  workspaceStrategy: z.enum(["worktree", "clone", "copy"]).optional(),
-});
-export type UpdateProjectConfigInput = z.infer<typeof UpdateProjectConfigSchema>;
-
-/** GET /api/sessions?scope=portfolio with filters */
-export const PortfolioSessionFilterSchema = z.object({
-  attention: z.string().optional(), // comma-separated attention levels
-  stale: z.coerce.number().positive().optional(), // seconds threshold
-  search: z.string().optional(),
-  showClosed: z.coerce.boolean().optional(),
-});
-export type PortfolioSessionFilter = z.infer<typeof PortfolioSessionFilterSchema>;

@@ -10,7 +10,6 @@
 import {
   getPortfolio,
   listPortfolioSessions,
-  getPortfolioSessionCounts,
   loadConfig,
   generateSessionPrefix,
   type PortfolioProject,
@@ -141,5 +140,5 @@ export async function getCachedPortfolioSessions(): Promise<PortfolioSession[]> 
 }
 
 // Re-export for direct use when cache bypass is needed
-export { listPortfolioSessions, getPortfolioSessionCounts };
+export { listPortfolioSessions };
 export type { PortfolioProject, PortfolioSession };

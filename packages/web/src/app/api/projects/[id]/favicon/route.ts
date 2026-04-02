@@ -1,6 +1,7 @@
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { NextResponse } from "next/server";
+import { assertPathWithinHome, isWithinDirectory } from "@/lib/path-security";
 import { getPortfolioServices } from "@/lib/portfolio-services";
 
 const CANDIDATES = [
@@ -34,10 +35,21 @@ export async function GET(
     return new NextResponse(null, { status: 404 });
   }
 
+  let repoPath: string;
+  try {
+    repoPath = await assertPathWithinHome(project.repoPath);
+  } catch {
+    return new NextResponse(null, { status: 404 });
+  }
+
   for (const candidate of CANDIDATES) {
     try {
-      const absolutePath = join(project.repoPath, ...candidate);
-      const file = await readFile(absolutePath);
+      const absolutePath = join(repoPath, ...candidate);
+      const resolvedPath = await realpath(absolutePath);
+      if (!isWithinDirectory(repoPath, resolvedPath)) {
+        continue;
+      }
+      const file = await readFile(resolvedPath);
       return new NextResponse(file, {
         status: 200,
         headers: {
