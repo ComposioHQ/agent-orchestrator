@@ -520,11 +520,13 @@ describe("SessionCard", () => {
       expect(onSend).toHaveBeenCalledTimes(1);
     });
 
-    expect(screen.queryByRole("button", { name: "Sent" })).not.toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: /type a reply to the agent/i })).toHaveValue(
-      "please continue",
-    );
-    expect(screen.getByRole("textbox", { name: /type a reply to the agent/i })).not.toBeDisabled();
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Sent" })).not.toBeInTheDocument();
+      expect(screen.getByRole("textbox", { name: /type a reply to the agent/i })).toHaveValue(
+        "please continue",
+      );
+      expect(screen.getByRole("textbox", { name: /type a reply to the agent/i })).not.toBeDisabled();
+    });
   });
 
   it("shows a temporary failed state when an alert action send is rejected", async () => {

@@ -3,11 +3,14 @@ import { join } from "node:path";
 import type { Command } from "commander";
 import chalk from "chalk";
 import {
+  createPluginRegistry,
   findConfigFile,
   getObservabilityBaseDir,
   loadConfig,
   type Notifier,
   type OrchestratorConfig,
+  type PluginRegistry,
+  type PluginSlot,
 } from "@composio/ao-core";
 import { runRepoScript } from "../lib/script-runner.js";
 import { detectOpenClawInstallation, validateToken } from "../lib/openclaw-probe.js";
@@ -37,6 +40,155 @@ function makeFailCounter(): { fail: (msg: string) => void; count: () => number }
       return n;
     },
   };
+}
+
+type CheckedPluginSlot = Extract<
+  PluginSlot,
+  "runtime" | "agent" | "workspace" | "tracker" | "scm" | "notifier"
+>;
+
+interface PluginReference {
+  slot: CheckedPluginSlot;
+  pluginName: string;
+  source: string;
+}
+
+interface NotifierTarget {
+  label: string;
+  pluginName: string;
+}
+
+async function loadPluginRegistry(config: OrchestratorConfig): Promise<PluginRegistry> {
+  const registry = createPluginRegistry();
+  await registry.loadFromConfig(config, importPluginModuleFromSource);
+  return registry;
+}
+
+function addPluginReference(
+  refs: PluginReference[],
+  slot: CheckedPluginSlot,
+  pluginName: string | undefined,
+  source: string,
+): void {
+  if (!pluginName) return;
+  refs.push({ slot, pluginName, source });
+}
+
+function resolveNotifierTarget(config: OrchestratorConfig, ref: string): NotifierTarget {
+  const configured = config.notifiers?.[ref];
+  if (configured?.plugin) {
+    return { label: ref, pluginName: configured.plugin };
+  }
+  return { label: ref, pluginName: ref };
+}
+
+function collectPluginReferences(config: OrchestratorConfig): PluginReference[] {
+  const refs: PluginReference[] = [];
+
+  addPluginReference(refs, "runtime", config.defaults.runtime, "defaults.runtime");
+  addPluginReference(refs, "agent", config.defaults.agent, "defaults.agent");
+  addPluginReference(refs, "workspace", config.defaults.workspace, "defaults.workspace");
+  addPluginReference(refs, "agent", config.defaults.orchestrator?.agent, "defaults.orchestrator.agent");
+  addPluginReference(refs, "agent", config.defaults.worker?.agent, "defaults.worker.agent");
+
+  for (const notifierName of config.defaults.notifiers ?? []) {
+    const target = resolveNotifierTarget(config, notifierName);
+    addPluginReference(
+      refs,
+      "notifier",
+      target.pluginName,
+      `defaults.notifiers: ${target.label} (plugin: ${target.pluginName})`,
+    );
+  }
+
+  for (const [priority, notifierNames] of Object.entries(config.notificationRouting ?? {})) {
+    for (const notifierName of notifierNames) {
+      const target = resolveNotifierTarget(config, notifierName);
+      addPluginReference(
+        refs,
+        "notifier",
+        target.pluginName,
+        `notificationRouting.${priority}: ${target.label} (plugin: ${target.pluginName})`,
+      );
+    }
+  }
+
+  for (const [name, notifierConfig] of Object.entries(config.notifiers ?? {})) {
+    addPluginReference(
+      refs,
+      "notifier",
+      notifierConfig.plugin,
+      `notifiers.${name} (plugin: ${notifierConfig.plugin})`,
+    );
+  }
+
+  for (const [projectId, project] of Object.entries(config.projects)) {
+    addPluginReference(refs, "runtime", project.runtime, `projects.${projectId}.runtime`);
+    addPluginReference(refs, "agent", project.agent, `projects.${projectId}.agent`);
+    addPluginReference(refs, "workspace", project.workspace, `projects.${projectId}.workspace`);
+    addPluginReference(
+      refs,
+      "agent",
+      project.orchestrator?.agent,
+      `projects.${projectId}.orchestrator.agent`,
+    );
+    addPluginReference(refs, "agent", project.worker?.agent, `projects.${projectId}.worker.agent`);
+    addPluginReference(
+      refs,
+      "tracker",
+      project.tracker?.plugin,
+      `projects.${projectId}.tracker.plugin`,
+    );
+    addPluginReference(refs, "scm", project.scm?.plugin, `projects.${projectId}.scm.plugin`);
+  }
+
+  return refs;
+}
+
+async function checkPluginResolution(
+  config: OrchestratorConfig,
+  fail: (msg: string) => void,
+): Promise<PluginRegistry> {
+  console.log("");
+  console.log("Plugin resolution:");
+
+  const registry = await loadPluginRegistry(config);
+  const loadedBySlot = new Map<CheckedPluginSlot, Set<string>>();
+  const slots: CheckedPluginSlot[] = [
+    "runtime",
+    "agent",
+    "workspace",
+    "tracker",
+    "scm",
+    "notifier",
+  ];
+
+  for (const slot of slots) {
+    loadedBySlot.set(
+      slot,
+      new Set(registry.list(slot).map((manifest) => manifest.name)),
+    );
+  }
+
+  const references = collectPluginReferences(config);
+  if (references.length === 0) {
+    warn("No plugin references found in config.");
+    return registry;
+  }
+
+  for (const ref of references) {
+    const loaded = loadedBySlot.get(ref.slot);
+    if (loaded?.has(ref.pluginName)) {
+      pass(`${ref.source} -> ${ref.slot} plugin "${ref.pluginName}"`);
+    } else {
+      fail(
+        `${ref.source} references ${ref.slot} plugin "${ref.pluginName}", but it could not be loaded. ` +
+          `Fix: install the plugin or correct the config value.`,
+      );
+    }
+  }
+
+  return registry;
 }
 
 // ---------------------------------------------------------------------------
@@ -183,29 +335,35 @@ async function checkNotifierConnectivity(
 
 async function sendTestNotifications(
   config: OrchestratorConfig,
+  registry: PluginRegistry,
   fail: (msg: string) => void,
 ): Promise<void> {
-  const { createPluginRegistry } = await import("@composio/ao-core");
-  const registry = createPluginRegistry();
-  await registry.loadFromConfig(config, importPluginModuleFromSource);
-
   const activeNotifierNames = config.defaults?.notifiers ?? [];
-  const configuredNotifiers = Object.keys(config.notifiers ?? {});
+  const configuredNotifiers = Object.entries(config.notifiers ?? {});
+  const targets = new Map<string, NotifierTarget>();
 
-  // Combine both lists (defaults + configured) and deduplicate
-  const allNames = [...new Set([...activeNotifierNames, ...configuredNotifiers])];
+  for (const [name, notifierConfig] of configuredNotifiers) {
+    targets.set(notifierConfig.plugin, { label: name, pluginName: notifierConfig.plugin });
+  }
 
-  if (allNames.length === 0) {
+  for (const name of activeNotifierNames) {
+    const target = resolveNotifierTarget(config, name);
+    if (!targets.has(target.pluginName)) {
+      targets.set(target.pluginName, target);
+    }
+  }
+
+  if (targets.size === 0) {
     warn("No notifiers to test. Fix: configure notifiers in your agent-orchestrator.yaml");
     return;
   }
 
-  console.log(`\nSending test notification to ${allNames.length} notifier(s)...\n`);
+  console.log(`\nSending test notification to ${targets.size} notifier(s)...\n`);
 
-  for (const name of allNames) {
-    const notifier = registry.get<Notifier>("notifier", name);
+  for (const target of targets.values()) {
+    const notifier = registry.get<Notifier>("notifier", target.pluginName);
     if (!notifier) {
-      warn(`${name}: plugin not loaded (may not be installed)`);
+      warn(`${target.label}: plugin "${target.pluginName}" not loaded (may not be installed)`);
       continue;
     }
 
@@ -222,10 +380,10 @@ async function sendTestNotifications(
       };
 
       await notifier.notify(testEvent);
-      pass(`${name}: test notification sent`);
+      pass(`${target.label}: test notification sent`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      fail(`${name}: ${message}`);
+      fail(`${target.label}: ${message}`);
     }
   }
 }
@@ -261,18 +419,20 @@ export function registerDoctor(program: Command): void {
       const configPath = findConfigFile();
       if (configPath) {
         let config: ReturnType<typeof loadConfig> | undefined;
+        let registry: PluginRegistry | undefined;
         try {
           config = loadConfig(configPath);
+          registry = await checkPluginResolution(config, fail);
           await checkNotifierConnectivity(config, fail);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          warn(`Notifier connectivity check failed: ${message}`);
+          fail(`Config-aware doctor checks failed: ${message}`);
         }
 
         // 3. Send test notifications if requested (separate catch for accurate errors)
-        if (opts.testNotify && config) {
+        if (opts.testNotify && config && registry) {
           try {
-            await sendTestNotifications(config, fail);
+            await sendTestNotifications(config, registry, fail);
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             fail(`Sending test notifications failed: ${message}`);

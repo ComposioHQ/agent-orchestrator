@@ -111,6 +111,23 @@ export {
 } from "./scm-webhook-utils.js";
 export { asValidOpenCodeSessionId } from "./opencode-session-id.js";
 export { normalizeOrchestratorSessionStrategy } from "./orchestrator-session-strategy.js";
+
+// Activity log — JSONL activity tracking for agents without native JSONL
+export {
+  appendActivityEntry,
+  readLastActivityEntry,
+  checkActivityLogState,
+  getActivityFallbackState,
+  classifyTerminalActivity,
+  recordTerminalActivity,
+} from "./activity-log.js";
+
+// Agent workspace hooks — shared PATH-wrapper setup for non-Claude agents
+export {
+  setupPathWrapperWorkspace,
+  buildAgentPath,
+  PREFERRED_GH_PATH,
+} from "./agent-workspace-hooks.js";
 export type { NormalizedOrchestratorSessionStrategy } from "./orchestrator-session-strategy.js";
 
 export {

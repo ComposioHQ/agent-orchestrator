@@ -16,6 +16,7 @@ const {
   mockOpen,
   mockCreateReadStream,
   mockHomedir,
+  mockReadLastJsonlEntry,
 } = vi.hoisted(() => ({
   mockExecFileAsync: vi.fn(),
   mockWriteFile: vi.fn().mockResolvedValue(undefined),
@@ -28,6 +29,7 @@ const {
   mockOpen: vi.fn(),
   mockCreateReadStream: vi.fn(),
   mockHomedir: vi.fn(() => "/mock/home"),
+  mockReadLastJsonlEntry: vi.fn(),
 }));
 
 vi.mock("node:child_process", () => {
@@ -60,6 +62,14 @@ vi.mock("node:fs", () => ({
 vi.mock("node:os", () => ({
   homedir: mockHomedir,
 }));
+
+vi.mock("@composio/ao-core", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...actual,
+    readLastJsonlEntry: mockReadLastJsonlEntry,
+  };
+});
 
 import { Readable } from "node:stream";
 import { create, manifest, default as defaultExport, resolveCodexBinary, _resetSessionFileCache } from "./index.js";
@@ -649,8 +659,12 @@ describe("getActivityState", () => {
     const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
-    // mtime = now (just modified)
     mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
+    // Mock readLastJsonlEntry to return a recent entry
+    mockReadLastJsonlEntry.mockResolvedValue({
+      lastType: "tool_call",
+      modifiedAt: new Date(),
+    });
 
     const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
     const result = await agent.getActivityState(session);
@@ -663,14 +677,66 @@ describe("getActivityState", () => {
     const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
     mockReaddir.mockResolvedValue(["sess.jsonl"]);
     setupMockOpen(content);
-    // mtime = 10 minutes ago (past the 5-minute threshold)
     const staleTime = Date.now() - 600_000;
     mockStat.mockResolvedValue({ mtimeMs: staleTime, mtime: new Date(staleTime) });
+    // Mock readLastJsonlEntry to return a stale entry
+    mockReadLastJsonlEntry.mockResolvedValue({
+      lastType: "assistant_message",
+      modifiedAt: new Date(staleTime),
+    });
 
     const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
     const result = await agent.getActivityState(session);
     expect(result?.state).toBe("idle");
     expect(result?.timestamp).toBeInstanceOf(Date);
+  });
+
+  it("returns waiting_input for approval_request entry type", async () => {
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
+    mockReadLastJsonlEntry.mockResolvedValue({
+      lastType: "approval_request",
+      modifiedAt: new Date(),
+    });
+
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    const result = await agent.getActivityState(session);
+    expect(result?.state).toBe("waiting_input");
+  });
+
+  it("returns blocked for error entry type", async () => {
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
+    mockReadLastJsonlEntry.mockResolvedValue({
+      lastType: "error",
+      modifiedAt: new Date(),
+    });
+
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    const result = await agent.getActivityState(session);
+    expect(result?.state).toBe("blocked");
+  });
+
+  it("returns ready for assistant_message entry type", async () => {
+    mockTmuxWithProcess("codex");
+    const content = '{"type":"session_meta","cwd":"/workspace/test"}\n';
+    mockReaddir.mockResolvedValue(["sess.jsonl"]);
+    setupMockOpen(content);
+    mockStat.mockResolvedValue({ mtimeMs: Date.now(), mtime: new Date() });
+    mockReadLastJsonlEntry.mockResolvedValue({
+      lastType: "assistant_message",
+      modifiedAt: new Date(),
+    });
+
+    const session = makeSession({ runtimeHandle: makeTmuxHandle(), workspacePath: "/workspace/test" });
+    const result = await agent.getActivityState(session);
+    expect(result?.state).toBe("ready");
   });
 
   it("returns exited when process handle has dead PID", async () => {
@@ -1394,7 +1460,7 @@ describe("setupWorkspaceHooks", () => {
     // Second call for AGENTS.md — file doesn't exist
     mockReadFile.mockImplementation((path: string) => {
       if (typeof path === "string" && path.endsWith(".ao-version")) {
-        return Promise.resolve("0.1.1");
+        return Promise.resolve("0.2.0");
       }
       // AGENTS.md read attempt
       return Promise.reject(new Error("ENOENT"));
@@ -1405,19 +1471,13 @@ describe("setupWorkspaceHooks", () => {
       sessionId: "sess-1",
     });
 
-    // Should still write the metadata helper (always written)
-    const helperWriteCall = mockWriteFile.mock.calls.find(
+    // Should NOT write any wrappers when version matches (helper, gh, git all skipped)
+    const wrapperWrites = mockWriteFile.mock.calls.filter(
       (call: [string, string, object]) =>
-        typeof call[0] === "string" && call[0].includes("ao-metadata-helper.sh.tmp."),
+        typeof call[0] === "string" &&
+        (call[0].includes("ao-metadata-helper.sh.tmp.") || call[0].includes("/gh.tmp.") || call[0].includes("/git.tmp.")),
     );
-    expect(helperWriteCall).toBeDefined();
-
-    // But should NOT write gh/git wrappers (version matches)
-    const ghWriteCall = mockWriteFile.mock.calls.find(
-      (call: [string, string, object]) =>
-        typeof call[0] === "string" && call[0].includes("/gh.tmp."),
-    );
-    expect(ghWriteCall).toBeUndefined();
+    expect(wrapperWrites).toHaveLength(0);
   });
 
   it("writes version marker after installing wrappers", async () => {
@@ -1434,7 +1494,7 @@ describe("setupWorkspaceHooks", () => {
         typeof call[0] === "string" && call[0].includes(".ao-version.tmp."),
     );
     expect(versionWriteCall).toBeDefined();
-    expect(versionWriteCall![1]).toBe("0.1.1");
+    expect(versionWriteCall![1]).toBe("0.2.0");
 
     const versionRenameCall = mockRename.mock.calls.find(
       (call: string[]) => typeof call[1] === "string" && call[1].endsWith(".ao-version"),
@@ -1442,15 +1502,11 @@ describe("setupWorkspaceHooks", () => {
     expect(versionRenameCall).toBeDefined();
   });
 
-  it("appends ao section to AGENTS.md when not present", async () => {
+  it("writes ao session context to .ao/AGENTS.md", async () => {
     // Version marker matches (skip wrapper install)
-    // AGENTS.md exists without ao section
     mockReadFile.mockImplementation((path: string) => {
       if (typeof path === "string" && path.endsWith(".ao-version")) {
-        return Promise.resolve("0.1.1");
-      }
-      if (typeof path === "string" && path.endsWith("AGENTS.md")) {
-        return Promise.resolve("# Existing Content\n\nSome stuff here.\n");
+        return Promise.resolve("0.2.0");
       }
       return Promise.reject(new Error("ENOENT"));
     });
@@ -1461,29 +1517,7 @@ describe("setupWorkspaceHooks", () => {
     });
 
     const agentsMdCall = mockWriteFile.mock.calls.find(
-      (call: string[]) => typeof call[0] === "string" && call[0].endsWith("AGENTS.md"),
-    );
-    expect(agentsMdCall).toBeDefined();
-    expect(agentsMdCall![1]).toContain("Agent Orchestrator (ao) Session");
-    expect(agentsMdCall![1]).toContain("# Existing Content");
-  });
-
-  it("creates AGENTS.md if it does not exist", async () => {
-    // Version marker matches, AGENTS.md doesn't exist
-    mockReadFile.mockImplementation((path: string) => {
-      if (typeof path === "string" && path.endsWith(".ao-version")) {
-        return Promise.resolve("0.1.1");
-      }
-      return Promise.reject(new Error("ENOENT"));
-    });
-
-    await agent.setupWorkspaceHooks!("/workspace/test", {
-      dataDir: "/data",
-      sessionId: "sess-1",
-    });
-
-    const agentsMdCall = mockWriteFile.mock.calls.find(
-      (call: string[]) => typeof call[0] === "string" && call[0].endsWith("AGENTS.md"),
+      (call: string[]) => typeof call[0] === "string" && call[0].includes(".ao/AGENTS.md"),
     );
     expect(agentsMdCall).toBeDefined();
     expect(agentsMdCall![1]).toContain("Agent Orchestrator (ao) Session");
@@ -1516,13 +1550,10 @@ describe("setupWorkspaceHooks", () => {
     }
   });
 
-  it("does not duplicate ao section in AGENTS.md if already present", async () => {
+  it("writes .ao/AGENTS.md without modifying repo-tracked AGENTS.md", async () => {
     mockReadFile.mockImplementation((path: string) => {
       if (typeof path === "string" && path.endsWith(".ao-version")) {
-        return Promise.resolve("0.1.1");
-      }
-      if (typeof path === "string" && path.endsWith("AGENTS.md")) {
-        return Promise.resolve("# Existing\n\n## Agent Orchestrator (ao) Session\n\nAlready here.\n");
+        return Promise.resolve("0.2.0");
       }
       return Promise.reject(new Error("ENOENT"));
     });
@@ -1532,11 +1563,12 @@ describe("setupWorkspaceHooks", () => {
       sessionId: "sess-1",
     });
 
-    const agentsMdCall = mockWriteFile.mock.calls.find(
+    // Should write to .ao/AGENTS.md, NOT to workspace root AGENTS.md
+    const allWrites = mockWriteFile.mock.calls.filter(
       (call: string[]) => typeof call[0] === "string" && call[0].endsWith("AGENTS.md"),
     );
-    // Should NOT write AGENTS.md since the section already exists
-    expect(agentsMdCall).toBeUndefined();
+    expect(allWrites).toHaveLength(1);
+    expect(allWrites[0]![0]).toContain(".ao/AGENTS.md");
   });
 });
 

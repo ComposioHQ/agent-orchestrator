@@ -15,7 +15,7 @@ import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 interface DirectTerminalProps {
   sessionId: string;
   startFullscreen?: boolean;
-  /** Visual variant. "orchestrator" uses violet accent; "agent" (default) uses blue. */
+  /** Visual variant. Orchestrator keeps the same design-system blue accent as the rest of the app. */
   variant?: "agent" | "orchestrator";
   /** CSS height for the terminal container in normal (non-fullscreen) mode.
    *  Defaults to "max(440px, calc(100vh - 440px))". */
@@ -78,11 +78,7 @@ export function buildTerminalThemes(variant: TerminalVariant): { dark: ITheme; l
     selDark: "rgba(91, 126, 248, 0.30)",
     selLight: "rgba(91, 126, 248, 0.25)",
   };
-  const orchAccent = {
-    cursor: "#a371f7",
-    selDark: "rgba(163, 113, 247, 0.25)",
-    selLight: "rgba(130, 80, 223, 0.20)",
-  };
+  const orchAccent = agentAccent;
   const accent = variant === "orchestrator" ? orchAccent : agentAccent;
 
   const dark: ITheme = {
@@ -682,8 +678,7 @@ export function DirectTerminal({
     };
   }, [fullscreen]);
 
-  const accentColor =
-    variant === "orchestrator" ? "var(--color-accent-violet)" : "var(--color-accent)";
+  const accentColor = "var(--color-accent)";
 
   const statusDotClass =
     status === "connected"

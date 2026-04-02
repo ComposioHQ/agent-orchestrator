@@ -38,7 +38,7 @@ export function PRStatus({ pr }: PRStatusProps) {
 
       {/* Merged badge */}
       {pr.state === "merged" && (
-        <span className="inline-flex items-center rounded-full bg-[rgba(163,113,247,0.1)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-accent-violet)]">
+        <span className="inline-flex items-center rounded-full bg-[var(--color-chip-bg)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-text-secondary)]">
           merged
         </span>
       )}
