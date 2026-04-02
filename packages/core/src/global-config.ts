@@ -39,7 +39,7 @@ import { atomicWriteFileSync } from "./atomic-write.js";
 // =============================================================================
 
 /** Identity fields owned by the global registry — never overwritten by shadow. */
-const IDENTITY_FIELDS = new Set(["name", "path"]);
+const IDENTITY_FIELDS = new Set(["name", "path", "sessionPrefix"]);
 
 /** Internal fields prefixed with underscore (e.g. _shadowSyncedAt). */
 const INTERNAL_FIELD_PREFIX = "_";
@@ -302,7 +302,7 @@ export function loadLocalProjectConfig(projectPath: string): LocalProjectConfig 
  * Called by `ao start` after validating local config.
  *
  * Rules:
- *   - Identity fields (name, path) are never overwritten
+ *   - Identity fields (name, path, sessionPrefix) are never overwritten
  *   - Fields starting with `_` (internal) are excluded
  *   - Fields matching *Token/*Key/*Secret/*Password are excluded (warn)
  *   - All other fields from localConfig are written verbatim (passthrough)
@@ -340,6 +340,9 @@ export function syncProjectShadow(
   globalConfig.projects[projectId] = {
     ...(existing?.name !== null && existing?.name !== undefined ? { name: existing.name } : {}),
     path: existing?.path ?? "",
+    ...(typeof existing?.sessionPrefix === "string"
+      ? { sessionPrefix: existing.sessionPrefix }
+      : {}),
     ...shadowFields,
     _shadowSyncedAt: Math.floor(Date.now() / 1000),
   };
