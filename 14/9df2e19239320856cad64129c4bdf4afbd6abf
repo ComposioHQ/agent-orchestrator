@@ -1,0 +1,27 @@
+packages/web/src/lib/project-page-data.ts
+  23c5d64b04ae6f61 1,12,18,26,45,49,53-61,63,69-74,79,84,89-91,105,111
+packages/web/src/app/projects/[projectId]/sessions/[sessionId]/page.tsx
+  23c5d64b04ae6f61 21
+packages/web/src/app/sessions/[id]/page.tsx
+  23c5d64b04ae6f61 19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "149df2e19239320856cad64129c4bdf4afbd6abf",
+  "prompts": {
+    "23c5d64b04ae6f61": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d4c54-8466-7133-b061-5dd0271c0503",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 31,
+      "total_deletions": 19,
+      "accepted_lines": 31,
+      "overriden_lines": 0
+    }
+  }
+}
