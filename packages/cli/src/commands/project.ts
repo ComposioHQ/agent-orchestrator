@@ -65,7 +65,7 @@ export function registerProject_cmd(program: Command): void {
     .description("Register a project path in the portfolio")
     .option("-k, --key <key>", "Config project key (for multi-project configs)")
     .action((path: string, opts: { key?: string }) => {
-      const resolvedPath = resolve(path);
+      const resolvedPath = resolve(path.replace(/^~/, process.env["HOME"] || ""));
 
       if (!loadLocalProjectConfig(resolvedPath)) {
         console.error(chalk.red(`No agent-orchestrator.yaml found at ${resolvedPath}`));

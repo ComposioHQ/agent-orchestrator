@@ -88,7 +88,7 @@ export function registerDashboard(program: Command): void {
 
       if (opts.open !== false) {
         openAbort = new AbortController();
-        const openPath = opts.project ? `/projects/${opts.project}` : "/";
+        const openPath = opts.project ? `/?project=${encodeURIComponent(opts.project)}` : "/";
         void waitForPortAndOpen(port, `http://localhost:${port}${openPath}`, openAbort.signal);
       }
 
