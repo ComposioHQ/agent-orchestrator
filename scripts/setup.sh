@@ -173,24 +173,6 @@ cd packages/ao
 npm link
 cd "$REPO_ROOT"
 
-# ─── Verify ao is in PATH ────────────────────────────────────────────────────
-
-echo ""
-if [ "${NEEDS_SHELL_RELOAD:-}" = true ]; then
-  echo "[ok] 'ao' linked to $NPM_PREFIX/bin/ao"
-  echo ""
-  echo "  Your npm prefix was reconfigured. Reload your shell to use 'ao':"
-  echo "    source ~/.zshrc   # or: source ~/.bashrc"
-elif command -v ao &> /dev/null; then
-  echo "[ok] 'ao' command is available in PATH"
-else
-  NPM_BIN="$NPM_PREFIX/bin"
-  echo "WARNING: 'ao' is not in your PATH yet."
-  echo "  Add to your shell profile and restart:"
-  echo ""
-  echo "    export PATH=\"$NPM_BIN:\$PATH\""
-fi
-
 # ─── Done ─────────────────────────────────────────────────────────────────────
 
 echo ""
@@ -207,3 +189,10 @@ echo "  Want to add more projects later?"
 echo ""
 echo "    ao start ~/path/to/another-repo"
 echo ""
+
+# ─── Reload shell if npm prefix was reconfigured ────────────────────────────
+
+if [ "${NEEDS_SHELL_RELOAD:-}" = true ]; then
+  echo "Restarting shell to pick up new PATH..."
+  exec "$SHELL" -l
+fi
