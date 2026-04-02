@@ -43,6 +43,42 @@ async function tmux(...args: string[]): Promise<string> {
   return stdout.trimEnd();
 }
 
+async function sendCommand(
+  target: string,
+  command: string,
+  options: { clearInput: boolean },
+): Promise<void> {
+  if (options.clearInput) {
+    await tmux("send-keys", "-t", target, "C-u");
+  }
+
+  if (command.includes("\n") || command.length > 200) {
+    const bufferName = `ao-${randomUUID()}`;
+    const tmpPath = join(tmpdir(), `ao-send-${randomUUID()}.txt`);
+    writeFileSync(tmpPath, command, { encoding: "utf-8", mode: 0o600 });
+    try {
+      await tmux("load-buffer", "-b", bufferName, tmpPath);
+      await tmux("paste-buffer", "-b", bufferName, "-t", target, "-d");
+    } finally {
+      try {
+        unlinkSync(tmpPath);
+      } catch {
+        // ignore cleanup errors
+      }
+      try {
+        await tmux("delete-buffer", "-b", bufferName);
+      } catch {
+        // Buffer may already be deleted by -d flag — that's fine
+      }
+    }
+  } else {
+    await tmux("send-keys", "-t", target, "-l", command);
+  }
+
+  await sleep(SHELL_READY_DELAY_MS);
+  await tmux("send-keys", "-t", target, "Enter");
+}
+
 export function create(): Runtime {
   return {
     name: "tmux",
@@ -57,22 +93,9 @@ export function create(): Runtime {
         envArgs.push("-e", `${key}=${value}`);
       }
 
-      // Run the launch command as the session's initial command in a plain POSIX
-      // shell rather than the user's interactive shell. This avoids prompt/startup
-      // noise and zsh-specific parsing/globbing failures for long bootstrap commands
-      // (notably OpenCode).
-      await tmux(
-        "new-session",
-        "-d",
-        "-s",
-        sessionName,
-        "-c",
-        config.workspacePath,
-        ...envArgs,
-        "sh",
-        "-lc",
-        config.launchCommand,
-      );
+      await tmux("new-session", "-d", "-s", sessionName, "-c", config.workspacePath, ...envArgs);
+      await sleep(SHELL_READY_DELAY_MS);
+      await sendCommand(sessionName, config.launchCommand, { clearInput: false });
 
       return {
         id: sessionName,
@@ -93,42 +116,7 @@ export function create(): Runtime {
     },
 
     async sendMessage(handle: RuntimeHandle, message: string): Promise<void> {
-      // Clear any partial input
-      await tmux("send-keys", "-t", handle.id, "C-u");
-
-      // For long or multiline messages, use load-buffer + paste-buffer
-      // Use randomUUID to avoid temp file collisions on concurrent sends
-      if (message.includes("\n") || message.length > 200) {
-        const bufferName = `ao-${randomUUID()}`;
-        const tmpPath = join(tmpdir(), `ao-send-${randomUUID()}.txt`);
-        writeFileSync(tmpPath, message, { encoding: "utf-8", mode: 0o600 });
-        try {
-          await tmux("load-buffer", "-b", bufferName, tmpPath);
-          await tmux("paste-buffer", "-b", bufferName, "-t", handle.id, "-d");
-        } finally {
-          // Clean up temp file and tmux buffer (in case paste-buffer failed
-          // and the -d flag didn't delete it)
-          try {
-            unlinkSync(tmpPath);
-          } catch {
-            // ignore cleanup errors
-          }
-          try {
-            await tmux("delete-buffer", "-b", bufferName);
-          } catch {
-            // Buffer may already be deleted by -d flag — that's fine
-          }
-        }
-      } else {
-        // Use -l (literal) so text like "Enter" or "Space" isn't interpreted
-        // as tmux key names
-        await tmux("send-keys", "-t", handle.id, "-l", message);
-      }
-
-      // Small delay to let tmux process the pasted text before pressing Enter.
-      // Without this, Enter can arrive before the text is fully rendered.
-      await sleep(SHELL_READY_DELAY_MS);
-      await tmux("send-keys", "-t", handle.id, "Enter");
+      await sendCommand(handle.id, message, { clearInput: true });
     },
 
     async getOutput(handle: RuntimeHandle, lines = 50): Promise<string> {
