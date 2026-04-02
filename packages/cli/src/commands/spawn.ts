@@ -48,7 +48,6 @@ function buildConfigFromGlobalRegistry(projectId: string): OrchestratorConfig {
     projects: {
       [projectId]: {
         ...effectiveProject,
-        repo: (effectiveProject as Record<string, unknown>)["repo"] ?? "",
       },
     },
   };
