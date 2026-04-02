@@ -42,8 +42,8 @@ function parsePortfolioRegistered(value: unknown): PortfolioRegistered | null {
     return null;
   }
 
-  const projects = value.projects;
-  for (const project of projects) {
+  const projects: PortfolioRegistered["projects"] = [];
+  for (const project of value.projects) {
     if (!isRecord(project) || typeof project.path !== "string" || typeof project.addedAt !== "string") {
       return null;
     }
@@ -54,6 +54,14 @@ function parsePortfolioRegistered(value: unknown): PortfolioRegistered | null {
     ) {
       return null;
     }
+
+    projects.push({
+      path: project.path,
+      addedAt: project.addedAt,
+      ...(typeof project.configProjectKey === "string"
+        ? { configProjectKey: project.configProjectKey }
+        : {}),
+    });
   }
 
   return { version: 1, projects };

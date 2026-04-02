@@ -114,7 +114,7 @@ function SidebarContent({
   );
 
   const visibleProjects = useMemo(() => {
-    let filtered = orderedProjects;
+    let filtered = groupBy === "repo" && repoFilter === "all" ? orderedProjects : sortedProjects;
     if (groupBy === "repo" && repoFilter !== "all") {
       filtered = sortedProjects.filter((project) => project.id === repoFilter);
     }

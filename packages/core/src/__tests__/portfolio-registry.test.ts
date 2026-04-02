@@ -140,6 +140,28 @@ describe("portfolio-registry", () => {
     expect(loadRegistered()).toEqual({ version: 1, projects: [] });
   });
 
+  it("sanitizes registered project entries instead of returning raw parsed objects", () => {
+    mkdirSync(dirname(getRegisteredPath()), { recursive: true });
+    writeFileSync(
+      getRegisteredPath(),
+      JSON.stringify({
+        version: 1,
+        projects: [
+          {
+            path: "/tmp/demo",
+            addedAt: "2026-04-02T00:00:00.000Z",
+            extra: "ignore-me",
+          },
+        ],
+      }),
+    );
+
+    expect(loadRegistered()).toEqual({
+      version: 1,
+      projects: [{ path: "/tmp/demo", addedAt: "2026-04-02T00:00:00.000Z" }],
+    });
+  });
+
   it("falls back when preferences.json has an unexpected shape", () => {
     mkdirSync(dirname(getPreferencesPath()), { recursive: true });
     writeFileSync(

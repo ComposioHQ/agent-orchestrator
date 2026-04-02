@@ -164,4 +164,22 @@ describe("UnifiedSidebar workspace ordering", () => {
     expect(screen.getByTestId("workspace-row-alpha")).toHaveAttribute("data-draggable", "false");
     expect(screen.getByTestId("workspace-row-bravo")).toHaveAttribute("data-draggable", "false");
   });
+
+  it("shows alphabetized projects when grouped by status", () => {
+    render(
+      <UnifiedSidebar
+        projects={[
+          makeProject({ id: "bravo", name: "Bravo" }),
+          makeProject({ id: "alpha", name: "Alpha", activeCount: 1 }),
+          makeProject({ id: "charlie", name: "Charlie" }),
+        ]}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("Workspace filters"));
+    fireEvent.click(screen.getAllByRole("button", { name: /Repo/i })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Status" }));
+
+    expect(rowOrder()).toEqual(["alpha", "bravo", "charlie"]);
+  });
 });
