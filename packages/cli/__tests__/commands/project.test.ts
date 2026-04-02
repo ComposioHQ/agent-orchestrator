@@ -18,6 +18,7 @@ const {
   mockLoadLocalProjectConfig,
   mockSyncShadow,
   mockMatchProjectByCwd,
+  mockFindProjectByPath,
   mockLoadConfig,
   mockGenerateSessionPrefix,
   mockGenerateProjectId,
@@ -38,6 +39,7 @@ const {
   mockLoadLocalProjectConfig: vi.fn(),
   mockSyncShadow: vi.fn(),
   mockMatchProjectByCwd: vi.fn().mockReturnValue(null),
+  mockFindProjectByPath: vi.fn().mockReturnValue(null),
   mockLoadConfig: vi.fn(),
   mockGenerateSessionPrefix: vi.fn((s: string) => s.slice(0, 2)),
   mockGenerateProjectId: vi.fn((p: string) => p.split("/").pop() ?? p),
@@ -73,6 +75,7 @@ vi.mock("@composio/ao-core", async (importOriginal) => {
     loadLocalProjectConfig: mockLoadLocalProjectConfig,
     syncShadow: mockSyncShadow,
     matchProjectByCwd: mockMatchProjectByCwd,
+    findProjectByPath: mockFindProjectByPath,
     loadConfig: mockLoadConfig,
     generateSessionPrefix: mockGenerateSessionPrefix,
     generateProjectId: mockGenerateProjectId,
@@ -177,6 +180,7 @@ describe("ao project add", () => {
     mockDetectConfigMode.mockReturnValue("global-only");
     mockFindLocalConfigPath.mockReturnValue(null);
     mockMatchProjectByCwd.mockReturnValue(null);
+    mockFindProjectByPath.mockReturnValue(null);
     mockExpandHome.mockImplementation((p: string) => p);
     mockGenerateProjectId.mockImplementation((p: string) => p.split("/").pop() ?? p);
     mockGenerateSessionPrefix.mockImplementation((s: string) => s.slice(0, 2));
@@ -201,9 +205,10 @@ describe("ao project add", () => {
     expect(mockRegisterProject).toHaveBeenCalled();
   });
 
-  it("skips registration when already registered", async () => {
-    mockLoadGlobalConfig.mockReturnValue(makeGlobalConfig(["ma"]));
-    mockMatchProjectByCwd.mockReturnValue("ma");
+  it("skips registration when already registered (exact path match)", async () => {
+    const config = makeGlobalConfig(["ma"]);
+    mockLoadGlobalConfig.mockReturnValue(config);
+    mockFindProjectByPath.mockReturnValue({ id: "ma", entry: config.projects["ma"] });
     await runCommand(["project", "add", "/home/user/my-app"]);
     expect(mockRegisterProject).not.toHaveBeenCalled();
     expect(mockSaveGlobalConfig).not.toHaveBeenCalled();

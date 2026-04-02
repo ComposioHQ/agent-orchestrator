@@ -21,7 +21,6 @@ import {
   findLocalConfigPath,
   loadLocalProjectConfig,
   syncShadow,
-  matchProjectByCwd,
   findProjectByPath,
   loadConfig,
   generateSessionPrefix,
