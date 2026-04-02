@@ -25,14 +25,18 @@ export async function GET() {
  * Body: { issueId: string, projectId: string, action: "verify" | "fail", comment?: string }
  */
 export async function POST(req: NextRequest) {
+  const body = (await req.json().catch(() => null)) as {
+    issueId: string;
+    projectId: string;
+    action: "verify" | "fail";
+    comment?: string;
+  } | null;
+  if (!body) {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
   try {
-    const body = await req.json();
-    const { issueId, projectId, action, comment } = body as {
-      issueId: string;
-      projectId: string;
-      action: "verify" | "fail";
-      comment?: string;
-    };
+    const { issueId, projectId, action, comment } = body;
 
     if (!issueId || !projectId || !action) {
       return NextResponse.json(
@@ -42,10 +46,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (action !== "verify" && action !== "fail") {
-      return NextResponse.json(
-        { error: 'action must be "verify" or "fail"' },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: 'action must be "verify" or "fail"' }, { status: 400 });
     }
 
     const { config, registry } = await getServices();
