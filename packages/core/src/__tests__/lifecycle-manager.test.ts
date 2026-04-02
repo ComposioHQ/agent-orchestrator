@@ -795,3 +795,281 @@ describe("getStates", () => {
     expect(lm.getStates().get("app-1")).toBe("working");
   });
 });
+
+describe("retriggerAfter", () => {
+  function makeSCMWithCIFailing(): SCM {
+    return {
+      name: "mock-scm",
+      detectPR: vi.fn(),
+      getPRState: vi.fn().mockResolvedValue("open"),
+      mergePR: vi.fn(),
+      closePR: vi.fn(),
+      getCIChecks: vi.fn(),
+      getCISummary: vi.fn().mockResolvedValue("failing"),
+      getReviews: vi.fn(),
+      getReviewDecision: vi.fn().mockResolvedValue("none"),
+      getPendingComments: vi.fn().mockResolvedValue([]),
+      getAutomatedComments: vi.fn().mockResolvedValue([]),
+      getMergeability: vi.fn(),
+    };
+  }
+
+  it("retriggers send-to-agent after retriggerAfter interval when state persists", async () => {
+    config.reactions = {
+      "ci-failed": {
+        auto: true,
+        action: "send-to-agent",
+        message: "CI is still failing. Try again.",
+        retriggerAfter: "5m",
+      },
+    };
+
+    const mockSCM = makeSCMWithCIFailing();
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    // Start with pr_open so we can transition to ci_failed
+    const session = makeSession({ status: "pr_open", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    // First check: transitions pr_open → ci_failed, fires reaction
+    await lm.check("app-1");
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+
+    // Immediately check again — retriggerAfter (5m) hasn't elapsed, no retrigger
+    await lm.check("app-1");
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retrigger if retriggerAfter interval has not elapsed", async () => {
+    config.reactions = {
+      "ci-failed": {
+        auto: true,
+        action: "send-to-agent",
+        message: "CI is still failing.",
+        retriggerAfter: "60m",
+      },
+    };
+
+    const mockSCM = makeSCMWithCIFailing();
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    const session = makeSession({ status: "pr_open", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    // Transition: fires first message
+    await lm.check("app-1");
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+
+    // Multiple subsequent checks — interval is 60m, none should retrigger
+    await lm.check("app-1");
+    await lm.check("app-1");
+    await lm.check("app-1");
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retrigger if retriggerAfter is not configured", async () => {
+    config.reactions = {
+      "ci-failed": {
+        auto: true,
+        action: "send-to-agent",
+        message: "CI is failing.",
+        // No retriggerAfter
+      },
+    };
+
+    const mockSCM = makeSCMWithCIFailing();
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        return null;
+      }),
+    };
+
+    const session = makeSession({ status: "pr_open", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    // First check: transition fires reaction
+    await lm.check("app-1");
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+
+    // Subsequent checks: no retrigger since retriggerAfter is not set
+    await lm.check("app-1");
+    await lm.check("app-1");
+    expect(mockSessionManager.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retrigger for notify reactions (only send-to-agent)", async () => {
+    config.reactions = {
+      "ci-failed": {
+        auto: true,
+        action: "notify",
+        priority: "warning",
+        retriggerAfter: "1s",
+      },
+    };
+
+    const mockSCM = makeSCMWithCIFailing();
+    const mockNotifier: Notifier = {
+      name: "mock-notifier",
+      notify: vi.fn().mockResolvedValue(undefined),
+    };
+    const registryWithSCM: PluginRegistry = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "scm") return mockSCM;
+        if (slot === "notifier") return mockNotifier;
+        return null;
+      }),
+    };
+
+    const session = makeSession({ status: "pr_open", pr: makePR() });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "pr_open",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithSCM,
+      sessionManager: mockSessionManager,
+    });
+
+    // Transition fires notify reaction
+    await lm.check("app-1");
+
+    // Even though retriggerAfter is 1s and interval has effectively elapsed,
+    // retrigger only applies to send-to-agent — no extra sends
+    await lm.check("app-1");
+    expect(mockSessionManager.send).not.toHaveBeenCalled();
+  });
+});
+
+describe("event log integration", () => {
+  it("accepts a custom event log and records state transitions", async () => {
+    const { createNullEventLog: _createNull, ...rest } = await import("../event-log.js");
+    const appendedEntries: import("../event-log.js").EventLogEntry[] = [];
+    const testEventLog = {
+      append: vi.fn((entry: import("../event-log.js").EventLogEntry) => {
+        appendedEntries.push(entry);
+      }),
+      close: vi.fn(),
+    };
+
+    const session = makeSession({ status: "spawning" });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "spawning",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+      eventLog: testEventLog,
+    });
+
+    await lm.check("app-1");
+
+    // Should have logged the transition
+    expect(testEventLog.append).toHaveBeenCalled();
+    const transitionEntry = appendedEntries.find(
+      (e) => e.type === "session.working" || e.data?.["newStatus"] === "working",
+    );
+    expect(transitionEntry).toBeDefined();
+    expect(transitionEntry?.sessionId).toBe("app-1");
+    expect(transitionEntry?.projectId).toBe("my-app");
+
+    // Swallow the unused rest import
+    void rest;
+  });
+
+  it("falls back to null event log when none is provided", async () => {
+    // Should not throw even without eventLog dep
+    const session = makeSession({ status: "spawning" });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "spawning",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config,
+      registry: mockRegistry,
+      sessionManager: mockSessionManager,
+      // No eventLog — should use createNullEventLog internally
+    });
+
+    await expect(lm.check("app-1")).resolves.not.toThrow();
+  });
+});

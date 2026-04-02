@@ -59,6 +59,7 @@ const ReactionConfigSchema = z.object({
   escalateAfter: z.union([z.number(), z.string()]).optional(),
   threshold: z.string().optional(),
   includeSummary: z.boolean().optional(),
+  retriggerAfter: z.string().optional(),
 });
 
 const TrackerConfigSchema = z
@@ -350,6 +351,7 @@ function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
         "CI is failing on your PR. Run `gh pr checks` to see the failures, fix them, and push.",
       retries: 2,
       escalateAfter: 2,
+      retriggerAfter: "15m",
     },
     "changes-requested": {
       auto: true,
@@ -357,18 +359,21 @@ function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
       message:
         "There are review comments on your PR. Check with `gh pr view --comments` and `gh api` for inline comments. Address each one, push fixes, and reply.",
       escalateAfter: "30m",
+      retriggerAfter: "20m",
     },
     "bugbot-comments": {
       auto: true,
       action: "send-to-agent",
       message: "Automated review comments found on your PR. Fix the issues flagged by the bot.",
       escalateAfter: "30m",
+      retriggerAfter: "20m",
     },
     "merge-conflicts": {
       auto: true,
       action: "send-to-agent",
       message: "Your branch has merge conflicts. Rebase on the default branch and resolve them.",
       escalateAfter: "15m",
+      retriggerAfter: "10m",
     },
     "approved-and-green": {
       auto: false,
