@@ -1,0 +1,174 @@
+packages/web/src/components/ActivityFeedPage.tsx
+  23c5d64b04ae6f61 162,166-167,179-184,186,189-190,195,198-199,206-210,212-214
+packages/web/src/app/globals.css
+  23c5d64b04ae6f61 3361-3371
+packages/web/src/components/Dashboard.tsx
+  23c5d64b04ae6f61 427-428
+packages/web/src/app/page.tsx
+  23c5d64b04ae6f61 6,14,19-20
+packages/web/src/components/UnifiedSidebar.tsx
+  eb79a4f1df0ed108 131
+  23c5d64b04ae6f61 1004
+packages/web/src/components/BottomSheet.tsx
+  23c5d64b04ae6f61 4
+packages/web/src/app/api/projects/clone/route.ts
+  9652e8f66d275678 15-16,52
+packages/web/src/components/ActionItemRow.tsx
+  23c5d64b04ae6f61 4,128
+packages/web/src/components/__tests__/ProjectSessionPageClient.test.tsx
+  23c5d64b04ae6f61 1-70
+packages/web/src/lib/project-page-data.ts
+  acfa3ea5c574c3c1 2-11,13-17,19-25,27-44,46-48,50-52,62,64-68,75-78,80-83,85-88,92-104,106-110,112-117
+  23c5d64b04ae6f61 1,12,18,26,45,49,53-61,63,69-74,79,84,89-91,105,111
+packages/web/src/components/AddProjectModal.tsx
+  23c5d64b04ae6f61 59-93,97,109,111-113,115,119-129,135-144,158,175,187,189,192-193,230,497-502
+packages/web/src/app/api/projects/[id]/resources/route.ts
+  5dde8a415f306ae4 35-45,52-88,111,142,152-153
+packages/web/src/app/activity/page.tsx
+  23c5d64b04ae6f61 6,15,21-25
+packages/web/src/lib/portfolio-page-data.ts
+  23c5d64b04ae6f61 11-15,40,45,68,85
+packages/web/src/lib/project-registration.ts
+  5dde8a415f306ae4 8,18,21
+  d1937d38142f07ac 6,51-57
+packages/web/src/lib/path-security.ts
+  5dde8a415f306ae4 1-35
+packages/web/src/components/__tests__/ActivityFeedPage.test.tsx
+  23c5d64b04ae6f61 165-186
+packages/web/src/components/ProjectSessionPageClient.tsx
+  23c5d64b04ae6f61 3,56,59-60,93,95,97-102,109,129,134,137,142,145
+packages/web/src/app/api/browse-directory/route.ts
+  9652e8f66d275678 4,16
+  5dde8a415f306ae4 17-23,66
+packages/web/src/app/api/projects/[id]/route.ts
+  d7824f8dec3363d1 99-101
+  d1937d38142f07ac 5,59-67,74
+packages/web/src/components/PortfolioPage.tsx
+  23c5d64b04ae6f61 119
+packages/web/src/app/api/settings/preferences/route.ts
+  d1937d38142f07ac 2,22-24,28-32,34,40-41
+packages/web/src/lib/relative-time.ts
+  23c5d64b04ae6f61 1-27
+packages/web/src/components/__tests__/Dashboard.emptyState.test.tsx
+  23c5d64b04ae6f61 59,84-85,87-98
+packages/web/src/app/api/projects/[id]/favicon/route.ts
+  5dde8a415f306ae4 1,4,38-44,47-52
+packages/web/src/lib/local-project-config.ts
+  5dde8a415f306ae4 1-31
+packages/web/src/app/projects/[projectId]/page.tsx
+  acfa3ea5c574c3c1 6
+packages/web/src/app/settings/page.tsx
+  23c5d64b04ae6f61 9,59
+packages/web/src/lib/portfolio-services.ts
+  5dde8a415f306ae4 42-48,115,143
+packages/web/src/app/projects/[projectId]/sessions/[sessionId]/page.tsx
+  23c5d64b04ae6f61 3,21,24
+  acfa3ea5c574c3c1 4,13-16
+packages/web/package.json
+  5dde8a415f306ae4 47-48
+packages/web/src/app/api/projects/route.ts
+  9652e8f66d275678 99
+  5dde8a415f306ae4 20-21
+packages/web/src/app/sessions/[id]/page.tsx
+  23c5d64b04ae6f61 19
+packages/web/src/lib/default-location.ts
+  23c5d64b04ae6f61 1-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "95d2aca92b0f9616c072cecccc9950c61d55635a",
+  "prompts": {
+    "23c5d64b04ae6f61": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d4c54-8466-7133-b061-5dd0271c0503",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 331,
+      "overriden_lines": 0
+    },
+    "5dde8a415f306ae4": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d4a93-2ca8-7b20-a778-4bc5ef0d7b9e",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 161,
+      "overriden_lines": 0
+    },
+    "9652e8f66d275678": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d4987-0963-7933-b6eb-d477bf1ef241",
+        "model": "unknown"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 6,
+      "overriden_lines": 0
+    },
+    "acfa3ea5c574c3c1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d4d9f-48e6-76b0-83d9-da7ee10ed1ff",
+        "model": "unknown"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 94,
+      "overriden_lines": 0
+    },
+    "d1937d38142f07ac": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cbb89ab6-e0ab-4d0e-a326-edd106c202fb",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 33,
+      "overriden_lines": 0
+    },
+    "d7824f8dec3363d1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d488f-b186-7d91-83c8-e8283aafdff3",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 34,
+      "overriden_lines": 0
+    },
+    "eb79a4f1df0ed108": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d493f-b74c-7c62-b8f5-e49d26d9ed4f",
+        "model": "unknown"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 116,
+      "overriden_lines": 0
+    }
+  }
+}
