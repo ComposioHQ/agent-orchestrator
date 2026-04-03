@@ -641,6 +641,7 @@ describe("tracker-linear plugin", () => {
         id: "INT-123",
         title: "Fix login bug",
         state: "in_progress",
+        branchName: "feat/INT-123",
       });
     });
 
