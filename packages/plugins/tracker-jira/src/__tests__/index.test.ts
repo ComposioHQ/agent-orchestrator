@@ -61,6 +61,18 @@ function mockFetch204() {
   });
 }
 
+/** Mock the sprint resolution calls (findBoardId + getActiveSprint). */
+function mockSprintResolution(sprintName: string | null = "Sprint 8") {
+  // findBoardId
+  mockFetchJson({ values: [{ id: 1 }] });
+  // getActiveSprint
+  if (sprintName) {
+    mockFetchJson({ values: [{ name: sprintName }] });
+  } else {
+    mockFetchJson({ values: [] });
+  }
+}
+
 const sampleJiraIssue = {
   key: "TT-142",
   fields: {
@@ -95,7 +107,7 @@ describe("tracker-jira plugin", () => {
   let tracker: ReturnType<typeof create>;
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    fetchMock.mockReset();
     tracker = create(pluginConfig);
   });
 
@@ -160,6 +172,7 @@ describe("tracker-jira plugin", () => {
 
   describe("getIssue", () => {
     it("returns Issue with correct fields", async () => {
+      mockSprintResolution();
       mockFetchJson(sampleJiraIssue);
       const issue = await tracker.getIssue("TT-142", project);
       expect(issue).toEqual({
@@ -175,12 +188,14 @@ describe("tracker-jira plugin", () => {
     });
 
     it("maps Done status to closed", async () => {
+      mockSprintResolution();
       mockFetchJson(sampleJiraIssueDone);
       const issue = await tracker.getIssue("TT-142", project);
       expect(issue.state).toBe("closed");
     });
 
     it("maps In Progress status to in_progress", async () => {
+      mockSprintResolution();
       mockFetchJson({
         ...sampleJiraIssue,
         fields: { ...sampleJiraIssue.fields, status: { name: "In Progress" } },
@@ -190,6 +205,7 @@ describe("tracker-jira plugin", () => {
     });
 
     it("handles null description", async () => {
+      mockSprintResolution();
       mockFetchJson({
         ...sampleJiraIssue,
         fields: { ...sampleJiraIssue.fields, description: null },
@@ -199,6 +215,7 @@ describe("tracker-jira plugin", () => {
     });
 
     it("handles null assignee", async () => {
+      mockSprintResolution();
       mockFetchJson({
         ...sampleJiraIssue,
         fields: { ...sampleJiraIssue.fields, assignee: null },
@@ -208,6 +225,7 @@ describe("tracker-jira plugin", () => {
     });
 
     it("handles null priority", async () => {
+      mockSprintResolution();
       mockFetchJson({
         ...sampleJiraIssue,
         fields: { ...sampleJiraIssue.fields, priority: null },
@@ -217,6 +235,7 @@ describe("tracker-jira plugin", () => {
     });
 
     it("throws on 401", async () => {
+      mockSprintResolution();
       mockFetchError(401);
       await expect(tracker.getIssue("TT-142", project)).rejects.toThrow(
         "authentication failed",
@@ -224,6 +243,7 @@ describe("tracker-jira plugin", () => {
     });
 
     it("throws on 404", async () => {
+      mockSprintResolution();
       mockFetchError(404);
       await expect(tracker.getIssue("TT-999", project)).rejects.toThrow(
         "not found",
@@ -231,6 +251,7 @@ describe("tracker-jira plugin", () => {
     });
 
     it("throws on 429", async () => {
+      mockSprintResolution();
       mockFetchError(429);
       await expect(tracker.getIssue("TT-142", project)).rejects.toThrow(
         "rate limit",
@@ -256,7 +277,8 @@ describe("tracker-jira plugin", () => {
         ...sampleJiraIssue,
         fields: { ...sampleJiraIssue.fields, status: { name: "Cancelled" } },
       });
-      expect(await tracker.isCompleted("TT-142", project)).toBe(true);
+      const result = await tracker.isCompleted("TT-142", project);
+      expect(result).toBe(true);
     });
   });
 
@@ -288,7 +310,29 @@ describe("tracker-jira plugin", () => {
   // ---- branchName --------------------------------------------------------
 
   describe("branchName", () => {
-    it("generates feat/{key} format", () => {
+    it("uses prefix without sprint when sprint not resolved", () => {
+      expect(tracker.branchName("TT-42", project)).toBe("feat/TT-42");
+    });
+
+    it("includes sprint number after sprint is resolved", async () => {
+      mockSprintResolution("Sprint 8");
+      mockFetchJson(sampleJiraIssue);
+      await tracker.getIssue("TT-42", project); // triggers sprint resolution
+      expect(tracker.branchName("TT-42", project)).toBe("feat/Sprint8/TT-42");
+    });
+
+    it("uses custom branchPrefix", async () => {
+      const customTracker = create({ ...pluginConfig, branchPrefix: "Agent" });
+      mockSprintResolution("Sprint 12");
+      mockFetchJson(sampleJiraIssue);
+      await customTracker.getIssue("TT-42", project);
+      expect(customTracker.branchName("TT-42", project)).toBe("Agent/Sprint12/TT-42");
+    });
+
+    it("falls back to prefix-only when no active sprint", async () => {
+      mockSprintResolution(null);
+      mockFetchJson(sampleJiraIssue);
+      await tracker.getIssue("TT-42", project);
       expect(tracker.branchName("TT-42", project)).toBe("feat/TT-42");
     });
   });
@@ -297,6 +341,7 @@ describe("tracker-jira plugin", () => {
 
   describe("generatePrompt", () => {
     it("includes title, URL, labels, and description", async () => {
+      mockSprintResolution();
       mockFetchJson(sampleJiraIssue);
       const prompt = await tracker.generatePrompt("TT-142", project);
       expect(prompt).toContain("Fix login SSO bug");
@@ -307,6 +352,7 @@ describe("tracker-jira plugin", () => {
     });
 
     it("omits labels when none", async () => {
+      mockSprintResolution();
       mockFetchJson({
         ...sampleJiraIssue,
         fields: { ...sampleJiraIssue.fields, labels: [] },
@@ -316,6 +362,7 @@ describe("tracker-jira plugin", () => {
     });
 
     it("omits description when null", async () => {
+      mockSprintResolution();
       mockFetchJson({
         ...sampleJiraIssue,
         fields: { ...sampleJiraIssue.fields, description: null },
@@ -380,14 +427,12 @@ describe("tracker-jira plugin", () => {
 
   describe("updateIssue", () => {
     it("transitions issue when state matches statusMap", async () => {
-      // getTransitions
       mockFetchJson({
         transitions: [
           { id: "21", name: "In Progress" },
           { id: "31", name: "Done" },
         ],
       });
-      // transitionIssue
       mockFetch204();
       await tracker.updateIssue!("TT-142", { state: "in_progress" }, project);
       expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -403,9 +448,7 @@ describe("tracker-jira plugin", () => {
     });
 
     it("adds labels by merging with existing", async () => {
-      // getIssue for current labels
       mockFetchJson(sampleJiraIssue);
-      // updateIssue
       mockFetch204();
       await tracker.updateIssue!("TT-142", { labels: ["new-label"] }, project);
       const body = JSON.parse(fetchMock.mock.calls[1][1].body as string);
@@ -415,9 +458,7 @@ describe("tracker-jira plugin", () => {
     });
 
     it("removes labels", async () => {
-      // getIssue for current labels
       mockFetchJson(sampleJiraIssue);
-      // updateIssue
       mockFetch204();
       await tracker.updateIssue!("TT-142", { removeLabels: ["bug"] }, project);
       const body = JSON.parse(fetchMock.mock.calls[1][1].body as string);
@@ -426,7 +467,6 @@ describe("tracker-jira plugin", () => {
 
     it("throws when transition not found", async () => {
       mockFetchJson({ transitions: [{ id: "21", name: "In Progress" }] });
-      // statusMap maps "closed" → "Done", which won't be found
       await expect(
         tracker.updateIssue!("TT-142", { state: "closed" }, project),
       ).rejects.toThrow('Transition "Done" not found');
@@ -437,9 +477,9 @@ describe("tracker-jira plugin", () => {
 
   describe("createIssue", () => {
     it("creates an issue and returns full details", async () => {
-      // create call
       mockFetchJson({ id: "10001", key: "TT-200" });
-      // getIssue to fetch full details
+      // getIssue triggers sprint resolution
+      mockSprintResolution();
       mockFetchJson({
         ...sampleJiraIssue,
         key: "TT-200",
@@ -456,6 +496,7 @@ describe("tracker-jira plugin", () => {
 
     it("sends project key in fields", async () => {
       mockFetchJson({ id: "10001", key: "TT-201" });
+      mockSprintResolution();
       mockFetchJson({ ...sampleJiraIssue, key: "TT-201" });
 
       await tracker.createIssue!(
@@ -468,6 +509,7 @@ describe("tracker-jira plugin", () => {
 
     it("includes labels when provided", async () => {
       mockFetchJson({ id: "10001", key: "TT-202" });
+      mockSprintResolution();
       mockFetchJson({ ...sampleJiraIssue, key: "TT-202" });
 
       await tracker.createIssue!(

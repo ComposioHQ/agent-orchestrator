@@ -264,6 +264,42 @@ export class JiraClient {
     });
   }
 
+  /** Get the active sprint name for a board. Uses the Agile REST API. */
+  async getActiveSprint(boardId: number): Promise<string | null> {
+    try {
+      const url = `${this.baseUrl}/rest/agile/1.0/board/${boardId}/sprint?state=active`;
+      const res = await fetch(url, {
+        headers: {
+          Authorization: this.authHeader,
+          Accept: "application/json",
+        },
+      });
+      if (!res.ok) return null;
+      const data = (await res.json()) as { values?: Array<{ name: string }> };
+      return data.values?.[0]?.name ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Find the first board for a project. */
+  async findBoardId(projectKey: string): Promise<number | null> {
+    try {
+      const url = `${this.baseUrl}/rest/agile/1.0/board?projectKeyOrId=${encodeURIComponent(projectKey)}&maxResults=1`;
+      const res = await fetch(url, {
+        headers: {
+          Authorization: this.authHeader,
+          Accept: "application/json",
+        },
+      });
+      if (!res.ok) return null;
+      const data = (await res.json()) as { values?: Array<{ id: number }> };
+      return data.values?.[0]?.id ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   /** Update issue fields. */
   async updateIssue(
     issueKey: string,

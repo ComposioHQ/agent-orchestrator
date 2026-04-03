@@ -32,6 +32,7 @@ interface JiraPluginConfig {
   projectKey?: string;
   jql?: string;
   statusMap?: Record<string, string>;
+  branchPrefix?: string;
 }
 
 function resolveConfig(pluginConfig?: Record<string, unknown>): {
@@ -39,6 +40,7 @@ function resolveConfig(pluginConfig?: Record<string, unknown>): {
   projectKey: string;
   jql: string | undefined;
   statusMap: Record<string, string>;
+  branchPrefix: string;
 } {
   const cfg = (pluginConfig ?? {}) as JiraPluginConfig;
 
@@ -57,6 +59,7 @@ function resolveConfig(pluginConfig?: Record<string, unknown>): {
     projectKey,
     jql: cfg.jql,
     statusMap: cfg.statusMap ?? {},
+    branchPrefix: cfg.branchPrefix ?? "feat",
   };
 }
 
@@ -101,13 +104,44 @@ function mapPriority(name?: string | null): number | undefined {
 // ---------------------------------------------------------------------------
 
 export function create(config?: Record<string, unknown>): Tracker {
-  const { client, projectKey, jql, statusMap } = resolveConfig(config);
+  const { client, projectKey, jql, statusMap, branchPrefix } = resolveConfig(config);
   const baseUrl = (config?.baseUrl as string | undefined) ?? process.env.JIRA_BASE_URL ?? "";
+
+  // Cache the active sprint name (resolved lazily on first use)
+  let activeSprintName: string | null | undefined;
+
+  async function resolveActiveSprint(): Promise<string | null> {
+    if (activeSprintName !== undefined) return activeSprintName;
+    if (!projectKey) {
+      activeSprintName = null;
+      return null;
+    }
+    try {
+      const boardId = await client.findBoardId(projectKey);
+      if (boardId) {
+        const sprint = await client.getActiveSprint(boardId);
+        activeSprintName = sprint;
+        return sprint;
+      }
+    } catch {
+      // Non-fatal
+    }
+    activeSprintName = null;
+    return null;
+  }
+
+  function extractSprintNumber(sprintName: string): string {
+    // Match patterns like "Sprint 8", "Sprint8", "Sprint-8", "S8"
+    const match = /sprint[\s\-_]*(\d+)/i.exec(sprintName);
+    return match ? match[1] : sprintName;
+  }
 
   const tracker: Tracker = {
     name: "jira",
 
     async getIssue(identifier: string, _project: ProjectConfig): Promise<Issue> {
+      // Eagerly resolve active sprint (cached after first call)
+      await resolveActiveSprint();
       const issue = await client.getIssue(identifier);
       return mapIssue(issue, baseUrl);
     },
@@ -128,7 +162,12 @@ export function create(config?: Record<string, unknown>): Tracker {
     },
 
     branchName(identifier: string, _project: ProjectConfig): string {
-      return `feat/${identifier}`;
+      // Sprint is resolved async; use cached value if available, otherwise use prefix as-is
+      if (activeSprintName) {
+        const sprintNum = extractSprintNumber(activeSprintName);
+        return `${branchPrefix}/Sprint${sprintNum}/${identifier}`;
+      }
+      return `${branchPrefix}/${identifier}`;
     },
 
     async generatePrompt(identifier: string, project: ProjectConfig): Promise<string> {
