@@ -1,0 +1,33 @@
+packages/web/src/components/Dashboard.tsx
+  a271ef70a2607a42 100,709-735
+packages/web/src/lib/services.ts
+  a271ef70a2607a42 110
+packages/web/src/app/sessions/[id]/page.tsx
+  a271ef70a2607a42 14-16,22-25
+packages/web/src/components/SessionPageClient.tsx
+  a271ef70a2607a42 3,6-10,14-18,24-26,29-30,66,69,83-93,96,100,198-199,201,206,208,218-225,230-240
+packages/web/src/app/projects/[projectId]/sessions/[sessionId]/page.tsx
+  a271ef70a2607a42 4,19,25
+packages/web/src/lib/project-name.ts
+  a271ef70a2607a42 14-16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "caf604025e61a917c0b4589357bbfd80a745f385",
+  "prompts": {
+    "a271ef70a2607a42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3be41795-6f73-4d51-9697-61db44b5ab6b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 108,
+      "total_deletions": 40,
+      "accepted_lines": 99,
+      "overriden_lines": 0
+    }
+  }
+}
