@@ -3,6 +3,24 @@ import { isOrchestratorSession } from "@composio/ao-core/types";
 type ProjectWithPrefix = { sessionPrefix?: string };
 type SessionLike = { id: string; projectId: string; metadata?: Record<string, string> };
 
+export function resolveProjectFilter(
+  projectFilter: string | null | undefined,
+  projects: Record<string, ProjectWithPrefix>,
+): string | undefined {
+  if (!projectFilter || projectFilter === "all") return undefined;
+  if (projects[projectFilter]) return projectFilter;
+
+  const matchedByPrefix = Object.entries(projects).find(
+    ([, project]) => project.sessionPrefix === projectFilter,
+  );
+  if (matchedByPrefix) return matchedByPrefix[0];
+
+  const projectIds = Object.keys(projects);
+  if (projectIds.length === 1) return projectIds[0];
+
+  return undefined;
+}
+
 /**
  * Check if a session belongs to a specific project.
  * Matches by projectId or sessionPrefix (same logic as resolveProject).
@@ -28,7 +46,9 @@ export function filterProjectSessions<T extends SessionLike>(
   projects: Record<string, ProjectWithPrefix>,
 ): T[] {
   if (!projectFilter || projectFilter === "all") return sessions;
-  return sessions.filter((session) => matchesProject(session, projectFilter, projects));
+  const resolved = resolveProjectFilter(projectFilter, projects);
+  if (!resolved) return sessions;
+  return sessions.filter((session) => matchesProject(session, resolved, projects));
 }
 
 /** Build a project-scoped href, falling back to ?project=all when no project is active. */

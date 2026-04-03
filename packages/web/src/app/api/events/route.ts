@@ -1,7 +1,7 @@
 import { getServices } from "@/lib/services";
 import { sessionToDashboard } from "@/lib/serialize";
 import { getAttentionLevel } from "@/lib/types";
-import { filterWorkerSessions } from "@/lib/project-utils";
+import { filterWorkerSessions, resolveProjectFilter } from "@/lib/project-utils";
 import {
   createCorrelationId,
   createProjectObserver,
@@ -29,10 +29,7 @@ export async function GET(request: Request): Promise<Response> {
 
   const ensureObserver = (config: ServicesConfig): ProjectObserver | null => {
     if (!observerProjectId) {
-      const requestedProjectId =
-        projectFilter && projectFilter !== "all" && config.projects[projectFilter]
-          ? projectFilter
-          : undefined;
+      const requestedProjectId = resolveProjectFilter(projectFilter, config.projects);
       observerProjectId = requestedProjectId ?? Object.keys(config.projects)[0];
     }
     if (!observerProjectId) return null;
@@ -72,10 +69,7 @@ export async function GET(request: Request): Promise<Response> {
 
         try {
           const { config, sessionManager } = await getServices();
-          const requestedProjectId =
-            projectFilter && projectFilter !== "all" && config.projects[projectFilter]
-              ? projectFilter
-              : undefined;
+          const requestedProjectId = resolveProjectFilter(projectFilter, config.projects);
           const sessions = await sessionManager.list(requestedProjectId);
           const workerSessions = filterWorkerSessions(sessions, projectFilter, config.projects);
           const dashboardSessions = workerSessions.map(sessionToDashboard);
@@ -131,10 +125,7 @@ export async function GET(request: Request): Promise<Response> {
           let dashboardSessions;
           try {
             const { config, sessionManager } = await getServices();
-            const requestedProjectId =
-              projectFilter && projectFilter !== "all" && config.projects[projectFilter]
-                ? projectFilter
-                : undefined;
+            const requestedProjectId = resolveProjectFilter(projectFilter, config.projects);
             const sessions = await sessionManager.list(requestedProjectId);
             const workerSessions = filterWorkerSessions(sessions, projectFilter, config.projects);
             dashboardSessions = workerSessions.map(sessionToDashboard);

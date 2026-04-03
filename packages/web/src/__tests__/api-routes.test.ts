@@ -318,6 +318,50 @@ describe("API Routes", () => {
       expect(mockSessionManager.list).toHaveBeenCalledWith("docs-app");
     });
 
+    it("accepts sessionPrefix aliases in project-scoped session queries", async () => {
+      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockImplementation(
+        async (projectId?: string) =>
+          multiProjectSessions.filter((session) => !projectId || session.projectId === projectId),
+      );
+
+      const res = await sessionsGET(
+        makeRequest("http://localhost:3000/api/sessions?project=docs"),
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+
+      expect(data.orchestratorId).toBe("docs-orchestrator");
+      expect(data.orchestrators).toEqual([
+        { id: "docs-orchestrator", projectId: "docs-app", projectName: "Docs App" },
+      ]);
+      expect(data.sessions.map((session: { id: string }) => session.id)).toEqual(["docs-2"]);
+      expect(mockSessionManager.list).toHaveBeenNthCalledWith(1, "docs-app");
+      expect(mockSessionManager.list).toHaveBeenNthCalledWith(2);
+    });
+
+    it("falls back to all sessions when project filter is stale or unknown", async () => {
+      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        multiProjectSessions,
+      );
+
+      const res = await sessionsGET(
+        makeRequest("http://localhost:3000/api/sessions?project=legacy-app"),
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+
+      expect(data.sessions.map((session: { id: string }) => session.id)).toEqual([
+        "backend-3",
+        "docs-2",
+      ]);
+      expect(data.orchestrators).toEqual([
+        { id: "docs-orchestrator", projectId: "docs-app", projectName: "Docs App" },
+        { id: "app-orchestrator", projectId: "my-app", projectName: "My App" },
+      ]);
+      expect(mockSessionManager.list).toHaveBeenCalledTimes(1);
+      expect(mockSessionManager.list).toHaveBeenCalledWith(undefined);
+    });
+
     it("keeps global pause sourced from all projects even for project-scoped requests", async () => {
       const pausedUntil = new Date(Date.now() + 60_000).toISOString();
       const pausedSessions = [
@@ -973,6 +1017,26 @@ describe("API Routes", () => {
       expect(event.sessions.length).toBeGreaterThan(0);
       expect(event.sessions[0]).toHaveProperty("id");
       expect(event.sessions[0]).toHaveProperty("attentionLevel");
+    });
+
+    it("falls back to all sessions when SSE project filter is stale or unknown", async () => {
+      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValue(multiProjectSessions);
+
+      const req = makeRequest("/api/events?project=legacy-app", { method: "GET" });
+      const res = await eventsGET(req);
+      const reader = res.body!.getReader();
+      const { value } = await reader.read();
+      reader.cancel();
+
+      const text = new TextDecoder().decode(value);
+      const jsonStr = text.replace("data: ", "").trim();
+      const event = JSON.parse(jsonStr);
+      expect(event.type).toBe("snapshot");
+      expect(event.sessions.map((session: { id: string }) => session.id).sort()).toEqual([
+        "backend-3",
+        "docs-2",
+      ]);
+      expect(mockSessionManager.list).toHaveBeenCalledWith(undefined);
     });
   });
 
