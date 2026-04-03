@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -19,7 +19,7 @@ import {
 import { getPreferencesPath, getRegisteredPath } from "../paths.js";
 
 /** Helper to create a minimal valid global config */
-function makeGlobalConfig(projects: Record<string, Record<string, unknown>>) {
+function makeGlobalConfig(projects: Record<string, { path: string; [key: string]: unknown }>) {
   return {
     port: 3000,
     readyThresholdMs: 300_000,

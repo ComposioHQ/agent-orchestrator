@@ -1,3 +1,4 @@
+import type * as NodeFsModule from "node:fs";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mockLoadConfig = vi.fn();
@@ -8,7 +9,7 @@ const mockCreateLifecycleManager = vi.fn();
 const mockExistsSync = vi.fn();
 
 vi.mock("node:fs", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:fs")>();
+  const actual = await importOriginal<NodeFsModule>();
   return {
     ...actual,
     existsSync: (...args: unknown[]) => mockExistsSync(...args),

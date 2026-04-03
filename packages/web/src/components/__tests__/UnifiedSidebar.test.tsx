@@ -6,13 +6,7 @@ import type { DashboardSession, PortfolioProjectSummary } from "@/lib/types";
 
 // jsdom does not define PointerEvent; alias it to MouseEvent for tests
 if (typeof globalThis.PointerEvent === "undefined") {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (globalThis as any).PointerEvent = class PointerEvent extends MouseEvent {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    constructor(type: string, params?: any) {
-      super(type, params);
-    }
-  };
+  (globalThis as Record<string, unknown>).PointerEvent = class PointerEvent extends MouseEvent {};
 }
 
 const router = {

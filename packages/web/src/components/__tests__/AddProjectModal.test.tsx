@@ -482,10 +482,6 @@ describe("AddProjectModal", () => {
         expect(btns.length).toBeGreaterThanOrEqual(1);
       });
 
-      // Find the submit button (not the modal title)
-      const submitBtns = screen.getAllByRole("button").filter(
-        (btn) => btn.textContent === "Open Project" && !btn.closest("[class*='justify-between']") === false,
-      );
       // Click the one that is not disabled
       const submitBtn = screen.getAllByRole("button").find(
         (btn) => btn.textContent === "Open Project" && !btn.hasAttribute("disabled"),
