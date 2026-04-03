@@ -63,9 +63,10 @@ export function resolveMultiProjectStart(
       // two projects at e.g. /work/app and /personal/app would break config loading.
       const newBasename = basename(projectRoot);
       const basenameConflict = Object.entries(globalConfig.projects).find(
-        ([, existing]) =>
-          basename(expandHome(existing.path)) === newBasename &&
-          resolve(expandHome(existing.path)) !== projectRoot,
+        ([, existing]) => {
+          const resolvedExisting = resolve(expandHome(existing.path));
+          return basename(resolvedExisting) === newBasename && resolvedExisting !== projectRoot;
+        },
       );
       if (basenameConflict) {
         const [conflictId, conflictEntry] = basenameConflict;
