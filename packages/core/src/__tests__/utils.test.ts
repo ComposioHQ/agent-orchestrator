@@ -106,6 +106,11 @@ describe("isGitBranchNameSafe", () => {
     expect(isGitBranchNameSafe(".hidden")).toBe(false);
   });
 
+  it("rejects consecutive slashes and dot-prefixed components", () => {
+    expect(isGitBranchNameSafe("feat//bar")).toBe(false);
+    expect(isGitBranchNameSafe("feat/.hidden")).toBe(false);
+  });
+
   it("rejects characters invalid in git refs", () => {
     expect(isGitBranchNameSafe("bad branch")).toBe(false);
     expect(isGitBranchNameSafe("x:y")).toBe(false);

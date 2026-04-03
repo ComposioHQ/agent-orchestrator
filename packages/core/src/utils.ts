@@ -44,6 +44,8 @@ export function isGitBranchNameSafe(name: string): boolean {
   if (name === "@" || name.startsWith(".") || name.endsWith(".") || name.endsWith("/")) return false;
   if (name.endsWith(".lock")) return false;
   if (name.includes("..")) return false;
+  if (name.includes("//")) return false;
+  if (name.includes("/.")) return false;
   if (name.includes("@{")) return false;
   if (name.startsWith("/")) return false;
   for (let i = 0; i < name.length; i++) {
