@@ -194,7 +194,9 @@ export function useSessionEvents(
 
   // Mux-based session updates (replaces SSE when available)
   useEffect(() => {
-    if (!muxSessions || muxSessions.length === 0) return;
+    if (!muxSessions) return;
+    // Note: empty array is intentional — it means all sessions were removed and we
+    // must still run the membership-key comparison to trigger scheduleRefresh().
 
     dispatch({ type: "snapshot", patches: muxSessions as SSESnapshotEvent["sessions"] });
 
