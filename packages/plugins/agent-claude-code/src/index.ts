@@ -735,7 +735,7 @@ function createClaudeCodeAgent(): Agent {
       if (!sessionFile) {
         // No session file yet — process is running but no conversation started.
         // Treat as idle (waiting for first task).
-        return { state: "idle", timestamp: new Date() };
+        return { state: "idle", timestamp: session.createdAt };
       }
 
       const entry = await readLastJsonlEntry(sessionFile);

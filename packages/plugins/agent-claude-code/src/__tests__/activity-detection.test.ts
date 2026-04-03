@@ -138,7 +138,11 @@ describe("Claude Code Activity Detection", () => {
 
     it("returns 'idle' when no session file exists yet", async () => {
       // projectDir exists but is empty — no .jsonl files yet (freshly spawned session)
-      expect((await agent.getActivityState(makeSession()))?.state).toBe("idle");
+      const session = makeSession();
+      const result = await agent.getActivityState(session);
+      expect(result?.state).toBe("idle");
+      // timestamp must be session.createdAt so stuck-detection can fire eventually
+      expect(result?.timestamp).toBe(session.createdAt);
     });
 
     it("returns null when no workspacePath", async () => {
