@@ -82,6 +82,19 @@ function extractPluginConfig(
     }
   }
 
+  // Tracker and SCM configs are per-project. Extract from the first project
+  // that uses this plugin so it receives YAML settings (baseUrl, projectKey, etc.)
+  // at create() time. Per-method calls also receive project.tracker for overrides.
+  if (slot === "tracker" || slot === "scm") {
+    for (const project of Object.values(config.projects)) {
+      const slotConfig = slot === "tracker" ? project.tracker : project.scm;
+      if (slotConfig?.plugin === name) {
+        const { plugin: _plugin, ...rest } = slotConfig as Record<string, unknown>;
+        return rest;
+      }
+    }
+  }
+
   return undefined;
 }
 
