@@ -273,9 +273,14 @@ class TerminalManager {
 
     // Wire up data events
     pty.onData((data: string) => {
-      // Push to all subscribers
+      // Push to all subscribers — isolate each callback so a throw in one
+      // (e.g. a closed ws.send) doesn't abort the loop or skip the buffer.
       for (const callback of terminal.subscribers) {
-        callback(data);
+        try {
+          callback(data);
+        } catch (err) {
+          console.error("[MuxServer] Subscriber callback threw:", err);
+        }
       }
 
       // Append to ring buffer
