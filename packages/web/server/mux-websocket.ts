@@ -11,34 +11,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { homedir, userInfo } from "node:os";
 import { spawn } from "node:child_process";
 import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
-
-// Types copied from src/lib/mux-protocol.ts to avoid cross-boundary imports
-// Client → Server
-type ClientMessage =
-  | { ch: "terminal"; id: string; type: "data"; data: string }
-  | { ch: "terminal"; id: string; type: "resize"; cols: number; rows: number }
-  | { ch: "terminal"; id: string; type: "open" }
-  | { ch: "terminal"; id: string; type: "close" }
-  | { ch: "system"; type: "ping" }
-  | { ch: "subscribe"; topics: ("sessions")[] };
-
-// Server → Client
-type ServerMessage =
-  | { ch: "terminal"; id: string; type: "data"; data: string }
-  | { ch: "terminal"; id: string; type: "exited"; code: number }
-  | { ch: "terminal"; id: string; type: "opened" }
-  | { ch: "terminal"; id: string; type: "error"; message: string }
-  | { ch: "sessions"; type: "snapshot"; sessions: SessionPatch[] }
-  | { ch: "system"; type: "pong" }
-  | { ch: "system"; type: "error"; message: string };
-
-interface SessionPatch {
-  id: string;
-  status: string;
-  activity: string | null;
-  attentionLevel: string;
-  lastActivityAt: string;
-}
+import type { ClientMessage, ServerMessage, SessionPatch } from "../src/lib/mux-protocol.js";
 
 /**
  * Manages a single shared SSE connection to Next.js /api/events.
@@ -525,13 +498,15 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
               }
             }
           } catch (err) {
-            const errorMsg: ServerMessage = {
-              ch: "terminal",
-              id,
-              type: "error",
-              message: err instanceof Error ? err.message : String(err),
-            };
-            ws.send(JSON.stringify(errorMsg));
+            if (ws.readyState === WebSocket.OPEN) {
+              const errorMsg: ServerMessage = {
+                ch: "terminal",
+                id,
+                type: "error",
+                message: err instanceof Error ? err.message : String(err),
+              };
+              ws.send(JSON.stringify(errorMsg));
+            }
           }
         } else if (msg.ch === "subscribe") {
           if (msg.topics.includes("sessions") && !sessionUnsubscribe) {
