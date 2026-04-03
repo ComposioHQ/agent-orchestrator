@@ -674,7 +674,7 @@ describe("useSessionEvents", () => {
     it("seeds attention levels from initialAttentionLevels parameter", () => {
       const sessions = makeSessions(2);
       const initialLevels = { "session-0": "working" as const, "session-1": "respond" as const };
-      const { result } = renderHook(() => useSessionEvents(sessions, null, undefined, initialLevels));
+      const { result } = renderHook(() => useSessionEvents(sessions, null, undefined, undefined, initialLevels));
       expect(result.current.sseAttentionLevels).toEqual({
         "session-0": "working",
         "session-1": "respond",
@@ -773,7 +773,7 @@ describe("useSessionEvents", () => {
       let currentLevels: Record<string, AttentionLevel> | undefined = { "session-0": "respond" as const };
 
       const { result, rerender } = renderHook(() =>
-        useSessionEvents(currentSessions, null, undefined, currentLevels),
+        useSessionEvents(currentSessions, null, undefined, undefined, currentLevels),
       );
 
       expect(result.current.sseAttentionLevels).toEqual({ "session-0": "respond" });

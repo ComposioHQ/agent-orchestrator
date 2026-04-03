@@ -52,6 +52,14 @@ export function createDirectTerminalServer(tmuxPath?: string): DirectTerminalSer
   });
 
   function shutdown() {
+    // Terminate all connected mux clients — this triggers their 'close' events
+    // which unsubscribe terminal callbacks and kill PTY processes.
+    if (muxWss) {
+      for (const client of muxWss.clients) {
+        client.terminate();
+      }
+      muxWss.close();
+    }
     server.close();
   }
 

@@ -48,25 +48,24 @@ function normalizePathValue(value: unknown): string | undefined {
   return trimmed;
 }
 
-function buildMuxWsUrl(): string {
+function buildMuxWsUrl(runtimeConfig: { directTerminalPort?: string; proxyWsPath?: string }): string {
   const loc = window.location;
   const protocol = loc.protocol === "https:" ? "wss:" : "ws:";
 
-  // Check for proxy path env var
-  const proxyWsPath = process.env.NEXT_PUBLIC_TERMINAL_WS_PATH;
+  // Runtime proxy path takes priority (set by `ao start` via TERMINAL_WS_PATH env var)
+  const proxyWsPath = runtimeConfig.proxyWsPath ?? process.env.NEXT_PUBLIC_TERMINAL_WS_PATH;
   if (proxyWsPath) {
-    // Replace trailing /ws with /mux
     const basePath = proxyWsPath.replace(/\/ws\/?$/, "");
     return `${protocol}//${loc.host}${basePath}/mux`;
   }
 
-  // Port-less or standard ports: use path-based
+  // Port-less or standard ports: use path-based routing (reverse proxy expected)
   if (loc.port === "" || loc.port === "443" || loc.port === "80") {
     return `${protocol}//${loc.hostname}/ao-terminal-mux`;
   }
 
-  // Direct port connection
-  const port = process.env.NEXT_PUBLIC_DIRECT_TERMINAL_PORT ?? "14801";
+  // Direct port connection — prefer runtime-configured port, fall back to env/default
+  const port = runtimeConfig.directTerminalPort ?? process.env.NEXT_PUBLIC_DIRECT_TERMINAL_PORT ?? "14801";
   return `${protocol}//${loc.hostname}:${port}/mux`;
 }
 
@@ -85,25 +84,6 @@ export function MuxProvider({ children }: { children: ReactNode }) {
   const runtimeConfigRef = useRef<{ directTerminalPort?: string; proxyWsPath?: string }>({});
   const sessionSubscribedRef = useRef(false);
 
-  // Fetch runtime config on mount
-  useEffect(() => {
-    const fetchRuntimeConfig = async () => {
-      try {
-        const res = await fetch("/api/runtime/terminal");
-        if (res.ok) {
-          const data = (await res.json()) as RuntimeTerminalConfig;
-          runtimeConfigRef.current = {
-            directTerminalPort: normalizePortValue(data.directTerminalPort),
-            proxyWsPath: normalizePathValue(data.proxyWsPath),
-          };
-        }
-      } catch {
-        // Ignore errors, fall back to defaults
-      }
-    };
-    void fetchRuntimeConfig();
-  }, []);
-
   const connect = useCallback(() => {
     if (wsRef.current) {
       return;
@@ -112,7 +92,7 @@ export function MuxProvider({ children }: { children: ReactNode }) {
     setStatus("connecting");
 
     try {
-      const url = buildMuxWsUrl();
+      const url = buildMuxWsUrl(runtimeConfigRef.current);
       console.log("[MuxProvider] Connecting to", url);
       const ws = new WebSocket(url);
 
@@ -209,11 +189,31 @@ export function MuxProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // Initial connection
+  // Fetch runtime config then connect. This ensures buildMuxWsUrl() has the
+  // server-configured port/path before the WebSocket is opened.
   useEffect(() => {
-    connect();
+    let cancelled = false;
+
+    const init = async () => {
+      try {
+        const res = await fetch("/api/runtime/terminal");
+        if (res.ok) {
+          const data = (await res.json()) as RuntimeTerminalConfig;
+          runtimeConfigRef.current = {
+            directTerminalPort: normalizePortValue(data.directTerminalPort),
+            proxyWsPath: normalizePathValue(data.proxyWsPath),
+          };
+        }
+      } catch {
+        // Ignore — fall back to env/default values
+      }
+      if (!cancelled) connect();
+    };
+
+    void init();
 
     return () => {
+      cancelled = true;
       if (reconnectTimer.current) {
         clearTimeout(reconnectTimer.current);
       }

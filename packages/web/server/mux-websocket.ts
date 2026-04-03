@@ -424,26 +424,30 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
     let missedPongs = 0;
     const MAX_MISSED_PONGS = 3;
 
-    // Heartbeat: send pong every 15s
+    // Heartbeat: send native WebSocket ping every 15s.
+    // Browsers automatically respond to native pings with pong frames —
+    // no application-level code is needed on the client side.
     const heartbeatInterval = setInterval(() => {
       if (ws.readyState === WebSocket.OPEN) {
-        const msg: ServerMessage = { ch: "system", type: "pong" };
-        ws.send(JSON.stringify(msg));
         missedPongs += 1;
-
         if (missedPongs >= MAX_MISSED_PONGS) {
           console.log("[MuxServer] Too many missed pongs, closing connection");
           ws.close(1000, "Heartbeat timeout");
+          return;
         }
+        ws.ping();
       }
     }, 15_000);
+
+    // Native pong resets the missed counter
+    ws.on("pong", () => {
+      missedPongs = 0;
+    });
 
     /**
      * Handle incoming messages
      */
     ws.on("message", (data) => {
-      // Reset missed pongs on any incoming message
-      missedPongs = 0;
 
       try {
         const msg = JSON.parse(data.toString("utf8")) as ClientMessage;
@@ -555,6 +559,10 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
       clearInterval(heartbeatInterval);
       sessionUnsubscribe?.();
       sessionUnsubscribe = null;
+      for (const unsub of subscriptions.values()) {
+        unsub();
+      }
+      subscriptions.clear();
     });
   });
 
