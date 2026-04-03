@@ -1,7 +1,12 @@
 "use client";
 
 import { useEffect, useReducer, useRef } from "react";
-import type { DashboardSession, GlobalPauseState, SSESnapshotEvent } from "@/lib/types";
+import type {
+  AttentionLevel,
+  DashboardSession,
+  GlobalPauseState,
+  SSESnapshotEvent,
+} from "@/lib/types";
 
 /** Debounce before fetching full session list after membership change. */
 const MEMBERSHIP_REFRESH_DELAY_MS = 120;
@@ -12,21 +17,34 @@ const DISCONNECTED_GRACE_PERIOD_MS = 4000;
 
 type ConnectionStatus = "connected" | "reconnecting" | "disconnected";
 
+/** Server-computed attention levels from the latest SSE snapshot. */
+export type SSEAttentionMap = Readonly<Record<string, AttentionLevel>>;
+
+
 interface State {
   sessions: DashboardSession[];
   globalPause: GlobalPauseState | null;
   connectionStatus: ConnectionStatus;
+  /** Attention levels from the latest SSE snapshot (server-computed, includes PR state). */
+  sseAttentionLevels: SSEAttentionMap;
 }
 
 type Action =
-  | { type: "reset"; sessions: DashboardSession[]; globalPause: GlobalPauseState | null }
+  | { type: "reset"; sessions: DashboardSession[]; globalPause: GlobalPauseState | null; sseAttentionLevels?: SSEAttentionMap }
   | { type: "snapshot"; patches: SSESnapshotEvent["sessions"] }
   | { type: "setConnection"; status: ConnectionStatus };
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
     case "reset":
-      return { ...state, sessions: action.sessions, globalPause: action.globalPause };
+      return {
+        ...state,
+        sessions: action.sessions,
+        globalPause: action.globalPause,
+        ...(action.sseAttentionLevels !== undefined
+          ? { sseAttentionLevels: action.sseAttentionLevels }
+          : {}),
+      };
     case "setConnection":
       return { ...state, connectionStatus: action.status };
     case "snapshot": {
@@ -50,7 +68,25 @@ function reducer(state: State, action: Action): State {
           lastActivityAt: patch.lastActivityAt,
         };
       });
-      return changed ? { ...state, sessions: next } : state;
+
+      // Build attention level map from server-computed values
+      const levels: Record<string, AttentionLevel> = {};
+      for (const p of action.patches) {
+        levels[p.id] = p.attentionLevel;
+      }
+
+      const sessionsChanged = changed;
+      const levelsChanged =
+        Object.keys(levels).length !== Object.keys(state.sseAttentionLevels).length ||
+        action.patches.some((p) => state.sseAttentionLevels[p.id] !== p.attentionLevel);
+
+      if (!sessionsChanged && !levelsChanged) return state;
+
+      return {
+        ...state,
+        sessions: sessionsChanged ? next : state.sessions,
+        sseAttentionLevels: levelsChanged ? levels : state.sseAttentionLevels,
+      };
     }
   }
 }
@@ -68,13 +104,17 @@ export function useSessionEvents(
   initialSessions: DashboardSession[],
   initialGlobalPause?: GlobalPauseState | null,
   project?: string,
+  initialAttentionLevels?: SSEAttentionMap,
 ): State {
   const [state, dispatch] = useReducer(reducer, {
     sessions: initialSessions,
     globalPause: initialGlobalPause ?? null,
     connectionStatus: "connected" as ConnectionStatus,
+    sseAttentionLevels: initialAttentionLevels ?? ({} as SSEAttentionMap),
   });
   const sessionsRef = useRef(state.sessions);
+  const initialAttentionLevelsRef = useRef(initialAttentionLevels);
+  initialAttentionLevelsRef.current = initialAttentionLevels;
   const refreshingRef = useRef(false);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingMembershipKeyRef = useRef<string | null>(null);
@@ -86,7 +126,12 @@ export function useSessionEvents(
   }, [state.sessions]);
 
   useEffect(() => {
-    dispatch({ type: "reset", sessions: initialSessions, globalPause: initialGlobalPause ?? null });
+    dispatch({
+      type: "reset",
+      sessions: initialSessions,
+      globalPause: initialGlobalPause ?? null,
+      sseAttentionLevels: initialAttentionLevelsRef.current ?? ({} as SSEAttentionMap),
+    });
   }, [initialSessions, initialGlobalPause]);
 
   useEffect(() => {

@@ -73,8 +73,17 @@ export function listDashboardOrchestrators(
   sessions: Session[],
   projects: Record<string, ProjectConfig>,
 ): DashboardOrchestratorLink[] {
+  const allSessionPrefixes = Object.entries(projects).map(
+    ([projectId, p]) => p.sessionPrefix ?? projectId,
+  );
   return sessions
-    .filter((session) => isOrchestratorSession(session))
+    .filter((session) =>
+      isOrchestratorSession(
+        session,
+        projects[session.projectId]?.sessionPrefix ?? session.projectId,
+        allSessionPrefixes,
+      ),
+    )
     .map((session) => ({
       id: session.id,
       projectId: session.projectId,

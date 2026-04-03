@@ -189,11 +189,37 @@ export interface Session {
   metadata: Record<string, string>;
 }
 
-export function isOrchestratorSession(session: {
-  id: SessionId;
-  metadata?: Record<string, string>;
-}): boolean {
-  return session.metadata?.["role"] === "orchestrator" || session.id.endsWith("-orchestrator");
+export function isOrchestratorSession(
+  session: { id: SessionId; metadata?: Record<string, string> },
+  sessionPrefix?: string,
+  allSessionPrefixes?: string[],
+): boolean {
+  if (session.metadata?.["role"] === "orchestrator" || session.id.endsWith("-orchestrator")) {
+    return true;
+  }
+  if (!sessionPrefix) {
+    return false;
+  }
+  const escaped = sessionPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (!new RegExp(`^${escaped}-orchestrator-\\d+$`).test(session.id)) {
+    return false;
+  }
+  // Guard against cross-project false positives: if the session ID is a plain
+  // numbered worker for any other known prefix (e.g. prefix "app-orchestrator"
+  // matches "app-orchestrator-1" as a worker), it is not an orchestrator.
+  if (allSessionPrefixes) {
+    for (const prefix of allSessionPrefixes) {
+      if (prefix === sessionPrefix) continue;
+      if (
+        new RegExp(
+          `^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-\\d+$`,
+        ).test(session.id)
+      ) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 /** Config for creating a new session */

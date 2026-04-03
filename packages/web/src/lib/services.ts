@@ -225,8 +225,16 @@ export async function pollBacklog(): Promise<void> {
     // Detect reopened issues: open state + agent:done label → relabel as agent:backlog
     await relabelReopenedIssues(config, registry);
 
+    const allSessionPrefixes = Object.entries(config.projects).map(
+      ([id, p]) => p.sessionPrefix ?? id,
+    );
     const workerSessions = allSessions.filter(
-      (session) => !isOrchestratorSession(session) && !TERMINAL_STATUSES.has(session.status),
+      (session) =>
+        !isOrchestratorSession(
+          session,
+          config.projects[session.projectId]?.sessionPrefix ?? session.projectId,
+          allSessionPrefixes,
+        ) && !TERMINAL_STATUSES.has(session.status),
     );
     const activeIssueIds = new Set(
       workerSessions
