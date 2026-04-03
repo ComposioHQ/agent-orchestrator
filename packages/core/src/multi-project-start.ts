@@ -69,11 +69,11 @@ export function resolveMultiProjectStart(
       );
       if (basenameConflict) {
         const [conflictId, conflictEntry] = basenameConflict;
-        messages.push({
-          level: "warn",
-          text: `Cannot register: directory basename "${newBasename}" conflicts with project "${conflictId}" (${conflictEntry.path}). Rename the directory to use a unique name.`,
-        });
-        return null;
+        // Throw rather than returning null+messages: null discards messages because
+        // the caller checks `if (!result) return null` before printing them.
+        throw new Error(
+          `Cannot register "${newBasename}": directory basename conflicts with project "${conflictId}" (${conflictEntry.path}). Rename the directory to use a unique name.`,
+        );
       }
 
       // Auto-register in hybrid mode
@@ -138,9 +138,9 @@ export function resolveMultiProjectStart(
       if (localPath) {
         try {
           const localConfig = loadLocalProjectConfig(localPath);
-          const { config: synced, excludedSecrets } = syncShadow(globalConfig, projectId, localConfig);
-          globalConfig = synced;
-          saveGlobalConfig(globalConfig);
+          // syncShadow writes the shadow file internally and returns the same
+          // globalConfig reference unchanged — no registry save needed here.
+          const { excludedSecrets } = syncShadow(globalConfig, projectId, localConfig);
           if (excludedSecrets.length > 0) {
             messages.push({ level: "warn", text: `Excluded secret-like fields: ${excludedSecrets.join(", ")}` });
           }
