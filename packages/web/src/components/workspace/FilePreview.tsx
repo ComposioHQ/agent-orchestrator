@@ -129,7 +129,7 @@ export function FilePreview({ sessionId, selectedFile }: FilePreviewProps) {
             rehypePlugins={[rehypeHighlight]}
             components={{
               code({ className, children, ...props }) {
-                if (className === "language-mermaid") {
+                if (className?.split(" ").includes("language-mermaid")) {
                   return <MermaidDiagram code={String(children).trim()} />;
                 }
                 return <code className={className} {...props}>{children}</code>;
