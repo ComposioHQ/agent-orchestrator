@@ -582,6 +582,9 @@ export function migrateToGlobalConfig(oldConfigPath: string, globalConfigPath?: 
     newGlobal.projects[projectId] = {
       name: (project["name"] as string | undefined) ?? projectId,
       path: projectPath,
+      ...(typeof project["sessionPrefix"] === "string"
+        ? { sessionPrefix: project["sessionPrefix"] as string }
+        : {}),
       ...shadowFields,
       _shadowSyncedAt: now,
     };

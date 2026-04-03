@@ -278,7 +278,7 @@ function applyProjectDefaults(config: OrchestratorConfig): OrchestratorConfig {
     }
 
     // Infer tracker from repo if not set (default to github issues)
-    if (!project.tracker) {
+    if (!project.tracker && project.repo?.includes("/")) {
       project.tracker = { plugin: inferredPlugin };
     }
   }
