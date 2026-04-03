@@ -446,8 +446,8 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
       if (ws.readyState === WebSocket.OPEN) {
         missedPongs += 1;
         if (missedPongs >= MAX_MISSED_PONGS) {
-          console.log("[MuxServer] Too many missed pongs, closing connection");
-          ws.close(1000, "Heartbeat timeout");
+          console.log("[MuxServer] Too many missed pongs, terminating connection");
+          ws.terminate();
           return;
         }
         ws.ping();

@@ -72,8 +72,6 @@ function buildMuxWsUrl(runtimeConfig: { directTerminalPort?: string; proxyWsPath
 export function MuxProvider({ children }: { children: ReactNode }) {
   const wsRef = useRef<WebSocket | null>(null);
   const subscribersRef = useRef(new Map<string, Set<(data: string) => void>>());
-  const buffersRef = useRef(new Map<string, string[]>());
-  const bufferBytesRef = useRef(new Map<string, number>());
   const openedTerminalsRef = useRef(new Set<string>());
   const [status, setStatus] = useState<"connecting" | "connected" | "reconnecting" | "disconnected">(
     "connecting",
@@ -138,29 +136,22 @@ export function MuxProvider({ children }: { children: ReactNode }) {
                   callback(msg.data);
                 }
               }
-
-              // Update buffer
-              const buffer = buffersRef.current.get(msg.id) ?? [];
-              buffer.push(msg.data);
-              buffersRef.current.set(msg.id, buffer);
-
-              const encoder = new TextEncoder();
-              let bytes = bufferBytesRef.current.get(msg.id) ?? 0;
-              bytes += encoder.encode(msg.data).length;
-              bufferBytesRef.current.set(msg.id, bytes);
-
-              // Trim buffer if needed (50KB limit)
-              const RING_BUFFER_MAX = 50 * 1024;
-              if (bytes > RING_BUFFER_MAX) {
-                while (bytes > RING_BUFFER_MAX && buffer.length > 0) {
-                  const removed = buffer.shift() ?? "";
-                  bytes -= encoder.encode(removed).length;
-                }
-                bufferBytesRef.current.set(msg.id, bytes);
-              }
             } else if (msg.type === "opened") {
               // Terminal opened successfully
               openedTerminalsRef.current.add(msg.id);
+            } else if (msg.type === "exited") {
+              // PTY exited and could not be re-attached — remove so it isn't
+              // re-opened on reconnect, and surface a terminal-level error chunk
+              openedTerminalsRef.current.delete(msg.id);
+              const subs = subscribersRef.current.get(msg.id);
+              if (subs) {
+                const notice = `\r\n\x1b[31m[Terminal exited with code ${msg.code}]\x1b[0m\r\n`;
+                for (const callback of subs) {
+                  callback(notice);
+                }
+              }
+            } else if (msg.type === "error") {
+              console.error(`[MuxProvider] Terminal error for ${msg.id}:`, msg.message);
             }
           } else if (msg.ch === "sessions" && msg.type === "snapshot") {
             setSessions(msg.sessions);
