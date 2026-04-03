@@ -2,8 +2,11 @@ import type { Metadata } from "next";
 export const dynamic = "force-dynamic";
 
 import { Dashboard } from "@/components/Dashboard";
+import { DashboardShell } from "@/components/DashboardShell";
 import { getAllProjects } from "@/lib/project-name";
 import { loadProjectPageData } from "@/lib/project-page-data";
+import { loadPortfolioPageData } from "@/lib/portfolio-page-data";
+import { getDefaultCloneLocation } from "@/lib/default-location";
 
 export async function generateMetadata(props: {
   params: Promise<{ projectId: string }>;
@@ -21,20 +24,30 @@ export default async function ProjectPage(props: {
   const params = await props.params;
   const projectFilter = params.projectId;
 
-  const pageData = await loadProjectPageData(projectFilter);
+  const [pageData, { projectSummaries }] = await Promise.all([
+    loadProjectPageData(projectFilter),
+    loadPortfolioPageData(),
+  ]);
 
   const projects = getAllProjects();
   const project = projects.find(p => p.id === projectFilter);
   const projectName = project?.name ?? projectFilter;
 
   return (
-    <Dashboard
-      initialSessions={pageData.sessions}
-      projectId={projectFilter}
-      projectName={projectName}
-      projects={projects}
-      initialGlobalPause={pageData.globalPause}
-      orchestrators={pageData.orchestrators}
-    />
+    <DashboardShell
+      projects={projectSummaries}
+      sessions={pageData.sidebarSessions}
+      activeProjectId={projectFilter}
+      defaultLocation={getDefaultCloneLocation()}
+    >
+      <Dashboard
+        initialSessions={pageData.sessions}
+        projectId={projectFilter}
+        projectName={projectName}
+        projects={projects}
+        initialGlobalPause={pageData.globalPause}
+        orchestrators={pageData.orchestrators}
+      />
+    </DashboardShell>
   );
 }
