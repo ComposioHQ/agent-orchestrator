@@ -24,11 +24,8 @@ export function EmptyState({
       <p className="text-[13px] text-[var(--color-text-muted)]">
         {isDefault ? (
           <>
-            No active sessions yet. AO should start the main orchestrator automatically. If it
-            doesn&apos;t, refresh or run{" "}
-            <code className="font-[var(--font-mono)] text-[var(--color-text-secondary)]">
-              ao start
-            </code>
+            No active worker sessions right now. Use the main orchestrator button in the header to
+            review queued work or spawn the next session.
           </>
         ) : (
           message
