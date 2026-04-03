@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useMemo } from "react";
 import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
 import {
   type DashboardSession,
@@ -10,7 +9,6 @@ import {
   getAttentionLevel,
 } from "@/lib/types";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
-import { ProjectSidebar } from "./ProjectSidebar";
 
 import { DynamicFavicon } from "./DynamicFavicon";
 import { PRCard, PRTableRow } from "./PRStatus";
@@ -44,12 +42,8 @@ export function PullRequestsPage({
     return levels;
   }, [initialSessions]);
   const { sessions, sseAttentionLevels } = useSessionEvents(initialSessions, null, projectId, initialAttentionLevels);
-  const searchParams = useSearchParams();
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
-  const showSidebar = projects.length > 1;
-  const allProjectsView = showSidebar && projectId === undefined;
+  const allProjectsView = projects.length > 1 && projectId === undefined;
   const currentProjectOrchestrator = useMemo(
     () =>
       projectId
@@ -71,47 +65,13 @@ export function PullRequestsPage({
     ? getProjectSessionHref(currentProjectOrchestrator.projectId, currentProjectOrchestrator.id)
     : null;
 
-  useEffect(() => {
-    setMobileMenuOpen(false);
-  }, [searchParams]);
-
   return (
     <div className="dashboard-shell flex h-screen">
-      {showSidebar ? (
-        <ProjectSidebar
-          projects={projects}
-          sessions={sessions}
-          activeProjectId={projectId}
-          activeSessionId={undefined}
-          collapsed={sidebarCollapsed}
-          onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
-          mobileOpen={mobileMenuOpen}
-          onMobileClose={() => setMobileMenuOpen(false)}
-        />
-      ) : null}
       <div className="dashboard-main flex-1 overflow-y-auto px-4 py-4 md:px-7 md:py-6">
         <DynamicFavicon sseAttentionLevels={sseAttentionLevels} projectName={projectName ? `${projectName} PRs` : "Pull Requests"} />
         <section className="dashboard-hero mb-5">
           <div className="dashboard-hero__backdrop" />
           <div className="dashboard-hero__content">
-            {showSidebar ? (
-              <button
-                type="button"
-                className="mobile-menu-toggle"
-                onClick={() => setMobileMenuOpen(true)}
-                aria-label="Open menu"
-              >
-                <svg
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  viewBox="0 0 24 24"
-                  className="h-5 w-5"
-                >
-                  <path d="M4 6h16M4 12h16M4 18h16" />
-                </svg>
-              </button>
-            ) : null}
             <div className="dashboard-hero__primary">
               <div className="dashboard-hero__heading">
                 <div>
