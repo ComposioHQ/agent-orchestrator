@@ -204,12 +204,18 @@ export function useSessionEvents(
     if (currentMembershipKey !== snapshotMembershipKey) {
       pendingMembershipKeyRef.current = snapshotMembershipKey;
       scheduleRefresh();
-      return;
-    }
-
-    if (Date.now() - lastRefreshAtRef.current >= STALE_REFRESH_INTERVAL_MS) {
+    } else if (Date.now() - lastRefreshAtRef.current >= STALE_REFRESH_INTERVAL_MS) {
       scheduleRefresh();
     }
+
+    return () => {
+      if (refreshTimerRef.current) {
+        clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+      activeRefreshControllerRef.current?.abort();
+      activeRefreshControllerRef.current = null;
+    };
   }, [muxSessions, scheduleRefresh]);
 
   useEffect(() => {

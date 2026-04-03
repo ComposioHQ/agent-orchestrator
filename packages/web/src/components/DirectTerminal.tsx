@@ -25,20 +25,6 @@ interface DirectTerminalProps {
   reloadCommand?: string;
 }
 
-interface DirectTerminalLocation {
-  protocol: string;
-  hostname: string;
-  host: string;
-  port: string;
-}
-
-interface DirectTerminalWsUrlOptions {
-  location: DirectTerminalLocation;
-  sessionId: string;
-  proxyWsPath?: string;
-  directTerminalPort?: string;
-}
-
 type TerminalVariant = "agent" | "orchestrator";
 
 
@@ -106,26 +92,6 @@ export function buildTerminalThemes(variant: TerminalVariant): { dark: ITheme; l
   return { dark, light };
 }
 
-export function buildDirectTerminalWsUrl({
-  location,
-  sessionId,
-  proxyWsPath,
-  directTerminalPort,
-}: DirectTerminalWsUrlOptions): string {
-  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-  if (proxyWsPath) {
-    // Path-based proxy uses host so non-standard ports are preserved.
-    return `${protocol}//${location.host}${proxyWsPath}?session=${encodeURIComponent(sessionId)}`;
-  }
-
-  if (location.port === "" || location.port === "443" || location.port === "80") {
-    return `${protocol}//${location.hostname}/ao-terminal-ws?session=${encodeURIComponent(sessionId)}`;
-  }
-
-  const port = directTerminalPort ?? "14801";
-  return `${protocol}//${location.hostname}:${port}/ws?session=${encodeURIComponent(sessionId)}`;
-}
-
 /**
  * Direct xterm.js terminal with native WebSocket connection.
  * Implements Extended Device Attributes (XDA) handler to enable
@@ -149,7 +115,7 @@ export function DirectTerminal({
   const searchParams = useSearchParams();
   const { resolvedTheme } = useTheme();
   const terminalThemes = useMemo(() => buildTerminalThemes(variant), [variant]);
-  const { subscribeTerminal, writeTerminal, resizeTerminal: resizeTerminalMux, openTerminal, status: muxStatus } = useMux();
+  const { subscribeTerminal, writeTerminal, resizeTerminal: resizeTerminalMux, openTerminal, closeTerminal, status: muxStatus } = useMux();
 
   const terminalRef = useRef<HTMLDivElement>(null);
   const terminalInstance = useRef<TerminalType | null>(null);
@@ -407,6 +373,7 @@ export function DirectTerminal({
           inputDisposable?.dispose();
           inputDisposable = null;
           unsubscribe?.();
+          closeTerminal(sessionId);
           terminal.dispose();
         };
       })
@@ -420,7 +387,7 @@ export function DirectTerminal({
       mounted = false;
       cleanup?.();
     };
-  }, [sessionId, variant, subscribeTerminal, writeTerminal, resizeTerminalMux, openTerminal]);
+  }, [sessionId, variant, subscribeTerminal, writeTerminal, resizeTerminalMux, openTerminal, closeTerminal]);
 
   // Live theme switching without terminal recreation
   useEffect(() => {

@@ -82,7 +82,6 @@ export function MuxProvider({ children }: { children: ReactNode }) {
   const reconnectAttempt = useRef(0);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const runtimeConfigRef = useRef<{ directTerminalPort?: string; proxyWsPath?: string }>({});
-  const sessionSubscribedRef = useRef(false);
 
   const connect = useCallback(() => {
     if (wsRef.current) {
@@ -113,7 +112,6 @@ export function MuxProvider({ children }: { children: ReactNode }) {
         }
 
         // Always subscribe to sessions
-        sessionSubscribedRef.current = true;
         const subMsg: ClientMessage = {
           ch: "subscribe",
           topics: ["sessions"],
@@ -140,8 +138,9 @@ export function MuxProvider({ children }: { children: ReactNode }) {
               buffer.push(msg.data);
               buffersRef.current.set(msg.id, buffer);
 
+              const encoder = new TextEncoder();
               let bytes = bufferBytesRef.current.get(msg.id) ?? 0;
-              bytes += Buffer.byteLength(msg.data, "utf8");
+              bytes += encoder.encode(msg.data).length;
               bufferBytesRef.current.set(msg.id, bytes);
 
               // Trim buffer if needed (50KB limit)
@@ -149,7 +148,7 @@ export function MuxProvider({ children }: { children: ReactNode }) {
               if (bytes > RING_BUFFER_MAX) {
                 while (bytes > RING_BUFFER_MAX && buffer.length > 0) {
                   const removed = buffer.shift() ?? "";
-                  bytes -= Buffer.byteLength(removed, "utf8");
+                  bytes -= encoder.encode(removed).length;
                 }
                 bufferBytesRef.current.set(msg.id, bytes);
               }
