@@ -41,6 +41,7 @@ import pluginAgentOpencode from "@composio/ao-plugin-agent-opencode";
 import pluginWorkspaceWorktree from "@composio/ao-plugin-workspace-worktree";
 import pluginScmGithub from "@composio/ao-plugin-scm-github";
 import pluginTrackerGithub from "@composio/ao-plugin-tracker-github";
+import pluginTrackerJira from "@composio/ao-plugin-tracker-jira";
 import pluginTrackerLinear from "@composio/ao-plugin-tracker-linear";
 
 export interface Services {
@@ -83,6 +84,7 @@ async function initServices(): Promise<Services> {
   registry.register(pluginWorkspaceWorktree);
   registry.register(pluginScmGithub);
   registry.register(pluginTrackerGithub);
+  registry.register(pluginTrackerJira);
   registry.register(pluginTrackerLinear);
 
   const sessionManager = createSessionManager({ config, registry });
