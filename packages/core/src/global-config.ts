@@ -575,7 +575,13 @@ export function migrateToGlobalConfig(oldConfigPath: string, globalConfigPath?: 
     for (const [key, value] of Object.entries(project)) {
       if (key === "name" || key === "path" || key === "sessionPrefix") continue;
       if (key.startsWith(INTERNAL_FIELD_PREFIX)) continue;
-      if (SECRET_SUFFIX_PATTERN.test(key)) continue;
+      if (SECRET_SUFFIX_PATTERN.test(key)) {
+        process.stderr.write(
+          `ao: warning — excluding "${key}" from global config during migration (secret-like field name). ` +
+            `Use environment variables for secrets.\n`,
+        );
+        continue;
+      }
       shadowFields[key] = value;
     }
 
