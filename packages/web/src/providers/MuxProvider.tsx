@@ -82,6 +82,7 @@ export function MuxProvider({ children }: { children: ReactNode }) {
   const reconnectAttempt = useRef(0);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const runtimeConfigRef = useRef<{ directTerminalPort?: string; proxyWsPath?: string }>({});
+  const isDestroyedRef = useRef(false);
 
   const connect = useCallback(() => {
     if (wsRef.current) {
@@ -94,10 +95,15 @@ export function MuxProvider({ children }: { children: ReactNode }) {
       const url = buildMuxWsUrl(runtimeConfigRef.current);
       console.log("[MuxProvider] Connecting to", url);
       const ws = new WebSocket(url);
+      // Assign immediately so cleanup can close it even during CONNECTING state
+      wsRef.current = ws;
 
       ws.addEventListener("open", () => {
+        if (isDestroyedRef.current) {
+          ws.close();
+          return;
+        }
         console.log("[MuxProvider] Connected");
-        wsRef.current = ws;
         setStatus("connected");
         reconnectAttempt.current = 0;
 
@@ -170,7 +176,10 @@ export function MuxProvider({ children }: { children: ReactNode }) {
 
       ws.addEventListener("close", () => {
         console.log("[MuxProvider] Disconnected");
-        wsRef.current = null;
+        if (wsRef.current === ws) wsRef.current = null;
+
+        // Don't reconnect if the provider has been unmounted
+        if (isDestroyedRef.current) return;
 
         // Reconnect with exponential backoff
         const delayMs = Math.min(1000 * Math.pow(2, reconnectAttempt.current), 30_000);
@@ -213,6 +222,7 @@ export function MuxProvider({ children }: { children: ReactNode }) {
 
     return () => {
       cancelled = true;
+      isDestroyedRef.current = true;
       if (reconnectTimer.current) {
         clearTimeout(reconnectTimer.current);
       }

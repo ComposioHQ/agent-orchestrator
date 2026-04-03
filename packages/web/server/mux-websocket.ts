@@ -501,7 +501,8 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
             } else if (type === "resize" && "cols" in msg && "rows" in msg) {
               terminalManager.resize(id, msg.cols, msg.rows);
             } else if (type === "close") {
-              terminalManager.close(id);
+              // Unsubscribe this client only — TerminalManager is shared across
+              // all mux connections so we must not kill the PTY here.
               const unsub = subscriptions.get(id);
               if (unsub) {
                 unsub();

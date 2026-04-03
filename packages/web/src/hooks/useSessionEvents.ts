@@ -209,10 +209,9 @@ export function useSessionEvents(
     }
 
     return () => {
-      if (refreshTimerRef.current) {
-        clearTimeout(refreshTimerRef.current);
-        refreshTimerRef.current = null;
-      }
+      // Only abort in-flight requests — do NOT clear the debounce timer.
+      // Cancelling the timer here would prevent the membership-change refresh
+      // from completing when muxSessions updates arrive in rapid succession.
       activeRefreshControllerRef.current?.abort();
       activeRefreshControllerRef.current = null;
     };
