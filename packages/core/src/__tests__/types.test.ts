@@ -18,6 +18,20 @@ describe("isOrchestratorSession", () => {
   it("does not classify worker sessions as orchestrators", () => {
     expect(isOrchestratorSession({ id: "app-7", metadata: { role: "worker" } })).toBe(false);
   });
+
+  it("does not false-positive on workers when sessionPrefix ends with -orchestrator", () => {
+    // Project with sessionPrefix "my-orchestrator" creates workers like "my-orchestrator-1".
+    // These must NOT be classified as orchestrators.
+    expect(isOrchestratorSession({ id: "my-orchestrator-1", metadata: {} })).toBe(false);
+    expect(isOrchestratorSession({ id: "my-orchestrator-2", metadata: {} })).toBe(false);
+  });
+
+  it("still detects suffixed orchestrators via role metadata", () => {
+    // Suffixed orchestrators (-orchestrator-2) are detected via their role metadata.
+    expect(
+      isOrchestratorSession({ id: "app-orchestrator-2", metadata: { role: "orchestrator" } }),
+    ).toBe(true);
+  });
 });
 
 describe("isIssueNotFoundError", () => {

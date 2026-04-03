@@ -293,11 +293,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
   } | null {
     const sessionsDir = getProjectSessionsDir(project);
 
-    // Scan all session IDs: base orchestrator first (fast path), then suffixed ones.
-    // Suffixed orchestrators (-orchestrator-2, -orchestrator-3) are created when
-    // the user opts to run multiple orchestrators simultaneously.
-    const candidates = listMetadata(sessionsDir).filter((id) =>
-      isOrchestratorSession({ id }),
+    // Scan session IDs for orchestrators belonging to this project.
+    // Use the project's session prefix for accurate matching — the generic regex
+    // /-orchestrator(-\d+)?$/ would false-positive on worker sessions like
+    // "my-orchestrator-1" when the sessionPrefix itself ends with "-orchestrator".
+    const orchestratorPrefix = `${project.sessionPrefix}-orchestrator`;
+    const candidates = listMetadata(sessionsDir).filter(
+      (id) => id === orchestratorPrefix || id.startsWith(`${orchestratorPrefix}-`),
     );
 
     for (const candidateId of candidates) {

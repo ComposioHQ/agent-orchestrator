@@ -190,8 +190,8 @@ export interface Session {
   metadata: Record<string, string>;
 }
 
-/** Matches base orchestrator (-orchestrator) and suffixed ones (-orchestrator-2, -orchestrator-3). */
-const ORCHESTRATOR_ID_PATTERN = /-orchestrator(-\d+)?$/;
+/** Matches the base orchestrator session ID suffix (-orchestrator). */
+const ORCHESTRATOR_ID_PATTERN = /-orchestrator$/;
 
 export function isOrchestratorSession(session: {
   id: SessionId;
