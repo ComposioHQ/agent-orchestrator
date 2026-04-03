@@ -386,6 +386,17 @@ export function DirectTerminal({
     };
   }, [sessionId, variant, subscribeTerminal, writeTerminal, resizeTerminalMux, openTerminal, closeTerminal]);
 
+  // Re-send terminal dimensions on every reconnect so the server-side PTY
+  // matches the client's xterm.js size (new PTYs spawn at 80×24 default).
+  useEffect(() => {
+    if (muxStatus !== "connected") return;
+    const fit = fitAddon.current;
+    const terminal = terminalInstance.current;
+    if (!fit || !terminal) return;
+    fit.fit();
+    resizeTerminalMux(sessionId, terminal.cols, terminal.rows);
+  }, [muxStatus, sessionId, resizeTerminalMux]);
+
   // Live theme switching without terminal recreation
   useEffect(() => {
     const terminal = terminalInstance.current;
