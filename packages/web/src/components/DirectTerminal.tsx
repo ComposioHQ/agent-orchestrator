@@ -120,6 +120,8 @@ export function DirectTerminal({
   const terminalRef = useRef<HTMLDivElement>(null);
   const terminalInstance = useRef<TerminalType | null>(null);
   const fitAddon = useRef<FitAddonType | null>(null);
+  const muxStatusRef = useRef(muxStatus);
+  muxStatusRef.current = muxStatus;
   const [fullscreen, setFullscreen] = useState(startFullscreen);
   const [error, setError] = useState<string | null>(null);
   const [reloading, setReloading] = useState(false);
@@ -399,7 +401,7 @@ export function DirectTerminal({
     const terminal = terminalInstance.current;
     const container = terminalRef.current;
 
-    if (!fit || !terminal || muxStatus !== "connected" || !container) {
+    if (!fit || !terminal || muxStatusRef.current !== "connected" || !container) {
       return;
     }
 
@@ -472,7 +474,7 @@ export function DirectTerminal({
       clearTimeout(timer1);
       clearTimeout(timer2);
     };
-  }, [fullscreen, muxStatus, sessionId, resizeTerminalMux]);
+  }, [fullscreen, sessionId, resizeTerminalMux]);
 
   const accentColor = "var(--color-accent)";
 
