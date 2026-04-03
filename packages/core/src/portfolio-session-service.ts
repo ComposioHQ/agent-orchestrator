@@ -8,6 +8,7 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { PortfolioProject, PortfolioSession, Session, SessionMetadata } from "./types.js";
+import { isOrchestratorSession } from "./types.js";
 import { getSessionsDir } from "./paths.js";
 import { parseKeyValueContent } from "./key-value.js";
 
@@ -65,8 +66,11 @@ async function loadProjectSessions(project: PortfolioProject): Promise<Portfolio
 
       const content = await readFile(filePath, "utf-8");
       const raw = parseKeyValueContent(content);
-      const metadata = rawToMetadata(raw);
 
+      // Exclude orchestrator sessions from portfolio listings
+      if (isOrchestratorSession({ id: name, metadata: raw })) continue;
+
+      const metadata = rawToMetadata(raw);
       const session = metadataToSession(name, project, metadata);
       results.push({ session, project });
     } catch {
@@ -153,9 +157,13 @@ export async function getPortfolioSessionCounts(portfolio: PortfolioProject[]): 
           const fileStat = await stat(filePath);
           if (!fileStat.isFile()) continue;
 
-          total++;
           const content = await readFile(filePath, "utf-8");
           const raw = parseKeyValueContent(content);
+
+          // Exclude orchestrator sessions from portfolio counts
+          if (isOrchestratorSession({ id: name, metadata: raw })) continue;
+
+          total++;
           if (!TERMINAL.has(raw["status"] ?? "")) active++;
         } catch {
           continue;
