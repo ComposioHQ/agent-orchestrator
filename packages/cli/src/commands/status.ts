@@ -10,8 +10,11 @@ import {
   type ActivityState,
   type Tracker,
   type ProjectConfig,
+  type ArchivedSessionEntry,
   isOrchestratorSession,
   loadConfig,
+  listAllArchivedSessions,
+  getSessionsDir,
 } from "@composio/ao-core";
 import { git, getTmuxSessions, getTmuxActivity } from "../lib/shell.js";
 import {
@@ -49,6 +52,19 @@ interface StatusOptions {
   json?: boolean;
   watch?: boolean;
   interval?: string;
+  showArchived?: boolean;
+  limit?: string;
+}
+
+const DEFAULT_ARCHIVED_LIMIT = 10;
+
+function parseArchivedLimit(value?: string): number {
+  if (!value) return DEFAULT_ARCHIVED_LIMIT;
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isNaN(parsed) || parsed <= 0) {
+    throw new Error("--limit must be a positive integer.");
+  }
+  return parsed;
 }
 
 const DEFAULT_WATCH_INTERVAL_SECONDS = 5;
@@ -232,6 +248,46 @@ function printOrchestratorRow(info: SessionInfo): void {
   }
 }
 
+function formatArchiveDate(date: Date): string {
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function printArchivedSection(entries: ArchivedSessionEntry[]): void {
+  if (entries.length === 0) return;
+  console.log(chalk.dim("  ── Archived ────────────────────────────────────────────────────"));
+
+  for (const entry of entries) {
+    const { sessionId, archivedAt, metadata } = entry;
+    const status = metadata["status"] ?? "unknown";
+    const prUrl = metadata["pr"] ?? null;
+    const prMatch = prUrl ? /\/pull\/(\d+)/.exec(prUrl) : null;
+    const prStr = prMatch ? chalk.dim(`#${prMatch[1]}`) : chalk.dim("-");
+    const branch = metadata["branch"] ?? null;
+
+    const statusColor =
+      status === "merged"
+        ? chalk.green
+        : status === "killed" || status === "terminated"
+          ? chalk.red
+          : chalk.dim;
+
+    const row =
+      padCol(chalk.dim(sessionId), COL.session) +
+      padCol(branch ? chalk.dim(branch) : chalk.dim("-"), COL.branch) +
+      padCol(prStr, COL.pr) +
+      padCol(statusColor(status), COL.ci + COL.review + COL.threads + COL.activity) +
+      chalk.dim(formatArchiveDate(archivedAt));
+
+    console.log(`  ${row}`);
+  }
+  console.log();
+}
+
 export function registerStatus(program: Command): void {
   program
     .command("status")
@@ -240,6 +296,8 @@ export function registerStatus(program: Command): void {
     .option("--json", "Output as JSON")
     .option("-w, --watch", "Refresh the status view continuously")
     .option("--interval <seconds>", "Refresh interval in seconds (default: 5)")
+    .option("--show-archived", "Show archived sessions below active ones")
+    .option("--limit <n>", "Max archived sessions to show (default: 10, requires --show-archived)")
     .action(async (opts: StatusOptions) => {
       if (opts.watch && opts.json) {
         console.error(chalk.red("--watch cannot be used with --json."));
@@ -413,6 +471,28 @@ export function registerStatus(program: Command): void {
             }
           } catch {
             // Plugin registry or tracker unavailable — skip silently
+          }
+
+          // Show archived sessions if requested
+          if (opts.showArchived) {
+            let archivedLimit = DEFAULT_ARCHIVED_LIMIT;
+            try {
+              archivedLimit = parseArchivedLimit(opts.limit);
+            } catch (err) {
+              console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+            }
+
+            const allArchived: ArchivedSessionEntry[] = [];
+            for (const projectId of projectIds) {
+              const project: ProjectConfig | undefined = config.projects[projectId];
+              if (!project) continue;
+              const sessionsDir = getSessionsDir(config.configPath, project.path);
+              const entries = listAllArchivedSessions(sessionsDir, archivedLimit);
+              allArchived.push(...entries);
+            }
+            // Re-sort combined results and apply limit
+            allArchived.sort((a, b) => b.archivedAt.getTime() - a.archivedAt.getTime());
+            printArchivedSection(allArchived.slice(0, archivedLimit));
           }
 
           console.log();

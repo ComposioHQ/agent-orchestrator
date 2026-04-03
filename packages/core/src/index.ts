@@ -35,7 +35,9 @@ export {
   updateMetadata,
   deleteMetadata,
   listMetadata,
+  listAllArchivedSessions,
 } from "./metadata.js";
+export type { ArchivedSessionEntry } from "./metadata.js";
 
 // tmux — command wrappers
 export {

@@ -9,6 +9,7 @@ import {
   type AttentionLevel,
   type GlobalPauseState,
   type DashboardOrchestratorLink,
+  type ArchivedSession,
   getAttentionLevel,
   isPRRateLimited,
   isPRMergeReady,
@@ -108,6 +109,9 @@ function DashboardInner({
   } | null>(null);
   const [sheetSessionOverride, setSheetSessionOverride] = useState<DashboardSession | null>(null);
   const [doneExpanded, setDoneExpanded] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
+  const [archivedSessions, setArchivedSessions] = useState<ArchivedSession[]>([]);
+  const [archivedLoading, setArchivedLoading] = useState(false);
   const sessionsRef = useRef(sessions);
   const hasSeededMobileExpansionRef = useRef(false);
   sessionsRef.current = sessions;
@@ -461,6 +465,24 @@ function DashboardInner({
     }
   };
 
+  useEffect(() => {
+    if (!showArchived) return;
+    setArchivedLoading(true);
+    const params = new URLSearchParams({ limit: "10" });
+    if (projectId) params.set("project", projectId);
+    fetch(`/api/sessions/archived?${params.toString()}`)
+      .then((res) => res.json())
+      .then((data: { archived?: ArchivedSession[] }) => {
+        setArchivedSessions(data.archived ?? []);
+      })
+      .catch(() => {
+        // Ignore — archived data is optional
+      })
+      .finally(() => {
+        setArchivedLoading(false);
+      });
+  }, [showArchived, projectId]);
+
   const hasAnySessions = KANBAN_LEVELS.some(
     (level) => grouped[level].length > 0,
   );
@@ -569,6 +591,27 @@ function DashboardInner({
                 ) : null}
                 {!allProjectsView && !isMobile ? (
                   <OrchestratorControl orchestrators={activeOrchestrators} />
+                ) : null}
+                {!allProjectsView ? (
+                  <button
+                    type="button"
+                    className="orchestrator-btn flex items-center gap-2 px-4 py-2 text-[12px] font-semibold"
+                    onClick={() => setShowArchived((v) => !v)}
+                    aria-pressed={showArchived}
+                    title={showArchived ? "Hide archived sessions" : "Show archived sessions"}
+                  >
+                    <svg
+                      className="h-3.5 w-3.5 opacity-75"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                    >
+                      <path d="M5 8h14M5 8a2 2 0 1 0 0-4h14a2 2 0 1 0 0 4M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8m-9 4h4" />
+                    </svg>
+                    {showArchived ? "Hide archived" : "Archived"}
+                  </button>
                 ) : null}
                 <ThemeToggle />
               </div>
@@ -777,6 +820,13 @@ function DashboardInner({
         )}
 
         {!allProjectsView && !hasAnySessions && grouped.done.length === 0 && <EmptyState />}
+
+        {!allProjectsView && showArchived && (
+          <ArchivedSessionsSection
+            sessions={archivedSessions}
+            loading={archivedLoading}
+          />
+        )}
 
       </div>
     </div>
@@ -1114,3 +1164,99 @@ function BoardLegendItem({ label, tone }: { label: string; tone: string }) {
   );
 }
 
+function ArchivedSessionsSection({
+  sessions,
+  loading,
+}: {
+  sessions: ArchivedSession[];
+  loading: boolean;
+}) {
+  return (
+    <div className="mt-8">
+      <div className="board-section-head mb-4">
+        <div>
+          <h2 className="board-section-head__title text-[var(--color-text-muted)]">
+            Archived Sessions
+          </h2>
+          <p className="board-section-head__subtitle">
+            Completed, merged, and terminated sessions.
+          </p>
+        </div>
+      </div>
+
+      {loading && (
+        <p className="px-1 text-[12px] text-[var(--color-text-muted)]">Loading…</p>
+      )}
+
+      {!loading && sessions.length === 0 && (
+        <p className="px-1 text-[12px] text-[var(--color-text-muted)]">No archived sessions found.</p>
+      )}
+
+      {!loading && sessions.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-[12px]">
+            <thead>
+              <tr className="border-b border-[var(--color-border-subtle)]">
+                <th className="py-2 pr-4 text-left font-medium text-[var(--color-text-muted)]">Session</th>
+                <th className="py-2 pr-4 text-left font-medium text-[var(--color-text-muted)]">Branch</th>
+                <th className="py-2 pr-4 text-left font-medium text-[var(--color-text-muted)]">PR</th>
+                <th className="py-2 pr-4 text-left font-medium text-[var(--color-text-muted)]">Status</th>
+                <th className="py-2 text-left font-medium text-[var(--color-text-muted)]">Archived</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sessions.map((session) => (
+                <tr
+                  key={`${session.sessionId}-${session.archivedAt}`}
+                  className="border-b border-[var(--color-border-subtle)] opacity-60"
+                >
+                  <td className="py-2 pr-4 font-mono text-[var(--color-text-secondary)]">
+                    {session.sessionId}
+                  </td>
+                  <td className="py-2 pr-4 text-[var(--color-text-muted)]">
+                    {session.branch ?? "—"}
+                  </td>
+                  <td className="py-2 pr-4">
+                    {session.prNumber && session.prUrl ? (
+                      <a
+                        href={session.prUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[var(--color-accent)] hover:underline"
+                      >
+                        #{session.prNumber}
+                      </a>
+                    ) : (
+                      <span className="text-[var(--color-text-muted)]">—</span>
+                    )}
+                  </td>
+                  <td className="py-2 pr-4">
+                    <span
+                      className={
+                        session.status === "merged"
+                          ? "text-[var(--color-status-ready)]"
+                          : session.status === "killed" || session.status === "terminated"
+                            ? "text-[var(--color-status-error)]"
+                            : "text-[var(--color-text-muted)]"
+                      }
+                    >
+                      {session.status}
+                    </span>
+                  </td>
+                  <td className="py-2 text-[var(--color-text-muted)]">
+                    {new Date(session.archivedAt).toLocaleDateString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}

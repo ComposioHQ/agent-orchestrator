@@ -276,6 +276,63 @@ export function updateArchivedMetadata(
 }
 
 /**
+ * An archived session entry with its ID, archive timestamp, and raw metadata.
+ */
+export interface ArchivedSessionEntry {
+  sessionId: SessionId;
+  archivedAt: Date;
+  metadata: Record<string, string>;
+}
+
+/** Regex matching the archive filename suffix: `_YYYY-MM-DDTHH-MM-SS-mmmZ` */
+const ARCHIVE_FILENAME_RE = /^(.+)_(\d{4}-\d{2}-\d{2}T[\d-]+Z)$/;
+
+/** Convert the dashed archive timestamp back to an ISO 8601 string. */
+function archiveTsToIso(ts: string): string {
+  // e.g. "2026-04-03T06-48-49-236Z" → "2026-04-03T06:48:49.236Z"
+  return ts.replace(/T(\d{2})-(\d{2})-(\d{2})-(\d+)Z$/, "T$1:$2:$3.$4Z");
+}
+
+/**
+ * List all archived sessions across all session IDs, sorted newest-first.
+ * Returns at most `limit` entries (default 10).
+ */
+export function listAllArchivedSessions(
+  dataDir: string,
+  limit = 10,
+): ArchivedSessionEntry[] {
+  const archiveDir = join(dataDir, "archive");
+  if (!existsSync(archiveDir)) return [];
+
+  const entries: { file: string; sessionId: string; archivedTs: string }[] = [];
+
+  for (const file of readdirSync(archiveDir)) {
+    const match = ARCHIVE_FILENAME_RE.exec(file);
+    if (!match) continue;
+    const [, sessionId, archivedTs] = match;
+    if (!sessionId || !VALID_SESSION_ID.test(sessionId)) continue;
+    entries.push({ file, sessionId, archivedTs });
+  }
+
+  // ISO timestamps with dashes sort correctly lexicographically
+  entries.sort((a, b) => b.archivedTs.localeCompare(a.archivedTs));
+
+  return entries.slice(0, limit).map(({ file, sessionId, archivedTs }) => {
+    let metadata: Record<string, string> = {};
+    try {
+      metadata = parseKeyValueContent(readFileSync(join(archiveDir, file), "utf-8"));
+    } catch {
+      // Skip unreadable files
+    }
+    return {
+      sessionId,
+      archivedAt: new Date(archiveTsToIso(archivedTs)),
+      metadata,
+    };
+  });
+}
+
+/**
  * List all session IDs that have metadata files.
  */
 export function listMetadata(dataDir: string): SessionId[] {

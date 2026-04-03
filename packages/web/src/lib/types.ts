@@ -133,6 +133,18 @@ export interface DashboardStats {
   needsReview: number;
 }
 
+/** A session that has been archived (merged, killed, etc.). */
+export interface ArchivedSession {
+  sessionId: string;
+  archivedAt: string; // ISO string
+  status: string;
+  branch: string | null;
+  prUrl: string | null;
+  prNumber: number | null;
+  summary: string | null;
+  projectId: string | null;
+}
+
 export interface DashboardOrchestratorLink {
   id: string;
   projectId: string;

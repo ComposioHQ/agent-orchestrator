@@ -11,6 +11,7 @@ import {
   updateMetadata,
   deleteMetadata,
   listMetadata,
+  listAllArchivedSessions,
 } from "../metadata.js";
 
 let dataDir: string;
@@ -460,5 +461,106 @@ describe("listMetadata", () => {
     const list = listMetadata(emptyDir);
     expect(list).toEqual([]);
     // no cleanup needed since dir was never created
+  });
+});
+
+describe("listAllArchivedSessions", () => {
+  function writeArchiveFile(
+    dir: string,
+    sessionId: string,
+    timestamp: string,
+    content: Record<string, string>,
+  ): void {
+    const archiveDir = join(dir, "archive");
+    mkdirSync(archiveDir, { recursive: true });
+    const lines = Object.entries(content)
+      .map(([k, v]) => `${k}=${v}`)
+      .join("\n");
+    writeFileSync(join(archiveDir, `${sessionId}_${timestamp}`), lines + "\n");
+  }
+
+  it("returns empty array when archive dir does not exist", () => {
+    const result = listAllArchivedSessions(dataDir);
+    expect(result).toEqual([]);
+  });
+
+  it("returns empty array when archive dir is empty", () => {
+    mkdirSync(join(dataDir, "archive"), { recursive: true });
+    const result = listAllArchivedSessions(dataDir);
+    expect(result).toEqual([]);
+  });
+
+  it("reads a single archived session", () => {
+    writeArchiveFile(dataDir, "ao-1", "2026-04-03T06-48-49-236Z", {
+      status: "merged",
+      branch: "feat/foo",
+      pr: "https://github.com/org/repo/pull/42",
+    });
+
+    const result = listAllArchivedSessions(dataDir);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.sessionId).toBe("ao-1");
+    expect(result[0]?.archivedAt).toBeInstanceOf(Date);
+    expect(result[0]?.archivedAt.toISOString()).toBe("2026-04-03T06:48:49.236Z");
+    expect(result[0]?.metadata["status"]).toBe("merged");
+    expect(result[0]?.metadata["branch"]).toBe("feat/foo");
+  });
+
+  it("sorts archived sessions newest-first", () => {
+    writeArchiveFile(dataDir, "ao-1", "2026-04-01T00-00-00-000Z", { status: "merged" });
+    writeArchiveFile(dataDir, "ao-3", "2026-04-03T00-00-00-000Z", { status: "killed" });
+    writeArchiveFile(dataDir, "ao-2", "2026-04-02T00-00-00-000Z", { status: "done" });
+
+    const result = listAllArchivedSessions(dataDir);
+    expect(result.map((e) => e.sessionId)).toEqual(["ao-3", "ao-2", "ao-1"]);
+  });
+
+  it("applies the limit parameter", () => {
+    for (let i = 1; i <= 15; i++) {
+      const ts = `2026-04-${String(i).padStart(2, "0")}T00-00-00-000Z`;
+      writeArchiveFile(dataDir, `ao-${i}`, ts, { status: "merged" });
+    }
+
+    const defaultResult = listAllArchivedSessions(dataDir);
+    expect(defaultResult).toHaveLength(10);
+
+    const limitedResult = listAllArchivedSessions(dataDir, 5);
+    expect(limitedResult).toHaveLength(5);
+  });
+
+  it("returns the most recent entries when limit is applied", () => {
+    writeArchiveFile(dataDir, "ao-old", "2026-01-01T00-00-00-000Z", { status: "merged" });
+    writeArchiveFile(dataDir, "ao-new", "2026-04-03T00-00-00-000Z", { status: "killed" });
+
+    const result = listAllArchivedSessions(dataDir, 1);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.sessionId).toBe("ao-new");
+  });
+
+  it("skips files that do not match the archive filename pattern", () => {
+    mkdirSync(join(dataDir, "archive"), { recursive: true });
+    writeFileSync(join(dataDir, "archive", "not-an-archive"), "status=working\n");
+    writeFileSync(join(dataDir, "archive", "ao-1_not-a-timestamp"), "status=merged\n");
+    writeArchiveFile(dataDir, "ao-valid", "2026-04-03T06-48-49-236Z", { status: "merged" });
+
+    const result = listAllArchivedSessions(dataDir);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.sessionId).toBe("ao-valid");
+  });
+
+  it("handles sessions archived via deleteMetadata", () => {
+    writeMetadata(dataDir, "ao-10", {
+      worktree: "/tmp/w",
+      branch: "feat/test",
+      status: "merged",
+      pr: "https://github.com/org/repo/pull/10",
+    });
+    deleteMetadata(dataDir, "ao-10", true);
+
+    const result = listAllArchivedSessions(dataDir);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.sessionId).toBe("ao-10");
+    expect(result[0]?.metadata["status"]).toBe("merged");
+    expect(result[0]?.metadata["branch"]).toBe("feat/test");
   });
 });
