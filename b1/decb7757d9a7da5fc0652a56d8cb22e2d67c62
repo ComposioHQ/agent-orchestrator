@@ -1,0 +1,69 @@
+packages/web/src/components/DirectTerminal.tsx
+  a271ef70a2607a42 340-342,412,625
+packages/web/src/lib/__tests__/services.test.ts
+  8f520299e68b0ff7 1,12
+packages/core/src/__tests__/portfolio-registry.test.ts
+  8f520299e68b0ff7 1,22
+packages/web/src/components/__tests__/UnifiedSidebar.test.tsx
+  8f520299e68b0ff7 9
+eslint.config.js
+  8f520299e68b0ff7 13
+packages/web/src/app/api/sessions/__tests__/route.test.ts
+  8f520299e68b0ff7 70-79
+packages/cli/src/commands/start.ts
+  5f9afb626ee184f9 129-135,137
+packages/web/next-env.d.ts
+  8f520299e68b0ff7 3
+packages/core/src/portfolio-session-service.ts
+  a271ef70a2607a42 13,117-131
+packages/web/src/lib/__tests__/portfolio-page-data.test.ts
+  8f520299e68b0ff7 1,23
+packages/web/src/components/__tests__/WorkspaceResourcesModal.test.tsx
+  8f520299e68b0ff7 512
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "b1decb7757d9a7da5fc0652a56d8cb22e2d67c62",
+  "prompts": {
+    "5f9afb626ee184f9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d53a3-b386-7b62-b6d9-8dc9a61b8473",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 8,
+      "total_deletions": 7,
+      "accepted_lines": 8,
+      "overriden_lines": 0
+    },
+    "8f520299e68b0ff7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d53a7-0de3-7901-be61-14014a48858e",
+        "model": "unknown"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 21,
+      "total_deletions": 59,
+      "accepted_lines": 20,
+      "overriden_lines": 0
+    },
+    "a271ef70a2607a42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3be41795-6f73-4d51-9697-61db44b5ab6b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 21,
+      "total_deletions": 5,
+      "accepted_lines": 21,
+      "overriden_lines": 0
+    }
+  }
+}
