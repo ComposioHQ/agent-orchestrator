@@ -10,6 +10,8 @@ import bash from "highlight.js/lib/languages/bash";
 import markdown from "highlight.js/lib/languages/markdown";
 import rust from "highlight.js/lib/languages/rust";
 import go from "highlight.js/lib/languages/go";
+import kotlin from "highlight.js/lib/languages/kotlin";
+import groovy from "highlight.js/lib/languages/groovy";
 
 hljs.registerLanguage("javascript", javascript);
 hljs.registerLanguage("typescript", typescript);
@@ -22,6 +24,8 @@ hljs.registerLanguage("bash", bash);
 hljs.registerLanguage("markdown", markdown);
 hljs.registerLanguage("rust", rust);
 hljs.registerLanguage("go", go);
+hljs.registerLanguage("kotlin", kotlin);
+hljs.registerLanguage("groovy", groovy);
 
 const EXT_TO_LANG: Record<string, string> = {
   ".js": "javascript",
@@ -46,6 +50,9 @@ const EXT_TO_LANG: Record<string, string> = {
   ".md": "markdown",
   ".rs": "rust",
   ".go": "go",
+  ".kt": "kotlin",
+  ".kts": "kotlin",
+  ".gradle": "groovy",
 };
 
 export function languageForFilePath(path: string): string | undefined {

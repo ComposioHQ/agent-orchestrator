@@ -73,12 +73,14 @@ function FileTreeNode({
   onToggleFolder,
   onSelectFile,
 }: FileTreeItemProps) {
-  const indent = 12 + depth * 16;
+  const indent = 8 + depth * 5;
 
   if (node.type === "file") {
     const status = gitStatus[node.path];
     const isSelected = selectedFile === node.path;
     const nameColor = status ? getGitStatusColor(status) : undefined;
+
+    const fileIcon = node.name.endsWith(".md") || node.name.endsWith(".mdx") ? "📝" : "📄";
 
     return (
       <div
@@ -86,7 +88,7 @@ function FileTreeNode({
         style={{ paddingLeft: `${indent + 16}px` }}
         onClick={() => onSelectFile(node.path)}
       >
-        <span className="workspace-file-tree-icon">📄</span>
+        <span className="workspace-file-tree-icon">{fileIcon}</span>
         <span className="workspace-file-tree-name" style={nameColor ? { color: nameColor } : undefined}>
           {node.name}
         </span>
