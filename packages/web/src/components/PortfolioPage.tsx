@@ -8,6 +8,10 @@ import type { ProjectInfo } from "@/lib/project-name";
 import { getAttentionLevel, type DashboardSession } from "@/lib/types";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
 
+// Stable reference used as default for initialSessions. An inline `[]` default
+// creates a new array on every render, which defeats the useMemo dependency check.
+const EMPTY_SESSIONS: DashboardSession[] = [];
+
 interface ProjectCardData {
   id: string;
   name: string;
@@ -74,7 +78,7 @@ function ProjectCard({ card }: { card: ProjectCardData }) {
   );
 }
 
-export function PortfolioPage({ projects, initialCards, initialSessions = [] }: PortfolioPageProps) {
+export function PortfolioPage({ projects, initialCards, initialSessions = EMPTY_SESSIONS }: PortfolioPageProps) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   // Use SSE-driven session stream (same infrastructure as the project dashboard).
