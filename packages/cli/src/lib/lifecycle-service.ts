@@ -61,6 +61,9 @@ export async function stopLifecycleWorker(
  * between test cases without re-importing the module.
  */
 export function clearActiveManagers(): void {
+  for (const manager of activeManagers.values()) {
+    manager.stop();
+  }
   activeManagers.clear();
 }
 
