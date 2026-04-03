@@ -480,24 +480,25 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
               // Validate session exists
               terminalManager.open(id);
 
-              // Send buffered data
-              const buffer = terminalManager.getBuffer(id);
-              if (buffer) {
-                const bufferMsg: ServerMessage = {
-                  ch: "terminal",
-                  id,
-                  type: "data",
-                  data: buffer,
-                };
-                ws.send(JSON.stringify(bufferMsg));
-              }
-
-              // Send opened confirmation
+              // Send opened confirmation (idempotent — safe to send on re-open)
               const openedMsg: ServerMessage = { ch: "terminal", id, type: "opened" };
               ws.send(JSON.stringify(openedMsg));
 
-              // Subscribe to data if not already subscribed
+              // Subscribe and send history buffer only for new subscribers.
+              // Skipping the buffer on re-open prevents duplicate output when
+              // MuxProvider re-sends open for all terminals on reconnect.
               if (!subscriptions.has(id)) {
+                // Send buffered history to catch up the new subscriber
+                const buffer = terminalManager.getBuffer(id);
+                if (buffer) {
+                  const bufferMsg: ServerMessage = {
+                    ch: "terminal",
+                    id,
+                    type: "data",
+                    data: buffer,
+                  };
+                  ws.send(JSON.stringify(bufferMsg));
+                }
                 const unsub = terminalManager.subscribe(
                   id,
                   (data) => {

@@ -11,7 +11,6 @@ interface MuxContextValue {
   resizeTerminal: (id: string, cols: number, rows: number) => void;
   status: "connecting" | "connected" | "reconnecting" | "disconnected";
   sessions: SessionPatch[];
-  terminals: string[];
 }
 
 const MuxContext = React.createContext<MuxContextValue | undefined>(undefined);
@@ -316,7 +315,6 @@ export function MuxProvider({ children }: { children: ReactNode }) {
       resizeTerminal,
       status,
       sessions,
-      terminals: Array.from(openedTerminalsRef.current),
     }),
     [subscribeTerminal, writeTerminal, openTerminal, closeTerminal, resizeTerminal, status, sessions],
   );
