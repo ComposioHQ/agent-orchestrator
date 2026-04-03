@@ -109,6 +109,53 @@ describe("buildPreviousSessionContext", () => {
     expect(result).toContain("- def5678 Add tests");
   });
 
+  it("uses the provided defaultBranch instead of hardcoded main", async () => {
+    mockExecFile.mockImplementation(
+      (
+        _cmd: string,
+        args: string[],
+        _opts: unknown,
+        cb?: (err: Error | null, stdout: string, stderr: string) => void,
+      ) => {
+        if (cb) cb(null, "abc1234 Fix login\n", "");
+      },
+    );
+
+    await buildPreviousSessionContext(
+      { status: "killed", summary: "work", branch: "feat/test" },
+      tmpDir,
+      "develop",
+    );
+
+    // Verify git was called with origin/develop, not origin/main
+    const callArgs = mockExecFile.mock.calls[0];
+    const gitArgs = callArgs[1] as string[];
+    expect(gitArgs).toContain("origin/develop");
+    expect(gitArgs).not.toContain("origin/main");
+  });
+
+  it("defaults to origin/main when no defaultBranch is provided", async () => {
+    mockExecFile.mockImplementation(
+      (
+        _cmd: string,
+        _args: string[],
+        _opts: unknown,
+        cb?: (err: Error | null, stdout: string, stderr: string) => void,
+      ) => {
+        if (cb) cb(null, "abc1234 Fix login\n", "");
+      },
+    );
+
+    await buildPreviousSessionContext(
+      { status: "killed", summary: "work", branch: "feat/test" },
+      tmpDir,
+    );
+
+    const callArgs = mockExecFile.mock.calls[0];
+    const gitArgs = callArgs[1] as string[];
+    expect(gitArgs).toContain("origin/main");
+  });
+
   it("handles git failure gracefully (best effort)", async () => {
     mockExecFile.mockImplementation(
       (

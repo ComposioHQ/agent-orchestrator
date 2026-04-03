@@ -23,6 +23,7 @@ const MAX_COMMITS = 20;
 export async function buildPreviousSessionContext(
   archivedRaw: Record<string, string>,
   workspacePath: string,
+  defaultBranch = "main",
 ): Promise<string | null> {
   const parts: string[] = [];
   parts.push("## Previous Session Context");
@@ -41,7 +42,7 @@ export async function buildPreviousSessionContext(
     try {
       const { stdout } = await execFileAsync(
         "git",
-        ["-C", workspacePath, "log", "--oneline", branch, "--not", "origin/main", "--"],
+        ["-C", workspacePath, "log", "--oneline", branch, "--not", `origin/${defaultBranch}`, "--"],
         { timeout: 10_000 },
       );
       if (stdout.trim()) {

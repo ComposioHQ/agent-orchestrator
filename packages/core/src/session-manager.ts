@@ -1161,7 +1161,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
         // Step 4: Context injection fallback
         if (!launchCommand) {
-          const context = await buildPreviousSessionContext(archived.raw, workspacePath);
+          const context = await buildPreviousSessionContext(archived.raw, workspacePath, project.defaultBranch);
           if (context) {
             agentLaunchConfig.prompt = `${context}\n\n---\n\n${agentLaunchConfig.prompt ?? ""}`;
             resumedFromSession = archived.sessionId;
