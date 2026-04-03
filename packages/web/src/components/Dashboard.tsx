@@ -16,6 +16,7 @@ import {
 import { AttentionZone } from "./AttentionZone";
 import { DynamicFavicon, countNeedingAttention } from "./DynamicFavicon";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
+import { useMuxOptional } from "@/providers/MuxProvider";
 import { ProjectSidebar } from "./ProjectSidebar";
 import { ThemeToggle } from "./ThemeToggle";
 import type { ProjectInfo } from "@/lib/project-name";
@@ -72,6 +73,7 @@ function DashboardInner({
   orchestrators,
 }: DashboardProps) {
   const orchestratorLinks = orchestrators ?? EMPTY_ORCHESTRATORS;
+  const mux = useMuxOptional();
   const initialAttentionLevels = useMemo(() => {
     const levels: Record<string, AttentionLevel> = {};
     for (const s of initialSessions) {
@@ -83,6 +85,7 @@ function DashboardInner({
     initialSessions,
     initialGlobalPause,
     projectId,
+    mux?.status === "connected" ? mux.sessions : undefined,
     initialAttentionLevels,
   );
   const searchParams = useSearchParams();

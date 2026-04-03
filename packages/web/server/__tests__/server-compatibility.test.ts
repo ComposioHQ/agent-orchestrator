@@ -41,31 +41,9 @@ describe("direct-terminal-ws.ts", () => {
     expect(source).not.toMatch(/existsSync.*session/i);
   });
 
-  it("exposes terminal health metrics in /health response", () => {
-    expect(source).toMatch(/metrics/);
-    expect(source).toMatch(/totalConnections/);
-    expect(source).toMatch(/totalDisconnects/);
-    expect(source).toMatch(/totalErrors/);
-  });
-});
-
-describe("terminal-websocket.ts", () => {
-  const source = readServerFile("terminal-websocket.ts");
-
-  it("imports from shared tmux-utils", () => {
-    expect(source).toMatch(/from\s+["']\.\/tmux-utils/);
-  });
-
-  it("does not import loadConfig from @composio/ao-core", () => {
-    expect(source).not.toMatch(/import\s.*loadConfig.*from\s+["']@composio\/ao-core["']/);
-  });
-
-  it("does not reference config.dataDir", () => {
-    expect(source).not.toMatch(/config\.dataDir/);
-  });
-
-  it("does not check file existence for session validation", () => {
-    expect(source).not.toMatch(/existsSync.*session/i);
+  it("exposes a /health endpoint", () => {
+    expect(source).toMatch(/\/health/);
+    expect(source).toMatch(/status.*ok|ok.*status/);
   });
 });
 

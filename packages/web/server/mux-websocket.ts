@@ -1,10 +1,13 @@
 /**
  * Multiplexed WebSocket server for terminal multiplexing.
  * Manages multiple terminal connections over a single persistent WebSocket.
+ *
+ * Session updates are delivered via a single shared SSE connection from this
+ * process to Next.js /api/events, then broadcast to all subscribed clients.
+ * This replaces per-client HTTP polling and makes session updates event-driven.
  */
 
 import { WebSocketServer, WebSocket } from "ws";
-import type { Server } from "node:http";
 import { homedir, userInfo } from "node:os";
 import { spawn } from "node:child_process";
 import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
@@ -37,6 +40,148 @@ interface SessionPatch {
   lastActivityAt: string;
 }
 
+/**
+ * Manages a single shared SSE connection to Next.js /api/events.
+ * Broadcasts session patches to all subscribed callbacks.
+ * Lazily connects on first subscriber, disconnects when the last one leaves.
+ */
+class SessionBroadcaster {
+  private subscribers = new Set<(sessions: SessionPatch[]) => void>();
+  private abortController: AbortController | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly baseUrl: string;
+
+  constructor(nextPort: string) {
+    this.baseUrl = `http://localhost:${nextPort}`;
+  }
+
+  /**
+   * Subscribe to session patches. Returns an unsubscribe function.
+   * Sends an immediate snapshot to the new subscriber, then live SSE pushes.
+   */
+  subscribe(callback: (sessions: SessionPatch[]) => void): () => void {
+    const wasEmpty = this.subscribers.size === 0;
+    this.subscribers.add(callback);
+
+    // Immediately send a one-off snapshot to just this new subscriber
+    void this.fetchSnapshot().then((sessions) => {
+      if (sessions && this.subscribers.has(callback)) {
+        callback(sessions);
+      }
+    });
+
+    // Start the shared SSE connection if this is the first subscriber
+    if (wasEmpty) {
+      void this.connect();
+    }
+
+    return () => {
+      this.subscribers.delete(callback);
+      if (this.subscribers.size === 0) {
+        this.disconnect();
+      }
+    };
+  }
+
+  private broadcast(sessions: SessionPatch[]): void {
+    for (const callback of this.subscribers) {
+      callback(sessions);
+    }
+  }
+
+  /** One-shot HTTP fetch of the current session list for immediate delivery. */
+  private async fetchSnapshot(): Promise<SessionPatch[] | null> {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
+      try {
+        const res = await fetch(`${this.baseUrl}/api/sessions/patches`, {
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+        if (!res.ok) return null;
+        const data = (await res.json()) as { sessions?: SessionPatch[] };
+        return data.sessions ?? null;
+      } catch {
+        clearTimeout(timeoutId);
+        return null;
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  /** Open a persistent SSE connection and stream events to all subscribers. */
+  private async connect(): Promise<void> {
+    if (this.abortController) return;
+
+    this.abortController = new AbortController();
+    const { signal } = this.abortController;
+
+    try {
+      const res = await fetch(`${this.baseUrl}/api/events`, {
+        signal,
+        headers: { Accept: "text/event-stream" },
+      });
+
+      if (!res.ok || !res.body) {
+        throw new Error(`SSE connect failed: ${res.status}`);
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (!signal.aborted) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const event = JSON.parse(line.slice(6)) as {
+              type: string;
+              sessions?: SessionPatch[];
+            };
+            if (event.type === "snapshot" && event.sessions) {
+              this.broadcast(event.sessions);
+            }
+          } catch {
+            // ignore malformed events
+          }
+        }
+      }
+    } catch (err) {
+      if (signal.aborted) return; // intentional disconnect, not an error
+      console.warn("[MuxServer] SSE connection lost:", err instanceof Error ? err.message : err);
+    } finally {
+      this.abortController = null;
+    }
+
+    // Reconnect with backoff if there are still subscribers
+    if (this.subscribers.size > 0) {
+      console.log("[MuxServer] SSE reconnecting in 5s");
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null;
+        if (this.subscribers.size > 0) void this.connect();
+      }, 5000);
+    }
+  }
+
+  private disconnect(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.abortController?.abort();
+    this.abortController = null;
+  }
+}
+
 // node-pty is an optionalDependency — load dynamically
 /* eslint-disable @typescript-eslint/consistent-type-imports -- node-pty is optional; static import would crash if missing */
 type IPty = import("node-pty").IPty;
@@ -45,8 +190,8 @@ let ptySpawn: typeof import("node-pty").spawn | undefined;
 try {
   const nodePty = await import("node-pty");
   ptySpawn = nodePty.spawn;
-} catch {
-  console.warn("[MuxServer] node-pty not available — mux server will be disabled.");
+} catch (err) {
+  console.warn("[MuxServer] node-pty not available — mux server will be disabled.", err);
 }
 
 interface ManagedTerminal {
@@ -256,27 +401,26 @@ class TerminalManager {
 }
 
 /**
- * Attach mux WebSocket server to an existing HTTP server.
- * Creates a /mux endpoint for multiplexed terminal connections.
+ * Create a mux WebSocket server (noServer mode).
+ * Returns the WebSocketServer instance for manual upgrade routing.
  */
-export function attachMuxWebSocket(server: Server, tmuxPath?: string): void {
+export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
   if (!ptySpawn) {
     console.warn("[MuxServer] node-pty not available — mux WebSocket will be disabled");
-    return;
+    return null;
   }
 
   const terminalManager = new TerminalManager(tmuxPath);
+  const nextPort = process.env.PORT || "3000";
+  const broadcaster = new SessionBroadcaster(nextPort);
 
-  const wss = new WebSocketServer({
-    server,
-    path: "/mux",
-  });
+  const wss = new WebSocketServer({ noServer: true });
 
   wss.on("connection", (ws) => {
     console.log("[MuxServer] New mux connection");
 
     const subscriptions = new Map<string, () => void>();
-    let sessionsPollerInterval: ReturnType<typeof setInterval> | null = null;
+    let sessionUnsubscribe: (() => void) | null = null;
     let missedPongs = 0;
     const MAX_MISSED_PONGS = 3;
 
@@ -293,28 +437,6 @@ export function attachMuxWebSocket(server: Server, tmuxPath?: string): void {
         }
       }
     }, 15_000);
-
-    /**
-     * Start session polling
-     * TODO: Implement in Phase 2 - for now, stub it out to avoid circular import issues
-     */
-    const startSessionPolling = async (): Promise<void> => {
-      if (sessionsPollerInterval) return;
-
-      console.log("[MuxServer] Session polling requested but not yet implemented");
-      // Session polling will be implemented in a follow-up phase
-      // to avoid importing src/ modules from the server-side TypeScript config
-    };
-
-    /**
-     * Stop session polling
-     */
-    const stopSessionPolling = (): void => {
-      if (sessionsPollerInterval) {
-        clearInterval(sessionsPollerInterval);
-        sessionsPollerInterval = null;
-      }
-    };
 
     /**
      * Handle incoming messages
@@ -392,8 +514,13 @@ export function attachMuxWebSocket(server: Server, tmuxPath?: string): void {
             ws.send(JSON.stringify(errorMsg));
           }
         } else if (msg.ch === "subscribe") {
-          if (msg.topics.includes("sessions")) {
-            void startSessionPolling();
+          if (msg.topics.includes("sessions") && !sessionUnsubscribe) {
+            sessionUnsubscribe = broadcaster.subscribe((sessions) => {
+              if (ws.readyState === WebSocket.OPEN) {
+                const snapMsg: ServerMessage = { ch: "sessions", type: "snapshot", sessions };
+                ws.send(JSON.stringify(snapMsg));
+              }
+            });
           }
         }
       } catch (err) {
@@ -415,24 +542,22 @@ export function attachMuxWebSocket(server: Server, tmuxPath?: string): void {
     ws.on("close", () => {
       console.log("[MuxServer] Mux connection closed");
       clearInterval(heartbeatInterval);
-      stopSessionPolling();
-
-      // Unsubscribe from all terminals
+      sessionUnsubscribe?.();
+      sessionUnsubscribe = null;
       for (const unsub of subscriptions.values()) {
         unsub();
       }
       subscriptions.clear();
     });
 
-    /**
-     * Handle connection error
-     */
     ws.on("error", (err) => {
       console.error("[MuxServer] WebSocket error:", err.message);
       clearInterval(heartbeatInterval);
-      stopSessionPolling();
+      sessionUnsubscribe?.();
+      sessionUnsubscribe = null;
     });
   });
 
-  console.log("[MuxServer] Mux WebSocket server attached to /mux");
+  console.log("[MuxServer] Mux WebSocket server created (noServer mode)");
+  return wss;
 }

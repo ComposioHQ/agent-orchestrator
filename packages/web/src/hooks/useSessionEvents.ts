@@ -1,12 +1,11 @@
 "use client";
 
 import { useEffect, useReducer, useRef, useCallback } from "react";
-import {
-  getAttentionLevel,
-  type AttentionLevel,
-  type DashboardSession,
-  type GlobalPauseState,
-  type SSESnapshotEvent,
+import type {
+  AttentionLevel,
+  DashboardSession,
+  GlobalPauseState,
+  SSESnapshotEvent,
 } from "@/lib/types";
 
 /** Debounce before fetching full session list after membership change. */
@@ -137,11 +136,6 @@ export function useSessionEvents(
     });
   }, [initialSessions, initialGlobalPause]);
 
-  // Stable boolean — only changes when mux transitions between present/absent,
-  // not on every new snapshot array reference. Used in the SSE effect deps so
-  // SSE setup/teardown runs only on that transition, not every mux update.
-  const muxActive = muxSessions !== undefined;
-
   // Define scheduleRefresh with useCallback so both effects can use it
   const scheduleRefresh = useCallback(() => {
     if (refreshingRef.current || refreshTimerRef.current) return;
@@ -163,14 +157,10 @@ export function useSessionEvents(
             if (refreshController.signal.aborted || !updated?.sessions) return;
 
             lastRefreshAtRef.current = Date.now();
-            const sseAttentionLevels = Object.fromEntries(
-              updated.sessions.map((s) => [s.id, getAttentionLevel(s)]),
-            ) as SSEAttentionMap;
             dispatch({
               type: "reset",
               sessions: updated.sessions,
               globalPause: updated.globalPause ?? null,
-              sseAttentionLevels,
             });
           },
         )
@@ -184,10 +174,6 @@ export function useSessionEvents(
           }
           if (refreshController.signal.aborted) {
             refreshingRef.current = false;
-            // If there's still a pending membership change, reschedule so it isn't lost
-            if (pendingMembershipKeyRef.current !== null) {
-              scheduleRefresh();
-            }
             return;
           }
 
@@ -208,9 +194,7 @@ export function useSessionEvents(
 
   // Mux-based session updates (replaces SSE when available)
   useEffect(() => {
-    if (!muxSessions) return;
-    // Note: empty array is intentional — it means all sessions were removed and we
-    // must still run the membership-key comparison to trigger scheduleRefresh().
+    if (!muxSessions || muxSessions.length === 0) return;
 
     dispatch({ type: "snapshot", patches: muxSessions as SSESnapshotEvent["sessions"] });
 
@@ -220,35 +204,19 @@ export function useSessionEvents(
     if (currentMembershipKey !== snapshotMembershipKey) {
       pendingMembershipKeyRef.current = snapshotMembershipKey;
       scheduleRefresh();
-    } else if (Date.now() - lastRefreshAtRef.current >= STALE_REFRESH_INTERVAL_MS) {
-      scheduleRefresh();
+      return;
     }
 
-    return () => {
-      // Only abort in-flight requests — do NOT clear the debounce timer.
-      // Cancelling the timer here would prevent the membership-change refresh
-      // from completing when muxSessions updates arrive in rapid succession.
-      activeRefreshControllerRef.current?.abort();
-      activeRefreshControllerRef.current = null;
-    };
+    if (Date.now() - lastRefreshAtRef.current >= STALE_REFRESH_INTERVAL_MS) {
+      scheduleRefresh();
+    }
   }, [muxSessions, scheduleRefresh]);
 
   useEffect(() => {
     // Skip SSE if mux sessions are available
-    if (muxActive) {
+    if (muxSessions) {
       dispatch({ type: "setConnection", status: "connected" });
-      return () => {
-        // Clear timer and reset all refresh state so the aborted fetch's
-        // .finally() handler doesn't reschedule after unmount.
-        if (refreshTimerRef.current) {
-          clearTimeout(refreshTimerRef.current);
-          refreshTimerRef.current = null;
-        }
-        pendingMembershipKeyRef.current = null;
-        refreshingRef.current = false;
-        activeRefreshControllerRef.current?.abort();
-        activeRefreshControllerRef.current = null;
-      };
+      return;
     }
 
     const url = project ? `/api/events?project=${encodeURIComponent(project)}` : "/api/events";
@@ -330,7 +298,7 @@ export function useSessionEvents(
       clearDisconnectedTimer();
       es.close();
     };
-  }, [project, muxActive, scheduleRefresh]);
+  }, [project, muxSessions, scheduleRefresh]);
 
   return state;
 }

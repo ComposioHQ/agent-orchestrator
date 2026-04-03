@@ -24,6 +24,11 @@ export function useMux(): MuxContextValue {
   return context;
 }
 
+/** Like useMux() but returns undefined when outside a MuxProvider (safe for tests). */
+export function useMuxOptional(): MuxContextValue | undefined {
+  return React.useContext(MuxContext);
+}
+
 interface RuntimeTerminalConfig {
   directTerminalPort?: unknown;
   proxyWsPath?: unknown;
@@ -127,14 +132,13 @@ export function MuxProvider({ children }: { children: ReactNode }) {
           ws.send(JSON.stringify(openMsg));
         }
 
-        // Re-subscribe to sessions if needed
-        if (sessionSubscribedRef.current) {
-          const subMsg: ClientMessage = {
-            ch: "subscribe",
-            topics: ["sessions"],
-          };
-          ws.send(JSON.stringify(subMsg));
-        }
+        // Always subscribe to sessions
+        sessionSubscribedRef.current = true;
+        const subMsg: ClientMessage = {
+          ch: "subscribe",
+          topics: ["sessions"],
+        };
+        ws.send(JSON.stringify(subMsg));
       });
 
       ws.addEventListener("message", (event) => {
