@@ -67,6 +67,7 @@ import { sessionFromMetadata } from "./utils/session-from-metadata.js";
 import { safeJsonParse } from "./utils/validation.js";
 import { isGitBranchNameSafe } from "./utils.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
+import { buildPreviousSessionContext } from "./session-context-builder.js";
 
 const execFileAsync = promisify(execFile);
 const OPENCODE_DISCOVERY_TIMEOUT_MS = 10_000;
@@ -571,6 +572,25 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     }
 
     return [...new Set(ids)];
+  }
+
+  /**
+   * Find the most recent archived session for a given issue and agent.
+   * Reuses existing archive helpers to correctly handle session IDs with underscores.
+   */
+  function findArchivedSessionForIssue(
+    sessionsDir: string,
+    issueId: string,
+    agentName: string,
+  ): { sessionId: string; raw: Record<string, string> } | null {
+    for (const sessionId of sortSessionIdsForReuse(listArchivedSessionIds(sessionsDir))) {
+      const raw = readArchivedMetadataRaw(sessionsDir, sessionId);
+      if (!raw) continue;
+      if (raw["issue"] === issueId && raw["agent"] === agentName) {
+        return { sessionId, raw };
+      }
+    }
+    return null;
   }
 
   async function resolveOpenCodeSessionReuse(options: {
@@ -1096,9 +1116,66 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       subagent: spawnConfig.subagent ?? selection.subagent,
     };
 
+    // --- Attempt to resume previous session for same issue ---
+    let launchCommand: string | undefined;
+    let resumedFromSession: string | undefined;
+
+    const respawnStrategy = project.workerRespawnStrategy ?? "resume";
+
+    if (
+      respawnStrategy !== "fresh" &&
+      spawnConfig.issueId
+    ) {
+      const archived = findArchivedSessionForIssue(
+        sessionsDir,
+        spawnConfig.issueId,
+        selection.agentName,
+      );
+
+      if (archived) {
+        // Step 3: Try native resume via getRestoreCommand
+        if (respawnStrategy === "resume" && plugins.agent.getRestoreCommand) {
+          const archivedSession = metadataToSession(
+            archived.sessionId,
+            archived.raw,
+            spawnConfig.projectId,
+          );
+          // Use the current workspace, not the archived one
+          archivedSession.workspacePath = workspacePath;
+
+          try {
+            const restoreCmd = await plugins.agent.getRestoreCommand(archivedSession, project);
+            if (restoreCmd) {
+              launchCommand = restoreCmd;
+              resumedFromSession = archived.sessionId;
+              console.log(
+                `[session-manager] Resuming conversation from archived session ${archived.sessionId} for issue ${spawnConfig.issueId}`,
+              );
+            }
+          } catch (err) {
+            console.warn(
+              `[session-manager] Failed to build restore command from archived session ${archived.sessionId}: ${err}`,
+            );
+          }
+        }
+
+        // Step 4: Context injection fallback
+        if (!launchCommand) {
+          const context = await buildPreviousSessionContext(archived.raw, workspacePath);
+          if (context) {
+            agentLaunchConfig.prompt = `${context}\n\n---\n\n${agentLaunchConfig.prompt ?? ""}`;
+            resumedFromSession = archived.sessionId;
+          }
+        }
+      }
+    }
+
+    if (!launchCommand) {
+      launchCommand = plugins.agent.getLaunchCommand(agentLaunchConfig);
+    }
+
     let handle: RuntimeHandle;
     try {
-      const launchCommand = plugins.agent.getLaunchCommand(agentLaunchConfig);
       const environment = plugins.agent.getEnvironment(agentLaunchConfig);
 
       handle = await plugins.runtime.create({
@@ -1171,6 +1248,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         runtimeHandle: JSON.stringify(handle),
         opencodeSessionId: reusedOpenCodeSessionId,
         userPrompt: spawnConfig.prompt,
+        resumedFrom: resumedFromSession,
       });
 
       if (plugins.agent.postLaunchSetup) {

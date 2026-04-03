@@ -190,6 +190,7 @@ const ProjectConfigSchema = z.object({
     .enum(["reuse", "delete", "ignore", "delete-new", "ignore-new", "kill-previous"])
     .optional(),
   opencodeIssueSessionStrategy: z.enum(["reuse", "delete", "ignore"]).optional(),
+  workerRespawnStrategy: z.enum(["resume", "context-inject", "fresh"]).optional(),
 });
 
 const DefaultPluginsSchema = z.object({

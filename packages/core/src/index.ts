@@ -85,6 +85,9 @@ export {
 export { asValidOpenCodeSessionId } from "./opencode-session-id.js";
 export { normalizeOrchestratorSessionStrategy } from "./orchestrator-session-strategy.js";
 
+// Session context builder — context injection for respawned sessions
+export { buildPreviousSessionContext } from "./session-context-builder.js";
+
 // Activity log — JSONL activity tracking for agents without native JSONL
 export {
   appendActivityEntry,

@@ -1198,6 +1198,13 @@ export interface ProjectConfig {
     | "kill-previous";
 
   opencodeIssueSessionStrategy?: "reuse" | "delete" | "ignore";
+
+  /** Strategy for handling previous sessions when spawning for the same issue.
+   * - "resume" (default): try getRestoreCommand(), fall back to context injection, then fresh
+   * - "context-inject": don't resume agent conversation, but inject context summary into prompt
+   * - "fresh": always start fresh (current behavior, no change)
+   */
+  workerRespawnStrategy?: "resume" | "context-inject" | "fresh";
 }
 
 export interface TrackerConfig {
@@ -1391,6 +1398,7 @@ export interface SessionMetadata {
   opencodeSessionId?: string;
   pinnedSummary?: string; // First quality summary, pinned for display stability
   userPrompt?: string; // Prompt used when spawning without a tracker issue
+  resumedFrom?: string; // Session ID this session was resumed from
 }
 
 // =============================================================================
