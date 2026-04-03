@@ -100,6 +100,7 @@ export function registerProjectCommand(program: Command): void {
         let projectId = opts.id ?? generateSessionPrefix(generateProjectId(projectPath));
 
         // Handle ID collision
+        let idSuffixed = false;
         if (globalConfig.projects[projectId]) {
           const conflicting = globalConfig.projects[projectId];
           if (resolve(expandHome(conflicting.path)) !== projectPath) {
@@ -108,13 +109,19 @@ export function registerProjectCommand(program: Command): void {
             const altId = `${projectId}${suffix}`;
             console.log(chalk.yellow(`ID "${projectId}" already taken, using "${altId}"`));
             projectId = altId;
+            idSuffixed = true;
           }
         }
 
         const entry: GlobalProjectEntry = {
           name: opts.name ?? basename(projectPath),
           path: projectPath,
-        };
+          // When the ID was suffixed due to collision (e.g. "ao" → "ao2"), store the
+          // derived prefix in the registry entry so buildEffectiveConfig uses it instead
+          // of re-deriving "oa" from the path basename, which would cause
+          // validateProjectUniqueness to throw "Duplicate session prefix".
+          ...(idSuffixed && { sessionPrefix: projectId }),
+        } as GlobalProjectEntry;
         globalConfig = registerProjectInConfig(globalConfig, projectId, entry);
 
         // Sync shadow if hybrid

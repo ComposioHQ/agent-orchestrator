@@ -173,6 +173,30 @@ describe("resolveMultiProjectStart", () => {
     expect(result!.messages.some((m) => m.text.includes("secret"))).toBe(true);
   });
 
+  it("writes explicit sessionPrefix when ID is suffixed to prevent validateProjectUniqueness throw", () => {
+    // "polar-project" and "other-app" both derive session prefix "oa" from their paths.
+    // After "oa" is taken, "other-app" gets project ID "oa2". Without an explicit
+    // sessionPrefix in the shadow, buildEffectiveConfig re-derives "oa" for "oa2"
+    // and validateProjectUniqueness throws "Duplicate session prefix".
+    const dir1 = join(testDir, "other-alpha");  // prefix "oa"
+    const dir2 = join(testDir, "other-app");    // prefix "oa" — collides
+    mkdirSync(dir1, { recursive: true });
+    mkdirSync(dir2, { recursive: true });
+    writeFileSync(join(dir2, "agent-orchestrator.yaml"), stringifyYaml({ repo: "org/other-app", defaultBranch: "main" }));
+
+    setupGlobalConfig({ oa: { name: "Other Alpha", path: dir1 } });
+
+    // Should not throw — the fix writes sessionPrefix: "oa2" to the shadow
+    const result = resolveMultiProjectStart(dir2);
+    expect(result).not.toBeNull();
+    expect(result!.projectId).toBe("oa2");
+
+    // Verify the global config entry has the explicit sessionPrefix so
+    // buildEffectiveConfig uses it instead of re-deriving "oa" from the basename.
+    const gc = loadGlobalConfig();
+    expect((gc!.projects["oa2"] as Record<string, unknown>)["sessionPrefix"]).toBe("oa2");
+  });
+
   it("handles double collision — increments suffix past 2 (lines 71-72)", () => {
     // "oa" and "oa2" are both pre-registered under paths whose derived prefixes
     // don't conflict with each other. A new project "other-app" → prefix "oa"

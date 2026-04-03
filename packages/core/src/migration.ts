@@ -68,12 +68,13 @@ export function buildEffectiveConfig(
       behaviorFields = loadShadowOrEmpty(projectId);
     }
 
-    // Honor an explicit sessionPrefix from the behavior fields (e.g. set via
-    // migration from an old config or a custom shadow file value). Fall back
-    // to deriving the prefix from the project path — this is correct whether
-    // projectId is the abbreviated form ("ao") or the full basename
-    // ("agent-orchestrator") registered by newer versions.
-    const sessionPrefix = (behaviorFields["sessionPrefix"] as string | undefined)
+    // Session prefix priority:
+    // 1. Global config entry (set when collision resolution appends a numeric suffix,
+    //    e.g. "ao" → "ao2", so both projects get distinct prefixes regardless of mode).
+    // 2. Behavior fields (local config in hybrid mode, shadow in global-only mode).
+    // 3. Derived from path basename as a final fallback.
+    const sessionPrefix = (entry as Record<string, unknown>)["sessionPrefix"] as string | undefined
+      ?? (behaviorFields["sessionPrefix"] as string | undefined)
       ?? generateSessionPrefix(generateProjectId(projectPath));
     const repo = String(behaviorFields["repo"] ?? "");
     if (!repo) {

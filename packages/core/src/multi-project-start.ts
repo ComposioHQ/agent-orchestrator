@@ -62,6 +62,7 @@ export function resolveMultiProjectStart(
       let derivedId = generateSessionPrefix(generateProjectId(projectRoot));
 
       // Handle collision
+      let idSuffixed = false;
       if (globalConfig.projects[derivedId]) {
         const existing = globalConfig.projects[derivedId];
         if (resolve(expandHome(existing.path)) !== projectRoot) {
@@ -73,6 +74,7 @@ export function resolveMultiProjectStart(
           }
           messages.push({ level: "warn", text: `ID "${derivedId}" taken, using "${altId}"` });
           derivedId = altId;
+          idSuffixed = true;
         }
       }
       projectId = derivedId;
@@ -80,7 +82,12 @@ export function resolveMultiProjectStart(
       const entry: GlobalProjectEntry = {
         name: basename(projectRoot),
         path: projectRoot,
-      };
+        // When the ID was suffixed due to collision, store the derived prefix so
+        // buildEffectiveConfig uses it instead of re-deriving from the path basename
+        // (which would reproduce the original colliding prefix and cause
+        // validateProjectUniqueness to throw on the next config load).
+        ...(idSuffixed && { sessionPrefix: projectId }),
+      } as GlobalProjectEntry;
       globalConfig = registerProject(globalConfig, projectId, entry);
 
       // Save registry first so the project entry exists even if shadow sync fails.
@@ -100,6 +107,7 @@ export function resolveMultiProjectStart(
       } catch (err) {
         messages.push({ level: "warn", text: `Could not sync local config: ${err instanceof Error ? err.message : String(err)}` });
       }
+
     } else {
       return null;
     }
