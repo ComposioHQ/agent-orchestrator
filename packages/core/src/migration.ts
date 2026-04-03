@@ -129,7 +129,19 @@ export function buildEffectiveConfig(
       }
     }
     if (behaviorFields["notificationRouting"]) {
-      Object.assign(mergedRouting, behaviorFields["notificationRouting"] as Record<string, string[]>);
+      const routing = behaviorFields["notificationRouting"] as Partial<Record<EventPriority, string[]>>;
+      for (const [priority, channels] of Object.entries(routing)) {
+        if (priority in mergedRouting) {
+          // First-registered project wins — consistent with notifier key deduplication.
+          console.warn(
+            `[ao] Warning: notificationRouting priority "${priority}" is already defined — ` +
+            `skipping duplicate from project "${projectId}". ` +
+            `Use unique routing configurations per project to avoid conflicts.`,
+          );
+        } else {
+          mergedRouting[priority as EventPriority] = channels;
+        }
+      }
     }
   }
 

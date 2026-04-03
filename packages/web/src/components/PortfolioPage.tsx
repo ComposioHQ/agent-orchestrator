@@ -27,7 +27,9 @@ interface PortfolioPageProps {
   initialSessions?: DashboardSession[];
 }
 
-type PortfolioBucket = keyof ProjectCardData["sessionCounts"] | "done";
+// "total" is computed separately — exclude it from the bucket type so it can
+// never be used as an increment target and accidentally double-count.
+type PortfolioBucket = Exclude<keyof ProjectCardData["sessionCounts"], "total"> | "done";
 
 /** Map canonical AttentionLevel to a portfolio bucket */
 function attentionLevelToBucket(session: DashboardSession): PortfolioBucket {
