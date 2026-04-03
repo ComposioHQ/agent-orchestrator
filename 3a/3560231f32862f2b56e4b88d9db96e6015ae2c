@@ -1,0 +1,25 @@
+packages/web/src/app/prs/page.tsx
+  fb3f318e02d02950 2
+packages/web/src/app/page.tsx
+  fb3f318e02d02950 2-4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "3a3560231f32862f2b56e4b88d9db96e6015ae2c",
+  "prompts": {
+    "fb3f318e02d02950": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8878dcd1-bedf-4310-ae8c-bc0c77d91996",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 4,
+      "total_deletions": 23,
+      "accepted_lines": 4,
+      "overriden_lines": 0
+    }
+  }
+}
