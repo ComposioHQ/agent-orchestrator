@@ -1,0 +1,91 @@
+packages/cli/__tests__/commands/project.test.ts
+  a271ef70a2607a42 1-186
+packages/web/src/lib/__tests__/api-schemas.test.ts
+  a271ef70a2607a42 1-97
+packages/web/src/lib/__tests__/path-security.test.ts
+  a271ef70a2607a42 1-92
+packages/web/src/lib/__tests__/ensure-project-orchestrator.test.ts
+  a271ef70a2607a42 1-92
+packages/web/src/lib/__tests__/project-name.test.ts
+  a271ef70a2607a42 1-132
+packages/web/src/app/activity/__tests__/page.test.tsx
+  a271ef70a2607a42 1-79
+packages/web/src/lib/__tests__/project-utils.test.ts
+  a271ef70a2607a42 1-94
+packages/web/src/components/settings/__tests__/ProjectSettings.test.tsx
+  a271ef70a2607a42 1-149
+packages/web/src/lib/__tests__/local-project-config.test.ts
+  a271ef70a2607a42 1-75
+packages/web/src/__tests__/middleware.test.ts
+  a271ef70a2607a42 1-74
+packages/core/src/__tests__/portfolio-routing.test.ts
+  a271ef70a2607a42 1-121
+packages/core/src/__tests__/global-config.test.ts
+  a271ef70a2607a42 1-2,4,6,10-16,80-723
+packages/cli/__tests__/lib/portfolio-display.test.ts
+  a271ef70a2607a42 1-104
+packages/web/src/components/settings/__tests__/PreferenceSettings.test.tsx
+  a271ef70a2607a42 1-184
+packages/web/src/app/api/projects/[id]/__tests__/route.test.ts
+  a271ef70a2607a42 1-199
+packages/web/src/app/api/integrations/__tests__/route.test.ts
+  a271ef70a2607a42 1-113
+packages/web/src/hooks/__tests__/useModal.test.ts
+  a271ef70a2607a42 1-87
+packages/web/src/components/__tests__/InlineMessageInput.test.tsx
+  a271ef70a2607a42 1-158
+packages/core/src/portfolio-session-service.ts
+  a271ef70a2607a42 10
+packages/web/src/components/__tests__/ActionItemRow.test.tsx
+  a271ef70a2607a42 1-222
+packages/web/src/app/projects/[projectId]/__tests__/page.test.tsx
+  a271ef70a2607a42 1-120
+packages/core/src/__tests__/portfolio-session-service.test.ts
+  a271ef70a2607a42 1-359
+packages/web/src/components/settings/__tests__/AgentSettings.test.tsx
+  a271ef70a2607a42 1-59
+packages/web/src/lib/__tests__/home-activity-data.test.ts
+  a271ef70a2607a42 1-108
+packages/web/src/app/prs/__tests__/page.test.tsx
+  a271ef70a2607a42 1-106
+packages/web/src/app/settings/__tests__/page.test.tsx
+  a271ef70a2607a42 1-120
+packages/web/src/lib/__tests__/project-registration.test.ts
+  a271ef70a2607a42 1-121
+packages/web/src/app/projects/[projectId]/sessions/[sessionId]/__tests__/page.test.tsx
+  a271ef70a2607a42 1-77
+packages/web/src/hooks/__tests__/usePortfolioEvents.test.ts
+  a271ef70a2607a42 1-177
+packages/web/src/components/settings/__tests__/IntegrationSettings.test.tsx
+  a271ef70a2607a42 1-119
+packages/cli/__tests__/lib/detect-agent.test.ts
+  a271ef70a2607a42 1-138
+packages/web/src/lib/__tests__/portfolio-services.test.ts
+  a271ef70a2607a42 1-162
+packages/core/src/__tests__/portfolio-projects.test.ts
+  a271ef70a2607a42 1-253
+packages/web/src/lib/__tests__/project-page-data.test.ts
+  a271ef70a2607a42 1-185
+packages/web/src/app/api/settings/preferences/__tests__/route.test.ts
+  a271ef70a2607a42 1-113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "7d86b5412549514cdef0dc9caf38feb87f2f545d",
+  "prompts": {
+    "a271ef70a2607a42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3be41795-6f73-4d51-9697-61db44b5ab6b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 6530,
+      "total_deletions": 547,
+      "accepted_lines": 5133,
+      "overriden_lines": 0
+    }
+  }
+}
