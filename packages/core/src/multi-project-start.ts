@@ -58,6 +58,24 @@ export function resolveMultiProjectStart(
     const projectRoot = found?.projectRoot ?? resolvedDir;
 
     if (localPath) {
+      // Reject if any existing project shares the same directory basename.
+      // validateProjectUniqueness checks basename(project.path) uniqueness, so
+      // two projects at e.g. /work/app and /personal/app would break config loading.
+      const newBasename = basename(projectRoot);
+      const basenameConflict = Object.entries(globalConfig.projects).find(
+        ([, existing]) =>
+          basename(expandHome(existing.path)) === newBasename &&
+          resolve(expandHome(existing.path)) !== projectRoot,
+      );
+      if (basenameConflict) {
+        const [conflictId, conflictEntry] = basenameConflict;
+        messages.push({
+          level: "warn",
+          text: `Cannot register: directory basename "${newBasename}" conflicts with project "${conflictId}" (${conflictEntry.path}). Rename the directory to use a unique name.`,
+        });
+        return null;
+      }
+
       // Auto-register in hybrid mode
       let derivedId = generateSessionPrefix(generateProjectId(projectRoot));
 

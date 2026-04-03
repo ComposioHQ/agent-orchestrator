@@ -527,8 +527,15 @@ export function loadConfig(configPath?: string): OrchestratorConfig {
     return loadConfigFromFile(configPath);
   }
 
-  // 2. Try global config (multi-project mode)
-  const effective = loadFromGlobalConfig();
+  // 2. Try global config (multi-project mode).
+  //    Catch errors (invalid YAML, schema failure, validateProjectUniqueness) so
+  //    a broken global config does not block fallback to a valid local config.
+  let effective: OrchestratorConfig | null = null;
+  try {
+    effective = loadFromGlobalConfig();
+  } catch {
+    // Intentionally swallowed: fall through to legacy single-file lookup below
+  }
   if (effective && Object.keys(effective.projects).length > 0) return effective;
 
   // 3. Fall back to local config search
@@ -553,11 +560,16 @@ export function loadConfigWithPath(configPath?: string): {
   config: OrchestratorConfig;
   path: string;
 } {
-  // Try global config (multi-project mode)
+  // Try global config (multi-project mode).
+  // Catch errors so a broken global config does not prevent fallback to local config.
   if (!configPath) {
-    const effective = loadFromGlobalConfig();
-    if (effective && Object.keys(effective.projects).length > 0) {
-      return { config: effective, path: findGlobalConfigPath() };
+    try {
+      const effective = loadFromGlobalConfig();
+      if (effective && Object.keys(effective.projects).length > 0) {
+        return { config: effective, path: findGlobalConfigPath() };
+      }
+    } catch {
+      // Intentionally swallowed: fall through to legacy single-file lookup below
     }
   }
 

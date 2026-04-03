@@ -255,6 +255,26 @@ describe("resolveMultiProjectStart", () => {
     expect(result!.messages.some((m) => m.level === "warn" && m.text.includes("Shadow sync failed"))).toBe(true);
   });
 
+  it("returns null with warning when new project has same basename as existing project", () => {
+    // validateProjectUniqueness checks basename(project.path) uniqueness.
+    // /work/app and /personal/app both have basename "app", so registering the
+    // second would succeed but break every subsequent loadConfig call.
+    const existingDir = join(testDir, "work", "app");
+    const newDir = join(testDir, "personal", "app"); // same basename "app"
+    mkdirSync(existingDir, { recursive: true });
+    mkdirSync(newDir, { recursive: true });
+    writeFileSync(
+      join(newDir, "agent-orchestrator.yaml"),
+      stringifyYaml({ repo: "org/personal-app", defaultBranch: "main" }),
+    );
+
+    setupGlobalConfig({ wa: { name: "Work App", path: existingDir } });
+
+    const result = resolveMultiProjectStart(newDir);
+    // Should refuse registration rather than create a broken config
+    expect(result).toBeNull();
+  });
+
   it("warns about secret exclusions for already-registered hybrid project (line 119)", () => {
     const projectDir = join(testDir, "registered-secret");
     mkdirSync(projectDir, { recursive: true });

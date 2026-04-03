@@ -96,6 +96,26 @@ export function registerProjectCommand(program: Command): void {
           return;
         }
 
+        // Reject if any existing project shares the same directory basename.
+        // validateProjectUniqueness checks basename(project.path) uniqueness, so two
+        // projects at e.g. /work/app and /personal/app would break subsequent config loads.
+        const newBasename = basename(projectPath);
+        const basenameConflict = Object.entries(globalConfig.projects).find(
+          ([, existing]) =>
+            basename(resolve(expandHome(existing.path))) === newBasename &&
+            resolve(expandHome(existing.path)) !== projectPath,
+        );
+        if (basenameConflict) {
+          const [conflictId, conflictEntry] = basenameConflict;
+          console.error(
+            chalk.red(
+              `Error: directory basename "${newBasename}" conflicts with project "${conflictId}" (${conflictEntry.path}).\n` +
+              `  Rename the directory to use a unique name, then run \`ao project add\` again.`,
+            ),
+          );
+          process.exit(1);
+        }
+
         // Derive ID
         let projectId = opts.id ?? generateSessionPrefix(generateProjectId(projectPath));
 
@@ -124,6 +144,11 @@ export function registerProjectCommand(program: Command): void {
         } as GlobalProjectEntry;
         globalConfig = registerProjectInConfig(globalConfig, projectId, entry);
 
+        // Save registry first so the project entry exists even if shadow sync fails.
+        // An orphan shadow file (shadow exists, no registry entry) is harder to
+        // recover from than a registered project with a missing shadow file.
+        saveGlobalConfig(globalConfig);
+
         // Sync shadow if hybrid
         const mode = detectConfigMode(projectPath);
         if (mode === "hybrid") {
@@ -131,8 +156,7 @@ export function registerProjectCommand(program: Command): void {
           if (localPath) {
             try {
               const localConfig = loadLocalProjectConfig(localPath);
-              const { config: synced, excludedSecrets } = syncShadow(globalConfig, projectId, localConfig);
-              globalConfig = synced;
+              const { excludedSecrets } = syncShadow(globalConfig, projectId, localConfig);
               if (excludedSecrets.length > 0) {
                 console.log(chalk.yellow(`  Excluded secret-like fields: ${excludedSecrets.join(", ")}`));
               }
@@ -141,8 +165,6 @@ export function registerProjectCommand(program: Command): void {
             }
           }
         }
-
-        saveGlobalConfig(globalConfig);
 
         console.log(chalk.green(`✓ Registered "${projectId}" (${mode})`));
         console.log(chalk.dim(`  Path: ${projectPath}`));
