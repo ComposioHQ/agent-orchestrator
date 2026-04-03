@@ -105,7 +105,7 @@
 
 .workspace-file-tree-list {
   overflow-y: auto;
-  overflow-x: hidden;
+  overflow-x: auto;
   padding: 4px 0;
   height: 100%;
 }
@@ -121,6 +121,7 @@
   user-select: none;
   transition: background-color 0.1s;
   white-space: nowrap;
+  min-width: max-content;
 }
 
 .workspace-file-tree-item:hover {
