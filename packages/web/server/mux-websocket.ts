@@ -367,8 +367,12 @@ class TerminalManager {
     // Return unsubscribe function
     return () => {
       terminal.subscribers.delete(callback);
-      // If no subscribers left and PTY is not attached, remove terminal from map
-      if (terminal.subscribers.size === 0 && !terminal.pty) {
+      // Kill PTY and clean up when the last subscriber leaves
+      if (terminal.subscribers.size === 0) {
+        if (terminal.pty) {
+          terminal.pty.kill();
+          terminal.pty = null;
+        }
         this.terminals.delete(id);
       }
     };

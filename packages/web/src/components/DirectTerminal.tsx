@@ -344,9 +344,6 @@ export function DirectTerminal({
           }
         });
 
-        // Update mux status
-        setStatus(muxStatus === "connected" ? "connected" : "connecting");
-
         // Handle window resize
         const handleResize = () => {
           if (fit) {
@@ -533,7 +530,7 @@ export function DirectTerminal({
         {isOpenCodeSession ? (
           <button
             onClick={handleReload}
-            disabled={reloading || status !== "connected"}
+            disabled={reloading || muxStatus !== "connected"}
             title="Restart OpenCode session (/exit then resume mapped session)"
             aria-label="Restart OpenCode session"
             className="ml-auto flex items-center gap-1 px-2 py-0.5 text-[11px] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)] disabled:cursor-not-allowed disabled:opacity-70"
