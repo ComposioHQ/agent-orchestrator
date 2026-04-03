@@ -38,6 +38,12 @@ vi.mock("@/components/Dashboard", () => ({
 beforeEach(() => {
   vi.clearAllMocks();
   mockNotFound.mockReset();
+  // In real Next.js, notFound() throws a special error to halt execution.
+  // Without this, the mock returns undefined and execution continues past
+  // the guard into getDashboardPageData(), causing a TypeError.
+  mockNotFound.mockImplementation(() => {
+    throw new Error("NEXT_NOT_FOUND");
+  });
 });
 
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -67,7 +73,8 @@ describe("ProjectPage", () => {
     mockGetAllProjects.mockReturnValue([{ id: "ao", name: "AO" }]);
 
     const ProjectPage = await loadPage();
-    await ProjectPage({ params: Promise.resolve({ id: "unknown" }) });
+    // notFound() throws in Next.js — the mock replicates this so execution halts
+    await expect(ProjectPage({ params: Promise.resolve({ id: "unknown" }) })).rejects.toThrow();
 
     expect(mockNotFound).toHaveBeenCalled();
   });
