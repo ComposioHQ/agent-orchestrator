@@ -215,9 +215,12 @@ import { registerStart, registerStop, createConfigOnly } from "../../src/command
 let tmpDir: string;
 let program: Command;
 let cwdSpy: ReturnType<typeof vi.spyOn>;
+let previousAoGlobalConfig: string | undefined;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "ao-start-test-"));
+  previousAoGlobalConfig = process.env.AO_GLOBAL_CONFIG;
+  process.env.AO_GLOBAL_CONFIG = join(tmpDir, "global-config.yaml");
 
   program = new Command();
   program.exitOverride();
@@ -280,6 +283,11 @@ beforeEach(() => {
 
 afterEach(() => {
   if (cwdSpy) cwdSpy.mockRestore();
+  if (previousAoGlobalConfig === undefined) {
+    delete process.env.AO_GLOBAL_CONFIG;
+  } else {
+    process.env.AO_GLOBAL_CONFIG = previousAoGlobalConfig;
+  }
   rmSync(tmpDir, { recursive: true, force: true });
   vi.restoreAllMocks();
 });

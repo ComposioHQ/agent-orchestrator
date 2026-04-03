@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 export const dynamic = "force-dynamic";
 
-import { notFound } from "next/navigation";
+import { redirect } from "next/navigation";
 import { Dashboard } from "@/components/Dashboard";
 import { DashboardShell } from "@/components/DashboardShell";
 import { getAllProjects } from "@/lib/project-name";
@@ -24,15 +24,17 @@ export default async function ProjectPage(props: {
 }) {
   const params = await props.params;
   const projectFilter = params.projectId;
+  const projects = getAllProjects();
+  const project = projects.find((p) => p.id === projectFilter);
+
+  if (!project) {
+    redirect("/");
+  }
 
   const [pageData, { projectSummaries }] = await Promise.all([
     loadProjectPageData(projectFilter),
     loadPortfolioPageData(),
   ]);
-
-  const projects = getAllProjects();
-  const project = projects.find(p => p.id === projectFilter);
-  if (!project) notFound();
   const projectName = project.name;
 
   return (

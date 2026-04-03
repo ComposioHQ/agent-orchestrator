@@ -134,6 +134,7 @@ export function AddProjectModal({ open, onClose, onProjectAdded }: AddProjectMod
       setPathInput(data.path);
       const shouldSelectCurrent = options?.selectCurrent ?? Boolean(dirPath);
       const nextHomePath = currentHomePath || data.path;
+      homePathRef.current = nextHomePath;
       if (shouldSelectCurrent && isSelectableProjectPath(data.path, nextHomePath)) {
         setSelectedPath(data.path);
       } else if (!isSelectableProjectPath(data.path, nextHomePath)) {
@@ -171,6 +172,7 @@ export function AddProjectModal({ open, onClose, onProjectAdded }: AddProjectMod
   // Reset form when modal closes
   useEffect(() => {
     if (!open) {
+      homePathRef.current = "";
       setSelectedPath("");
       setHomePath("");
       setName("");

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("next/navigation", () => ({
-  notFound: vi.fn(),
+  redirect: vi.fn(),
 }));
 
 vi.mock("@/components/Dashboard", () => ({
@@ -33,7 +33,7 @@ vi.mock("@/lib/default-location", () => ({
 }));
 
 import { render, screen } from "@testing-library/react";
-import { notFound } from "next/navigation";
+import { redirect } from "next/navigation";
 import { getAllProjects } from "@/lib/project-name";
 import { loadProjectPageData } from "@/lib/project-page-data";
 import { loadPortfolioPageData } from "@/lib/portfolio-page-data";
@@ -42,7 +42,7 @@ import ProjectPage, { generateMetadata } from "../page";
 const mockGetAllProjects = vi.mocked(getAllProjects);
 const mockLoadProjectPageData = vi.mocked(loadProjectPageData);
 const mockLoadPortfolioPageData = vi.mocked(loadPortfolioPageData);
-const mockNotFound = vi.mocked(notFound);
+const mockRedirect = vi.mocked(redirect);
 
 const fakePageData = {
   sessions: [],
@@ -66,9 +66,9 @@ beforeEach(() => {
   mockGetAllProjects.mockReturnValue(fakeProjects);
   mockLoadProjectPageData.mockResolvedValue(fakePageData);
   mockLoadPortfolioPageData.mockResolvedValue(fakePortfolioData);
-  mockNotFound.mockImplementation((() => {
-    throw new Error("NOT_FOUND");
-  }) as unknown as typeof notFound);
+  mockRedirect.mockImplementation((() => {
+    throw new Error("NEXT_REDIRECT");
+  }) as unknown as typeof redirect);
 });
 
 describe("ProjectPage", () => {
@@ -85,10 +85,11 @@ describe("ProjectPage", () => {
     );
   });
 
-  it("calls notFound when project does not exist", async () => {
+  it("redirects home when project does not exist", async () => {
     await ProjectPage({ params: Promise.resolve({ projectId: "nonexistent" }) }).catch(() => {});
 
-    expect(mockNotFound).toHaveBeenCalled();
+    expect(mockRedirect).toHaveBeenCalledWith("/");
+    expect(mockLoadProjectPageData).not.toHaveBeenCalled();
   });
 
   it("loads project page data and portfolio data", async () => {
