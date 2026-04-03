@@ -509,7 +509,7 @@ describe("WorkspaceResourcesModal", () => {
     });
 
     it("shows submitting state text", async () => {
-      (global.fetch as Mock) = vi.fn().mockImplementation((url: string, opts?: RequestInit) => {
+      (global.fetch as Mock) = vi.fn().mockImplementation((url: string, _opts?: RequestInit) => {
         if (url.includes("/resources")) {
           return fetchJsonOk(makeResourcesResponse());
         }

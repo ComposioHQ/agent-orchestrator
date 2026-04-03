@@ -67,14 +67,17 @@ const mockComputeStats = vi.hoisted(() =>
 );
 const mockListDashboardOrchestrators = vi.hoisted(() => vi.fn(() => []));
 const mockGetCorrelationId = vi.hoisted(() => vi.fn(() => "test-corr-id"));
-const mockJsonWithCorrelation = vi.hoisted(() => {
-  const { NextResponse } = require("next/server") as typeof import("next/server");
-  return vi.fn((body: unknown, init: ResponseInit | undefined, correlationId: string) => {
-    const resp = NextResponse.json(body, init);
-    resp.headers.set("x-correlation-id", correlationId);
-    return resp;
-  });
-});
+const mockJsonWithCorrelation = vi.hoisted(() =>
+  vi.fn((body: unknown, init: ResponseInit | undefined, correlationId: string) => {
+    const headers = new Headers(init?.headers);
+    headers.set("content-type", "application/json");
+    headers.set("x-correlation-id", correlationId);
+    return new Response(JSON.stringify(body), {
+      ...init,
+      headers,
+    });
+  }),
+);
 const mockRecordApiObservation = vi.hoisted(() => vi.fn());
 const mockResolveGlobalPause = vi.hoisted(() => vi.fn(() => null));
 const mockFilterProjectSessions = vi.hoisted(() =>

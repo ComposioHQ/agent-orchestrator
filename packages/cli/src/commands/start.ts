@@ -126,15 +126,16 @@ async function resolveProject(
     const { createInterface } = await import("node:readline/promises");
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     try {
-      const choice = await rl.question(`\n  Choose project [1-${projectIds.length}]: `);
+      while (true) {
+        const choice = await rl.question(`\n  Choose project [1-${projectIds.length}]: `);
+        const idx = Number.parseInt(choice.trim(), 10);
+        if (Number.isFinite(idx) && idx >= 1 && idx <= projectIds.length) {
+          const projectId = projectIds[idx - 1];
+          return { projectId, project: config.projects[projectId] };
+        }
 
-      const idx = Number.parseInt(choice.trim(), 10);
-      if (!Number.isFinite(idx) || idx < 1 || idx > projectIds.length) {
-        throw new Error("Please enter a valid number from the list");
+        console.log(chalk.yellow(`  Please enter a valid number from 1 to ${projectIds.length}.`));
       }
-
-      const projectId = projectIds[idx - 1];
-      return { projectId, project: config.projects[projectId] };
     } finally {
       rl.close();
     }

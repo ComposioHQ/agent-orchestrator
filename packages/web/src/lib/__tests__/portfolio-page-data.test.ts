@@ -1,3 +1,4 @@
+import type * as TypesModule from "@/lib/types";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const mockGetPortfolioServices = vi.fn();
@@ -19,7 +20,7 @@ vi.mock("@composio/ao-core", () => ({
 }));
 
 vi.mock("@/lib/types", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/types")>("@/lib/types");
+  const actual = await vi.importActual<TypesModule>("@/lib/types");
   return actual;
 });
 

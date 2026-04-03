@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { isOrchestratorSession, type PortfolioProject, type PortfolioSession, type Session, type SessionMetadata } from "./types.js";
 import { getSessionsDir } from "./paths.js";
 import { parseKeyValueContent } from "./key-value.js";
+import { parsePrFromUrl } from "./utils/pr.js";
 
 const DEFAULT_PER_PROJECT_TIMEOUT_MS = 3_000;
 const VALID_SESSION_ID = /^[a-zA-Z0-9_-]+$/;
@@ -113,7 +114,21 @@ function metadataToSession(sessionId: string, project: PortfolioProject, metadat
     activity: null, // Not available without agent plugin
     branch: metadata.branch || null,
     issueId: metadata.issue || null,
-    pr: metadata.pr ? { number: 0, url: metadata.pr, title: "", owner: "", repo: "", branch: "", baseBranch: "", isDraft: false } : null,
+    pr: metadata.pr
+      ? (() => {
+          const parsed = parsePrFromUrl(metadata.pr);
+          return {
+            number: parsed?.number ?? 0,
+            url: metadata.pr,
+            title: "",
+            owner: parsed?.owner ?? "",
+            repo: parsed?.repo ?? "",
+            branch: metadata.branch ?? "",
+            baseBranch: "",
+            isDraft: false,
+          };
+        })()
+      : null,
     workspacePath: metadata.worktree || null,
     runtimeHandle: metadata.runtimeHandle ? { id: metadata.runtimeHandle, runtimeName: "tmux", data: {} } : null,
     agentInfo: metadata.summary ? { summary: metadata.summary, agentSessionId: null } : null,
