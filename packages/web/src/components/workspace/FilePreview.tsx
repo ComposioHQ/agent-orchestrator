@@ -1,10 +1,16 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useFileContent } from "./useFileContent";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import { highlightFileContentByLines, languageForFilePath } from "./codeHighlight";
+
+const MermaidDiagram = dynamic(
+  () => import("./MermaidDiagram").then((m) => ({ default: m.MermaidDiagram })),
+  { ssr: false }
+);
 
 interface FilePreviewProps {
   sessionId: string;
@@ -121,6 +127,14 @@ export function FilePreview({ sessionId, selectedFile }: FilePreviewProps) {
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             rehypePlugins={[rehypeHighlight]}
+            components={{
+              code({ className, children, ...props }) {
+                if (className === "language-mermaid") {
+                  return <MermaidDiagram code={String(children).trim()} />;
+                }
+                return <code className={className} {...props}>{children}</code>;
+              },
+            }}
           >
             {data.content}
           </ReactMarkdown>

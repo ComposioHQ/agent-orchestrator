@@ -504,6 +504,41 @@
 .hljs-addition { color: #b5cea8; background: rgba(181, 206, 168, 0.1); }
 .hljs-deletion { color: #ce9178; background: rgba(206, 145, 120, 0.1); }
 
+/* Mermaid diagrams */
+.mermaid-diagram {
+  display: flex;
+  justify-content: center;
+  padding: 16px;
+  margin: 16px 0;
+  background: var(--color-bg-secondary, #1e1e2e);
+  border-radius: 8px;
+  overflow-x: auto;
+}
+
+.mermaid-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.mermaid-error {
+  margin: 16px 0;
+  padding: 12px 16px;
+  background: rgba(255, 80, 80, 0.1);
+  border: 1px solid rgba(255, 80, 80, 0.3);
+  border-radius: 6px;
+  color: #ff6b6b;
+  font-size: 13px;
+}
+
+.mermaid-error pre {
+  margin: 8px 0 0;
+  padding: 0;
+  background: none;
+  color: #ff9999;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
 /* ── Diff Viewer ───────────────────────────────────────── */
 
 .workspace-diff-viewer {
@@ -527,6 +562,7 @@
 .workspace-diff-line {
   display: flex;
   padding: 0 16px 0 0;
+  min-width: fit-content;
 }
 
 .workspace-diff-line--added {
