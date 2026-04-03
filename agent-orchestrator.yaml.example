@@ -8,6 +8,12 @@
 # Web dashboard port
 port: 3000
 
+# Optional: publicly reachable base URL for the dashboard. When set, AO will
+# include fully-qualified session URLs (e.g. https://ao.example.com/sessions/ao-1)
+# in spawn responses and notifications. If omitted AO will default to
+# http://localhost:<port> for generated links.
+# dashboardBaseUrl: https://ao.example.com
+
 # Terminal server ports (defaults: 14800/14801 — chosen to avoid conflicts with dev tools)
 # Override when running multiple dashboards to avoid EADDRINUSE
 # terminalPort: 14800

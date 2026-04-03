@@ -148,6 +148,11 @@ async function spawnSession(
     console.log(`  Attach:   ${chalk.dim(`tmux attach -t ${tmuxTarget}`)}`);
     console.log();
 
+    if (session.dashboardUrl) {
+      console.log(`  Dashboard: ${chalk.dim(session.dashboardUrl)}`);
+      console.log();
+    }
+
     // Open terminal tab if requested
     if (openTab) {
       try {
