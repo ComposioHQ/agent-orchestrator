@@ -136,6 +136,11 @@ export function useSessionEvents(
     });
   }, [initialSessions, initialGlobalPause]);
 
+  // Stable boolean — only changes when mux transitions between present/absent,
+  // not on every new snapshot array reference. Used in the SSE effect deps so
+  // SSE setup/teardown runs only on that transition, not every mux update.
+  const muxActive = muxSessions !== undefined;
+
   // Define scheduleRefresh with useCallback so both effects can use it
   const scheduleRefresh = useCallback(() => {
     if (refreshingRef.current || refreshTimerRef.current) return;
@@ -174,6 +179,10 @@ export function useSessionEvents(
           }
           if (refreshController.signal.aborted) {
             refreshingRef.current = false;
+            // If there's still a pending membership change, reschedule so it isn't lost
+            if (pendingMembershipKeyRef.current !== null) {
+              scheduleRefresh();
+            }
             return;
           }
 
@@ -221,7 +230,7 @@ export function useSessionEvents(
 
   useEffect(() => {
     // Skip SSE if mux sessions are available
-    if (muxSessions) {
+    if (muxActive) {
       dispatch({ type: "setConnection", status: "connected" });
       return () => {
         // Clear timer and reset all refresh state so the aborted fetch's
@@ -316,7 +325,7 @@ export function useSessionEvents(
       clearDisconnectedTimer();
       es.close();
     };
-  }, [project, muxSessions, scheduleRefresh]);
+  }, [project, muxActive, scheduleRefresh]);
 
   return state;
 }
