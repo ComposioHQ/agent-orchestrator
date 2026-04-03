@@ -224,11 +224,14 @@ export function useSessionEvents(
     if (muxSessions) {
       dispatch({ type: "setConnection", status: "connected" });
       return () => {
-        // Clear any pending refresh timer so it doesn't fire after unmount
+        // Clear timer and reset all refresh state so the aborted fetch's
+        // .finally() handler doesn't reschedule after unmount.
         if (refreshTimerRef.current) {
           clearTimeout(refreshTimerRef.current);
           refreshTimerRef.current = null;
         }
+        pendingMembershipKeyRef.current = null;
+        refreshingRef.current = false;
         activeRefreshControllerRef.current?.abort();
         activeRefreshControllerRef.current = null;
       };

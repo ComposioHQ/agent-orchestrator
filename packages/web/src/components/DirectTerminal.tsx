@@ -482,17 +482,23 @@ export function DirectTerminal({
   const statusDotClass =
     displayStatus === "connected"
       ? "bg-[var(--color-status-ready)]"
-      : displayStatus === "error"
+      : displayStatus === "error" || displayStatus === "disconnected"
         ? "bg-[var(--color-status-error)]"
         : "bg-[var(--color-status-attention)] animate-[pulse_1.5s_ease-in-out_infinite]";
 
   const statusText =
-    displayStatus === "connected" ? "Connected" : displayStatus === "error" ? (error ?? "Error") : "Connecting…";
+    displayStatus === "connected"
+      ? "Connected"
+      : displayStatus === "error"
+        ? (error ?? "Error")
+        : displayStatus === "disconnected"
+          ? "Disconnected"
+          : "Connecting…";
 
   const statusTextColor =
     displayStatus === "connected"
       ? "text-[var(--color-status-ready)]"
-      : displayStatus === "error"
+      : displayStatus === "error" || displayStatus === "disconnected"
         ? "text-[var(--color-status-error)]"
         : "text-[var(--color-text-tertiary)]";
 
