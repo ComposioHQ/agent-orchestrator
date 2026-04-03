@@ -48,7 +48,7 @@ function reducer(state: State, action: Action): State {
           status: patch.status,
           activity: patch.activity,
           lastActivityAt: patch.lastActivityAt,
-          ...(patch.projectId !== undefined && { projectId: patch.projectId }),
+          projectId: patch.projectId,
         };
       });
       return changed ? { ...state, sessions: next } : state;
