@@ -12,6 +12,19 @@ const MermaidDiagram = dynamic(
   { ssr: false }
 );
 
+// Defined at module scope so the reference is stable across renders.
+// react-markdown uses components.code as a React component type — a new
+// function reference on every render causes it to unmount/remount the
+// MermaidDiagram component, resetting its SVG state and causing flicker.
+const markdownComponents = {
+  code({ className, children, ...props }: React.ComponentPropsWithoutRef<"code">) {
+    if (className?.split(" ").includes("language-mermaid")) {
+      return <MermaidDiagram code={String(children).trim()} />;
+    }
+    return <code className={className} {...props}>{children}</code>;
+  },
+};
+
 interface FilePreviewProps {
   sessionId: string;
   selectedFile: string | null;
@@ -127,14 +140,7 @@ export function FilePreview({ sessionId, selectedFile }: FilePreviewProps) {
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             rehypePlugins={[rehypeHighlight]}
-            components={{
-              code({ className, children, ...props }) {
-                if (className?.split(" ").includes("language-mermaid")) {
-                  return <MermaidDiagram code={String(children).trim()} />;
-                }
-                return <code className={className} {...props}>{children}</code>;
-              },
-            }}
+            components={markdownComponents}
           >
             {data.content}
           </ReactMarkdown>
