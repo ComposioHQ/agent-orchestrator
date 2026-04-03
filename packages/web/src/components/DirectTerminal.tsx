@@ -121,7 +121,6 @@ export function DirectTerminal({
   const terminalInstance = useRef<TerminalType | null>(null);
   const fitAddon = useRef<FitAddonType | null>(null);
   const [fullscreen, setFullscreen] = useState(startFullscreen);
-  const [status, setStatus] = useState<"connecting" | "connected" | "error">("connecting");
   const [error, setError] = useState<string | null>(null);
   const [reloading, setReloading] = useState(false);
   const [reloadError, setReloadError] = useState<string | null>(null);
@@ -376,7 +375,6 @@ export function DirectTerminal({
       })
       .catch((err) => {
         console.error("[DirectTerminal] Failed to load xterm.js:", err);
-        setStatus("error");
         setError("Failed to load terminal");
       });
 

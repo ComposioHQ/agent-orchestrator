@@ -200,6 +200,9 @@ export function MuxProvider({ children }: { children: ReactNode }) {
   // Fetch runtime config then connect. This ensures buildMuxWsUrl() has the
   // server-configured port/path before the WebSocket is opened.
   useEffect(() => {
+    // Reset destroyed flag so StrictMode double-invoke works correctly:
+    // cleanup sets it to true, but the re-run must treat itself as alive.
+    isDestroyedRef.current = false;
     let cancelled = false;
 
     const init = async () => {
