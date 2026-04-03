@@ -180,9 +180,11 @@ interface ManagedTerminal {
   exitCallbacks: Set<(exitCode: number) => void>;
   buffer: string[];
   bufferBytes: number;
+  reattachAttempts: number;
 }
 
 const RING_BUFFER_MAX = 50 * 1024; // 50KB max per terminal
+const MAX_REATTACH_ATTEMPTS = 3;
 
 /**
  * TerminalManager manages PTY processes independently of WebSocket connections.
@@ -222,6 +224,7 @@ class TerminalManager {
         exitCallbacks: new Set(),
         buffer: [],
         bufferBytes: 0,
+        reattachAttempts: 0,
       };
       this.terminals.set(id, terminal);
     }
@@ -299,15 +302,21 @@ class TerminalManager {
       console.log(`[MuxServer] PTY exited for ${id} with code ${exitCode}`);
       terminal.pty = null;
 
-      // If there are still subscribers, re-attach immediately
-      if (terminal.subscribers.size > 0) {
-        console.log(`[MuxServer] Re-attaching to ${id} (has ${terminal.subscribers.size} subscribers)`);
+      // Re-attach if subscribers are still present, up to MAX_REATTACH_ATTEMPTS.
+      // The cap prevents an unbounded respawn loop when the PTY crashes immediately
+      // after every attach (e.g. resource exhaustion or a broken tmux session).
+      if (terminal.subscribers.size > 0 && terminal.reattachAttempts < MAX_REATTACH_ATTEMPTS) {
+        terminal.reattachAttempts += 1;
+        console.log(`[MuxServer] Re-attaching to ${id} (attempt ${terminal.reattachAttempts}/${MAX_REATTACH_ATTEMPTS})`);
         try {
           this.open(id);
+          terminal.reattachAttempts = 0; // reset on successful attach
           return; // re-attached — don't notify exit
         } catch (err) {
           console.error(`[MuxServer] Failed to re-attach ${id}:`, err);
         }
+      } else if (terminal.reattachAttempts >= MAX_REATTACH_ATTEMPTS) {
+        console.error(`[MuxServer] Max re-attach attempts reached for ${id}, giving up`);
       }
 
       // Notify subscribers that the terminal has exited (re-attach failed or no subscribers)
