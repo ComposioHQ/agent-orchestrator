@@ -2,7 +2,12 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { isRetryableHttpStatus, normalizeRetryConfig, readLastJsonlEntry } from "../utils.js";
+import {
+  isGitBranchNameSafe,
+  isRetryableHttpStatus,
+  normalizeRetryConfig,
+  readLastJsonlEntry,
+} from "../utils.js";
 import { parsePrFromUrl } from "../utils/pr.js";
 
 describe("readLastJsonlEntry", () => {
@@ -84,6 +89,30 @@ describe("readLastJsonlEntry", () => {
     const path = setup('{"type":"test"}\n');
     const result = await readLastJsonlEntry(path);
     expect(result!.modifiedAt).toBeInstanceOf(Date);
+  });
+});
+
+describe("isGitBranchNameSafe", () => {
+  it("accepts typical Linear-style branch names", () => {
+    expect(isGitBranchNameSafe("feature/foo-bar-123")).toBe(true);
+    expect(isGitBranchNameSafe("feat/INT-123")).toBe(true);
+  });
+
+  it("rejects empty, @, lock suffix, double dots, and leading dot", () => {
+    expect(isGitBranchNameSafe("")).toBe(false);
+    expect(isGitBranchNameSafe("@")).toBe(false);
+    expect(isGitBranchNameSafe("foo.lock")).toBe(false);
+    expect(isGitBranchNameSafe("a..b")).toBe(false);
+    expect(isGitBranchNameSafe(".hidden")).toBe(false);
+  });
+
+  it("rejects characters invalid in git refs", () => {
+    expect(isGitBranchNameSafe("bad branch")).toBe(false);
+    expect(isGitBranchNameSafe("x:y")).toBe(false);
+    expect(isGitBranchNameSafe("x~y")).toBe(false);
+    expect(isGitBranchNameSafe("x?y")).toBe(false);
+    expect(isGitBranchNameSafe("x[y]")).toBe(false);
+    expect(isGitBranchNameSafe("a\nb")).toBe(false);
   });
 });
 

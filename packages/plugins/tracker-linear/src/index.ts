@@ -296,7 +296,7 @@ function createLinearTracker(query: GraphQLTransport): Tracker {
         labels: node.labels.nodes.map((l) => l.name),
         assignee: node.assignee?.displayName ?? node.assignee?.name,
         priority: node.priority,
-        ...(node.branchName ? { branchName: node.branchName } : {}),
+        branchName: node.branchName ?? undefined,
       };
     },
 
@@ -429,7 +429,7 @@ function createLinearTracker(query: GraphQLTransport): Tracker {
         labels: node.labels.nodes.map((l) => l.name),
         assignee: node.assignee?.displayName ?? node.assignee?.name,
         priority: node.priority,
-        ...(node.branchName ? { branchName: node.branchName } : {}),
+        branchName: node.branchName ?? undefined,
       }));
     },
 
@@ -622,7 +622,7 @@ function createLinearTracker(query: GraphQLTransport): Tracker {
         labels: node.labels.nodes.map((l) => l.name),
         assignee: node.assignee?.displayName ?? node.assignee?.name,
         priority: node.priority,
-        ...(node.branchName ? { branchName: node.branchName } : {}),
+        branchName: node.branchName ?? undefined,
       };
 
       // Assign after creation (Linear's issueCreate uses assigneeId, not display name)

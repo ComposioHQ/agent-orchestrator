@@ -65,6 +65,7 @@ import { asValidOpenCodeSessionId } from "./opencode-session-id.js";
 import { normalizeOrchestratorSessionStrategy } from "./orchestrator-session-strategy.js";
 import { sessionFromMetadata } from "./utils/session-from-metadata.js";
 import { safeJsonParse } from "./utils/validation.js";
+import { isGitBranchNameSafe } from "./utils.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
 
 const execFileAsync = promisify(execFile);
@@ -988,9 +989,11 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     if (spawnConfig.branch) {
       branch = spawnConfig.branch;
     } else if (spawnConfig.issueId && plugins.tracker && resolvedIssue) {
-      branch = resolvedIssue.branchName
-        ? resolvedIssue.branchName
-        : plugins.tracker.branchName(spawnConfig.issueId, project);
+      const fromIssue = resolvedIssue.branchName;
+      branch =
+        fromIssue && isGitBranchNameSafe(fromIssue)
+          ? fromIssue
+          : plugins.tracker.branchName(spawnConfig.issueId, project);
     } else if (spawnConfig.issueId) {
       // If the issueId is already branch-safe (e.g. "INT-9999"), use as-is.
       // Otherwise sanitize free-text (e.g. "fix login bug") into a valid slug.

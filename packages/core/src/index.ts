@@ -70,6 +70,7 @@ export {
   shellEscape,
   escapeAppleScript,
   validateUrl,
+  isGitBranchNameSafe,
   isRetryableHttpStatus,
   normalizeRetryConfig,
   readLastJsonlEntry,
