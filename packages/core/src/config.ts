@@ -17,6 +17,8 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { ConfigNotFoundError, type OrchestratorConfig } from "./types.js";
 import { generateSessionPrefix } from "./paths.js";
+import { loadGlobalConfig, findGlobalConfigPath, type GlobalConfig } from "./global-config.js";
+import { buildEffectiveConfig } from "./migration.js";
 
 function inferScmPlugin(project: {
   repo: string;
@@ -239,52 +241,36 @@ function expandHome(filepath: string): string {
 }
 
 /** Expand all path fields in the config */
-function expandPaths(config: OrchestratorConfig): OrchestratorConfig {
-  for (const project of Object.values(config.projects)) {
-    project.path = expandHome(project.path);
+export function expandPaths(config: OrchestratorConfig): OrchestratorConfig {
+  const projects: typeof config.projects = {};
+  for (const [id, project] of Object.entries(config.projects)) {
+    projects[id] = { ...project, path: expandHome(project.path) };
   }
 
-  for (const plugin of config.plugins ?? []) {
-    if (plugin.path) {
-      plugin.path = expandHome(plugin.path);
-    }
-  }
+  const plugins = config.plugins?.map((plugin) =>
+    plugin.path ? { ...plugin, path: expandHome(plugin.path) } : plugin,
+  );
 
-  return config;
+  return { ...config, projects, ...(plugins !== undefined ? { plugins } : {}) };
 }
 
 /** Apply defaults to project configs */
-function applyProjectDefaults(config: OrchestratorConfig): OrchestratorConfig {
+export function applyProjectDefaults(config: OrchestratorConfig): OrchestratorConfig {
+  const projects: typeof config.projects = {};
   for (const [id, project] of Object.entries(config.projects)) {
-    // Derive name from project ID if not set
-    if (!project.name) {
-      project.name = id;
-    }
-
-    // Derive session prefix from project path basename if not set
-    if (!project.sessionPrefix) {
-      const projectId = basename(project.path);
-      project.sessionPrefix = generateSessionPrefix(projectId);
-    }
-
+    const name = project.name ?? id;
+    const sessionPrefix = project.sessionPrefix ?? generateSessionPrefix(basename(project.path));
     const inferredPlugin = inferScmPlugin(project);
-
-    // Infer SCM from repo if not set
-    if (!project.scm && project.repo.includes("/")) {
-      project.scm = { plugin: inferredPlugin };
-    }
-
-    // Infer tracker from repo if not set (default to github issues)
-    if (!project.tracker) {
-      project.tracker = { plugin: inferredPlugin };
-    }
+    const scm = project.scm ?? (project.repo.includes("/") ? { plugin: inferredPlugin } : undefined);
+    const tracker = project.tracker ?? { plugin: inferredPlugin };
+    projects[id] = { ...project, name, sessionPrefix, tracker, ...(scm !== undefined ? { scm } : {}) };
   }
 
-  return config;
+  return { ...config, projects };
 }
 
 /** Validate project uniqueness and session prefix collisions */
-function validateProjectUniqueness(config: OrchestratorConfig): void {
+export function validateProjectUniqueness(config: OrchestratorConfig): void {
   // Check for duplicate project IDs (basenames)
   const projectIds = new Set<string>();
   const projectIdToPaths: Record<string, string[]> = {};
@@ -341,7 +327,7 @@ function validateProjectUniqueness(config: OrchestratorConfig): void {
 }
 
 /** Apply default reactions */
-function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
+export function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
   const defaults: Record<string, (typeof config.reactions)[string]> = {
     "ci-failed": {
       auto: true,
@@ -409,9 +395,7 @@ function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
   };
 
   // Merge defaults with user-specified reactions (user wins)
-  config.reactions = { ...defaults, ...config.reactions };
-
-  return config;
+  return { ...config, reactions: { ...defaults, ...config.reactions } };
 }
 
 /**
@@ -494,24 +478,74 @@ export function findConfig(startDir?: string): string | null {
   return findConfigFile(startDir);
 }
 
-/** Load and validate config from a YAML file */
-export function loadConfig(configPath?: string): OrchestratorConfig {
-  // Priority: 1. Explicit param, 2. Search (including AO_CONFIG_PATH env var)
-  // findConfigFile handles AO_CONFIG_PATH validation, so delegate to it
-  const path = configPath ?? findConfigFile();
+/**
+ * Run the shared config-building pipeline for a loaded GlobalConfig.
+ *
+ * Single source of truth for: buildEffectiveConfig → expandPaths →
+ * applyProjectDefaults → applyDefaultReactions → validateProjectUniqueness.
+ * Used by loadFromGlobalConfig and resolveMultiProjectStart so they stay
+ * in sync as the pipeline evolves.
+ */
+export function buildConfigFromGlobal(
+  globalConfig: GlobalConfig,
+  globalPath: string,
+): OrchestratorConfig {
+  const config = buildEffectiveConfig(globalConfig, globalPath);
+  let effective = expandPaths(config);
+  effective = applyProjectDefaults(effective);
+  effective = applyDefaultReactions(effective);
+  validateProjectUniqueness(effective);
+  return effective;
+}
 
+/**
+ * Build effective config from global registry + shadow files.
+ * Shared pipeline used by all multi-project loading paths.
+ */
+function loadFromGlobalConfig(): OrchestratorConfig | null {
+  const globalConfig = loadGlobalConfig();
+  if (!globalConfig) return null;
+
+  const globalPath = findGlobalConfigPath();
+  return buildConfigFromGlobal(globalConfig, globalPath);
+}
+
+/**
+ * Load config with multi-project support.
+ *
+ * Resolution order:
+ * 1. If explicit configPath is provided, use it (old-format compat)
+ * 2. Try global config at ~/.agent-orchestrator/config.yaml
+ *    → If found, build effective config from global + local configs
+ * 3. Fall back to local config search (old single-file format)
+ */
+export function loadConfig(configPath?: string): OrchestratorConfig {
+  // 1. Explicit param — load directly; errors (including ZodError) propagate to caller.
+  //    An explicitly-specified config path must be valid; silently switching to a
+  //    different config would be confusing and could mask misconfiguration.
+  if (configPath) {
+    return loadConfigFromFile(configPath);
+  }
+
+  // 2. Try global config (multi-project mode)
+  const effective = loadFromGlobalConfig();
+  if (effective && Object.keys(effective.projects).length > 0) return effective;
+
+  // 3. Fall back to local config search
+  const path = findConfigFile();
   if (!path) {
     throw new ConfigNotFoundError();
   }
 
+  return loadConfigFromFile(path);
+}
+
+/** Load config from a specific file (old single-file format) */
+function loadConfigFromFile(path: string): OrchestratorConfig {
   const raw = readFileSync(path, "utf-8");
   const parsed = parseYaml(raw);
   const config = validateConfig(parsed);
-
-  // Set the config path in the config object for hash generation
-  config.configPath = path;
-
-  return config;
+  return { ...config, configPath: path };
 }
 
 /** Load config and return both config and resolved path */
@@ -519,19 +553,21 @@ export function loadConfigWithPath(configPath?: string): {
   config: OrchestratorConfig;
   path: string;
 } {
+  // Try global config (multi-project mode)
+  if (!configPath) {
+    const effective = loadFromGlobalConfig();
+    if (effective && Object.keys(effective.projects).length > 0) {
+      return { config: effective, path: findGlobalConfigPath() };
+    }
+  }
+
   const path = configPath ?? findConfigFile();
 
   if (!path) {
     throw new ConfigNotFoundError();
   }
 
-  const raw = readFileSync(path, "utf-8");
-  const parsed = parseYaml(raw);
-  const config = validateConfig(parsed);
-
-  // Set the config path in the config object for hash generation
-  config.configPath = path;
-
+  const config = loadConfigFromFile(path);
   return { config, path };
 }
 

@@ -292,19 +292,29 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     sourceSessionId: string;
   } | null {
     const sessionsDir = getProjectSessionsDir(project);
-    const orchestratorId = `${project.sessionPrefix}-orchestrator`;
-    const orchestratorRaw = readMetadataRaw(sessionsDir, orchestratorId);
-    if (!orchestratorRaw) return null;
 
-    const until = parsePauseUntil(orchestratorRaw[GLOBAL_PAUSE_UNTIL_KEY]);
-    if (!until) return null;
-    if (until.getTime() <= Date.now()) return null;
+    // Scan all session IDs: base orchestrator first (fast path), then suffixed ones.
+    // Suffixed orchestrators (-orchestrator-2, -orchestrator-3) are created when
+    // the user opts to run multiple orchestrators simultaneously.
+    const candidates = listMetadata(sessionsDir).filter((id) =>
+      isOrchestratorSession({ id }),
+    );
 
-    return {
-      until,
-      reason: orchestratorRaw[GLOBAL_PAUSE_REASON_KEY] ?? "Model rate limit reached",
-      sourceSessionId: orchestratorRaw[GLOBAL_PAUSE_SOURCE_KEY] ?? "unknown",
-    };
+    for (const candidateId of candidates) {
+      const raw = readMetadataRaw(sessionsDir, candidateId);
+      if (!raw) continue;
+
+      const until = parsePauseUntil(raw[GLOBAL_PAUSE_UNTIL_KEY]);
+      if (!until || until.getTime() <= Date.now()) continue;
+
+      return {
+        until,
+        reason: raw[GLOBAL_PAUSE_REASON_KEY] ?? "Model rate limit reached",
+        sourceSessionId: raw[GLOBAL_PAUSE_SOURCE_KEY] ?? "unknown",
+      };
+    }
+
+    return null;
   }
 
   function normalizePath(path: string): string {
@@ -360,7 +370,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     raw: Record<string, string> | null | undefined,
   ): boolean {
     if (!raw) return false;
-    return raw["role"] === "orchestrator" || sessionId.endsWith("-orchestrator");
+    return raw["role"] === "orchestrator" || isOrchestratorSession({ id: sessionId, metadata: raw });
   }
 
   function isCleanupProtectedSession(
@@ -1247,7 +1257,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       throw new Error(`Agent plugin '${selection.agentName}' not found`);
     }
 
-    const sessionId = `${project.sessionPrefix}-orchestrator`;
+    const sessionId = orchestratorConfig.sessionSuffix
+      ? `${project.sessionPrefix}-orchestrator-${orchestratorConfig.sessionSuffix}`
+      : `${project.sessionPrefix}-orchestrator`;
     const orchestratorSessionStrategy = normalizeOrchestratorSessionStrategy(
       project.orchestratorSessionStrategy,
     );
@@ -1815,8 +1827,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
   async function send(sessionId: SessionId, message: string): Promise<void> {
     const { raw, sessionsDir, project } = requireSessionRecord(sessionId);
     const pause = getProjectPause(project);
-    const orchestratorId = `${project.sessionPrefix}-orchestrator`;
-    if (pause && sessionId !== orchestratorId) {
+    if (pause && !isOrchestratorSessionRecord(sessionId, raw)) {
       throw new Error(
         `Project is paused due to model rate limit until ${pause.until.toISOString()} (${pause.reason}; source: ${pause.sourceSessionId})`,
       );

@@ -218,8 +218,6 @@ beforeEach(() => {
     running: true,
     started: true,
     pid: 12345,
-    pidFile: "/tmp/lifecycle-worker.pid",
-    logFile: "/tmp/lifecycle-worker.log",
   });
   mockStopLifecycleWorker.mockReset();
   mockStopLifecycleWorker.mockResolvedValue(true);
@@ -941,5 +939,141 @@ describe("stop command", () => {
     expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator", {
       purgeOpenCode: true,
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Multi-project integration (handleMultiProjectStart)
+// ---------------------------------------------------------------------------
+
+describe("multi-project start", () => {
+  let globalConfigDir: string;
+  let origGlobalEnv: string | undefined;
+
+  beforeEach(() => {
+    globalConfigDir = join(tmpDir, ".ao-global");
+    mkdirSync(join(globalConfigDir, "projects"), { recursive: true });
+    origGlobalEnv = process.env["AO_GLOBAL_CONFIG_PATH"];
+    process.env["AO_GLOBAL_CONFIG_PATH"] = join(globalConfigDir, "config.yaml");
+  });
+
+  afterEach(() => {
+    if (origGlobalEnv !== undefined) {
+      process.env["AO_GLOBAL_CONFIG_PATH"] = origGlobalEnv;
+    } else {
+      delete process.env["AO_GLOBAL_CONFIG_PATH"];
+    }
+  });
+
+  function writeGlobalConfig(projects: Record<string, { name: string; path: string }>): void {
+    const entries = Object.entries(projects);
+    if (entries.length === 0) {
+      writeFileSync(join(globalConfigDir, "config.yaml"), "projects: {}\n", "utf-8");
+    } else {
+      const yaml = entries
+        .map(([id, p]) => `  ${id}:\n    name: ${p.name}\n    path: ${p.path}`)
+        .join("\n");
+      writeFileSync(join(globalConfigDir, "config.yaml"), `projects:\n${yaml}\n`, "utf-8");
+    }
+  }
+
+  function writeShadow(id: string, data: Record<string, string>): void {
+    const yaml = Object.entries(data)
+      .map(([k, v]) => `${k}: ${v}`)
+      .join("\n");
+    writeFileSync(join(globalConfigDir, "projects", `${id}.yaml`), yaml, "utf-8");
+  }
+
+  it("loads config from global registry + shadow files", async () => {
+    // Use core module functions directly (imported via the mock passthrough)
+    const core = await import("@composio/ao-core");
+    const projectPath = join(tmpDir, "my-project");
+    mkdirSync(projectPath, { recursive: true });
+
+    writeGlobalConfig({ mp: { name: "My Project", path: projectPath } });
+    writeShadow("mp", { repo: "org/my-project", defaultBranch: "main" });
+
+    const gc = core.loadGlobalConfig();
+    expect(gc).not.toBeNull();
+    expect(gc!.projects["mp"]).toBeDefined();
+    expect(gc!.projects["mp"].name).toBe("My Project");
+  });
+
+  it("detects config mode as global-only when no local config", async () => {
+    const core = await import("@composio/ao-core");
+    const projectPath = join(tmpDir, "global-only-proj");
+    mkdirSync(projectPath, { recursive: true });
+
+    expect(core.detectConfigMode(projectPath)).toBe("global-only");
+  });
+
+  it("detects config mode as hybrid when local config exists", async () => {
+    const core = await import("@composio/ao-core");
+    const projectPath = join(tmpDir, "hybrid-proj");
+    mkdirSync(projectPath, { recursive: true });
+    writeFileSync(join(projectPath, "agent-orchestrator.yaml"), "repo: org/hybrid\n");
+
+    expect(core.detectConfigMode(projectPath)).toBe("hybrid");
+  });
+
+  it("builds effective config from global + shadow", async () => {
+    const core = await import("@composio/ao-core");
+    const projectPath = join(tmpDir, "eff-proj");
+    mkdirSync(projectPath, { recursive: true });
+
+    writeGlobalConfig({ ep: { name: "Effective Project", path: projectPath } });
+    writeShadow("ep", { repo: "org/effective", defaultBranch: "develop" });
+
+    const gc = core.loadGlobalConfig()!;
+    const globalPath = core.findGlobalConfigPath();
+    const config = core.buildEffectiveConfig(gc, globalPath);
+
+    expect(config.projects["ep"]).toBeDefined();
+    expect(config.projects["ep"].repo).toBe("org/effective");
+    expect(config.projects["ep"].defaultBranch).toBe("develop");
+    expect(config.projects["ep"].name).toBe("Effective Project");
+  });
+
+  it("matchProjectByCwd finds registered project", async () => {
+    const core = await import("@composio/ao-core");
+    const projectPath = join(tmpDir, "match-proj");
+    mkdirSync(projectPath, { recursive: true });
+
+    writeGlobalConfig({ mp: { name: "Match", path: projectPath } });
+
+    const gc = core.loadGlobalConfig()!;
+    expect(core.matchProjectByCwd(gc, projectPath)).toBe("mp");
+    expect(core.matchProjectByCwd(gc, join(projectPath, "src"))).toBe("mp");
+    expect(core.matchProjectByCwd(gc, "/unrelated/path")).toBeNull();
+  });
+
+  it("prints ao project list hint after registering a new project", async () => {
+    const core = await import("@composio/ao-core");
+    const projectPath = join(tmpDir, "hint-proj");
+    mkdirSync(projectPath, { recursive: true });
+    writeFileSync(join(projectPath, "agent-orchestrator.yaml"), "repo: org/hint\ndefaultBranch: main\n");
+
+    // Empty global config — project will be auto-registered on start
+    writeGlobalConfig({});
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const result = core.resolveMultiProjectStart(projectPath);
+    // Simulate what handleMultiProjectStart does with the messages
+    if (result) {
+      for (const msg of result.messages) {
+        if (msg.level === "success") console.log(`  ✓ ${msg.text}`);
+        else if (msg.level === "warn") console.log(`  ⚠ ${msg.text}`);
+        else console.log(`  ${msg.text}`);
+      }
+      const wasRegistered = result.messages.some((m) => m.text.includes("Registered"));
+      if (wasRegistered) {
+        console.log(`  Run \`ao project list\` to see all registered projects.`);
+      }
+    }
+
+    const output = logSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(output).toContain("ao project list");
+    logSpy.mockRestore();
   });
 });

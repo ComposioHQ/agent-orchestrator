@@ -121,8 +121,6 @@ beforeEach(() => {
     running: true,
     started: true,
     pid: 12345,
-    pidFile: "/tmp/lifecycle-worker.pid",
-    logFile: "/tmp/lifecycle-worker.log",
   });
 });
 
@@ -530,6 +528,63 @@ describe("spawn command", () => {
     expect(errors).toContain(
       "Session app-1 was created, but failed to claim PR 123: already tracked by app-9",
     );
+  });
+
+  it("uses --project flag to target a specific project", async () => {
+    // Add a second project
+    (mockConfigRef.current as Record<string, unknown>).projects = {
+      "my-app": {
+        name: "My App",
+        repo: "org/my-app",
+        path: join(tmpDir, "main-repo"),
+        defaultBranch: "main",
+        sessionPrefix: "app",
+      },
+      "other-proj": {
+        name: "Other Project",
+        repo: "org/other",
+        path: join(tmpDir, "other-repo"),
+        defaultBranch: "main",
+        sessionPrefix: "oth",
+      },
+    };
+    mkdirSync(join(tmpDir, "other-repo"), { recursive: true });
+
+    const fakeSession: Session = {
+      id: "oth-1",
+      projectId: "other-proj",
+      status: "spawning",
+      activity: null,
+      branch: "feat/99",
+      issueId: "99",
+      pr: null,
+      workspacePath: "/tmp/wt/oth-1",
+      runtimeHandle: { id: "hash-oth-1", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+
+    await program.parseAsync(["node", "test", "spawn", "--project", "other-proj", "99"]);
+
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith({
+      projectId: "other-proj",
+      issueId: "99",
+    });
+  });
+
+  it("errors for unknown --project ID", async () => {
+    await expect(
+      program.parseAsync(["node", "test", "spawn", "--project", "nonexistent", "42"]),
+    ).rejects.toThrow();
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => String(c[0]))
+      .join("\n");
+    expect(errors).toContain("Unknown project");
   });
 });
 

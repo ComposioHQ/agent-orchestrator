@@ -53,6 +53,9 @@ export function generateInstanceId(configPath: string, projectPath: string): str
  * 4. Single word: first 3 chars (integrator → int)
  */
 export function generateSessionPrefix(projectId: string): string {
+  if (!projectId || projectId.length === 0) {
+    return "proj";
+  }
   if (projectId.length <= 4) {
     return projectId.toLowerCase();
   }
@@ -66,11 +69,13 @@ export function generateSessionPrefix(projectId: string): string {
   // kebab-case or snake_case: use initials
   if (projectId.includes("-") || projectId.includes("_")) {
     const separator = projectId.includes("-") ? "-" : "_";
-    return projectId
+    const prefix = projectId
       .split(separator)
+      .filter((word) => word.length > 0)
       .map((word) => word[0])
       .join("")
       .toLowerCase();
+    return prefix || projectId.slice(0, 3).toLowerCase();
   }
 
   // Single word: first 3 characters

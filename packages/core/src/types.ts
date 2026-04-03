@@ -1,4 +1,5 @@
 import type { ObservabilityLevel } from "./observability.js";
+import type { ConfigMode } from "./global-config.js";
 
 /**
  * Agent Orchestrator — Core Type Definitions
@@ -189,11 +190,14 @@ export interface Session {
   metadata: Record<string, string>;
 }
 
+/** Matches base orchestrator (-orchestrator) and suffixed ones (-orchestrator-2, -orchestrator-3). */
+const ORCHESTRATOR_ID_PATTERN = /-orchestrator(-\d+)?$/;
+
 export function isOrchestratorSession(session: {
   id: SessionId;
   metadata?: Record<string, string>;
 }): boolean {
-  return session.metadata?.["role"] === "orchestrator" || session.id.endsWith("-orchestrator");
+  return session.metadata?.["role"] === "orchestrator" || ORCHESTRATOR_ID_PATTERN.test(session.id);
 }
 
 /** Config for creating a new session */
@@ -216,6 +220,8 @@ export interface SessionSpawnConfig {
 export interface OrchestratorSpawnConfig {
   projectId: string;
   systemPrompt?: string;
+  /** Optional suffix for additional orchestrators, e.g. "2" → "{prefix}-orchestrator-2" */
+  sessionSuffix?: string;
 }
 
 // =============================================================================
@@ -984,6 +990,12 @@ export interface OrchestratorConfig {
    */
   configPath: string;
 
+  /**
+   * Path to the global config file (multi-project mode).
+   * Set when loaded via global config. Undefined in legacy single-file mode.
+   */
+  globalConfigPath?: string;
+
   /** Web dashboard port (defaults to 3000) */
   port?: number;
 
@@ -1004,6 +1016,9 @@ export interface OrchestratorConfig {
 
   /** Project configurations */
   projects: Record<string, ProjectConfig>;
+
+  /** Display order for projects in sidebar/portfolio */
+  projectOrder?: string[];
 
   /** Notification channel configs */
   notifiers: Record<string, NotifierConfig>;
@@ -1070,6 +1085,9 @@ export interface ProjectConfig {
 
   /** Session name prefix (e.g. "app" → "app-1", "app-2") */
   sessionPrefix: string;
+
+  /** Config ownership mode (set at runtime, not persisted) */
+  configMode?: ConfigMode;
 
   /** Override default runtime */
   runtime?: string;

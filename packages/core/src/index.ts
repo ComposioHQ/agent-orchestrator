@@ -16,7 +16,48 @@ export {
   getDefaultConfig,
   findConfig,
   findConfigFile,
+  buildConfigFromGlobal,
 } from "./config.js";
+
+// Global config — multi-project registry, shadow sync, mode detection
+export {
+  findGlobalConfigPath,
+  getGlobalDataDir,
+  globalConfigExists,
+  loadGlobalConfig,
+  loadGlobalConfigOrThrow,
+  saveGlobalConfig,
+  scaffoldGlobalConfig,
+  registerProject,
+  unregisterProject,
+  detectConfigMode,
+  findLocalConfigPath,
+  findLocalConfigUpwards,
+  loadLocalProjectConfig,
+  syncShadow,
+  getShadowDir,
+  getShadowFilePath,
+  loadShadowFile,
+  saveShadowFile,
+  deleteShadowFile,
+  isSecretField,
+  filterSecrets,
+  matchProjectByCwd,
+  findProjectByPath,
+} from "./global-config.js";
+export type {
+  ConfigMode,
+  GlobalConfig,
+  GlobalProjectEntry,
+  LocalProjectConfig,
+} from "./global-config.js";
+
+// Effective config builder — merges global registry + shadow files
+export { buildEffectiveConfig } from "./migration.js";
+
+// Multi-project start — registration, sync, config building
+export { resolveMultiProjectStart } from "./multi-project-start.js";
+export type { MultiProjectStartResult } from "./multi-project-start.js";
 
 // Plugin registry
 export {

@@ -174,6 +174,7 @@ export function registerSpawn(program: Command): void {
     .argument("[second]", "" /* hidden second arg to catch old two-arg usage */)
     .option("--open", "Open session in terminal tab")
     .option("--agent <name>", "Override the agent plugin (e.g. codex, claude-code)")
+    .option("-p, --project <id>", "Target project (remote mode — works from any directory)")
     .option("--claim-pr <pr>", "Immediately claim an existing PR for the spawned session")
     .option("--assign-on-github", "Assign the claimed PR to the authenticated GitHub user")
     .option("--decompose", "Decompose issue into subtasks before spawning")
@@ -185,6 +186,7 @@ export function registerSpawn(program: Command): void {
         opts: {
           open?: boolean;
           agent?: string;
+          project?: string;
           claimPr?: string;
           assignOnGithub?: boolean;
           decompose?: boolean;
@@ -208,7 +210,16 @@ export function registerSpawn(program: Command): void {
         let projectId: string;
         let issueId: string | undefined;
 
-        if (first) {
+        if (opts.project) {
+          // Remote mode: explicit --project flag
+          if (!config.projects[opts.project]) {
+            console.error(chalk.red(`Unknown project: ${opts.project}`));
+            console.error(chalk.dim(`Available: ${Object.keys(config.projects).join(", ")}`));
+            process.exit(1);
+          }
+          projectId = opts.project;
+          issueId = first;
+        } else if (first) {
           issueId = first;
           try {
             projectId = autoDetectProject(config);

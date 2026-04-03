@@ -29,6 +29,12 @@ import {
   configToYaml,
   normalizeOrchestratorSessionStrategy,
   ConfigNotFoundError,
+  // Multi-project imports
+  resolveMultiProjectStart,
+  findLocalConfigPath,
+  saveShadowFile,
+  loadShadowFile,
+  expandHome,
   type OrchestratorConfig,
   type ProjectConfig,
   type ParsedRepoUrl,
@@ -66,6 +72,39 @@ import { findProjectForDirectory } from "../lib/project-resolution.js";
 
 const DEFAULT_PORT = 3000;
 const IS_TTY = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+
+// =============================================================================
+// MULTI-PROJECT REGISTRATION & SYNC
+// =============================================================================
+
+/**
+ * Thin CLI wrapper around resolveMultiProjectStart from core.
+ * Adds user-facing console output for migration and registration messages.
+ */
+async function handleMultiProjectStart(
+  workingDir: string,
+): Promise<{ config: OrchestratorConfig; projectId: string } | null> {
+  const result = resolveMultiProjectStart(workingDir);
+  if (!result) return null;
+
+  // Print messages from the core function
+  for (const msg of result.messages) {
+    if (msg.level === "success") {
+      console.log(chalk.green(`  ✓ ${msg.text}`));
+    } else if (msg.level === "warn") {
+      console.log(chalk.yellow(`  ⚠ ${msg.text}`));
+    } else {
+      console.log(chalk.dim(`  ${msg.text}`));
+    }
+  }
+
+  const wasRegistered = result.messages.some((m) => m.text.includes("Registered"));
+  if (wasRegistered) {
+    console.log(chalk.dim(`  Run \`ao project list\` to see all registered projects.`));
+  }
+
+  return { config: result.config, projectId: result.projectId };
+}
 
 // =============================================================================
 // HELPERS
@@ -647,7 +686,7 @@ async function addProjectToConfig(
 ): Promise<string> {
   await ensureGit("adding projects");
 
-  const resolvedPath = resolve(projectPath.replace(/^~/, process.env["HOME"] || ""));
+  const resolvedPath = resolve(expandHome(projectPath));
   let projectId = basename(resolvedPath);
 
   // Avoid overwriting an existing project with the same directory name
@@ -897,7 +936,7 @@ async function runStartup(
   config: OrchestratorConfig,
   projectId: string,
   project: ProjectConfig,
-  opts?: { dashboard?: boolean; orchestrator?: boolean; rebuild?: boolean },
+  opts?: { dashboard?: boolean; orchestrator?: boolean; rebuild?: boolean; orchestratorSuffix?: string },
 ): Promise<number> {
   // Ensure tmux is available before doing anything — covers all entry paths
   // (normal start, URL start, retry with existing config)
@@ -921,7 +960,9 @@ async function runStartup(
     }
   }
 
-  const sessionId = `${project.sessionPrefix}-orchestrator`;
+  const sessionId = opts?.orchestratorSuffix
+    ? `${project.sessionPrefix}-orchestrator-${opts.orchestratorSuffix}`
+    : `${project.sessionPrefix}-orchestrator`;
   const shouldStartLifecycle = opts?.dashboard !== false || opts?.orchestrator !== false;
   let lifecycleStatus: Awaited<ReturnType<typeof ensureLifecycleWorker>> | null = null;
   let port = config.port ?? DEFAULT_PORT;
@@ -995,7 +1036,11 @@ async function runStartup(
     try {
       spinner.start("Creating orchestrator session");
       const systemPrompt = generateOrchestratorPrompt({ config, projectId, project });
-      const session = await sm.spawnOrchestrator({ projectId, systemPrompt });
+      const session = await sm.spawnOrchestrator({
+        projectId,
+        systemPrompt,
+        sessionSuffix: opts?.orchestratorSuffix,
+      });
       if (session.runtimeHandle?.id) {
         tmuxTarget = session.runtimeHandle.id;
       }
@@ -1118,6 +1163,7 @@ export function registerStart(program: Command): void {
           orchestrator?: boolean;
           rebuild?: boolean;
           interactive?: boolean;
+          orchestratorSuffix?: string;
         },
       ) => {
         try {
@@ -1133,7 +1179,7 @@ export function registerStart(program: Command): void {
             ({ projectId, project } = await resolveProjectByRepo(config, result.parsed));
           } else if (projectArg && isLocalPath(projectArg)) {
             // ── Path argument: add project if new, then start ──
-            const resolvedPath = resolve(projectArg.replace(/^~/, process.env["HOME"] || ""));
+            const resolvedPath = resolve(expandHome(projectArg));
 
             // Try to load existing config
             let configPath: string | undefined;
@@ -1160,7 +1206,7 @@ export function registerStart(program: Command): void {
 
               // Check if project is already in config (match by path)
               const existingEntry = Object.entries(config.projects).find(
-                ([, p]) => resolve(p.path.replace(/^~/, process.env["HOME"] || "")) === resolvedPath,
+                ([, p]) => resolve(expandHome(p.path)) === resolvedPath,
               );
 
               if (existingEntry) {
@@ -1175,14 +1221,14 @@ export function registerStart(program: Command): void {
                 project = config.projects[projectId];
               }
             }
-          } else {
-            // ── No arg or project ID: load config or auto-create ──
+          } else if (projectArg) {
+            // ── Explicit project ID: load config and resolve ──
+            // Don't run handleMultiProjectStart which would auto-register CWD
             let loadedConfig: OrchestratorConfig | null = null;
             try {
               loadedConfig = loadConfig();
             } catch (err) {
               if (err instanceof ConfigNotFoundError) {
-                // First run — auto-create config
                 loadedConfig = await autoCreateConfig(cwd());
               } else {
                 throw err;
@@ -1190,6 +1236,28 @@ export function registerStart(program: Command): void {
             }
             config = loadedConfig;
             ({ projectId, project } = await resolveProject(config, projectArg));
+          } else {
+            // ── No arg: try multi-project flow first ──
+            const multiResult = await handleMultiProjectStart(cwd());
+            if (multiResult) {
+              config = multiResult.config;
+              ({ projectId, project } = await resolveProject(config, multiResult.projectId));
+            } else {
+              // Fall back to legacy single-file config or auto-create
+              let loadedConfig: OrchestratorConfig | null = null;
+              try {
+                loadedConfig = loadConfig();
+              } catch (err) {
+                if (err instanceof ConfigNotFoundError) {
+                  // First run — auto-create config
+                  loadedConfig = await autoCreateConfig(cwd());
+                } else {
+                  throw err;
+                }
+              }
+              config = loadedConfig;
+              ({ projectId, project } = await resolveProject(config));
+            }
           }
 
           // ── Already-running detection (Step 9) ──
@@ -1217,35 +1285,53 @@ export function registerStart(program: Command): void {
                 openUrl(url);
                 process.exit(0);
               } else if (choice === "new") {
-                // Generate unique orchestrator: same project, new session
-                const rawYaml = readFileSync(config.configPath, "utf-8");
-                const rawConfig = yamlParse(rawYaml);
+                // Spawn an additional orchestrator for the same project.
+                // Find the next available suffix (2, 3, 4...) by checking existing sessions.
+                const sm = await getSessionManager(config);
+                const sessions = await sm.list(projectId);
+                const orchPrefix = `${project.sessionPrefix}-orchestrator`;
+                let suffix = 2;
+                while (sessions.some((s) => s.id === `${orchPrefix}-${suffix}`)) suffix++;
 
-                // Collect existing prefixes to avoid collisions
-                const existingPrefixes = new Set(
-                  Object.values(rawConfig.projects as Record<string, Record<string, unknown>>).map(
-                    (p) => p.sessionPrefix as string,
-                  ).filter(Boolean),
-                );
+                if (config.globalConfigPath) {
+                  // Multi-project mode: pass suffix to runStartup
+                  opts = { ...opts, orchestratorSuffix: String(suffix) };
+                  console.log(chalk.green(`\n✓ Starting orchestrator-${suffix} for "${projectId}"\n`));
+                } else {
+                  // Legacy single-file mode: add a new project entry with different prefix
+                  const existingIds = new Set(Object.keys(config.projects));
+                  let newId: string;
+                  do {
+                    const rnd = Math.random().toString(36).slice(2, 6);
+                    newId = `${projectId}-${rnd}`;
+                  } while (existingIds.has(newId));
 
-                let newId: string;
-                let newPrefix: string;
-                do {
-                  const suffix = Math.random().toString(36).slice(2, 6);
-                  newId = `${projectId}-${suffix}`;
-                  newPrefix = generateSessionPrefix(newId);
-                } while (rawConfig.projects[newId] || existingPrefixes.has(newPrefix));
-
-                rawConfig.projects[newId] = {
-                  ...rawConfig.projects[projectId],
-                  sessionPrefix: newPrefix,
-                };
-                writeFileSync(config.configPath, yamlStringify(rawConfig, { indent: 2 }));
-                console.log(chalk.green(`\n✓ New orchestrator "${newId}" added to config\n`));
-                config = loadConfig(config.configPath);
-                projectId = newId;
-                project = config.projects[newId];
-                // Continue to startup below
+                  const rawYaml = readFileSync(config.configPath, "utf-8");
+                  const rawConfig = yamlParse(rawYaml);
+                  if (!rawConfig.projects) rawConfig.projects = {};
+                  if (rawConfig.projects[projectId]) {
+                    rawConfig.projects[newId] = {
+                      ...rawConfig.projects[projectId],
+                      sessionPrefix: generateSessionPrefix(newId),
+                    };
+                    writeFileSync(config.configPath, yamlStringify(rawConfig, { indent: 2 }));
+                    console.log(chalk.green(`\n✓ New orchestrator "${newId}" added to config\n`));
+                    config = loadConfig();
+                    const reloadedProject = config.projects[newId];
+                    if (reloadedProject) {
+                      projectId = newId;
+                      project = reloadedProject;
+                    } else {
+                      // Config reload didn't surface the new entry — fall back to suffix
+                      opts = { ...opts, orchestratorSuffix: String(suffix) };
+                      console.log(chalk.green(`\n✓ Starting orchestrator-${suffix} for "${projectId}"\n`));
+                    }
+                  } else {
+                    // Project not found in raw YAML (unexpected — fall back to suffix approach)
+                    opts = { ...opts, orchestratorSuffix: String(suffix) };
+                    console.log(chalk.green(`\n✓ Starting orchestrator-${suffix} for "${projectId}"\n`));
+                  }
+                }
               } else if (choice === "restart") {
                 try { process.kill(running.pid, "SIGTERM"); } catch { /* already dead */ }
                 if (!(await waitForExit(running.pid, 5000))) {
@@ -1274,15 +1360,43 @@ export function registerStart(program: Command): void {
           if (agentOverride) {
             const { orchestratorAgent, workerAgent } = agentOverride;
 
-            const rawYaml = readFileSync(config.configPath, "utf-8");
-            const rawConfig = yamlParse(rawYaml);
-            const proj = rawConfig.projects[projectId];
-            proj.orchestrator = { ...(proj.orchestrator ?? {}), agent: orchestratorAgent };
-            proj.worker = { ...(proj.worker ?? {}), agent: workerAgent };
-            writeFileSync(config.configPath, yamlStringify(rawConfig, { indent: 2 }));
-            console.log(chalk.dim(`  ✓ Saved to ${config.configPath}\n`));
-            
-            config = loadConfig(config.configPath);
+            if (config.globalConfigPath) {
+              // Multi-project mode: write to shadow file
+              const shadow = loadShadowFile(projectId) ?? {};
+              shadow["orchestrator"] = { ...(shadow["orchestrator"] as Record<string, unknown> ?? {}), agent: orchestratorAgent };
+              shadow["worker"] = { ...(shadow["worker"] as Record<string, unknown> ?? {}), agent: workerAgent };
+              saveShadowFile(projectId, shadow);
+              // Also update local config if hybrid mode (local is source of truth)
+              const localConfigPath = findLocalConfigPath(project.path);
+              if (localConfigPath) {
+                try {
+                  const localRaw = yamlParse(readFileSync(localConfigPath, "utf-8")) as Record<string, unknown>;
+                  localRaw["orchestrator"] = { ...(localRaw["orchestrator"] as Record<string, unknown> ?? {}), agent: orchestratorAgent };
+                  localRaw["worker"] = { ...(localRaw["worker"] as Record<string, unknown> ?? {}), agent: workerAgent };
+                  writeFileSync(localConfigPath, yamlStringify(localRaw, { indent: 2 }));
+                } catch {
+                  // Local config update failed — shadow still has the values
+                }
+              }
+              console.log(chalk.dim(`  ✓ Saved agent config\n`));
+            } else {
+              // Legacy single-file mode
+              const rawYaml = readFileSync(config.configPath, "utf-8");
+              const rawConfig = yamlParse(rawYaml);
+              const proj = rawConfig.projects[projectId];
+              if (proj) {
+                proj.orchestrator = { ...(proj.orchestrator ?? {}), agent: orchestratorAgent };
+                proj.worker = { ...(proj.worker ?? {}), agent: workerAgent };
+                writeFileSync(config.configPath, yamlStringify(rawConfig, { indent: 2 }));
+                console.log(chalk.dim(`  ✓ Saved to ${config.configPath}\n`));
+              }
+            }
+            // Reload config so the just-saved agent overrides take effect.
+            // For multi-project mode: shadow file was written above; loadConfig()
+            // picks it up via the global config pipeline.
+            // For legacy mode: the YAML was written to config.configPath directly;
+            // loadConfig() finds the same file via normal discovery.
+            config = loadConfig();
             project = config.projects[projectId];
           }
 
