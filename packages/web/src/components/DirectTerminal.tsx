@@ -478,8 +478,8 @@ export function DirectTerminal({
 
   const accentColor = "var(--color-accent)";
 
-  // Use muxStatus for the actual connection, fallback to local status for error messages
-  const displayStatus = muxStatus === "connected" ? "connected" : muxStatus === "disconnected" && error ? "error" : muxStatus;
+  // Local errors (e.g. xterm.js load failure) take priority over mux connection state
+  const displayStatus = error ? "error" : muxStatus;
 
   const statusDotClass =
     displayStatus === "connected"

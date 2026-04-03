@@ -221,7 +221,15 @@ export function useSessionEvents(
     // Skip SSE if mux sessions are available
     if (muxSessions) {
       dispatch({ type: "setConnection", status: "connected" });
-      return;
+      return () => {
+        // Clear any pending refresh timer so it doesn't fire after unmount
+        if (refreshTimerRef.current) {
+          clearTimeout(refreshTimerRef.current);
+          refreshTimerRef.current = null;
+        }
+        activeRefreshControllerRef.current?.abort();
+        activeRefreshControllerRef.current = null;
+      };
     }
 
     const url = project ? `/api/events?project=${encodeURIComponent(project)}` : "/api/events";

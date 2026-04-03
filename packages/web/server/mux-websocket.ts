@@ -199,6 +199,7 @@ interface ManagedTerminal {
   tmuxSessionId: string;
   pty: IPty | null;
   subscribers: Set<(data: string) => void>;
+  exitCallbacks: Set<(exitCode: number) => void>;
   buffer: string[];
   bufferBytes: number;
 }
@@ -240,6 +241,7 @@ class TerminalManager {
         tmuxSessionId,
         pty: null,
         subscribers: new Set(),
+        exitCallbacks: new Set(),
         buffer: [],
         bufferBytes: 0,
       };
@@ -319,9 +321,15 @@ class TerminalManager {
         console.log(`[MuxServer] Re-attaching to ${id} (has ${terminal.subscribers.size} subscribers)`);
         try {
           this.open(id);
+          return; // re-attached — don't notify exit
         } catch (err) {
           console.error(`[MuxServer] Failed to re-attach ${id}:`, err);
         }
+      }
+
+      // Notify subscribers that the terminal has exited (re-attach failed or no subscribers)
+      for (const cb of terminal.exitCallbacks) {
+        cb(exitCode);
       }
     });
 
@@ -352,8 +360,9 @@ class TerminalManager {
   /**
    * Subscribe to terminal data. Returns unsubscribe function.
    * Automatically opens the terminal if needed.
+   * @param onExit - called when the PTY exits and cannot be re-attached
    */
-  subscribe(id: string, callback: (data: string) => void): () => void {
+  subscribe(id: string, callback: (data: string) => void, onExit?: (exitCode: number) => void): () => void {
     // Ensure terminal is open
     this.open(id);
     const terminal = this.terminals.get(id);
@@ -363,10 +372,12 @@ class TerminalManager {
 
     // Add subscriber
     terminal.subscribers.add(callback);
+    if (onExit) terminal.exitCallbacks.add(onExit);
 
     // Return unsubscribe function
     return () => {
       terminal.subscribers.delete(callback);
+      if (onExit) terminal.exitCallbacks.delete(onExit);
       // Kill PTY and clean up when the last subscriber leaves
       if (terminal.subscribers.size === 0) {
         if (terminal.pty) {
@@ -487,17 +498,26 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
 
               // Subscribe to data if not already subscribed
               if (!subscriptions.has(id)) {
-                const unsub = terminalManager.subscribe(id, (data) => {
-                  const dataMsg: ServerMessage = {
-                    ch: "terminal",
-                    id,
-                    type: "data",
-                    data,
-                  };
-                  if (ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify(dataMsg));
-                  }
-                });
+                const unsub = terminalManager.subscribe(
+                  id,
+                  (data) => {
+                    const dataMsg: ServerMessage = {
+                      ch: "terminal",
+                      id,
+                      type: "data",
+                      data,
+                    };
+                    if (ws.readyState === WebSocket.OPEN) {
+                      ws.send(JSON.stringify(dataMsg));
+                    }
+                  },
+                  (exitCode) => {
+                    const exitedMsg: ServerMessage = { ch: "terminal", id, type: "exited", code: exitCode };
+                    if (ws.readyState === WebSocket.OPEN) {
+                      ws.send(JSON.stringify(exitedMsg));
+                    }
+                  },
+                );
                 subscriptions.set(id, unsub);
               }
             } else if (type === "data" && "data" in msg) {
