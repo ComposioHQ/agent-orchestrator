@@ -1,0 +1,47 @@
+packages/web/src/app/api/integrations/__tests__/route.test.ts
+  a271ef70a2607a42 24,27-31,34,36,41,45
+packages/core/src/__tests__/portfolio-session-service.test.ts
+  a271ef70a2607a42 19,29
+packages/web/src/app/api/browse-directory/__tests__/route.test.ts
+  a271ef70a2607a42 1-53
+packages/web/src/app/api/projects/__tests__/route.test.ts
+  a271ef70a2607a42 1-81
+packages/web/src/__tests__/api-routes.test.ts
+  a271ef70a2607a42 588-663
+packages/web/src/app/api/projects/clone/__tests__/route.test.ts
+  a271ef70a2607a42 1-68
+packages/core/src/__tests__/global-config.test.ts
+  a271ef70a2607a42 4
+packages/web/src/app/api/projects/[id]/resources/__tests__/route.test.ts
+  a271ef70a2607a42 1-106
+packages/web/src/lib/__tests__/path-security.test.ts
+  a271ef70a2607a42 6,14
+packages/web/src/app/api/projects/[id]/favicon/__tests__/route.test.ts
+  a271ef70a2607a42 1-56
+packages/cli/__tests__/commands/project.test.ts
+  a271ef70a2607a42 43,52
+packages/web/src/hooks/__tests__/usePortfolioEvents.test.ts
+  a271ef70a2607a42 2,63
+packages/web/src/lib/__tests__/project-name.test.ts
+  a271ef70a2607a42 8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "3898caefd3b93332cdaa13640bfc5980f938760b",
+  "prompts": {
+    "a271ef70a2607a42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3be41795-6f73-4d51-9697-61db44b5ab6b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 569,
+      "total_deletions": 125,
+      "accepted_lines": 460,
+      "overriden_lines": 0
+    }
+  }
+}
