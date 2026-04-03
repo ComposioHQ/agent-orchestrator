@@ -352,15 +352,20 @@ describe("tracker-jira plugin", () => {
       mockFetchJson({ startAt: 0, maxResults: 50, total: 0, issues: [] });
       await customTracker.listIssues!({}, project);
       const url = fetchMock.mock.calls[0][0] as string;
-      expect(url).toContain(encodeURIComponent("project = TT AND status = 'To Do'"));
+      expect(url).toContain("search/jql");
+      expect(url).toContain("project");
+      expect(url).toContain("TT");
+      expect(url).toContain("To+Do");
     });
 
     it("builds JQL from filters when no custom JQL", async () => {
       mockFetchJson({ startAt: 0, maxResults: 50, total: 0, issues: [] });
       await tracker.listIssues!({ state: "open", labels: ["bug"] }, project);
       const url = fetchMock.mock.calls[0][0] as string;
-      expect(url).toContain(encodeURIComponent('project = "TT"'));
-      expect(url).toContain(encodeURIComponent('labels = "bug"'));
+      expect(url).toContain("search/jql");
+      expect(url).toContain("project");
+      expect(url).toContain("%22TT%22");
+      expect(url).toContain("%22bug%22");
     });
 
     it("respects limit", async () => {

@@ -38,6 +38,7 @@ export interface JiraSearchResponse {
   maxResults: number;
   total: number;
   issues: JiraIssue[];
+  nextPageToken?: string;
 }
 
 /** Atlassian Document Format node (recursive). */
@@ -175,19 +176,26 @@ export class JiraClient {
 
   // ---- public API ---------------------------------------------------------
 
-  /** Search issues using JQL. Handles pagination internally. */
+  /** Search issues using JQL. Handles pagination internally. Uses the new /search/jql endpoint. */
   async searchIssues(jql: string, limit = 50): Promise<JiraIssue[]> {
     const issues: JiraIssue[] = [];
-    let startAt = 0;
+    let nextPageToken: string | undefined;
 
     while (issues.length < limit) {
       const pageSize = Math.min(limit - issues.length, 100);
+      const params = new URLSearchParams({
+        jql,
+        maxResults: String(pageSize),
+        fields: "summary,description,status,priority,labels,assignee,issuetype",
+      });
+      if (nextPageToken) params.set("nextPageToken", nextPageToken);
+
       const result = await this.request<JiraSearchResponse>(
-        `search?jql=${encodeURIComponent(jql)}&startAt=${startAt}&maxResults=${pageSize}&fields=summary,description,status,priority,labels,assignee,issuetype`,
+        `search/jql?${params.toString()}`,
       );
       issues.push(...result.issues);
-      if (issues.length >= result.total || result.issues.length === 0) break;
-      startAt += result.issues.length;
+      if (!result.nextPageToken || result.issues.length === 0) break;
+      nextPageToken = result.nextPageToken;
     }
 
     return issues.slice(0, limit);
