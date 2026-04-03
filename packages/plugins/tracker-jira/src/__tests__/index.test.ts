@@ -14,23 +14,22 @@ import type { ProjectConfig } from "@composio/ao-core";
 // Fixtures
 // ---------------------------------------------------------------------------
 
+/** Project config with Jira tracker settings (mirrors YAML structure). */
 const project: ProjectConfig = {
   name: "test",
   repo: "acme/repo",
   path: "/tmp/repo",
   defaultBranch: "main",
   sessionPrefix: "test",
-};
-
-const pluginConfig = {
-  baseUrl: "https://acme.atlassian.net",
-  email: "bot@acme.com",
-  apiToken: "test-token",
-  projectKey: "TT",
-  statusMap: {
-    in_progress: "In Progress",
-    closed: "Done",
-    open: "To Do",
+  tracker: {
+    plugin: "jira",
+    baseUrl: "https://acme.atlassian.net",
+    projectKey: "TT",
+    statusMap: {
+      in_progress: "In Progress",
+      closed: "Done",
+      open: "To Do",
+    },
   },
 };
 
@@ -108,7 +107,11 @@ describe("tracker-jira plugin", () => {
 
   beforeEach(() => {
     fetchMock.mockReset();
-    tracker = create(pluginConfig);
+    // Auth comes from env vars
+    process.env.JIRA_EMAIL = "bot@acme.com";
+    process.env.JIRA_API_TOKEN = "test-token";
+    process.env.JIRA_BASE_URL = "https://acme.atlassian.net";
+    tracker = create();
   });
 
   // ---- manifest ----------------------------------------------------------
@@ -126,23 +129,34 @@ describe("tracker-jira plugin", () => {
       expect(tracker.name).toBe("jira");
     });
 
-    it("throws when baseUrl is missing", () => {
-      const env = process.env;
+    it("creates without throwing even if env vars are missing", () => {
+      delete process.env.JIRA_EMAIL;
+      delete process.env.JIRA_API_TOKEN;
       delete process.env.JIRA_BASE_URL;
-      expect(() => create({})).toThrow("baseUrl is required");
-      process.env = env;
+      // create() should NOT throw — errors are deferred to method calls
+      expect(() => create()).not.toThrow();
     });
 
-    it("throws when email is missing", () => {
-      expect(() => create({ baseUrl: "https://x.atlassian.net" })).toThrow(
-        "email is required",
-      );
+    it("throws on first API call when email is missing", async () => {
+      delete process.env.JIRA_EMAIL;
+      const t = create();
+      await expect(t.getIssue("TT-1", project)).rejects.toThrow("JIRA_EMAIL");
     });
 
-    it("throws when apiToken is missing", () => {
-      expect(() =>
-        create({ baseUrl: "https://x.atlassian.net", email: "a@b.com" }),
-      ).toThrow("apiToken is required");
+    it("throws on first API call when apiToken is missing", async () => {
+      delete process.env.JIRA_API_TOKEN;
+      const t = create();
+      await expect(t.getIssue("TT-1", project)).rejects.toThrow("JIRA_API_TOKEN");
+    });
+
+    it("throws on first API call when baseUrl is missing", async () => {
+      delete process.env.JIRA_BASE_URL;
+      const projectNoUrl: ProjectConfig = {
+        ...project,
+        tracker: { plugin: "jira", projectKey: "TT" },
+      };
+      const t = create();
+      await expect(t.getIssue("TT-1", projectNoUrl)).rejects.toThrow("baseUrl");
     });
   });
 
@@ -150,21 +164,14 @@ describe("tracker-jira plugin", () => {
 
   describe("detect()", () => {
     it("returns true when all env vars are set", () => {
-      const orig = { ...process.env };
-      process.env.JIRA_BASE_URL = "https://x.atlassian.net";
-      process.env.JIRA_EMAIL = "a@b.com";
-      process.env.JIRA_API_TOKEN = "tok";
       expect(detect()).toBe(true);
-      process.env = orig;
     });
 
     it("returns false when env vars are missing", () => {
-      const orig = { ...process.env };
       delete process.env.JIRA_BASE_URL;
       delete process.env.JIRA_EMAIL;
       delete process.env.JIRA_API_TOKEN;
       expect(detect()).toBe(false);
-      process.env = orig;
     });
   });
 
@@ -257,6 +264,15 @@ describe("tracker-jira plugin", () => {
         "rate limit",
       );
     });
+
+    it("reads baseUrl from project.tracker config", async () => {
+      delete process.env.JIRA_BASE_URL;
+      const t = create();
+      mockSprintResolution();
+      mockFetchJson(sampleJiraIssue);
+      const issue = await t.getIssue("TT-142", project);
+      expect(issue.url).toBe("https://acme.atlassian.net/browse/TT-142");
+    });
   });
 
   // ---- isCompleted -------------------------------------------------------
@@ -285,8 +301,18 @@ describe("tracker-jira plugin", () => {
   // ---- issueUrl ----------------------------------------------------------
 
   describe("issueUrl", () => {
-    it("generates correct URL", () => {
+    it("generates correct URL from project.tracker.baseUrl", () => {
       expect(tracker.issueUrl("TT-42", project)).toBe(
+        "https://acme.atlassian.net/browse/TT-42",
+      );
+    });
+
+    it("falls back to JIRA_BASE_URL env var", () => {
+      const projectNoUrl: ProjectConfig = {
+        ...project,
+        tracker: { plugin: "jira" },
+      };
+      expect(tracker.issueUrl("TT-42", projectNoUrl)).toBe(
         "https://acme.atlassian.net/browse/TT-42",
       );
     });
@@ -321,12 +347,15 @@ describe("tracker-jira plugin", () => {
       expect(tracker.branchName("TT-42", project)).toBe("feat/Sprint8/TT-42");
     });
 
-    it("uses custom branchPrefix", async () => {
-      const customTracker = create({ ...pluginConfig, branchPrefix: "Agent" });
+    it("uses custom branchPrefix from project.tracker", async () => {
+      const customProject: ProjectConfig = {
+        ...project,
+        tracker: { ...project.tracker!, branchPrefix: "Agent" },
+      };
       mockSprintResolution("Sprint 12");
       mockFetchJson(sampleJiraIssue);
-      await customTracker.getIssue("TT-42", project);
-      expect(customTracker.branchName("TT-42", project)).toBe("Agent/Sprint12/TT-42");
+      await tracker.getIssue("TT-42", customProject);
+      expect(tracker.branchName("TT-42", customProject)).toBe("Agent/Sprint12/TT-42");
     });
 
     it("falls back to prefix-only when no active sprint", async () => {
@@ -334,6 +363,14 @@ describe("tracker-jira plugin", () => {
       mockFetchJson(sampleJiraIssue);
       await tracker.getIssue("TT-42", project);
       expect(tracker.branchName("TT-42", project)).toBe("feat/TT-42");
+    });
+
+    it("reads branchPrefix from project.tracker", () => {
+      const customProject: ProjectConfig = {
+        ...project,
+        tracker: { ...project.tracker!, branchPrefix: "Agent/Sprint0" },
+      };
+      expect(tracker.branchName("TT-42", customProject)).toBe("Agent/Sprint0/TT-42");
     });
   });
 
@@ -391,13 +428,13 @@ describe("tracker-jira plugin", () => {
       expect(issues[1].id).toBe("TT-143");
     });
 
-    it("uses custom JQL from config when provided", async () => {
-      const customTracker = create({
-        ...pluginConfig,
-        jql: "project = TT AND status = 'To Do'",
-      });
+    it("uses custom JQL from project.tracker.jql", async () => {
+      const customProject: ProjectConfig = {
+        ...project,
+        tracker: { ...project.tracker!, jql: "project = TT AND status = 'To Do'" },
+      };
       mockFetchJson({ startAt: 0, maxResults: 50, total: 0, issues: [] });
-      await customTracker.listIssues!({}, project);
+      await tracker.listIssues!({}, customProject);
       const url = fetchMock.mock.calls[0][0] as string;
       expect(url).toContain("search/jql");
       expect(url).toContain("project");

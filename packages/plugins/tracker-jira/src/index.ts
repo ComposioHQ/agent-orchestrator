@@ -22,45 +22,31 @@ export const manifest = {
 };
 
 // ---------------------------------------------------------------------------
-// Config
+// Helpers — read per-project config from project.tracker
 // ---------------------------------------------------------------------------
 
-interface JiraPluginConfig {
-  baseUrl?: string;
-  email?: string;
-  apiToken?: string;
-  projectKey?: string;
-  jql?: string;
-  statusMap?: Record<string, string>;
-  branchPrefix?: string;
+function getBaseUrl(project: ProjectConfig): string {
+  return (
+    (project.tracker?.["baseUrl"] as string | undefined) ??
+    process.env.JIRA_BASE_URL ??
+    ""
+  );
 }
 
-function resolveConfig(pluginConfig?: Record<string, unknown>): {
-  client: JiraClient;
-  projectKey: string;
-  jql: string | undefined;
-  statusMap: Record<string, string>;
-  branchPrefix: string;
-} {
-  const cfg = (pluginConfig ?? {}) as JiraPluginConfig;
+function getProjectKey(project: ProjectConfig): string {
+  return (project.tracker?.["projectKey"] as string | undefined) ?? "";
+}
 
-  const baseUrl = cfg.baseUrl ?? process.env.JIRA_BASE_URL;
-  const email = cfg.email ?? process.env.JIRA_EMAIL;
-  const apiToken = cfg.apiToken ?? process.env.JIRA_API_TOKEN;
+function getJql(project: ProjectConfig): string | undefined {
+  return project.tracker?.["jql"] as string | undefined;
+}
 
-  if (!baseUrl) throw new Error("Jira tracker: baseUrl is required (config or JIRA_BASE_URL env)");
-  if (!email) throw new Error("Jira tracker: email is required (config or JIRA_EMAIL env)");
-  if (!apiToken) throw new Error("Jira tracker: apiToken is required (config or JIRA_API_TOKEN env)");
+function getStatusMap(project: ProjectConfig): Record<string, string> {
+  return (project.tracker?.["statusMap"] as Record<string, string> | undefined) ?? {};
+}
 
-  const projectKey = cfg.projectKey ?? "";
-
-  return {
-    client: new JiraClient({ baseUrl, email, apiToken }),
-    projectKey,
-    jql: cfg.jql,
-    statusMap: cfg.statusMap ?? {},
-    branchPrefix: cfg.branchPrefix ?? "feat",
-  };
+function getBranchPrefix(project: ProjectConfig): string {
+  return (project.tracker?.["branchPrefix"] as string | undefined) ?? "feat";
 }
 
 // ---------------------------------------------------------------------------
@@ -99,60 +85,82 @@ function mapPriority(name?: string | null): number | undefined {
   return undefined;
 }
 
+function extractSprintNumber(sprintName: string): string {
+  const match = /sprint[\s\-_]*(\d+)/i.exec(sprintName);
+  return match ? match[1] : sprintName;
+}
+
 // ---------------------------------------------------------------------------
 // Tracker implementation
 // ---------------------------------------------------------------------------
 
-export function create(config?: Record<string, unknown>): Tracker {
-  const { client, projectKey, jql, statusMap, branchPrefix } = resolveConfig(config);
-  const baseUrl = (config?.baseUrl as string | undefined) ?? process.env.JIRA_BASE_URL ?? "";
+export function create(): Tracker {
+  // Auth from env vars — validated lazily on first API call, not at load time,
+  // so the plugin can still register even if credentials aren't set yet.
+  const email = process.env.JIRA_EMAIL;
+  const apiToken = process.env.JIRA_API_TOKEN;
 
-  // Cache the active sprint name (resolved lazily on first use)
-  let activeSprintName: string | null | undefined;
+  // Client cache keyed by baseUrl (supports multiple Jira instances)
+  const clients = new Map<string, JiraClient>();
 
-  async function resolveActiveSprint(): Promise<string | null> {
-    if (activeSprintName !== undefined) return activeSprintName;
-    if (!projectKey) {
-      activeSprintName = null;
-      return null;
+  function getClient(project: ProjectConfig): JiraClient {
+    const baseUrl = getBaseUrl(project);
+    if (!baseUrl) throw new Error("Jira tracker: baseUrl is required (project.tracker.baseUrl or JIRA_BASE_URL env)");
+    if (!email) throw new Error("Jira tracker: JIRA_EMAIL env var is required");
+    if (!apiToken) throw new Error("Jira tracker: JIRA_API_TOKEN env var is required");
+
+    let client = clients.get(baseUrl);
+    if (!client) {
+      client = new JiraClient({ baseUrl, email, apiToken });
+      clients.set(baseUrl, client);
     }
+    return client;
+  }
+
+  // Cache active sprint per projectKey (resolved lazily)
+  const sprintCache = new Map<string, string | null>();
+
+  async function resolveActiveSprint(project: ProjectConfig): Promise<string | null> {
+    const projectKey = getProjectKey(project);
+    if (!projectKey) return null;
+
+    const cached = sprintCache.get(projectKey);
+    if (cached !== undefined) return cached;
+
     try {
+      const client = getClient(project);
       const boardId = await client.findBoardId(projectKey);
       if (boardId) {
         const sprint = await client.getActiveSprint(boardId);
-        activeSprintName = sprint;
+        sprintCache.set(projectKey, sprint);
         return sprint;
       }
     } catch {
-      // Non-fatal
+      // Non-fatal — fall back to no sprint
     }
-    activeSprintName = null;
+    sprintCache.set(projectKey, null);
     return null;
-  }
-
-  function extractSprintNumber(sprintName: string): string {
-    // Match patterns like "Sprint 8", "Sprint8", "Sprint-8", "S8"
-    const match = /sprint[\s\-_]*(\d+)/i.exec(sprintName);
-    return match ? match[1] : sprintName;
   }
 
   const tracker: Tracker = {
     name: "jira",
 
-    async getIssue(identifier: string, _project: ProjectConfig): Promise<Issue> {
-      // Eagerly resolve active sprint (cached after first call)
-      await resolveActiveSprint();
+    async getIssue(identifier: string, project: ProjectConfig): Promise<Issue> {
+      await resolveActiveSprint(project);
+      const client = getClient(project);
       const issue = await client.getIssue(identifier);
-      return mapIssue(issue, baseUrl);
+      return mapIssue(issue, getBaseUrl(project));
     },
 
-    async isCompleted(identifier: string, _project: ProjectConfig): Promise<boolean> {
+    async isCompleted(identifier: string, project: ProjectConfig): Promise<boolean> {
+      const client = getClient(project);
       const issue = await client.getIssue(identifier);
       const state = mapState(issue.fields.status.name);
       return state === "closed" || state === "cancelled";
     },
 
-    issueUrl(identifier: string, _project: ProjectConfig): string {
+    issueUrl(identifier: string, project: ProjectConfig): string {
+      const baseUrl = getBaseUrl(project);
       return `${baseUrl.replace(/\/+$/, "")}/browse/${identifier}`;
     },
 
@@ -161,13 +169,15 @@ export function create(config?: Record<string, unknown>): Tracker {
       return match?.[1] ?? url;
     },
 
-    branchName(identifier: string, _project: ProjectConfig): string {
-      // Sprint is resolved async; use cached value if available, otherwise use prefix as-is
-      if (activeSprintName) {
-        const sprintNum = extractSprintNumber(activeSprintName);
-        return `${branchPrefix}/Sprint${sprintNum}/${identifier}`;
+    branchName(identifier: string, project: ProjectConfig): string {
+      const prefix = getBranchPrefix(project);
+      const projectKey = getProjectKey(project);
+      const sprintName = sprintCache.get(projectKey);
+      if (sprintName) {
+        const sprintNum = extractSprintNumber(sprintName);
+        return `${prefix}/Sprint${sprintNum}/${identifier}`;
       }
-      return `${branchPrefix}/${identifier}`;
+      return `${prefix}/${identifier}`;
     },
 
     async generatePrompt(identifier: string, project: ProjectConfig): Promise<string> {
@@ -195,19 +205,23 @@ export function create(config?: Record<string, unknown>): Tracker {
 
     async listIssues(
       filters: IssueFilters,
-      _project: ProjectConfig,
+      project: ProjectConfig,
     ): Promise<Issue[]> {
-      const effectiveJql = buildJql(jql, projectKey, filters);
+      const client = getClient(project);
+      const effectiveJql = buildJql(getJql(project), getProjectKey(project), filters);
       const limit = filters.limit ?? 50;
       const issues = await client.searchIssues(effectiveJql, limit);
-      return issues.map((i) => mapIssue(i, baseUrl));
+      return issues.map((i) => mapIssue(i, getBaseUrl(project)));
     },
 
     async updateIssue(
       identifier: string,
       update: IssueUpdate,
-      _project: ProjectConfig,
+      project: ProjectConfig,
     ): Promise<void> {
+      const client = getClient(project);
+      const statusMap = getStatusMap(project);
+
       if (update.state) {
         const transitionName = statusMap[update.state];
         if (transitionName) {
@@ -227,7 +241,6 @@ export function create(config?: Record<string, unknown>): Tracker {
         await client.updateIssue(identifier, { labels: filtered });
       }
       if (update.assignee) {
-        // Jira requires accountId, but we accept displayName — best effort
         await client.updateIssue(identifier, {
           assignee: { accountId: update.assignee },
         });
@@ -239,8 +252,11 @@ export function create(config?: Record<string, unknown>): Tracker {
 
     async createIssue(
       input: CreateIssueInput,
-      _project: ProjectConfig,
+      project: ProjectConfig,
     ): Promise<Issue> {
+      const client = getClient(project);
+      const projectKey = getProjectKey(project);
+
       const fields: Record<string, unknown> = {
         summary: input.title,
         description: {
@@ -264,9 +280,8 @@ export function create(config?: Record<string, unknown>): Tracker {
         fields.assignee = { accountId: input.assignee };
       }
 
-      // Jira create returns the new issue key
       const result = await client.createIssue(fields);
-      return tracker.getIssue(result.key, _project);
+      return tracker.getIssue(result.key, project);
     },
   };
 
