@@ -545,15 +545,10 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
       subscriptions.clear();
     });
 
+    // In the ws library, "error" is always followed by "close", so the close
+    // handler below handles all cleanup.  Log the error here and nothing more.
     ws.on("error", (err) => {
       console.error("[MuxServer] WebSocket error:", err.message);
-      clearInterval(heartbeatInterval);
-      sessionUnsubscribe?.();
-      sessionUnsubscribe = null;
-      for (const unsub of subscriptions.values()) {
-        unsub();
-      }
-      subscriptions.clear();
     });
   });
 
