@@ -115,8 +115,9 @@ class SessionBroadcaster {
   private async connect(): Promise<void> {
     if (this.abortController) return;
 
-    this.abortController = new AbortController();
-    const { signal } = this.abortController;
+    const controller = new AbortController();
+    this.abortController = controller;
+    const { signal } = controller;
 
     try {
       const res = await fetch(`${this.baseUrl}/api/events`, {
@@ -159,7 +160,11 @@ class SessionBroadcaster {
       if (signal.aborted) return; // intentional disconnect, not an error
       console.warn("[MuxServer] SSE connection lost:", err instanceof Error ? err.message : err);
     } finally {
-      this.abortController = null;
+      // Only clear our own controller — a concurrent connect() may have already
+      // set a new one (e.g. disconnect() → subscribe() → connect() in the same tick).
+      if (this.abortController === controller) {
+        this.abortController = null;
+      }
     }
 
     // Reconnect with backoff if there are still subscribers
@@ -398,21 +403,6 @@ class TerminalManager {
     return terminal.buffer.join("");
   }
 
-  /**
-   * Close a terminal (kill PTY and remove from subscribers)
-   */
-  close(id: string): void {
-    const terminal = this.terminals.get(id);
-    if (!terminal) return;
-
-    if (terminal.pty) {
-      terminal.pty.kill();
-      terminal.pty = null;
-    }
-
-    // Don't remove from map immediately — let it stay until all subscribers unsubscribe
-    // This allows for graceful cleanup if subscribers are still holding references
-  }
 }
 
 /**
@@ -444,13 +434,13 @@ export function createMuxWebSocket(tmuxPath?: string): WebSocketServer | null {
     // no application-level code is needed on the client side.
     const heartbeatInterval = setInterval(() => {
       if (ws.readyState === WebSocket.OPEN) {
+        // Send the ping first so it counts as a sent-but-unanswered probe
+        ws.ping();
         missedPongs += 1;
         if (missedPongs >= MAX_MISSED_PONGS) {
           console.log("[MuxServer] Too many missed pongs, terminating connection");
           ws.terminate();
-          return;
         }
-        ws.ping();
       }
     }, 15_000);
 
