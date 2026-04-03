@@ -433,16 +433,19 @@ function DashboardInner({
   );
 
   const liveStats = useMemo<DashboardStats>(
-    () => ({
-      totalSessions: sessions.length,
-      workingSessions: sessions.filter(
-        (session) => session.activity !== null && session.activity !== "exited",
-      ).length,
-      openPRs: sessions.filter((session) => session.pr?.state === "open").length,
-      needsReview: sessions.filter(
-        (session) => session.pr && !session.pr.isDraft && session.pr.reviewDecision === "pending",
-      ).length,
-    }),
+    () => {
+      const activeSessions = sessions.filter((s) => getAttentionLevel(s) !== "done");
+      return {
+        totalSessions: sessions.length,
+        workingSessions: activeSessions.filter(
+          (session) => session.activity !== null && session.activity !== "exited",
+        ).length,
+        openPRs: activeSessions.filter((session) => session.pr?.state === "open").length,
+        needsReview: activeSessions.filter(
+          (session) => session.pr && !session.pr.isDraft && session.pr.reviewDecision === "pending",
+        ).length,
+      };
+    },
     [sessions],
   );
 
