@@ -40,7 +40,7 @@ import { registerProject_cmd } from "../../src/commands/project.js";
 let program: Command;
 let logSpy: ReturnType<typeof vi.spyOn>;
 let errorSpy: ReturnType<typeof vi.spyOn>;
-let exitSpy: ReturnType<typeof vi.spyOn>;
+let _exitSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -49,7 +49,7 @@ beforeEach(() => {
   registerProject_cmd(program);
   logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
   errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-  exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+  _exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
     throw new Error(`EXIT:${code}`);
   }) as typeof process.exit);
 });

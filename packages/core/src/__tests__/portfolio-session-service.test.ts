@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { join } from "node:path";
 
 // Mock node:fs/promises before importing the module under test
 vi.mock("node:fs/promises", () => ({
@@ -17,7 +16,7 @@ vi.mock("../key-value.js", () => ({
 }));
 
 vi.mock("../types.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../types.js")>();
+  const actual = (await importOriginal()) as Record<string, unknown>;
   return {
     ...actual,
     isOrchestratorSession: vi.fn(),
@@ -27,8 +26,7 @@ vi.mock("../types.js", async (importOriginal) => {
 import { readdir, readFile, stat } from "node:fs/promises";
 import { getSessionsDir } from "../paths.js";
 import { parseKeyValueContent } from "../key-value.js";
-import { isOrchestratorSession } from "../types.js";
-import type { PortfolioProject } from "../types.js";
+import { isOrchestratorSession, type PortfolioProject } from "../types.js";
 import {
   listPortfolioSessions,
   getPortfolioSessionCounts,

@@ -21,22 +21,28 @@ vi.mock("node:child_process", () => {
 
 import { GET } from "../route";
 
+const ENV_KEYS = ["GITHUB_TOKEN", "GH_TOKEN", "LINEAR_API_KEY", "SLACK_WEBHOOK_URL"] as const;
 const savedEnv: Record<string, string | undefined> = {};
+
+function clearEnvKey(key: string): void {
+  // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+  delete process.env[key];
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
-  for (const key of ["GITHUB_TOKEN", "GH_TOKEN", "LINEAR_API_KEY", "SLACK_WEBHOOK_URL"]) {
+  for (const key of ENV_KEYS) {
     savedEnv[key] = process.env[key];
-    delete process.env[key];
+    clearEnvKey(key);
   }
 });
 
 afterEach(() => {
-  for (const key of ["GITHUB_TOKEN", "GH_TOKEN", "LINEAR_API_KEY", "SLACK_WEBHOOK_URL"]) {
+  for (const key of ENV_KEYS) {
     if (savedEnv[key] !== undefined) {
       process.env[key] = savedEnv[key];
     } else {
-      delete process.env[key];
+      clearEnvKey(key);
     }
   }
 });

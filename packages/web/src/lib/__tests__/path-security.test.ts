@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { realpath } from "node:fs/promises";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  const actual = (await importOriginal()) as Record<string, unknown>;
   return {
     ...actual,
     realpath: vi.fn((p: string) => Promise.resolve(p)),
@@ -11,7 +11,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 vi.mock("node:os", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:os")>();
+  const actual = (await importOriginal()) as Record<string, unknown>;
   return {
     ...actual,
     default: { ...actual, homedir: vi.fn(() => "/home/testuser") },

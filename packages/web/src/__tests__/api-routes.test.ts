@@ -523,6 +523,96 @@ describe("API Routes", () => {
       const data = await res.json();
       expect(data.session.issueId).toBeNull();
     });
+
+    it("passes agent overrides through to the session manager", async () => {
+      const req = makeRequest("/api/spawn", {
+        method: "POST",
+        body: JSON.stringify({ projectId: "my-app", agent: "codex" }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await spawnPOST(req);
+
+      expect(res.status).toBe(201);
+      expect(mockSessionManager.spawn).toHaveBeenCalledWith(
+        expect.objectContaining({ projectId: "my-app", agent: "codex" }),
+      );
+    });
+
+    it("returns 400 when issueId is invalid", async () => {
+      const req = makeRequest("/api/spawn", {
+        method: "POST",
+        body: JSON.stringify({ projectId: "my-app", issueId: "bad id!" }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await spawnPOST(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toMatch(/issueId/);
+    });
+
+    it("returns 400 when branch exceeds max length", async () => {
+      const req = makeRequest("/api/spawn", {
+        method: "POST",
+        body: JSON.stringify({ projectId: "my-app", branch: "a".repeat(256) }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await spawnPOST(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toMatch(/branch/);
+    });
+
+    it("returns 400 when prompt exceeds max length", async () => {
+      const req = makeRequest("/api/spawn", {
+        method: "POST",
+        body: JSON.stringify({ projectId: "my-app", prompt: "x".repeat(20_001) }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await spawnPOST(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toMatch(/prompt/);
+    });
+
+    it("returns 400 when agent is not a string", async () => {
+      const req = makeRequest("/api/spawn", {
+        method: "POST",
+        body: JSON.stringify({ projectId: "my-app", agent: 12345 }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await spawnPOST(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toMatch(/agent/);
+    });
+
+    it("returns 500 when session manager spawn throws", async () => {
+      (mockSessionManager.spawn as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error("spawn failed"),
+      );
+      const req = makeRequest("/api/spawn", {
+        method: "POST",
+        body: JSON.stringify({ projectId: "my-app" }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await spawnPOST(req);
+      expect(res.status).toBe(500);
+      const data = await res.json();
+      expect(data.error).toContain("spawn failed");
+    });
+
+    it("passes branch and prompt through to session manager", async () => {
+      const req = makeRequest("/api/spawn", {
+        method: "POST",
+        body: JSON.stringify({ projectId: "my-app", branch: "feat/test", prompt: "fix the bug" }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await spawnPOST(req);
+      expect(res.status).toBe(201);
+      expect(mockSessionManager.spawn).toHaveBeenCalledWith(
+        expect.objectContaining({ branch: "feat/test", prompt: "fix the bug" }),
+      );
+    });
   });
 
   describe("POST /api/orchestrators", () => {

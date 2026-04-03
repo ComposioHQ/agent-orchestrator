@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, act, waitFor } from "@testing-library/react";
+import { renderHook, act } from "@testing-library/react";
 import { usePortfolioEvents } from "../usePortfolioEvents";
 import type { PortfolioActionItem, PortfolioProjectSummary } from "@/lib/types";
 import { makeSession } from "../../__tests__/helpers";
@@ -60,7 +60,7 @@ describe("usePortfolioEvents", () => {
   });
 
   it("polls for updates on interval", async () => {
-    const { result } = renderHook(() =>
+    renderHook(() =>
       usePortfolioEvents([], [makeSummary()]),
     );
 

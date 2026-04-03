@@ -5,7 +5,7 @@ const mockLoadPreferences = vi.fn(() => ({}));
 const mockGetPortfolio = vi.fn(() => []);
 
 vi.mock("react", () => ({
-  cache: (fn: Function) => fn,
+  cache: (fn: (...args: unknown[]) => unknown) => fn,
 }));
 
 vi.mock("@composio/ao-core", () => ({
