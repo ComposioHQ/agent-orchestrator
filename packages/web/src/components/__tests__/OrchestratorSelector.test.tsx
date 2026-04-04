@@ -148,4 +148,63 @@ describe("OrchestratorSelector", () => {
     expect(screen.getByText("Active")).toBeInTheDocument();
     expect(screen.getByText("spawning")).toBeInTheDocument();
   });
+
+  describe("formatRelativeTime edge cases", () => {
+    it("shows Unknown for invalid date strings", () => {
+      const orchestratorsWithInvalidDate = [
+        {
+          ...mockOrchestrators[0],
+          createdAt: "not-a-valid-date",
+          lastActivityAt: null,
+        },
+      ];
+      render(
+        <OrchestratorSelector
+          {...defaultProps}
+          orchestrators={orchestratorsWithInvalidDate}
+        />,
+      );
+
+      // The "Created Unknown" text should appear for invalid dates
+      expect(screen.getByText(/Created Unknown/)).toBeInTheDocument();
+    });
+
+    it("shows Just now for future timestamps", () => {
+      const futureDate = new Date(Date.now() + 60000).toISOString(); // 1 minute in future
+      const orchestratorsWithFutureDate = [
+        {
+          ...mockOrchestrators[0],
+          createdAt: futureDate,
+          lastActivityAt: null,
+        },
+      ];
+      render(
+        <OrchestratorSelector
+          {...defaultProps}
+          orchestrators={orchestratorsWithFutureDate}
+        />,
+      );
+
+      // Future timestamps should show "Just now" instead of negative values
+      expect(screen.getByText(/Created Just now/)).toBeInTheDocument();
+    });
+
+    it("shows Unknown for null dates", () => {
+      const orchestratorsWithNullDate = [
+        {
+          ...mockOrchestrators[0],
+          createdAt: null,
+          lastActivityAt: null,
+        },
+      ];
+      render(
+        <OrchestratorSelector
+          {...defaultProps}
+          orchestrators={orchestratorsWithNullDate}
+        />,
+      );
+
+      expect(screen.getByText(/Created Unknown/)).toBeInTheDocument();
+    });
+  });
 });
