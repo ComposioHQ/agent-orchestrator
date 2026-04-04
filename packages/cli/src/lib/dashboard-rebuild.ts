@@ -6,7 +6,7 @@
 import { resolve } from "node:path";
 import { existsSync, rmSync } from "node:fs";
 import ora from "ora";
-import { execSilent } from "./shell.js";
+import { exec, execSilent } from "./shell.js";
 
 /**
  * Find the PID of a process listening on the given port.
@@ -58,9 +58,7 @@ export async function waitForPortFree(port: number, timeoutMs: number): Promise<
 }
 
 /**
- * Clean just the .next cache directory. Use when a dev server is running —
- * it will recompile on next request. Does NOT run pnpm build (which would
- * create a production .next that the dev server can't use).
+ * Remove the .next directory before a rebuild.
  */
 export async function cleanNextCache(webDir: string): Promise<void> {
   const nextDir = resolve(webDir, ".next");
@@ -72,3 +70,31 @@ export async function cleanNextCache(webDir: string): Promise<void> {
   }
 }
 
+/**
+ * Rebuild dashboard production artifacts from a source checkout.
+ * Global npm installs ship prebuilt artifacts and cannot rebuild in place.
+ */
+export async function rebuildDashboardProductionArtifacts(webDir: string): Promise<void> {
+  if (webDir.includes("node_modules")) {
+    throw new Error(
+      "Dashboard rebuild is only available from a source checkout. " +
+      "Run `ao update`, or reinstall with `npm install -g @composio/ao@latest`.",
+    );
+  }
+
+  await cleanNextCache(webDir);
+
+  const workspaceRoot = resolve(webDir, "../..");
+  const spinner = ora("Rebuilding dashboard production artifacts").start();
+
+  try {
+    await exec("pnpm", ["build"], { cwd: workspaceRoot });
+    spinner.succeed("Rebuilt dashboard production artifacts");
+  } catch (error) {
+    spinner.fail("Dashboard rebuild failed");
+    throw new Error(
+      "Failed to rebuild dashboard production artifacts. Run `pnpm build` and try again.",
+      { cause: error },
+    );
+  }
+}

@@ -46,6 +46,15 @@ async function checkBuilt(webDir: string): Promise<void> {
       : "Run: pnpm build";
     throw new Error(`Packages not built. ${hint}`);
   }
+
+  const webBuildId = resolve(webDir, ".next", "BUILD_ID");
+  const startAllEntry = resolve(webDir, "dist-server", "start-all.js");
+  if (!existsSync(webBuildId) || !existsSync(startAllEntry)) {
+    const hint = webDir.includes("node_modules")
+      ? "Run: npm install -g @composio/ao@latest"
+      : "Run: pnpm build";
+    throw new Error(`Packages not built. ${hint}`);
+  }
 }
 
 /**

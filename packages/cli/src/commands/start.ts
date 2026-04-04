@@ -46,7 +46,7 @@ import {
   findFreePort,
   MAX_PORT_SCAN,
 } from "../lib/web-dir.js";
-import { cleanNextCache } from "../lib/dashboard-rebuild.js";
+import { rebuildDashboardProductionArtifacts } from "../lib/dashboard-rebuild.js";
 import { preflight } from "../lib/preflight.js";
 import { register, unregister, isAlreadyRunning, getRunning, waitForExit } from "../lib/running-state.js";
 import { isHumanCaller } from "../lib/caller-context.js";
@@ -931,10 +931,10 @@ async function runStartup(
       port = newPort;
     }
     const webDir = findWebDir(); // throws with install-specific guidance if not found
-    await preflight.checkBuilt(webDir);
-
     if (opts?.rebuild) {
-      await cleanNextCache(webDir);
+      await rebuildDashboardProductionArtifacts(webDir);
+    } else {
+      await preflight.checkBuilt(webDir);
     }
 
     spinner.start("Starting dashboard");
