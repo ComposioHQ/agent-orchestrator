@@ -720,8 +720,8 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
 .dashboard-title {
   font-size: clamp(22px, 2.8vw, 32px);
   line-height: 1;
-  letter-spacing: -0.05em;
-  font-weight: 600;
+  letter-spacing: -0.035em;
+  font-weight: 680;
   color: var(--color-text-primary);
 }
 
