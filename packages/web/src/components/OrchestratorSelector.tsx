@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { cn } from "@/lib/cn";
 
-interface Orchestrator {
+export interface Orchestrator {
   id: string;
   projectId: string;
   projectName: string;

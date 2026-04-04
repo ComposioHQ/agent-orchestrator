@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { OrchestratorSelector } from "@/components/OrchestratorSelector";
+import { OrchestratorSelector, type Orchestrator } from "@/components/OrchestratorSelector";
 import { getServices } from "@/lib/services";
 import { isOrchestratorSession } from "@composio/ao-core/types";
 import { getAllProjects } from "@/lib/project-name";
@@ -20,16 +20,6 @@ export async function generateMetadata(props: {
     }
   }
   return { title: { absolute: `ao | ${projectName} - Select Orchestrator` } };
-}
-
-interface Orchestrator {
-  id: string;
-  projectId: string;
-  projectName: string;
-  status: string;
-  activity: string | null;
-  createdAt: string | null;
-  lastActivityAt: string | null;
 }
 
 export default async function OrchestratorsRoute(props: {
