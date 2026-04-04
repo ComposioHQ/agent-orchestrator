@@ -48,14 +48,9 @@ const execFileAsync = promisify(execFile);
 // Rate Limit Handling
 // ---------------------------------------------------------------------------
 
-const RATE_LIMIT_ERROR_PATTERNS = [
-  "rate limit",
-  "rate Limit",
-  "API rate limit",
-  "GraphQL rate limit",
-  "rate limit exceeded",
-  "Too Many Requests",
-];
+// "rate limit" matches case-insensitively, covering "rate Limit", "API rate limit",
+// "GraphQL rate limit", "rate limit exceeded", etc. Keep only distinct patterns.
+const RATE_LIMIT_ERROR_PATTERNS = ["rate limit", "Too Many Requests"];
 
 function isRateLimitError(error: unknown): boolean {
   const msg = error instanceof Error ? error.message : String(error);
@@ -609,7 +604,9 @@ async function fetchCheckRunsViaRest(repo: string, sha: string, cwd?: string): P
     // on an object-returning endpoint produces "{...}{...}" which JSON.parse
     // cannot handle when there are more than one page of results (>30 runs).
     const raw = await ghWithRetry(
-      ["api", `repos/${repo}/commits/${sha}/check-runs`, "--paginate", "--jq", ".check_runs[]"],
+      // per_page=100 ensures the curl fallback (which drops --paginate) still
+      // fetches up to 100 check-runs in a single call instead of the default 30.
+      ["api", `repos/${repo}/commits/${sha}/check-runs?per_page=100`, "--paginate", "--jq", ".check_runs[]"],
       cwd,
     );
     // `gh` applies --jq and emits one JSON object per line (NDJSON).
