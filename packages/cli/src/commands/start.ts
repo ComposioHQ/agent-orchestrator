@@ -1015,13 +1015,31 @@ async function runStartup(
     );
 
     if (existingOrchestrators.length > 0) {
-      // Existing orchestrators found — don't spawn a new one
-      // Let the dashboard handle orchestrator selection
-      hasExistingOrchestrators = true;
-      spinner.info(
-        `Found ${existingOrchestrators.length} existing orchestrator session(s). ` +
-          `Open the dashboard to select or start a new one.`,
-      );
+      // Existing orchestrators found
+      if (opts?.dashboard === false) {
+        // No dashboard — auto-select the most recently active orchestrator
+        const sortedOrchestrators = [...existingOrchestrators].sort(
+          (a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime(),
+        );
+        const selected = sortedOrchestrators[0];
+        selectedOrchestratorId = selected.id;
+        if (selected.runtimeHandle?.id) {
+          tmuxTarget = selected.runtimeHandle.id;
+        }
+        spinner.succeed(
+          `Using existing orchestrator session: ${selected.id}` +
+            (existingOrchestrators.length > 1
+              ? ` (${existingOrchestrators.length - 1} other session(s) available)`
+              : ""),
+        );
+      } else {
+        // Dashboard available — let the user select
+        hasExistingOrchestrators = true;
+        spinner.info(
+          `Found ${existingOrchestrators.length} existing orchestrator session(s). ` +
+            `Open the dashboard to select or start a new one.`,
+        );
+      }
     } else {
       // No existing orchestrators — spawn a new one
       try {
