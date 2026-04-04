@@ -15,7 +15,7 @@ import {
 } from "@composio/ao-core";
 import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { readdir, readFile, stat, writeFile, mkdir, chmod } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -608,6 +608,14 @@ function createGeminiAgent(): Agent {
    */
   const resolvedBinary: string = resolveGeminiBinarySync();
 
+  /**
+   * System prompt stored from getLaunchCommand so postLaunchSetup can write
+   * it to GEMINI.md before the REPL is ready. Gemini CLI has no --system-prompt
+   * flag — GEMINI.md is the correct way to inject system context.
+   */
+  let pendingSystemPromptFile: string | null = null;
+  let pendingSystemPrompt: string | null = null;
+
   return {
     name: "gemini",
     processName: "gemini",
@@ -633,15 +641,10 @@ function createGeminiAgent(): Agent {
         parts.push("--model", shellEscape(config.model));
       }
 
-      if (config.systemPromptFile) {
-        // Gemini reads context from GEMINI.md in the project root.
-        // There is no direct --system-prompt-file flag; the file's contents
-        // are passed as a shell substitution so the shell expands them at
-        // launch time without tmux truncation.
-        parts.push("--system-prompt", `"$(cat ${shellEscape(config.systemPromptFile)})"`);
-      } else if (config.systemPrompt) {
-        parts.push("--system-prompt", shellEscape(config.systemPrompt));
-      }
+      // Gemini CLI has no --system-prompt flag. Store for postLaunchSetup,
+      // which writes the content to GEMINI.md (Gemini's system context file).
+      pendingSystemPromptFile = config.systemPromptFile ?? null;
+      pendingSystemPrompt = config.systemPrompt ?? null;
 
       // NOTE: prompt is NOT embedded here — AO sends it post-launch via
       // runtime.sendMessage() so Gemini stays in interactive REPL mode.
@@ -751,6 +754,25 @@ function createGeminiAgent(): Agent {
       //    yet for this worktree — mirrors what claude-code does).
       if (session.workspacePath) {
         await writeGeminiHooks(session.workspacePath);
+      }
+
+      // 2. Write system prompt to GEMINI.md if one was provided.
+      //    Gemini CLI reads GEMINI.md from the project root as system context.
+      //    --system-prompt is NOT a valid flag in Gemini CLI.
+      if (session.workspacePath && (pendingSystemPromptFile || pendingSystemPrompt)) {
+        try {
+          let content = pendingSystemPrompt ?? "";
+          if (pendingSystemPromptFile) {
+            content = readFileSync(pendingSystemPromptFile, "utf-8");
+          }
+          if (content.trim()) {
+            await writeFile(join(session.workspacePath, "GEMINI.md"), content, "utf-8");
+          }
+        } catch {
+          // Non-fatal — Gemini will just start without system context
+        }
+        pendingSystemPromptFile = null;
+        pendingSystemPrompt = null;
       }
 
       // 2. Wait for Gemini's REPL prompt (❯) to appear so the session manager's
