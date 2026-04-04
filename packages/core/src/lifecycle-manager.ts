@@ -344,7 +344,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     if (!project) return session.status;
 
     const agentName = resolveAgentSelection({
-      role: resolveSessionRole(session.id, session.metadata),
+      role: resolveSessionRole(session.id, session.metadata, project.sessionPrefix),
       project,
       defaults: config.defaults,
       persistedAgent: session.metadata["agent"],

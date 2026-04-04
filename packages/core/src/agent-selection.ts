@@ -22,11 +22,8 @@ export function resolveSessionRole(
   sessionId: string,
   metadata: Record<string, string> | undefined,
   sessionPrefix: string,
-  allSessionPrefixes?: string[],
 ): SessionRole {
-  return isOrchestratorSession({ id: sessionId, metadata }, sessionPrefix, allSessionPrefixes)
-    ? "orchestrator"
-    : "worker";
+  return isOrchestratorSession({ id: sessionId, metadata }, sessionPrefix) ? "orchestrator" : "worker";
 }
 
 export function resolveAgentSelection(params: {

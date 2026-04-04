@@ -1,13 +1,12 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { notFound, useParams } from "next/navigation";
+import { useParams } from "next/navigation";
 import { isOrchestratorSession } from "@composio/ao-core/types";
 import { SessionDetail } from "@/components/SessionDetail";
 import { type DashboardSession, type ActivityState, getAttentionLevel, type AttentionLevel } from "@/lib/types";
 import { activityIcon } from "@/lib/activity-icons";
 import type { ProjectInfo } from "@/lib/project-name";
-import { getSessionTitle } from "@/lib/format";
 import { useSSESessionActivity } from "@/hooks/useSSESessionActivity";
 
 function truncate(s: string, max: number): string {
@@ -30,8 +29,12 @@ function buildSessionTitle(
 
   if (isOrchestrator) {
     detail = "Orchestrator Terminal";
+  } else if (session.pr) {
+    detail = `#${session.pr.number} ${truncate(session.pr.branch, 30)}`;
+  } else if (session.branch) {
+    detail = truncate(session.branch, 30);
   } else {
-    detail = truncate(getSessionTitle(session), 40);
+    detail = "Session Detail";
   }
 
   return emoji ? `${emoji} ${id} | ${detail}` : `${id} | ${detail}`;
@@ -60,8 +63,7 @@ export default function SessionPage() {
   const [zoneCounts, setZoneCounts] = useState<ZoneCounts | null>(null);
   const [projectOrchestratorId, setProjectOrchestratorId] = useState<string | null | undefined>(undefined);
   const [loading, setLoading] = useState(true);
-  const [routeError, setRouteError] = useState<Error | null>(null);
-  const [sessionMissing, setSessionMissing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [prefixByProject, setPrefixByProject] = useState<Map<string, string>>(new Map());
   const sessionProjectId = session?.projectId ?? null;
   const allPrefixes = [...prefixByProject.values()];
@@ -72,7 +74,6 @@ export default function SessionPage() {
   const sessionIsOrchestratorRef = useRef(false);
   const resolvedProjectSessionsKeyRef = useRef<string | null>(null);
   const prefixByProjectRef = useRef<Map<string, string>>(new Map());
-  const hasLoadedSessionRef = useRef(false);
 
   // Keep prefixByProjectRef in sync so fetchProjectSessions (stable [] dep) reads latest map
   useEffect(() => {
@@ -118,23 +119,17 @@ export default function SessionPage() {
     try {
       const res = await fetch(`/api/sessions/${encodeURIComponent(id)}`);
       if (res.status === 404) {
-        if (!hasLoadedSessionRef.current) {
-          setSessionMissing(true);
-        }
+        setError("Session not found");
         setLoading(false);
         return;
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as DashboardSession;
       setSession(data);
-      setRouteError(null);
-      setSessionMissing(false);
-      hasLoadedSessionRef.current = true;
+      setError(null);
     } catch (err) {
       console.error("Failed to fetch session:", err);
-      if (!hasLoadedSessionRef.current) {
-        setRouteError(err instanceof Error ? err : new Error("Failed to load session"));
-      }
+      setError("Failed to load session");
     } finally {
       setLoading(false);
     }
@@ -216,17 +211,17 @@ export default function SessionPage() {
     );
   }
 
-  if (sessionMissing) {
-    notFound();
-    return null;
-  }
-
-  if (routeError) {
-    throw routeError;
-  }
-
-  if (!session) {
-    throw new Error("Session data was unavailable after loading completed");
+  if (error || !session) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[var(--color-bg-base)]">
+        <div className="text-[13px] text-[var(--color-status-error)]">
+          {error ?? "Session not found"}
+        </div>
+        <a href="/" className="text-[12px] text-[var(--color-accent)] hover:underline">
+          ← Back to dashboard
+        </a>
+      </div>
+    );
   }
 
   return (

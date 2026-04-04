@@ -9,12 +9,27 @@ import {
   listDashboardOrchestrators,
 } from "@/lib/serialize";
 import { getCorrelationId, jsonWithCorrelation, recordApiObservation } from "@/lib/observability";
+import { resolveGlobalPause } from "@/lib/global-pause";
 import { filterProjectSessions } from "@/lib/project-utils";
-import { settlesWithin } from "@/lib/async-utils";
 
 const METADATA_ENRICH_TIMEOUT_MS = 3_000;
 const PR_ENRICH_TIMEOUT_MS = 4_000;
 const PER_PR_ENRICH_TIMEOUT_MS = 1_500;
+
+async function settlesWithin(promise: Promise<unknown>, timeoutMs: number): Promise<boolean> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<boolean>((resolve) => {
+    timeoutId = setTimeout(() => resolve(false), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise.then(() => true).catch(() => true), timeoutPromise]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
 
 export async function GET(request: Request) {
   const correlationId = getCorrelationId(request);
@@ -57,6 +72,8 @@ export async function GET(request: Request) {
         correlationId,
       );
     }
+
+    const allSessions = requestedProjectId ? await sessionManager.list() : coreSessions;
 
     const allSessionPrefixes = Object.entries(config.projects).map(
       ([projectId, p]) => p.sessionPrefix ?? projectId,
@@ -127,6 +144,7 @@ export async function GET(request: Request) {
         stats: computeStats(dashboardSessions),
         orchestratorId,
         orchestrators,
+        globalPause: resolveGlobalPause(allSessions, config.projects),
       },
       { status: 200 },
       correlationId,
