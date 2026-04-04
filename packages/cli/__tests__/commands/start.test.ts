@@ -64,6 +64,7 @@ vi.mock("ora", () => ({
     stop: vi.fn().mockReturnThis(),
     succeed: vi.fn().mockReturnThis(),
     fail: vi.fn().mockReturnThis(),
+    info: vi.fn().mockReturnThis(),
     text: "",
   }),
 }));
@@ -861,6 +862,57 @@ describe("start command — orchestrator session strategy display", () => {
       expect(output).not.toContain("reused existing session");
     },
   );
+
+  it("handles existing orchestrator sessions by showing info and not spawning new", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    // Return an existing orchestrator session
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-orchestrator",
+        projectId: "my-app",
+        metadata: { role: "orchestrator" },
+      },
+    ]);
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
+
+    const output = getLoggedOutput();
+    expect(output).toContain("existing sessions found — select one in the dashboard");
+
+    // Should NOT spawn a new orchestrator when existing ones exist
+    expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
+  });
+
+  it("fails and cleans up dashboard when orchestrator setup throws", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    // Mock findWebDir
+    const { findWebDir } = await import("../../src/lib/web-dir.js");
+    vi.mocked(findWebDir).mockReturnValue(tmpDir);
+    writeFileSync(join(tmpDir, "package.json"), "{}");
+
+    const fakeDashboard = {
+      on: vi.fn(),
+      kill: vi.fn(),
+      emit: vi.fn(),
+    };
+    mockSpawn.mockReturnValue(fakeDashboard);
+
+    mockSessionManager.list.mockResolvedValue([]);
+    mockSessionManager.spawnOrchestrator.mockRejectedValue(new Error("Spawn failed"));
+
+    await expect(program.parseAsync(["node", "test", "start"])).rejects.toThrow("process.exit(1)");
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(errors).toContain("Failed to setup orchestrator: Spawn failed");
+
+    // Should have killed the dashboard
+    expect(fakeDashboard.kill).toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------

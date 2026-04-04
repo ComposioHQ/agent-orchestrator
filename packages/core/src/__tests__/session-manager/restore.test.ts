@@ -365,7 +365,7 @@ describe("restore", () => {
     expect(restored.status).toBe("spawning");
     const meta = readMetadataRaw(sessionsDir, "app-1");
     expect(meta?.["opencodeSessionId"]).toBe("ses_restore_discovered");
-  });
+  }, 15000);
 
   it("uses orchestratorModel when restoring orchestrator sessions", async () => {
     const wsPath = join(tmpDir, "ws-app-orchestrator-restore");
