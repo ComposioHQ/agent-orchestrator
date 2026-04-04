@@ -27,8 +27,13 @@ interface OrchestratorSelectorProps {
 function formatRelativeTime(isoDate: string | null): string {
   if (!isoDate) return "Unknown";
   const date = new Date(isoDate);
+  const timestamp = date.getTime();
+  // Guard against invalid dates (NaN) and future timestamps
+  if (!Number.isFinite(timestamp)) return "Unknown";
   const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
+  const diffMs = now.getTime() - timestamp;
+  // Handle future timestamps
+  if (diffMs < 0) return "Just now";
   const diffMins = Math.floor(diffMs / 60000);
   const diffHours = Math.floor(diffMins / 60);
   const diffDays = Math.floor(diffHours / 24);
