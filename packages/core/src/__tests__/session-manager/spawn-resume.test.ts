@@ -391,6 +391,42 @@ describe("spawn — resume strategy (default)", () => {
     expect(mockRuntime.create).not.toHaveBeenCalled();
   });
 
+  it("uses richer done session for context injection when native resume fails", async () => {
+    // Older killed session (resumable)
+    createArchive("app-1", {
+      agent: "mock-agent",
+      issue: "INT-100",
+      status: "killed",
+      branch: "feat/INT-100",
+      worktree: "/old/path",
+      project: "my-app",
+      summary: "Sparse summary",
+    }, "2025-01-10T12-00-00-000Z");
+
+    // Newer done session (richer context with PR)
+    createArchive("app-2", {
+      agent: "mock-agent",
+      issue: "INT-100",
+      status: "done",
+      branch: "feat/INT-100",
+      worktree: "/old/path",
+      project: "my-app",
+      summary: "Full implementation done",
+      pr: "https://github.com/org/repo/pull/99",
+    }, "2025-01-15T12-00-00-000Z");
+
+    // Native resume matches killed session (app-1) but then fails
+    mockAgent.getRestoreCommand = vi.fn().mockResolvedValue(null);
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.spawn({ projectId: "my-app", issueId: "INT-100" });
+
+    // Context injection should use the richer done session (app-2), not the killed one (app-1)
+    const launchConfig = vi.mocked(mockAgent.getLaunchCommand).mock.calls[0][0];
+    expect(launchConfig.prompt).toContain("pull/99");
+    expect(launchConfig.prompt).toContain("completed normally");
+  });
+
   it("allows spawn when active session is for a different issue", async () => {
     writeMetadata(sessionsDir, "app-1", {
       worktree: "/tmp/ws",

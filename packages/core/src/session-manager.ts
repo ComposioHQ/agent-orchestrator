@@ -1213,15 +1213,22 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
 
       // Step 4: Context injection fallback
+      // Re-search with broader status set — native resume only matched resumable statuses
+      // (killed/errored/terminated), but a newer "done" session may have richer context (PR URL, summary).
       if (!launchCommand) {
+        const contextArchived = findArchivedSessionForIssue(
+          sessionsDir,
+          spawnConfig.issueId!,
+          selection.agentName,
+        ) ?? archived;
         const context = await buildPreviousSessionContext(
-          archived.raw,
+          contextArchived.raw,
           workspacePath,
           project.defaultBranch,
         );
         if (context) {
           agentLaunchConfig.prompt = `${context}\n\n---\n\n${agentLaunchConfig.prompt ?? ""}`;
-          resumedFromSession = archived.sessionId;
+          resumedFromSession = contextArchived.sessionId;
         }
       }
     }
