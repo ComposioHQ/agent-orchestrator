@@ -58,8 +58,11 @@ describe("preflight.checkBuilt", () => {
     // /web/node_modules/@composio/ao-core     — miss
     // /node_modules/@composio/ao-core         — hit
     // /node_modules/@composio/ao-core/dist/index.js — exists
+    // /web/.next/BUILD_ID and /web/dist-server/start-all.js — exist
     mockExistsSync
       .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(true);
     await expect(preflight.checkBuilt("/web")).resolves.toBeUndefined();
@@ -82,6 +85,16 @@ describe("preflight.checkBuilt", () => {
   it("throws 'pnpm build' when ao-core exists but dist is missing", async () => {
     // findPackageUp finds ao-core, but dist/index.js is missing
     mockExistsSync
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+    await expect(preflight.checkBuilt("/web")).rejects.toThrow(
+      "Packages not built",
+    );
+  });
+
+  it("throws when web production artifacts are missing", async () => {
+    mockExistsSync
+      .mockReturnValueOnce(true)
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(false);
     await expect(preflight.checkBuilt("/web")).rejects.toThrow(
