@@ -41,6 +41,8 @@ import {
   type PluginRegistry,
   type RuntimeHandle,
   type Issue,
+  type SessionStatus,
+  TERMINAL_STATUSES,
   PR_STATE,
 } from "./types.js";
 import {
@@ -574,21 +576,30 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     return [...new Set(ids)];
   }
 
+  /** Statuses eligible for resume via getRestoreCommand(). */
+  const SPAWN_RESUMABLE_STATUSES = new Set(["killed", "errored", "terminated"]);
+  /** Statuses eligible for context injection (includes "done"). */
+  const SPAWN_CONTEXT_STATUSES = new Set(["killed", "errored", "terminated", "done"]);
+
   /**
    * Find the most recent archived session for a given issue and agent.
    * Reuses existing archive helpers to correctly handle session IDs with underscores.
+   * Filters out merged sessions and optionally restricts to resumable statuses.
    */
   function findArchivedSessionForIssue(
     sessionsDir: string,
     issueId: string,
     agentName: string,
+    options?: { resumableOnly?: boolean },
   ): { sessionId: string; raw: Record<string, string> } | null {
+    const allowedStatuses = options?.resumableOnly ? SPAWN_RESUMABLE_STATUSES : SPAWN_CONTEXT_STATUSES;
     for (const sessionId of sortSessionIdsForReuse(listArchivedSessionIds(sessionsDir))) {
       const raw = readArchivedMetadataRaw(sessionsDir, sessionId);
       if (!raw) continue;
-      if (raw["issue"] === issueId && raw["agent"] === agentName) {
-        return { sessionId, raw };
-      }
+      if (raw["issue"] !== issueId || raw["agent"] !== agentName) continue;
+      const status = raw["status"];
+      if (!status || !allowedStatuses.has(status)) continue;
+      return { sessionId, raw };
     }
     return null;
   }
@@ -1003,13 +1014,59 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       validateAndStoreOrigin(config.configPath, project.path);
     }
 
+    // --- Gap 3: Active session dedup guard ---
+    // Prevent spawning a second worker for the same issue when one is already active.
+    if (spawnConfig.issueId) {
+      for (const existingId of listMetadata(sessionsDir)) {
+        const existingRaw = readMetadataRaw(sessionsDir, existingId);
+        const existingStatus = existingRaw?.["status"] ?? "";
+        if (
+          existingRaw &&
+          existingRaw["issue"] === spawnConfig.issueId &&
+          existingRaw["agent"] === selection.agentName &&
+          !isOrchestratorSessionRecord(existingId, existingRaw, project.sessionPrefix) &&
+          !TERMINAL_STATUSES.has(existingStatus as SessionStatus)
+        ) {
+          throw new Error(
+            `An active session "${existingId}" already exists for issue ${spawnConfig.issueId}. Kill it first or use a different issue.`,
+          );
+        }
+      }
+    }
+
+    // --- Determine respawn strategy and find archived session BEFORE workspace creation ---
+    const respawnStrategy = project.workerRespawnStrategy ?? "resume";
+    let archived: { sessionId: string; raw: Record<string, string> } | null = null;
+    let attemptNativeResume = false;
+
+    if (respawnStrategy !== "fresh" && spawnConfig.issueId) {
+      // For native resume, only match resumable statuses (killed/errored/terminated).
+      // For context injection, also match "done" sessions.
+      if (respawnStrategy === "resume" && plugins.agent.getRestoreCommand) {
+        archived = findArchivedSessionForIssue(sessionsDir, spawnConfig.issueId, selection.agentName, {
+          resumableOnly: true,
+        });
+        if (archived) {
+          attemptNativeResume = true;
+        } else {
+          // No resumable session found; fall back to context-eligible sessions (includes "done")
+          archived = findArchivedSessionForIssue(sessionsDir, spawnConfig.issueId, selection.agentName);
+        }
+      } else {
+        archived = findArchivedSessionForIssue(sessionsDir, spawnConfig.issueId, selection.agentName);
+      }
+    }
+
     // Determine session ID — atomically reserve to prevent concurrent collisions
     const { sessionId, tmuxName } = await reserveNextSessionIdentity(project, sessionsDir);
 
     // Determine branch name — explicit branch always takes priority
+    // When resuming, reuse the archived session's branch to preserve commits.
     let branch: string;
     if (spawnConfig.branch) {
       branch = spawnConfig.branch;
+    } else if (attemptNativeResume && archived?.raw["branch"]) {
+      branch = archived.raw["branch"];
     } else if (spawnConfig.issueId && plugins.tracker && resolvedIssue) {
       const fromIssue = resolvedIssue.branchName;
       branch =
@@ -1033,16 +1090,24 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       branch = `session/${sessionId}`;
     }
 
-    // Create workspace (if workspace plugin is available)
+    // Create workspace — when resuming, use workspace.restore() to reuse the archived branch
     let workspacePath = project.path;
     if (plugins.workspace) {
       try {
-        const wsInfo = await plugins.workspace.create({
-          projectId: spawnConfig.projectId,
-          project,
-          sessionId,
-          branch,
-        });
+        let wsInfo;
+        const wsConfig = { projectId: spawnConfig.projectId, project, sessionId, branch };
+        if (attemptNativeResume && archived?.raw["worktree"] && plugins.workspace.restore) {
+          // Restore workspace at the archived worktree path to preserve agent session file references
+          try {
+            wsInfo = await plugins.workspace.restore(wsConfig, archived.raw["worktree"]);
+          } catch {
+            // Restore failed — fall back to fresh workspace.create()
+            wsInfo = await plugins.workspace.create(wsConfig);
+            attemptNativeResume = false;
+          }
+        } else {
+          wsInfo = await plugins.workspace.create(wsConfig);
+        }
         workspacePath = wsInfo.path;
 
         // Run post-create hooks — clean up workspace on failure
@@ -1120,52 +1185,43 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     let launchCommand: string | undefined;
     let resumedFromSession: string | undefined;
 
-    const respawnStrategy = project.workerRespawnStrategy ?? "resume";
+    if (archived) {
+      // Step 3: Try native resume via getRestoreCommand (only for resumable statuses)
+      if (attemptNativeResume && plugins.agent.getRestoreCommand) {
+        const archivedSession = metadataToSession(
+          archived.sessionId,
+          archived.raw,
+          spawnConfig.projectId,
+        );
+        // Use the restored workspace path (which matches the archived path for agent session file lookups)
+        archivedSession.workspacePath = workspacePath;
 
-    if (
-      respawnStrategy !== "fresh" &&
-      spawnConfig.issueId
-    ) {
-      const archived = findArchivedSessionForIssue(
-        sessionsDir,
-        spawnConfig.issueId,
-        selection.agentName,
-      );
-
-      if (archived) {
-        // Step 3: Try native resume via getRestoreCommand
-        if (respawnStrategy === "resume" && plugins.agent.getRestoreCommand) {
-          const archivedSession = metadataToSession(
-            archived.sessionId,
-            archived.raw,
-            spawnConfig.projectId,
-          );
-          // Use the current workspace, not the archived one
-          archivedSession.workspacePath = workspacePath;
-
-          try {
-            const restoreCmd = await plugins.agent.getRestoreCommand(archivedSession, project);
-            if (restoreCmd) {
-              launchCommand = restoreCmd;
-              resumedFromSession = archived.sessionId;
-              console.log(
-                `[session-manager] Resuming conversation from archived session ${archived.sessionId} for issue ${spawnConfig.issueId}`,
-              );
-            }
-          } catch (err) {
-            console.warn(
-              `[session-manager] Failed to build restore command from archived session ${archived.sessionId}: ${err}`,
+        try {
+          const restoreCmd = await plugins.agent.getRestoreCommand(archivedSession, project);
+          if (restoreCmd) {
+            launchCommand = restoreCmd;
+            resumedFromSession = archived.sessionId;
+            console.log(
+              `[session-manager] Resuming conversation from archived session ${archived.sessionId} for issue ${spawnConfig.issueId}`,
             );
           }
+        } catch (err) {
+          console.warn(
+            `[session-manager] Failed to build restore command from archived session ${archived.sessionId}: ${err}`,
+          );
         }
+      }
 
-        // Step 4: Context injection fallback
-        if (!launchCommand) {
-          const context = await buildPreviousSessionContext(archived.raw, workspacePath, project.defaultBranch);
-          if (context) {
-            agentLaunchConfig.prompt = `${context}\n\n---\n\n${agentLaunchConfig.prompt ?? ""}`;
-            resumedFromSession = archived.sessionId;
-          }
+      // Step 4: Context injection fallback
+      if (!launchCommand) {
+        const context = await buildPreviousSessionContext(
+          archived.raw,
+          workspacePath,
+          project.defaultBranch,
+        );
+        if (context) {
+          agentLaunchConfig.prompt = `${context}\n\n---\n\n${agentLaunchConfig.prompt ?? ""}`;
+          resumedFromSession = archived.sessionId;
         }
       }
     }

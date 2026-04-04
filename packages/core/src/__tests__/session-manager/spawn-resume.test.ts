@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createSessionManager } from "../../session-manager.js";
-import { readMetadataRaw } from "../../metadata.js";
+import { readMetadataRaw, writeMetadata } from "../../metadata.js";
 import type {
   OrchestratorConfig,
   PluginRegistry,
@@ -14,6 +14,7 @@ import type {
 import {
   setupTestContext,
   teardownTestContext,
+  makeHandle,
   type TestContext,
 } from "../test-utils.js";
 
@@ -171,26 +172,54 @@ describe("spawn — resume strategy (default)", () => {
     expect(mockAgent.getRestoreCommand).not.toHaveBeenCalled();
   });
 
-  it("passes current workspace path to getRestoreCommand, not archived one", async () => {
+  it("uses workspace.restore() when attempting native resume (Gap 1&2)", async () => {
     createArchive("app-1", {
       agent: "mock-agent",
       issue: "INT-100",
       status: "killed",
       branch: "feat/INT-100",
-      worktree: "/old/archived/path",
+      worktree: "/old/worktree/path",
       project: "my-app",
     });
 
-    const mockGetRestore = vi.fn().mockResolvedValue("mock-agent --resume x");
-    mockAgent.getRestoreCommand = mockGetRestore;
+    mockAgent.getRestoreCommand = vi.fn().mockResolvedValue("mock-agent --resume x");
+    const mockRestore = vi.fn().mockResolvedValue({
+      path: "/old/worktree/path",
+      branch: "feat/INT-100",
+      sessionId: "app-2",
+      projectId: "my-app",
+    });
+    ctx.mockWorkspace.restore = mockRestore;
 
     const sm = createSessionManager({ config, registry: mockRegistry });
     await sm.spawn({ projectId: "my-app", issueId: "INT-100" });
 
-    // The session passed to getRestoreCommand should have the new workspace path
-    const sessionArg = mockGetRestore.mock.calls[0][0] as Session;
-    expect(sessionArg.workspacePath).not.toBe("/old/archived/path");
-    expect(sessionArg.workspacePath).toBe("/tmp/ws"); // from mock workspace create
+    // Should use workspace.restore() not workspace.create()
+    expect(mockRestore).toHaveBeenCalledWith(
+      expect.objectContaining({ branch: "feat/INT-100" }),
+      "/old/worktree/path",
+    );
+  });
+
+  it("falls back to workspace.create() when workspace.restore() fails", async () => {
+    createArchive("app-1", {
+      agent: "mock-agent",
+      issue: "INT-100",
+      status: "killed",
+      branch: "feat/INT-100",
+      worktree: "/old/worktree/path",
+      project: "my-app",
+    });
+
+    mockAgent.getRestoreCommand = vi.fn().mockResolvedValue("mock-agent --resume x");
+    ctx.mockWorkspace.restore = vi.fn().mockRejectedValue(new Error("worktree gone"));
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.spawn({ projectId: "my-app", issueId: "INT-100" });
+
+    // Should fall back to create() and getLaunchCommand() (native resume abandoned)
+    expect(ctx.mockWorkspace.create).toHaveBeenCalled();
+    expect(mockAgent.getLaunchCommand).toHaveBeenCalled();
   });
 
   it("writes resumedFrom to metadata on successful resume", async () => {
@@ -292,6 +321,90 @@ describe("spawn — resume strategy (default)", () => {
     const launchConfig = vi.mocked(mockAgent.getLaunchCommand).mock.calls[0][0];
     expect(launchConfig.prompt).toContain("## Previous Session Context");
     expect(launchConfig.prompt).toContain("Partially fixed the issue");
+  });
+
+  // Gap 5: done sessions should NOT be used for native resume
+  it("does not attempt native resume for done sessions", async () => {
+    createArchive("app-1", {
+      agent: "mock-agent",
+      issue: "INT-100",
+      status: "done",
+      branch: "feat/INT-100",
+      worktree: "/old/path",
+      project: "my-app",
+      summary: "Completed task",
+      pr: "https://github.com/org/repo/pull/42",
+    });
+
+    mockAgent.getRestoreCommand = vi.fn().mockResolvedValue("mock-agent --resume x");
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.spawn({ projectId: "my-app", issueId: "INT-100" });
+
+    // getRestoreCommand should NOT be called for done sessions
+    expect(mockAgent.getRestoreCommand).not.toHaveBeenCalled();
+    // But context injection should work
+    const launchConfig = vi.mocked(mockAgent.getLaunchCommand).mock.calls[0][0];
+    expect(launchConfig.prompt).toContain("completed normally");
+  });
+
+  // Gap 6: merged sessions should be filtered out entirely
+  it("does not match merged sessions", async () => {
+    createArchive("app-1", {
+      agent: "mock-agent",
+      issue: "INT-100",
+      status: "merged",
+      branch: "feat/INT-100",
+      worktree: "/old/path",
+      project: "my-app",
+      summary: "Work landed",
+    });
+
+    mockAgent.getRestoreCommand = vi.fn().mockResolvedValue("mock-agent --resume x");
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.spawn({ projectId: "my-app", issueId: "INT-100" });
+
+    expect(mockAgent.getRestoreCommand).not.toHaveBeenCalled();
+    // No context injection either — merged work already landed
+    const launchConfig = vi.mocked(mockAgent.getLaunchCommand).mock.calls[0][0];
+    expect(launchConfig.prompt).not.toContain("## Previous Session Context");
+  });
+
+  // Gap 3: active session dedup guard
+  it("throws when an active session already exists for the same issue", async () => {
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/ws",
+      branch: "feat/INT-100",
+      status: "working",
+      project: "my-app",
+      agent: "mock-agent",
+      issue: "INT-100",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await expect(sm.spawn({ projectId: "my-app", issueId: "INT-100" })).rejects.toThrow(
+      /already exists for issue INT-100/,
+    );
+    // No resources should be created
+    expect(mockRuntime.create).not.toHaveBeenCalled();
+  });
+
+  it("allows spawn when active session is for a different issue", async () => {
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/ws",
+      branch: "feat/INT-200",
+      status: "working",
+      project: "my-app",
+      agent: "mock-agent",
+      issue: "INT-200",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const session = await sm.spawn({ projectId: "my-app", issueId: "INT-100" });
+    expect(session.id).toBeDefined();
   });
 });
 
