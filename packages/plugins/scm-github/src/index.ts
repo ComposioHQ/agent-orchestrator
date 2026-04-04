@@ -5,7 +5,10 @@
  */
 
 import { execFile } from "node:child_process";
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { writeFileSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import {
   CI_STATUS,
@@ -41,6 +44,449 @@ import {
 
 const execFileAsync = promisify(execFile);
 
+// ---------------------------------------------------------------------------
+// Rate Limit Handling
+// ---------------------------------------------------------------------------
+
+const RATE_LIMIT_ERROR_PATTERNS = [
+  "rate limit",
+  "rate Limit",
+  "API rate limit",
+  "GraphQL rate limit",
+  "rate limit exceeded",
+  "Too Many Requests",
+];
+
+function isRateLimitError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  if (RATE_LIMIT_ERROR_PATTERNS.some((pattern) => msg.toLowerCase().includes(pattern.toLowerCase()))) {
+    return true;
+  }
+  if (error instanceof Error && error.cause) {
+    return isRateLimitError(error.cause);
+  }
+  return false;
+}
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Parsed `gh pr view ... --json a,b,c` for REST fallback synthesis. */
+type PrViewRestConversion = {
+  repo: string;
+  prNumber: string;
+  jsonFields: string[];
+};
+
+function parsePrViewRestConversion(args: string[]): PrViewRestConversion | null {
+  if (args[0] !== "pr" || args[1] !== "view") return null;
+
+  const prNumber = args[2];
+  if (!prNumber || !/^\d+$/.test(prNumber)) return null;
+
+  const repoIdx = args.indexOf("--repo");
+  if (repoIdx === -1 || !args[repoIdx + 1]) return null;
+
+  const repo = args[repoIdx + 1];
+  const jIdx = args.indexOf("--json");
+  const jsonFields =
+    jIdx !== -1 && args[jIdx + 1]
+      ? args[jIdx + 1]
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : [];
+
+  return { repo, prNumber, jsonFields };
+}
+
+/** Map GitHub REST `mergeable_state` to GraphQL-style `mergeStateStatus` tokens. */
+function restMergeableStateToGraphqlMergeStateStatus(raw: string): string {
+  const up = raw.toUpperCase();
+  const map: Record<string, string> = {
+    CLEAN: "CLEAN",
+    DIRTY: "DIRTY",
+    BLOCKED: "BLOCKED",
+    UNSTABLE: "UNSTABLE",
+    UNKNOWN: "UNKNOWN",
+    BEHIND: "BEHIND",
+    DRAFT: "DRAFT",
+  };
+  return map[up] ?? (up || "UNKNOWN");
+}
+
+type RestReviewRow = {
+  state?: string;
+  user?: { login?: string };
+  body?: string;
+  submitted_at?: string;
+};
+
+/**
+ * Approximate `gh pr view --json reviewDecision` from REST /pulls/{n}/reviews.
+ * Empty list is treated as REVIEW_REQUIRED (conservative vs GraphQL "no decision").
+ *
+ * COMMENTED reviews are non-decisive — they don't override an existing APPROVED
+ * or CHANGES_REQUESTED decision. Only the latest decisive review per reviewer counts.
+ */
+function deriveReviewDecisionGraphqlFromReviews(reviewsUnknown: unknown): string {
+  if (!Array.isArray(reviewsUnknown)) return "REVIEW_REQUIRED";
+  const rows = reviewsUnknown as RestReviewRow[];
+  if (rows.length === 0) return "REVIEW_REQUIRED";
+
+  const decisiveStates = new Set(["APPROVED", "CHANGES_REQUESTED"]);
+  const byUser = new Map<string, RestReviewRow>();
+  for (const r of rows) {
+    const login = r.user?.login ?? "";
+    if (!decisiveStates.has((r.state ?? "").toUpperCase())) continue;
+    const prev = byUser.get(login);
+    const t = r.submitted_at ? Date.parse(r.submitted_at) : 0;
+    const pt = prev?.submitted_at ? Date.parse(prev.submitted_at) : 0;
+    if (!prev || t >= pt) byUser.set(login, r);
+  }
+  const latest = [...byUser.values()];
+
+  if (latest.some((r) => (r.state ?? "").toUpperCase() === "CHANGES_REQUESTED")) {
+    return "CHANGES_REQUESTED";
+  }
+  if (latest.length > 0 && latest.every((r) => (r.state ?? "").toUpperCase() === "APPROVED")) {
+    return "APPROVED";
+  }
+  return "REVIEW_REQUIRED";
+}
+
+function mapRestReviewsToPrViewReviewsShape(reviewsUnknown: unknown): Array<{
+  author: { login: string };
+  state: string;
+  body: string;
+  submittedAt: string;
+}> {
+  if (!Array.isArray(reviewsUnknown)) return [];
+  return (reviewsUnknown as RestReviewRow[]).map((r) => ({
+    author: { login: r.user?.login ?? "unknown" },
+    state: r.state ?? "",
+    body: r.body ?? "",
+    submittedAt: r.submitted_at ?? "",
+  }));
+}
+
+function synthesizePrViewJsonFromRest(
+  rest: Record<string, unknown>,
+  jsonFields: string[],
+  opts: { reviewDecision?: string; reviewsPayload?: unknown; statusCheckRollup?: unknown[] },
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const want = new Set(jsonFields);
+
+  if (want.has("state")) {
+    out.state = rest.state;
+    if (rest.merged !== undefined) out.merged = rest.merged;
+  }
+  if (want.has("title") && rest.title !== undefined) out.title = rest.title;
+  if (want.has("additions") && rest.additions !== undefined) out.additions = rest.additions;
+  if (want.has("deletions") && rest.deletions !== undefined) out.deletions = rest.deletions;
+
+  if (want.has("mergeable")) {
+    const m = rest.mergeable;
+    if (m === true) out.mergeable = "MERGEABLE";
+    else if (m === false) out.mergeable = "CONFLICTING";
+    else if (m === null) out.mergeable = "UNKNOWN";
+    else if (typeof m === "string") out.mergeable = m;
+    else out.mergeable = "UNKNOWN";
+  }
+
+  if (want.has("isDraft")) {
+    out.isDraft = Boolean(rest.draft);
+  }
+
+  if (want.has("mergeStateStatus")) {
+    const rawMs = typeof rest.mergeable_state === "string" ? rest.mergeable_state : "";
+    out.mergeStateStatus = restMergeableStateToGraphqlMergeStateStatus(rawMs);
+  }
+
+  if (want.has("reviewDecision")) {
+    out.reviewDecision = opts.reviewDecision ?? "REVIEW_REQUIRED";
+  }
+
+  if (want.has("reviews") && opts.reviewsPayload !== undefined) {
+    out.reviews = mapRestReviewsToPrViewReviewsShape(opts.reviewsPayload);
+  }
+
+  if (want.has("statusCheckRollup") && opts.statusCheckRollup !== undefined) {
+    out.statusCheckRollup = opts.statusCheckRollup;
+  }
+
+  // REST API uses head.sha; GraphQL gh pr view uses headRefOid. Map accordingly.
+  if (want.has("headRefOid")) {
+    const headObj = rest.head as Record<string, unknown> | undefined;
+    if (typeof headObj?.sha === "string") out.headRefOid = headObj.sha;
+  }
+
+  for (const f of jsonFields) {
+    if (f in out || !(f in rest)) continue;
+    out[f] = rest[f];
+  }
+
+  return out;
+}
+
+async function fetchPrViewFallbackAsJson(
+  conv: PrViewRestConversion,
+  cwd?: string,
+): Promise<string> {
+  const pullRaw = await execCli("gh", ["api", `repos/${conv.repo}/pulls/${conv.prNumber}`], cwd);
+  const restObj = JSON.parse(pullRaw) as Record<string, unknown>;
+
+  let reviewDecision: string | undefined;
+  let reviewsPayload: unknown;
+  const needReviews =
+    conv.jsonFields.includes("reviewDecision") || conv.jsonFields.includes("reviews");
+
+  if (needReviews) {
+    try {
+      let revRaw = "";
+      let lastErr: unknown;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          revRaw = await execCli(
+            "gh",
+            ["api", `repos/${conv.repo}/pulls/${conv.prNumber}/reviews`, "--paginate"],
+            cwd,
+          );
+          break;
+        } catch (err) {
+          lastErr = err;
+          if (!isRateLimitError(err)) throw err;
+          if (attempt < 2) await sleep(Math.min(1000 * Math.pow(2, attempt), 30000));
+        }
+      }
+      if (!revRaw && lastErr) throw lastErr;
+      reviewsPayload = JSON.parse(revRaw);
+      if (conv.jsonFields.includes("reviewDecision")) {
+        reviewDecision = deriveReviewDecisionGraphqlFromReviews(reviewsPayload);
+      }
+    } catch (err) {
+      if (conv.jsonFields.includes("reviews")) throw err;
+      reviewDecision = "REVIEW_REQUIRED";
+    }
+  }
+
+  // Fetch check-runs via REST when statusCheckRollup is requested.
+  let statusCheckRollup: unknown[] | undefined;
+  if (conv.jsonFields.includes("statusCheckRollup")) {
+    const headObj = restObj.head as Record<string, unknown> | undefined;
+    const sha = typeof headObj?.sha === "string" ? headObj.sha : undefined;
+    if (sha) {
+      statusCheckRollup = await fetchCheckRunsViaRest(conv.repo, sha, cwd);
+    }
+  }
+
+  return JSON.stringify(
+    synthesizePrViewJsonFromRest(restObj, conv.jsonFields, {
+      reviewDecision,
+      reviewsPayload,
+      statusCheckRollup,
+    }),
+  );
+}
+
+/**
+ * Write a temporary curl config file containing the Authorization header.
+ * The file is created with mode 0o600 (owner-only read/write) to keep the
+ * token out of the process argument list (visible in `ps`).
+ */
+function writeTempCurlConfig(token: string): string {
+  const configPath = join(tmpdir(), `.curl-auth-${randomUUID()}`);
+  const escapedToken = token.replace(/\\/g, "\\\\").replace(/\n/g, "\\n");
+  writeFileSync(configPath, `header = "Authorization: Bearer ${escapedToken}"\n`, {
+    mode: 0o600,
+  });
+  return configPath;
+}
+
+/** Best-effort cleanup of a temporary curl config file. */
+function cleanupTempCurlConfig(configPath: string | undefined): void {
+  if (!configPath) return;
+  try {
+    unlinkSync(configPath);
+  } catch {
+    // Best-effort: file may already be gone
+  }
+}
+
+/**
+ * Fallback to direct REST API calls using curl when gh CLI is rate limited.
+ * Supports `gh api repos/...` invocations only. GraphQL calls are not supported.
+ *
+ * Supported forms:
+ *   gh api repos/owner/repo/pulls
+ *   gh api /repos/owner/repo/pulls
+ *   gh api repos/owner/repo/pulls --method GET
+ *
+ * For unsupported forms (e.g. `gh api graphql`), this function throws so that
+ * the caller can rethrow the original gh error.
+ */
+export async function ghRestFallback(args: string[]): Promise<string> {
+  if (!Array.isArray(args) || args.length === 0 || args[0] !== "api") {
+    throw new Error("ghRestFallback only supports `gh api` commands");
+  }
+
+  const apiArgs = args.slice(1);
+  if (apiArgs.length === 0) {
+    throw new Error("ghRestFallback: missing endpoint for `gh api` command");
+  }
+
+  // Find the first positional argument (endpoint) — skip flags like --method, -X, etc.
+  let endpoint = "";
+  for (let i = 0; i < apiArgs.length; i++) {
+    const arg = apiArgs[i];
+    if (arg === "--method" || arg === "-X") {
+      i++; // Skip the method value
+    } else if (!arg.startsWith("-")) {
+      endpoint = arg;
+      break;
+    }
+  }
+  if (!endpoint) {
+    throw new Error("ghRestFallback: missing endpoint for `gh api` command");
+  }
+
+  if (endpoint === "graphql" || endpoint.startsWith("graphql/")) {
+    throw new Error("ghRestFallback does not support GraphQL queries");
+  }
+
+  if (endpoint.startsWith("/")) {
+    endpoint = endpoint.slice(1);
+  }
+
+  // Retrieve auth token for the REST API call
+  let token = "";
+  try {
+    const { stdout: tokenOutput } = await execFileAsync("gh", ["auth", "token"], {
+      maxBuffer: 10 * 1024 * 1024,
+      timeout: 30_000,
+    });
+    token = tokenOutput.trim();
+  } catch {
+    // No auth available — continue without token (hits lower rate limits)
+  }
+
+  const queryParts: string[] = [];
+  const curlFlags: string[] = [];
+
+  for (let i = 1; i < apiArgs.length; i++) {
+    const arg = apiArgs[i];
+    if (arg.startsWith("?")) {
+      queryParts.push(arg.slice(1));
+    } else if (arg === "--method" || arg === "-X") {
+      curlFlags.push("-X", apiArgs[i + 1] || "GET");
+      i++;
+    } else if (arg.startsWith("-") || arg.startsWith("--")) {
+      curlFlags.push(arg);
+      if (apiArgs[i + 1] && !apiArgs[i + 1].startsWith("-")) {
+        curlFlags.push(apiArgs[i + 1]);
+        i++;
+      }
+    }
+  }
+
+  let url = `https://api.github.com/${endpoint}`;
+  if (queryParts.length > 0) {
+    url += "?" + queryParts.join("&");
+  }
+
+  const curlArgs = [
+    "-f",
+    "-sS",
+    "-H",
+    "Accept: application/vnd.github+json",
+    "-H",
+    "X-GitHub-Api-Version: 2022-11-28",
+  ];
+
+  let curlConfigPath: string | undefined;
+  if (token) {
+    curlConfigPath = writeTempCurlConfig(token);
+    curlArgs.push("--config", curlConfigPath);
+  }
+
+  curlArgs.push(...curlFlags, url);
+
+  try {
+    const { stdout } = await execFileAsync("curl", curlArgs, {
+      maxBuffer: 10 * 1024 * 1024,
+      timeout: 30_000,
+    });
+    return stdout.trim();
+  } catch (err) {
+    throw new Error(`REST fallback failed: ${(err as Error).message}`, { cause: err });
+  } finally {
+    cleanupTempCurlConfig(curlConfigPath);
+  }
+}
+
+/**
+ * Execute gh CLI with rate limit retry and REST API fallback.
+ * Uses exponential backoff on rate limit errors, then falls back to:
+ * - `ghRestFallback()` for `gh api` calls
+ * - `fetchPrViewFallbackAsJson()` for `gh pr view --json` calls
+ */
+async function ghWithRetry(
+  args: string[],
+  cwd?: string,
+  maxRetries = 3,
+  env?: Record<string, string>,
+): Promise<string> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await execCli("gh", args, cwd, env);
+    } catch (err) {
+      lastError = err;
+
+      if (isRateLimitError(err)) {
+        if (attempt < maxRetries - 1) {
+          const backoffMs = Math.min(1000 * Math.pow(2, attempt), 30000);
+          console.warn(
+            `GitHub rate limit detected, retrying in ${backoffMs}ms (attempt ${attempt + 1}/${maxRetries})`,
+          );
+          await sleep(backoffMs);
+        }
+      } else {
+        // Non-rate-limit error — don't retry
+        throw err;
+      }
+    }
+  }
+
+  // All retries exhausted — attempt REST fallback
+  if (args[0] === "api") {
+    console.warn("Gh CLI rate limit retries exhausted, trying REST API fallback for `gh api` call");
+    try {
+      return await ghRestFallback(args);
+    } catch {
+      if (lastError instanceof Error) throw lastError;
+      throw new Error(String(lastError));
+    }
+  }
+
+  if (args[0] === "pr" && args[1] === "view") {
+    const conv = parsePrViewRestConversion(args);
+    if (conv) {
+      console.warn(
+        "Gh CLI rate limit retries exhausted, trying REST API fallback for `gh pr view` call",
+      );
+      return await fetchPrViewFallbackAsJson(conv, cwd);
+    }
+  }
+
+  console.warn("Gh CLI rate limit retries exhausted, no REST fallback available");
+  if (lastError instanceof Error) throw lastError;
+  throw new Error(String(lastError));
+}
+
 /** Known bot logins that produce automated review comments */
 const BOT_AUTHORS = new Set([
   "cursor[bot]",
@@ -61,10 +507,16 @@ const BOT_AUTHORS = new Set([
 
 type ExecCommand = "gh" | "git";
 
-async function execCli(bin: ExecCommand, args: string[], cwd?: string): Promise<string> {
+async function execCli(
+  bin: ExecCommand,
+  args: string[],
+  cwd?: string,
+  env?: Record<string, string>,
+): Promise<string> {
   try {
     const { stdout } = await execFileAsync(bin, args, {
       ...(cwd ? { cwd } : {}),
+      ...(env ? { env: { ...process.env, ...env } } : {}),
       maxBuffer: 10 * 1024 * 1024,
       timeout: 30_000,
     });
@@ -77,11 +529,105 @@ async function execCli(bin: ExecCommand, args: string[], cwd?: string): Promise<
 }
 
 async function gh(args: string[]): Promise<string> {
-  return execCli("gh", args);
+  return ghWithRetry(args);
 }
 
 async function ghInDir(args: string[], cwd: string): Promise<string> {
-  return execCli("gh", args, cwd);
+  return ghWithRetry(args, cwd);
+}
+
+/**
+ * Map REST check-run conclusion/status to the GraphQL-style state string
+ * used in `statusCheckRollup` entries.
+ */
+function mapCheckRunConclusionToState(
+  conclusion: unknown,
+  status: unknown,
+): string {
+  if (typeof conclusion === "string" && conclusion) {
+    const c = conclusion.toUpperCase();
+    if (c === "SUCCESS") return "SUCCESS";
+    if (c === "FAILURE") return "FAILURE";
+    if (c === "NEUTRAL") return "NEUTRAL";
+    if (c === "CANCELLED") return "CANCELLED";
+    if (c === "TIMED_OUT") return "TIMED_OUT";
+    if (c === "ACTION_REQUIRED") return "ACTION_REQUIRED";
+    if (c === "SKIPPED") return "SKIPPED";
+    return c;
+  }
+  // No conclusion yet — map from status
+  if (typeof status === "string") {
+    const s = status.toUpperCase();
+    if (s === "COMPLETED") return "SUCCESS";
+    if (s === "IN_PROGRESS") return "IN_PROGRESS";
+    if (s === "QUEUED") return "QUEUED";
+    return s;
+  }
+  return "PENDING";
+}
+
+/**
+ * Fetch all check-runs for a commit via the GitHub REST API using `gh api --paginate`.
+ * Returns a statusCheckRollup-compatible array of entries with name, state, and detailsUrl.
+ */
+async function fetchCheckRunsViaRest(repo: string, sha: string, cwd?: string): Promise<unknown[]> {
+  try {
+    const raw = await execCli(
+      "gh",
+      ["api", `repos/${repo}/commits/${sha}/check-runs`, "--paginate"],
+      cwd,
+    );
+    const data = JSON.parse(raw) as { check_runs?: unknown[] };
+    return (data.check_runs ?? []).map((run: Record<string, unknown> | unknown) => {
+      const r = run as Record<string, unknown>;
+      return {
+        name: r.name,
+        state: mapCheckRunConclusionToState(r.conclusion, r.status),
+        detailsUrl: r.html_url,
+      };
+    });
+  } catch {
+    // Best-effort: return empty rollup rather than failing the whole fallback
+    return [];
+  }
+}
+
+/**
+ * Rate-limit fallback for getCIChecksFromStatusRollup:
+ * Fetches head SHA from REST PR endpoint, then retrieves check-runs.
+ */
+async function getCIChecksFromStatusRollupViaRest(pr: PRInfo): Promise<CICheck[]> {
+  let sha: string | undefined;
+  try {
+    const prRaw = await gh(["api", `repos/${pr.owner}/${pr.repo}/pulls/${pr.number}`]);
+    const prData = JSON.parse(prRaw) as { head?: { sha?: unknown } };
+    sha = typeof prData.head?.sha === "string" ? prData.head.sha : undefined;
+  } catch {
+    return [];
+  }
+  if (!sha) return [];
+
+  const rollup = await fetchCheckRunsViaRest(`${pr.owner}/${pr.repo}`, sha);
+  return (rollup as Record<string, unknown>[])
+    .map((entry): CICheck | null => {
+      const name =
+        (typeof entry.name === "string" && entry.name) ||
+        (typeof entry.context === "string" && entry.context);
+      if (!name) return null;
+      const rawState =
+        typeof entry.conclusion === "string"
+          ? entry.conclusion
+          : typeof entry.state === "string"
+            ? entry.state
+            : undefined;
+      return {
+        name,
+        status: mapRawCheckStateToStatus(rawState),
+        conclusion: typeof rawState === "string" ? rawState.toUpperCase() : undefined,
+        url: typeof entry.detailsUrl === "string" ? entry.detailsUrl : undefined,
+      };
+    })
+    .filter((check): check is CICheck => check !== null);
 }
 
 async function git(args: string[], cwd: string): Promise<string> {
@@ -163,15 +709,22 @@ function mapRawCheckStateToStatus(rawState: string | undefined): CICheck["status
 }
 
 async function getCIChecksFromStatusRollup(pr: PRInfo): Promise<CICheck[]> {
-  const raw = await gh([
-    "pr",
-    "view",
-    String(pr.number),
-    "--repo",
-    repoFlag(pr),
-    "--json",
-    "statusCheckRollup",
-  ]);
+  let raw: string;
+  try {
+    raw = await gh([
+      "pr",
+      "view",
+      String(pr.number),
+      "--repo",
+      repoFlag(pr),
+      "--json",
+      "statusCheckRollup",
+    ]);
+  } catch (err) {
+    if (!isRateLimitError(err)) throw err;
+    // Rate limit on gh pr view — fall back to REST check-runs via shared helper
+    return getCIChecksFromStatusRollupViaRest(pr);
+  }
 
   const data: { statusCheckRollup?: unknown[] } = JSON.parse(raw);
   const rollup = Array.isArray(data.statusCheckRollup) ? data.statusCheckRollup : [];
@@ -687,19 +1240,30 @@ function createGitHubSCM(): SCM {
       let checks: CICheck[];
       try {
         checks = await this.getCIChecks(pr);
-      } catch {
-        // Before fail-closing, check if the PR is merged/closed —
-        // GitHub may not return check data for those, and reporting
-        // "failing" for a merged PR is wrong.
-        try {
-          const state = await this.getPRState(pr);
-          if (state === "merged" || state === "closed") return "none";
-        } catch {
-          // Can't determine state either; fall through to fail-closed.
+      } catch (err) {
+        // Rate limit errors are transient — try the status-rollup path first
+        // (gh pr view with REST fallback) before giving up.
+        if (isRateLimitError(err)) {
+          try {
+            checks = await getCIChecksFromStatusRollup(pr);
+          } catch {
+            // If the secondary fallback also fails, fail-closed.
+            return "failing";
+          }
+        } else {
+          // Before fail-closing, check if the PR is merged/closed —
+          // GitHub may not return check data for those, and reporting
+          // "failing" for a merged PR is wrong.
+          try {
+            const state = await this.getPRState(pr);
+            if (state === "merged" || state === "closed") return "none";
+          } catch {
+            // Can't determine state either; fall through to fail-closed.
+          }
+          // Fail closed for open PRs: report as failing rather than
+          // "none" (which getMergeability treats as passing).
+          return "failing";
         }
-        // Fail closed for open PRs: report as failing rather than
-        // "none" (which getMergeability treats as passing).
-        return "failing";
       }
       if (checks.length === 0) return "none";
 
