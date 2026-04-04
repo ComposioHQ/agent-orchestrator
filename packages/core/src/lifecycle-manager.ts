@@ -1284,8 +1284,8 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       // Poll all sessions concurrently
       await Promise.allSettled(sessionsToCheck.map((s) => checkSession(s)));
 
-      // Prune stale entries from states and reactionTrackers for sessions
-      // that no longer appear in the session list (e.g., after kill/cleanup)
+      // Prune stale entries from states, reactionTrackers, and lastReviewBacklogCheckAt
+      // for sessions that no longer appear in the session list (e.g., after kill/cleanup)
       const currentSessionIds = new Set(sessions.map((s) => s.id));
       for (const trackedId of states.keys()) {
         if (!currentSessionIds.has(trackedId)) {
@@ -1296,6 +1296,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const sessionId = trackerKey.split(":")[0];
         if (sessionId && !currentSessionIds.has(sessionId)) {
           reactionTrackers.delete(trackerKey);
+        }
+      }
+      for (const sessionId of lastReviewBacklogCheckAt.keys()) {
+        if (!currentSessionIds.has(sessionId)) {
+          lastReviewBacklogCheckAt.delete(sessionId);
         }
       }
 
