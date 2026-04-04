@@ -1623,4 +1623,84 @@ describe("extractPREnrichment ciChecks", () => {
     expect(extracted?.data.ciChecks).toHaveLength(1);
     expect(extracted?.data.ciChecks?.[0]?.name).toBe("lint");
   });
+
+  it("maps COMPLETED+STARTUP_FAILURE to skipped (matches REST mapRawCheckStateToStatus default fallback)", () => {
+    const pullRequest = {
+      title: "Startup failure check",
+      state: "OPEN",
+      additions: 1,
+      deletions: 0,
+      isDraft: false,
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      reviewDecision: "NONE",
+      reviews: { nodes: [] },
+      commits: {
+        nodes: [
+          {
+            commit: {
+              statusCheckRollup: {
+                state: "FAILURE",
+                contexts: {
+                  nodes: [
+                    {
+                      name: "infra-check",
+                      status: "COMPLETED",
+                      conclusion: "STARTUP_FAILURE",
+                      detailsUrl: null,
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        ],
+      },
+    };
+
+    const extracted = extractPREnrichment(pullRequest);
+    const check = extracted?.data.ciChecks?.[0];
+    // STARTUP_FAILURE is not in the explicit failure list → falls through to "skipped"
+    // matching mapRawCheckStateToStatus()'s default return "skipped"
+    expect(check?.status).toBe("skipped");
+    expect(check?.conclusion).toBe("STARTUP_FAILURE");
+  });
+
+  it("handles null pageInfo safely without TypeError (typeof null === 'object' quirk)", () => {
+    const pullRequest = {
+      title: "Null pageInfo",
+      state: "OPEN",
+      additions: 1,
+      deletions: 0,
+      isDraft: false,
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      reviewDecision: "NONE",
+      reviews: { nodes: [] },
+      commits: {
+        nodes: [
+          {
+            commit: {
+              statusCheckRollup: {
+                state: "SUCCESS",
+                contexts: {
+                  nodes: [
+                    { name: "lint", status: "COMPLETED", conclusion: "SUCCESS", detailsUrl: null },
+                  ],
+                  pageInfo: null, // null pageInfo — older API responses may omit this
+                },
+              },
+            },
+          },
+        ],
+      },
+    };
+
+    // Must not throw TypeError: Cannot read properties of null
+    expect(() => extractPREnrichment(pullRequest)).not.toThrow();
+    const extracted = extractPREnrichment(pullRequest);
+    // null pageInfo is treated as "not truncated" → ciChecks should be defined
+    expect(extracted?.data.ciChecks).toBeDefined();
+    expect(extracted?.data.ciChecks).toHaveLength(1);
+  });
 });

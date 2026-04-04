@@ -630,9 +630,19 @@ function parseCheckContexts(contexts: unknown): CICheck[] {
           // Mirror mapRawCheckStateToStatus() in the REST path: all non-failure
           // terminal conclusions that are not SUCCESS map to "skipped".
           status = "skipped";
-        } else {
-          // FAILURE, TIMED_OUT, CANCELLED, ACTION_REQUIRED, STARTUP_FAILURE, etc.
+        } else if (
+          rawConclusion === "FAILURE" ||
+          rawConclusion === "TIMED_OUT" ||
+          rawConclusion === "CANCELLED" ||
+          rawConclusion === "ACTION_REQUIRED" ||
+          rawConclusion === "ERROR"
+        ) {
+          // Explicit failure conclusions — mirrors the failure list in mapRawCheckStateToStatus()
           status = "failed";
+        } else {
+          // STARTUP_FAILURE and any other unrecognized conclusion → "skipped",
+          // matching mapRawCheckStateToStatus()'s default return "skipped" in the REST path.
+          status = "skipped";
         }
       } else if (rawStatus === "IN_PROGRESS") {
         // Only IN_PROGRESS maps to "running" — matches mapRawCheckStateToStatus() in REST path
@@ -798,10 +808,12 @@ function extractPREnrichment(
   const contextsField = statusCheckRollup?.["contexts"] as
     | Record<string, unknown>
     | undefined;
+  const pageInfo = contextsField?.["pageInfo"];
   const contextsHasNextPage =
-    contextsField &&
-    typeof contextsField["pageInfo"] === "object" &&
-    (contextsField["pageInfo"] as Record<string, unknown>)["hasNextPage"] === true;
+    pageInfo !== null &&
+    pageInfo !== undefined &&
+    typeof pageInfo === "object" &&
+    (pageInfo as Record<string, unknown>)["hasNextPage"] === true;
   const ciChecks =
     contextsField && !contextsHasNextPage
       ? parseCheckContexts(contextsField)
