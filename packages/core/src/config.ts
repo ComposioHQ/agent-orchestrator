@@ -728,8 +728,13 @@ export function loadConfig(configPath?: string): OrchestratorConfig {
       try {
         const effective = loadFromGlobalConfig();
         if (effective && Object.keys(effective.projects).length > 0) return effective;
-      } catch {
-        // Global config also malformed or invalid — fall through to re-throw original error
+      } catch (globalErr) {
+        // Only swallow parse/schema errors (broken or schema-invalid global config file).
+        // Re-throw actionable config errors (e.g. session prefix collisions) so users
+        // see a meaningful error instead of a silent fallback.
+        if (!(globalErr instanceof z.ZodError) && !(globalErr instanceof Error && globalErr.name === "YAMLParseError")) {
+          throw globalErr;
+        }
       }
       // No global config (or empty registry) — re-throw the original validation error
       throw err;
@@ -740,9 +745,13 @@ export function loadConfig(configPath?: string): OrchestratorConfig {
   try {
     const effective = loadFromGlobalConfig();
     if (effective && Object.keys(effective.projects).length > 0) return effective;
-  } catch {
-    // Global config is present but malformed or pipeline throws — fall through to
-    // local config so users with valid per-project configs are not blocked.
+  } catch (err) {
+    // Only swallow parse/schema errors (broken or schema-invalid global config file).
+    // Re-throw actionable config errors (e.g. session prefix collisions) so users
+    // see a meaningful error rather than a misleading ConfigNotFoundError.
+    if (!(err instanceof z.ZodError) && !(err instanceof Error && err.name === "YAMLParseError")) {
+      throw err;
+    }
   }
 
   // 3. Fall back to local config search
@@ -778,8 +787,13 @@ export function loadConfigWithPath(configPath?: string): {
       if (effective && Object.keys(effective.projects).length > 0) {
         return { config: effective, path: globalPath };
       }
-    } catch {
-      // Global config malformed or pipeline throws — fall through to local config
+    } catch (err) {
+      // Only swallow parse/schema errors (broken or schema-invalid global config file).
+      // Re-throw actionable config errors (e.g. session prefix collisions) so users
+      // see a meaningful error instead of a silent fallback to local config.
+      if (!(err instanceof z.ZodError) && !(err instanceof Error && err.name === "YAMLParseError")) {
+        throw err;
+      }
     }
   }
 
@@ -802,8 +816,13 @@ export function loadConfigWithPath(configPath?: string): {
       if (effective && Object.keys(effective.projects).length > 0) {
         return { config: effective, path: findGlobalConfigPath() };
       }
-    } catch {
-      // Global config also malformed — fall through to re-throw original error
+    } catch (globalErr) {
+      // Only swallow parse/schema errors (broken or schema-invalid global config file).
+      // Re-throw actionable config errors (e.g. session prefix collisions) so users
+      // see a meaningful error instead of a silent fallback.
+      if (!(globalErr instanceof z.ZodError) && !(globalErr instanceof Error && globalErr.name === "YAMLParseError")) {
+        throw globalErr;
+      }
     }
     throw err;
   }
