@@ -1354,16 +1354,32 @@ export function registerStart(program: Command): void {
             if (config.globalConfigPath) {
               // Multi-project mode: write to shadow file
               const shadow = loadShadowFile(projectId) ?? {};
-              shadow["orchestrator"] = { ...(shadow["orchestrator"] as Record<string, unknown> ?? {}), agent: orchestratorAgent };
-              shadow["worker"] = { ...(shadow["worker"] as Record<string, unknown> ?? {}), agent: workerAgent };
+              const existingOrch = shadow["orchestrator"];
+              const existingWork = shadow["worker"];
+              shadow["orchestrator"] = {
+                ...(typeof existingOrch === "object" && existingOrch !== null && !Array.isArray(existingOrch) ? existingOrch as Record<string, unknown> : {}),
+                agent: orchestratorAgent,
+              };
+              shadow["worker"] = {
+                ...(typeof existingWork === "object" && existingWork !== null && !Array.isArray(existingWork) ? existingWork as Record<string, unknown> : {}),
+                agent: workerAgent,
+              };
               saveShadowFile(projectId, shadow);
               // Also update local config if hybrid mode (local is source of truth)
               const localConfigPath = findLocalConfigPath(project.path);
               if (localConfigPath) {
                 try {
                   const localRaw = yamlParse(readFileSync(localConfigPath, "utf-8")) as Record<string, unknown>;
-                  localRaw["orchestrator"] = { ...(localRaw["orchestrator"] as Record<string, unknown> ?? {}), agent: orchestratorAgent };
-                  localRaw["worker"] = { ...(localRaw["worker"] as Record<string, unknown> ?? {}), agent: workerAgent };
+                  const localOrch = localRaw["orchestrator"];
+                  const localWork = localRaw["worker"];
+                  localRaw["orchestrator"] = {
+                    ...(typeof localOrch === "object" && localOrch !== null && !Array.isArray(localOrch) ? localOrch as Record<string, unknown> : {}),
+                    agent: orchestratorAgent,
+                  };
+                  localRaw["worker"] = {
+                    ...(typeof localWork === "object" && localWork !== null && !Array.isArray(localWork) ? localWork as Record<string, unknown> : {}),
+                    agent: workerAgent,
+                  };
                   writeFileSync(localConfigPath, yamlStringify(localRaw, { indent: 2 }));
                 } catch {
                   // Local config update failed — shadow has the values but they won't

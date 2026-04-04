@@ -132,9 +132,9 @@ export function buildEffectiveConfig(
       agentRules: asString(behaviorFields["agentRules"]),
       agentRulesFile: asString(behaviorFields["agentRulesFile"]),
       orchestratorRules: asString(behaviorFields["orchestratorRules"]),
-      orchestratorSessionStrategy: behaviorFields["orchestratorSessionStrategy"] as ProjectConfig["orchestratorSessionStrategy"],
-      opencodeIssueSessionStrategy: behaviorFields["opencodeIssueSessionStrategy"] as ProjectConfig["opencodeIssueSessionStrategy"],
-      decomposer: behaviorFields["decomposer"] as ProjectConfig["decomposer"],
+      orchestratorSessionStrategy: asString(behaviorFields["orchestratorSessionStrategy"]) as ProjectConfig["orchestratorSessionStrategy"],
+      opencodeIssueSessionStrategy: asString(behaviorFields["opencodeIssueSessionStrategy"]) as ProjectConfig["opencodeIssueSessionStrategy"],
+      decomposer: asObject<ProjectConfig["decomposer"]>(behaviorFields["decomposer"]),
     };
 
     if (behaviorFields["notifiers"]) {
