@@ -253,28 +253,9 @@ export function findGlobalConfigPath(): string {
  * 2. ~/.local/share/agent-orchestrator/ (if XDG_CONFIG_HOME set but not XDG_DATA_HOME)
  * 3. ~/.agent-orchestrator/ (config and data colocated)
  */
-export function getGlobalDataDir(): string {
-  if (process.env["XDG_DATA_HOME"]) {
-    return resolve(process.env["XDG_DATA_HOME"], "agent-orchestrator");
-  }
-
-  if (process.env["XDG_CONFIG_HOME"]) {
-    return resolve(homedir(), ".local", "share", "agent-orchestrator");
-  }
-
-  return resolve(homedir(), ".agent-orchestrator");
-}
-
 // =============================================================================
 // LOADING
 // =============================================================================
-
-/**
- * Check if a global config file exists.
- */
-export function globalConfigExists(): boolean {
-  return existsSync(findGlobalConfigPath());
-}
 
 /**
  * Load the global config. Returns null if not found.
@@ -307,18 +288,6 @@ export function loadGlobalConfig(): GlobalConfig | null {
   return config;
 }
 
-/**
- * Load the global config, throwing if not found.
- */
-export function loadGlobalConfigOrThrow(): GlobalConfig {
-  const config = loadGlobalConfig();
-  if (!config) {
-    throw new Error(
-      "No global config found. Run `ao start` in a project directory to set up.",
-    );
-  }
-  return config;
-}
 
 // =============================================================================
 // SAVING

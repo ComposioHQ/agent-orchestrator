@@ -21,10 +21,7 @@ export {
 // Global config — multi-project registry, shadow sync, mode detection
 export {
   findGlobalConfigPath,
-  getGlobalDataDir,
-  globalConfigExists,
   loadGlobalConfig,
-  loadGlobalConfigOrThrow,
   saveGlobalConfig,
   scaffoldGlobalConfig,
   registerProject,

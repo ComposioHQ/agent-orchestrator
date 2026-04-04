@@ -469,7 +469,7 @@ export function applyProjectDefaults(config: OrchestratorConfig): OrchestratorCo
   const projects: typeof config.projects = {};
   for (const [id, project] of Object.entries(config.projects)) {
     const name = project.name ?? id;
-    const sessionPrefix = project.sessionPrefix ?? generateSessionPrefix(basename(project.path));
+    const sessionPrefix = project.sessionPrefix || generateSessionPrefix(basename(project.path));
     const inferredPlugin = inferScmPlugin(project);
     const scm = project.scm ?? (project.repo.includes("/") ? { plugin: inferredPlugin } : undefined);
     const tracker = project.tracker ?? { plugin: inferredPlugin };
@@ -703,8 +703,11 @@ export function applyGlobalConfigPipeline(raw: OrchestratorConfig): Orchestrator
   effective = applyDefaultReactions(effective);
   const externalPluginEntries = collectExternalPluginConfigs(effective);
   if (externalPluginEntries.length > 0) {
-    effective.plugins = mergeExternalPlugins(effective.plugins, externalPluginEntries);
-    effective._externalPluginEntries = externalPluginEntries;
+    effective = {
+      ...effective,
+      plugins: mergeExternalPlugins(effective.plugins, externalPluginEntries),
+      _externalPluginEntries: externalPluginEntries,
+    };
   }
   validateProjectUniqueness(effective);
   return effective;

@@ -1305,12 +1305,17 @@ export function registerStart(program: Command): void {
                     };
                     writeFileSync(config.configPath, yamlStringify(rawConfig, { indent: 2 }));
                     console.log(chalk.green(`\n✓ New orchestrator "${newId}" added to config\n`));
-                    config = loadConfig();
+                    config = loadConfig(config.configPath);
                     const reloadedProject = config.projects[newId];
                     if (reloadedProject) {
                       projectId = newId;
                       project = reloadedProject;
                     }
+                  } else {
+                    console.log(chalk.yellow(
+                      `\n  ⚠ Could not create new orchestrator: project "${projectId}" not found in ${config.configPath}.\n` +
+                      `    Use "ao project add" to register the project first.\n`,
+                    ));
                   }
                 }
               } else if (choice === "restart") {
