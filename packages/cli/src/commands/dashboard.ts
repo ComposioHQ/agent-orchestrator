@@ -7,6 +7,7 @@ import { findWebDir, buildDashboardEnv, waitForPortAndOpen } from "../lib/web-di
 import {
   assertDashboardRebuildSupported,
   findRunningDashboardPid,
+  isInstalledUnderNodeModules,
   rebuildDashboardProductionArtifacts,
   waitForPortFree,
 } from "../lib/dashboard-rebuild.js";
@@ -106,7 +107,7 @@ export function registerDashboard(program: Command): void {
         if (code !== 0 && code !== null && !opts.rebuild) {
           const stderr = stderrChunks.join("");
           if (looksLikeStaleBuild(stderr)) {
-            const recoveryCommand = webDir.includes("node_modules")
+            const recoveryCommand = isInstalledUnderNodeModules(webDir)
               ? "ao update"
               : "ao dashboard --rebuild";
             console.error(

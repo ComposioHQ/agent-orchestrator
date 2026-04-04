@@ -89,6 +89,28 @@ describe("findRunningDashboardPid", () => {
   });
 });
 
+describe("isInstalledUnderNodeModules", () => {
+  it("returns true for a Unix node_modules path segment", async () => {
+    const { isInstalledUnderNodeModules } = await import("../../src/lib/dashboard-rebuild.js");
+
+    expect(isInstalledUnderNodeModules("/usr/local/lib/node_modules/@composio/ao-web")).toBe(true);
+  });
+
+  it("returns true for a Windows node_modules path segment", async () => {
+    const { isInstalledUnderNodeModules } = await import("../../src/lib/dashboard-rebuild.js");
+
+    expect(isInstalledUnderNodeModules("C:\\Users\\me\\node_modules\\@composio\\ao-web")).toBe(true);
+  });
+
+  it("returns false for source paths containing node_modules as plain text", async () => {
+    const { isInstalledUnderNodeModules } = await import("../../src/lib/dashboard-rebuild.js");
+
+    expect(
+      isInstalledUnderNodeModules("/home/user/node_modules_backup/agent-orchestrator/packages/web"),
+    ).toBe(false);
+  });
+});
+
 describe("assertDashboardRebuildSupported", () => {
   it("passes for a source checkout", async () => {
     const { assertDashboardRebuildSupported } = await import("../../src/lib/dashboard-rebuild.js");

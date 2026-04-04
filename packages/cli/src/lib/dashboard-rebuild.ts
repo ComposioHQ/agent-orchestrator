@@ -8,6 +8,11 @@ import { existsSync, rmSync } from "node:fs";
 import ora from "ora";
 import { exec, execSilent } from "./shell.js";
 
+// Match node_modules as a path segment, not just a substring.
+export function isInstalledUnderNodeModules(path: string): boolean {
+  return path.includes("/node_modules/") || path.includes("\\node_modules\\");
+}
+
 /**
  * Find the PID of a process listening on the given port.
  * Returns null if no process is found.
@@ -75,7 +80,7 @@ export async function cleanNextCache(webDir: string): Promise<void> {
  * Global npm installs ship prebuilt artifacts and cannot rebuild in place.
  */
 export function assertDashboardRebuildSupported(webDir: string): void {
-  if (webDir.includes("node_modules")) {
+  if (isInstalledUnderNodeModules(webDir)) {
     throw new Error(
       "Dashboard rebuild is only available from a source checkout. " +
       "Run `ao update`, or reinstall with `npm install -g @composio/ao@latest`.",
