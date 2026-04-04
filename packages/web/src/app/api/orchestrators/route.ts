@@ -1,7 +1,8 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { generateOrchestratorPrompt, isOrchestratorSession } from "@composio/ao-core";
+import { generateOrchestratorPrompt } from "@composio/ao-core";
 import { getServices } from "@/lib/services";
-import { validateIdentifier } from "@/lib/validation";
+import { validateIdentifier, validateConfiguredProject } from "@/lib/validation";
+import { mapSessionsToOrchestrators } from "@/lib/orchestrator-utils";
 
 /**
  * GET /api/orchestrators?project=<projectId>
@@ -29,17 +30,7 @@ export async function GET(request: NextRequest) {
     const sessionPrefix = project.sessionPrefix ?? projectId;
 
     const allSessions = await sessionManager.list(projectId);
-    const orchestrators = allSessions
-      .filter((s) => isOrchestratorSession(s, sessionPrefix))
-      .map((s) => ({
-        id: s.id,
-        projectId: s.projectId,
-        projectName: project.name,
-        status: s.status,
-        activity: s.activity,
-        createdAt: s.createdAt?.toISOString() ?? null,
-        lastActivityAt: s.lastActivityAt?.toISOString() ?? null,
-      }));
+    const orchestrators = mapSessionsToOrchestrators(allSessions, sessionPrefix, project.name);
 
     return NextResponse.json({ orchestrators, projectName: project.name });
   } catch (err) {
@@ -64,11 +55,11 @@ export async function POST(request: NextRequest) {
   try {
     const { config, sessionManager } = await getServices();
     const projectId = body.projectId as string;
-    const project = config.projects[projectId];
-
-    if (!project) {
-      return NextResponse.json({ error: `Unknown project: ${projectId}` }, { status: 404 });
+    const projectErr = validateConfiguredProject(config.projects, projectId);
+    if (projectErr) {
+      return NextResponse.json({ error: projectErr }, { status: 404 });
     }
+    const project = config.projects[projectId];
 
     const systemPrompt = generateOrchestratorPrompt({ config, projectId, project });
     const session = await sessionManager.spawnOrchestrator({ projectId, systemPrompt });

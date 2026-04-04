@@ -1023,9 +1023,8 @@ async function runStartup(
         );
         const selected = sortedOrchestrators[0];
         selectedOrchestratorId = selected.id;
-        if (selected.runtimeHandle?.id) {
-          tmuxTarget = selected.runtimeHandle.id;
-        }
+        // Use runtimeHandle.id if available, otherwise fall back to the session ID
+        tmuxTarget = selected.runtimeHandle?.id ?? selected.id;
         spinner.succeed(
           `Using existing orchestrator session: ${selected.id}` +
             (existingOrchestrators.length > 1
