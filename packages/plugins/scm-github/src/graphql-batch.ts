@@ -611,14 +611,17 @@ function parseCheckContexts(contexts: unknown): CICheck[] {
     // CheckRun node (GitHub Actions)
     if (typeof n["name"] === "string" && typeof n["status"] === "string") {
       const rawStatus = (n["status"] as string).toUpperCase();
+      // Uppercase conclusion to match REST getCIChecks/getCIChecksFromStatusRollup format
+      // so fingerprints are consistent regardless of which data source is used.
       const rawConclusion =
         typeof n["conclusion"] === "string" ? (n["conclusion"] as string).toUpperCase() : null;
 
       let status: CICheck["status"];
       if (rawStatus === "COMPLETED") {
-        if (!rawConclusion || rawConclusion === "SUCCESS" || rawConclusion === "NEUTRAL") {
+        if (!rawConclusion || rawConclusion === "SUCCESS") {
           status = "passed";
-        } else if (rawConclusion === "SKIPPED") {
+        } else if (rawConclusion === "SKIPPED" || rawConclusion === "NEUTRAL") {
+          // NEUTRAL maps to "skipped" to match mapRawCheckStateToStatus() in the REST path
           status = "skipped";
         } else {
           status = "failed";
@@ -632,7 +635,8 @@ function parseCheckContexts(contexts: unknown): CICheck[] {
       checks.push({
         name: n["name"] as string,
         status,
-        conclusion: typeof n["conclusion"] === "string" ? (n["conclusion"] as string) : undefined,
+        // Store the uppercased conclusion to match REST format
+        conclusion: rawConclusion ?? undefined,
         url: typeof n["detailsUrl"] === "string" ? (n["detailsUrl"] as string) : undefined,
       });
       continue;

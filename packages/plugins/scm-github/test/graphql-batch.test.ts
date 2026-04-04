@@ -1398,6 +1398,88 @@ describe("extractPREnrichment ciChecks", () => {
     const extracted = extractPREnrichment(pullRequest);
     const check = extracted?.data.ciChecks?.[0];
     expect(check?.status).toBe("skipped");
+    expect(check?.conclusion).toBe("SKIPPED"); // uppercased to match REST format
+  });
+
+  it("maps COMPLETED+NEUTRAL conclusion to skipped (matches REST mapRawCheckStateToStatus)", () => {
+    const pullRequest = {
+      title: "Neutral check",
+      state: "OPEN",
+      additions: 5,
+      deletions: 2,
+      isDraft: false,
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      reviewDecision: "NONE",
+      reviews: { nodes: [] },
+      commits: {
+        nodes: [
+          {
+            commit: {
+              statusCheckRollup: {
+                state: "SUCCESS",
+                contexts: {
+                  nodes: [
+                    {
+                      name: "optional-check",
+                      status: "COMPLETED",
+                      conclusion: "NEUTRAL",
+                      detailsUrl: null,
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        ],
+      },
+    };
+
+    const extracted = extractPREnrichment(pullRequest);
+    const check = extracted?.data.ciChecks?.[0];
+    // NEUTRAL maps to "skipped" in REST mapRawCheckStateToStatus — must match
+    expect(check?.status).toBe("skipped");
+    expect(check?.conclusion).toBe("NEUTRAL");
+  });
+
+  it("uppercases CheckRun conclusion to match REST getCIChecks format", () => {
+    const pullRequest = {
+      title: "Mixed case conclusion",
+      state: "OPEN",
+      additions: 5,
+      deletions: 2,
+      isDraft: false,
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      reviewDecision: "NONE",
+      reviews: { nodes: [] },
+      commits: {
+        nodes: [
+          {
+            commit: {
+              statusCheckRollup: {
+                state: "FAILURE",
+                contexts: {
+                  nodes: [
+                    {
+                      name: "lint",
+                      status: "COMPLETED",
+                      conclusion: "failure", // lowercase from API
+                      detailsUrl: null,
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        ],
+      },
+    };
+
+    const extracted = extractPREnrichment(pullRequest);
+    const check = extracted?.data.ciChecks?.[0];
+    expect(check?.status).toBe("failed");
+    expect(check?.conclusion).toBe("FAILURE"); // must be uppercased
   });
 
   it("returns undefined ciChecks when contexts list is truncated (hasNextPage=true)", () => {
