@@ -456,6 +456,18 @@ describe("getEnvironment", () => {
   });
 });
 
+describe("getRuntimeHints", () => {
+  const agent = create();
+
+  it("requests the Codex home directory for Docker runtimes", () => {
+    expect(agent.getRuntimeHints?.(makeLaunchConfig())).toEqual({
+      docker: {
+        homeMounts: [{ path: ".codex" }],
+      },
+    });
+  });
+});
+
 // =========================================================================
 // isProcessRunning
 // =========================================================================

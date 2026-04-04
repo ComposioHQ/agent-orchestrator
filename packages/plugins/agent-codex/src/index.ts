@@ -14,6 +14,7 @@ import {
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
+  type AgentRuntimeHints,
   type ActivityState,
   type ActivityDetection,
   type CostEstimate,
@@ -473,6 +474,14 @@ function createCodexAgent(): Agent {
       env["CODEX_DISABLE_UPDATE_CHECK"] = "1";
 
       return env;
+    },
+
+    getRuntimeHints(): AgentRuntimeHints {
+      return {
+        docker: {
+          homeMounts: [{ path: ".codex" }],
+        },
+      };
     },
 
     detectActivity(terminalOutput: string): ActivityState {

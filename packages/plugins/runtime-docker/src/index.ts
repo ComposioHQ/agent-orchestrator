@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
 import type {
+  AgentDockerRuntimeHints,
   AttachInfo,
   PluginModule,
   Runtime,
@@ -158,7 +159,40 @@ function getWorkspaceMounts(workspacePath: string): VolumeMount[] {
   return dedupeMounts(mounts);
 }
 
-function prepareContainerEnvironment(environment: Record<string, string>): {
+function resolveHomePath(basePath: string, requestedPath: string): string {
+  return requestedPath.startsWith("/") ? requestedPath : join(basePath, requestedPath);
+}
+
+function getAgentHomeMounts(
+  hints: AgentDockerRuntimeHints | undefined,
+  containerHome: string,
+): VolumeMount[] {
+  if (!hints?.homeMounts?.length) {
+    return [];
+  }
+
+  const hostHome = homedir();
+  const mounts: VolumeMount[] = [];
+  for (const mount of hints.homeMounts) {
+    const hostPath = resolveHomePath(hostHome, mount.path);
+    if (!pathIsDirectory(hostPath) && !pathIsFile(hostPath)) {
+      continue;
+    }
+
+    mounts.push({
+      hostPath,
+      containerPath: resolveHomePath(containerHome, mount.target ?? mount.path),
+      readOnly: mount.readOnly,
+    });
+  }
+
+  return mounts;
+}
+
+function prepareContainerEnvironment(
+  environment: Record<string, string>,
+  hints?: AgentDockerRuntimeHints,
+): {
   environment: Record<string, string>;
   mounts: VolumeMount[];
 } {
@@ -187,16 +221,12 @@ function prepareContainerEnvironment(environment: Record<string, string>): {
     prepared["AO_DATA_DIR"] = CONTAINER_AO_DATA_DIR;
   }
 
-  const hostHome = homedir();
   const containerHome = prepared["HOME"] || CONTAINER_HOME_DIR;
   let usingContainerHome = false;
-
-  const hostCodexDir = join(hostHome, ".codex");
-  if (pathIsDirectory(hostCodexDir)) {
-    mounts.push({
-      hostPath: hostCodexDir,
-      containerPath: join(containerHome, ".codex"),
-    });
+  const hostHome = homedir();
+  const agentHomeMounts = getAgentHomeMounts(hints, containerHome);
+  if (agentHomeMounts.length > 0) {
+    mounts.push(...agentHomeMounts);
     usingContainerHome = true;
   }
 
@@ -396,7 +426,10 @@ export function create(): Runtime {
       const containerName = config.sessionId;
       const tmuxSessionName = config.sessionId;
       const shell = runtimeConfig.shell ?? "/bin/sh";
-      const preparedEnvironment = prepareContainerEnvironment(config.environment ?? {});
+      const preparedEnvironment = prepareContainerEnvironment(
+        config.environment ?? {},
+        config.agentRuntimeHints?.docker,
+      );
       const mounts = dedupeMounts([
         ...getWorkspaceMounts(config.workspacePath),
         ...preparedEnvironment.mounts,

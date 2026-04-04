@@ -1127,12 +1127,14 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     try {
       const launchCommand = plugins.agent.getLaunchCommand(agentLaunchConfig);
       const environment = plugins.agent.getEnvironment(agentLaunchConfig);
+      const agentRuntimeHints = plugins.agent.getRuntimeHints?.(agentLaunchConfig) ?? undefined;
 
       handle = await plugins.runtime.create({
         sessionId: tmuxName ?? sessionId, // Use tmux name for runtime if available
         workspacePath,
         launchCommand,
         runtimeConfig,
+        ...(agentRuntimeHints ? { agentRuntimeHints } : {}),
         environment: {
           ...environment,
           AO_SESSION: sessionId,
@@ -1456,6 +1458,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     const launchCommand = plugins.agent.getLaunchCommand(agentLaunchConfig);
     const environment = plugins.agent.getEnvironment(agentLaunchConfig);
+    const agentRuntimeHints = plugins.agent.getRuntimeHints?.(agentLaunchConfig) ?? undefined;
 
     // Create runtime — clean up worktree and metadata on failure
     let handle: RuntimeHandle;
@@ -1465,6 +1468,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         workspacePath,
         launchCommand,
         runtimeConfig,
+        ...(agentRuntimeHints ? { agentRuntimeHints } : {}),
         environment: {
           ...environment,
           AO_SESSION: sessionId,
@@ -2476,6 +2480,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     }
 
     const environment = plugins.agent.getEnvironment(agentLaunchConfig);
+    const agentRuntimeHints = plugins.agent.getRuntimeHints?.(agentLaunchConfig) ?? undefined;
 
     // 8. Create runtime (reuse tmuxName from metadata)
     const tmuxName = raw["tmuxName"];
@@ -2484,6 +2489,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       workspacePath,
       launchCommand,
       runtimeConfig,
+      ...(agentRuntimeHints ? { agentRuntimeHints } : {}),
       environment: {
         ...environment,
         AO_SESSION: sessionId,

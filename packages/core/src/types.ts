@@ -285,12 +285,39 @@ export interface Runtime {
   getAttachInfo?(handle: RuntimeHandle): Promise<AttachInfo>;
 }
 
+export interface AgentDockerHomeMount {
+  /**
+   * Host path to mount for Docker runtimes.
+   * Relative paths are resolved against the current user's home directory.
+   */
+  path: string;
+  /**
+   * Container destination for the mount.
+   * Relative paths are resolved against the container HOME directory.
+   * Defaults to the same relative path as `path`.
+   */
+  target?: string;
+  /** Mount the path read-only when possible. */
+  readOnly?: boolean;
+}
+
+export interface AgentDockerRuntimeHints {
+  /** Files or directories the agent expects under its container HOME. */
+  homeMounts?: AgentDockerHomeMount[];
+}
+
+export interface AgentRuntimeHints {
+  /** Runtime hints consumed by the Docker runtime plugin. */
+  docker?: AgentDockerRuntimeHints;
+}
+
 export interface RuntimeCreateConfig {
   sessionId: SessionId;
   workspacePath: string;
   launchCommand: string;
   environment: Record<string, string>;
   runtimeConfig?: Record<string, unknown>;
+  agentRuntimeHints?: AgentRuntimeHints;
 }
 
 /** Opaque handle returned by runtime.create() */
@@ -352,6 +379,9 @@ export interface Agent {
 
   /** Get environment variables for the agent process */
   getEnvironment(config: AgentLaunchConfig): Record<string, string>;
+
+  /** Optional runtime-specific hints (for example, Docker home mounts). */
+  getRuntimeHints?(config: AgentLaunchConfig): AgentRuntimeHints | null;
 
   /**
    * Detect what the agent is currently doing from terminal output.

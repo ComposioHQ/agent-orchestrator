@@ -264,7 +264,7 @@ describe("runtime.create()", () => {
     );
   });
 
-  it("mounts worktree git metadata, remaps wrappers, and strips host-only GH_PATH", async () => {
+  it("mounts requested agent home state, worktree git metadata, remaps wrappers, and strips host-only GH_PATH", async () => {
     addFileSystemEntries([
       {
         path: "/worktrees/docker-session/.git",
@@ -290,6 +290,11 @@ describe("runtime.create()", () => {
       sessionId: "docker-session",
       workspacePath: "/worktrees/docker-session",
       launchCommand: "codex --model gpt-5",
+      agentRuntimeHints: {
+        docker: {
+          homeMounts: [{ path: ".codex" }],
+        },
+      },
       environment: {
         AO_SESSION: "docker-session",
         PATH: "/host/.ao/bin:/usr/local/bin:/usr/bin:/bin",
@@ -348,6 +353,32 @@ describe("runtime.create()", () => {
       "-e",
       "HOME=/home/ao",
     ]);
+  });
+
+  it("does not mount agent home state unless the agent requests it", async () => {
+    addFileSystemEntries([
+      { path: "/host/home/.codex", kind: "dir" },
+      { path: "/host/home/.gitconfig", kind: "file", content: "[user]\n\tname = Test\n" },
+    ]);
+
+    mockDockerSuccess("container-id");
+    mockDockerSuccess();
+    mockDockerSuccess();
+    mockDockerSuccess();
+
+    await create().create({
+      sessionId: "docker-session",
+      workspacePath: "/tmp/workspace",
+      launchCommand: "codex --model gpt-5",
+      environment: {
+        AO_SESSION: "docker-session",
+      },
+      runtimeConfig: { image: "ao-fake-codex:latest" },
+    });
+
+    const runArgs = mockExecFileCustom.mock.calls[0]?.[1] as string[];
+    expect(runArgs).toContain("/host/home/.gitconfig:/home/ao/.gitconfig:ro");
+    expect(runArgs).not.toContain("/host/home/.codex:/home/ao/.codex");
   });
 
   it("removes the container if startup fails", async () => {
