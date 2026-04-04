@@ -116,6 +116,7 @@ export function OrchestratorSelector({
       router.push(`/sessions/${data.orchestrator.id}`);
     } catch (err) {
       setSpawnError(err instanceof Error ? err.message : "Failed to spawn orchestrator");
+    } finally {
       setIsSpawning(false);
     }
   };

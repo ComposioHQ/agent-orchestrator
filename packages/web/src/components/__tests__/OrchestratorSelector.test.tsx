@@ -2,8 +2,9 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { OrchestratorSelector } from "../OrchestratorSelector";
 
+const mockPush = vi.fn();
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push: mockPush }),
 }));
 
 const mockOrchestrators = [
@@ -37,6 +38,7 @@ const defaultProps = {
 describe("OrchestratorSelector", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPush.mockClear();
     global.fetch = vi.fn();
   });
 
@@ -81,7 +83,7 @@ describe("OrchestratorSelector", () => {
     expect(screen.getByRole("button", { name: /start new orchestrator/i })).toBeInTheDocument();
   });
 
-  it("spawns new orchestrator on button click", async () => {
+  it("spawns new orchestrator on button click and navigates", async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () =>
@@ -98,6 +100,10 @@ describe("OrchestratorSelector", () => {
 
     await waitFor(() => {
       expect(mockFetch).toHaveBeenCalledWith("/api/orchestrators", expect.any(Object));
+    });
+
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith("/sessions/app-orchestrator-3");
     });
   });
 
@@ -147,6 +153,62 @@ describe("OrchestratorSelector", () => {
     expect(screen.getByText("working")).toBeInTheDocument();
     expect(screen.getByText("Active")).toBeInTheDocument();
     expect(screen.getByText("spawning")).toBeInTheDocument();
+  });
+
+  it("covers relative time for days and status colors/labels", () => {
+    const wideOrchestrators = [
+      {
+        id: "orch-2",
+        projectId: "my-project",
+        projectName: "My Project",
+        status: "ci_failed",
+        activity: "waiting_input",
+        createdAt: new Date(Date.now() - 3600000 * 50).toISOString(), // 2d ago
+        lastActivityAt: null,
+      },
+      {
+        id: "orch-3",
+        projectId: "my-project",
+        projectName: "My Project",
+        status: "killed",
+        activity: "ready",
+        createdAt: new Date(Date.now() - 1000).toISOString(), // Just now
+        lastActivityAt: null,
+      },
+      {
+        id: "orch-4",
+        projectId: "my-project",
+        projectName: "My Project",
+        status: "unknown",
+        activity: "blocked",
+        createdAt: new Date().toISOString(),
+        lastActivityAt: null,
+      },
+      {
+        id: "orch-5",
+        projectId: "my-project",
+        projectName: "My Project",
+        status: "mergeable",
+        activity: "exited",
+        createdAt: new Date().toISOString(),
+        lastActivityAt: null,
+      },
+    ];
+
+    render(
+      <OrchestratorSelector
+        {...defaultProps}
+        orchestrators={wideOrchestrators}
+      />,
+    );
+
+    expect(screen.getByText(/2d ago/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Just now/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Waiting/)).toBeInTheDocument();
+    expect(screen.getByText(/Ready/)).toBeInTheDocument();
+    expect(screen.getByText(/Blocked/)).toBeInTheDocument();
+    expect(screen.getByText(/Exited/)).toBeInTheDocument();
+    expect(screen.getByText(/ci failed/i)).toBeInTheDocument();
   });
 
   describe("formatRelativeTime edge cases", () => {
