@@ -2005,5 +2005,64 @@ describe("spawn", () => {
       expect(mockRuntime.create).not.toHaveBeenCalled();
       expect(readMetadataRaw(sessionsDir, "app-orchestrator")).toEqual({});
     });
+
+    it("destroys and replaces existing session when agent changed (reuse strategy)", async () => {
+      const mockCodexAgent: Agent = {
+        ...mockAgent,
+        name: "codex",
+        processName: "codex",
+        getLaunchCommand: vi.fn().mockReturnValue("codex --start"),
+        getEnvironment: vi.fn().mockReturnValue({ CODEX_VAR: "1" }),
+      };
+      const registryWithCodex: PluginRegistry = {
+        ...mockRegistry,
+        get: vi.fn().mockImplementation((slot: string, name: string) => {
+          if (slot === "runtime") return mockRuntime;
+          if (slot === "workspace") return mockWorkspace;
+          if (slot === "agent") {
+            if (name === "codex") return mockCodexAgent;
+            return mockAgent;
+          }
+          return null;
+        }),
+      };
+
+      // Existing session persisted with claude-code
+      writeMetadata(sessionsDir, "app-orchestrator", {
+        worktree: join(tmpDir, "my-app"),
+        branch: "main",
+        status: "working",
+        role: "orchestrator",
+        project: "my-app",
+        agent: "mock-agent",
+        runtimeHandle: JSON.stringify(makeHandle("rt-old-agent")),
+        createdAt: new Date().toISOString(),
+      });
+
+      vi.mocked(mockRuntime.isAlive).mockResolvedValue(true);
+
+      // Config now selects codex for orchestrator
+      const configWithCodex: OrchestratorConfig = {
+        ...config,
+        projects: {
+          ...config.projects,
+          "my-app": {
+            ...config.projects["my-app"],
+            orchestrator: { agent: "codex" },
+            orchestratorSessionStrategy: "reuse",
+          },
+        },
+      };
+
+      const sm = createSessionManager({ config: configWithCodex, registry: registryWithCodex });
+      const session = await sm.spawnOrchestrator({ projectId: "my-app" });
+
+      // Old session should be destroyed, not reused
+      expect(mockRuntime.destroy).toHaveBeenCalled();
+      expect(session.metadata["orchestratorSessionReused"]).toBeUndefined();
+      // New session should use codex
+      expect(mockCodexAgent.getLaunchCommand).toHaveBeenCalled();
+      expect(readMetadataRaw(sessionsDir, "app-orchestrator")?.["agent"]).toBe("codex");
+    });
   });
 });

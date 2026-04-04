@@ -1291,7 +1291,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       const existingAlive = await plugins.runtime
         .isAlive(existingOrchestrator.runtimeHandle)
         .catch(() => false);
-      if (existingAlive && orchestratorSessionStrategy === "reuse") {
+      const persistedAgentName = existingRaw?.["agent"];
+      const agentChanged = persistedAgentName != null && persistedAgentName !== selection.agentName;
+      if (existingAlive && orchestratorSessionStrategy === "reuse" && !agentChanged) {
         const persistedRaw = readMetadataRaw(sessionsDir, sessionId);
         if (persistedRaw?.["runtimeHandle"]) {
           const persisted = metadataToSession(
@@ -1305,9 +1307,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         await plugins.runtime.destroy(existingOrchestrator.runtimeHandle).catch(() => undefined);
         deleteMetadata(sessionsDir, sessionId, false);
       }
-      if (existingAlive && orchestratorSessionStrategy !== "reuse") {
+      if (existingAlive && (orchestratorSessionStrategy !== "reuse" || agentChanged)) {
         await plugins.runtime.destroy(existingOrchestrator.runtimeHandle).catch(() => undefined);
-        // Destroy runtime and delete metadata without archive for ignore strategy
+        // Destroy runtime and delete metadata — agent change or non-reuse strategy
         deleteMetadata(sessionsDir, sessionId, false);
       }
       // For dead runtime, delete metadata so reserveSessionId can succeed:
@@ -1333,7 +1335,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         const concurrentAlive = await plugins.runtime
           .isAlive(concurrentSession.runtimeHandle)
           .catch(() => false);
-        if (concurrentAlive && orchestratorSessionStrategy === "reuse") {
+        const concurrentAgentChanged =
+          concurrentRaw?.["agent"] != null && concurrentRaw["agent"] !== selection.agentName;
+        if (concurrentAlive && orchestratorSessionStrategy === "reuse" && !concurrentAgentChanged) {
           concurrentSession.metadata["orchestratorSessionReused"] = "true";
           return concurrentSession;
         }
