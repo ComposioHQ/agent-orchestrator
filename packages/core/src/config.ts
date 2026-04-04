@@ -725,16 +725,25 @@ export function loadConfig(configPath?: string): OrchestratorConfig {
       // Re-throw I/O errors immediately.
       if (!(err instanceof z.ZodError)) throw err;
 
-      const effective = loadFromGlobalConfig();
-      if (effective && Object.keys(effective.projects).length > 0) return effective;
+      try {
+        const effective = loadFromGlobalConfig();
+        if (effective && Object.keys(effective.projects).length > 0) return effective;
+      } catch {
+        // Global config also malformed or invalid — fall through to re-throw original error
+      }
       // No global config (or empty registry) — re-throw the original validation error
       throw err;
     }
   }
 
   // 2. Try global config (multi-project mode)
-  const effective = loadFromGlobalConfig();
-  if (effective && Object.keys(effective.projects).length > 0) return effective;
+  try {
+    const effective = loadFromGlobalConfig();
+    if (effective && Object.keys(effective.projects).length > 0) return effective;
+  } catch {
+    // Global config is present but malformed or pipeline throws — fall through to
+    // local config so users with valid per-project configs are not blocked.
+  }
 
   // 3. Fall back to local config search
   const path = findConfigFile();
@@ -764,9 +773,13 @@ export function loadConfigWithPath(configPath?: string): {
   //    since global config doesn't match OrchestratorConfigSchema (single-file format).
   const globalPath = findGlobalConfigPath();
   if (!configPath || configPath === globalPath) {
-    const effective = loadFromGlobalConfig();
-    if (effective && Object.keys(effective.projects).length > 0) {
-      return { config: effective, path: globalPath };
+    try {
+      const effective = loadFromGlobalConfig();
+      if (effective && Object.keys(effective.projects).length > 0) {
+        return { config: effective, path: globalPath };
+      }
+    } catch {
+      // Global config malformed or pipeline throws — fall through to local config
     }
   }
 
@@ -784,9 +797,13 @@ export function loadConfigWithPath(configPath?: string): {
     // paths need the multi-project pipeline.
     if (!(err instanceof z.ZodError)) throw err;
 
-    const effective = loadFromGlobalConfig();
-    if (effective && Object.keys(effective.projects).length > 0) {
-      return { config: effective, path: findGlobalConfigPath() };
+    try {
+      const effective = loadFromGlobalConfig();
+      if (effective && Object.keys(effective.projects).length > 0) {
+        return { config: effective, path: findGlobalConfigPath() };
+      }
+    } catch {
+      // Global config also malformed — fall through to re-throw original error
     }
     throw err;
   }

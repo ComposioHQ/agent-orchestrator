@@ -164,7 +164,14 @@ export function registerProjectCommand(program: Command): void {
         // newly registered project and existing ones, same as resolveMultiProjectStart.
         const globalPath = findGlobalConfigPath();
         const built = buildEffectiveConfig(globalConfig, globalPath);
-        applyGlobalConfigPipeline(built); // throws on prefix collision
+        try {
+          applyGlobalConfigPipeline(built); // throws on prefix collision
+        } catch (validationErr) {
+          // Clean up the shadow file we just wrote so it doesn't remain as an orphan
+          // (the global config was never saved, so the project is unregistered).
+          deleteShadowFile(projectId);
+          throw validationErr;
+        }
 
         saveGlobalConfig(globalConfig);
 
