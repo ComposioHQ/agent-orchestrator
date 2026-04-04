@@ -863,7 +863,7 @@ describe("start command — orchestrator session strategy display", () => {
     },
   );
 
-  it("handles existing orchestrator sessions by showing info and not spawning new", async () => {
+  it("handles existing orchestrator sessions by auto-selecting when --no-dashboard", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
 
     // Return an existing orchestrator session
@@ -872,12 +872,52 @@ describe("start command — orchestrator session strategy display", () => {
         id: "app-orchestrator",
         projectId: "my-app",
         metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(),
+        runtimeHandle: { id: "tmux-session-existing" },
       },
     ]);
 
     await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
 
     const output = getLoggedOutput();
+    // When --no-dashboard is used, auto-selects the most recent orchestrator
+    // and shows the tmux attach command (not the dashboard selection message)
+    expect(output).toContain("tmux attach -t tmux-session-existing");
+    expect(output).not.toContain("existing sessions found — select one in the dashboard");
+
+    // Should NOT spawn a new orchestrator when existing ones exist
+    expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
+  });
+
+  it("shows dashboard selection message when existing orchestrators found with dashboard enabled", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    // Mock findWebDir
+    const { findWebDir } = await import("../../src/lib/web-dir.js");
+    vi.mocked(findWebDir).mockReturnValue(tmpDir);
+    writeFileSync(join(tmpDir, "package.json"), "{}");
+
+    const fakeDashboard = {
+      on: vi.fn(),
+      kill: vi.fn(),
+      emit: vi.fn(),
+    };
+    mockSpawn.mockReturnValue(fakeDashboard);
+
+    // Return an existing orchestrator session
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-orchestrator",
+        projectId: "my-app",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(),
+      },
+    ]);
+
+    await program.parseAsync(["node", "test", "start"]);
+
+    const output = getLoggedOutput();
+    // When dashboard is enabled, shows selection message
     expect(output).toContain("existing sessions found — select one in the dashboard");
 
     // Should NOT spawn a new orchestrator when existing ones exist
