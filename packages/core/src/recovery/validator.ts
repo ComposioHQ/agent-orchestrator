@@ -31,7 +31,7 @@ export async function validateSession(
 
   const runtimeName = project.runtime ?? config.defaults.runtime;
   const agentName = resolveAgentSelection({
-    role: resolveSessionRole(sessionId, rawMetadata),
+    role: resolveSessionRole(sessionId, rawMetadata, project.sessionPrefix),
     project,
     defaults: config.defaults,
     persistedAgent: rawMetadata["agent"],

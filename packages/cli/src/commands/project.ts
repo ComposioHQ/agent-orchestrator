@@ -97,6 +97,14 @@ export function registerProjectCommand(program: Command): void {
         if (globalConfig.projects[projectId]) {
           const conflicting = globalConfig.projects[projectId];
           if (resolve(expandHome(conflicting.path)) !== projectPath) {
+            if (opts.id) {
+              // User explicitly requested this ID — don't silently reassign it.
+              console.error(
+                chalk.red(`Error: project ID "${projectId}" is already in use by ${conflicting.path}.`) +
+                "\n  Choose a different ID with --id <id> or omit --id to auto-generate one.",
+              );
+              process.exit(1);
+            }
             let suffix = 2;
             while (globalConfig.projects[`${projectId}${suffix}`]) suffix++;
             const altId = `${projectId}${suffix}`;

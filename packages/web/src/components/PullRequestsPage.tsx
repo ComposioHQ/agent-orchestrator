@@ -7,6 +7,7 @@ import {
   type DashboardSession,
   type DashboardPR,
   type DashboardOrchestratorLink,
+  getAttentionLevel,
 } from "@/lib/types";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
 import { ProjectSidebar } from "./ProjectSidebar";
@@ -35,7 +36,14 @@ export function PullRequestsPage({
   orchestrators,
 }: PullRequestsPageProps) {
   const orchestratorLinks = orchestrators ?? EMPTY_ORCHESTRATORS;
-  const { sessions } = useSessionEvents(initialSessions, null, projectId);
+  const initialAttentionLevels = useMemo(() => {
+    const levels: Record<string, ReturnType<typeof getAttentionLevel>> = {};
+    for (const s of initialSessions) {
+      levels[s.id] = getAttentionLevel(s);
+    }
+    return levels;
+  }, [initialSessions]);
+  const { sessions, sseAttentionLevels } = useSessionEvents(initialSessions, null, projectId, initialAttentionLevels);
   const searchParams = useSearchParams();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -82,7 +90,7 @@ export function PullRequestsPage({
         />
       ) : null}
       <div className="dashboard-main flex-1 overflow-y-auto px-4 py-4 md:px-7 md:py-6">
-        <DynamicFavicon sessions={sessions} projectName={projectName ? `${projectName} PRs` : "Pull Requests"} />
+        <DynamicFavicon sseAttentionLevels={sseAttentionLevels} projectName={projectName ? `${projectName} PRs` : "Pull Requests"} />
         <section className="dashboard-hero mb-5">
           <div className="dashboard-hero__backdrop" />
           <div className="dashboard-hero__content">

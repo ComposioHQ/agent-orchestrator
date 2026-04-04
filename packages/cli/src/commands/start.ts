@@ -935,7 +935,7 @@ async function runStartup(
   config: OrchestratorConfig,
   projectId: string,
   project: ProjectConfig,
-  opts?: { dashboard?: boolean; orchestrator?: boolean; rebuild?: boolean; orchestratorSuffix?: string },
+  opts?: { dashboard?: boolean; orchestrator?: boolean; rebuild?: boolean },
 ): Promise<number> {
   // Ensure tmux is available before doing anything — covers all entry paths
   // (normal start, URL start, retry with existing config)
@@ -959,9 +959,7 @@ async function runStartup(
     }
   }
 
-  const sessionId = opts?.orchestratorSuffix
-    ? `${project.sessionPrefix}-orchestrator-${opts.orchestratorSuffix}`
-    : `${project.sessionPrefix}-orchestrator`;
+  const sessionId = `${project.sessionPrefix}-orchestrator`;
   const shouldStartLifecycle = opts?.dashboard !== false || opts?.orchestrator !== false;
   let lifecycleStatus: Awaited<ReturnType<typeof ensureLifecycleWorker>> | null = null;
   let port = config.port ?? DEFAULT_PORT;
@@ -1038,7 +1036,6 @@ async function runStartup(
       const session = await sm.spawnOrchestrator({
         projectId,
         systemPrompt,
-        sessionSuffix: opts?.orchestratorSuffix,
       });
       if (session.runtimeHandle?.id) {
         tmuxTarget = session.runtimeHandle.id;
@@ -1162,7 +1159,6 @@ export function registerStart(program: Command): void {
           orchestrator?: boolean;
           rebuild?: boolean;
           interactive?: boolean;
-          orchestratorSuffix?: string;
         },
       ) => {
         try {
@@ -1284,18 +1280,10 @@ export function registerStart(program: Command): void {
                 openUrl(url);
                 process.exit(0);
               } else if (choice === "new") {
-                // Spawn an additional orchestrator for the same project.
-                // Find the next available suffix (2, 3, 4...) by checking existing sessions.
-                const sm = await getSessionManager(config);
-                const sessions = await sm.list(projectId);
-                const orchPrefix = `${project.sessionPrefix}-orchestrator`;
-                let suffix = 2;
-                while (sessions.some((s) => s.id === `${orchPrefix}-${suffix}`)) suffix++;
-
                 if (config.globalConfigPath) {
-                  // Multi-project mode: pass suffix to runStartup
-                  opts = { ...opts, orchestratorSuffix: String(suffix) };
-                  console.log(chalk.green(`\n✓ Starting orchestrator-${suffix} for "${projectId}"\n`));
+                  // Multi-project mode: spawnOrchestrator auto-reserves the next available
+                  // numbered identity ({prefix}-orchestrator-N) via reserveNextOrchestratorIdentity.
+                  console.log(chalk.green(`\n✓ Starting new orchestrator for "${projectId}"\n`));
                 } else {
                   // Legacy single-file mode: add a new project entry with different prefix
                   const existingIds = new Set(Object.keys(config.projects));
@@ -1320,15 +1308,7 @@ export function registerStart(program: Command): void {
                     if (reloadedProject) {
                       projectId = newId;
                       project = reloadedProject;
-                    } else {
-                      // Config reload didn't surface the new entry — fall back to suffix
-                      opts = { ...opts, orchestratorSuffix: String(suffix) };
-                      console.log(chalk.green(`\n✓ Starting orchestrator-${suffix} for "${projectId}"\n`));
                     }
-                  } else {
-                    // Project not found in raw YAML (unexpected — fall back to suffix approach)
-                    opts = { ...opts, orchestratorSuffix: String(suffix) };
-                    console.log(chalk.green(`\n✓ Starting orchestrator-${suffix} for "${projectId}"\n`));
                   }
                 }
               } else if (choice === "restart") {
@@ -1373,8 +1353,15 @@ export function registerStart(program: Command): void {
                   localRaw["orchestrator"] = { ...(localRaw["orchestrator"] as Record<string, unknown> ?? {}), agent: orchestratorAgent };
                   localRaw["worker"] = { ...(localRaw["worker"] as Record<string, unknown> ?? {}), agent: workerAgent };
                   writeFileSync(localConfigPath, yamlStringify(localRaw, { indent: 2 }));
-                } catch {
-                  // Local config update failed — shadow still has the values
+                } catch (err) {
+                  // Local config update failed — shadow has the values but they won't
+                  // persist across `ao start` in hybrid mode (local config is source of truth).
+                  console.warn(
+                    chalk.yellow(
+                      `  ⚠ Could not update local config at ${localConfigPath}: agent override will not persist after the next ao start.\n` +
+                      `    Update it manually: set orchestrator.agent=${orchestratorAgent} and worker.agent=${workerAgent}.`,
+                    ),
+                  );
                 }
               }
               console.log(chalk.dim(`  ✓ Saved agent config\n`));
@@ -1390,10 +1377,12 @@ export function registerStart(program: Command): void {
                 console.log(chalk.dim(`  ✓ Saved to ${config.configPath}\n`));
               }
             }
-            // Pass configPath so loadConfig() reads from the same source we
-            // just wrote to, instead of preferring the global config which
-            // wouldn't have the just-saved agent overrides.
-            config = loadConfig(config.configPath);
+            // Reload config so the just-saved agent overrides take effect.
+            // For multi-project mode: shadow file was written above; loadConfig()
+            // picks it up via the global config pipeline.
+            // For legacy mode: the YAML was written to config.configPath directly;
+            // loadConfig() finds the same file via normal discovery.
+            config = loadConfig();
             project = config.projects[projectId];
           }
 

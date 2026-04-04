@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { useSessionEvents } from "../useSessionEvents";
-import type { DashboardSession, GlobalPauseState } from "../../lib/types";
+import type { AttentionLevel, DashboardSession, GlobalPauseState } from "../../lib/types";
 import { makeSession } from "../../__tests__/helpers";
 
 describe("useSessionEvents", () => {
@@ -661,6 +661,131 @@ describe("useSessionEvents", () => {
 
       expect(result.current.sessions).toHaveLength(1);
       expect(result.current.sessions[0].id).toBe("session-0");
+    });
+  });
+
+  describe("sseAttentionLevels", () => {
+    it("starts with empty attention levels when no initial levels provided", () => {
+      const sessions = makeSessions(2);
+      const { result } = renderHook(() => useSessionEvents(sessions));
+      expect(result.current.sseAttentionLevels).toEqual({});
+    });
+
+    it("seeds attention levels from initialAttentionLevels parameter", () => {
+      const sessions = makeSessions(2);
+      const initialLevels = { "session-0": "working" as const, "session-1": "respond" as const };
+      const { result } = renderHook(() => useSessionEvents(sessions, null, undefined, initialLevels));
+      expect(result.current.sseAttentionLevels).toEqual({
+        "session-0": "working",
+        "session-1": "respond",
+      });
+    });
+
+    it("populates attention levels from SSE snapshot", () => {
+      const sessions = makeSessions(2);
+      const { result } = renderHook(() => useSessionEvents(sessions));
+
+      act(() => {
+        eventSourceMock!.onmessage!.call(eventSourceMock, {
+          data: JSON.stringify({
+            type: "snapshot",
+            sessions: [
+              { id: "session-0", status: "working", activity: "active", attentionLevel: "working", lastActivityAt: new Date().toISOString() },
+              { id: "session-1", status: "needs_input", activity: "waiting_input", attentionLevel: "respond", lastActivityAt: new Date().toISOString() },
+            ],
+          }),
+        } as MessageEvent);
+      });
+
+      expect(result.current.sseAttentionLevels).toEqual({
+        "session-0": "working",
+        "session-1": "respond",
+      });
+    });
+
+    it("updates attention levels when they change", () => {
+      const sessions = makeSessions(1);
+      const { result } = renderHook(() => useSessionEvents(sessions));
+
+      act(() => {
+        eventSourceMock!.onmessage!.call(eventSourceMock, {
+          data: JSON.stringify({
+            type: "snapshot",
+            sessions: [
+              { id: "session-0", status: "working", activity: "active", attentionLevel: "working", lastActivityAt: new Date().toISOString() },
+            ],
+          }),
+        } as MessageEvent);
+      });
+
+      expect(result.current.sseAttentionLevels["session-0"]).toBe("working");
+
+      act(() => {
+        eventSourceMock!.onmessage!.call(eventSourceMock, {
+          data: JSON.stringify({
+            type: "snapshot",
+            sessions: [
+              { id: "session-0", status: "needs_input", activity: "waiting_input", attentionLevel: "respond", lastActivityAt: new Date().toISOString() },
+            ],
+          }),
+        } as MessageEvent);
+      });
+
+      expect(result.current.sseAttentionLevels["session-0"]).toBe("respond");
+    });
+
+    it("preserves referential stability when attention levels do not change", () => {
+      const sessions = makeSessions(1);
+      const { result } = renderHook(() => useSessionEvents(sessions));
+
+      const ts = new Date().toISOString();
+
+      act(() => {
+        eventSourceMock!.onmessage!.call(eventSourceMock, {
+          data: JSON.stringify({
+            type: "snapshot",
+            sessions: [
+              { id: "session-0", status: "working", activity: "active", attentionLevel: "working", lastActivityAt: ts },
+            ],
+          }),
+        } as MessageEvent);
+      });
+
+      const firstLevels = result.current.sseAttentionLevels;
+
+      act(() => {
+        eventSourceMock!.onmessage!.call(eventSourceMock, {
+          data: JSON.stringify({
+            type: "snapshot",
+            sessions: [
+              { id: "session-0", status: "working", activity: "active", attentionLevel: "working", lastActivityAt: ts },
+            ],
+          }),
+        } as MessageEvent);
+      });
+
+      expect(result.current.sseAttentionLevels).toBe(firstLevels);
+    });
+
+    it("resets sseAttentionLevels to new initialAttentionLevels when initialSessions changes", () => {
+      const sessions1 = makeSessions(1);
+      let currentSessions = sessions1;
+      let currentLevels: Record<string, AttentionLevel> | undefined = { "session-0": "respond" as const };
+
+      const { result, rerender } = renderHook(() =>
+        useSessionEvents(currentSessions, null, undefined, currentLevels),
+      );
+
+      expect(result.current.sseAttentionLevels).toEqual({ "session-0": "respond" });
+
+      const sessions2 = makeSessions(1).map((s) => ({ ...s, id: "session-new" }));
+      const levels2 = { "session-new": "working" as const };
+      currentSessions = sessions2;
+      currentLevels = levels2;
+      rerender();
+
+      expect(result.current.sseAttentionLevels).toEqual({ "session-new": "working" });
+      expect(result.current.sseAttentionLevels["session-0"]).toBeUndefined();
     });
   });
 });

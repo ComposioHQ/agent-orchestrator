@@ -42,8 +42,25 @@ const IDENTITY_FIELDS = new Set(["name", "path"]);
 /** Internal fields (prefixed with _) */
 const isInternalField = (key: string): boolean => key.startsWith("_");
 
-/** Secret-like field patterns (excluded from shadow sync in hybrid mode) */
-const SECRET_PATTERNS = [/token$/i, /key$/i, /secret$/i, /password$/i, /credentials?$/i];
+/**
+ * Secret-like field patterns (excluded from shadow sync in hybrid mode).
+ *
+ * These patterns are intentionally specific to avoid accidentally excluding
+ * config fields that only look like secrets by name (e.g. a field called
+ * `apiKey` that holds an env-var *name* rather than the secret itself).
+ * `/key$/i` alone is too broad — it would also match `workerKey`, `sessionKey`,
+ * or any other field that ends in "key" but is not a credential. Instead we
+ * require the field name to start with a known secret-category prefix, handling
+ * both camelCase (`apiKey`) and SCREAMING_SNAKE_CASE (`API_KEY`) variants via
+ * the optional `[-_]?` separator.
+ */
+const SECRET_PATTERNS = [
+  /token$/i,
+  /(?:api|secret|private|access|signing|encryption|auth)[-_]?key$/i,
+  /secret$/i,
+  /password$/i,
+  /credentials?$/i,
+];
 
 export function isSecretField(key: string): boolean {
   return SECRET_PATTERNS.some((p) => p.test(key));

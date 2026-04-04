@@ -44,6 +44,16 @@ describe("SessionPage project polling", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     sessionDetailSpy.mockClear();
+
+    const eventSourceMock = {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      close: vi.fn(),
+      readyState: 1,
+    };
+    global.EventSource = vi.fn(
+      () => eventSourceMock as unknown as EventSource,
+    ) as unknown as typeof EventSource;
   });
 
   afterEach(() => {

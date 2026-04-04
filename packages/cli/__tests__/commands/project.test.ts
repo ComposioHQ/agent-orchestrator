@@ -234,6 +234,19 @@ describe("ao project add", () => {
     );
   });
 
+  it("errors when --id override is taken by a different path", async () => {
+    const config = makeGlobalConfig([]);
+    config.projects["custom"] = { name: "Other", path: "/other/path" } as GlobalConfig["projects"][string];
+    mockLoadGlobalConfig.mockReturnValue(config);
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => { throw new Error("exit"); });
+    await expect(runCommand(["project", "add", "/home/user/my-app", "--id", "custom"])).rejects.toThrow();
+    expect(errorSpy.mock.calls.flat().join(" ")).toMatch(/already in use/);
+    errorSpy.mockRestore();
+    exitSpy.mockRestore();
+  });
+
   it("appends numeric suffix when derived ID is taken by a different path", async () => {
     // "my-app" → generateProjectId → "my-app" → generateSessionPrefix → "my" → taken by /other/path
     mockGenerateProjectId.mockReturnValue("my-app");

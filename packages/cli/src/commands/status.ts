@@ -74,7 +74,11 @@ async function gatherSessionInfo(
   scm: SCM,
   projectConfig: ReturnType<typeof loadConfig>,
 ): Promise<SessionInfo> {
-  const suppressPROwnership = isOrchestratorSession(session);
+  const sessionPrefix = projectConfig.projects[session.projectId]?.sessionPrefix ?? session.projectId;
+  const allSessionPrefixes = Object.entries(projectConfig.projects).map(
+    ([id, p]) => p.sessionPrefix ?? id,
+  );
+  const suppressPROwnership = isOrchestratorSession(session, sessionPrefix, allSessionPrefixes);
   let branch = session.branch;
   const status = session.status;
   const summary = session.metadata["summary"] ?? null;
@@ -144,7 +148,7 @@ async function gatherSessionInfo(
 
   return {
     name: session.id,
-    role: isOrchestratorSession(session) ? "orchestrator" : "worker",
+    role: isOrchestratorSession(session, sessionPrefix, allSessionPrefixes) ? "orchestrator" : "worker",
     branch,
     status,
     summary,
@@ -386,7 +390,7 @@ export function registerStatus(program: Command): void {
             let unverifiedTotal = 0;
             for (const projectId of projectIds) {
               const project: ProjectConfig | undefined = config.projects[projectId];
-              if (!project?.tracker) continue;
+              if (!project?.tracker?.plugin) continue;
               const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
               if (!tracker?.listIssues) continue;
               try {
