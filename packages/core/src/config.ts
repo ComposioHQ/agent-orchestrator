@@ -491,6 +491,11 @@ export function buildConfigFromGlobal(
   globalPath: string,
 ): OrchestratorConfig {
   const config = buildEffectiveConfig(globalConfig, globalPath);
+  // expandPaths is called here even though buildEffectiveConfig already
+  // calls expandHome on each project's path. The double-call is idempotent
+  // for project paths (expandHome is a no-op on already-absolute paths), but
+  // expandPaths is still needed to expand plugin.path entries, which
+  // buildEffectiveConfig passes through from globalConfig.plugins unexpanded.
   let effective = expandPaths(config);
   effective = applyProjectDefaults(effective);
   effective = applyDefaultReactions(effective);
