@@ -1471,25 +1471,5 @@ export function registerStop(program: Command): void {
           }
           process.exit(1);
         }
-
-        const lifecycleStopped = await stopLifecycleWorker(config, _projectId);
-        if (lifecycleStopped) {
-          console.log(chalk.green("Lifecycle worker stopped"));
-        } else {
-          console.log(chalk.yellow("Lifecycle worker not running"));
-        }
-
-        // Stop dashboard
-        await stopDashboard(port);
-
-        console.log(chalk.bold.green("\n✓ Orchestrator stopped\n"));
-      } catch (err) {
-        if (err instanceof Error) {
-          console.error(chalk.red("\nError:"), err.message);
-        } else {
-          console.error(chalk.red("\nError:"), String(err));
-        }
-        process.exit(1);
-      }
-    });
+      });
 }
