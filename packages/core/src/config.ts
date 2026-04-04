@@ -471,7 +471,7 @@ export function applyProjectDefaults(config: OrchestratorConfig): OrchestratorCo
     const name = project.name ?? id;
     const sessionPrefix = project.sessionPrefix || generateSessionPrefix(basename(project.path));
     const inferredPlugin = inferScmPlugin(project);
-    const scm = project.scm ?? (project.repo.includes("/") ? { plugin: inferredPlugin } : undefined);
+    const scm = project.scm ?? (project.repo && project.repo.includes("/") ? { plugin: inferredPlugin } : undefined);
     const tracker = project.tracker ?? { plugin: inferredPlugin };
     projects[id] = { ...project, name, sessionPrefix, tracker, ...(scm !== undefined ? { scm } : {}) };
   }

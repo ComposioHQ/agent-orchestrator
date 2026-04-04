@@ -26,6 +26,8 @@ import {
   generateSessionPrefix,
   generateProjectId,
   expandHome,
+  loadShadowFile,
+  saveShadowFile,
   type GlobalProjectEntry,
 } from "@composio/ao-core";
 import { getSessionManager } from "../lib/create-session-manager.js";
@@ -119,7 +121,7 @@ export function registerProjectCommand(program: Command): void {
         };
         globalConfig = registerProjectInConfig(globalConfig, projectId, entry);
 
-        // Sync shadow if hybrid
+        // Sync shadow if hybrid; scaffold minimal shadow if global-only
         const mode = detectConfigMode(projectPath);
         if (mode === "hybrid") {
           const localPath = findLocalConfigPath(projectPath);
@@ -134,6 +136,13 @@ export function registerProjectCommand(program: Command): void {
             } catch (err) {
               console.log(chalk.yellow(`  Could not sync local config: ${err instanceof Error ? err.message : String(err)}`));
             }
+          }
+        } else {
+          // Global-only: create a minimal shadow file so buildEffectiveConfig has
+          // a file to read from. Without it, repo/defaultBranch/agent fields all
+          // fall back to empty defaults and the project cannot be started.
+          if (!loadShadowFile(projectId)) {
+            saveShadowFile(projectId, { repo: "", defaultBranch: "main" });
           }
         }
 
