@@ -997,7 +997,19 @@ async function runStartup(
     const sm = await getSessionManager(config);
 
     // Check for existing orchestrator sessions for this project
-    const allSessions = await sm.list(projectId);
+    let allSessions;
+    try {
+      allSessions = await sm.list(projectId);
+    } catch (err) {
+      spinner.fail("Failed to list sessions");
+      if (dashboardProcess) {
+        dashboardProcess.kill();
+      }
+      throw new Error(
+        `Failed to list sessions: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err },
+      );
+    }
     const existingOrchestrators = allSessions.filter((s) =>
       isOrchestratorSession(s, project.sessionPrefix ?? projectId),
     );
