@@ -307,7 +307,9 @@ async function sendTextToTmux(
     const bufferName = `ao-${randomUUID()}`;
     const tmpName = `/tmp/ao-${randomUUID()}.txt`;
     const hostTmpPath = join(tmpdir(), `ao-docker-${randomUUID()}.txt`);
-    writeFileSync(hostTmpPath, text, { encoding: "utf-8", mode: 0o600 });
+    // docker cp preserves file mode; keep the staging file readable so the
+    // container's configured runtime user can load it into tmux.
+    writeFileSync(hostTmpPath, text, { encoding: "utf-8", mode: 0o644 });
     try {
       await docker(["cp", hostTmpPath, `${containerName}:${tmpName}`]);
       await dockerTmux(containerName, ["load-buffer", "-b", bufferName, tmpName]);

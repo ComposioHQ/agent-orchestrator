@@ -412,7 +412,7 @@ describe("runtime.sendMessage()", () => {
     expect(fs.writeFileSync).toHaveBeenCalledWith(
       expect.stringContaining("ao-docker-test-uuid-1234.txt"),
       message,
-      { encoding: "utf-8", mode: 0o600 },
+      { encoding: "utf-8", mode: 0o644 },
     );
     expect(mockExecFileCustom).toHaveBeenNthCalledWith(
       2,
