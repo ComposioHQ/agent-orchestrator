@@ -381,8 +381,13 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     metadata?: Record<string, string> | null,
   ): boolean {
     const canonicalOrchestratorId = `${project.sessionPrefix}-orchestrator`;
+    // Prefix-based check protects suffixed orchestrators (e.g. -orchestrator-2)
+    // even when metadata is unavailable (deleted or corrupted), without introducing
+    // false positives that a broader regex would.
+    const isSuffixedOrchestrator = sessionId.startsWith(`${canonicalOrchestratorId}-`);
     return (
       sessionId === canonicalOrchestratorId ||
+      isSuffixedOrchestrator ||
       isOrchestratorSession({ id: sessionId, metadata: metadata ?? undefined })
     );
   }
