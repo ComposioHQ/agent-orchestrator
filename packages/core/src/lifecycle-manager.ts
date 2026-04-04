@@ -694,7 +694,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     return reactionConfig ? (reactionConfig as ReactionConfig) : null;
   }
 
-  function updateSessionMetadata(session: Session, updates: Partial<Record<string, string>>): void {
+  function updateSessionMetadata(
+    session: Session,
+    updates: Partial<Record<string, string>>,
+  ): void {
     const project = config.projects[session.projectId];
     if (!project) return;
 
@@ -827,9 +830,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     // --- Automated (bot) review comments ---
     if (automatedComments !== null) {
-      const automatedFingerprint = makeFingerprint(automatedComments.map((comment) => comment.id));
+      const automatedFingerprint = makeFingerprint(
+        automatedComments.map((comment) => comment.id),
+      );
       const lastAutomatedFingerprint = session.metadata["lastAutomatedReviewFingerprint"] ?? "";
-      const lastAutomatedDispatchHash = session.metadata["lastAutomatedReviewDispatchHash"] ?? "";
+      const lastAutomatedDispatchHash =
+        session.metadata["lastAutomatedReviewDispatchHash"] ?? "";
 
       if (automatedFingerprint !== lastAutomatedFingerprint) {
         clearReactionTracker(session.id, automatedReactionKey);

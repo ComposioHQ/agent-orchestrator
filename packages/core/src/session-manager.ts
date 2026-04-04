@@ -64,11 +64,6 @@ import {
 import { asValidOpenCodeSessionId } from "./opencode-session-id.js";
 import { normalizeOrchestratorSessionStrategy } from "./orchestrator-session-strategy.js";
 import {
-  GLOBAL_PAUSE_REASON_KEY,
-  GLOBAL_PAUSE_SOURCE_KEY,
-  GLOBAL_PAUSE_UNTIL_KEY,
-  parsePauseUntil,
-} from "./global-pause.js";
 import { sessionFromMetadata } from "./utils/session-from-metadata.js";
 import { safeJsonParse } from "./utils/validation.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
@@ -282,48 +277,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
    */
   function getProjectSessionsDir(project: ProjectConfig): string {
     return getSessionsDir(config.configPath, project.path);
-  }
-
-  function getProjectPause(project: ProjectConfig): {
-    until: Date;
-    reason: string;
-    sourceSessionId: string;
-  } | null {
-    const sessionsDir = getProjectSessionsDir(project);
-
-    // Build the candidate list using name-pattern matching so we never read
-    // raw metadata for worker sessions (avoids N file reads on every hot path).
-    // Do not pre-seed the canonical ID — with the numbered orchestrator scheme
-    // ({prefix}-orchestrator-N) it will rarely exist, and pre-seeding it would
-    // cause an unconditional extra readMetadataRaw on every hot-path invocation.
-    const canonicalOrchestratorId = `${project.sessionPrefix}-orchestrator`;
-    const orchestratorPattern = new RegExp(`^${escapeRegex(project.sessionPrefix)}-orchestrator-(\\d+)$`);
-    const candidateIds = new Set<string>();
-    for (const id of listMetadata(sessionsDir)) {
-      if (id === canonicalOrchestratorId || orchestratorPattern.test(id)) {
-        candidateIds.add(id);
-      }
-    }
-
-    let best: { until: Date; reason: string; sourceSessionId: string } | null = null;
-    for (const sessionId of candidateIds) {
-      const raw = readMetadataRaw(sessionsDir, sessionId);
-      if (!raw) continue;
-      if (!isOrchestratorSessionRecord(sessionId, raw, project.sessionPrefix)) continue;
-
-      const until = parsePauseUntil(raw[GLOBAL_PAUSE_UNTIL_KEY]);
-      if (!until || until.getTime() <= Date.now()) continue;
-
-      if (!best || until.getTime() > best.until.getTime()) {
-        best = {
-          until,
-          reason: raw[GLOBAL_PAUSE_REASON_KEY] ?? "Model rate limit reached",
-          sourceSessionId: raw[GLOBAL_PAUSE_SOURCE_KEY] ?? "unknown",
-        };
-      }
-    }
-
-    return best;
   }
 
   function normalizePath(path: string): string {
@@ -982,13 +935,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       throw new Error(`Unknown project: ${spawnConfig.projectId}`);
     }
 
-    const pause = getProjectPause(project);
-    if (pause) {
-      throw new Error(
-        `Project is paused due to model rate limit until ${pause.until.toISOString()} (${pause.reason}; source: ${pause.sourceSessionId})`,
-      );
-    }
-
     const selection = resolveAgentSelection({
       role: "worker",
       project,
@@ -1311,13 +1257,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     const project = config.projects[orchestratorConfig.projectId];
     if (!project) {
       throw new Error(`Unknown project: ${orchestratorConfig.projectId}`);
-    }
-
-    const pause = getProjectPause(project);
-    if (pause) {
-      throw new Error(
-        `Project is paused due to model rate limit until ${pause.until.toISOString()} (${pause.reason}; source: ${pause.sourceSessionId})`,
-      );
     }
 
     const selection = resolveAgentSelection({
@@ -1907,12 +1846,6 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
   async function send(sessionId: SessionId, message: string): Promise<void> {
     const { raw, sessionsDir, project } = requireSessionRecord(sessionId);
-    const pause = getProjectPause(project);
-    if (pause && !isOrchestratorSessionRecord(sessionId, raw, project.sessionPrefix)) {
-      throw new Error(
-        `Project is paused due to model rate limit until ${pause.until.toISOString()} (${pause.reason}; source: ${pause.sourceSessionId})`,
-      );
-    }
 
     const selection = resolveSelectionForSession(project, sessionId, raw);
     const selectedAgent = selection.agentName;
