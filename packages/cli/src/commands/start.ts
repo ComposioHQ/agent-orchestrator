@@ -1165,15 +1165,23 @@ export function registerStart(program: Command): void {
           let config: OrchestratorConfig;
           let projectId: string;
           let project: ProjectConfig;
+          // URL and local-path branches are "quick start" flows that add and start
+          // a new project — they should proceed even when AO is already running
+          // (multi-project mode supports multiple simultaneous projects).
+          // The already-running check is only relevant for the no-arg and
+          // explicit-ID cases where the user might want to reuse the running instance.
+          let skipAlreadyRunningCheck = false;
 
           if (projectArg && isRepoUrl(projectArg)) {
             // ── URL argument: clone + auto-config + start ──
+            skipAlreadyRunningCheck = true;
             console.log(chalk.bold.cyan("\n  Agent Orchestrator — Quick Start\n"));
             const result = await handleUrlStart(projectArg);
             config = result.config;
             ({ projectId, project } = await resolveProjectByRepo(config, result.parsed));
           } else if (projectArg && isLocalPath(projectArg)) {
             // ── Path argument: add project if new, then start ──
+            skipAlreadyRunningCheck = true;
             const resolvedPath = resolve(projectArg.replace(/^~/, process.env["HOME"] || ""));
 
             // Try to load existing config
@@ -1256,7 +1264,7 @@ export function registerStart(program: Command): void {
           }
 
           // ── Already-running detection (Step 9) ──
-          const running = await isAlreadyRunning();
+          const running = skipAlreadyRunningCheck ? null : await isAlreadyRunning();
           if (running) {
             if (isHumanCaller()) {
               console.log(chalk.cyan(`\nℹ AO is already running.`));

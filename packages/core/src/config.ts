@@ -17,7 +17,7 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { ConfigNotFoundError, type ExternalPluginEntryRef, type OrchestratorConfig } from "./types.js";
 import { generateSessionPrefix } from "./paths.js";
-import { loadGlobalConfig, findGlobalConfigPath } from "./global-config.js";
+import { loadGlobalConfig, findGlobalConfigPath, findLocalConfigUpwards } from "./global-config.js";
 import { buildEffectiveConfig } from "./migration.js";
 
 function inferScmPlugin(project: {
@@ -654,28 +654,11 @@ export function findConfigFile(startDir?: string): string | null {
     }
   }
 
-  // 2. Search up directory tree from CWD (like git)
-  const searchUpTree = (dir: string): string | null => {
-    const configFiles = ["agent-orchestrator.yaml", "agent-orchestrator.yml"];
-
-    for (const filename of configFiles) {
-      const configPath = resolve(dir, filename);
-      if (existsSync(configPath)) {
-        return configPath;
-      }
-    }
-
-    const parent = resolve(dir, "..");
-    if (parent === dir) {
-      // Reached root
-      return null;
-    }
-
-    return searchUpTree(parent);
-  };
-
+  // 2. Search up directory tree from CWD (like git).
+  // Delegates to findLocalConfigUpwards in global-config.ts, the single
+  // implementation of this walk shared with the multi-project registration path.
   const cwd = process.cwd();
-  const foundInTree = searchUpTree(cwd);
+  const foundInTree = findLocalConfigUpwards(cwd)?.configPath ?? null;
   if (foundInTree) {
     return foundInTree;
   }
