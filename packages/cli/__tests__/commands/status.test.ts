@@ -432,6 +432,27 @@ describe("status command", () => {
     expect(output).toContain("Activity");
   });
 
+  it("shows tracker issue identifiers in the status table", async () => {
+    writeFileSync(
+      join(sessionsDir, "app-1"),
+      "worktree=/tmp/wt\nbranch=feat/status-column\nstatus=working\nissue=INT-123\n",
+    );
+
+    mockTmux.mockImplementation(async (...args: string[]) => {
+      if (args[0] === "list-sessions") return "app-1";
+      if (args[0] === "display-message") return String(Math.floor(Date.now() / 1000) - 60);
+      return null;
+    });
+    mockGit.mockResolvedValue("feat/status-column");
+
+    await program.parseAsync(["node", "test", "status"]);
+
+    const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+    const plainOutput = output.replace(/\u001b\[[0-9;]*m/g, "");
+    expect(plainOutput).toContain("Issue");
+    expect(plainOutput).toMatch(/app-1\s+INT-123\s+feat\/status-column/);
+  });
+
   it("shows PR number, CI status, review decision, and threads", async () => {
     writeFileSync(
       join(sessionsDir, "app-1"),
@@ -579,6 +600,55 @@ describe("status command", () => {
     expect(parsed[0].ciStatus).toBe("passing");
     expect(parsed[0].reviewDecision).toBe("pending");
     expect(parsed[0].pendingThreads).toBe(0);
+  });
+
+  it("includes issueUrl in JSON output when a tracker is configured", async () => {
+    writeFileSync(
+      join(sessionsDir, "app-1"),
+      "worktree=/tmp/wt\nbranch=feat/json-issue\nstatus=working\nissue=INT-123\n",
+    );
+
+    mockConfigRef.current = {
+      ...(mockConfigRef.current as Record<string, unknown>),
+      projects: {
+        "my-app": {
+          ...((mockConfigRef.current as { projects: Record<string, unknown> }).projects["my-app"] as Record<
+            string,
+            unknown
+          >),
+          tracker: { plugin: "linear", workspaceSlug: "acme" },
+        },
+      },
+    } as Record<string, unknown>;
+
+    const mockTracker = {
+      issueUrl: vi.fn().mockReturnValue("https://linear.app/acme/issue/INT-123"),
+    };
+    mockGetPluginRegistry.mockResolvedValueOnce({
+      get: vi.fn().mockImplementation((slot: string, name: string) => {
+        if (slot === "tracker" && name === "linear") return mockTracker;
+        return null;
+      }),
+      list: vi.fn(),
+      register: vi.fn(),
+    });
+
+    mockTmux.mockImplementation(async (...args: string[]) => {
+      if (args[0] === "list-sessions") return "app-1";
+      if (args[0] === "display-message") return String(Math.floor(Date.now() / 1000));
+      return null;
+    });
+    mockGit.mockResolvedValue("feat/json-issue");
+
+    await program.parseAsync(["node", "test", "status", "--json"]);
+
+    const parsed = JSON.parse(consoleSpy.mock.calls.map((c) => c[0]).join(""));
+    expect(parsed[0].issue).toBe("INT-123");
+    expect(parsed[0].issueUrl).toBe("https://linear.app/acme/issue/INT-123");
+    expect(mockTracker.issueUrl).toHaveBeenCalledWith(
+      "INT-123",
+      expect.objectContaining({ tracker: { plugin: "linear", workspaceSlug: "acme" } }),
+    );
   });
 
   it("rejects --watch with --json", async () => {
