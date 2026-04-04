@@ -620,10 +620,18 @@ function parseCheckContexts(contexts: unknown): CICheck[] {
       if (rawStatus === "COMPLETED") {
         if (!rawConclusion || rawConclusion === "SUCCESS") {
           status = "passed";
-        } else if (rawConclusion === "SKIPPED" || rawConclusion === "NEUTRAL") {
-          // NEUTRAL maps to "skipped" to match mapRawCheckStateToStatus() in the REST path
+        } else if (
+          rawConclusion === "SKIPPED" ||
+          rawConclusion === "NEUTRAL" ||
+          rawConclusion === "STALE" ||
+          rawConclusion === "NOT_REQUIRED" ||
+          rawConclusion === "NONE"
+        ) {
+          // Mirror mapRawCheckStateToStatus() in the REST path: all non-failure
+          // terminal conclusions that are not SUCCESS map to "skipped".
           status = "skipped";
         } else {
+          // FAILURE, TIMED_OUT, CANCELLED, ACTION_REQUIRED, STARTUP_FAILURE, etc.
           status = "failed";
         }
       } else if (rawStatus === "IN_PROGRESS" || rawStatus === "QUEUED" || rawStatus === "WAITING") {

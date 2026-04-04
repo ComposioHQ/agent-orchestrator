@@ -1482,6 +1482,40 @@ describe("extractPREnrichment ciChecks", () => {
     expect(check?.conclusion).toBe("FAILURE"); // must be uppercased
   });
 
+  it("maps STALE/NOT_REQUIRED/NONE conclusions to skipped (matches REST mapRawCheckStateToStatus)", () => {
+    const makeContextsWithConclusion = (conclusion: string) => ({
+      title: "Check",
+      state: "OPEN",
+      additions: 1,
+      deletions: 0,
+      isDraft: false,
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      reviewDecision: "NONE",
+      reviews: { nodes: [] },
+      commits: {
+        nodes: [
+          {
+            commit: {
+              statusCheckRollup: {
+                state: "SUCCESS",
+                contexts: {
+                  nodes: [{ name: "check", status: "COMPLETED", conclusion, detailsUrl: null }],
+                },
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    for (const conclusion of ["STALE", "NOT_REQUIRED", "NONE"]) {
+      const extracted = extractPREnrichment(makeContextsWithConclusion(conclusion));
+      const check = extracted?.data.ciChecks?.[0];
+      expect(check?.status, `${conclusion} should map to skipped`).toBe("skipped");
+    }
+  });
+
   it("returns undefined ciChecks when contexts list is truncated (hasNextPage=true)", () => {
     const pullRequest = {
       title: "Many CI checks",
