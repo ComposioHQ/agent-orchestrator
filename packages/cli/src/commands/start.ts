@@ -1410,8 +1410,16 @@ export function registerStart(program: Command): void {
             // picks it up via the global config pipeline.
             // Legacy mode: the YAML was written to config.configPath directly; pass the
             // explicit path so we reload that file even if a global config also exists.
+            //
+            // Capture the in-memory orchestratorSessionStrategy before reload — "ignore-new"
+            // is set when the user picks "start new orchestrator" but is never persisted to
+            // disk, so the reload would silently discard it.
+            const strategyOverride = project.orchestratorSessionStrategy;
             config = config.globalConfigPath ? loadConfig() : loadConfig(config.configPath);
             project = config.projects[projectId];
+            if (strategyOverride !== project.orchestratorSessionStrategy) {
+              project = { ...project, orchestratorSessionStrategy: strategyOverride };
+            }
           }
 
           const actualPort = await runStartup(config, projectId, project, opts);

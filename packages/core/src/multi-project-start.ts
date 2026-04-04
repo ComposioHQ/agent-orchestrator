@@ -18,6 +18,8 @@ import {
   findLocalConfigUpwards,
   loadLocalProjectConfig,
   syncShadow,
+  loadShadowFile,
+  saveShadowFile,
   matchProjectByCwd,
   findGlobalConfigPath,
 } from "./global-config.js";
@@ -62,6 +64,7 @@ export function resolveMultiProjectStart(
     if (localPath) {
       // Auto-register in hybrid mode
       let derivedId = generateSessionPrefix(generateProjectId(projectRoot));
+      const originalDerivedId = derivedId;
 
       // Handle collision
       if (globalConfig.projects[derivedId]) {
@@ -97,6 +100,16 @@ export function resolveMultiProjectStart(
         messages.push({ level: "success", text: "Shadow synced" });
       } catch (err) {
         messages.push({ level: "warn", text: `Could not sync local config: ${err instanceof Error ? err.message : String(err)}` });
+      }
+
+      // If the ID was suffixed to resolve a collision (e.g. "ao" → "ao2"), the session
+      // prefix would still be re-derived from basename(path) by applyProjectDefaults,
+      // producing the same prefix as the original project ("ao" for both).
+      // Write the suffixed prefix explicitly to the shadow so applyProjectDefaults
+      // uses it instead of re-deriving from the path.
+      if (derivedId !== originalDerivedId) {
+        const currentShadow = loadShadowFile(projectId) ?? {};
+        saveShadowFile(projectId, { ...currentShadow, sessionPrefix: generateSessionPrefix(projectId) });
       }
 
       messages.push({ level: "success", text: `Registered project "${projectId}" (hybrid mode)` });
