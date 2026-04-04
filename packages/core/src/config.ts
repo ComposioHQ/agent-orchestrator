@@ -258,8 +258,12 @@ export function expandPaths(config: OrchestratorConfig): OrchestratorConfig {
 export function applyProjectDefaults(config: OrchestratorConfig): OrchestratorConfig {
   const projects: typeof config.projects = {};
   for (const [id, project] of Object.entries(config.projects)) {
-    const name = project.name ?? id;
-    const sessionPrefix = project.sessionPrefix ?? generateSessionPrefix(basename(project.path));
+    // Use || (falsy check) not ?? (nullish check) so that an empty string ""
+    // falls through to the default — matching validateProjectUniqueness which
+    // also uses ||. Using ?? here while validateProjectUniqueness uses ||
+    // would cause them to operate on different effective prefixes/names.
+    const name = project.name || id;
+    const sessionPrefix = project.sessionPrefix || generateSessionPrefix(basename(project.path));
     const inferredPlugin = inferScmPlugin(project);
     const scm = project.scm ?? (project.repo.includes("/") ? { plugin: inferredPlugin } : undefined);
     const tracker = project.tracker ?? { plugin: inferredPlugin };

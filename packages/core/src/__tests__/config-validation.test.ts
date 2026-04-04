@@ -3,7 +3,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { validateConfig } from "../config.js";
+import { validateConfig, applyProjectDefaults } from "../config.js";
+import type { OrchestratorConfig } from "../types.js";
 
 describe("Config Validation - Project Uniqueness", () => {
   it("rejects duplicate project IDs (same basename)", () => {
@@ -231,6 +232,66 @@ describe("Config Validation - Session Prefix Uniqueness", () => {
     };
 
     expect(() => validateConfig(config)).toThrow(/Duplicate session prefix/);
+  });
+
+  it("treats empty string sessionPrefix as unset and derives from path", () => {
+    // sessionPrefix: "" is falsy — must fall through to the generated default,
+    // not be stored as an empty string which would produce broken IDs like "-orchestrator".
+    // This matters for the multi-project path where buildEffectiveConfig assembles
+    // ProjectConfig directly (bypassing Zod validation) and applyProjectDefaults is
+    // responsible for filling in the default.
+    const config = {
+      configPath: "/config.yaml",
+      port: 3000,
+      readyThresholdMs: 300000,
+      defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+      notifiers: {},
+      notificationRouting: { urgent: [], action: [], warning: [], info: [] },
+      reactions: {},
+      projects: {
+        proj1: {
+          name: "proj1",
+          path: "/repos/my-app",
+          repo: "org/my-app",
+          defaultBranch: "main",
+          sessionPrefix: "", // empty string — should be treated as unset
+          agentConfig: {},
+          metadata: {},
+        },
+      },
+    } as unknown as OrchestratorConfig;
+
+    const result = applyProjectDefaults(config);
+    const project = result.projects["proj1"];
+    expect(project.sessionPrefix).toBeTruthy(); // must not be empty
+    expect(project.sessionPrefix).not.toBe(""); // must have fallen back to generated prefix
+  });
+
+  it("treats empty string name as unset and falls back to config key", () => {
+    const config = {
+      configPath: "/config.yaml",
+      port: 3000,
+      readyThresholdMs: 300000,
+      defaults: { runtime: "tmux", agent: "claude-code", workspace: "worktree", notifiers: [] },
+      notifiers: {},
+      notificationRouting: { urgent: [], action: [], warning: [], info: [] },
+      reactions: {},
+      projects: {
+        myproject: {
+          name: "", // empty string — should fall back to config key "myproject"
+          path: "/repos/my-app",
+          repo: "org/my-app",
+          defaultBranch: "main",
+          sessionPrefix: "ma",
+          agentConfig: {},
+          metadata: {},
+        },
+      },
+    } as unknown as OrchestratorConfig;
+
+    const result = applyProjectDefaults(config);
+    const project = result.projects["myproject"];
+    expect(project.name).toBe("myproject");
   });
 });
 
