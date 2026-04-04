@@ -31,7 +31,6 @@ const defaultProps = {
   orchestrators: mockOrchestrators,
   projectId: "my-project",
   projectName: "My Project",
-  projects: [{ id: "my-project", name: "My Project" }],
   error: null,
 };
 

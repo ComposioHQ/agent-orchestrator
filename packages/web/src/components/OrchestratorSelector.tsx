@@ -4,7 +4,6 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { cn } from "@/lib/cn";
-import type { ProjectInfo } from "@/lib/project-name";
 
 interface Orchestrator {
   id: string;
@@ -20,7 +19,6 @@ interface OrchestratorSelectorProps {
   orchestrators: Orchestrator[];
   projectId: string;
   projectName: string;
-  projects: ProjectInfo[];
   error: string | null;
 }
 
@@ -92,7 +90,6 @@ export function OrchestratorSelector({
   orchestrators,
   projectId,
   projectName,
-  projects: _projects,
   error,
 }: OrchestratorSelectorProps) {
   const router = useRouter();

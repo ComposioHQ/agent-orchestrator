@@ -84,14 +84,11 @@ export default async function OrchestratorsRoute(props: {
     error = err instanceof Error ? err.message : "Failed to load orchestrators";
   }
 
-  const projects = getAllProjects();
-
   return (
     <OrchestratorSelector
       orchestrators={orchestrators}
       projectId={projectId}
       projectName={projectName}
-      projects={projects}
       error={error}
     />
   );
