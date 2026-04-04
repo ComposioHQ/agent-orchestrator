@@ -352,19 +352,29 @@ export async function ghRestFallback(args: string[]): Promise<string> {
     throw new Error("ghRestFallback: missing endpoint for `gh api` command");
   }
 
-  // Find the first positional argument (endpoint) — skip flags like --method, -X, etc.
+  // gh api flags that take a value argument — both loops must agree on this set
+  // so that flag values (e.g. ".name" for --jq .name) are not mistaken for the endpoint.
+  const GH_API_FLAGS_WITH_VALUE = new Set(["--method", "-X", "--jq", "-q", "-f", "--field", "--raw-field", "--input"]);
+  // gh api flags that are boolean/standalone
+  const GH_API_FLAGS_BOOLEAN = new Set(["--paginate", "--silent", "--include"]);
+
+  // Find the first positional argument (endpoint) — skip all known value-taking
+  // and boolean flags so their values are not mistaken for the endpoint.
   // Track the index so the flag collection loop below can skip it correctly.
   let endpoint = "";
   let endpointIdx = -1;
   for (let i = 0; i < apiArgs.length; i++) {
     const arg = apiArgs[i];
-    if (arg === "--method" || arg === "-X") {
-      i++; // Skip the method value
+    if (GH_API_FLAGS_WITH_VALUE.has(arg)) {
+      i++; // Skip the flag's value argument
+    } else if (GH_API_FLAGS_BOOLEAN.has(arg)) {
+      // standalone flag — no value to skip
     } else if (!arg.startsWith("-")) {
       endpoint = arg;
       endpointIdx = i;
       break;
     }
+    // Unknown flags starting with "-" are skipped (no value consumed)
   }
   if (!endpoint) {
     throw new Error("ghRestFallback: missing endpoint for `gh api` command");
@@ -398,11 +408,6 @@ export async function ghRestFallback(args: string[]): Promise<string> {
   // because curl doesn't understand them and they have no REST equivalent here.
   const queryParts: string[] = [];
   const curlFlags: string[] = [];
-
-  // gh api flags that take a value argument but should be ignored (not forwarded to curl)
-  const GH_API_FLAGS_WITH_VALUE = new Set(["--jq", "-q", "-f", "--field", "--raw-field", "--input"]);
-  // gh api flags that are boolean/standalone and should be ignored
-  const GH_API_FLAGS_BOOLEAN = new Set(["--paginate", "--silent", "--include"]);
 
   for (let i = 0; i < apiArgs.length; i++) {
     if (i === endpointIdx) continue; // skip the endpoint
