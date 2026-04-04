@@ -756,37 +756,20 @@ async function startDashboard(
 ): Promise<ChildProcess> {
   const env = await buildDashboardEnv(port, configPath, terminalPort, directTerminalPort);
 
-  // Detect dev vs production: the `server/` source directory only exists in the
-  // monorepo. Published npm packages only have `dist-server/`.
-  const isDevMode = existsSync(resolve(webDir, "server"));
-
-  let child: ChildProcess;
-  if (isDevMode) {
-    // Monorepo development: use pnpm run dev (tsx, HMR, etc.)
-    child = spawn("pnpm", ["run", "dev"], {
-      cwd: webDir,
-      stdio: "inherit",
-      detached: false,
-      env,
-    });
-  } else {
-    // Production (installed from npm): use pre-built start-all script
-    child = spawn("node", [resolve(webDir, "dist-server", "start-all.js")], {
-      cwd: webDir,
-      stdio: "inherit",
-      detached: false,
-      env,
-    });
-  }
+  const startScript = resolve(webDir, "dist-server", "start-all.js");
+  const child: ChildProcess = spawn("node", [startScript], {
+    cwd: webDir,
+    stdio: "inherit",
+    detached: false,
+    env,
+  });
 
   child.on("error", (err) => {
-    const cmd = isDevMode ? "pnpm" : "node";
-    const args = isDevMode ? ["run", "dev"] : [resolve(webDir, "dist-server", "start-all.js")];
     const formatted = formatCommandError(err, {
-      cmd,
-      args,
+      cmd: "node",
+      args: [startScript],
       action: "start the AO dashboard",
-      installHints: genericInstallHints(cmd),
+      installHints: genericInstallHints("node"),
     });
     console.error(chalk.red("Dashboard failed to start:"), formatted.message);
     // Emit synthetic exit so callers listening on "exit" can clean up

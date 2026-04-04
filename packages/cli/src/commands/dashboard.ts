@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import chalk from "chalk";
 import type { Command } from "commander";
@@ -60,21 +59,12 @@ export function registerDashboard(program: Command): void {
         config.directTerminalPort,
       );
 
-      // In dev mode (monorepo), use `pnpm run dev` which starts Next.js AND
-      // the terminal WebSocket servers via concurrently. Without the WS servers,
-      // the live terminal in the dashboard won't work.
-      const isDevMode = existsSync(resolve(webDir, "server"));
-      const child = isDevMode
-        ? spawn("pnpm", ["run", "dev"], {
-            cwd: webDir,
-            stdio: ["inherit", "inherit", "pipe"],
-            env,
-          })
-        : spawn("npx", ["next", "dev", "-p", String(port)], {
-            cwd: webDir,
-            stdio: ["inherit", "inherit", "pipe"],
-            env,
-          });
+      const startScript = resolve(webDir, "dist-server", "start-all.js");
+      const child = spawn("node", [startScript, "-p", String(port)], {
+        cwd: webDir,
+        stdio: ["inherit", "inherit", "pipe"],
+        env,
+      });
 
       const stderrChunks: string[] = [];
 
