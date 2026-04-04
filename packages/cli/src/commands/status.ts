@@ -29,6 +29,7 @@ import { getPluginRegistry, getSessionManager } from "../lib/create-session-mana
 interface SessionInfo {
   name: string;
   role: "worker" | "orchestrator";
+  issueUrl: string | null;
   branch: string | null;
   status: string | null;
   summary: string | null;
@@ -72,6 +73,7 @@ async function gatherSessionInfo(
   session: Session,
   agent: Agent,
   scm: SCM,
+  tracker: Tracker | null,
   projectConfig: ReturnType<typeof loadConfig>,
 ): Promise<SessionInfo> {
   const sessionPrefix = projectConfig.projects[session.projectId]?.sessionPrefix ?? session.projectId;
@@ -84,6 +86,7 @@ async function gatherSessionInfo(
   const summary = session.metadata["summary"] ?? null;
   const prUrl = suppressPROwnership ? null : (session.metadata["pr"] ?? null);
   const issue = session.issueId;
+  const issueUrl = issue && tracker ? tracker.issueUrl(issue, projectConfig.projects[session.projectId]) : null;
 
   // Get live branch from worktree if available
   if (session.workspacePath) {
@@ -149,6 +152,7 @@ async function gatherSessionInfo(
   return {
     name: session.id,
     role: isOrchestratorSession(session, sessionPrefix, allSessionPrefixes) ? "orchestrator" : "worker",
+    issueUrl,
     branch,
     status,
     summary,
@@ -168,6 +172,7 @@ async function gatherSessionInfo(
 // Column widths for the table
 const COL = {
   session: 14,
+  issue: 12,
   branch: 24,
   pr: 6,
   ci: 6,
@@ -180,6 +185,7 @@ const COL = {
 function printTableHeader(): void {
   const hdr =
     padCol("Session", COL.session) +
+    padCol("Issue", COL.issue) +
     padCol("Branch", COL.branch) +
     padCol("PR", COL.pr) +
     padCol("CI", COL.ci) +
@@ -189,7 +195,15 @@ function printTableHeader(): void {
     "Age";
   console.log(chalk.dim(`  ${hdr}`));
   const totalWidth =
-    COL.session + COL.branch + COL.pr + COL.ci + COL.review + COL.threads + COL.activity + 3;
+    COL.session +
+    COL.issue +
+    COL.branch +
+    COL.pr +
+    COL.ci +
+    COL.review +
+    COL.threads +
+    COL.activity +
+    3;
   console.log(chalk.dim(`  ${"─".repeat(totalWidth)}`));
 }
 
@@ -198,6 +212,7 @@ function printSessionRow(info: SessionInfo): void {
 
   const row =
     padCol(chalk.green(info.name), COL.session) +
+    padCol(info.issue ? chalk.magenta(info.issue) : chalk.dim("-"), COL.issue) +
     padCol(info.branch ? chalk.cyan(info.branch) : chalk.dim("-"), COL.branch) +
     padCol(info.prNumber ? chalk.blue(prStr) : chalk.dim(prStr), COL.pr) +
     padCol(ciStatusIcon(info.ciStatus), COL.ci) +
@@ -321,6 +336,9 @@ export function registerStatus(program: Command): void {
           const agentName = projectConfig.agent ?? config.defaults.agent;
           const agent = getAgentByNameFromRegistry(registry, agentName);
           const scm = getSCMFromRegistry(registry, config, projectId);
+          const tracker = projectConfig.tracker?.plugin
+            ? registry.get<Tracker>("tracker", projectConfig.tracker.plugin)
+            : null;
 
           if (!opts.json) {
             console.log(header(projectConfig.name || projectId));
@@ -335,7 +353,9 @@ export function registerStatus(program: Command): void {
           }
 
           // Gather all session info in parallel
-          const infoPromises = projectSessions.map((s) => gatherSessionInfo(s, agent, scm, config));
+          const infoPromises = projectSessions.map((s) =>
+            gatherSessionInfo(s, agent, scm, tracker, config),
+          );
           const sessionInfos = await Promise.all(infoPromises);
 
           const orchestrators = sessionInfos.filter((info) => info.role === "orchestrator");

@@ -24,6 +24,7 @@ const {
   mockGetActivityState,
   mockDetectPR,
   mockGetCISummary,
+  mockIssueUrl,
   mockGetReviewDecision,
   mockGetPendingComments,
   mockSessionManager,
@@ -37,6 +38,7 @@ const {
   mockGetActivityState: vi.fn(),
   mockDetectPR: vi.fn(),
   mockGetCISummary: vi.fn(),
+  mockIssueUrl: vi.fn(),
   mockGetReviewDecision: vi.fn(),
   mockGetPendingComments: vi.fn(),
   mockSessionManager: {
@@ -276,6 +278,8 @@ beforeEach(() => {
   mockDetectPR.mockResolvedValue(null);
   mockGetCISummary.mockReset();
   mockGetCISummary.mockResolvedValue("none");
+  mockIssueUrl.mockReset();
+  mockIssueUrl.mockImplementation((issueId: string) => `https://tracker.example/issues/${issueId}`);
   mockGetReviewDecision.mockReset();
   mockGetReviewDecision.mockResolvedValue("none");
   mockGetPendingComments.mockReset();
@@ -426,10 +430,55 @@ describe("status command", () => {
 
     const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
     expect(output).toContain("Session");
+    expect(output).toContain("Issue");
     expect(output).toContain("Branch");
     expect(output).toContain("PR");
     expect(output).toContain("CI");
     expect(output).toContain("Activity");
+  });
+
+  it("shows the issue identifier for worker sessions in the table", async () => {
+    mockConfigRef.current = {
+      ...(mockConfigRef.current as Record<string, unknown>),
+      projects: {
+        "my-app": {
+          name: "My App",
+          repo: "org/my-app",
+          path: join(tmpDir, "main-repo"),
+          defaultBranch: "main",
+          sessionPrefix: "app",
+          tracker: { plugin: "linear" },
+          scm: { plugin: "github" },
+        },
+      },
+    } as Record<string, unknown>;
+
+    writeFileSync(
+      join(sessionsDir, "app-1"),
+      "worktree=/tmp/wt\nbranch=feat/status\nstatus=working\nissue=ENG-1633\n",
+    );
+
+    mockGetPluginRegistry.mockResolvedValue({
+      get: vi.fn((slot: string) => {
+        if (slot === "tracker") {
+          return { issueUrl: mockIssueUrl };
+        }
+        return null;
+      }),
+      list: vi.fn(),
+      register: vi.fn(),
+    });
+    mockTmux.mockImplementation(async (...args: string[]) => {
+      if (args[0] === "list-sessions") return "app-1";
+      if (args[0] === "display-message") return null;
+      return null;
+    });
+    mockGit.mockResolvedValue("feat/status");
+
+    await program.parseAsync(["node", "test", "status"]);
+
+    const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(output).toContain("ENG-1633");
   });
 
   it("shows PR number, CI status, review decision, and threads", async () => {
@@ -579,6 +628,52 @@ describe("status command", () => {
     expect(parsed[0].ciStatus).toBe("passing");
     expect(parsed[0].reviewDecision).toBe("pending");
     expect(parsed[0].pendingThreads).toBe(0);
+  });
+
+  it("includes issueUrl in JSON output when a tracker is configured", async () => {
+    mockConfigRef.current = {
+      ...(mockConfigRef.current as Record<string, unknown>),
+      projects: {
+        "my-app": {
+          name: "My App",
+          repo: "org/my-app",
+          path: join(tmpDir, "main-repo"),
+          defaultBranch: "main",
+          sessionPrefix: "app",
+          tracker: { plugin: "linear" },
+          scm: { plugin: "github" },
+        },
+      },
+    } as Record<string, unknown>;
+
+    writeFileSync(
+      join(sessionsDir, "app-1"),
+      "worktree=/tmp/wt\nbranch=feat/json\nstatus=working\nissue=ENG-1633\n",
+    );
+
+    mockGetPluginRegistry.mockResolvedValue({
+      get: vi.fn((slot: string) => {
+        if (slot === "tracker") {
+          return { issueUrl: mockIssueUrl };
+        }
+        return null;
+      }),
+      list: vi.fn(),
+      register: vi.fn(),
+    });
+    mockTmux.mockImplementation(async (...args: string[]) => {
+      if (args[0] === "list-sessions") return "app-1";
+      if (args[0] === "display-message") return String(Math.floor(Date.now() / 1000));
+      return null;
+    });
+    mockGit.mockResolvedValue("feat/json");
+
+    await program.parseAsync(["node", "test", "status", "--json"]);
+
+    const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
+    const parsed = JSON.parse(jsonCalls);
+    expect(parsed[0].issue).toBe("ENG-1633");
+    expect(parsed[0].issueUrl).toBe("https://tracker.example/issues/ENG-1633");
   });
 
   it("rejects --watch with --json", async () => {
