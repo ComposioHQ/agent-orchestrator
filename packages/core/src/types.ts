@@ -210,11 +210,7 @@ export function isOrchestratorSession(
   if (allSessionPrefixes) {
     for (const prefix of allSessionPrefixes) {
       if (prefix === sessionPrefix) continue;
-      if (
-        new RegExp(
-          `^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-\\d+$`,
-        ).test(session.id)
-      ) {
+      if (new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-\\d+$`).test(session.id)) {
         return false;
       }
     }
@@ -662,7 +658,10 @@ export interface SCM {
    * @param observer - Optional observer for batch operation metrics
    * @returns Map keyed by "${owner}/${repo}#${number}" containing enrichment data
    */
-  enrichSessionsPRBatch?(prs: PRInfo[], observer?: BatchObserver): Promise<Map<string, PREnrichmentData>>;
+  enrichSessionsPRBatch?(
+    prs: PRInfo[],
+    observer?: BatchObserver,
+  ): Promise<Map<string, PREnrichmentData>>;
 }
 
 // --- PR Types ---
@@ -1083,6 +1082,7 @@ export interface DefaultPlugins {
   agent: string;
   workspace: string;
   notifiers: string[];
+  maxConcurrentSessions?: number;
   orchestrator?: {
     agent?: string;
   };
@@ -1142,6 +1142,9 @@ export interface ProjectConfig {
 
   /** Override default workspace */
   workspace?: string;
+
+  /** Maximum number of active non-terminal sessions allowed for this project */
+  maxConcurrentSessions?: number;
 
   /** Issue tracker configuration */
   tracker?: TrackerConfig;

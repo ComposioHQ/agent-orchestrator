@@ -11,7 +11,15 @@
  * Reference: scripts/claude-ao-session, scripts/send-to-session
  */
 
-import { statSync, existsSync, readdirSync, writeFileSync, mkdirSync, utimesSync, unlinkSync } from "node:fs";
+import {
+  statSync,
+  existsSync,
+  readdirSync,
+  writeFileSync,
+  mkdirSync,
+  utimesSync,
+  unlinkSync,
+} from "node:fs";
 import { execFile } from "node:child_process";
 import { basename, join, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -22,6 +30,7 @@ import {
   NON_RESTORABLE_STATUSES,
   SessionNotFoundError,
   SessionNotRestorableError,
+  TERMINAL_STATUSES,
   WorkspaceMissingError,
   type OpenCodeSessionManager,
   type Session,
@@ -297,7 +306,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     // ({prefix}-orchestrator-N) it will rarely exist, and pre-seeding it would
     // cause an unconditional extra readMetadataRaw on every hot-path invocation.
     const canonicalOrchestratorId = `${project.sessionPrefix}-orchestrator`;
-    const orchestratorPattern = new RegExp(`^${escapeRegex(project.sessionPrefix)}-orchestrator-(\\d+)$`);
+    const orchestratorPattern = new RegExp(
+      `^${escapeRegex(project.sessionPrefix)}-orchestrator-(\\d+)$`,
+    );
     const candidateIds = new Set<string>();
     for (const id of listMetadata(sessionsDir)) {
       if (id === canonicalOrchestratorId || orchestratorPattern.test(id)) {
@@ -324,6 +335,18 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     }
 
     return best;
+  }
+
+  function getMaxConcurrentSessions(project: ProjectConfig): number | undefined {
+    return project.maxConcurrentSessions ?? config.defaults.maxConcurrentSessions;
+  }
+
+  function countActiveSessionRecords(project: ProjectConfig): number {
+    return loadActiveSessionRecords(project).filter(({ raw }) => {
+      const status = raw["status"];
+      if (!status) return true;
+      return !TERMINAL_STATUSES.has(status as Session["status"]);
+    }).length;
   }
 
   function normalizePath(path: string): string {
@@ -797,8 +820,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     );
     // After config validation, plugin is always set if tracker/scm exists
     // (either from user config or auto-generated from package/path)
-    const tracker =
-      project.tracker?.plugin ? registry.get<Tracker>("tracker", project.tracker.plugin) : null;
+    const tracker = project.tracker?.plugin
+      ? registry.get<Tracker>("tracker", project.tracker.plugin)
+      : null;
     const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
 
     return { runtime, agent, workspace, tracker, scm };
@@ -987,6 +1011,16 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       throw new Error(
         `Project is paused due to model rate limit until ${pause.until.toISOString()} (${pause.reason}; source: ${pause.sourceSessionId})`,
       );
+    }
+
+    const maxConcurrentSessions = getMaxConcurrentSessions(project);
+    if (maxConcurrentSessions !== undefined) {
+      const activeSessionCount = countActiveSessionRecords(project);
+      if (activeSessionCount >= maxConcurrentSessions) {
+        throw new Error(
+          `Cannot spawn session for ${spawnConfig.projectId}: maxConcurrentSessions=${maxConcurrentSessions} reached (${activeSessionCount} active sessions). Wait for a session to finish or raise the limit.`,
+        );
+      }
     }
 
     const selection = resolveAgentSelection({
@@ -1493,7 +1527,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           AO_CALLER_TYPE: "orchestrator",
           AO_PROJECT_ID: orchestratorConfig.projectId,
           AO_CONFIG_PATH: config.configPath,
-          ...(config.port !== undefined && config.port !== null && { AO_PORT: String(config.port) }),
+          ...(config.port !== undefined &&
+            config.port !== null && { AO_PORT: String(config.port) }),
         },
       });
     } catch (err) {
@@ -2227,7 +2262,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
     );
 
     for (const { sessionName, raw: otherRaw } of activeRecords) {
-      if (!otherRaw || isOrchestratorSessionRecord(sessionName, otherRaw, project.sessionPrefix)) continue;
+      if (!otherRaw || isOrchestratorSessionRecord(sessionName, otherRaw, project.sessionPrefix))
+        continue;
 
       const samePr = otherRaw["pr"] === pr.url;
       const sameBranch =

@@ -46,7 +46,11 @@ Your role is to coordinate and manage worker agent sessions. You do NOT write co
 - **Default Branch**: ${project.defaultBranch}
 - **Session Prefix**: ${project.sessionPrefix}
 - **Local Path**: ${project.path}
-- **Dashboard Port**: ${config.port ?? 3000}`);
+- **Dashboard Port**: ${config.port ?? 3000}${
+    (project.maxConcurrentSessions ?? config.defaults.maxConcurrentSessions)
+      ? `\n- **Max Concurrent Sessions**: ${project.maxConcurrentSessions ?? config.defaults.maxConcurrentSessions}`
+      : ""
+  }`);
 
   // Quick Start
   sections.push(`## Quick Start
@@ -220,7 +224,7 @@ When an agent needs human judgment:
   // Tips
   sections.push(`## Tips
 
-1. **Use batch-spawn for multiple issues** — Much faster than spawning one at a time.
+1. **Use batch-spawn for multiple issues** — It's faster than spawning one at a time, but respect the configured session cap.
 
 2. **Check status before spawning** — Avoid creating duplicate sessions for issues already being worked on.
 

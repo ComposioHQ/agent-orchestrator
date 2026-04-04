@@ -82,6 +82,14 @@ async function runSpawnPreflight(
   }
 }
 
+function resolveMaxConcurrentSessions(
+  config: OrchestratorConfig,
+  projectId: string,
+): number | undefined {
+  const project = config.projects[projectId];
+  return project?.maxConcurrentSessions ?? config.defaults.maxConcurrentSessions;
+}
+
 async function spawnSession(
   config: OrchestratorConfig,
   projectId: string,
@@ -344,25 +352,29 @@ export function registerBatchSpawn(program: Command): void {
 
       const sm = await getSessionManager(config);
       const created: Array<{ session: string; issue: string }> = [];
-      const skipped: Array<{ issue: string; existing: string }> = [];
+      const skipped: Array<{ issue: string; reason: string }> = [];
       const failed: Array<{ issue: string; error: string }> = [];
       const spawnedIssues = new Set<string>();
+      const maxConcurrentSessions = resolveMaxConcurrentSessions(config, projectId);
 
       // Load existing sessions once before the loop to avoid repeated reads + enrichment.
       // Exclude terminal sessions so completed/merged sessions don't block respawning
       // (e.g. when an issue is reopened after its PR was merged).
       const existingSessions = await sm.list(projectId);
+      let activeSessionCount = existingSessions.filter(
+        (s) => !TERMINAL_STATUSES.has(s.status),
+      ).length;
       const existingIssueMap = new Map(
         existingSessions
           .filter((s) => s.issueId && !TERMINAL_STATUSES.has(s.status))
           .map((s) => [s.issueId!.toLowerCase(), s.id]),
       );
 
-      for (const issue of issues) {
+      for (const [index, issue] of issues.entries()) {
         // Duplicate detection — check both existing sessions and same-run duplicates
         if (spawnedIssues.has(issue.toLowerCase())) {
           console.log(chalk.yellow(`  Skip ${issue} — duplicate in this batch`));
-          skipped.push({ issue, existing: "(this batch)" });
+          skipped.push({ issue, reason: "duplicate in this batch" });
           continue;
         }
 
@@ -370,14 +382,24 @@ export function registerBatchSpawn(program: Command): void {
         const existingSessionId = existingIssueMap.get(issue.toLowerCase());
         if (existingSessionId) {
           console.log(chalk.yellow(`  Skip ${issue} — already has session ${existingSessionId}`));
-          skipped.push({ issue, existing: existingSessionId });
+          skipped.push({ issue, reason: `already has session ${existingSessionId}` });
           continue;
+        }
+
+        if (maxConcurrentSessions !== undefined && activeSessionCount >= maxConcurrentSessions) {
+          const reason = `maxConcurrentSessions=${maxConcurrentSessions} reached (${activeSessionCount} active sessions)`;
+          for (const remainingIssue of issues.slice(index)) {
+            console.log(chalk.yellow(`  Skip ${remainingIssue} — ${reason}`));
+            skipped.push({ issue: remainingIssue, reason });
+          }
+          break;
         }
 
         try {
           const session = await sm.spawn({ projectId, issueId: issue });
           created.push({ session: session.id, issue });
           spawnedIssues.add(issue.toLowerCase());
+          activeSessionCount += 1;
           console.log(chalk.green(`  Created ${session.id} for ${issue}`));
 
           if (opts.open) {
@@ -406,7 +428,7 @@ export function registerBatchSpawn(program: Command): void {
       }
       if (skipped.length > 0) {
         console.log(chalk.yellow(`Skipped ${skipped.length} issues:`));
-        for (const item of skipped) console.log(`  ${item.issue} (existing: ${item.existing})`);
+        for (const item of skipped) console.log(`  ${item.issue} (${item.reason})`);
       }
       if (failed.length > 0) {
         console.log(chalk.red(`Failed ${failed.length} issues:`));
