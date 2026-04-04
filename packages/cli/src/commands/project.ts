@@ -22,6 +22,9 @@ import {
   loadLocalProjectConfig,
   syncShadow,
   findProjectByPath,
+  findGlobalConfigPath,
+  buildEffectiveConfig,
+  applyGlobalConfigPipeline,
   loadConfig,
   generateSessionPrefix,
   generateProjectId,
@@ -145,6 +148,12 @@ export function registerProjectCommand(program: Command): void {
             saveShadowFile(projectId, { repo: "", defaultBranch: "main" });
           }
         }
+
+        // Validate before persisting — catches session prefix collisions between
+        // newly registered project and existing ones, same as resolveMultiProjectStart.
+        const globalPath = findGlobalConfigPath();
+        const built = buildEffectiveConfig(globalConfig, globalPath);
+        applyGlobalConfigPipeline(built); // throws on prefix collision
 
         saveGlobalConfig(globalConfig);
 

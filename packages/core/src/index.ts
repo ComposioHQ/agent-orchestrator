@@ -16,6 +16,7 @@ export {
   getDefaultConfig,
   findConfig,
   findConfigFile,
+  applyGlobalConfigPipeline,
 } from "./config.js";
 
 // Global config — multi-project registry, shadow sync, mode detection
