@@ -15,6 +15,7 @@ import {
   SESSION_STATUS,
   PR_STATE,
   CI_STATUS,
+  TERMINAL_STATUSES,
   type LifecycleManager,
   type SessionManager,
   type SessionId,
@@ -301,7 +302,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         const [owner, repo] = p.repo.split("/");
         return owner === pr.owner && repo === pr.repo;
       });
-      if (!project?.scm) continue;
+      if (!project?.scm?.plugin) continue;
 
       const pluginKey = project.scm.plugin;
       if (!prsByPlugin.has(pluginKey)) {
@@ -407,13 +408,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     if (!project) return session.status;
 
     const agentName = resolveAgentSelection({
-      role: resolveSessionRole(session.id, session.metadata),
+      role: resolveSessionRole(session.id, session.metadata, project.sessionPrefix),
       project,
       defaults: config.defaults,
       persistedAgent: session.metadata["agent"],
     }).agentName;
     const agent = registry.get<Agent>("agent", agentName);
-    const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
 
     // Track activity state across steps so stuck detection can run after PR checks
     let detectedIdleTimestamp: Date | null = null;
@@ -788,13 +789,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const project = config.projects[session.projectId];
     if (!project || !session.pr) return;
 
-    const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
     if (!scm) return;
 
     const humanReactionKey = "changes-requested";
     const automatedReactionKey = "bugbot-comments";
 
-    if (newStatus === "merged" || newStatus === "killed") {
+    if (TERMINAL_STATUSES.has(newStatus)) {
       clearReactionTracker(session.id, humanReactionKey);
       clearReactionTracker(session.id, automatedReactionKey);
       updateSessionMetadata(session, {
@@ -959,7 +960,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const project = config.projects[session.projectId];
     if (!project || !session.pr) return;
 
-    const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
     if (!scm) return;
 
     const ciReactionKey = "ci-failed";
@@ -1078,7 +1079,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const project = config.projects[session.projectId];
     if (!project || !session.pr) return;
 
-    const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+    const scm = project.scm?.plugin ? registry.get<SCM>("scm", project.scm.plugin) : null;
     if (!scm) return;
 
     const conflictReactionKey = "merge-conflicts";
@@ -1211,7 +1212,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       });
 
       // Reset allCompleteEmitted when any session becomes active again
-      if (newStatus !== "merged" && newStatus !== "killed") {
+      if (!TERMINAL_STATUSES.has(newStatus)) {
         allCompleteEmitted = false;
       }
 
@@ -1322,7 +1323,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
 
       // Check if all sessions are complete (trigger reaction only once)
-      const activeSessions = sessions.filter((s) => s.status !== "merged" && s.status !== "killed");
+      const activeSessions = sessions.filter((s) => !TERMINAL_STATUSES.has(s.status));
       if (sessions.length > 0 && activeSessions.length === 0 && !allCompleteEmitted) {
         allCompleteEmitted = true;
 

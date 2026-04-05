@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: projectErr }, { status: 404 });
     }
     const project = config.projects[projectId];
-    if (!project.tracker) {
+    if (!project.tracker?.plugin) {
       return NextResponse.json({ error: `Project ${projectId} has no tracker` }, { status: 422 });
     }
 
