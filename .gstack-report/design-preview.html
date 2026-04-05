@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Orchestrator — Warm Terminal Component Library</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg-base: #121110; --bg-surface: #1a1918; --bg-elevated: #222120;
+    --bg-elevated-hover: #2a2928; --bg-subtle: rgba(255, 240, 220, 0.04);
+    --text-primary: #f0ece8; --text-secondary: #a8a29e; --text-tertiary: #78716c;
+    --accent: #8b9cf7; --accent-hover: #a3b1fa; --accent-tint: rgba(139, 156, 247, 0.12);
+    --status-working: #22c55e; --status-attention: #e2a336;
+    --status-error: #ef4444; --status-review: #06b6d4; --status-done: #57534e;
+    --border-subtle: rgba(255, 240, 220, 0.06);
+    --border-default: rgba(255, 240, 220, 0.10);
+    --border-strong: rgba(255, 240, 220, 0.18);
+    --font-sans: 'Geist', -apple-system, sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+  }
+  :root.light {
+    --bg-base: #f5f3f0; --bg-surface: #ffffff; --bg-elevated: #ffffff;
+    --bg-elevated-hover: #f7f5f2; --bg-subtle: rgba(120, 100, 80, 0.05);
+    --text-primary: #1c1917; --text-secondary: #57534e; --text-tertiary: #736e6b;
+    --accent: #5c64b5; --accent-hover: #4e55a3; --accent-tint: rgba(92, 100, 181, 0.08);
+    --status-working: #16a34a; --status-attention: #b8860b;
+    --status-error: #dc2626; --status-review: #0891b2; --status-done: #d6d3d1;
+    --border-subtle: rgba(28, 25, 23, 0.06);
+    --border-default: rgba(28, 25, 23, 0.12);
+    --border-strong: rgba(28, 25, 23, 0.20);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: var(--font-sans); background: var(--bg-base); color: var(--text-primary); line-height: 1.5; -webkit-font-smoothing: antialiased; }
+
+  .header { position: sticky; top: 0; z-index: 50; display: flex; align-items: center; justify-content: space-between; padding: 12px 32px; border-bottom: 1px solid var(--border-subtle); background: var(--bg-surface); backdrop-filter: blur(12px); }
+  .header h1 { font-family: var(--font-mono); font-size: 14px; font-weight: 500; letter-spacing: -0.02em; color: var(--accent); }
+  .header-actions { display: flex; gap: 8px; align-items: center; }
+  .theme-toggle { background: var(--bg-elevated); border: 1px solid var(--border-default); color: var(--text-secondary); padding: 6px 14px; font-size: 12px; cursor: pointer; font-family: var(--font-sans); transition: background 0.15s ease-out; }
+  .theme-toggle:hover { background: var(--bg-elevated-hover); color: var(--text-primary); }
+
+  .container { max-width: 1200px; margin: 0 auto; padding: 48px 32px; }
+  section { margin-bottom: 72px; }
+  .section-label { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-tertiary); margin-bottom: 20px; border-bottom: 1px solid var(--border-subtle); padding-bottom: 8px; }
+  .subsection { margin-bottom: 28px; }
+  .subsection-label { font-size: 12px; font-weight: 500; color: var(--text-secondary); margin-bottom: 10px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px; }
+  .grid-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 16px; }
+  .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .gap-8 { gap: 8px; }
+  .mb-12 { margin-bottom: 12px; }
+  .mb-16 { margin-bottom: 16px; }
+  .mb-24 { margin-bottom: 24px; }
+  @media (max-width: 900px) { .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; } }
+
+  /* ── Hero ──────────────────────────────── */
+  .hero-title { font-family: var(--font-mono); font-size: clamp(28px, 4vw, 48px); font-weight: 500; letter-spacing: -0.03em; line-height: 1.1; margin-bottom: 12px; }
+  .hero-accent { color: var(--accent); }
+  .hero-sub { font-size: 14px; color: var(--text-secondary); max-width: 480px; }
+
+  /* ── Buttons ───────────────────────────── */
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 16px; min-height: 36px; font-family: var(--font-sans); font-size: 13px; font-weight: 500; border: 1px solid transparent; cursor: pointer; transition: background 0.12s ease-out, border-color 0.12s ease-out, opacity 0.12s; }
+  .btn:active { transform: scale(0.97); }
+  .btn-primary { background: var(--accent); color: #121110; border-color: var(--accent); }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-secondary { background: var(--bg-elevated); color: var(--text-primary); border-color: var(--border-default); }
+  .btn-secondary:hover { background: var(--bg-elevated-hover); border-color: var(--border-strong); }
+  .btn-ghost { background: transparent; color: var(--text-secondary); }
+  .btn-ghost:hover { background: var(--bg-subtle); color: var(--text-primary); }
+  .btn-danger { background: transparent; color: var(--status-error); border-color: rgba(239,68,68,0.3); }
+  .btn-danger:hover { background: rgba(239,68,68,0.08); border-color: var(--status-error); }
+  .btn-sm { padding: 4px 10px; min-height: 28px; font-size: 12px; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
+
+  /* ── Icon Buttons ──────────────────────── */
+  .icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border: 1px solid transparent; background: transparent; color: var(--text-tertiary); cursor: pointer; transition: background 0.12s, color 0.12s, border-color 0.12s; }
+  .icon-btn:hover { background: var(--bg-subtle); color: var(--text-primary); }
+  .icon-btn:active { transform: scale(0.95); }
+  .icon-btn--bordered { border-color: var(--border-default); background: var(--bg-elevated); }
+  .icon-btn--bordered:hover { background: var(--bg-elevated-hover); border-color: var(--border-strong); }
+  .icon-btn--sm { width: 32px; height: 32px; }
+  .icon-btn--danger:hover { color: var(--status-error); background: rgba(239,68,68,0.08); }
+  .icon-btn--active { color: var(--accent); background: var(--accent-tint); }
+  .icon-btn:disabled { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
+  .icon-btn svg { width: 16px; height: 16px; }
+
+  /* ── Inputs ────────────────────────────── */
+  .input-group { display: flex; flex-direction: column; gap: 5px; margin-bottom: 16px; }
+  .input-label { font-size: 12px; font-weight: 500; color: var(--text-secondary); }
+  .input { background: var(--bg-base); border: 1px solid var(--border-default); padding: 8px 12px; font-family: var(--font-sans); font-size: 13px; color: var(--text-primary); width: 100%; outline: none; transition: border-color 0.12s; }
+  .input::placeholder { color: var(--text-tertiary); }
+  .input:focus { border-color: var(--accent); }
+  .input--error { border-color: var(--status-error); }
+  .input:disabled { opacity: 0.5; cursor: not-allowed; background: var(--bg-subtle); }
+  .input-hint { font-size: 11px; color: var(--text-tertiary); }
+  .input-error { font-size: 11px; color: var(--status-error); }
+  .input-row { display: flex; gap: 8px; }
+  .input-row .input { flex: 1; }
+  .textarea { background: var(--bg-base); border: 1px solid var(--border-default); padding: 8px 12px; font-family: var(--font-sans); font-size: 13px; color: var(--text-primary); width: 100%; outline: none; resize: vertical; min-height: 80px; transition: border-color 0.12s; }
+  .textarea:focus { border-color: var(--accent); }
+  .textarea::placeholder { color: var(--text-tertiary); }
+  .select { appearance: none; background: var(--bg-base) url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%2378716c' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 12px center; border: 1px solid var(--border-default); padding: 8px 32px 8px 12px; font-family: var(--font-sans); font-size: 13px; color: var(--text-primary); outline: none; cursor: pointer; width: 100%; }
+  .select:focus { border-color: var(--accent); }
+
+  /* ── Toggle + Checkbox + Radio ─────────── */
+  .toggle-row { display: flex; align-items: center; gap: 10px; }
+  .toggle { position: relative; width: 36px; height: 20px; background: var(--border-strong); border: none; cursor: pointer; transition: background 0.15s; }
+  .toggle::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; background: var(--text-primary); transition: transform 0.15s; }
+  .toggle.on { background: var(--accent); }
+  .toggle.on::after { transform: translateX(16px); }
+  .check-row { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  .checkbox { width: 16px; height: 16px; border: 1px solid var(--border-strong); background: var(--bg-base); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .checkbox.checked { background: var(--accent); border-color: var(--accent); }
+  .checkbox.checked::after { content: '✓'; color: #121110; font-size: 11px; font-weight: 700; }
+  .radio { width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--border-strong); background: var(--bg-base); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .radio.checked { border-color: var(--accent); }
+  .radio.checked::after { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+  .control-label { font-size: 13px; color: var(--text-secondary); }
+
+  /* ── Status indicators ─────────────────── */
+  .status-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; font-size: 11px; font-weight: 600; background: var(--bg-subtle); color: var(--text-secondary); }
+  .status-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .badge { display: inline-flex; align-items: center; padding: 2px 8px; font-size: 10px; font-weight: 600; font-family: var(--font-mono); letter-spacing: 0.02em; text-transform: uppercase; }
+  .badge-success { background: rgba(34,197,94,0.12); color: var(--status-working); }
+  .badge-warning { background: rgba(226,163,54,0.12); color: var(--status-attention); }
+  .badge-error { background: rgba(239,68,68,0.12); color: var(--status-error); }
+  .badge-info { background: rgba(6,182,212,0.12); color: var(--status-review); }
+  .badge-neutral { background: var(--bg-subtle); color: var(--text-tertiary); }
+  .count-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; font-size: 10px; font-weight: 700; font-family: var(--font-mono); background: var(--accent); color: #121110; }
+
+  /* ── Avatar ─────────────────────────────── */
+  .avatar { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; background: var(--accent-tint); color: var(--accent); font-size: 13px; font-weight: 600; border-radius: 50%; flex-shrink: 0; }
+  .avatar--sm { width: 24px; height: 24px; font-size: 10px; }
+  .avatar--lg { width: 40px; height: 40px; font-size: 16px; }
+  .avatar-row { display: flex; align-items: center; gap: 10px; }
+
+  /* ── Breadcrumbs ────────────────────────── */
+  .breadcrumbs { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+  .breadcrumb { color: var(--text-tertiary); cursor: pointer; }
+  .breadcrumb:hover { color: var(--accent); }
+  .breadcrumb--active { color: var(--text-primary); cursor: default; }
+  .breadcrumb-sep { color: var(--text-tertiary); }
+
+  /* ── Tabs ───────────────────────────────── */
+  .tabs { display: flex; border-bottom: 1px solid var(--border-subtle); }
+  .tab { padding: 8px 16px; font-size: 13px; font-weight: 500; color: var(--text-tertiary); cursor: pointer; border-bottom: 2px solid transparent; transition: color 0.12s, border-color 0.12s; }
+  .tab:hover { color: var(--text-secondary); }
+  .tab--active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* ── Accordion ─────────────────────────── */
+  .accordion { border: 1px solid var(--border-default); }
+  .accordion-item { border-bottom: 1px solid var(--border-subtle); }
+  .accordion-item:last-child { border-bottom: none; }
+  .accordion-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; cursor: pointer; transition: background 0.12s; }
+  .accordion-header:hover { background: var(--bg-subtle); }
+  .accordion-header-left { display: flex; align-items: center; gap: 10px; }
+  .accordion-title { font-size: 14px; font-weight: 600; }
+  .accordion-count { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
+  .accordion-chevron { color: var(--text-tertiary); font-size: 12px; transition: transform 0.15s; }
+  .accordion-chevron.open { transform: rotate(90deg); }
+  .accordion-body { padding: 0 16px 16px; }
+  .accordion-body--collapsed { display: none; }
+
+  /* ── Cards ──────────────────────────────── */
+  .card { background: var(--bg-surface); border: 1px solid var(--border-default); padding: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.03); }
+  .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .card-title { font-size: 13px; font-weight: 600; }
+  .card-body { font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
+
+  /* ── Session card ──────────────────────── */
+  .session-card { background: var(--bg-surface); border: 1px solid var(--border-default); padding: 10px 12px; border-left: 2px solid transparent; box-shadow: inset 0 1px 0 rgba(255,255,255,0.03); transition: background 0.12s; cursor: pointer; }
+  .session-card:hover { background: var(--bg-elevated-hover); }
+  .session-card-title { font-size: 12px; font-weight: 500; margin-bottom: 4px; }
+  .session-card-meta { font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary); }
+  .session-card-status { display: inline-flex; align-items: center; gap: 4px; margin-top: 6px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+  .session-card-actions { display: flex; gap: 6px; margin-top: 8px; }
+
+  /* ── Alerts ─────────────────────────────── */
+  .alert { padding: 12px 16px; font-size: 13px; border-left: 2px solid; display: flex; align-items: flex-start; gap: 8px; }
+  .alert-success { background: rgba(34,197,94,0.06); border-color: var(--status-working); color: var(--status-working); }
+  .alert-warning { background: rgba(226,163,54,0.06); border-color: var(--status-attention); color: var(--status-attention); }
+  .alert-error { background: rgba(239,68,68,0.06); border-color: var(--status-error); color: var(--status-error); }
+  .alert-info { background: rgba(6,182,212,0.06); border-color: var(--status-review); color: var(--status-review); }
+
+  /* ── Toast ──────────────────────────────── */
+  .toast { display: flex; align-items: center; gap: 10px; padding: 10px 16px; background: var(--bg-elevated); border: 1px solid var(--border-default); box-shadow: 0 8px 24px rgba(0,0,0,0.4); font-size: 13px; max-width: 360px; }
+  .toast-icon { flex-shrink: 0; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+  .toast-dismiss { margin-left: auto; color: var(--text-tertiary); cursor: pointer; font-size: 14px; }
+
+  /* ── Tooltip ────────────────────────────── */
+  .tooltip-demo { position: relative; display: inline-block; }
+  .tooltip-bubble { position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); padding: 6px 10px; background: var(--bg-elevated); border: 1px solid var(--border-default); font-size: 11px; color: var(--text-secondary); white-space: nowrap; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+
+  /* ── Dropdown ───────────────────────────── */
+  .dropdown { background: var(--bg-elevated); border: 1px solid var(--border-default); box-shadow: 0 8px 24px rgba(0,0,0,0.4); padding: 4px 0; min-width: 180px; }
+  .dropdown-item { display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 13px; color: var(--text-secondary); cursor: pointer; transition: background 0.08s; }
+  .dropdown-item:hover { background: var(--bg-subtle); color: var(--text-primary); }
+  .dropdown-item--danger:hover { color: var(--status-error); }
+  .dropdown-divider { height: 1px; background: var(--border-subtle); margin: 4px 0; }
+  .dropdown-item-shortcut { margin-left: auto; font-size: 11px; color: var(--text-tertiary); font-family: var(--font-mono); }
+
+  /* ── Modal ──────────────────────────────── */
+  .modal-backdrop { background: rgba(0,0,0,0.5); padding: 40px; display: flex; justify-content: center; align-items: flex-start; }
+  .modal { background: var(--bg-elevated); border: 1px solid var(--border-default); padding: 24px; max-width: 420px; width: 100%; box-shadow: 0 16px 48px rgba(0,0,0,0.5); }
+  .modal-title { font-family: var(--font-mono); font-size: 16px; font-weight: 500; margin-bottom: 8px; }
+  .modal-body { font-size: 13px; color: var(--text-secondary); margin-bottom: 20px; line-height: 1.5; }
+  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+  /* ── Skeleton ───────────────────────────── */
+  @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+  .skeleton { background: linear-gradient(90deg, var(--bg-subtle) 25%, var(--bg-elevated) 50%, var(--bg-subtle) 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; }
+  .skeleton-line { height: 12px; margin-bottom: 8px; }
+  .skeleton-line--short { width: 60%; }
+  .skeleton-line--medium { width: 80%; }
+  .skeleton-block { height: 80px; }
+
+  /* ── Progress ──────────────────────────── */
+  .progress-bar { height: 4px; background: var(--bg-subtle); width: 100%; overflow: hidden; }
+  .progress-fill { height: 100%; background: var(--accent); transition: width 0.3s; }
+  .progress-fill--success { background: var(--status-working); }
+  .progress-fill--error { background: var(--status-error); }
+
+  /* ── Kbd / Shortcut ────────────────────── */
+  .kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; padding: 0 6px; font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); background: var(--bg-elevated); border: 1px solid var(--border-default); box-shadow: 0 1px 0 var(--border-default); }
+
+  /* ── Connection bar ────────────────────── */
+  .connection-bar { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 8px 16px; font-size: 12px; font-weight: 500; }
+  .connection-bar--connected { background: rgba(34,197,94,0.08); color: var(--status-working); }
+  .connection-bar--reconnecting { background: rgba(226,163,54,0.08); color: var(--status-attention); }
+  .connection-bar--disconnected { background: rgba(239,68,68,0.12); color: var(--status-error); cursor: pointer; }
+
+  /* ── Sidebar nav ───────────────────────── */
+  .sidebar-demo { width: 220px; background: var(--bg-surface); border: 1px solid var(--border-subtle); }
+  .sidebar-section { padding: 12px; }
+  .sidebar-heading { font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-tertiary); margin-bottom: 8px; }
+  .sidebar-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; font-size: 12px; color: var(--text-secondary); cursor: pointer; transition: background 0.1s; }
+  .sidebar-item:hover { background: var(--bg-subtle); }
+  .sidebar-item--active { color: var(--accent); background: var(--accent-tint); }
+  .sidebar-item-count { margin-left: auto; font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary); }
+  .sidebar-divider { height: 1px; background: var(--border-subtle); margin: 4px 12px; }
+
+  /* ── Empty state ───────────────────────── */
+  .empty-state { border: 1px dashed var(--border-default); padding: 32px; text-align: center; }
+  .empty-state-text { font-size: 13px; color: var(--text-tertiary); margin-bottom: 12px; }
+
+  /* ── Data table ────────────────────────── */
+  .data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .data-table th { text-align: left; font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-tertiary); padding: 8px 12px; border-bottom: 1px solid var(--border-default); }
+  .data-table td { padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); color: var(--text-secondary); }
+  .data-table td.mono { font-family: var(--font-mono); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .data-table tr:hover td { background: var(--bg-subtle); }
+
+  /* ── Quick reply ────────────────────────── */
+  .quick-reply { display: flex; gap: 8px; padding: 12px; background: var(--bg-surface); border: 1px solid var(--border-default); }
+  .quick-reply .input { flex: 1; border: none; background: transparent; padding: 4px 0; }
+  .quick-reply .input:focus { border: none; }
+
+  /* ── Terminal ───────────────────────────── */
+  .terminal { background: var(--bg-base); border: 1px solid var(--border-default); padding: 16px; font-family: var(--font-mono); font-size: 12px; line-height: 1.7; color: var(--text-tertiary); overflow-x: auto; }
+  .t-prompt { color: var(--status-working); }
+  .t-cmd { color: var(--text-primary); }
+  .t-accent { color: var(--accent); }
+  .t-ok { color: var(--status-working); }
+  .t-err { color: var(--status-error); }
+  .t-warn { color: var(--status-attention); }
+
+  /* ── Mobile bottom nav ─────────────────── */
+  .mobile-nav { display: flex; background: var(--bg-surface); border: 1px solid var(--border-subtle); }
+  .mobile-nav-item { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 4px; font-size: 10px; font-weight: 600; color: var(--text-tertiary); cursor: pointer; transition: color 0.12s; border-top: 2px solid transparent; }
+  .mobile-nav-item:hover { color: var(--text-secondary); }
+  .mobile-nav-item--active { color: var(--accent); border-top-color: var(--accent); }
+  .mobile-nav-item svg { width: 18px; height: 18px; }
+
+  /* ── Dashboard mock ────────────────────── */
+  .dashboard-mock { border: 1px solid var(--border-subtle); overflow: hidden; background: var(--bg-base); }
+  .dash-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; border-bottom: 1px solid var(--border-subtle); background: var(--bg-surface); }
+  .dash-title { font-family: var(--font-mono); font-size: clamp(18px, 2.5vw, 24px); font-weight: 500; letter-spacing: -0.02em; }
+  .dash-stats { display: flex; gap: 16px; font-size: 12px; color: var(--text-tertiary); }
+  .dash-stat-value { font-family: var(--font-mono); color: var(--text-secondary); }
+  .dash-body { display: flex; min-height: 320px; }
+  .dash-sidebar { width: 180px; border-right: 1px solid var(--border-subtle); padding: 12px; flex-shrink: 0; }
+  .dash-kanban { flex: 1; display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--border-subtle); padding: 1px; }
+  .dash-column { background: var(--bg-base); padding: 12px; min-width: 0; }
+  .dash-col-header { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .dash-col-title { font-size: 13px; font-weight: 600; }
+  .dash-col-count { font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary); background: var(--bg-subtle); padding: 1px 6px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>agent-orchestrator</h1>
+  <div class="header-actions">
+    <button class="icon-btn" title="Notifications"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg></button>
+    <div class="avatar avatar--sm">A</div>
+    <button class="theme-toggle" onclick="document.documentElement.classList.toggle('light'); this.textContent = document.documentElement.classList.contains('light') ? 'Dark mode' : 'Light mode'">Light mode</button>
+  </div>
+</div>
+
+<div class="container">
+
+  <section>
+    <h2 class="hero-title">Warm Terminal<br><span class="hero-accent">Component Library</span></h2>
+    <p class="hero-sub">Zero border-radius. Warm charcoal. Hard edges. Every component.</p>
+  </section>
+
+  <!-- ═══ BUTTONS ═══ -->
+  <section>
+    <div class="section-label">Buttons</div>
+    <div class="subsection"><div class="subsection-label">Default</div><div class="row mb-12"><button class="btn btn-primary">Spawn Agent</button><button class="btn btn-secondary">View PR</button><button class="btn btn-ghost">Skip</button><button class="btn btn-danger">Terminate</button></div></div>
+    <div class="subsection"><div class="subsection-label">Small</div><div class="row mb-12"><button class="btn btn-primary btn-sm">Merge</button><button class="btn btn-secondary btn-sm">Continue</button><button class="btn btn-ghost btn-sm">Abort</button><button class="btn btn-danger btn-sm">Kill</button></div></div>
+    <div class="subsection"><div class="subsection-label">Disabled</div><div class="row mb-12"><button class="btn btn-primary" disabled>Spawn Agent</button><button class="btn btn-secondary" disabled>View PR</button></div></div>
+    <div class="subsection"><div class="subsection-label">With icon</div><div class="row"><button class="btn btn-primary"><svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Spawn Agent</button><button class="btn btn-secondary"><svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>Open PR</button></div></div>
+  </section>
+
+  <!-- ═══ ICON BUTTONS ═══ -->
+  <section>
+    <div class="section-label">Icon Buttons</div>
+    <div class="subsection"><div class="subsection-label">Default (44px touch target)</div>
+      <div class="row mb-16">
+        <button class="icon-btn" title="Filter"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></button>
+        <button class="icon-btn" title="Add"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+        <button class="icon-btn" title="Settings"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg></button>
+        <button class="icon-btn" title="Refresh"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg></button>
+        <button class="icon-btn icon-btn--danger" title="Delete"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg></button>
+        <button class="icon-btn icon-btn--active" title="Active"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+        <button class="icon-btn" disabled title="Disabled"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+      </div>
+    </div>
+    <div class="subsection"><div class="subsection-label">Bordered</div>
+      <div class="row mb-16">
+        <button class="icon-btn icon-btn--bordered" title="Expand"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg></button>
+        <button class="icon-btn icon-btn--bordered" title="Collapse sidebar"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="0"/><line x1="9" y1="3" x2="9" y2="21"/></svg></button>
+        <button class="icon-btn icon-btn--bordered" title="More"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg></button>
+      </div>
+    </div>
+    <div class="subsection"><div class="subsection-label">Small (32px)</div>
+      <div class="row">
+        <button class="icon-btn icon-btn--sm" title="Close"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        <button class="icon-btn icon-btn--sm" title="Chevron"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></button>
+        <button class="icon-btn icon-btn--sm" title="Copy"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="0"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ FORM CONTROLS ═══ -->
+  <section>
+    <div class="section-label">Form Controls</div>
+    <div class="grid-2">
+      <div>
+        <div class="input-group"><label class="input-label">Agent reply</label><input class="input" type="text" placeholder="Type a reply to the agent..."><span class="input-hint">Press Enter to send</span></div>
+        <div class="input-group"><label class="input-label">Branch name (error)</label><input class="input input--error" type="text" value="feat/my branch"><span class="input-error">Branch names cannot contain spaces</span></div>
+        <div class="input-group"><label class="input-label">Disabled</label><input class="input" type="text" value="Read-only value" disabled></div>
+        <div class="input-group"><label class="input-label">Textarea</label><textarea class="textarea" placeholder="Describe what the agent should do..."></textarea></div>
+      </div>
+      <div>
+        <div class="input-group"><label class="input-label">Agent</label><select class="select"><option>claude-code</option><option>codex</option><option>aider</option><option>opencode</option></select></div>
+        <div class="input-group"><label class="input-label">Search + Button</label><div class="input-row"><input class="input" type="text" placeholder="Search sessions..."><button class="btn btn-secondary">Search</button></div></div>
+        <div class="input-group" style="margin-top:16px">
+          <div class="subsection-label">Toggles</div>
+          <div class="toggle-row mb-12"><button class="toggle on" onclick="this.classList.toggle('on')"></button><span class="control-label">Auto-merge when CI passes</span></div>
+          <div class="toggle-row mb-12"><button class="toggle" onclick="this.classList.toggle('on')"></button><span class="control-label">Desktop notifications</span></div>
+          <div class="subsection-label" style="margin-top:16px">Checkboxes</div>
+          <div class="check-row mb-12"><div class="checkbox checked"></div><span class="control-label">Run tests before merge</span></div>
+          <div class="check-row mb-12"><div class="checkbox"></div><span class="control-label">Auto-assign reviewers</span></div>
+          <div class="subsection-label" style="margin-top:16px">Radios</div>
+          <div class="check-row mb-12"><div class="radio checked"></div><span class="control-label">claude-code</span></div>
+          <div class="check-row mb-12"><div class="radio"></div><span class="control-label">codex</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ STATUS + BADGES ═══ -->
+  <section>
+    <div class="section-label">Status, Badges, Avatars</div>
+    <div class="subsection"><div class="subsection-label">Status pills</div><div class="row mb-16"><span class="status-pill"><span class="status-dot" style="background:var(--status-working)"></span> Working</span><span class="status-pill"><span class="status-dot" style="background:var(--status-attention)"></span> Respond</span><span class="status-pill"><span class="status-dot" style="background:var(--status-review)"></span> Review</span><span class="status-pill"><span class="status-dot" style="background:var(--status-error)"></span> Error</span><span class="status-pill"><span class="status-dot" style="background:var(--status-done)"></span> Done</span></div></div>
+    <div class="subsection"><div class="subsection-label">Badges</div><div class="row mb-16"><span class="badge badge-success">CI PASSING</span><span class="badge badge-warning">NEEDS INPUT</span><span class="badge badge-error">CI FAILED</span><span class="badge badge-info">IN REVIEW</span><span class="badge badge-neutral">DRAFT</span></div></div>
+    <div class="subsection"><div class="subsection-label">Count badges</div><div class="row mb-16"><span class="count-badge">3</span><span class="count-badge">12</span><span class="count-badge">99+</span></div></div>
+    <div class="subsection"><div class="subsection-label">Avatars</div><div class="row"><div class="avatar avatar--sm">A</div><div class="avatar">AH</div><div class="avatar avatar--lg">N</div><div class="avatar-row"><div class="avatar avatar--sm">A</div><span style="font-size:13px">Ashish Huddar</span><span style="font-size:11px; color:var(--text-tertiary)">admin</span></div></div></div>
+  </section>
+
+  <!-- ═══ BREADCRUMBS + TABS ═══ -->
+  <section>
+    <div class="section-label">Navigation</div>
+    <div class="subsection"><div class="subsection-label">Breadcrumbs</div><div class="breadcrumbs mb-16"><span class="breadcrumb">Dashboard</span><span class="breadcrumb-sep">/</span><span class="breadcrumb">agent-orchestrator</span><span class="breadcrumb-sep">/</span><span class="breadcrumb breadcrumb--active">ao-130</span></div></div>
+    <div class="subsection"><div class="subsection-label">Tabs</div><div class="tabs mb-16"><div class="tab tab--active">Terminal</div><div class="tab">Activity</div><div class="tab">PR Status</div><div class="tab">Settings</div></div></div>
+    <div class="subsection"><div class="subsection-label">Keyboard shortcuts</div><div class="row gap-8"><span class="kbd">⌘</span><span class="kbd">K</span><span style="font-size:12px;color:var(--text-tertiary);margin:0 8px">Command palette</span><span class="kbd">⌘</span><span class="kbd">⇧</span><span class="kbd">S</span><span style="font-size:12px;color:var(--text-tertiary)">Spawn agent</span></div></div>
+  </section>
+
+  <!-- ═══ ACCORDION ═══ -->
+  <section>
+    <div class="section-label">Accordion (Mobile Kanban)</div>
+    <div class="accordion" style="max-width:400px">
+      <div class="accordion-item">
+        <div class="accordion-header" onclick="this.nextElementSibling.classList.toggle('accordion-body--collapsed'); this.querySelector('.accordion-chevron').classList.toggle('open')">
+          <div class="accordion-header-left"><span class="status-dot" style="background:var(--status-error)"></span><span class="accordion-title">Respond</span><span class="accordion-count">1</span></div>
+          <span class="accordion-chevron open">▶</span>
+        </div>
+        <div class="accordion-body">
+          <div class="session-card" style="border-left-color:var(--status-attention)"><div class="session-card-title">Review comments on PR</div><div class="session-card-meta">feat/issue-792 · PR #888</div><div class="session-card-status" style="color:var(--status-attention)"><span class="status-dot" style="background:var(--status-attention)"></span> Needs input</div></div>
+        </div>
+      </div>
+      <div class="accordion-item">
+        <div class="accordion-header" onclick="this.nextElementSibling.classList.toggle('accordion-body--collapsed'); this.querySelector('.accordion-chevron').classList.toggle('open')">
+          <div class="accordion-header-left"><span class="status-dot" style="background:var(--status-working)"></span><span class="accordion-title">Working</span><span class="accordion-count">1</span></div>
+          <span class="accordion-chevron">▶</span>
+        </div>
+        <div class="accordion-body accordion-body--collapsed">
+          <div class="session-card" style="border-left-color:var(--status-working)"><div class="session-card-title">Fix CI pipeline</div><div class="session-card-meta">fix/ci-pipeline · PR #854</div></div>
+        </div>
+      </div>
+      <div class="accordion-item">
+        <div class="accordion-header" onclick="this.nextElementSibling.classList.toggle('accordion-body--collapsed'); this.querySelector('.accordion-chevron').classList.toggle('open')">
+          <div class="accordion-header-left"><span class="status-dot" style="background:var(--status-review)"></span><span class="accordion-title">Review</span><span class="accordion-count">0</span></div>
+          <span class="accordion-chevron">▶</span>
+        </div>
+        <div class="accordion-body accordion-body--collapsed"><div class="empty-state" style="padding:16px"><div class="empty-state-text" style="margin:0">No code waiting for review.</div></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ DROPDOWN ═══ -->
+  <section>
+    <div class="section-label">Dropdown, Tooltip, Toast</div>
+    <div class="grid-3">
+      <div>
+        <div class="subsection-label">Dropdown menu</div>
+        <div class="dropdown">
+          <div class="dropdown-item"><svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>Send message<span class="dropdown-item-shortcut">⌘M</span></div>
+          <div class="dropdown-item"><svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>View terminal</div>
+          <div class="dropdown-item"><svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>Restart agent</div>
+          <div class="dropdown-divider"></div>
+          <div class="dropdown-item dropdown-item--danger"><svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>Terminate<span class="dropdown-item-shortcut">⌫</span></div>
+        </div>
+      </div>
+      <div>
+        <div class="subsection-label">Tooltip</div>
+        <div style="padding-top:40px"><div class="tooltip-demo"><button class="btn btn-secondary">Hover target</button><div class="tooltip-bubble">Spawn a new agent session</div></div></div>
+      </div>
+      <div>
+        <div class="subsection-label">Toasts</div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div class="toast"><span class="toast-icon" style="color:var(--status-working)">✓</span><span>Session ao-130 merged successfully</span><span class="toast-dismiss">×</span></div>
+          <div class="toast"><span class="toast-icon" style="color:var(--status-error)">!</span><span>CI failed on PR #573</span><span class="toast-dismiss">×</span></div>
+          <div class="toast"><span class="toast-icon" style="color:var(--status-attention)">⚠</span><span>Agent needs your input</span><span class="toast-dismiss">×</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ SIDEBAR ═══ -->
+  <section>
+    <div class="section-label">Sidebar Navigation</div>
+    <div class="sidebar-demo">
+      <div class="sidebar-section">
+        <div class="sidebar-heading">Workspaces</div>
+        <div class="sidebar-item sidebar-item--active"><span class="status-dot" style="background:var(--status-working)"></span>agent-orchestrator<span class="sidebar-item-count">3</span></div>
+        <div class="sidebar-item"><span class="status-dot" style="background:var(--text-tertiary)"></span>ai-readiness<span class="sidebar-item-count">0</span></div>
+      </div>
+      <div class="sidebar-divider"></div>
+      <div class="sidebar-section">
+        <div class="sidebar-heading">Sessions</div>
+        <div class="sidebar-item"><span class="status-dot" style="background:var(--status-working)"></span>ao-130 fix/ci<span class="badge badge-success" style="margin-left:auto;font-size:8px">ACTIVE</span></div>
+        <div class="sidebar-item"><span class="status-dot" style="background:var(--status-attention)"></span>ao-128 feat/792</div>
+        <div class="sidebar-item"><span class="status-dot" style="background:var(--status-review)"></span>ao-125 perf/bundle</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ CONNECTION BAR ═══ -->
+  <section>
+    <div class="section-label">Connection Status Bar</div>
+    <div style="display:flex;flex-direction:column;gap:8px;max-width:500px">
+      <div class="connection-bar connection-bar--connected"><span class="status-dot" style="background:var(--status-working)"></span>Connected</div>
+      <div class="connection-bar connection-bar--reconnecting"><span class="status-dot" style="background:var(--status-attention)"></span>Reconnecting...</div>
+      <div class="connection-bar connection-bar--disconnected"><span class="status-dot" style="background:var(--status-error)"></span>Disconnected. Click to retry.</div>
+    </div>
+  </section>
+
+  <!-- ═══ SKELETON + PROGRESS ═══ -->
+  <section>
+    <div class="section-label">Loading States</div>
+    <div class="grid-2">
+      <div>
+        <div class="subsection-label">Skeleton card</div>
+        <div class="card"><div class="skeleton skeleton-line" style="width:40%"></div><div class="skeleton skeleton-line skeleton-line--medium"></div><div class="skeleton skeleton-line skeleton-line--short"></div></div>
+      </div>
+      <div>
+        <div class="subsection-label">Progress bars</div>
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <div><div class="subsection-label" style="margin-bottom:4px">CI running (65%)</div><div class="progress-bar"><div class="progress-fill" style="width:65%"></div></div></div>
+          <div><div class="subsection-label" style="margin-bottom:4px">Tests passing (100%)</div><div class="progress-bar"><div class="progress-fill progress-fill--success" style="width:100%"></div></div></div>
+          <div><div class="subsection-label" style="margin-bottom:4px">Build failed (40%)</div><div class="progress-bar"><div class="progress-fill progress-fill--error" style="width:40%"></div></div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ MODAL ═══ -->
+  <section>
+    <div class="section-label">Modal / Dialog</div>
+    <div class="modal-backdrop">
+      <div class="modal">
+        <div class="modal-title">Terminate session?</div>
+        <div class="modal-body">This will kill the agent process for <span style="font-family:var(--font-mono); color:var(--text-primary)">ao-130</span> and archive the session. This action cannot be undone.</div>
+        <div class="modal-actions"><button class="btn btn-ghost">Cancel</button><button class="btn btn-danger">Terminate</button></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ TERMINAL ═══ -->
+  <section>
+    <div class="section-label">Terminal Output</div>
+    <div class="terminal">
+      <span class="t-prompt">$</span> <span class="t-cmd">claude --resume ao-130</span><br>
+      Resuming session ao-130...<br>
+      <span class="t-accent">Reading</span> packages/web/src/app/globals.css<br>
+      <span class="t-accent">Writing</span> packages/web/src/app/globals.css<br>
+      <span class="t-ok">✓</span> Fixed border-radius: 2px → 0<br>
+      <span class="t-accent">Reading</span> packages/web/src/components/Dashboard.tsx<br>
+      <span class="t-warn">⚠</span> File has 412 lines (limit: 400)<br>
+      <span class="t-err">✗</span> <span style="color:var(--status-error)">Test failed:</span> Expected "No sessions" but got "No agents need your input."<br>
+      <span class="t-accent">Writing</span> packages/web/src/__tests__/components.test.tsx<br>
+      <span class="t-ok">✓</span> Updated test assertion<br>
+      <span class="t-ok">✓</span> All 50 tests passing
+    </div>
+  </section>
+
+  <!-- ═══ QUICK REPLY ═══ -->
+  <section>
+    <div class="section-label">Quick Reply</div>
+    <div class="quick-reply" style="max-width:500px">
+      <input class="input" type="text" placeholder="Type a reply to the agent...">
+      <button class="btn btn-primary btn-sm">Send</button>
+      <button class="btn btn-ghost btn-sm">Skip</button>
+    </div>
+  </section>
+
+  <!-- ═══ ALERTS ═══ -->
+  <section>
+    <div class="section-label">Alerts</div>
+    <div style="display:grid;gap:8px">
+      <div class="alert alert-success"><span style="flex-shrink:0">✓</span> CI passing on PR #888. Ready to merge.</div>
+      <div class="alert alert-warning"><span style="flex-shrink:0">⚠</span> Agent ao-130 is waiting for your input on a permission prompt.</div>
+      <div class="alert alert-error"><span style="flex-shrink:0">✗</span> CI failed on PR #573. 2 test failures in page.test.tsx.</div>
+      <div class="alert alert-info"><span style="flex-shrink:0">ℹ</span> There are review comments on your PR. Check with gh pr view.</div>
+    </div>
+  </section>
+
+  <!-- ═══ SESSION CARDS ═══ -->
+  <section>
+    <div class="section-label">Session Cards</div>
+    <div class="grid-2">
+      <div><div class="subsection-label">Working</div><div class="session-card" style="border-left-color:var(--status-working)"><div class="session-card-title">Fix CI pipeline failures</div><div class="session-card-meta">fix/ci-pipeline · PR #854 · +126 -31</div><div class="session-card-status" style="color:var(--status-working)"><span class="status-dot" style="background:var(--status-working)"></span> Active · 2m ago</div><div class="session-card-actions"><button class="btn btn-ghost btn-sm">Terminal</button><button class="btn btn-danger btn-sm">Terminate</button></div></div></div>
+      <div><div class="subsection-label">Needs Input</div><div class="session-card" style="border-left-color:var(--status-attention)"><div class="session-card-title">Review comments on PR</div><div class="session-card-meta">feat/issue-792 · PR #888</div><div class="session-card-status" style="color:var(--status-attention)"><span class="status-dot" style="background:var(--status-attention)"></span> Needs input</div><div class="session-card-actions"><button class="btn btn-primary btn-sm">Continue</button><button class="btn btn-ghost btn-sm">Abort</button><button class="btn btn-ghost btn-sm">Skip</button></div></div></div>
+      <div><div class="subsection-label">Review</div><div class="session-card" style="border-left-color:var(--status-review)"><div class="session-card-title">Reduce bundle size</div><div class="session-card-meta">perf/bundle · PR #888 · +100 -45</div><div class="session-card-status" style="color:var(--status-review)"><span class="status-dot" style="background:var(--status-review)"></span> Needs review · <span class="badge badge-success" style="font-size:8px">CI PASSING</span></div><div class="session-card-actions"><button class="btn btn-secondary btn-sm">View PR</button><button class="btn btn-primary btn-sm">Merge</button></div></div></div>
+      <div><div class="subsection-label">Empty state</div><div class="empty-state"><div class="empty-state-text">No agents need your input.</div><button class="btn btn-secondary btn-sm">Spawn Agent</button></div></div>
+    </div>
+  </section>
+
+  <!-- ═══ DATA TABLE ═══ -->
+  <section>
+    <div class="section-label">Data Table</div>
+    <div class="card" style="padding:0;overflow:hidden">
+      <table class="data-table"><thead><tr><th>PR</th><th>Title</th><th>Size</th><th>CI</th><th>Review</th><th>Unresolved</th></tr></thead><tbody>
+        <tr><td class="mono" style="color:var(--accent)">#573</td><td>fix: DirectTerminal stuck on 'Connecting...'</td><td class="mono"><span style="color:var(--status-working)">+4</span> <span style="color:var(--status-error)">-4</span></td><td><span class="badge badge-success" style="font-size:9px">PASSING</span></td><td style="color:var(--text-tertiary)">needs review</td><td class="mono" style="color:var(--text-tertiary)">0</td></tr>
+        <tr><td class="mono" style="color:var(--accent)">#854</td><td>fix: persist session model and permissions</td><td class="mono"><span style="color:var(--status-working)">+126</span> <span style="color:var(--status-error)">-31</span></td><td><span class="badge badge-success" style="font-size:9px">PASSING</span></td><td style="color:var(--text-tertiary)">needs review</td><td class="mono" style="color:var(--text-tertiary)">0</td></tr>
+        <tr><td class="mono" style="color:var(--accent)">#888</td><td>perf: code-split web dashboard to reduce JS bundle size</td><td class="mono"><span style="color:var(--status-working)">+100</span> <span style="color:var(--status-error)">-45</span></td><td><span class="badge badge-success" style="font-size:9px">PASSING</span></td><td style="color:var(--accent)">approved</td><td class="mono" style="color:var(--status-attention)">1</td></tr>
+      </tbody></table>
+    </div>
+  </section>
+
+  <!-- ═══ MOBILE NAV ═══ -->
+  <section>
+    <div class="section-label">Mobile Bottom Navigation</div>
+    <div class="mobile-nav" style="max-width:400px">
+      <div class="mobile-nav-item mobile-nav-item--active"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>Board</div>
+      <div class="mobile-nav-item"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>PRs</div>
+      <div class="mobile-nav-item"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>Terminal</div>
+      <div class="mobile-nav-item"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09"/></svg>Settings</div>
+    </div>
+  </section>
+
+  <!-- ═══ FULL DASHBOARD ═══ -->
+  <section>
+    <div class="section-label">Full Dashboard Preview</div>
+    <div class="dashboard-mock">
+      <div class="dash-header"><div class="dash-title">agent-orchestrator</div><div class="dash-stats"><span><span class="dash-stat-value">3</span> active</span><span><span class="dash-stat-value">30</span> total</span><span><span class="dash-stat-value">1</span> needs input</span></div></div>
+      <div class="dash-body">
+        <div class="dash-sidebar"><div class="sidebar-heading">Workspaces</div><div class="sidebar-item sidebar-item--active"><span class="status-dot" style="background:var(--status-working)"></span>agent-orchestrator</div><div class="sidebar-item"><span class="status-dot" style="background:var(--text-tertiary)"></span>ai-readiness</div></div>
+        <div class="dash-kanban">
+          <div class="dash-column"><div class="dash-col-header"><span class="status-dot" style="background:var(--status-working)"></span><span class="dash-col-title">Working</span><span class="dash-col-count">1</span></div><div class="session-card" style="border-left-color:var(--status-working)"><div class="session-card-title">Fix CI pipeline</div><div class="session-card-meta">fix/ci-pipeline · #854</div><div class="session-card-status" style="color:var(--status-working)"><span class="status-dot" style="background:var(--status-working)"></span> Active</div></div></div>
+          <div class="dash-column"><div class="dash-col-header"><span class="status-dot" style="background:var(--status-review)"></span><span class="dash-col-title">Review</span><span class="dash-col-count">1</span></div><div class="session-card" style="border-left-color:var(--status-review)"><div class="session-card-title">Reduce bundle size</div><div class="session-card-meta">perf/bundle · #888</div><div class="session-card-status" style="color:var(--status-review)"><span class="status-dot" style="background:var(--status-review)"></span> Needs review</div></div></div>
+          <div class="dash-column"><div class="dash-col-header"><span class="status-dot" style="background:var(--status-attention)"></span><span class="dash-col-title">Respond</span><span class="dash-col-count">1</span></div><div class="session-card" style="border-left-color:var(--status-attention)"><div class="session-card-title">Review comments</div><div class="session-card-meta">feat/issue-792 · #888</div><div class="session-card-status" style="color:var(--status-attention)"><span class="status-dot" style="background:var(--status-attention)"></span> Needs input</div></div></div>
+          <div class="dash-column"><div class="dash-col-header"><span class="status-dot" style="background:var(--status-working)"></span><span class="dash-col-title">Ready</span><span class="dash-col-count">0</span></div><div class="empty-state" style="padding:16px"><div class="empty-state-text" style="margin:0;font-size:11px">Nothing cleared to land.</div></div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section><p style="font-size:11px; color:var(--text-tertiary); text-align:center; font-family:var(--font-mono);">warm-terminal · 0px radius · agent-orchestrator · 2026</p></section>
+</div>
+
+</body>
+</html>

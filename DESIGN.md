@@ -52,7 +52,7 @@
 | bg-elevated-hover | #f7f5f2 | Hover states | Warm tint on hover, matching the base temperature. |
 | bg-subtle | rgba(120, 100, 80, 0.05) | Subtle tints | Brown-tinted transparency for warm highlighting. |
 
-**Light mode strategy:** Warm parchment base (#f5f3f0) with white cards. The same brown undertone that makes dark mode warm also makes light mode feel like quality paper, not sterile lab equipment. Accent desaturated 15% in light mode (#6b73c4). Status colors shifted darker (green #16a34a, amber #b8860b, red #dc2626, cyan #0891b2) to maintain contrast on light backgrounds. Drop shadows replace inset highlights for surface hierarchy.
+**Light mode strategy:** Warm parchment base (#f5f3f0) with white cards. The same brown undertone that makes dark mode warm also makes light mode feel like quality paper, not sterile lab equipment. Accent darkened in light mode (#5c64b5) to maintain 5.3:1 contrast on white. Status colors shifted darker (green #16a34a, amber #b8860b, red #dc2626, cyan #0891b2) to maintain contrast on light backgrounds. Drop shadows replace inset highlights for surface hierarchy.
 
 ### Text (Dark Mode)
 | Token | Value | Usage |
@@ -66,7 +66,7 @@
 |-------|-------|-------|
 | text-primary | #1c1917 | Headings, card titles, body. Warm near-black, not pure black. |
 | text-secondary | #57534e | Descriptions, metadata. Stone-500. |
-| text-tertiary | #a8a29e | Timestamps, placeholders. Stone-400. |
+| text-tertiary | #736e6b | Timestamps, placeholders. Darkened from #a8a29e to pass WCAG AA (5.0:1 on white, 4.5:1 on base). |
 
 ### Borders (Dark Mode)
 | Token | Value | Usage |
@@ -98,11 +98,8 @@
 - **Mobile column order:** Respond > Review > Pending > Working (urgency-first)
 - **Max content width:** 1280px for settings/detail pages
 - **Border radius:**
-  - base: 2px (cards, buttons, inputs — consistent, sharp, intentional)
-  - sm: 4px (tooltips, small transient elements)
-  - md: 6px (dropdowns, floating interactive elements)
-  - lg: 8px (modals, large floating overlays)
-  - full: 9999px (pills, badges, count indicators)
+  - 0px everywhere. No rounding on cards, buttons, inputs, modals, dropdowns. Hard edges are the identity. The only exception is status dots (circles by nature) and avatar images.
+  - full: 9999px (status dots, avatar circles only)
 - **Card inset highlight:** `inset 0 1px 0 rgba(255,255,255,0.03)` in dark mode
 - **Status accent:** 2px solid left border on session cards, colored by status
 
@@ -134,10 +131,14 @@
   - Body text (13px): 4.5:1 minimum against surface backgrounds
   - Large text (18px+ or 14px bold): 3:1 minimum
   - UI components (borders, icons): 3:1 minimum against adjacent colors
-  - text-primary #f0ece8 on bg-surface #1a1918: 13.2:1 ✓
-  - text-secondary #a8a29e on bg-surface #1a1918: 5.8:1 ✓
-  - text-tertiary #78716c on bg-surface #1a1918: 3.5:1 ✓ (labels only, not body text)
-  - accent #8b9cf7 on bg-surface #1a1918: 5.7:1 ✓
+  - Dark: text-primary #f0ece8 on bg-surface #1a1918: 14.9:1 ✓
+  - Dark: text-secondary #a8a29e on bg-surface #1a1918: 7.0:1 ✓
+  - Dark: text-tertiary #78716c on bg-surface #1a1918: 3.7:1 ✓ (labels only, not body text)
+  - Dark: accent #8b9cf7 on bg-surface #1a1918: 6.9:1 ✓
+  - Light: text-primary #1c1917 on bg-surface #ffffff: 17.5:1 ✓
+  - Light: text-secondary #57534e on bg-surface #ffffff: 7.6:1 ✓
+  - Light: text-tertiary #736e6b on bg-surface #ffffff: 5.0:1 ✓
+  - Light: accent #5c64b5 on bg-surface #ffffff: 5.3:1 ✓
 - **Focus indicators:** `outline: 2px solid var(--accent); outline-offset: 2px` on `:focus-visible`. Never `outline: none` without a visible replacement.
 - **Reduced motion:** `@media (prefers-reduced-motion: reduce)` disables all animations and transitions globally. Non-negotiable.
 - **Color independence:** Never encode meaning with color alone. Always pair colored dots with text labels. Status pills include both dot and text.
@@ -175,7 +176,7 @@
 | Disabled | opacity: 0.5, cursor: not-allowed | opacity: 0.5 | opacity: 0.5 | opacity: 0.5 |
 - **Padding:** 8px 16px
 - **Font:** Geist Sans, 13px, weight 500
-- **Border-radius:** 2px (base)
+- **Border-radius:** 0
 - **Min touch target:** 44px height (add padding if needed)
 
 ### Input Fields
@@ -188,7 +189,7 @@
 | Disabled | opacity: 0.5, cursor: not-allowed, bg: bg-subtle |
 - **Padding:** 8px 12px
 - **Font:** Geist Sans, 13px
-- **Border-radius:** 2px
+- **Border-radius:** 0
 
 ### Status Pill
 - **Layout:** inline-flex, center-aligned, gap 6px
@@ -196,14 +197,14 @@
 - **Text:** 11px, weight 600, text-secondary
 - **Background:** bg-subtle
 - **Padding:** 4px 10px
-- **Border-radius:** full (9999px)
+- **Border-radius:** 0
 
 ### Alert / Banner
 - **Layout:** flex, padding 12px 16px
 - **Left border:** 2px solid, colored by severity
 - **Background:** status color at 6% opacity
 - **Text:** status color, 13px
-- **Border-radius:** 2px
+- **Border-radius:** 0
 - **Variants:** success (green), warning (amber), error (red), info (cyan)
 
 ## Performance Guidelines
@@ -232,7 +233,8 @@
 |------|----------|-----------|
 | 2026-03-28 | Initial design system created | Created by /design-consultation with competitive research (Conductor.build, T3 Code, OpenAI Codex, Emdash) + 4 design voices |
 | 2026-03-28 | Geist Sans + JetBrains Mono (2 fonts only) | Emil review: 4 fonts creates cognitive gear-shifts on scan-heavy dashboards |
-| 2026-03-28 | 2px base border-radius | Full 0px risks looking unstyled. 2px reads as intentionally sharp while feeling designed. |
+| 2026-03-28 | 2px base border-radius (v1) | Full 0px risks looking unstyled. 2px reads as intentionally sharp while feeling designed. |
+| 2026-04-05 | 0px border-radius everywhere | Hard edges are the identity. With warm surfaces and inset highlights providing depth, rounding adds nothing. Zero radius is the most honest expression of Industrial/Warm Terminal. |
 | 2026-03-28 | Keep dot pulse, remove border heartbeat | Emil review: 4s border animation on 15+ cards is "decorative anxiety" with high perf cost. |
 | 2026-04-05 | Fresh design system: Warm Terminal | Every competitor converges on cool blue-gray. Warm charcoal with cream text and warm periwinkle accent creates instant visual distinction. |
 | 2026-04-05 | JetBrains Mono for display + data | Mono headlines in a mono-heavy dashboard create typographic cohesion instead of two competing voices. Free, open source, already in the codebase. |
