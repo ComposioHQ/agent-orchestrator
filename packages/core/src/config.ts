@@ -11,12 +11,70 @@
  */
 
 import { readFileSync, existsSync } from "node:fs";
-import { resolve, join, basename } from "node:path";
+import { resolve, join, dirname, basename } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { ConfigNotFoundError, type ExternalPluginEntryRef, type OrchestratorConfig } from "./types.js";
 import { generateSessionPrefix } from "./paths.js";
+
+// ---------------------------------------------------------------------------
+// .env file loader — loads a sibling .env file next to agent-orchestrator.yaml
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse a .env file and inject variables into process.env.
+ * Only sets variables that are NOT already present in the environment
+ * (existing env vars always take precedence).
+ *
+ * Supports: KEY=value, KEY="value", KEY='value', comments (#), blank lines.
+ */
+export function loadEnvFile(envPath: string): void {
+  if (!existsSync(envPath)) return;
+
+  let content: string;
+  try {
+    content = readFileSync(envPath, "utf-8");
+  } catch {
+    return;
+  }
+
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+
+    const eqIndex = trimmed.indexOf("=");
+    if (eqIndex <= 0) continue;
+
+    let key = trimmed.slice(0, eqIndex).trim();
+    let value = trimmed.slice(eqIndex + 1).trim();
+
+    // Strip optional `export ` prefix (common in shell-style .env files).
+    // Without this, `export FOO=bar` would be parsed as key="export FOO"
+    // and silently fail to set FOO.
+    if (key.startsWith("export ") || key.startsWith("export\t")) {
+      key = key.slice("export".length).trimStart();
+    }
+
+    // Skip lines whose key isn't a valid env-var identifier — prevents
+    // accidental pollution from malformed lines.
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+
+    // Strip surrounding quotes
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+
+    // Don't overwrite existing env vars — an explicitly-set empty string
+    // is a deliberate "disable" signal and must be preserved.
+    if (process.env[key] === undefined) {
+      process.env[key] = value;
+    }
+  }
+}
 
 function inferScmPlugin(project: {
   repo: string;
@@ -714,6 +772,11 @@ export function loadConfig(configPath?: string): OrchestratorConfig {
     throw new ConfigNotFoundError();
   }
 
+  // Load .env file from the same directory as the config file.
+  // This allows plugin credentials (e.g. JIRA_EMAIL, JIRA_API_TOKEN)
+  // to live next to agent-orchestrator.yaml without polluting shell config.
+  loadEnvFile(resolve(dirname(path), ".env"));
+
   const raw = readFileSync(path, "utf-8");
   const parsed = parseYaml(raw);
   const config = validateConfig(parsed);
@@ -734,6 +797,8 @@ export function loadConfigWithPath(configPath?: string): {
   if (!path) {
     throw new ConfigNotFoundError();
   }
+
+  loadEnvFile(resolve(dirname(path), ".env"));
 
   const raw = readFileSync(path, "utf-8");
   const parsed = parseYaml(raw);
