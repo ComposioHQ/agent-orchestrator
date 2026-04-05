@@ -59,7 +59,7 @@ export function adfToMarkdown(node: AdfNode | null): string {
   return renderNode(node).trim();
 }
 
-function renderNode(node: AdfNode, listDepth = 0): string {
+function renderNode(node: AdfNode, listDepth = 0, listMarker = "- "): string {
   switch (node.type) {
     case "doc":
       return (node.content ?? []).map((c) => renderNode(c, listDepth)).join("");
@@ -93,10 +93,14 @@ function renderNode(node: AdfNode, listDepth = 0): string {
     }
 
     case "bulletList":
-      return (node.content ?? []).map((c) => renderNode(c, listDepth)).join("");
+      return (node.content ?? []).map((c) => renderNode(c, listDepth, "- ")).join("");
 
-    case "orderedList":
-      return (node.content ?? []).map((c) => renderNode(c, listDepth)).join("");
+    case "orderedList": {
+      const start = (node.attrs?.order as number) ?? 1;
+      return (node.content ?? [])
+        .map((c, i) => renderNode(c, listDepth, `${start + i}. `))
+        .join("");
+    }
 
     case "listItem": {
       const indent = "  ".repeat(listDepth);
@@ -104,7 +108,7 @@ function renderNode(node: AdfNode, listDepth = 0): string {
         .map((c) => renderNode(c, listDepth + 1))
         .join("")
         .trimEnd();
-      return `${indent}- ${body}\n`;
+      return `${indent}${listMarker}${body}\n`;
     }
 
     case "hardBreak":

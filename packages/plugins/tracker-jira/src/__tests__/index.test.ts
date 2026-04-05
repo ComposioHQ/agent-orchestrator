@@ -149,6 +149,26 @@ describe("tracker-jira plugin", () => {
       await expect(t.getIssue("TT-1", project)).rejects.toThrow("JIRA_API_TOKEN");
     });
 
+    it("reads credentials fresh on each call (supports .env loaded after create)", async () => {
+      // Simulate create() running before .env is loaded
+      delete process.env.JIRA_EMAIL;
+      delete process.env.JIRA_API_TOKEN;
+      const t = create();
+
+      // First call fails — creds still missing
+      await expect(t.getIssue("TT-1", project)).rejects.toThrow("JIRA_EMAIL");
+
+      // Later, .env is loaded and env vars appear
+      process.env.JIRA_EMAIL = "late@acme.com";
+      process.env.JIRA_API_TOKEN = "late-token";
+      mockFetchJson(sampleJiraIssue);
+      mockSprintResolution();
+
+      // Same tracker instance now works without re-creating
+      const issue = await t.getIssue("TT-1", project);
+      expect(issue).not.toBeNull();
+    });
+
     it("throws on first API call when baseUrl is missing", async () => {
       delete process.env.JIRA_BASE_URL;
       const projectNoUrl: ProjectConfig = {
@@ -542,6 +562,36 @@ describe("tracker-jira plugin", () => {
       );
       const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
       expect(body.fields.project.key).toBe("TT");
+    });
+
+    it("includes issuetype defaulting to Task", async () => {
+      mockFetchJson({ id: "10001", key: "TT-203" });
+      mockSprintResolution();
+      mockFetchJson({ ...sampleJiraIssue, key: "TT-203" });
+
+      await tracker.createIssue!(
+        { title: "Test", description: "d" },
+        project,
+      );
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+      expect(body.fields.issuetype).toEqual({ name: "Task" });
+    });
+
+    it("respects project.tracker.issueType override", async () => {
+      mockFetchJson({ id: "10001", key: "TT-204" });
+      mockSprintResolution();
+      mockFetchJson({ ...sampleJiraIssue, key: "TT-204" });
+
+      const customProject = {
+        ...project,
+        tracker: { ...project.tracker, issueType: "Bug" },
+      };
+      await tracker.createIssue!(
+        { title: "Test", description: "d" },
+        customProject,
+      );
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+      expect(body.fields.issuetype).toEqual({ name: "Bug" });
     });
 
     it("includes labels when provided", async () => {

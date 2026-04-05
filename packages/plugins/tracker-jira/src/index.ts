@@ -48,6 +48,10 @@ function getBranchPrefix(project: ProjectConfig): string {
   return (project.tracker?.["branchPrefix"] as string | undefined) ?? "feat";
 }
 
+function getIssueType(project: ProjectConfig): string {
+  return (project.tracker?.["issueType"] as string | undefined) ?? "Task";
+}
+
 // ---------------------------------------------------------------------------
 // Jira → AO mapping
 // ---------------------------------------------------------------------------
@@ -94,24 +98,24 @@ function extractSprintNumber(sprintName: string): string {
 // ---------------------------------------------------------------------------
 
 export function create(): Tracker {
-  // Auth from env vars — validated lazily on first API call, not at load time,
-  // so the plugin can still register even if credentials aren't set yet.
-  const email = process.env.JIRA_EMAIL;
-  const apiToken = process.env.JIRA_API_TOKEN;
-
-  // Client cache keyed by baseUrl (supports multiple Jira instances)
+  // Client cache keyed by baseUrl+email (supports multiple Jira instances and
+  // credential rotation). Credentials are read fresh on every call so the
+  // plugin can register before .env is loaded and still pick up env vars later.
   const clients = new Map<string, JiraClient>();
 
   function getClient(project: ProjectConfig): JiraClient {
     const baseUrl = getBaseUrl(project);
+    const email = process.env.JIRA_EMAIL;
+    const apiToken = process.env.JIRA_API_TOKEN;
     if (!baseUrl) throw new Error("Jira tracker: baseUrl is required (project.tracker.baseUrl or JIRA_BASE_URL env)");
     if (!email) throw new Error("Jira tracker: JIRA_EMAIL env var is required");
     if (!apiToken) throw new Error("Jira tracker: JIRA_API_TOKEN env var is required");
 
-    let client = clients.get(baseUrl);
+    const cacheKey = `${baseUrl}|${email}`;
+    let client = clients.get(cacheKey);
     if (!client) {
       client = new JiraClient({ baseUrl, email, apiToken });
-      clients.set(baseUrl, client);
+      clients.set(cacheKey, client);
     }
     return client;
   }
@@ -272,6 +276,7 @@ export function create(): Tracker {
       if (projectKey) {
         fields.project = { key: projectKey };
       }
+      fields.issuetype = { name: getIssueType(project) };
       if (input.labels && input.labels.length > 0) {
         fields.labels = input.labels;
       }

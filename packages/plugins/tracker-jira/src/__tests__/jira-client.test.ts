@@ -156,6 +156,63 @@ describe("adfToMarkdown", () => {
     expect(adfToMarkdown(doc)).toContain("fallback");
   });
 
+  it("converts ordered lists with numeric prefixes", () => {
+    const doc: AdfNode = {
+      type: "doc",
+      content: [
+        {
+          type: "orderedList",
+          content: [
+            {
+              type: "listItem",
+              content: [
+                { type: "paragraph", content: [{ type: "text", text: "First" }] },
+              ],
+            },
+            {
+              type: "listItem",
+              content: [
+                { type: "paragraph", content: [{ type: "text", text: "Second" }] },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const result = adfToMarkdown(doc);
+    expect(result).toContain("1. First");
+    expect(result).toContain("2. Second");
+  });
+
+  it("respects the `order` attr for ordered list start index", () => {
+    const doc: AdfNode = {
+      type: "doc",
+      content: [
+        {
+          type: "orderedList",
+          attrs: { order: 5 },
+          content: [
+            {
+              type: "listItem",
+              content: [
+                { type: "paragraph", content: [{ type: "text", text: "Five" }] },
+              ],
+            },
+            {
+              type: "listItem",
+              content: [
+                { type: "paragraph", content: [{ type: "text", text: "Six" }] },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const result = adfToMarkdown(doc);
+    expect(result).toContain("5. Five");
+    expect(result).toContain("6. Six");
+  });
+
   it("converts strikethrough", () => {
     const doc: AdfNode = {
       type: "doc",
