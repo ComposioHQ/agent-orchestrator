@@ -816,9 +816,15 @@ function createGeminiAgent(): Agent {
           const { stdout } = await execFileAsync("tmux", ["capture-pane", "-p", "-t", tmuxTarget], {
             timeout: 5_000,
           });
-          // Gemini REPL shows "gemini ❯ " or just "❯ " when ready
-          if (/[❯>]\s*$/.test(stdout.trimEnd())) {
-            return;
+          // Gemini REPL shows "gemini ❯ " or just "❯ " when ready.
+          // Use ❯ only (not bare >) — ">" appears in bash heredocs and PS1
+          // prompts and causes false-positive early returns before Gemini starts.
+          if (/❯\s*$/.test(stdout.trimEnd())) {
+            // Verify the Gemini process is still alive before declaring ready.
+            // Prevents false-positives where ❯ appeared in startup output but
+            // Gemini has since exited (e.g. auth error, guard wrapper).
+            const pid = await findGeminiProcess(handle as RuntimeHandle);
+            if (pid !== null) return;
           }
           // Guard: if gemini exited immediately (guard script, not installed), bail out
           if (/gemini guard:|command not found|not installed/i.test(stdout)) {
