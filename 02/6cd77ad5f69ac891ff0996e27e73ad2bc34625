@@ -1,0 +1,31 @@
+packages/cli/src/commands/start.ts
+  6a8216f93c54f467 972,1046-1049,1570
+packages/cli/src/commands/spawn.ts
+  6a8216f93c54f467 58
+packages/core/src/multi-project-start.ts
+  6a8216f93c54f467 10-11,16,24,117-142
+packages/core/src/config.ts
+  6a8216f93c54f467 693-694,697
+packages/core/src/global-config.ts
+  6a8216f93c54f467 877-883
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "026cd77ad5f69ac891ff0996e27e73ad2bc34625",
+  "prompts": {
+    "6a8216f93c54f467": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8dc0b8df-3943-4b4a-9ae0-cac5caa38a80",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 58,
+      "total_deletions": 18,
+      "accepted_lines": 48,
+      "overriden_lines": 0
+    }
+  }
+}
