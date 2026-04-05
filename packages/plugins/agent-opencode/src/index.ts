@@ -23,6 +23,9 @@ import {
   type OpenCodeAgentConfig,
 } from "@aoagents/ao-core";
 import { execFile, execFileSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -72,13 +75,20 @@ function parseSessionList(raw: string): OpenCodeSessionListEntry[] {
   });
 }
 
+/** Directory for persisted helper scripts (avoids inline quoting issues with tmux paste-buffer). */
+const SCRIPT_DIR = join(tmpdir(), "ao-opencode-scripts");
+
 /**
- * Parse JSON stream lines from `opencode run --format json` output.
- * Each line is a JSON object. We look for objects containing a session_id field.
- * The step_start event typically contains the session_id.
+ * Write the session-ID capture and lookup Node scripts to disk (once)
+ * and return their paths. Scripts are idempotent so overwriting is safe.
  */
-function buildSessionIdCaptureScript(): string {
-  const script = `
+function ensureHelperScripts(): { capturePath: string; lookupPath: string } {
+  mkdirSync(SCRIPT_DIR, { recursive: true });
+
+  const capturePath = join(SCRIPT_DIR, "capture-session-id.js");
+  const lookupPath = join(SCRIPT_DIR, "lookup-session-id.js");
+
+  const captureScript = `
 let buffer = '';
 let captured = null;
 process.stdin.on('data', chunk => {
@@ -113,12 +123,9 @@ process.stdin.on('data', chunk => {
   }
   process.exit(1);
 });
-  `.trim();
-  return script.replace(/\n/g, " ").replace(/\s+/g, " ");
-}
+`.trimStart();
 
-function buildSessionLookupScript(): string {
-  const script = `
+  const lookupScript = `
 let input = '';
 process.stdin.on('data', c => input += c).on('end', () => {
   const title = process.argv[1];
@@ -145,8 +152,12 @@ process.stdin.on('data', c => input += c).on('end', () => {
   if (matches.length === 0) process.exit(1);
   process.stdout.write(matches[0].id);
 });
-  `.trim();
-  return script.replace(/\n/g, " ").replace(/\s+/g, " ");
+`.trimStart();
+
+  writeFileSync(capturePath, captureScript, { encoding: "utf-8", mode: 0o644 });
+  writeFileSync(lookupPath, lookupScript, { encoding: "utf-8", mode: 0o644 });
+
+  return { capturePath, lookupPath };
 }
 
 // =============================================================================
@@ -244,8 +255,7 @@ function createOpenCodeAgent(): Agent {
           shellEscape(`AO:${config.sessionId}`),
           ...sharedOptions,
         ];
-        const captureScript = buildSessionIdCaptureScript();
-        const fallbackScript = buildSessionLookupScript();
+        const { capturePath, lookupPath } = ensureHelperScripts();
         const runCommand = ["opencode", "run", ...runOptions, "--command", "true"].join(" ");
         const resumeOptions = [...(promptValue ? ["--prompt", promptValue] : []), ...sharedOptions];
         const resumeOptionsSuffix = resumeOptions.length > 0 ? ` ${resumeOptions.join(" ")}` : "";
@@ -253,8 +263,8 @@ function createOpenCodeAgent(): Agent {
           `failed to discover OpenCode session ID for AO:${config.sessionId}`,
         );
         return [
-          `SES_ID=$(${runCommand} | node -e ${shellEscape(captureScript)})`,
-          `if [ -z "$SES_ID" ]; then SES_ID=$(opencode session list --format json | node -e ${shellEscape(fallbackScript)} ${shellEscape(`AO:${config.sessionId}`)}); fi`,
+          `SES_ID=$(${runCommand} | node ${shellEscape(capturePath)})`,
+          `if [ -z "$SES_ID" ]; then SES_ID=$(opencode session list --format json | node ${shellEscape(lookupPath)} ${shellEscape(`AO:${config.sessionId}`)}); fi`,
           `[ -n "$SES_ID" ] && exec opencode --session "$SES_ID"${resumeOptionsSuffix}; echo ${missingSessionError} >&2; exit 1`,
         ].join("; ");
       }

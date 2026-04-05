@@ -825,59 +825,56 @@ describe("getEnvironment PATH", () => {
 });
 
 describe("session ID capture from JSON stream", () => {
-  it("validates session_id format with ses_ prefix", () => {
+  it("references capture script file instead of inlining", () => {
     const agent = create();
     const cmd = agent.getLaunchCommand(makeLaunchConfig());
 
-    expect(cmd).toContain("session_id");
-    expect(cmd).toContain("sessionID");
-    expect(cmd).toContain("/^ses_[A-Za-z0-9_-]+$/");
+    expect(cmd).toContain("capture-session-id.js");
+    expect(cmd).not.toContain("node -e");
   });
 
-  it("parses JSON lines and extracts session_id or sessionID field", () => {
+  it("capture script file contains session_id parsing logic", () => {
     const agent = create();
-    const cmd = agent.getLaunchCommand(makeLaunchConfig());
+    agent.getLaunchCommand(makeLaunchConfig());
 
-    expect(cmd).toContain("JSON.parse(trimmed)");
-    expect(cmd).toContain("obj.session_id");
-    expect(cmd).toContain("obj.sessionID");
-  });
+    const fs = require("node:fs");
+    const os = require("node:os");
+    const path = require("node:path");
+    const scriptPath = path.join(os.tmpdir(), "ao-opencode-scripts", "capture-session-id.js");
+    const content = fs.readFileSync(scriptPath, "utf-8");
 
-  it("handles buffer accumulation for partial lines", () => {
-    const agent = create();
-    const cmd = agent.getLaunchCommand(makeLaunchConfig());
-
-    expect(cmd).toContain("buffer.split");
-    expect(cmd).toContain("buffer = lines.pop()");
+    expect(content).toContain("session_id");
+    expect(content).toContain("sessionID");
+    expect(content).toContain("/^ses_[A-Za-z0-9_-]+$/");
+    expect(content).toContain("JSON.parse(trimmed)");
+    expect(content).toContain("buffer.split");
   });
 });
 
 describe("title-based fallback sorting with newest-first", () => {
-  it("sorts by updated timestamp (newest first) when multiple sessions have the same title", () => {
+  it("references lookup script file for session list fallback", () => {
     const agent = create();
     const cmd = agent.getLaunchCommand(makeLaunchConfig());
 
     expect(cmd).toContain("opencode session list --format json");
-
-    expect(cmd).toContain("sort((a, b) =>");
-    expect(cmd).toContain("tb - ta");
+    expect(cmd).toContain("lookup-session-id.js");
   });
 
-  it("validates session IDs with ses_ prefix pattern", () => {
+  it("lookup script file contains sorting and validation logic", () => {
     const agent = create();
-    const cmd = agent.getLaunchCommand(makeLaunchConfig());
+    agent.getLaunchCommand(makeLaunchConfig());
 
-    expect(cmd).toContain("isValidId");
-    expect(cmd).toContain("/^ses_[A-Za-z0-9_-]+$/");
-  });
+    const fs = require("node:fs");
+    const os = require("node:os");
+    const path = require("node:path");
+    const scriptPath = path.join(os.tmpdir(), "ao-opencode-scripts", "lookup-session-id.js");
+    const content = fs.readFileSync(scriptPath, "utf-8");
 
-  it("handles numeric and string timestamps in sorting", () => {
-    const agent = create();
-    const cmd = agent.getLaunchCommand(makeLaunchConfig());
-
-    expect(cmd).toContain("typeof value ===");
-    expect(cmd).toContain("Number.isFinite");
-    expect(cmd).toContain("Date.parse(value)");
+    expect(content).toContain("sort((a, b) =>");
+    expect(content).toContain("tb - ta");
+    expect(content).toContain("/^ses_[A-Za-z0-9_-]+$/");
+    expect(content).toContain("Number.isFinite");
+    expect(content).toContain("Date.parse(value)");
   });
 });
 
