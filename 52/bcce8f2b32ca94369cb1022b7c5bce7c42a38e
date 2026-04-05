@@ -1,0 +1,25 @@
+packages/web/package.json
+  b7a83dd19bcf871c 22
+packages/cli/package.json
+  b7a83dd19bcf871c 32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "52bcce8f2b32ca94369cb1022b7c5bce7c42a38e",
+  "prompts": {
+    "b7a83dd19bcf871c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d5e44-0d6c-7442-bfac-a8b93803617c",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 2,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    }
+  }
+}
