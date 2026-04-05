@@ -75,6 +75,7 @@ export default function SessionPage() {
   const sessionIsOrchestratorRef = useRef(false);
   const resolvedProjectSessionsKeyRef = useRef<string | null>(null);
   const prefixByProjectRef = useRef<Map<string, string>>(new Map());
+  const hasLoadedSessionRef = useRef(false);
 
   // Keep prefixByProjectRef in sync so fetchProjectSessions (stable [] dep) reads latest map
   useEffect(() => {
@@ -129,9 +130,12 @@ export default function SessionPage() {
       setSession(data);
       setRouteError(null);
       setSessionMissing(false);
+      hasLoadedSessionRef.current = true;
     } catch (err) {
       console.error("Failed to fetch session:", err);
-      setRouteError(err instanceof Error ? err : new Error("Failed to load session"));
+      if (!hasLoadedSessionRef.current) {
+        setRouteError(err instanceof Error ? err : new Error("Failed to load session"));
+      }
     } finally {
       setLoading(false);
     }
