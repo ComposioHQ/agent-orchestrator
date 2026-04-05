@@ -220,13 +220,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   }
 
   /**
-   * Update session status in StateStore
-   */
-  function setSessionStatus(sessionId: SessionId, projectId: string, status: SessionStatus): void {
-    recordStateTransition(sessionId, projectId, status);
-  }
-
-  /**
    * Get all current states as a Map (for getStates() API)
    */
   function getStatesMap(): Map<SessionId, SessionStatus> {
@@ -1201,7 +1194,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     if (newStatus !== oldStatus) {
       const correlationId = createCorrelationId("lifecycle-transition");
       // State transition detected
-      setSessionStatus(session.id, session.projectId, newStatus);
       recordStateTransition(session.id, session.projectId, newStatus, {
         oldStatus,
         transition: true,
@@ -1274,9 +1266,14 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           await notifyHuman(event, priority);
         }
       }
-    } else {
-      // No transition but track current state in StateStore
-      setSessionStatus(session.id, session.projectId, newStatus);
+    } else if (!tracked) {
+      // No transition but ensure we have a persisted snapshot for new sessions
+      stateStore.syncState({
+        timestamp: Math.floor(Date.now() / 1000),
+        sessionId: session.id,
+        projectId: session.projectId,
+        status: newStatus,
+      });
     }
 
     await Promise.allSettled([

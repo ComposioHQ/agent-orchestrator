@@ -10,15 +10,17 @@
 
 import {
   appendFileSync,
+  copyFileSync,
   readFileSync,
+  renameSync,
   writeFileSync,
   existsSync,
   mkdirSync,
-  renameSync,
   readdirSync,
+  unlinkSync,
 } from "node:fs";
-import { join, dirname } from "node:path";
-import type { SessionId, SessionStatus, SessionMetadata } from "./types.js";
+import { join } from "node:path";
+import type { SessionId, SessionStatus } from "./types.js";
 import { readMetadata, listMetadata } from "./metadata.js";
 import { generateProjectId, getProjectBaseDir, getSessionsDir } from "./paths.js";
 import { loadConfig } from "./config.js";
@@ -66,6 +68,8 @@ interface StateStoreConfig {
  * Provides crash-safe, lock-free state management using JSON Lines format.
  * Each line is a JSON object representing a state transition event.
  */
+const ARCHIVE_RETENTION_LIMIT = 10;
+
 export class StateStore {
   private readonly stateDir: string;
   private readonly eventsFile: string;
@@ -145,13 +149,20 @@ export class StateStore {
     appendFileSync(this.eventsFile, line, "utf-8");
 
     // Update in-memory state
-    this.updateInMemoryState(event);
+    this.applyEvent(event);
   }
 
   /**
-   * Update in-memory state after appending event
+   * Sync the in-memory state without appending to disk.
    */
-  private updateInMemoryState(event: SessionEvent): void {
+  syncState(event: SessionEvent): void {
+    this.applyEvent(event);
+  }
+
+  /**
+   * Update in-memory state after applying an event
+   */
+  private applyEvent(event: SessionEvent): void {
     const existing = this.state.get(event.sessionId);
     const newState: SessionState = {
       sessionId: event.sessionId,
@@ -185,7 +196,7 @@ export class StateStore {
 
       try {
         const event = JSON.parse(line) as SessionEvent;
-        this.updateInMemoryState(event);
+        this.applyEvent(event);
       } catch {
         // Discard truncated/incomplete JSON lines
         // This is expected after crashes/power loss
@@ -209,14 +220,10 @@ export class StateStore {
 
     // Generate archive filename with timestamp
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const tempFile = join(this.stateDir, `events-${timestamp}.jsonl.tmp`);
     const archiveFile = join(this.stateDir, `events-${timestamp}.jsonl`);
 
-    // Archive existing file if it exists
-    if (existsSync(this.eventsFile)) {
-      renameSync(this.eventsFile, archiveFile);
-    }
-
-    // Write new compacted log with only latest state per session
+    // Write new compacted log into a temp file first
     const lines: string[] = [];
     for (const [, sessionState] of this.state) {
       const event: SessionEvent = {
@@ -229,7 +236,33 @@ export class StateStore {
       lines.push(JSON.stringify(event));
     }
 
-    writeFileSync(this.eventsFile, lines.join("\n") + "\n", "utf-8");
+    writeFileSync(tempFile, lines.join("\n") + "\n", "utf-8");
+
+    // Copy the old log to an archive before swapping
+    if (existsSync(this.eventsFile)) {
+      copyFileSync(this.eventsFile, archiveFile);
+    }
+
+    // Replace the live log with the compacted content
+    renameSync(tempFile, this.eventsFile);
+
+    this.cleanupArchives();
+  }
+
+  private cleanupArchives(): void {
+    const archives = readdirSync(this.stateDir)
+      .filter((name) => name.startsWith("events-") && name.endsWith(".jsonl"))
+      .sort();
+
+    const excess = archives.length - ARCHIVE_RETENTION_LIMIT;
+    if (excess < 1) {
+      return;
+    }
+
+    for (let i = 0; i < excess; i++) {
+      const archivePath = join(this.stateDir, archives[i]);
+      unlinkSync(archivePath);
+    }
   }
 
   /**
@@ -365,8 +398,7 @@ export function migrateAllProjects(configPath: string): Array<{
  * @returns Full path to state directory
  */
 export function getStateDir(configPath: string, projectPath: string): string {
-  const projectId = generateProjectId(projectPath);
-  const baseDir = getProjectBaseDir(configPath, projectId);
+  const baseDir = getProjectBaseDir(configPath, projectPath);
   return join(baseDir, "state");
 }
 
