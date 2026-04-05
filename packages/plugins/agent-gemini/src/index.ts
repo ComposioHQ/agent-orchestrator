@@ -1,6 +1,12 @@
 import {
   shellEscape,
   DEFAULT_READY_THRESHOLD_MS,
+  DEFAULT_ACTIVE_WINDOW_MS,
+  normalizeAgentPermissionMode,
+  readLastActivityEntry,
+  checkActivityLogState,
+  getActivityFallbackState,
+  recordTerminalActivity,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
@@ -22,17 +28,6 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-
-function normalizePermissionMode(
-  mode: string | undefined,
-): "permissionless" | "default" | "auto-edit" | "suggest" | undefined {
-  if (!mode) return undefined;
-  if (mode === "skip") return "permissionless";
-  if (mode === "permissionless" || mode === "default" || mode === "auto-edit" || mode === "suggest") {
-    return mode;
-  }
-  return undefined;
-}
 
 // =============================================================================
 // Metadata Updater Hook Script
@@ -632,7 +627,7 @@ function createGeminiAgent(): Agent {
     getLaunchCommand(config: AgentLaunchConfig): string {
       const parts: string[] = [shellEscape(resolvedBinary)];
 
-      const permissionMode = normalizePermissionMode(config.permissions);
+      const permissionMode = normalizeAgentPermissionMode(config.permissions);
       if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
         parts.push("--approval-mode=yolo");
       }
@@ -671,39 +666,61 @@ function createGeminiAgent(): Agent {
     ): Promise<ActivityDetection | null> {
       const threshold = readyThresholdMs ?? DEFAULT_READY_THRESHOLD_MS;
 
+      // 1. PROCESS CHECK — always first
       if (!session.runtimeHandle) return { state: "exited", timestamp: new Date() };
       const running = await this.isProcessRunning(session.runtimeHandle);
       if (!running) return { state: "exited", timestamp: new Date() };
 
       if (!session.workspacePath) return null;
 
+      // 2. ACTIONABLE STATES — check AO activity JSONL for waiting_input/blocked.
+      //    checkActivityLogState only surfaces these two states; active/ready/idle
+      //    return null so we fall through to the native signal below.
+      const activityResult = await readLastActivityEntry(session.workspacePath);
+      const actionableState = checkActivityLogState(activityResult);
+      if (actionableState) return actionableState;
+
+      // 3. NATIVE SIGNAL — Gemini's own session JSON files have a lastUpdated
+      //    timestamp that is more accurate than file mtime on network filesystems.
       const chatsDir = getGeminiChatsDir(session.workspacePath);
       const latest = await findLatestSessionFileCached(chatsDir);
 
-      if (!latest) {
-        // Session file not yet created (agent just started) — fall back to
-        // detectActivity via the lifecycle manager's fallback path.
-        return null;
+      if (latest) {
+        let activityTime = latest.mtime;
+        const sessionData = await parseSessionFile(latest.path);
+        if (sessionData?.lastUpdated) {
+          const d = new Date(sessionData.lastUpdated);
+          if (!isNaN(d.getTime())) activityTime = d;
+        }
+
+        const ageMs = Date.now() - activityTime.getTime();
+        const activeWindow = Math.min(DEFAULT_ACTIVE_WINDOW_MS, threshold);
+
+        if (ageMs < activeWindow) return { state: "active", timestamp: activityTime };
+        if (ageMs < threshold) return { state: "ready", timestamp: activityTime };
+        return { state: "idle", timestamp: activityTime };
       }
 
-      // Prefer lastUpdated from JSON — file mtime can drift on network filesystems.
-      let activityTime = latest.mtime;
-      const sessionData = await parseSessionFile(latest.path);
-      if (sessionData?.lastUpdated) {
-        const d = new Date(sessionData.lastUpdated);
-        if (!isNaN(d.getTime())) activityTime = d;
-      }
+      // 4. JSONL ENTRY FALLBACK — mandatory safety net when the native Gemini
+      //    session file is missing (agent just started or hasn't written yet).
+      //    Uses the AO activity JSONL entry's detected state with age-based decay
+      //    (active → ready → idle). Never promotes a stale state.
+      const activeWindowMs = Math.min(DEFAULT_ACTIVE_WINDOW_MS, threshold);
+      const fallback = getActivityFallbackState(activityResult, activeWindowMs, threshold);
+      if (fallback) return fallback;
 
-      const ageMs = Date.now() - activityTime.getTime();
-      const activeWindow = Math.min(30_000, threshold);
-
-      if (ageMs < activeWindow) return { state: "active", timestamp: activityTime };
-      if (ageMs < threshold) return { state: "ready", timestamp: activityTime };
-      return { state: "idle", timestamp: activityTime };
+      return null;
     },
 
     async isProcessRunning(handle: RuntimeHandle): Promise<boolean> {
       return (await findGeminiProcess(handle)) !== null;
+    },
+
+    async recordActivity(session: Session, terminalOutput: string): Promise<void> {
+      if (!session.workspacePath) return;
+      await recordTerminalActivity(session.workspacePath, terminalOutput, (output) =>
+        this.detectActivity(output),
+      );
     },
 
     async getSessionInfo(session: Session): Promise<AgentSessionInfo | null> {

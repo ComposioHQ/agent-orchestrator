@@ -14,6 +14,10 @@ const {
   mockMkdir,
   mockChmod,
   mockExistsSync,
+  mockReadLastActivityEntry,
+  mockCheckActivityLogState,
+  mockGetActivityFallbackState,
+  mockRecordTerminalActivity,
 } = vi.hoisted(() => ({
   mockExecFileAsync: vi.fn(),
   mockReaddir: vi.fn(),
@@ -24,6 +28,10 @@ const {
   mockMkdir: vi.fn().mockResolvedValue(undefined),
   mockChmod: vi.fn().mockResolvedValue(undefined),
   mockExistsSync: vi.fn().mockReturnValue(false),
+  mockReadLastActivityEntry: vi.fn().mockResolvedValue(null),
+  mockCheckActivityLogState: vi.fn().mockReturnValue(null),
+  mockGetActivityFallbackState: vi.fn().mockReturnValue(null),
+  mockRecordTerminalActivity: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("node:child_process", () => {
@@ -55,6 +63,17 @@ vi.mock("node:fs", () => ({
 vi.mock("node:os", () => ({
   homedir: mockHomedir,
 }));
+
+vi.mock("@composio/ao-core", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...actual,
+    readLastActivityEntry: mockReadLastActivityEntry,
+    checkActivityLogState: mockCheckActivityLogState,
+    getActivityFallbackState: mockGetActivityFallbackState,
+    recordTerminalActivity: mockRecordTerminalActivity,
+  };
+});
 
 import {
   create,
@@ -163,6 +182,10 @@ beforeEach(() => {
   resetPsCache();
   resetSessionFileCache();
   mockHomedir.mockReturnValue("/mock/home");
+  mockReadLastActivityEntry.mockResolvedValue(null);
+  mockCheckActivityLogState.mockReturnValue(null);
+  mockGetActivityFallbackState.mockReturnValue(null);
+  mockRecordTerminalActivity.mockResolvedValue(undefined);
 });
 
 // =============================================================================
@@ -270,19 +293,20 @@ describe("getLaunchCommand", () => {
     expect(cmd).toContain("--model 'gemini-2.5-pro'");
   });
 
-  it("adds --system-prompt from systemPrompt field", () => {
+  it("does NOT add --system-prompt flag (Gemini uses GEMINI.md instead)", () => {
+    // Gemini CLI has no --system-prompt flag; the prompt is written to GEMINI.md
+    // by postLaunchSetup. The launch command should stay clean.
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ systemPrompt: "Be concise" }));
-    expect(cmd).toContain("--system-prompt");
-    expect(cmd).toContain("Be concise");
+    expect(cmd).not.toContain("--system-prompt");
+    expect(cmd).not.toContain("Be concise");
   });
 
-  it("adds --system-prompt with cat substitution from systemPromptFile", () => {
+  it("does NOT add system prompt file path to command (Gemini uses GEMINI.md instead)", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ systemPromptFile: "/path/to/prompt.md" }),
     );
-    expect(cmd).toContain("--system-prompt");
-    expect(cmd).toContain("cat");
-    expect(cmd).toContain("/path/to/prompt.md");
+    expect(cmd).not.toContain("--system-prompt");
+    expect(cmd).not.toContain("/path/to/prompt.md");
   });
 
   it("combines all options except prompt", () => {
@@ -427,6 +451,22 @@ describe("getActivityState", () => {
     expect(result?.state).toBe("exited");
   });
 
+  it("returns waiting_input from AO activity JSONL when agent is at a permission prompt", async () => {
+    makeTmuxMock();
+    mockReadLastActivityEntry.mockResolvedValue({ state: "waiting_input", ts: Date.now() });
+    mockCheckActivityLogState.mockReturnValue({ state: "waiting_input", timestamp: new Date() });
+    const result = await agent.getActivityState(makeSession({ runtimeHandle: makeTmuxHandle() }));
+    expect(result?.state).toBe("waiting_input");
+  });
+
+  it("returns blocked from AO activity JSONL when agent hit an error", async () => {
+    makeTmuxMock();
+    mockReadLastActivityEntry.mockResolvedValue({ state: "blocked", ts: Date.now() });
+    mockCheckActivityLogState.mockReturnValue({ state: "blocked", timestamp: new Date() });
+    const result = await agent.getActivityState(makeSession({ runtimeHandle: makeTmuxHandle() }));
+    expect(result?.state).toBe("blocked");
+  });
+
   it("returns null when no chats dir exists", async () => {
     makeTmuxMock();
     mockReaddir.mockRejectedValue(Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
@@ -436,6 +476,29 @@ describe("getActivityState", () => {
   it("returns null when no session files exist", async () => {
     makeTmuxMock();
     mockReaddir.mockResolvedValue([]);
+    expect(await agent.getActivityState(makeSession({ runtimeHandle: makeTmuxHandle() }))).toBeNull();
+  });
+
+  it("returns active from JSONL entry fallback when native session file is missing (fresh entry)", async () => {
+    makeTmuxMock();
+    mockReaddir.mockResolvedValue([]); // no Gemini session files
+    mockGetActivityFallbackState.mockReturnValue({ state: "active", timestamp: new Date() });
+    const result = await agent.getActivityState(makeSession({ runtimeHandle: makeTmuxHandle() }));
+    expect(result?.state).toBe("active");
+  });
+
+  it("returns idle from JSONL entry fallback when native session file is missing (old entry, age decay)", async () => {
+    makeTmuxMock();
+    mockReaddir.mockResolvedValue([]); // no Gemini session files
+    mockGetActivityFallbackState.mockReturnValue({ state: "idle", timestamp: new Date(Date.now() - 400_000) });
+    const result = await agent.getActivityState(makeSession({ runtimeHandle: makeTmuxHandle() }));
+    expect(result?.state).toBe("idle");
+  });
+
+  it("returns null when both native signal and JSONL are unavailable", async () => {
+    makeTmuxMock();
+    mockReaddir.mockResolvedValue([]); // no Gemini session files
+    mockGetActivityFallbackState.mockReturnValue(null); // no JSONL data either
     expect(await agent.getActivityState(makeSession({ runtimeHandle: makeTmuxHandle() }))).toBeNull();
   });
 
@@ -487,6 +550,29 @@ describe("getActivityState", () => {
     await agent.getActivityState(session);
     // readdir should only be called once — second call hits cache
     expect(mockReaddir).toHaveBeenCalledTimes(1);
+  });
+});
+
+// =============================================================================
+// recordActivity
+// =============================================================================
+describe("recordActivity", () => {
+  const agent = create();
+
+  it("delegates to recordTerminalActivity with detectActivity classifier", async () => {
+    const session = makeSession({ workspacePath: "/workspace/proj" });
+    await agent.recordActivity!(session, "some terminal output");
+    expect(mockRecordTerminalActivity).toHaveBeenCalledWith(
+      "/workspace/proj",
+      "some terminal output",
+      expect.any(Function),
+    );
+  });
+
+  it("does nothing when workspacePath is null", async () => {
+    const session = makeSession({ workspacePath: null });
+    await agent.recordActivity!(session, "output");
+    expect(mockRecordTerminalActivity).not.toHaveBeenCalled();
   });
 });
 
