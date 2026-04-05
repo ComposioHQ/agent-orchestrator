@@ -22,14 +22,14 @@ describe("SessionNotFound", () => {
     render(<SessionNotFound />);
     expect(
       screen.getByText(
-        "The session you’re looking for does not exist anymore, or the link is stale.",
+        "The session you\u2019re looking for doesn\u2019t exist or has been deleted.",
       ),
     ).toBeInTheDocument();
   });
 
   it("renders a link back to the dashboard", () => {
     render(<SessionNotFound />);
-    const link = screen.getByText("Back to dashboard");
+    const link = screen.getByText("← Back to dashboard");
     expect(link).toBeInTheDocument();
     expect(link.closest("a")).toHaveAttribute("href", "/");
   });
