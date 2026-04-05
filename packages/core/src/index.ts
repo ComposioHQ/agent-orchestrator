@@ -84,7 +84,6 @@ export type {
 export { generateOrchestratorPrompt } from "./orchestrator-prompt.js";
 export type { OrchestratorPromptConfig } from "./orchestrator-prompt.js";
 
-
 // Global pause constants and utilities
 export {
   GLOBAL_PAUSE_UNTIL_KEY,
@@ -181,6 +180,17 @@ export {
   expandHome,
   validateAndStoreOrigin,
 } from "./paths.js";
+
+export {
+  createStateStore,
+  migrateFromMetadata,
+  migrateAllProjects,
+  getStateDir,
+  getEventsFilePath,
+  hasStateStore,
+  type SessionEvent,
+  type SessionState,
+} from "./state-store.js";
 
 // Config generator — auto-generate config from repo URL
 export {
