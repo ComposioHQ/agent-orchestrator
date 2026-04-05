@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { createLifecycleManager } from "../lifecycle-manager.js";
+import { createLifecycleManager, runCompactLog } from "../lifecycle-manager.js";
 import { createSessionManager } from "../session-manager.js";
 import { writeMetadata, readMetadataRaw } from "../metadata.js";
 import type {
@@ -39,6 +39,26 @@ beforeEach(() => {
 
 afterEach(() => {
   env.cleanup();
+});
+
+describe("runCompactLog helper", () => {
+  it("records observer success", () => {
+    const observer = { recordOperation: vi.fn() };
+    const store = { compactLog: vi.fn() };
+    runCompactLog(store as any, observer as any, "test-project");
+    expect(observer.recordOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "success", operation: "compact_log" }),
+    );
+  });
+
+  it("records failure when compaction throws", () => {
+    const observer = { recordOperation: vi.fn() };
+    const store = { compactLog: vi.fn().mockImplementation(() => { throw new Error("boom"); }) };
+    runCompactLog(store as any, observer as any, undefined);
+    expect(observer.recordOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "failure", reason: "boom" }),
+    );
+  });
 });
 
 /** Helper: write standard session metadata and return a lifecycle manager */

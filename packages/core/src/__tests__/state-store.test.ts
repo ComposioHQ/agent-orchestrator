@@ -454,5 +454,21 @@ projects:
       const eventsPath = getEventsFilePath(configPath, projectPath);
       expect(eventsPath).toContain("events.jsonl");
     });
+
+    it("does not persist syncState-only entries during compaction", () => {
+      store.init();
+      store.syncState({
+        timestamp: 123,
+        sessionId: "sync-only",
+        projectId: "my-app",
+        status: "working",
+      });
+
+      store.compactLog();
+
+      const content = readFileSync(getEventsFilePath(configPath, projectPath), "utf-8");
+      const lines = content.split("\n").filter(Boolean);
+      expect(lines.length).toBe(0);
+    });
   });
 });

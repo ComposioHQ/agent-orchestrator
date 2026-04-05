@@ -38,7 +38,11 @@ import {
 } from "./types.js";
 import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
-import { createCorrelationId, createProjectObserver } from "./observability.js";
+import {
+  createCorrelationId,
+  createProjectObserver,
+  type ProjectObserver,
+} from "./observability.js";
 import { resolveAgentSelection, resolveSessionRole } from "./agent-selection.js";
 import { createStateStore, type SessionEvent } from "./state-store.js";
 
@@ -79,6 +83,45 @@ function inferPriority(type: EventType): EventPriority {
     return "warning";
   }
   return "info";
+}
+
+export function runCompactLog(
+  store: { compactLog: () => void },
+  observer: ProjectObserver | undefined,
+  projectId: string | undefined,
+): void {
+  const compactCorrelationId = createCorrelationId("compact-log");
+  try {
+    store.compactLog();
+    observer?.recordOperation?.({
+      metric: "lifecycle_poll",
+      operation: "compact_log",
+      outcome: "success",
+      projectId,
+      level: "info",
+      correlationId: compactCorrelationId,
+    });
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    observer?.recordOperation?.({
+      metric: "lifecycle_poll",
+      operation: "compact_log",
+      outcome: "failure",
+      reason: errorMsg,
+      projectId,
+      level: "warn",
+      correlationId: compactCorrelationId,
+    });
+    process.stderr.write(
+      JSON.stringify({
+        source: "lifecycle-manager",
+        operation: "compact_log",
+        level: "warn",
+        message: errorMsg,
+        timestamp: new Date().toISOString(),
+      }) + "\n",
+    );
+  }
 }
 
 /** Create an OrchestratorEvent with defaults filled in. */
@@ -257,38 +300,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     pollCycleCount++;
     if (pollCycleCount >= 10) {
       pollCycleCount = 0;
-      const compactCorrelationId = createCorrelationId("compact-log");
-      try {
-        stateStore.compactLog();
-        observer?.recordOperation?.({
-          metric: "lifecycle_poll",
-          operation: "compact_log",
-          outcome: "success",
-          projectId: scopedProjectId,
-          level: "info",
-          correlationId: compactCorrelationId,
-        });
-      } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        observer?.recordOperation?.({
-          metric: "lifecycle_poll",
-          operation: "compact_log",
-          outcome: "failure",
-          reason: errorMsg,
-          projectId: scopedProjectId,
-          level: "warn",
-          correlationId: compactCorrelationId,
-        });
-        process.stderr.write(
-          JSON.stringify({
-            source: "lifecycle-manager",
-            operation: "compact_log",
-            level: "warn",
-            message: errorMsg,
-            timestamp: new Date().toISOString(),
-          }) + "\n",
-        );
-      }
+      runCompactLog(stateStore, observer, scopedProjectId);
     }
   }
 

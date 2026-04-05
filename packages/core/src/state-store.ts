@@ -74,6 +74,7 @@ export class StateStore {
   private readonly stateDir: string;
   private readonly eventsFile: string;
   private state: Map<SessionId, SessionState> = new Map();
+  private persisted = new Set<SessionId>();
   private initialized = false;
 
   constructor(private readonly config: StateStoreConfig) {
@@ -148,20 +149,20 @@ export class StateStore {
     appendFileSync(this.eventsFile, line, "utf-8");
 
     // Update in-memory state
-    this.applyEvent(event);
+    this.applyEvent(event, true);
   }
 
   /**
    * Sync the in-memory state without appending to disk.
    */
   syncState(event: SessionEvent): void {
-    this.applyEvent(event);
+    this.applyEvent(event, false);
   }
 
   /**
    * Update in-memory state after applying an event
    */
-  private applyEvent(event: SessionEvent): void {
+  private applyEvent(event: SessionEvent, persisted: boolean): void {
     const existing = this.state.get(event.sessionId);
     const newState: SessionState = {
       sessionId: event.sessionId,
@@ -171,6 +172,11 @@ export class StateStore {
       metadata: event.metadata ?? existing?.metadata ?? {},
     };
     this.state.set(event.sessionId, newState);
+    if (persisted) {
+      this.persisted.add(event.sessionId);
+    } else {
+      this.persisted.delete(event.sessionId);
+    }
   }
 
   /**
@@ -195,7 +201,7 @@ export class StateStore {
 
       try {
         const event = JSON.parse(line) as SessionEvent;
-        this.applyEvent(event);
+        this.applyEvent(event, true);
       } catch {
         // Discard truncated/incomplete JSON lines
         // This is expected after crashes/power loss
@@ -225,6 +231,9 @@ export class StateStore {
     // Write new compacted log into a temp file first
     const lines: string[] = [];
     for (const [, sessionState] of this.state) {
+      if (!this.persisted.has(sessionState.sessionId)) {
+        continue;
+      }
       const event: SessionEvent = {
         timestamp: sessionState.lastUpdated,
         sessionId: sessionState.sessionId,
