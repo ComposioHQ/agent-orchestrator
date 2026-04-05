@@ -252,7 +252,7 @@ describe("Dashboard mobile layout", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Ready" }));
 
-    expect(screen.getByText("No sessions")).toBeInTheDocument();
+    expect(screen.getByText("Nothing cleared to land yet.")).toBeInTheDocument();
   });
 
   it("preserves a deliberate all-collapsed state across session updates", () => {

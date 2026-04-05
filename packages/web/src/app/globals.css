@@ -985,13 +985,6 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   }
 }
 
-
-.dark .detail-card {
-  --color-text-secondary: #a5afc4;
-  --color-text-muted: #6f7c94;
-  --color-text-tertiary: #6f7c94;
-}
-
 /* ── Session cards — flat, Linear-style ──────────────────────────────── */
 
 .session-card {
