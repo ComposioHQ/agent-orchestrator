@@ -18,7 +18,7 @@ export default async function ProjectSessionPage(props: {
     redirect("/");
   }
 
-  const [{ projectSummaries }, projectPageData] = await Promise.all([
+  const [{ projectSummaries, sessions: allSessions }, projectPageData] = await Promise.all([
     loadPortfolioPageData(),
     loadProjectPageData(params.projectId),
   ]);
@@ -26,7 +26,7 @@ export default async function ProjectSessionPage(props: {
   return (
     <DashboardShell
       projects={projectSummaries}
-      sessions={projectPageData.sidebarSessions}
+      sessions={allSessions}
       activeProjectId={params.projectId}
       activeSessionId={params.sessionId}
       defaultLocation={getDefaultCloneLocation()}

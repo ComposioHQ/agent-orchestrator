@@ -11,6 +11,7 @@ import {
 import type { DashboardSession, PortfolioProjectSummary } from "@/lib/types";
 import { useRouter } from "next/navigation";
 import { useModal } from "@/hooks/useModal";
+import { useSessionEvents } from "@/hooks/useSessionEvents";
 import { AddProjectModal } from "./AddProjectModal";
 import { CloneFromUrlModal } from "./CloneFromUrlModal";
 import { UnifiedSidebar } from "./UnifiedSidebar";
@@ -50,6 +51,7 @@ export function DashboardShell({
   const toggleSidebarCollapse = useCallback(() => setSidebarCollapsed((v) => !v), []);
   const addProjectModal = useModal();
   const cloneModal = useModal();
+  const { sessions: liveSessions } = useSessionEvents(sessions ?? []);
   const controls = useMemo<DashboardShellControls>(
     () => ({
       openAddProject: addProjectModal.open,
@@ -63,7 +65,7 @@ export function DashboardShell({
       <div className="min-h-screen bg-[var(--color-bg-base)] text-[var(--color-text-primary)] lg:flex">
         <UnifiedSidebar
           projects={projects}
-          sessions={sessions}
+          sessions={liveSessions}
           activeProjectId={activeProjectId}
           activeSessionId={activeSessionId}
           mobileOpen={mobileOpen}

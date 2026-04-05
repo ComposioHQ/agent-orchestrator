@@ -17,6 +17,7 @@ import { cn } from "@/lib/cn";
 import { getAttentionLevel, type AttentionLevel, type DashboardSession, type PortfolioProjectSummary } from "@/lib/types";
 import { getProjectSessionHref } from "@/lib/project-utils";
 import { getSessionTitle } from "@/lib/format";
+import { isOrchestratorSession } from "@composio/ao-core/types";
 import { Modal } from "./Modal";
 import { ThemeToggle } from "./ThemeToggle";
 import { WorkspaceResourcesModal } from "./WorkspaceResourcesModal";
@@ -73,6 +74,41 @@ function reorderProjects(
   return next;
 }
 
+function formatAgentLabel(agentId: string | undefined): string {
+  switch (agentId) {
+    case "claude-code":
+      return "Claude";
+    case "opencode":
+      return "OpenCode";
+    case "codex":
+      return "Codex";
+    default:
+      return agentId
+        ? agentId.replace(/[-_]+/g, " ").replace(/\b\w/g, (char) => char.toUpperCase())
+        : "Agent";
+  }
+}
+
+function getAgentIconProps(agentId: string | undefined): { src?: string; fallback: string } {
+  switch (agentId) {
+    case "claude-code":
+      return { src: "/agent-icons/claude-code.png", fallback: "CC" };
+    case "opencode":
+      return { src: "/agent-icons/opencode.png", fallback: "OC" };
+    case "codex":
+      return { src: "/agent-icons/codex.svg", fallback: "CX" };
+    default: {
+      const fallback = formatAgentLabel(agentId)
+        .split(" ")
+        .map((part) => part[0])
+        .join("")
+        .slice(0, 2)
+        .toUpperCase() || "AG";
+      return { fallback };
+    }
+  }
+}
+
 function SidebarContent({
   projects,
   sessions,
@@ -99,14 +135,21 @@ function SidebarContent({
   const [resourceProject, setResourceProject] = useState<PortfolioProjectSummary | null>(null);
   const [removeTarget, setRemoveTarget] = useState<{ id: string; name: string } | null>(null);
   const [removing, setRemoving] = useState(false);
+  const [killTarget, setKillTarget] = useState<{ id: string; title: string } | null>(null);
+  const [killing, setKilling] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [spawnMenuProjectId, setSpawnMenuProjectId] = useState<string | null>(null);
+  const [projectMenuId, setProjectMenuId] = useState<string | null>(null);
   const [orderedProjects, setOrderedProjects] = useState(projects);
   const [draggedProjectId, setDraggedProjectId] = useState<string | null>(null);
   const [dragOverProjectId, setDragOverProjectId] = useState<string | null>(null);
+  const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(
+    () => new Set(activeProjectId ? [activeProjectId] : []),
+  );
   const filterMenuRef = useRef<HTMLDivElement>(null);
   const addMenuRef = useRef<HTMLDivElement>(null);
   const spawnMenuRef = useRef<HTMLDivElement>(null);
+  const projectMenuRef = useRef<HTMLDivElement>(null);
 
   const sortedProjects = useMemo(
     () => [...orderedProjects].sort((a, b) => a.name.localeCompare(b.name)),
@@ -135,21 +178,42 @@ function SidebarContent({
     if (!sessions) return [];
     return sessions
       .filter((s) => {
+        if (isOrchestratorSession(s)) return false;
         const level = getAttentionLevel(s);
         return level !== "done";
       })
       .sort((a, b) => new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime());
   }, [sessions]);
 
-  const projectNameMap = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const p of orderedProjects) map.set(p.id, p.name);
-    return map;
-  }, [orderedProjects]);
+  const activeAgentsByProject = useMemo(() => {
+    const grouped = new Map<string, DashboardSession[]>();
+    for (const session of activeAgents) {
+      const projectSessions = grouped.get(session.projectId) ?? [];
+      projectSessions.push(session);
+      grouped.set(session.projectId, projectSessions);
+    }
+    return grouped;
+  }, [activeAgents]);
 
   useEffect(() => {
     setOrderedProjects(projects);
   }, [projects]);
+
+  useEffect(() => {
+    setExpandedProjectIds((current) => {
+      const next = new Set(current);
+      if (activeProjectId) {
+        next.add(activeProjectId);
+      }
+      if (activeSessionId) {
+        const activeSessionProjectId = sessions?.find((session) => session.id === activeSessionId)?.projectId;
+        if (activeSessionProjectId) {
+          next.add(activeSessionProjectId);
+        }
+      }
+      return next;
+    });
+  }, [activeProjectId, activeSessionId, sessions]);
 
   const spawnAgents = useMemo(
     () =>
@@ -237,6 +301,18 @@ function SidebarContent({
     return () => document.removeEventListener("pointerdown", handlePointerDown);
   }, [spawnMenuProjectId]);
 
+  useEffect(() => {
+    function handlePointerDown(event: PointerEvent) {
+      if (!projectMenuRef.current?.contains(event.target as Node)) {
+        setProjectMenuId(null);
+      }
+    }
+
+    if (!projectMenuId) return;
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [projectMenuId]);
+
   function handleRemoveProject(projectId: string, projectName: string) {
     setRemoveTarget({ id: projectId, name: projectName });
   }
@@ -281,6 +357,30 @@ function SidebarContent({
       router.push(getProjectSessionHref(projectId, body.session.id));
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Failed to spawn agent");
+    }
+  }
+
+  function handleKillSession(sessionId: string, sessionTitle: string) {
+    setKillTarget({ id: sessionId, title: sessionTitle });
+  }
+
+  async function executeKillSession() {
+    if (!killTarget) return;
+    setKilling(true);
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(killTarget.id)}/kill`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error || "Failed to terminate session");
+      }
+      setKillTarget(null);
+      router.refresh();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to terminate session");
+    } finally {
+      setKilling(false);
     }
   }
 
@@ -336,10 +436,22 @@ function SidebarContent({
     }
   }
 
+  function toggleProjectExpanded(projectId: string) {
+    setExpandedProjectIds((current) => {
+      const next = new Set(current);
+      if (next.has(projectId)) {
+        next.delete(projectId);
+      } else {
+        next.add(projectId);
+      }
+      return next;
+    });
+  }
+
   return (
     <div className="flex h-full flex-col bg-[var(--color-bg-surface)] text-[var(--color-text-secondary)]">
       {/* Activity link */}
-      <div className="border-b border-[var(--color-border-subtle)] px-4 py-4">
+      <div className="border-b border-[var(--color-border-subtle)] px-3 py-2.5">
         <Link
           href="/activity"
           className={cn(
@@ -355,7 +467,7 @@ function SidebarContent({
       </div>
 
       {/* Workspaces header */}
-      <div className="flex items-center justify-between px-4 pb-3 pt-4">
+      <div className="flex items-center justify-between px-3 pb-2 pt-3">
         <span className="font-[family-name:var(--font-mono)] text-[10px] font-medium uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">
           Workspaces
         </span>
@@ -512,11 +624,12 @@ function SidebarContent({
       </div>
 
       {/* Workspace list */}
-      <nav className="flex-1 overflow-y-auto overflow-x-hidden px-2 pb-4" aria-label="Workspace navigation">
+      <nav className="flex-1 overflow-y-auto overflow-x-hidden px-1.5 pb-4" aria-label="Workspace navigation">
         <div className="space-y-0.5">
           {visibleProjects.map((project) => {
             const isActive = activeProjectId === project.id;
-            const attentionPills = getAttentionPills(project);
+            const projectAgents = activeAgentsByProject.get(project.id) ?? [];
+            const isExpanded = expandedProjectIds.has(project.id);
             const isDragTarget =
               canReorderWorkspaces &&
               draggedProjectId !== null &&
@@ -553,7 +666,7 @@ function SidebarContent({
                 {canReorderWorkspaces ? (
                   <span
                     className={cn(
-                      "pointer-events-none absolute left-1.5 top-1/2 z-[1] -translate-y-1/2 text-[var(--color-text-quaternary)] transition-all duration-100",
+                      "pointer-events-none absolute left-0.5 top-1/2 z-[1] -translate-y-1/2 text-[var(--color-text-quaternary)] transition-all duration-100",
                       draggedProjectId === project.id
                         ? "opacity-100"
                         : "opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100",
@@ -564,57 +677,85 @@ function SidebarContent({
                   </span>
                 ) : null}
 
-                <div
-                  className={cn(
-                    "flex min-h-[44px] items-center gap-3 px-3 py-2 text-[13px] tracking-[-0.011em] hover:no-underline",
-                    isActive
-                      ? "text-[var(--color-text-primary)]"
-                      : "text-[var(--color-text-secondary)]",
-                  )}
-                >
-                  <Link
-                    href={`/projects/${encodeURIComponent(project.id)}`}
-                    className="flex min-w-0 flex-1 items-center gap-3 hover:no-underline"
+                <div className="flex min-h-[32px] items-center gap-1 px-1.5 py-1">
+                  <div
+                    className={cn(
+                      "flex min-w-0 flex-1 items-center gap-1.5 text-[13px] tracking-[-0.011em]",
+                      isActive
+                        ? "text-[var(--color-text-primary)]"
+                        : "text-[var(--color-text-secondary)]",
+                    )}
                   >
-                    <ProjectAvatar
-                      projectId={project.id}
-                      name={project.name}
-                      degraded={project.degraded}
-                    />
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        toggleProjectExpanded(project.id);
+                      }}
+                      aria-label={`${isExpanded ? "Collapse" : "Expand"} ${project.name} sessions`}
+                      aria-expanded={isExpanded}
+                      className="relative z-[3] flex h-4 w-4 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[var(--color-text-quaternary)] transition-colors duration-100 hover:bg-[var(--color-bg-elevated-hover)] hover:text-[var(--color-text-tertiary)]"
+                    >
+                      <span className={cn("transition-transform duration-150", isExpanded && "rotate-90")}>
+                        <ChevronRightIcon />
+                      </span>
+                    </button>
+                    <Link
+                      href={`/projects/${encodeURIComponent(project.id)}`}
+                      draggable={false}
+                      className="flex min-w-0 flex-1 items-center gap-2 hover:no-underline"
+                    >
+                      <ProjectAvatar
+                        projectId={project.id}
+                        name={project.name}
+                        degraded={project.degraded}
+                      />
 
-                    <div className="min-w-0 flex-1 transition-[padding-right] duration-100 group-hover/row:pr-[84px] group-focus-within/row:pr-[84px]">
-                      <span className="block truncate text-[13px] font-medium tracking-[-0.02em]">
+                      <span className="min-w-0 flex-1 truncate text-[13px] font-medium tracking-[-0.02em]">
                         {project.name}
                       </span>
-                      {attentionPills.length > 0 ? (
-                        <div className="mt-0.5 flex items-center gap-1">
-                          {attentionPills.map(({ level, count, color, bgColor }) => (
-                            <span
-                              key={level}
-                              className="inline-flex items-center rounded-[var(--radius-sm)] px-1.5 py-px text-[9px] font-medium tabular-nums"
-                              style={{ color, backgroundColor: bgColor }}
-                            >
-                              {count}{level[0]}
-                            </span>
-                          ))}
+                    </Link>
+                  </div>
+
+                  <div
+                    className={cn(
+                      "flex shrink-0 items-center gap-0.5 transition-opacity duration-100",
+                      "opacity-0 group-focus-within/row:opacity-100 group-hover/row:opacity-100",
+                    )}
+                  >
+                    <div className="relative" ref={projectMenuId === project.id ? projectMenuRef : undefined}>
+                      <SidebarIconButton
+                        label="Project options"
+                        onClick={() => {
+                          setProjectMenuId(
+                            projectMenuId === project.id ? null : project.id,
+                          );
+                        }}
+                      >
+                        <MoreIcon />
+                      </SidebarIconButton>
+                      {projectMenuId === project.id ? (
+                        <div className="absolute right-0 top-8 z-20 min-w-[192px] rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] p-1 shadow-[var(--box-shadow-lg,0_14px_40px_rgba(0,0,0,0.18))]">
+                          <SidebarMenuButton
+                            icon={<LinkIcon />}
+                            label="Open from"
+                            onClick={() => {
+                              setProjectMenuId(null);
+                              setResourceProject(project);
+                            }}
+                          />
+                          <SidebarMenuButton
+                            icon={<TrashIcon />}
+                            label="Remove workspace"
+                            onClick={() => {
+                              setProjectMenuId(null);
+                              handleRemoveProject(project.id, project.name);
+                            }}
+                          />
                         </div>
                       ) : null}
                     </div>
-                  </Link>
-
-                  {/* Action buttons — visible on hover/focus-within for keyboard accessibility */}
-                  <div
-                    className={cn(
-                      "pointer-events-none absolute right-2 top-1/2 z-[2] flex -translate-y-1/2 items-center gap-0.5 transition-opacity duration-100",
-                      "opacity-0 group-focus-within/row:pointer-events-auto group-focus-within/row:opacity-100 group-hover/row:pointer-events-auto group-hover/row:opacity-100",
-                    )}
-                  >
-                    <SidebarIconButton
-                      label="Open from"
-                      onClick={() => setResourceProject(project)}
-                    >
-                      <LinkIcon />
-                    </SidebarIconButton>
                     <div className="relative" ref={spawnMenuProjectId === project.id ? spawnMenuRef : undefined}>
                       <SidebarIconButton
                         label="Spawn a new agent"
@@ -648,70 +789,69 @@ function SidebarContent({
                         </div>
                       ) : null}
                     </div>
-                    <SidebarIconButton
-                      label="Remove workspace"
-                      onClick={() => handleRemoveProject(project.id, project.name)}
-                    >
-                      <TrashIcon />
-                    </SidebarIconButton>
                   </div>
                 </div>
+
+                {isExpanded ? (
+                  <div draggable={false} className="pb-1.5 pl-3 pr-1">
+                    <div className="space-y-0.5 border-l border-[var(--color-border-subtle)] pl-2.5">
+                      {projectAgents.length > 0 ? (
+                        projectAgents.map((session) => {
+                          const isSessionActive = activeSessionId === session.id;
+                          const attention = getAttentionLevel(session);
+                          const title = getSessionTitle(session);
+
+                          return (
+                            <div
+                              key={session.id}
+                              className={cn(
+                                "group/session relative flex items-center gap-1 overflow-hidden rounded-[var(--radius-sm)] border-l-2",
+                                ATTENTION_BORDER_CLASS[attention],
+                                isSessionActive
+                                  ? "bg-[var(--color-accent-subtle)] text-[var(--color-text-primary)]"
+                                  : "text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-elevated-hover)]",
+                              )}
+                            >
+                              <Link
+                                href={getProjectSessionHref(session.projectId, session.id)}
+                                draggable={false}
+                                className="flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-1.5 pr-1 hover:no-underline"
+                              >
+                                <SidebarAgentIcon agentId={session.metadata["agent"]} attention={attention} />
+                                <span className="min-w-0 flex-1 truncate text-[11.5px] font-medium tracking-[-0.011em]">
+                                  {title}
+                                </span>
+                                <StatusChip attention={attention} />
+                              </Link>
+                              <div className="pr-1 opacity-0 transition-opacity duration-100 group-hover/session:opacity-100 group-focus-within/session:opacity-100">
+                                <SidebarIconButton
+                                  label="Terminate session"
+                                  onClick={() => {
+                                    handleKillSession(session.id, title);
+                                  }}
+                                >
+                                  <TrashIcon />
+                                </SidebarIconButton>
+                              </div>
+                            </div>
+                          );
+                        })
+                      ) : (
+                        <div className="py-1.5 pl-1.5 text-[11px] text-[var(--color-text-tertiary)]">
+                          No agents
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
               </div>
             );
           })}
         </div>
       </nav>
 
-      {/* AO Agents */}
-      {activeAgents.length > 0 && (
-        <div className="border-t border-[var(--color-border-subtle)]">
-          <div className="flex items-center justify-between px-4 pb-2 pt-3">
-            <span className="font-[family-name:var(--font-mono)] text-[10px] font-medium uppercase tracking-[0.06em] text-[var(--color-text-tertiary)]">
-              Agents
-              <span className="ml-1.5 text-[var(--color-text-quaternary)]">{activeAgents.length}</span>
-            </span>
-          </div>
-          <div className="max-h-[200px] overflow-y-auto px-2 pb-2 scrollbar-thin">
-            <div className="space-y-0.5">
-              {activeAgents.map((session) => {
-                const isActive = activeSessionId === session.id;
-                const attention = getAttentionLevel(session);
-                const title = getSessionTitle(session);
-                const projectName = projectNameMap.get(session.projectId);
-
-                return (
-                  <Link
-                    key={session.id}
-                    href={getProjectSessionHref(session.projectId, session.id)}
-                    className={cn(
-                      "group/agent relative flex items-center gap-2.5 rounded-[var(--radius-sm)] px-3 py-2 text-[12px] tracking-[-0.011em] transition-colors duration-100 hover:no-underline",
-                      isActive
-                        ? "bg-[var(--color-accent-subtle)] text-[var(--color-text-primary)]"
-                        : "text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-elevated-hover)]",
-                    )}
-                  >
-                    {isActive && (
-                      <span className="absolute inset-y-1 left-0 w-[2px] rounded-full bg-[var(--color-accent)]" />
-                    )}
-                    <AgentActivityDot attention={attention} />
-                    <div className="min-w-0 flex-1">
-                      <span className="block truncate font-medium">{title}</span>
-                      {projectName && (
-                        <span className="block truncate text-[10px] text-[var(--color-text-tertiary)]">
-                          {projectName}
-                        </span>
-                      )}
-                    </div>
-                  </Link>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Footer */}
-      <div className="border-t border-[var(--color-border-subtle)] px-3 py-3">
+      <div className="border-t border-[var(--color-border-subtle)] px-3 py-2">
         <div className="flex items-center justify-between text-[var(--color-text-tertiary)]">
           <ThemeToggle compact />
           <Link
@@ -775,6 +915,46 @@ function SidebarContent({
             {removeTarget?.name}
           </span>{" "}
           from your workspaces? The directory won&apos;t be deleted from disk.
+        </p>
+      </Modal>
+
+      <Modal
+        open={killTarget !== null}
+        onClose={() => setKillTarget(null)}
+        title="Terminate Session"
+        size="sm"
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setKillTarget(null)}
+              disabled={killing}
+              className="border border-[var(--color-border-default)] px-4 py-2 text-[12px] font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-elevated-hover)] disabled:opacity-50"
+              style={{ borderRadius: "2px", minHeight: 40 }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => { void executeKillSession(); }}
+              disabled={killing}
+              className="bg-[var(--color-status-error)] px-4 py-2 text-[12px] font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+              style={{ borderRadius: "2px", minHeight: 40 }}
+            >
+              {killing ? "Terminating..." : "Terminate"}
+            </button>
+          </div>
+        }
+      >
+        <p className="text-[13px] leading-relaxed text-[var(--color-text-secondary)]">
+          Terminate{" "}
+          <span
+            className="font-medium text-[var(--color-text-primary)]"
+            style={{ fontFamily: "var(--font-mono)" }}
+          >
+            {killTarget?.title}
+          </span>
+          ? The agent process will be stopped.
         </p>
       </Modal>
 
@@ -1033,6 +1213,24 @@ const AGENT_DOT_COLORS: Record<AttentionLevel, string> = {
   done: "var(--color-text-quaternary, var(--color-text-tertiary))",
 };
 
+const ATTENTION_BORDER_CLASS: Record<AttentionLevel, string> = {
+  working: "border-l-[var(--color-status-working)]",
+  respond: "border-l-[var(--color-status-attention)]",
+  review: "border-l-[var(--color-accent-violet)]",
+  merge: "border-l-[var(--color-status-ready)]",
+  pending: "border-l-[var(--color-border-subtle)]",
+  done: "border-l-[var(--color-border-subtle)]",
+};
+
+const ATTENTION_STATUS_LABEL: Record<AttentionLevel, string> = {
+  working: "working",
+  respond: "waiting",
+  review: "in review",
+  merge: "mergeable",
+  pending: "pending",
+  done: "done",
+};
+
 function AgentActivityDot({ attention }: { attention: AttentionLevel }) {
   const color = AGENT_DOT_COLORS[attention];
   const isAnimated = attention === "working";
@@ -1048,6 +1246,20 @@ function AgentActivityDot({ attention }: { attention: AttentionLevel }) {
         className="relative inline-flex h-2 w-2 rounded-full"
         style={{ backgroundColor: color }}
       />
+    </span>
+  );
+}
+
+function StatusChip({ attention }: { attention: AttentionLevel }) {
+  const label = ATTENTION_STATUS_LABEL[attention];
+  const color = AGENT_DOT_COLORS[attention];
+  if (attention === "pending" || attention === "done") return null;
+  return (
+    <span
+      className="shrink-0 rounded-[3px] px-1 py-px text-[9px] font-semibold uppercase tracking-[0.055em]"
+      style={{ color, backgroundColor: `color-mix(in srgb, ${color} 14%, transparent)` }}
+    >
+      {label}
     </span>
   );
 }
@@ -1161,34 +1373,6 @@ function SidebarMenuButton({
   );
 }
 
-const ATTENTION_PILL_CONFIG: Record<
-  AttentionLevel,
-  { color: string; bgColor: string; priority: number } | null
-> = {
-  working: { color: "var(--color-status-working)", bgColor: "var(--color-tint-blue)", priority: 0 },
-  respond: { color: "var(--color-status-attention)", bgColor: "var(--color-tint-yellow)", priority: 1 },
-  review: { color: "var(--color-accent-violet)", bgColor: "var(--color-tint-violet)", priority: 2 },
-  merge: { color: "var(--color-status-ready)", bgColor: "var(--color-tint-green)", priority: 3 },
-  pending: { color: "var(--color-text-tertiary)", bgColor: "var(--color-tint-neutral)", priority: 4 },
-  done: null,
-};
-
-function getAttentionPills(project: PortfolioProjectSummary) {
-  const pills: { level: AttentionLevel; count: number; color: string; bgColor: string }[] = [];
-  for (const [level, config] of Object.entries(ATTENTION_PILL_CONFIG)) {
-    if (!config) continue;
-    const count = project.attentionCounts[level as AttentionLevel] ?? 0;
-    if (count > 0) {
-      pills.push({ level: level as AttentionLevel, count, color: config.color, bgColor: config.bgColor });
-    }
-  }
-  return pills.sort((a, b) => {
-    const aPriority = ATTENTION_PILL_CONFIG[a.level]?.priority ?? 99;
-    const bPriority = ATTENTION_PILL_CONFIG[b.level]?.priority ?? 99;
-    return aPriority - bPriority;
-  });
-}
-
 /* ── Icons ─────────────────────────────────────────────────────────── */
 
 function ClockIcon() {
@@ -1196,6 +1380,16 @@ function ClockIcon() {
     <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.7" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="8.25" />
       <path d="M12 7.75V12l2.75 1.75" />
+    </svg>
+  );
+}
+
+function MoreIcon() {
+  return (
+    <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
+      <circle cx="12" cy="5" r="1.5" />
+      <circle cx="12" cy="12" r="1.5" />
+      <circle cx="12" cy="19" r="1.5" />
     </svg>
   );
 }
@@ -1310,6 +1504,43 @@ function TrashIcon() {
   );
 }
 
+function SidebarAgentIcon({ agentId, attention }: { agentId: string | undefined; attention: AttentionLevel }) {
+  const label = formatAgentLabel(agentId);
+  const { src, fallback } = getAgentIconProps(agentId);
+  const badgeColor = AGENT_DOT_COLORS[attention];
+  const isAnimated = attention === "working";
+
+  return (
+    <span
+      className="relative shrink-0"
+      aria-label={`${label} agent`}
+      title={label}
+    >
+      {src ? <AgentFaviconIcon src={src} fallback={fallback} /> : <AgentFaviconIconFallback fallback={fallback} />}
+      <span className="absolute -bottom-px -right-px flex h-[7px] w-[7px] items-center justify-center rounded-full bg-[var(--color-bg-primary)] p-px">
+        {isAnimated && (
+          <span
+            className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-75"
+            style={{ backgroundColor: badgeColor }}
+          />
+        )}
+        <span
+          className="relative inline-flex h-full w-full rounded-full"
+          style={{ backgroundColor: badgeColor }}
+        />
+      </span>
+    </span>
+  );
+}
+
+function AgentFaviconIconFallback({ fallback }: { fallback: string }) {
+  return (
+    <span className="flex h-[18px] w-[18px] items-center justify-center rounded-[4px] bg-slate-100 text-[9px] font-semibold tracking-[0.08em] text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+      {fallback}
+    </span>
+  );
+}
+
 function AgentFaviconIcon({
   src,
   fallback,
@@ -1320,15 +1551,11 @@ function AgentFaviconIcon({
   const [failed, setFailed] = useState(false);
 
   if (failed) {
-    return (
-      <span className="flex h-4 w-4 items-center justify-center rounded-[4px] bg-slate-100 text-[9px] font-semibold tracking-[0.08em] text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-        {fallback}
-      </span>
-    );
+    return <AgentFaviconIconFallback fallback={fallback} />;
   }
 
   return (
-    <span className="flex h-4 w-4 items-center justify-center overflow-hidden rounded-[4px] bg-white ring-1 ring-slate-200/70 dark:bg-slate-900 dark:ring-slate-700/70">
+    <span className="flex h-[18px] w-[18px] items-center justify-center overflow-hidden rounded-[4px] bg-white ring-1 ring-slate-200/70 dark:bg-slate-900 dark:ring-slate-700/70">
       <img
         alt=""
         aria-hidden="true"

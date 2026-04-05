@@ -33,6 +33,13 @@ interface DashboardProps {
   orchestrators?: DashboardOrchestratorLink[];
 }
 
+/** Strip HTML tags and truncate server error text for safe toast display. */
+function sanitizeErrorText(text: string, maxLen = 120): string {
+  const stripped = text.replace(/<[^>]*>/g, "").trim();
+  if (stripped.length <= maxLen) return stripped;
+  return `${stripped.slice(0, maxLen)}…`;
+}
+
 const KANBAN_LEVELS = ["working", "pending", "review", "respond", "merge"] as const;
 /** Urgency-first order for the mobile accordion (reversed from desktop) */
 const MOBILE_KANBAN_ORDER = ["respond", "merge", "review", "pending", "working"] as const;
@@ -77,7 +84,7 @@ function DashboardInner({
     }
     return levels;
   }, [initialSessions]);
-  const { sessions, globalPause, connectionStatus, sseAttentionLevels } = useSessionEvents(
+  const { sessions, globalPause, connectionStatus, sseAttentionLevels, lastDataAt } = useSessionEvents(
     initialSessions,
     initialGlobalPause,
     projectId,
@@ -299,7 +306,7 @@ function DashboardInner({
         const text = await res.text();
         const messageText = text || "Unknown error";
         console.error(`Failed to send message to ${sessionId}:`, messageText);
-        showToast(`Send failed: ${messageText}`, "error");
+        showToast(`Send failed: ${sanitizeErrorText(messageText)}`, "error");
         const errorWithToast = new Error(messageText);
         (errorWithToast as Error & { toastShown?: boolean }).toastShown = true;
         throw errorWithToast;
@@ -325,7 +332,7 @@ function DashboardInner({
       if (!res.ok) {
         const text = await res.text();
         console.error(`Failed to kill ${sessionId}:`, text);
-        showToast(`Terminate failed: ${text}`, "error");
+        showToast(`Terminate failed: ${sanitizeErrorText(text)}`, "error");
       } else {
         showToast("Session terminated", "success");
       }
@@ -371,7 +378,7 @@ function DashboardInner({
       if (!res.ok) {
         const text = await res.text();
         console.error(`Failed to merge PR #${prNumber}:`, text);
-        showToast(`Merge failed: ${text}`, "error");
+        showToast(`Merge failed: ${sanitizeErrorText(text)}`, "error");
         return;
       } else {
         showToast(`PR #${prNumber} merged`, "success");
@@ -391,7 +398,7 @@ function DashboardInner({
       if (!res.ok) {
         const text = await res.text();
         console.error(`Failed to restore ${sessionId}:`, text);
-        showToast(`Restore failed: ${text}`, "error");
+        showToast(`Restore failed: ${sanitizeErrorText(text)}`, "error");
       } else {
         showToast("Session restored", "success");
       }
@@ -475,7 +482,7 @@ function DashboardInner({
 
   return (
     <>
-    <ConnectionBar status={connectionStatus} />
+    <ConnectionBar status={connectionStatus} lastDataAt={lastDataAt} />
     <div className="dashboard-shell flex min-h-screen flex-col">
       <div className="dashboard-main flex-1 overflow-y-auto px-4 py-4 md:px-7 md:py-6">
         <div id="mobile-dashboard-anchor" aria-hidden="true" />

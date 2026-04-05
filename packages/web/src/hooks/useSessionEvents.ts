@@ -27,12 +27,15 @@ interface State {
   connectionStatus: ConnectionStatus;
   /** Attention levels from the latest SSE snapshot (server-computed, includes PR state). */
   sseAttentionLevels: SSEAttentionMap;
+  /** Timestamp of the last successful data update (SSE snapshot or full refresh). */
+  lastDataAt: number;
 }
 
 type Action =
   | { type: "reset"; sessions: DashboardSession[]; globalPause: GlobalPauseState | null; sseAttentionLevels?: SSEAttentionMap }
   | { type: "snapshot"; patches: SSESnapshotEvent["sessions"] }
-  | { type: "setConnection"; status: ConnectionStatus };
+  | { type: "setConnection"; status: ConnectionStatus }
+  | { type: "dataReceived" };
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
@@ -41,12 +44,15 @@ function reducer(state: State, action: Action): State {
         ...state,
         sessions: action.sessions,
         globalPause: action.globalPause,
+        lastDataAt: Date.now(),
         ...(action.sseAttentionLevels !== undefined
           ? { sseAttentionLevels: action.sseAttentionLevels }
           : {}),
       };
     case "setConnection":
       return { ...state, connectionStatus: action.status };
+    case "dataReceived":
+      return { ...state, lastDataAt: Date.now() };
     case "snapshot": {
       const patchMap = new Map(action.patches.map((p) => [p.id, p]));
       let changed = false;
@@ -80,12 +86,13 @@ function reducer(state: State, action: Action): State {
         Object.keys(levels).length !== Object.keys(state.sseAttentionLevels).length ||
         action.patches.some((p) => state.sseAttentionLevels[p.id] !== p.attentionLevel);
 
-      if (!sessionsChanged && !levelsChanged) return state;
+      if (!sessionsChanged && !levelsChanged) return { ...state, lastDataAt: Date.now() };
 
       return {
         ...state,
         sessions: sessionsChanged ? next : state.sessions,
         sseAttentionLevels: levelsChanged ? levels : state.sseAttentionLevels,
+        lastDataAt: Date.now(),
       };
     }
   }
@@ -111,6 +118,7 @@ export function useSessionEvents(
     globalPause: initialGlobalPause ?? null,
     connectionStatus: "connected" as ConnectionStatus,
     sseAttentionLevels: initialAttentionLevels ?? ({} as SSEAttentionMap),
+    lastDataAt: Date.now(),
   });
   const sessionsRef = useRef(state.sessions);
   const initialAttentionLevelsRef = useRef(initialAttentionLevels);
@@ -238,7 +246,12 @@ export function useSessionEvents(
 
     es.onopen = () => {
       clearDisconnectedTimer();
-      if (!disposed) dispatch({ type: "setConnection", status: "connected" });
+      if (!disposed) {
+        dispatch({ type: "setConnection", status: "connected" });
+        // Immediately refresh sessions on connect to replace potentially stale
+        // server-rendered data instead of waiting for the first SSE snapshot.
+        scheduleRefresh();
+      }
     };
 
     es.onerror = () => {
