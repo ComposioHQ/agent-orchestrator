@@ -1,5 +1,5 @@
 import type { Session } from "@composio/ao-core";
-import { isOrchestratorSession } from "@composio/ao-core/types";
+import { isOrchestratorSession, isTerminalSession } from "@composio/ao-core/types";
 import type { Orchestrator } from "@/components/OrchestratorSelector";
 
 /**
@@ -10,9 +10,10 @@ export function mapSessionsToOrchestrators(
   sessions: Session[],
   sessionPrefix: string,
   projectName: string,
+  allSessionPrefixes?: string[],
 ): Orchestrator[] {
   return sessions
-    .filter((s) => isOrchestratorSession(s, sessionPrefix))
+    .filter((s) => isOrchestratorSession(s, sessionPrefix, allSessionPrefixes) && !isTerminalSession(s))
     .map((s) => ({
       id: s.id,
       projectId: s.projectId,
