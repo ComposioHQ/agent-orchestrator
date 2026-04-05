@@ -112,9 +112,10 @@ jobs:
 
       - name: Enforce strong artifact evidence for integration claims
         if: steps.check.outputs.found == 'true'
+        env:
+          CLAIM: ${{ steps.claim.outputs.claim }}
         run: |
           BODY=$(cat "$RUNNER_TEMP/pr_body.txt")
-          CLAIM="${{ steps.claim.outputs.claim }}"
 
           # integration + pipeline-e2e claims require rich artifacts; unit/fix/feat/docs/chore can use terminal evidence only.
           if [ "$CLAIM" = "integration" ] || [ "$CLAIM" = "pipeline-e2e" ]; then
@@ -178,13 +179,28 @@ jobs:
         run: |
           BODY=$(cat "$RUNNER_TEMP/pr_body.txt")
 
-          # Extract from "## Evidence" to EOF to avoid false matches before the section.
+          # Extract from "## Evidence" to EOF to avoid false matches before the section,
+          # then strip HTML comments so template placeholders (<!-- PASS | INSUFFICIENT -->)
+          # cannot satisfy the verdict check on an unfilled template.
           EVIDENCE_SECTION=$(printf '%s' "$BODY" \
-            | sed -n '/^[[:space:]]*## [Ee]vidence/,$p')
+            | sed -n '/^[[:space:]]*## [Ee]vidence/,$p' \
+            | awk '
+              { gsub(/<!--[^>]*-->/, "") }
+              /^[[:space:]]*<!--/ && $0 !~ /<!--[^>]*-->/ { in_comment=1; next }
+              in_comment && /^[[:space:]]*-->/ { in_comment=0; next }
+              in_comment { next }
+              { print }
+            ')
 
-          # Fallback to full body if Evidence section could not be isolated
+          # Fallback to full body (with HTML stripped) if Evidence section could not be isolated
           if [ -z "$EVIDENCE_SECTION" ]; then
-            EVIDENCE_SECTION="$BODY"
+            EVIDENCE_SECTION=$(printf '%s' "$BODY" | awk '
+              { gsub(/<!--[^>]*-->/, "") }
+              /^[[:space:]]*<!--/ && $0 !~ /<!--[^>]*-->/ { in_comment=1; next }
+              in_comment && /^[[:space:]]*-->/ { in_comment=0; next }
+              in_comment { next }
+              { print }
+            ')
           fi
 
           # Check for PASS verdict — scoped to Evidence section
