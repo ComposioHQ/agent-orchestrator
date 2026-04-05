@@ -189,6 +189,28 @@ describe("tracker-jira plugin", () => {
       expect(secondAuth).not.toBe(firstAuth);
     });
 
+    it("evicts stale cache entries when apiToken rotates (no memory leak)", async () => {
+      const t = create();
+
+      // Rotate through 5 tokens — without eviction the internal Map would
+      // accumulate 5 entries (each holding an expired Authorization header).
+      const tokens = ["tok-1", "tok-2", "tok-3", "tok-4", "tok-5"];
+      let first = true;
+      for (const tok of tokens) {
+        process.env.JIRA_API_TOKEN = tok;
+        fetchMock.mockReset();
+        // Sprint is cached per-projectKey after first call
+        if (first) mockSprintResolution();
+        mockFetchJson(sampleJiraIssue);
+        await t.getIssue("TT-1", project);
+        const auth = fetchMock.mock.calls.at(-1)![1].headers.Authorization;
+        expect(auth).toContain(
+          Buffer.from(`bot@acme.com:${tok}`).toString("base64"),
+        );
+        first = false;
+      }
+    });
+
     it("throws on first API call when baseUrl is missing", async () => {
       delete process.env.JIRA_BASE_URL;
       const projectNoUrl: ProjectConfig = {

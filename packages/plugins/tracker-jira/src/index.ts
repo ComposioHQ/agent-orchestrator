@@ -160,6 +160,16 @@ export function create(): Tracker {
     const cacheKey = `${baseUrl}|${email}|${apiToken}`;
     let client = clients.get(cacheKey);
     if (!client) {
+      // Evict stale entries for the same baseUrl+email with a different
+      // token — otherwise rotating credentials in a long-running process
+      // leaks old JiraClient instances (each holding an expired
+      // Authorization header) into the Map unboundedly.
+      const identityPrefix = `${baseUrl}|${email}|`;
+      for (const existingKey of clients.keys()) {
+        if (existingKey.startsWith(identityPrefix) && existingKey !== cacheKey) {
+          clients.delete(existingKey);
+        }
+      }
       client = new JiraClient({ baseUrl, email, apiToken });
       clients.set(cacheKey, client);
     }

@@ -29,7 +29,7 @@ import { generateSessionPrefix } from "./paths.js";
  *
  * Supports: KEY=value, KEY="value", KEY='value', comments (#), blank lines.
  */
-function loadEnvFile(envPath: string): void {
+export function loadEnvFile(envPath: string): void {
   if (!existsSync(envPath)) return;
 
   let content: string;
@@ -46,8 +46,19 @@ function loadEnvFile(envPath: string): void {
     const eqIndex = trimmed.indexOf("=");
     if (eqIndex <= 0) continue;
 
-    const key = trimmed.slice(0, eqIndex).trim();
+    let key = trimmed.slice(0, eqIndex).trim();
     let value = trimmed.slice(eqIndex + 1).trim();
+
+    // Strip optional `export ` prefix (common in shell-style .env files).
+    // Without this, `export FOO=bar` would be parsed as key="export FOO"
+    // and silently fail to set FOO.
+    if (key.startsWith("export ") || key.startsWith("export\t")) {
+      key = key.slice("export".length).trimStart();
+    }
+
+    // Skip lines whose key isn't a valid env-var identifier — prevents
+    // accidental pollution from malformed lines.
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
 
     // Strip surrounding quotes
     if (
