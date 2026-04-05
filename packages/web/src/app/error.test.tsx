@@ -7,6 +7,15 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh }),
 }));
 
+vi.mock("next/link", () => ({
+  default: ({
+    children,
+    ...props
+  }: React.PropsWithChildren<React.AnchorHTMLAttributes<HTMLAnchorElement>>) => (
+    <a {...props}>{children}</a>
+  ),
+}));
+
 import ErrorPage from "./error";
 
 describe("Route error boundary", () => {
