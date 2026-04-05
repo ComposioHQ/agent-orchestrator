@@ -1,0 +1,29 @@
+packages/web/src/app/__tests__/page.test.tsx
+  6a8216f93c54f467 18,21,27-30,36-39,41-44,48-50,65-73,76,79,85-89,92,98-100,102,106,109-110,113-115,117,121,124
+packages/web/src/lib/__tests__/project-page-data.test.ts
+  6a8216f93c54f467 184
+packages/web/src/hooks/__tests__/useSessionEvents.test.ts
+  6a8216f93c54f467 402-406
+packages/web/src/components/__tests__/UnifiedSidebar.test.tsx
+  6a8216f93c54f467 322,334-335,399,417-418,420,430,442,447,449,451,710-712,737-738,753-754,786-787,819-820,943,958,962,966,970,974,977,991,995,998,1031,1035,1037,1056,1061-1063,1066,1088,1092-1094,1401-1403,1536-1537
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "2a6abc3c03da1456444a4356636fdcb1988c491f",
+  "prompts": {
+    "6a8216f93c54f467": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8dc0b8df-3943-4b4a-9ae0-cac5caa38a80",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 103,
+      "total_deletions": 77,
+      "accepted_lines": 103,
+      "overriden_lines": 0
+    }
+  }
+}
