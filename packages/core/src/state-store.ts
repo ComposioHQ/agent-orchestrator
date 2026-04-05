@@ -77,7 +77,6 @@ export class StateStore {
   private initialized = false;
 
   constructor(private readonly config: StateStoreConfig) {
-    const projectId = generateProjectId(config.projectPath);
     const baseDir = getProjectBaseDir(config.configPath, config.projectPath);
     this.stateDir = join(baseDir, "state");
     this.eventsFile = join(this.stateDir, "events.jsonl");

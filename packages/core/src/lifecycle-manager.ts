@@ -232,14 +232,6 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
   }
 
   /**
-   * Delete a session's state from StateStore
-   */
-  function deleteSessionState(sessionId: SessionId): void {
-    // StateStore doesn't have delete, but we can just not record anything
-    // The state will remain but won't be updated - this is acceptable for cleanup
-  }
-
-  /**
    * Record a state transition event to the StateStore
    */
   function recordStateTransition(

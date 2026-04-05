@@ -6,14 +6,10 @@ import {
   writeFileSync,
   appendFileSync,
   existsSync,
-  readdirSync,
-  statSync,
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import type {
-  StateStore} from "../state-store.js";
 import {
   createStateStore,
   migrateFromMetadata,
@@ -22,15 +18,10 @@ import {
   getEventsFilePath,
   hasStateStore,
   type SessionEvent,
-  type SessionState,
+  type StateStore,
 } from "../state-store.js";
 import { writeMetadata } from "../metadata.js";
-import {
-  getSessionsDir,
-  getProjectBaseDir,
-  generateProjectId,
-  generateConfigHash,
-} from "../paths.js";
+import { getSessionsDir } from "../paths.js";
 import type { SessionStatus } from "../types.js";
 
 describe("StateStore", () => {
