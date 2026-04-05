@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { useParams } from "next/navigation";
+import { notFound, useParams } from "next/navigation";
 import { isOrchestratorSession } from "@composio/ao-core/types";
 import { SessionDetail } from "@/components/SessionDetail";
 import { type DashboardSession, type ActivityState, getAttentionLevel, type AttentionLevel } from "@/lib/types";
@@ -63,7 +63,8 @@ export default function SessionPage() {
   const [zoneCounts, setZoneCounts] = useState<ZoneCounts | null>(null);
   const [projectOrchestratorId, setProjectOrchestratorId] = useState<string | null | undefined>(undefined);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [routeError, setRouteError] = useState<Error | null>(null);
+  const [sessionMissing, setSessionMissing] = useState(false);
   const [prefixByProject, setPrefixByProject] = useState<Map<string, string>>(new Map());
   const sessionProjectId = session?.projectId ?? null;
   const allPrefixes = [...prefixByProject.values()];
@@ -119,17 +120,18 @@ export default function SessionPage() {
     try {
       const res = await fetch(`/api/sessions/${encodeURIComponent(id)}`);
       if (res.status === 404) {
-        setError("Session not found");
+        setSessionMissing(true);
         setLoading(false);
         return;
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as DashboardSession;
       setSession(data);
-      setError(null);
+      setRouteError(null);
+      setSessionMissing(false);
     } catch (err) {
       console.error("Failed to fetch session:", err);
-      setError("Failed to load session");
+      setRouteError(err instanceof Error ? err : new Error("Failed to load session"));
     } finally {
       setLoading(false);
     }
@@ -211,17 +213,17 @@ export default function SessionPage() {
     );
   }
 
-  if (error || !session) {
-    return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[var(--color-bg-base)]">
-        <div className="text-[13px] text-[var(--color-status-error)]">
-          {error ?? "Session not found"}
-        </div>
-        <a href="/" className="text-[12px] text-[var(--color-accent)] hover:underline">
-          ← Back to dashboard
-        </a>
-      </div>
-    );
+  if (sessionMissing) {
+    notFound();
+    return null;
+  }
+
+  if (routeError) {
+    throw routeError;
+  }
+
+  if (!session) {
+    throw new Error("Session data was unavailable after loading completed");
   }
 
   return (
