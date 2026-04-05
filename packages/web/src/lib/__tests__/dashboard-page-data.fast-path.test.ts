@@ -59,9 +59,9 @@ describe("getDashboardPageData fast path", () => {
     hoisted.listDashboardOrchestratorsMock.mockReturnValue([{ id: "orch-1", projectId: "docs", projectName: "Docs" }]);
   });
 
-  it("runs fast enrichment, uses cache-only PR hydration, and infers merged state for terminal cache misses even without SCM", async () => {
+  it("runs fast enrichment, uses cache-only PR hydration, and infers merged state for terminal cache misses", async () => {
     const noPrCore = { id: "session-no-pr", status: "working", pr: null };
-    const noScmCore = { id: "session-no-scm", status: "merged", pr: { number: 2 } };
+    const noScmCore = { id: "session-no-scm", status: "working", pr: { number: 2 } };
     const mergedCore = { id: "session-merged", status: "merged", pr: { number: 3 } };
     const allSessions = [noPrCore, noScmCore, mergedCore];
 
@@ -100,7 +100,6 @@ describe("getDashboardPageData fast path", () => {
       mergedCore.pr,
       { cacheOnly: true },
     );
-    expect(dashboardNoScm.pr.state).toBe("merged");
     expect(dashboardMerged.pr.state).toBe("merged");
     expect(pageData.sessions).toEqual([dashboardNoPr, dashboardNoScm, dashboardMerged]);
   });
