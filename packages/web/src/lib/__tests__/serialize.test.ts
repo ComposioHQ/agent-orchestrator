@@ -854,6 +854,41 @@ describe("enrichSessionsMetadata", () => {
     expect(dashboard.issueTitle).toBe("Fix auth bug");
   });
 
+  it("starts issue-title fetches before agent summaries finish", async () => {
+    let resolveSummary: ((value: { summary: string; summaryIsFallback: false; agentSessionId: string }) => void) | null = null;
+
+    const tracker = mockTracker("Fix auth bug");
+    const agent = {
+      ...mockAgent(),
+      getSessionInfo: vi.fn().mockImplementation(
+        () => new Promise((resolve) => {
+          resolveSummary = resolve;
+        }),
+      ),
+    } as Agent;
+    const registry = mockRegistry(tracker, agent);
+
+    const core = createCoreSession({ issueId: `${urlBase}-parallel` });
+    const dashboard = sessionToDashboard(core);
+
+    const enrichmentPromise = enrichSessionsMetadata([core], [dashboard], testConfig, registry);
+    await Promise.resolve();
+
+    expect(tracker.getIssue).toHaveBeenCalledTimes(1);
+    expect(dashboard.issueLabel).toBe("#42");
+    expect(dashboard.summary).toBeNull();
+
+    resolveSummary?.({
+      summary: "Implementing auth fix",
+      summaryIsFallback: false,
+      agentSessionId: "abc",
+    });
+    await enrichmentPromise;
+
+    expect(dashboard.summary).toBe("Implementing auth fix");
+    expect(dashboard.issueTitle).toBe("Fix auth bug");
+  });
+
   it("should skip sessions without issue URLs", async () => {
     const tracker = mockTracker();
     const agent = mockAgent();
