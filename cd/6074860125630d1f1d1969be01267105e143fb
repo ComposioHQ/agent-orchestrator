@@ -1,0 +1,29 @@
+packages/web/src/lib/project-page-data.ts
+  fe22d544bc0eda57 42
+packages/web/src/app/api/projects/[id]/resources/route.ts
+  fe22d544bc0eda57 207
+packages/core/src/index.ts
+  fe22d544bc0eda57 24,29-30,37-42,232-234
+packages/core/src/multi-project-start.ts
+  fe22d544bc0eda57 114-123,240-244
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "cd6074860125630d1f1d1969be01267105e143fb",
+  "prompts": {
+    "fe22d544bc0eda57": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c636a786-d69d-4905-a8ac-c61bd9ed1578",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 37,
+      "total_deletions": 34,
+      "accepted_lines": 30,
+      "overriden_lines": 0
+    }
+  }
+}
