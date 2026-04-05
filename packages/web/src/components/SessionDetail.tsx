@@ -1,14 +1,17 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo, type ReactNode } from "react";
+import { useState, useEffect, useRef, useMemo, lazy, Suspense, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
 import { type DashboardSession, type DashboardPR, isPRMergeReady } from "@/lib/types";
 import { CI_STATUS } from "@composio/ao-core/types";
 import { cn } from "@/lib/cn";
 import { CICheckList } from "./CIBadge";
-import { DirectTerminal } from "./DirectTerminal";
 import { MobileBottomNav } from "./MobileBottomNav";
+
+const DirectTerminal = lazy(() =>
+  import("./DirectTerminal").then((m) => ({ default: m.DirectTerminal })),
+);
 
 interface OrchestratorZones {
   merge: number;
@@ -397,14 +400,25 @@ export function SessionDetail({
                 Live Terminal
               </span>
             </div>
-            <DirectTerminal
-              sessionId={session.id}
-              startFullscreen={startFullscreen}
-              variant={terminalVariant}
-              height={terminalHeight}
-              isOpenCodeSession={isOpenCodeSession}
-              reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
-            />
+            <Suspense
+              fallback={
+                <div
+                  className="flex items-center justify-center rounded-lg border border-[var(--color-border-default)] bg-[var(--color-bg-terminal)]"
+                  style={{ height: terminalHeight }}
+                >
+                  <span className="text-[12px] text-[var(--color-text-tertiary)]">Loading terminal…</span>
+                </div>
+              }
+            >
+              <DirectTerminal
+                sessionId={session.id}
+                startFullscreen={startFullscreen}
+                variant={terminalVariant}
+                height={terminalHeight}
+                isOpenCodeSession={isOpenCodeSession}
+                reloadCommand={isOpenCodeSession ? reloadCommand : undefined}
+              />
+            </Suspense>
           </section>
 
           {pr ? (

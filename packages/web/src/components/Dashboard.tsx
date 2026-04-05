@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
 import {
@@ -21,10 +21,13 @@ import { ThemeToggle } from "./ThemeToggle";
 import type { ProjectInfo } from "@/lib/project-name";
 import { EmptyState } from "./Skeleton";
 import { ToastProvider, useToast } from "./Toast";
-import { BottomSheet } from "./BottomSheet";
 import { ConnectionBar } from "./ConnectionBar";
 import { MobileBottomNav } from "./MobileBottomNav";
 import { getProjectScopedHref } from "@/lib/project-utils";
+
+const BottomSheet = lazy(() =>
+  import("./BottomSheet").then((m) => ({ default: m.BottomSheet })),
+);
 
 interface DashboardProps {
   initialSessions: DashboardSession[];
@@ -750,17 +753,19 @@ function DashboardInner({
       />
     ) : null}
     {isMobile ? (
-    <BottomSheet
-      session={hydratedSheetSession}
-      mode={sheetState?.mode ?? "preview"}
-      onConfirm={handleKillConfirm}
-      onCancel={() => setSheetState(null)}
-      onRequestKill={handleRequestKillFromPreview}
-      onMerge={handleMerge}
-      isMergeReady={
-        hydratedSheetSession?.pr ? isPRMergeReady(hydratedSheetSession.pr) : false
-      }
-    />
+    <Suspense fallback={null}>
+      <BottomSheet
+        session={hydratedSheetSession}
+        mode={sheetState?.mode ?? "preview"}
+        onConfirm={handleKillConfirm}
+        onCancel={() => setSheetState(null)}
+        onRequestKill={handleRequestKillFromPreview}
+        onMerge={handleMerge}
+        isMergeReady={
+          hydratedSheetSession?.pr ? isPRMergeReady(hydratedSheetSession.pr) : false
+        }
+      />
+    </Suspense>
     ) : null}
     </>
   );

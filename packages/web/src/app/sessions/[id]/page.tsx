@@ -1,13 +1,16 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, lazy, Suspense } from "react";
 import { useParams } from "next/navigation";
 import { isOrchestratorSession } from "@composio/ao-core/types";
-import { SessionDetail } from "@/components/SessionDetail";
 import { type DashboardSession, type ActivityState, getAttentionLevel, type AttentionLevel } from "@/lib/types";
 import { activityIcon } from "@/lib/activity-icons";
 import type { ProjectInfo } from "@/lib/project-name";
 import { useSSESessionActivity } from "@/hooks/useSSESessionActivity";
+
+const SessionDetail = lazy(() =>
+  import("@/components/SessionDetail").then((m) => ({ default: m.SessionDetail })),
+);
 
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + "..." : s;
@@ -225,11 +228,19 @@ export default function SessionPage() {
   }
 
   return (
-    <SessionDetail
-      session={session}
-      isOrchestrator={sessionIsOrchestrator}
-      orchestratorZones={zoneCounts ?? undefined}
-      projectOrchestratorId={projectOrchestratorId}
-    />
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-[var(--color-bg-base)]">
+          <div className="text-[13px] text-[var(--color-text-tertiary)]">Loading session…</div>
+        </div>
+      }
+    >
+      <SessionDetail
+        session={session}
+        isOrchestrator={sessionIsOrchestrator}
+        orchestratorZones={zoneCounts ?? undefined}
+        projectOrchestratorId={projectOrchestratorId}
+      />
+    </Suspense>
   );
 }

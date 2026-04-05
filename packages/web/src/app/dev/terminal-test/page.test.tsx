@@ -39,7 +39,9 @@ describe("TerminalTestPage", () => {
     const { default: TerminalTestPage } = await import("./page");
     render(<TerminalTestPage />);
 
-    expect(screen.getByText("Terminal Implementation Test & Documentation")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("Terminal Implementation Test & Documentation")).toBeInTheDocument();
+    });
     expect(screen.getByText(/Root Cause Analysis/i)).toBeInTheDocument();
     expect(screen.getByText(/The Debugging Journey/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /hide side-by-side comparison/i })).toBeInTheDocument();
@@ -64,7 +66,9 @@ describe("TerminalTestPage", () => {
     const { default: TerminalTestPage } = await import("./page");
     render(<TerminalTestPage />);
 
-    expect(screen.getByText(/Using same session for both terminals/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText(/Using same session for both terminals/i)).toBeInTheDocument();
+    });
     expect(screen.getByText("?old_session=ao-orchestrator&new_session=ao-20")).toBeInTheDocument();
   });
 });

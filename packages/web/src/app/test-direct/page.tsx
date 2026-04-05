@@ -1,8 +1,11 @@
 "use client";
 
-import { DirectTerminal } from "@/components/DirectTerminal";
 import { useSearchParams } from "next/navigation";
-import { Suspense } from "react";
+import { Suspense, lazy } from "react";
+
+const DirectTerminal = lazy(() =>
+  import("@/components/DirectTerminal").then((m) => ({ default: m.DirectTerminal })),
+);
 
 // Force dynamic rendering (required for useSearchParams)
 export const dynamic = "force-dynamic";

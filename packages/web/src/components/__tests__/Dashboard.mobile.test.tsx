@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Dashboard } from "../Dashboard";
 import { makePR, makeSession } from "../../__tests__/helpers";
@@ -92,7 +92,9 @@ describe("Dashboard mobile layout", () => {
       fireEvent.click(screen.getByRole("button", { name: /open need approval to proceed/i }));
     });
 
-    expect(screen.getByRole("link", { name: "Open session" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("link", { name: "Open session" })).toBeInTheDocument();
+    });
     expect(screen.getByRole("button", { name: "Terminate" })).toBeInTheDocument();
     expect(screen.getAllByText("Need approval to proceed").length).toBeGreaterThan(1);
     expect(screen.getAllByText("respond").length).toBeGreaterThan(0);
@@ -119,7 +121,9 @@ describe("Dashboard mobile layout", () => {
       fireEvent.click(screen.getByRole("button", { name: /open need approval to proceed/i }));
     });
 
-    expect(screen.getByRole("button", { name: "Terminate" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Terminate" })).toBeInTheDocument();
+    });
     expect(screen.getAllByText("needs input").length).toBeGreaterThan(0);
 
     rerender(

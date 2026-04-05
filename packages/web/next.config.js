@@ -10,6 +10,9 @@ const nextConfig = {
     "@composio/ao-plugin-tracker-linear",
     "@composio/ao-plugin-workspace-worktree",
   ],
+  experimental: {
+    optimizePackageImports: ["@composio/ao-core"],
+  },
   async headers() {
     return [
       {

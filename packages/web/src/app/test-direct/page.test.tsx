@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 let searchParams = new URLSearchParams();
@@ -32,10 +32,14 @@ describe("TestDirectPage", () => {
 
     render(<TestDirectPage />);
 
-    expect(screen.getByText("DirectTerminal Test - XDA Clipboard Support")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("DirectTerminal Test - XDA Clipboard Support")).toBeInTheDocument();
+    });
     expect(screen.getByText("Testing:")).toBeInTheDocument();
     expect(screen.getByText("ao-orchestrator")).toBeInTheDocument();
-    expect(screen.getByTestId("direct-terminal")).toHaveTextContent("ao-orchestrator:false");
+    await waitFor(() => {
+      expect(screen.getByTestId("direct-terminal")).toHaveTextContent("ao-orchestrator:false");
+    });
   });
 
   it("passes session and fullscreen params to the terminal", async () => {
@@ -44,7 +48,9 @@ describe("TestDirectPage", () => {
 
     render(<TestDirectPage />);
 
-    expect(screen.getByTestId("direct-terminal")).toHaveTextContent("ao-20:true");
+    await waitFor(() => {
+      expect(screen.getByTestId("direct-terminal")).toHaveTextContent("ao-20:true");
+    });
     expect(screen.getByText(/clipboard works without iTerm2 attachment/i)).toBeInTheDocument();
   });
 });
