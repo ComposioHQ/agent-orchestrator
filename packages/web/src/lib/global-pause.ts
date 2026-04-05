@@ -1,3 +1,5 @@
+import "server-only";
+
 import {
   GLOBAL_PAUSE_REASON_KEY,
   GLOBAL_PAUSE_SOURCE_KEY,

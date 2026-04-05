@@ -747,23 +747,59 @@ export async function createConfigOnly(): Promise<void> {
  * Start dashboard server in the background.
  * Returns the child process handle for cleanup.
  */
+async function buildDashboard(webDir: string, env: NodeJS.ProcessEnv): Promise<void> {
+  const spinner = ora();
+  spinner.start("Building optimized dashboard (~15s)");
+  try {
+    const { spawnSync } = await import("node:child_process");
+    const result = spawnSync("pnpm", ["run", "build"], { cwd: webDir, stdio: "pipe", env });
+    if (result.status !== 0) {
+      spinner.fail("Dashboard build failed");
+      const stderr = result.stderr?.toString() ?? "";
+      throw new Error(`Dashboard build exited with code ${result.status}\n${stderr}`);
+    }
+    spinner.succeed("Dashboard built");
+  } catch (err) {
+    spinner.fail("Dashboard build failed");
+    throw err;
+  }
+}
+
 async function startDashboard(
   port: number,
   webDir: string,
   configPath: string | null,
   terminalPort?: number,
   directTerminalPort?: number,
+  devMode?: boolean,
 ): Promise<ChildProcess> {
   const env = await buildDashboardEnv(port, configPath, terminalPort, directTerminalPort);
 
-  // Detect dev vs production: the `server/` source directory only exists in the
-  // monorepo. Published npm packages only have `dist-server/`.
-  const isDevMode = existsSync(resolve(webDir, "server"));
+  // Detect monorepo vs npm install: the `server/` source directory only exists
+  // in the monorepo. Published npm packages only have `dist-server/`.
+  const isMonorepo = existsSync(resolve(webDir, "server"));
+
+  // In monorepo: use HMR dev server only when --dev is passed explicitly.
+  // Default is optimized mode (production build + start-all) for faster loading.
+  const useDevServer = isMonorepo && devMode === true;
 
   let child: ChildProcess;
-  if (isDevMode) {
-    // Monorepo development: use pnpm run dev (tsx, HMR, etc.)
+  if (useDevServer) {
+    // Monorepo with --dev: use pnpm run dev (tsx watch, HMR, etc.)
+    console.log(chalk.dim("  Mode: development (HMR enabled)"));
     child = spawn("pnpm", ["run", "dev"], {
+      cwd: webDir,
+      stdio: "inherit",
+      detached: false,
+      env,
+    });
+  } else if (isMonorepo) {
+    // Monorepo default: build optimized bundles then start production server.
+    // This reduces JS bundle from ~1.7MB (dev) to ~170KB (gzipped).
+    await buildDashboard(webDir, env as NodeJS.ProcessEnv);
+    console.log(chalk.dim("  Mode: optimized (production bundles)"));
+    console.log(chalk.dim("  Tip: use --dev for hot reload when editing dashboard UI\n"));
+    child = spawn("node", [resolve(webDir, "dist-server", "start-all.js")], {
       cwd: webDir,
       stdio: "inherit",
       detached: false,
@@ -780,8 +816,8 @@ async function startDashboard(
   }
 
   child.on("error", (err) => {
-    const cmd = isDevMode ? "pnpm" : "node";
-    const args = isDevMode ? ["run", "dev"] : [resolve(webDir, "dist-server", "start-all.js")];
+    const cmd = useDevServer ? "pnpm" : "node";
+    const args = useDevServer ? ["run", "dev"] : [resolve(webDir, "dist-server", "start-all.js")];
     const formatted = formatCommandError(err, {
       cmd,
       args,
@@ -897,7 +933,7 @@ async function runStartup(
   config: OrchestratorConfig,
   projectId: string,
   project: ProjectConfig,
-  opts?: { dashboard?: boolean; orchestrator?: boolean; rebuild?: boolean },
+  opts?: { dashboard?: boolean; orchestrator?: boolean; rebuild?: boolean; dev?: boolean },
 ): Promise<number> {
   // Ensure tmux is available before doing anything — covers all entry paths
   // (normal start, URL start, retry with existing config)
@@ -961,6 +997,7 @@ async function runStartup(
       config.configPath,
       config.terminalPort,
       config.directTerminalPort,
+      opts?.dev,
     );
     spinner.succeed(`Dashboard starting on http://localhost:${port}`);
     console.log(chalk.dim("  (Dashboard will be ready in a few seconds)\n"));
@@ -1109,6 +1146,7 @@ export function registerStart(program: Command): void {
     .option("--no-dashboard", "Skip starting the dashboard server")
     .option("--no-orchestrator", "Skip starting the orchestrator agent")
     .option("--rebuild", "Clean and rebuild dashboard before starting")
+    .option("--dev", "Use Next.js dev server with hot reload (for dashboard UI development)")
     .option("--interactive", "Prompt to configure config settings")
     .action(
       async (
@@ -1117,6 +1155,7 @@ export function registerStart(program: Command): void {
           dashboard?: boolean;
           orchestrator?: boolean;
           rebuild?: boolean;
+          dev?: boolean;
           interactive?: boolean;
         },
       ) => {

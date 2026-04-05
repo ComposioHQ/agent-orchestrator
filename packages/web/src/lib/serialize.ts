@@ -1,3 +1,5 @@
+import "server-only";
+
 /**
  * Core Session → DashboardSession serialization.
  *
