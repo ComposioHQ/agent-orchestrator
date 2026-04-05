@@ -250,7 +250,8 @@ describe("sessionToDashboard", () => {
     expect(dashboard.pr?.deletions).toBe(0);
     expect(dashboard.pr?.ciStatus).toBe("none");
     expect(dashboard.pr?.reviewDecision).toBe("none");
-    expect(dashboard.pr?.mergeability.blockers).toContain("Data not loaded");
+    expect(dashboard.pr?.mergeability.blockers).toEqual([]);
+    expect(dashboard.pr?.enriched).toBe(false);
   });
 
   it("should set pr to null when session has no PR", () => {
@@ -1166,11 +1167,12 @@ describe("basicPRToDashboard defaults", () => {
     expect(dashboard.pr?.reviewDecision).not.toBe("changes_requested");
   });
 
-  it("should have explicit blocker indicating data not loaded", () => {
+  it("should mark unenriched PR with enriched: false", () => {
     const pr = createPRInfo();
     const coreSession = createCoreSession({ pr });
     const dashboard = sessionToDashboard(coreSession);
 
-    expect(dashboard.pr?.mergeability.blockers).toContain("Data not loaded");
+    expect(dashboard.pr?.enriched).toBe(false);
+    expect(dashboard.pr?.mergeability.blockers).toEqual([]);
   });
 });

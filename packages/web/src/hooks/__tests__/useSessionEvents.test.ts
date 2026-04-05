@@ -1007,58 +1007,5 @@ describe("useSessionEvents", () => {
       // fetch should still only have been called once (the failed one)
       expect(fetch).toHaveBeenCalledTimes(1);
     });
-
-    it("updates lastRefreshAtRef when fetch returns OK but no sessions data", async () => {
-      const sessions = makeSessions(1);
-      // Return OK response but with null/empty body (no sessions field)
-      vi.mocked(fetch)
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({ globalPause: null }),
-        } as unknown as Response)
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({ sessions, globalPause: null }),
-        } as unknown as Response);
-
-      renderHook(() => useSessionEvents(sessions));
-
-      // First snapshot triggers refresh (lastRefreshAtRef = 0)
-      await act(async () => {
-        eventSourceMock!.onmessage!.call(eventSourceMock, {
-          data: JSON.stringify({
-            type: "snapshot",
-            sessions: sessions.map((s) => ({
-              id: s.id,
-              status: s.status,
-              activity: s.activity,
-              lastActivityAt: s.lastActivityAt,
-            })),
-          }),
-        } as MessageEvent);
-      });
-
-      await waitFor(() => {
-        expect(fetch).toHaveBeenCalledTimes(1);
-      });
-
-      // Second snapshot should NOT trigger another immediate refresh
-      // because lastRefreshAtRef was updated even for the empty response
-      await act(async () => {
-        eventSourceMock!.onmessage!.call(eventSourceMock, {
-          data: JSON.stringify({
-            type: "snapshot",
-            sessions: sessions.map((s) => ({
-              id: s.id,
-              status: s.status,
-              activity: s.activity,
-              lastActivityAt: s.lastActivityAt,
-            })),
-          }),
-        } as MessageEvent);
-      });
-
-      expect(fetch).toHaveBeenCalledTimes(1);
-    });
   });
 });

@@ -1,5 +1,5 @@
 import { cache } from "react";
-import { TERMINAL_STATUSES, type DashboardSession, type DashboardOrchestratorLink } from "@/lib/types";
+import type { DashboardSession, DashboardOrchestratorLink } from "@/lib/types";
 import { getServices, getSCM } from "@/lib/services";
 import {
   sessionToDashboard,
@@ -11,11 +11,6 @@ import {
 import { getPrimaryProjectId, getProjectName, getAllProjects, type ProjectInfo } from "@/lib/project-name";
 import { filterProjectSessions, filterWorkerSessions } from "@/lib/project-utils";
 import { resolveGlobalPause, type GlobalPauseState } from "@/lib/global-pause";
-import { settlesWithin } from "@/lib/async-utils";
-
-const FAST_METADATA_ENRICH_TIMEOUT_MS = 3_000;
-
-const FAST_METADATA_ENRICH_TIMEOUT_MS = 3_000;
 
 interface DashboardPageData {
   sessions: DashboardSession[];
@@ -24,21 +19,6 @@ interface DashboardPageData {
   projectName: string;
   projects: ProjectInfo[];
   selectedProjectId?: string;
-}
-
-async function settlesWithin(promise: Promise<unknown>, timeoutMs: number): Promise<boolean> {
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  const timeoutPromise = new Promise<boolean>((resolve) => {
-    timeoutId = setTimeout(() => resolve(false), timeoutMs);
-  });
-
-  try {
-    return await Promise.race([promise.then(() => true).catch(() => true), timeoutPromise]);
-  } finally {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
-  }
 }
 
 export const getDashboardProjectName = cache(function getDashboardProjectName(
@@ -85,32 +65,25 @@ export const getDashboardPageData = cache(async function getDashboardPageData(pr
     const coreSessions = filterWorkerSessions(allSessions, projectFilter, config.projects);
     pageData.sessions = coreSessions.map(sessionToDashboard);
 
-    // Fast enrichment: issue labels (sync) + agent summaries (local disk I/O).
-    // Keep a hard cap here so a slow local agent plugin can't stall SSR indefinitely.
-    await settlesWithin(
-      enrichSessionsMetadataFast(coreSessions, pageData.sessions, config, registry),
-      FAST_METADATA_ENRICH_TIMEOUT_MS,
-    );
+    // Fast enrichment: issue labels (sync) + agent summaries (local disk I/O)
+    await enrichSessionsMetadataFast(coreSessions, pageData.sessions, config, registry);
 
     // PR cache hits only (in-memory lookup, no SCM API calls)
-    // TERMINAL_STATUSES includes merged, killed, cleanup, done, terminated, errored
+    const terminalStatuses = new Set(["merged", "killed", "cleanup", "done", "terminated"]);
     for (let i = 0; i < coreSessions.length; i++) {
       const core = coreSessions[i];
       if (!core.pr) continue;
       const projectConfig = resolveProject(core, config.projects);
       const scm = getSCM(registry, projectConfig);
-      if (scm) {
-        await enrichSessionPR(pageData.sessions[i], scm, core.pr, { cacheOnly: true });
-      }
+      if (!scm) continue;
+      await enrichSessionPR(pageData.sessions[i], scm, core.pr, { cacheOnly: true });
 
-      // For cache-miss PRs, infer terminal PR state from lifecycle status
-      // to avoid showing merged/closed PRs as "open" until client refresh.
+      // For terminal sessions with cache-miss PRs, infer state from session status
+      // to avoid showing merged/closed PRs as "open" until client refresh
       const sessionPR = pageData.sessions[i].pr;
-      if (sessionPR && !sessionPR.enriched && TERMINAL_STATUSES.has(core.status)) {
+      if (sessionPR && !sessionPR.enriched && terminalStatuses.has(core.status)) {
         if (core.status === "merged") {
           sessionPR.state = "merged";
-        } else if (core.status === "killed") {
-          sessionPR.state = "closed";
         }
       }
     }

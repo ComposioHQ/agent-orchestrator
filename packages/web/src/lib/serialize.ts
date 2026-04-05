@@ -372,25 +372,6 @@ export async function enrichSessionsMetadataFast(
   config: OrchestratorConfig,
   registry: PluginRegistry,
 ): Promise<void> {
-  const { summaryPromises } = prepareSessionMetadataEnrichment(
-    coreSessions,
-    dashboardSessions,
-    config,
-    registry,
-  );
-
-  await Promise.allSettled(summaryPromises);
-}
-
-function prepareSessionMetadataEnrichment(
-  coreSessions: Session[],
-  dashboardSessions: DashboardSession[],
-  config: OrchestratorConfig,
-  registry: PluginRegistry,
-): {
-  projects: Array<ProjectConfig | undefined>;
-  summaryPromises: Promise<void>[];
-} {
   const projects = coreSessions.map((core) => resolveProject(core, config.projects));
 
   // Issue labels (synchronous string parsing, no API calls)
@@ -411,7 +392,7 @@ function prepareSessionMetadataEnrichment(
     return enrichSessionAgentSummary(dashboardSessions[i], core, agent);
   });
 
-  return { projects, summaryPromises };
+  await Promise.allSettled(summaryPromises);
 }
 
 /**
@@ -424,14 +405,11 @@ export async function enrichSessionsMetadata(
   config: OrchestratorConfig,
   registry: PluginRegistry,
 ): Promise<void> {
-  const { projects, summaryPromises } = prepareSessionMetadataEnrichment(
-    coreSessions,
-    dashboardSessions,
-    config,
-    registry,
-  );
+  // Run fast enrichment first (labels + summaries)
+  await enrichSessionsMetadataFast(coreSessions, dashboardSessions, config, registry);
 
-  // Issue-title fetches depend on labels being set, but can run in parallel with summary I/O.
+  // Then add issue titles (tracker API, cached with TTL)
+  const projects = coreSessions.map((core) => resolveProject(core, config.projects));
   const issueTitlePromises = projects.map((project, i) => {
     if (!dashboardSessions[i].issueUrl || !dashboardSessions[i].issueLabel) {
       return Promise.resolve();
@@ -442,7 +420,7 @@ export async function enrichSessionsMetadata(
     return enrichSessionIssueTitle(dashboardSessions[i], tracker, project);
   });
 
-  await Promise.allSettled([...summaryPromises, ...issueTitlePromises]);
+  await Promise.allSettled(issueTitlePromises);
 }
 
 /** Compute dashboard stats from a list of sessions. */
