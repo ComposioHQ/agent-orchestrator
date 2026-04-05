@@ -6,6 +6,7 @@ import { isOrchestratorSession } from "@composio/ao-core/types";
 import { SessionDetail } from "@/components/SessionDetail";
 import { type DashboardSession, type ActivityState, getAttentionLevel, type AttentionLevel } from "@/lib/types";
 import { activityIcon } from "@/lib/activity-icons";
+import type { ProjectInfo } from "@/lib/project-name";
 import { useSSESessionActivity } from "@/hooks/useSSESessionActivity";
 
 function truncate(s: string, max: number): string {
@@ -15,12 +16,14 @@ function truncate(s: string, max: number): string {
 /** Build a descriptive tab title from session data. */
 function buildSessionTitle(
   session: DashboardSession,
+  prefixByProject: Map<string, string>,
   activityOverride?: ActivityState | null,
 ): string {
   const id = session.id;
   const activity = activityOverride !== undefined ? activityOverride : session.activity;
   const emoji = activity ? (activityIcon[activity] ?? "") : "";
-  const isOrchestrator = isOrchestratorSession(session);
+  const allPrefixes = [...prefixByProject.values()];
+  const isOrchestrator = isOrchestratorSession(session, prefixByProject.get(session.projectId), allPrefixes);
 
   let detail: string;
 
@@ -61,11 +64,35 @@ export default function SessionPage() {
   const [projectOrchestratorId, setProjectOrchestratorId] = useState<string | null | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [prefixByProject, setPrefixByProject] = useState<Map<string, string>>(new Map());
   const sessionProjectId = session?.projectId ?? null;
-  const sessionIsOrchestrator = session ? isOrchestratorSession(session) : false;
+  const allPrefixes = [...prefixByProject.values()];
+  const sessionIsOrchestrator = session
+    ? isOrchestratorSession(session, prefixByProject.get(session.projectId), allPrefixes)
+    : false;
   const sessionProjectIdRef = useRef<string | null>(null);
   const sessionIsOrchestratorRef = useRef(false);
   const resolvedProjectSessionsKeyRef = useRef<string | null>(null);
+  const prefixByProjectRef = useRef<Map<string, string>>(new Map());
+
+  // Keep prefixByProjectRef in sync so fetchProjectSessions (stable [] dep) reads latest map
+  useEffect(() => {
+    prefixByProjectRef.current = prefixByProject;
+  }, [prefixByProject]);
+
+  // Fetch project prefix map once on mount so isOrchestratorSession can use the correct prefix
+  useEffect(() => {
+    fetch("/api/projects")
+      .then((res) => res.ok ? res.json() : null)
+      .then((data: { projects?: ProjectInfo[] } | null) => {
+        if (data?.projects) {
+          setPrefixByProject(
+            new Map(data.projects.map((p) => [p.id, p.sessionPrefix ?? p.id])),
+          );
+        }
+      })
+      .catch(() => {/* non-critical — falls back to role metadata check */});
+  }, []);
 
   // Subscribe to SSE for real-time activity updates (title emoji)
   const sseActivity = useSSESessionActivity(id);
@@ -73,11 +100,11 @@ export default function SessionPage() {
   // Update document title based on session data + SSE activity override
   useEffect(() => {
     if (session) {
-      document.title = buildSessionTitle(session, sseActivity?.activity);
+      document.title = buildSessionTitle(session, prefixByProject, sseActivity?.activity);
     } else {
       document.title = `${id} | Session Detail`;
     }
-  }, [session, id, sseActivity]);
+  }, [session, id, prefixByProject, sseActivity]);
 
   useEffect(() => {
     sessionProjectIdRef.current = sessionProjectId;
@@ -141,8 +168,9 @@ export default function SessionPage() {
         working: 0,
         done: 0,
       };
+      const allPrefixes = [...prefixByProjectRef.current.values()];
       for (const s of sessions) {
-        if (!isOrchestratorSession(s)) {
+        if (!isOrchestratorSession(s, prefixByProjectRef.current.get(s.projectId), allPrefixes)) {
           counts[getAttentionLevel(s) as AttentionLevel]++;
         }
       }
