@@ -1,0 +1,25 @@
+.gstack-report/design-preview.html
+  9f484f56446aa97f 1-609
+DESIGN.md
+  9f484f56446aa97f 55,69,101-102,134-141,179,192,200,207,236-237
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "ff82312eb6bf16f78442e987e468c54634648b3d",
+  "prompts": {
+    "9f484f56446aa97f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6befeeed-b65e-410c-99a4-881aec7a8edd",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 852,
+      "total_deletions": 438,
+      "accepted_lines": 734,
+      "overriden_lines": 0
+    }
+  }
+}
