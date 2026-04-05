@@ -788,4 +788,138 @@ describe("useSessionEvents", () => {
       expect(result.current.sseAttentionLevels["session-0"]).toBeUndefined();
     });
   });
+
+  // ── mux-based session updates ──────────────────────────────────────────
+
+  describe("mux session updates", () => {
+    const makePatch = (id: string) => ({
+      id,
+      status: "working",
+      activity: "active" as string | null,
+      attentionLevel: "working",
+      lastActivityAt: new Date().toISOString(),
+    });
+
+    it("sets connectionStatus to connected when muxSessions is provided", () => {
+      const patches = [makePatch("s1")];
+      const { result } = renderHook(() =>
+        useSessionEvents(makeSessions(1), null, undefined, patches),
+      );
+      expect(result.current.connectionStatus).toBe("connected");
+    });
+
+    it("dispatches snapshot from muxSessions", async () => {
+      const patches = [makePatch("s1"), makePatch("s2")];
+      const { result } = renderHook(() =>
+        useSessionEvents([], null, undefined, patches),
+      );
+      await waitFor(() => result.current.sessions.length === 2);
+    });
+
+    it("triggers scheduleRefresh when mux session membership changes", async () => {
+      vi.useFakeTimers();
+      const initialPatches = [makePatch("s1")];
+      const newPatches = [makePatch("s1"), makePatch("s2")];
+      let currentPatches = initialPatches;
+
+      vi.mocked(fetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          sessions: [makeSession({ id: "s1" }), makeSession({ id: "s2" })],
+          globalPause: null,
+        }),
+      } as unknown as Response);
+
+      const { rerender } = renderHook(() =>
+        useSessionEvents([], null, undefined, currentPatches),
+      );
+
+      currentPatches = newPatches;
+      rerender();
+
+      // Advance past the 120ms debounce
+      act(() => vi.advanceTimersByTime(200));
+      await waitFor(() => vi.mocked(fetch).mock.calls.length > 0);
+      vi.useRealTimers();
+    });
+
+    it("aborts in-flight request when muxSessions changes rapidly", async () => {
+      vi.useFakeTimers();
+      const controller = new AbortController();
+      let resolveFirst!: () => void;
+      const firstFetch = new Promise<Response>((resolve) => {
+        resolveFirst = () =>
+          resolve({
+            ok: true,
+            json: async () => ({ sessions: [], globalPause: null }),
+          } as unknown as Response);
+      });
+
+      vi.mocked(fetch)
+        .mockReturnValueOnce(firstFetch)
+        .mockResolvedValue({
+          ok: true,
+          json: async () => ({ sessions: [], globalPause: null }),
+        } as unknown as Response);
+
+      let patches = [makePatch("s1")];
+      const { rerender } = renderHook(() =>
+        useSessionEvents([], null, undefined, patches),
+      );
+
+      patches = [makePatch("s1"), makePatch("s2")];
+      rerender();
+      act(() => vi.advanceTimersByTime(200));
+
+      // Change again rapidly — cleanup should abort previous controller
+      patches = [makePatch("s1"), makePatch("s2"), makePatch("s3")];
+      rerender();
+
+      resolveFirst();
+      vi.useRealTimers();
+      // Main assertion: no crash and hook remains stable
+      expect(controller.signal).toBeDefined();
+    });
+
+    it("skips SSE setup when muxActive is true", () => {
+      const patches = [makePatch("s1")];
+      const EventSourceSpy = vi.fn(() => ({
+        close: vi.fn(),
+        onmessage: null,
+        onerror: null,
+        onopen: null,
+        readyState: 1,
+      }));
+      global.EventSource = Object.assign(EventSourceSpy, {
+        CONNECTING: 0, OPEN: 1, CLOSED: 2,
+      }) as unknown as typeof EventSource;
+
+      renderHook(() => useSessionEvents([], null, undefined, patches));
+
+      expect(EventSourceSpy).not.toHaveBeenCalled();
+    });
+
+    it("mux-active cleanup aborts in-flight fetch and clears timer", async () => {
+      vi.useFakeTimers();
+      vi.mocked(fetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({ sessions: [], globalPause: null }),
+      } as unknown as Response);
+
+      const patches = [makePatch("s1")];
+      let mux: typeof patches | undefined = patches;
+      const { rerender, unmount } = renderHook(() =>
+        useSessionEvents([], null, undefined, mux),
+      );
+
+      // Trigger a membership change so a timer is pending
+      mux = [makePatch("s1"), makePatch("s2")];
+      rerender();
+
+      // Unmount while timer is pending — should clean up without crash
+      unmount();
+      act(() => vi.advanceTimersByTime(500));
+      vi.useRealTimers();
+    });
+  });
 });

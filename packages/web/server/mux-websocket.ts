@@ -11,7 +11,37 @@ import { WebSocketServer, WebSocket } from "ws";
 import { homedir, userInfo } from "node:os";
 import { spawn } from "node:child_process";
 import { findTmux, resolveTmuxSession, validateSessionId } from "./tmux-utils.js";
-import type { ClientMessage, ServerMessage, SessionPatch } from "../src/lib/mux-protocol.js";
+
+// These types mirror src/lib/mux-protocol.ts exactly.
+// tsconfig.server.json constrains rootDir to "server/", so we cannot import
+// across the boundary. Keep both in sync when updating the protocol.
+
+// ── Client → Server ──
+type ClientMessage =
+  | { ch: "terminal"; id: string; type: "data"; data: string }
+  | { ch: "terminal"; id: string; type: "resize"; cols: number; rows: number }
+  | { ch: "terminal"; id: string; type: "open" }
+  | { ch: "terminal"; id: string; type: "close" }
+  | { ch: "system"; type: "ping" }
+  | { ch: "subscribe"; topics: ("sessions")[] };
+
+// ── Server → Client ──
+type ServerMessage =
+  | { ch: "terminal"; id: string; type: "data"; data: string }
+  | { ch: "terminal"; id: string; type: "exited"; code: number }
+  | { ch: "terminal"; id: string; type: "opened" }
+  | { ch: "terminal"; id: string; type: "error"; message: string }
+  | { ch: "sessions"; type: "snapshot"; sessions: SessionPatch[] }
+  | { ch: "system"; type: "pong" }
+  | { ch: "system"; type: "error"; message: string };
+
+interface SessionPatch {
+  id: string;
+  status: string;
+  activity: string | null;
+  attentionLevel: string;
+  lastActivityAt: string;
+}
 
 /**
  * Manages a single shared SSE connection to Next.js /api/events.
