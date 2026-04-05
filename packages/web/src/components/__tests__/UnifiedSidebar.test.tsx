@@ -347,6 +347,140 @@ describe("UnifiedSidebar attention pills", () => {
   });
 });
 
+describe("UnifiedSidebar project session accordion", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPathname = "/";
+    setupFetch();
+  });
+
+  it("renders project sessions in an accordion when expanded", () => {
+    render(
+      <UnifiedSidebar
+        projects={[makeProject({ id: "proj-1", name: "Project One", activeCount: 1 })]}
+        sessions={[
+          makeSession({
+            id: "proj-1-1",
+            projectId: "proj-1",
+            summary: "Fix flaky sidebar state",
+            metadata: { agent: "codex" },
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.queryByText("Fix flaky sidebar state")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("Expand Project One sessions"));
+
+    expect(screen.getByText("Fix flaky sidebar state")).toBeInTheDocument();
+    expect(screen.getByText("Codex · proj-1-1")).toBeInTheDocument();
+    expect(screen.getAllByLabelText("Codex agent").length).toBeGreaterThan(0);
+  });
+
+  it("auto-expands the active session's project", () => {
+    render(
+      <UnifiedSidebar
+        projects={[makeProject({ id: "proj-1", name: "Project One", activeCount: 1 })]}
+        sessions={[
+          makeSession({
+            id: "proj-1-1",
+            projectId: "proj-1",
+            summary: "Investigate review feedback",
+            metadata: { agent: "claude-code" },
+          }),
+        ]}
+        activeProjectId="proj-1"
+        activeSessionId="proj-1-1"
+      />,
+    );
+
+    expect(screen.getByText("Investigate review feedback")).toBeInTheDocument();
+    expect(screen.getByLabelText("Collapse Project One sessions")).toBeInTheDocument();
+  });
+
+  it("shows inline confirm before killing an AO agent session", async () => {
+    render(
+      <UnifiedSidebar
+        projects={[makeProject({ id: "proj-1", name: "Project One", activeCount: 1 })]}
+        sessions={[
+          makeSession({
+            id: "proj-1-1",
+            projectId: "proj-1",
+            summary: "Investigate review feedback",
+            metadata: { agent: "claude-code" },
+          }),
+        ]}
+        activeProjectId="proj-1"
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("Terminate session"));
+
+    expect(screen.getByRole("button", { name: "Confirm" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        "/api/sessions/proj-1-1/kill",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+  });
+
+  it("clears the inline confirm state when the mouse leaves the AO agent row", () => {
+    render(
+      <UnifiedSidebar
+        projects={[makeProject({ id: "proj-1", name: "Project One", activeCount: 1 })]}
+        sessions={[
+          makeSession({
+            id: "proj-1-1",
+            projectId: "proj-1",
+            summary: "Investigate review feedback",
+            metadata: { agent: "claude-code" },
+          }),
+        ]}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("Terminate session"));
+    expect(screen.getByRole("button", { name: "Confirm" })).toBeInTheDocument();
+
+    const row = screen.getByText("Investigate review feedback").closest(".group\\/agent");
+    expect(row).not.toBeNull();
+    fireEvent.pointerLeave(row!);
+
+    expect(screen.queryByRole("button", { name: "Confirm" })).not.toBeInTheDocument();
+  });
+
+  it("does not show orchestrator sessions in the sidebar agent lists", () => {
+    render(
+      <UnifiedSidebar
+        projects={[makeProject({ id: "proj-1", name: "Project One", activeCount: 2 })]}
+        sessions={[
+          makeSession({
+            id: "proj-1-orchestrator",
+            projectId: "proj-1",
+            summary: "Main orchestrator",
+            metadata: { role: "orchestrator", agent: "codex" },
+          }),
+          makeSession({
+            id: "proj-1-1",
+            projectId: "proj-1",
+            summary: "Worker task",
+            metadata: { agent: "codex" },
+          }),
+        ]}
+        activeProjectId="proj-1"
+      />,
+    );
+
+    expect(screen.getByText("Worker task")).toBeInTheDocument();
+    expect(screen.queryByText("Main orchestrator")).not.toBeInTheDocument();
+  });
+});
+
 describe("UnifiedSidebar filter menu", () => {
   beforeEach(() => {
     vi.clearAllMocks();

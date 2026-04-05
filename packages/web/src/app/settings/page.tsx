@@ -8,22 +8,11 @@ import { IntegrationSettings } from "@/components/settings/IntegrationSettings";
 import { ProjectSettings } from "@/components/settings/ProjectSettings";
 import { getDefaultCloneLocation } from "@/lib/default-location";
 import { getPortfolioServices } from "@/lib/portfolio-services";
-import type { AttentionLevel, PortfolioProjectSummary } from "@/lib/types";
+import { loadPortfolioPageData } from "@/lib/portfolio-page-data";
 
 export const metadata: Metadata = {
   title: { absolute: "ao | Settings" },
 };
-
-function emptyAttentionCounts(): Record<AttentionLevel, number> {
-  return {
-    merge: 0,
-    respond: 0,
-    review: 0,
-    pending: 0,
-    working: 0,
-    done: 0,
-  };
-}
 
 function getAgentDefaults() {
   try {
@@ -42,21 +31,11 @@ function getAgentDefaults() {
 
 export default async function SettingsRoute() {
   const { portfolio } = getPortfolioServices();
-  const projectSummaries: PortfolioProjectSummary[] = portfolio
-    .map((project) => ({
-      id: project.id,
-      name: project.name,
-      repo: project.repo,
-      sessionCount: 0,
-      activeCount: 0,
-      attentionCounts: emptyAttentionCounts(),
-      degraded: project.degraded,
-      degradedReason: project.degradedReason,
-    }));
+  const { projectSummaries, sessions } = await loadPortfolioPageData();
   const agentDefaults = getAgentDefaults();
 
   return (
-    <DashboardShell projects={projectSummaries} defaultLocation={getDefaultCloneLocation()}>
+    <DashboardShell projects={projectSummaries} sessions={sessions} defaultLocation={getDefaultCloneLocation()}>
       <main className="min-h-screen bg-[var(--color-bg-base)] px-5 py-8 text-[var(--color-text-primary)] sm:px-6 lg:px-10">
         <div className="mx-auto max-w-[1120px]">
           <header className="rounded-[2px] border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] px-6 py-6 shadow-[var(--card-shadow)]">

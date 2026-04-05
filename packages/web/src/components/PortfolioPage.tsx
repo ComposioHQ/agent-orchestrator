@@ -7,6 +7,7 @@ import type { AttentionLevel, PortfolioProjectSummary } from "@/lib/types";
 
 interface PortfolioPageProps {
   projectSummaries: PortfolioProjectSummary[];
+  orphanedSessionCount?: number;
   onOpenProject?: () => void;
   onCloneFromUrl?: () => void;
 }
@@ -16,6 +17,7 @@ const ACTIVE_LEVELS: AttentionLevel[] = ["merge", "respond", "review", "pending"
 
 export function PortfolioPage({
   projectSummaries,
+  orphanedSessionCount = 0,
   onOpenProject,
   onCloneFromUrl,
 }: PortfolioPageProps) {
@@ -26,7 +28,7 @@ export function PortfolioPage({
   const hasSessions = projectSummaries.some((p) => p.sessionCount > 0);
 
   if (hasSessions) {
-    return <AttentionHome projectSummaries={projectSummaries} />;
+    return <AttentionHome projectSummaries={projectSummaries} orphanedSessionCount={orphanedSessionCount} />;
   }
 
   return <LauncherHome
@@ -40,7 +42,7 @@ export function PortfolioPage({
 // Attention-first home — for returning users with sessions
 // ---------------------------------------------------------------------------
 
-function AttentionHome({ projectSummaries }: { projectSummaries: PortfolioProjectSummary[] }) {
+function AttentionHome({ projectSummaries, orphanedSessionCount = 0 }: { projectSummaries: PortfolioProjectSummary[]; orphanedSessionCount?: number }) {
   const totalActive = projectSummaries.reduce((s, p) => s + p.activeCount, 0);
   const totalSessions = projectSummaries.reduce((s, p) => s + p.sessionCount, 0);
 
@@ -96,6 +98,18 @@ function AttentionHome({ projectSummaries }: { projectSummaries: PortfolioProjec
             </p>
           )}
         </div>
+
+        {/* Orphaned sessions warning */}
+        {orphanedSessionCount > 0 && (
+          <div className="mt-4 rounded-[2px] border border-[var(--color-status-attention)] bg-[rgba(210,153,34,0.08)] px-4 py-3">
+            <p className="text-[var(--font-size-sm)] text-[var(--color-status-attention)]">
+              {orphanedSessionCount} session{orphanedSessionCount === 1 ? "" : "s"} belong{orphanedSessionCount === 1 ? "s" : ""} to
+              a project that was removed.
+              Run <code className="font-[var(--font-mono)] text-[11px]">ao project add &lt;path&gt;</code> to
+              re-register, or <code className="font-[var(--font-mono)] text-[11px]">ao stop</code> to clean up.
+            </p>
+          </div>
+        )}
 
         {/* Project cards */}
         <div className="mt-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

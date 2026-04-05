@@ -38,11 +38,13 @@ function emptyAttentionCounts(): Record<AttentionLevel, number> {
 export async function loadPortfolioPageData(): Promise<{
   projectSummaries: PortfolioProjectSummary[];
   sessions: DashboardSession[];
+  orphanedSessionCount: number;
 }> {
   const { portfolio } = getPortfolioServices();
   const portfolioSessions = await getCachedPortfolioSessions().catch(() => []);
   const summaries = new Map<string, PortfolioProjectSummary>();
   const sessions: DashboardSession[] = [];
+  let orphanedSessionCount = 0;
 
   for (const project of portfolio) {
     if (project.enabled === false) continue;
@@ -62,7 +64,10 @@ export async function loadPortfolioPageData(): Promise<{
     if (isOrchestratorSession(item.session)) continue;
 
     const summary = summaries.get(item.project.id);
-    if (!summary) continue;
+    if (!summary) {
+      orphanedSessionCount++;
+      continue;
+    }
 
     const dashboardSession = sessionToDashboard(item.session);
     sessions.push(dashboardSession);
@@ -82,5 +87,5 @@ export async function loadPortfolioPageData(): Promise<{
     }
   }
 
-  return { projectSummaries, sessions };
+  return { projectSummaries, sessions, orphanedSessionCount };
 }
