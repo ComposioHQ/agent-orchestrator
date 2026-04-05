@@ -1,0 +1,90 @@
+packages/web/src/lib/portfolio-page-data.ts
+  fe22d544bc0eda57 49,51-54,72-75
+packages/web/src/app/api/browse-directory/route.ts
+  fe22d544bc0eda57 20,28,66-70
+packages/core/src/global-config.ts
+  fe22d544bc0eda57 289-291,294-297
+packages/core/src/portfolio-registry.ts
+  fe22d544bc0eda57 21,27,30,236-248,250-270,329-344,348,361
+packages/web/src/lib/__tests__/project-name.test.ts
+  fe22d544bc0eda57 120-121
+packages/web/src/lib/api-schemas.ts
+  fe22d544bc0eda57 7
+packages/cli/src/commands/project.ts
+  fb9d2fb1d60f2006 179-183
+packages/plugins/scm-github/src/index.ts
+  fe22d544bc0eda57 554-593
+packages/web/src/app/api/projects/clone/__tests__/route.test.ts
+  fe22d544bc0eda57 34,78,81,86,89
+packages/web/src/app/api/projects/[id]/resources/__tests__/route.test.ts
+  fe22d544bc0eda57 20-21,29-36,41,55-58,83-86,93-94,109-111,175,179-185,202,206-212,225,229-235,247,251-256,265-268
+packages/core/src/migration.ts
+  fe22d544bc0eda57 102-103,105-108,110
+packages/web/src/lib/services.ts
+  fe22d544bc0eda57 91-96
+packages/plugins/scm-gitlab/src/index.ts
+  fe22d544bc0eda57 507-549
+packages/web/src/components/DashboardShell.tsx
+  fe22d544bc0eda57 66
+packages/cli/__tests__/lib/lifecycle-service.test.ts
+  fb9d2fb1d60f2006 118-139
+packages/cli/__tests__/commands/project.test.ts
+  fb9d2fb1d60f2006 457-465
+packages/cli/src/commands/start.ts
+  fb9d2fb1d60f2006 1190,1198
+packages/cli/__tests__/commands/start.test.ts
+  fb9d2fb1d60f2006 316-323
+packages/cli/src/lib/lifecycle-service.ts
+  fb9d2fb1d60f2006 13-27,39-40,43
+packages/web/src/app/api/projects/clone/route.ts
+  fe22d544bc0eda57 4,17,54-71,79,81,84-89,91,102-111,127-135
+packages/web/src/app/api/projects/route.ts
+  fe22d544bc0eda57 121,133
+packages/web/src/lib/path-security.ts
+  fe22d544bc0eda57 3,14-44,56
+packages/web/src/lib/ensure-project-orchestrator.ts
+  fe22d544bc0eda57 6-8,14,18-29,37,42
+packages/web/src/app/api/projects/[id]/resources/route.ts
+  fe22d544bc0eda57 4,56-59,61,64,70-71,159-161,167
+packages/core/src/types.ts
+  fe22d544bc0eda57 650-661
+packages/web/src/lib/__tests__/path-security.test.ts
+  fe22d544bc0eda57 17-18,26,50,63-64,69,79,85-86
+packages/web/src/app/api/orchestrators/route.ts
+  fe22d544bc0eda57 4,26-29
+packages/web/src/components/PortfolioPage.tsx
+  fe22d544bc0eda57 175-180
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "e3093bc97e64d09e6c0737aa1cb2e390e96521fe",
+  "prompts": {
+    "fb9d2fb1d60f2006": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d5c50-1ee5-7f72-8a84-b15dafc8cccc",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 64,
+      "total_deletions": 5,
+      "accepted_lines": 64,
+      "overriden_lines": 0
+    },
+    "fe22d544bc0eda57": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c636a786-d69d-4905-a8ac-c61bd9ed1578",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 393,
+      "total_deletions": 198,
+      "accepted_lines": 390,
+      "overriden_lines": 0
+    }
+  }
+}
