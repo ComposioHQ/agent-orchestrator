@@ -135,4 +135,34 @@ describe("getDashboardPageData fast path", () => {
       vi.useRealTimers();
     }
   });
+
+  it("does not block SSR indefinitely when fast metadata enrichment hangs", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const core = { id: "session-hung", status: "working", pr: null };
+      const dashboard = { id: "session-hung", pr: null };
+
+      hoisted.getServicesMock.mockResolvedValue({
+        config: { projects: { mono: { id: "mono" } } },
+        registry: { scm: "registry" },
+        sessionManager: { list: vi.fn().mockResolvedValue([core]) },
+      });
+      hoisted.filterProjectSessionsMock.mockReturnValue([core]);
+      hoisted.filterWorkerSessionsMock.mockReturnValue([core]);
+      hoisted.sessionToDashboardMock.mockReturnValue(dashboard);
+      hoisted.enrichSessionsMetadataFastMock.mockImplementation(
+        () => new Promise(() => {}),
+      );
+
+      const pageDataPromise = getDashboardPageData("mono");
+      await vi.advanceTimersByTimeAsync(3_000);
+      const pageData = await pageDataPromise;
+
+      expect(pageData.sessions).toEqual([dashboard]);
+      expect(hoisted.enrichSessionPRMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

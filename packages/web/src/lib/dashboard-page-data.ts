@@ -15,6 +15,8 @@ import { settlesWithin } from "@/lib/async-utils";
 
 const FAST_METADATA_ENRICH_TIMEOUT_MS = 3_000;
 
+const FAST_METADATA_ENRICH_TIMEOUT_MS = 3_000;
+
 interface DashboardPageData {
   sessions: DashboardSession[];
   globalPause: GlobalPauseState | null;
@@ -22,6 +24,21 @@ interface DashboardPageData {
   projectName: string;
   projects: ProjectInfo[];
   selectedProjectId?: string;
+}
+
+async function settlesWithin(promise: Promise<unknown>, timeoutMs: number): Promise<boolean> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<boolean>((resolve) => {
+    timeoutId = setTimeout(() => resolve(false), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise.then(() => true).catch(() => true), timeoutPromise]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
 }
 
 export const getDashboardProjectName = cache(function getDashboardProjectName(
