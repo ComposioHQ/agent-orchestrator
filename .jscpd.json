@@ -1,0 +1,17 @@
+{
+  "minLines": 8,
+  "minTokens": 50,
+  "threshold": 3,
+  "pattern": "**/*.{ts,tsx}",
+  "ignore": [
+    "**/dist/**",
+    "**/node_modules/**",
+    "**/__tests__/**",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx"
+  ],
+  "reporters": ["console"],
+  "gitignore": true
+}
