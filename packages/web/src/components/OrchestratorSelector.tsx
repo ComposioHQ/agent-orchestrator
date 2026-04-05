@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { cn } from "@/lib/cn";
@@ -95,8 +95,13 @@ export function OrchestratorSelector({
   const router = useRouter();
   const [isSpawning, setIsSpawning] = useState(false);
   const [spawnError, setSpawnError] = useState<string | null>(null);
+  const spawnLockRef = useRef(false);
 
   const handleSpawnNew = async () => {
+    // Synchronous re-entrancy guard: React state updates are async,
+    // so two clicks before rerender would fire two POSTs without this.
+    if (spawnLockRef.current) return;
+    spawnLockRef.current = true;
     setIsSpawning(true);
     setSpawnError(null);
 
@@ -118,6 +123,7 @@ export function OrchestratorSelector({
       setSpawnError(err instanceof Error ? err.message : "Failed to spawn orchestrator");
     } finally {
       setIsSpawning(false);
+      spawnLockRef.current = false;
     }
   };
 

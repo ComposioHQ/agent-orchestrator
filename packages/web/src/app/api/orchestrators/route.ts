@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { generateOrchestratorPrompt } from "@composio/ao-core";
+import { generateOrchestratorPrompt, generateSessionPrefix } from "@composio/ao-core";
 import { getServices } from "@/lib/services";
 import { validateIdentifier, validateConfiguredProject } from "@/lib/validation";
 import { mapSessionsToOrchestrators } from "@/lib/orchestrator-utils";
@@ -30,7 +30,10 @@ export async function GET(request: NextRequest) {
     const sessionPrefix = project.sessionPrefix ?? projectId;
 
     const allSessions = await sessionManager.list(projectId);
-    const orchestrators = mapSessionsToOrchestrators(allSessions, sessionPrefix, project.name);
+    const allSessionPrefixes = Object.entries(config.projects).map(
+      ([, p]) => p.sessionPrefix ?? generateSessionPrefix(p.name ?? ""),
+    );
+    const orchestrators = mapSessionsToOrchestrators(allSessions, sessionPrefix, project.name, allSessionPrefixes);
 
     return NextResponse.json({ orchestrators, projectName: project.name });
   } catch (err) {
@@ -55,9 +58,9 @@ export async function POST(request: NextRequest) {
   try {
     const { config, sessionManager } = await getServices();
     const projectId = body.projectId as string;
-    const projectErr = validateConfiguredProject(config.projects, projectId);
-    if (projectErr) {
-      return NextResponse.json({ error: projectErr }, { status: 404 });
+    const configProjectErr = validateConfiguredProject(config.projects, projectId);
+    if (configProjectErr) {
+      return NextResponse.json({ error: configProjectErr }, { status: 404 });
     }
     const project = config.projects[projectId];
 
