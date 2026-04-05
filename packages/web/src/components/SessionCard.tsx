@@ -5,6 +5,7 @@ import {
   type DashboardSession,
   getAttentionLevel,
   isPRRateLimited,
+  isPRUnenriched,
   TERMINAL_STATUSES,
   TERMINAL_ACTIVITIES,
   CI_STATUS,
@@ -17,7 +18,7 @@ import { getSizeLabel } from "./PRStatus";
 
 interface SessionCardProps {
   session: DashboardSession;
-  onSend?: (sessionId: string, message: string) => void;
+  onSend?: (sessionId: string, message: string) => Promise<void> | void;
   onKill?: (sessionId: string) => void;
   onMerge?: (prNumber: number) => void;
   onRestore?: (sessionId: string) => void;
@@ -94,13 +95,47 @@ function getDoneStatusInfo(session: DashboardSession): {
 function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: SessionCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [sendingAction, setSendingAction] = useState<string | null>(null);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [failedAction, setFailedAction] = useState<string | null>(null);
+  const [sendingQuickReply, setSendingQuickReply] = useState<string | null>(null);
+  const [sentQuickReply, setSentQuickReply] = useState<string | null>(null);
+  const [replyText, setReplyText] = useState("");
+  const actionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const quickReplyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const level = getAttentionLevel(session);
   const pr = session.pr;
 
+  const handleQuickReply = async (message: string): Promise<boolean> => {
+    const trimmedMessage = message.trim();
+    if (!trimmedMessage || sendingQuickReply !== null) return false;
+
+    setSendingQuickReply(trimmedMessage);
+    setSentQuickReply(null);
+
+    try {
+      await Promise.resolve(onSend?.(session.id, trimmedMessage));
+      setSentQuickReply(trimmedMessage);
+      if (quickReplyTimerRef.current) clearTimeout(quickReplyTimerRef.current);
+      quickReplyTimerRef.current = setTimeout(() => setSentQuickReply(null), 2000);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      setSendingQuickReply(null);
+    }
+  };
+
+  const handleReplyKeyDown = async (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      const sent = await handleQuickReply(replyText);
+      if (sent) setReplyText("");
+    }
+  };
+
   useEffect(() => {
     return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
+      if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
+      if (quickReplyTimerRef.current) clearTimeout(quickReplyTimerRef.current);
     };
   }, []);
 
@@ -108,16 +143,21 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
     if (sendingAction !== null) return;
 
     setSendingAction(action);
+    setFailedAction(null);
     try {
       await Promise.resolve(onSend?.(session.id, message));
-      if (timerRef.current) clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(() => setSendingAction(null), 2000);
+      if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
+      actionTimerRef.current = setTimeout(() => setSendingAction(null), 2000);
     } catch {
       setSendingAction(null);
+      setFailedAction(action);
+      if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
+      actionTimerRef.current = setTimeout(() => setFailedAction(null), 2000);
     }
   };
 
   const rateLimited = pr ? isPRRateLimited(pr) : false;
+  const prUnenriched = pr ? isPRUnenriched(pr) : false;
   const alerts = getAlerts(session);
   const isReadyToMerge = !rateLimited && pr?.mergeability.mergeable && pr.state === "open";
   const isTerminal =
@@ -227,13 +267,15 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
               #{pr.number}
             </a>
           )}
-          {pr && !rateLimited && (
+          {pr && !rateLimited && (prUnenriched ? (
+            <span className="inline-block h-[14px] w-16 animate-pulse rounded-full bg-[var(--color-bg-subtle)]" />
+          ) : (
             <span className="done-meta-chip font-[var(--font-mono)]">
               <span className="text-[var(--color-status-ready)]">+{pr.additions}</span>{" "}
               <span className="text-[var(--color-status-error)]">-{pr.deletions}</span>{" "}
               {getSizeLabel(pr.additions, pr.deletions)}
             </span>
-          )}
+          ))}
         </div>
 
         {/* Expandable detail panel */}
@@ -307,21 +349,33 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
                   >
                     {pr.title}
                   </a>
-                  <br />
-                  <span className="mt-1 inline-flex items-center gap-2">
-                    <span className="done-meta-chip font-[var(--font-mono)]">
-                      <span className="text-[var(--color-status-ready)]">+{pr.additions}</span>{" "}
-                      <span className="text-[var(--color-status-error)]">-{pr.deletions}</span>
-                    </span>
-                    <span className="text-[var(--color-text-muted)]">·</span>
-                    <span className="text-[10px] text-[var(--color-text-muted)]">
-                      mergeable: {pr.mergeability.mergeable ? "yes" : "no"}
-                    </span>
-                    <span className="text-[var(--color-text-muted)]">·</span>
-                    <span className="text-[10px] text-[var(--color-text-muted)]">
-                      review: {pr.reviewDecision}
-                    </span>
-                  </span>
+                  {prUnenriched ? (
+                    <>
+                      <br />
+                      <span className="mt-1 inline-flex items-center gap-2 text-[10px] text-[var(--color-text-muted)]">
+                        <span className="inline-block h-3 w-12 animate-pulse rounded bg-[var(--color-bg-subtle)]" />
+                        <span>PR details loading...</span>
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <br />
+                      <span className="mt-1 inline-flex items-center gap-2">
+                        <span className="done-meta-chip font-[var(--font-mono)]">
+                          <span className="text-[var(--color-status-ready)]">+{pr.additions}</span>{" "}
+                          <span className="text-[var(--color-status-error)]">-{pr.deletions}</span>
+                        </span>
+                        <span className="text-[var(--color-text-muted)]">·</span>
+                        <span className="text-[10px] text-[var(--color-text-muted)]">
+                          mergeable: {pr.mergeability.mergeable ? "yes" : "no"}
+                        </span>
+                        <span className="text-[var(--color-text-muted)]">·</span>
+                        <span className="text-[10px] text-[var(--color-text-muted)]">
+                          review: {pr.reviewDecision}
+                        </span>
+                      </span>
+                    </>
+                  )}
                 </p>
               </div>
             )}
@@ -436,11 +490,13 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
               #{pr.number}
             </a>
           )}
-          {pr && !rateLimited && (
+          {pr && !rateLimited && (prUnenriched ? (
+            <span className="inline-block h-[14px] w-16 animate-pulse rounded-full bg-[var(--color-bg-subtle)]" />
+          ) : (
             <span className="inline-flex items-center rounded-full bg-[var(--color-chip-bg)] px-2 py-0.5 font-[var(--font-mono)] text-[10px] font-semibold text-[var(--color-text-muted)]">
               +{pr.additions} -{pr.deletions} {getSizeLabel(pr.additions, pr.deletions)}
             </span>
-          )}
+          ))}
         </div>
 
         {secondaryText && (
@@ -512,6 +568,8 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
                       disabled={sendingAction === alert.key}
                       className={cn(
                         "border-l px-2 py-0.5 font-[var(--font-mono)] text-[11px] font-medium transition-colors disabled:opacity-50",
+                        failedAction === alert.key &&
+                          "bg-[var(--color-tint-red)] text-[var(--color-status-error)]",
                         alert.actionClassName,
                       )}
                       style={{
@@ -519,7 +577,11 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
                           alert.borderColor ?? alert.color ?? "var(--color-border-default)",
                       }}
                     >
-                      {sendingAction === alert.key ? "sent!" : alert.actionLabel}
+                      {sendingAction === alert.key
+                        ? "sent!"
+                        : failedAction === alert.key
+                          ? "failed"
+                          : alert.actionLabel}
                     </button>
                   )}
                 </span>
@@ -592,6 +654,61 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
           )}
         </div>
       </div>
+
+      {level === "respond" && (
+        <div className="quick-reply" onClick={(e) => e.stopPropagation()}>
+          {session.summary && !session.summaryIsFallback && (
+            <p className="quick-reply__summary">{session.summary}</p>
+          )}
+          <div className="quick-reply__presets">
+            <button
+              className="quick-reply__preset-btn"
+              onClick={() => void handleQuickReply("continue")}
+              disabled={sendingQuickReply !== null}
+            >
+              {sendingQuickReply === "continue"
+                ? "Sending..."
+                : sentQuickReply === "continue"
+                  ? "Sent"
+                  : "Continue"}
+            </button>
+            <button
+              className="quick-reply__preset-btn"
+              onClick={() => void handleQuickReply("abort")}
+              disabled={sendingQuickReply !== null}
+            >
+              {sendingQuickReply === "abort"
+                ? "Sending..."
+                : sentQuickReply === "abort"
+                  ? "Sent"
+                  : "Abort"}
+            </button>
+            <button
+              className="quick-reply__preset-btn"
+              onClick={() => void handleQuickReply("skip")}
+              disabled={sendingQuickReply !== null}
+            >
+              {sendingQuickReply === "skip"
+                ? "Sending..."
+                : sentQuickReply === "skip"
+                  ? "Sent"
+                  : "Skip"}
+            </button>
+          </div>
+          <textarea
+            className="quick-reply__input"
+            placeholder={sendingQuickReply !== null ? "Sending..." : "Type a reply..."}
+            aria-label="Type a reply to the agent"
+            value={replyText}
+            onChange={(e) => setReplyText(e.target.value)}
+            onKeyDown={(e) => {
+              void handleReplyKeyDown(e);
+            }}
+            rows={1}
+            disabled={sendingQuickReply !== null}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -626,6 +743,7 @@ function getAlerts(session: DashboardSession): Alert[] {
   const pr = session.pr;
   if (!pr || pr.state !== "open") return [];
   if (isPRRateLimited(pr)) return [];
+  if (isPRUnenriched(pr)) return [];
 
   const meta = session.metadata;
   const alerts: Alert[] = [];

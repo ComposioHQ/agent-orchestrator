@@ -159,7 +159,13 @@ export function useSessionEvents(
         .then((res) => (res.ok ? res.json() : null))
         .then(
           (updated: { sessions?: DashboardSession[]; globalPause?: GlobalPauseState } | null) => {
-            if (refreshController.signal.aborted || !updated?.sessions) return;
+            if (refreshController.signal.aborted || !updated?.sessions) {
+              // Update timestamp even for non-OK responses to prevent retry storms
+              if (!refreshController.signal.aborted) {
+                lastRefreshAtRef.current = Date.now();
+              }
+              return;
+            }
 
             lastRefreshAtRef.current = Date.now();
             dispatch({

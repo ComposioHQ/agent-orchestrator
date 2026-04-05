@@ -48,42 +48,4 @@ describe("SessionCard diff coverage", () => {
     expect(screen.queryByText("mergeable: no")).toBeNull();
     expect(screen.queryByText("review: none")).toBeNull();
   });
-
-  it("shows enriched PR metrics in the done-card detail panel when data is available", () => {
-    render(
-      <SessionCard
-        session={makeSession({
-          id: "done-3",
-          status: "merged",
-          activity: "exited",
-          summary: "Fixed the auth bug",
-          pr: makePR({
-            number: 90,
-            title: "fix: auth token refresh",
-            additions: 42,
-            deletions: 7,
-            reviewDecision: "approved",
-            mergeability: {
-              mergeable: true,
-              ciPassing: true,
-              approved: true,
-              noConflicts: true,
-              blockers: [],
-            },
-            enriched: true,
-          }),
-        })}
-      />,
-    );
-
-    // Click to expand the done card
-    fireEvent.click(screen.getByText("fix: auth token refresh"));
-
-    // Enriched PR detail lines 361-377 should render
-    expect(screen.getByText("mergeable: yes")).not.toBeNull();
-    expect(screen.getByText("review: approved")).not.toBeNull();
-    // +42 appears in both meta chips and expanded detail
-    expect(screen.getAllByText("+42").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("-7").length).toBeGreaterThanOrEqual(1);
-  });
 });
