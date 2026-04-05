@@ -18,7 +18,7 @@
     "build": "next build && tsc -p tsconfig.server.json",
     "start": "next start",
     "start:all": "node dist-server/start-all.js",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "pnpm --filter @composio/ao-web^... build && tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rm -rf .next dist-server",
