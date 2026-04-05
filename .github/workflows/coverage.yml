@@ -41,8 +41,10 @@ jobs:
         run: pnpm -r --filter '!@composio/ao-web' build
 
       - name: Get changed files
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          git diff --name-only origin/${{ github.base_ref }}...HEAD -- '*.ts' '*.tsx' > changed-files.txt
+          git diff --name-only origin/$BASE_REF...HEAD -- '*.ts' '*.tsx' > changed-files.txt
           echo "Changed TS files:"
           cat changed-files.txt
 
@@ -87,7 +89,6 @@ jobs:
         run: node .github/scripts/coverage-report.mjs
 
       - name: Post or update PR comment
-        if: steps.report.outputs.has_coverage == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
