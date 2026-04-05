@@ -15,7 +15,11 @@ import { resolve, join, basename } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
-import { ConfigNotFoundError, type ExternalPluginEntryRef, type OrchestratorConfig } from "./types.js";
+import {
+  ConfigNotFoundError,
+  type ExternalPluginEntryRef,
+  type OrchestratorConfig,
+} from "./types.js";
 import { generateSessionPrefix } from "./paths.js";
 
 function inferScmPlugin(project: {
@@ -189,6 +193,7 @@ const ProjectConfigSchema = z.object({
   runtime: z.string().optional(),
   agent: z.string().optional(),
   workspace: z.string().optional(),
+  maxConcurrentSessions: z.number().int().positive().optional(),
   tracker: TrackerConfigSchema.optional(),
   scm: SCMConfigSchema.optional(),
   symlinks: z.array(z.string()).optional(),
@@ -212,6 +217,7 @@ const DefaultPluginsSchema = z.object({
   agent: z.string().default("claude-code"),
   workspace: z.string().default("worktree"),
   notifiers: z.array(z.string()).default(["composio", "desktop"]),
+  maxConcurrentSessions: z.number().int().positive().optional(),
   orchestrator: RoleAgentDefaultsSchema,
   worker: RoleAgentDefaultsSchema,
 });
@@ -307,7 +313,9 @@ function generateTempPluginName(pkg?: string, path?: string): string {
     const packageName = slashParts[slashParts.length - 1] ?? pkg;
 
     // Extract plugin name after ao-plugin-{slot}- prefix, preserving multi-word names like "jira-cloud"
-    const prefixMatch = packageName.match(/^ao-plugin-(?:runtime|agent|workspace|tracker|scm|notifier|terminal)-(.+)$/);
+    const prefixMatch = packageName.match(
+      /^ao-plugin-(?:runtime|agent|workspace|tracker|scm|notifier|terminal)-(.+)$/,
+    );
     if (prefixMatch?.[1]) {
       return prefixMatch[1];
     }
@@ -441,8 +449,7 @@ function mergeExternalPlugins(
       // If the existing plugin is disabled but there's an inline reference, enable it
       const existingPlugin = plugins.find(
         (p) =>
-          (entry.package && p.package === entry.package) ||
-          (entry.path && p.path === entry.path),
+          (entry.package && p.package === entry.package) || (entry.path && p.path === entry.path),
       );
       if (existingPlugin && existingPlugin.enabled === false) {
         existingPlugin.enabled = true;

@@ -3,12 +3,7 @@ import { mkdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { createSessionManager } from "../../session-manager.js";
 import { validateConfig } from "../../config.js";
-import {
-  writeMetadata,
-  readMetadata,
-  readMetadataRaw,
-  updateMetadata,
-} from "../../metadata.js";
+import { writeMetadata, readMetadata, readMetadataRaw, updateMetadata } from "../../metadata.js";
 import type {
   OrchestratorConfig,
   PluginRegistry,
@@ -93,6 +88,63 @@ describe("spawn", () => {
       "Project is paused due to model rate limit until",
     );
     expect(mockRuntime.create).not.toHaveBeenCalled();
+  });
+
+  it("blocks spawn when default maxConcurrentSessions is reached", async () => {
+    writeMetadata(sessionsDir, "app-9", {
+      worktree: join(tmpDir, "my-app"),
+      branch: "feat/existing",
+      status: "working",
+    });
+
+    const configWithLimit: OrchestratorConfig = {
+      ...config,
+      defaults: {
+        ...config.defaults,
+        maxConcurrentSessions: 1,
+      },
+    };
+
+    const sm = createSessionManager({ config: configWithLimit, registry: mockRegistry });
+
+    await expect(sm.spawn({ projectId: "my-app" })).rejects.toThrow(
+      "maxConcurrentSessions=1 reached (1 active sessions)",
+    );
+    expect(mockRuntime.create).not.toHaveBeenCalled();
+  });
+
+  it("uses project maxConcurrentSessions override and ignores terminal sessions", async () => {
+    writeMetadata(sessionsDir, "app-4", {
+      worktree: join(tmpDir, "my-app"),
+      branch: "feat/existing",
+      status: "working",
+    });
+    writeMetadata(sessionsDir, "app-5", {
+      worktree: join(tmpDir, "my-app"),
+      branch: "feat/completed",
+      status: "merged",
+    });
+
+    const configWithProjectLimit: OrchestratorConfig = {
+      ...config,
+      defaults: {
+        ...config.defaults,
+        maxConcurrentSessions: 1,
+      },
+      projects: {
+        ...config.projects,
+        "my-app": {
+          ...config.projects["my-app"],
+          maxConcurrentSessions: 2,
+        },
+      },
+    };
+
+    const sm = createSessionManager({ config: configWithProjectLimit, registry: mockRegistry });
+    const session = await sm.spawn({ projectId: "my-app" });
+
+    expect(session.id).toBe("app-6");
+    expect(mockRuntime.create).toHaveBeenCalledOnce();
   });
 
   it("uses issue ID to derive branch name", async () => {

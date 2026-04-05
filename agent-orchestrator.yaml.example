@@ -15,14 +15,15 @@ port: 3000
 
 # Default plugins (these are the defaults — you can omit this section)
 defaults:
-  runtime: tmux           # tmux | process
-  agent: claude-code      # claude-code | codex | aider | opencode
+  runtime: tmux # tmux | process
+  agent: claude-code # claude-code | codex | aider | opencode
+  # maxConcurrentSessions: 4
   # orchestrator:
   #   agent: claude-code
   # worker:
   #   agent: codex
-  workspace: worktree     # worktree | clone
-  notifiers: [desktop]    # desktop | slack | discord | webhook | composio | openclaw
+  workspace: worktree # worktree | clone
+  notifiers: [desktop] # desktop | slack | discord | webhook | composio | openclaw
 
 # Installer-managed external plugins (optional)
 # plugins:
@@ -45,6 +46,7 @@ projects:
     path: ~/my-app
     defaultBranch: main
     sessionPrefix: app
+    # maxConcurrentSessions: 3
 
     # Issue tracker (defaults to github issues)
     # tracker:
@@ -94,7 +96,7 @@ projects:
 
     # Rules for the orchestrator agent (reserved for future use)
     # orchestratorRules: |
-    #   Prefer to batch-spawn related issues together.
+    #   Prefer to batch-spawn related issues together, but respect maxConcurrentSessions.
 
     # OpenCode issue session strategy (only for agent: opencode)
     # opencodeIssueSessionStrategy: reuse   # reuse | delete | ignore

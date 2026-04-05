@@ -482,6 +482,56 @@ describe("Config Schema Validation", () => {
 });
 
 describe("Config Defaults", () => {
+  it("accepts maxConcurrentSessions at defaults and project scope", () => {
+    const config = {
+      defaults: {
+        maxConcurrentSessions: 4,
+      },
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+          maxConcurrentSessions: 2,
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.defaults.maxConcurrentSessions).toBe(4);
+    expect(validated.projects.proj1.maxConcurrentSessions).toBe(2);
+  });
+
+  it("rejects non-positive maxConcurrentSessions", () => {
+    expect(() =>
+      validateConfig({
+        defaults: {
+          maxConcurrentSessions: 0,
+        },
+        projects: {
+          proj1: {
+            path: "/repos/test",
+            repo: "org/test",
+            defaultBranch: "main",
+          },
+        },
+      }),
+    ).toThrow();
+
+    expect(() =>
+      validateConfig({
+        projects: {
+          proj1: {
+            path: "/repos/test",
+            repo: "org/test",
+            defaultBranch: "main",
+            maxConcurrentSessions: -1,
+          },
+        },
+      }),
+    ).toThrow();
+  });
+
   it("applies default session prefix from project ID", () => {
     const config = {
       projects: {

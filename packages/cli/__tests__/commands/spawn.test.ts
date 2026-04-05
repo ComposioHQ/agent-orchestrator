@@ -69,7 +69,7 @@ let configPath: string;
 let cwdSpy: ReturnType<typeof vi.spyOn> | undefined;
 
 import { Command } from "commander";
-import { registerSpawn } from "../../src/commands/spawn.js";
+import { registerBatchSpawn, registerSpawn } from "../../src/commands/spawn.js";
 
 let program: Command;
 let consoleSpy: ReturnType<typeof vi.spyOn>;
@@ -107,12 +107,15 @@ beforeEach(() => {
   program = new Command();
   program.exitOverride();
   registerSpawn(program);
+  registerBatchSpawn(program);
   consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(process, "exit").mockImplementation((code) => {
     throw new Error(`process.exit(${code})`);
   });
 
+  mockSessionManager.list.mockReset();
+  mockSessionManager.list.mockResolvedValue([]);
   mockSessionManager.spawn.mockReset();
   mockSessionManager.claimPR.mockReset();
   mockExec.mockReset();
@@ -378,9 +381,7 @@ describe("spawn command", () => {
   it("reports error when spawn fails", async () => {
     mockSessionManager.spawn.mockRejectedValue(new Error("worktree creation failed"));
 
-    await expect(program.parseAsync(["node", "test", "spawn"])).rejects.toThrow(
-      "process.exit(1)",
-    );
+    await expect(program.parseAsync(["node", "test", "spawn"])).rejects.toThrow("process.exit(1)");
   });
 
   it("claims a PR for the spawned session when --claim-pr is provided", async () => {
@@ -471,14 +472,7 @@ describe("spawn command", () => {
       takenOverFrom: ["app-9"],
     });
 
-    await program.parseAsync([
-      "node",
-      "test",
-      "spawn",
-      "--claim-pr",
-      "123",
-      "--assign-on-github",
-    ]);
+    await program.parseAsync(["node", "test", "spawn", "--claim-pr", "123", "--assign-on-github"]);
 
     expect(mockSessionManager.claimPR).toHaveBeenCalledWith("app-1", "123", {
       assignOnGithub: true,
@@ -537,9 +531,7 @@ describe("spawn pre-flight checks", () => {
   it("fails with clear error when tmux is not installed (default runtime)", async () => {
     mockExec.mockRejectedValue(new Error("ENOENT"));
 
-    await expect(program.parseAsync(["node", "test", "spawn"])).rejects.toThrow(
-      "process.exit(1)",
-    );
+    await expect(program.parseAsync(["node", "test", "spawn"])).rejects.toThrow("process.exit(1)");
 
     const errors = vi
       .mocked(console.error)
@@ -596,9 +588,7 @@ describe("spawn pre-flight checks", () => {
       .mockResolvedValueOnce({ stdout: "gh version 2.40", stderr: "" }) // gh --version
       .mockRejectedValueOnce(new Error("not logged in")); // gh auth status
 
-    await expect(program.parseAsync(["node", "test", "spawn"])).rejects.toThrow(
-      "process.exit(1)",
-    );
+    await expect(program.parseAsync(["node", "test", "spawn"])).rejects.toThrow("process.exit(1)");
 
     const errors = vi
       .mocked(console.error)
@@ -739,9 +729,7 @@ describe("spawn pre-flight checks", () => {
       .mockResolvedValueOnce({ stdout: "tmux 3.3a", stderr: "" }) // tmux -V
       .mockRejectedValueOnce(new Error("ENOENT")); // gh --version fails
 
-    await expect(program.parseAsync(["node", "test", "spawn"])).rejects.toThrow(
-      "process.exit(1)",
-    );
+    await expect(program.parseAsync(["node", "test", "spawn"])).rejects.toThrow("process.exit(1)");
 
     const errors = vi
       .mocked(console.error)
@@ -749,5 +737,64 @@ describe("spawn pre-flight checks", () => {
       .join("\n");
     expect(errors).toContain("not installed");
     expect(errors).not.toContain("not authenticated");
+  });
+});
+
+describe("batch-spawn command", () => {
+  it("stops spawning when maxConcurrentSessions is reached", async () => {
+    (mockConfigRef.current as Record<string, unknown>).defaults = {
+      runtime: "tmux",
+      agent: "claude-code",
+      workspace: "worktree",
+      notifiers: ["desktop"],
+      maxConcurrentSessions: 2,
+    };
+
+    const existingSession: Session = {
+      id: "app-1",
+      projectId: "my-app",
+      status: "working",
+      activity: "working",
+      branch: "feat/existing",
+      issueId: "INT-0",
+      pr: null,
+      workspacePath: "/tmp/wt-1",
+      runtimeHandle: { id: "hash-app-1", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+    const createdSession: Session = {
+      id: "app-2",
+      projectId: "my-app",
+      status: "spawning",
+      activity: null,
+      branch: "feat/INT-1",
+      issueId: "INT-1",
+      pr: null,
+      workspacePath: "/tmp/wt-2",
+      runtimeHandle: { id: "hash-app-2", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+
+    mockSessionManager.list.mockResolvedValue([existingSession]);
+    mockSessionManager.spawn.mockResolvedValue(createdSession);
+
+    await program.parseAsync(["node", "test", "batch-spawn", "INT-1", "INT-2", "INT-3"]);
+
+    expect(mockSessionManager.spawn).toHaveBeenCalledTimes(1);
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith({
+      projectId: "my-app",
+      issueId: "INT-1",
+    });
+
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("INT-2");
+    expect(output).toContain("INT-3");
+    expect(output).toContain("maxConcurrentSessions=2 reached (2 active sessions)");
   });
 });
