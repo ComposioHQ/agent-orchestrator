@@ -257,7 +257,35 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     pollCycleCount++;
     if (pollCycleCount >= 10) {
       pollCycleCount = 0;
-      stateStore.compactLog();
+      try {
+        stateStore.compactLog();
+        observer?.recordOperation?.({
+          metric: "lifecycle_poll",
+          operation: "compact_log",
+          outcome: "success",
+          projectId: scopedProjectId,
+          level: "info",
+        });
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        observer?.recordOperation?.({
+          metric: "lifecycle_poll",
+          operation: "compact_log",
+          outcome: "failure",
+          reason: errorMsg,
+          projectId: scopedProjectId,
+          level: "warn",
+        });
+        process.stderr.write(
+          JSON.stringify({
+            source: "lifecycle-manager",
+            operation: "compact_log",
+            level: "warn",
+            message: errorMsg,
+            timestamp: new Date().toISOString(),
+          }) + "\n",
+        );
+      }
     }
   }
 
