@@ -111,12 +111,15 @@ export function getWorktreesDir(configPath: string, projectPath: string): string
   return join(getProjectBaseDir(configPath, projectPath), "worktrees");
 }
 
+/** Directory name for the artifact store within a project base directory. */
+export const ARTIFACTS_DIR_NAME = "artifacts";
+
 /**
  * Get the artifacts directory for a project.
  * Format: ~/.agent-orchestrator/{hash}-{projectId}/artifacts
  */
 export function getArtifactsDir(configPath: string, projectPath: string): string {
-  return join(getProjectBaseDir(configPath, projectPath), "artifacts");
+  return join(getProjectBaseDir(configPath, projectPath), ARTIFACTS_DIR_NAME);
 }
 
 /**

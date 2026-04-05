@@ -33,7 +33,7 @@ export function validatePublish(filePath: string, worktreePath: string): void {
 
   // Block path traversal — file must be within the worktree
   const resolvedWorktree = resolve(worktreePath);
-  if (!resolved.startsWith(resolvedWorktree)) {
+  if (!resolved.startsWith(resolvedWorktree + "/") && resolved !== resolvedWorktree) {
     throw new Error(`Blocked: path ${filePath} is outside worktree ${worktreePath}`);
   }
 }

@@ -123,8 +123,12 @@ export function readManifest(artifactsDir: string): ArtifactManifest {
   if (!existsSync(manifestPath)) {
     return { schemaVersion: 1, updatedAt: new Date().toISOString(), entries: [] };
   }
-  const raw = readFileSync(manifestPath, "utf-8");
-  return JSON.parse(raw) as ArtifactManifest;
+  try {
+    const raw = readFileSync(manifestPath, "utf-8");
+    return JSON.parse(raw) as ArtifactManifest;
+  } catch {
+    return { schemaVersion: 1, updatedAt: new Date().toISOString(), entries: [] };
+  }
 }
 
 export function writeManifest(artifactsDir: string, manifest: ArtifactManifest): void {

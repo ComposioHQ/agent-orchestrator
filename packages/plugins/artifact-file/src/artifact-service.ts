@@ -28,7 +28,6 @@ import {
   type ArtifactFilter,
   type ArtifactSearchResult,
   type ArtifactStatus,
-  type ArtifactCategory,
 } from "@composio/ao-core";
 import {
   generateArtifactId,
@@ -42,6 +41,8 @@ import {
   removeSidecar,
 } from "./utils.js";
 import { validatePublish } from "./guards.js";
+
+const MANIFEST_FILENAME = "manifest.json";
 
 export interface ArtifactServiceConfig {
   artifactsDir: string;
@@ -65,7 +66,7 @@ export function createArtifactService(config: ArtifactServiceConfig): ArtifactSe
   }
 
   async function ensureManifest(): Promise<ArtifactManifest> {
-    const manifestPath = join(artifactsDir, "manifest.json");
+    const manifestPath = join(artifactsDir, MANIFEST_FILENAME);
     if (existsSync(manifestPath)) {
       return readManifest(artifactsDir);
     }
@@ -125,22 +126,6 @@ export function createArtifactService(config: ArtifactServiceConfig): ArtifactSe
       const before = new Date(filter.createdBefore).getTime();
       result = result.filter((e) => new Date(e.createdAt).getTime() <= before);
     }
-    if (filter.lastN !== undefined && filter.lastN > 0) {
-      // Get unique session IDs sorted by most recent artifact (from filtered results)
-      const sessionLastActivity = new Map<string, number>();
-      for (const e of result) {
-        const t = new Date(e.createdAt).getTime();
-        const existing = sessionLastActivity.get(e.sessionId) ?? 0;
-        if (t > existing) sessionLastActivity.set(e.sessionId, t);
-      }
-      const recentSessions = [...sessionLastActivity.entries()]
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, filter.lastN)
-        .map(([sid]) => sid);
-      const sessionSet = new Set(recentSessions);
-      result = result.filter((e) => sessionSet.has(e.sessionId));
-    }
-
     return result;
   }
 
@@ -182,7 +167,7 @@ export function createArtifactService(config: ArtifactServiceConfig): ArtifactSe
       if (!existsSync(artifactsDir)) {
         mkdirSync(artifactsDir, { recursive: true });
       }
-      const manifestPath = join(artifactsDir, "manifest.json");
+      const manifestPath = join(artifactsDir, MANIFEST_FILENAME);
       if (!existsSync(manifestPath)) {
         const empty: ArtifactManifest = {
           schemaVersion: 1,
@@ -194,7 +179,7 @@ export function createArtifactService(config: ArtifactServiceConfig): ArtifactSe
     },
 
     async isInitialized(): Promise<boolean> {
-      return existsSync(join(artifactsDir, "manifest.json"));
+      return existsSync(join(artifactsDir, MANIFEST_FILENAME));
     },
 
     async publish(
@@ -269,55 +254,6 @@ export function createArtifactService(config: ArtifactServiceConfig): ArtifactSe
       return entry;
     },
 
-    async publishReference(
-      sessionId: string,
-      meta: {
-        referenceType: string;
-        referenceUrl: string;
-        category: ArtifactCategory;
-        description: string;
-        issueId?: string;
-      },
-    ): Promise<ArtifactEntry> {
-      const id = generateArtifactId();
-      const now = new Date().toISOString();
-      const filename = `${meta.referenceType}-${id.slice(0, 8)}`;
-
-      const entry: ArtifactEntry = {
-        id,
-        sessionId,
-        issueId: meta.issueId,
-        filename,
-        path: `${sessionId}/${filename}`,
-        mimeType: "application/x-reference",
-        category: meta.category,
-        status: "published",
-        size: 0,
-        createdAt: now,
-        updatedAt: now,
-        description: meta.description,
-        isReference: true,
-        referenceUrl: meta.referenceUrl,
-        referenceType: meta.referenceType,
-      };
-
-      // Ensure session dir exists for consistency
-      ensureSessionDir(sessionId);
-
-      // Write sidecar for recovery (no actual file for references)
-      const sidecarFilePath = join(getSessionDir(sessionId), filename);
-      writeSidecar(sidecarFilePath, entry);
-
-      await withManifestLock(artifactsDir, async () => {
-        const manifest = readManifest(artifactsDir);
-        manifest.entries.push(entry);
-        writeManifest(artifactsDir, manifest);
-        updateSessionMetadata(sessionId, manifest);
-      });
-
-      return entry;
-    },
-
     async list(filter?: ArtifactFilter): Promise<ArtifactEntry[]> {
       const manifest = await ensureManifest();
       return filterEntries(manifest.entries, filter);
@@ -353,11 +289,13 @@ export function createArtifactService(config: ArtifactServiceConfig): ArtifactSe
     async grep(
       pattern: string,
       filter?: ArtifactFilter,
+      options?: { contextLines?: number },
     ): Promise<ArtifactSearchResult[]> {
       const manifest = await ensureManifest();
       const entries = filterEntries(manifest.entries, filter);
       const greppableEntries = entries.filter(isGreppable);
 
+      const contextLines = options?.contextLines ?? 2;
       const regex = new RegExp(pattern, "gi");
       const results: ArtifactSearchResult[] = [];
 
@@ -375,8 +313,8 @@ export function createArtifactService(config: ArtifactServiceConfig): ArtifactSe
 
         for (let i = 0; i < lines.length; i++) {
           if (regex.test(lines[i])) {
-            const contextStart = Math.max(0, i - 2);
-            const contextEnd = Math.min(lines.length - 1, i + 2);
+            const contextStart = Math.max(0, i - contextLines);
+            const contextEnd = Math.min(lines.length - 1, i + contextLines);
             matches.push({
               line: i + 1,
               content: lines[i],

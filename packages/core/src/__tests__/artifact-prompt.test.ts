@@ -10,19 +10,17 @@ describe("buildArtifactLayer", () => {
     const ctx: ArtifactContext = {
       artifactsDir: "/tmp/artifacts",
       totalArtifacts: 0,
-      totalSessions: 0,
     };
     const result = buildArtifactLayer(ctx);
     expect(result).toContain("## Artifacts");
     expect(result).toContain("ao artifact publish");
-    expect(result).toContain("ao artifact publish-ref");
+    expect(result).toContain("ao artifact publish");
   });
 
   it("includes discovery commands", () => {
     const ctx: ArtifactContext = {
       artifactsDir: "/tmp/artifacts",
       totalArtifacts: 0,
-      totalSessions: 0,
     };
     const result = buildArtifactLayer(ctx);
     expect(result).toContain("ao artifact list");
@@ -34,7 +32,6 @@ describe("buildArtifactLayer", () => {
     const ctx: ArtifactContext = {
       artifactsDir: "/tmp/artifacts",
       totalArtifacts: 0,
-      totalSessions: 0,
     };
     const result = buildArtifactLayer(ctx);
     expect(result).toContain("### What to Publish");
@@ -46,7 +43,6 @@ describe("buildArtifactLayer", () => {
     const ctx: ArtifactContext = {
       artifactsDir: "/tmp/artifacts",
       totalArtifacts: 0,
-      totalSessions: 0,
     };
     const result = buildArtifactLayer(ctx);
     expect(result).not.toContain("There are currently");
@@ -56,32 +52,29 @@ describe("buildArtifactLayer", () => {
     const ctx: ArtifactContext = {
       artifactsDir: "/tmp/artifacts",
       totalArtifacts: 5,
-      totalSessions: 2,
     };
     const result = buildArtifactLayer(ctx);
-    expect(result).toContain("There are currently 5 artifacts from 2 sessions");
+    expect(result).toContain("There are currently 5 artifacts");
     expect(result).toContain("ao artifact list");
   });
 
-  it("uses singular 'session' when totalSessions is 1", () => {
+  it("uses singular 'artifact' when totalArtifacts is 1", () => {
     const ctx: ArtifactContext = {
       artifactsDir: "/tmp/artifacts",
-      totalArtifacts: 3,
-      totalSessions: 1,
+      totalArtifacts: 1,
     };
     const result = buildArtifactLayer(ctx);
-    expect(result).toContain("from 1 session.");
-    expect(result).not.toContain("from 1 sessions");
+    expect(result).toContain("1 artifact.");
+    expect(result).not.toContain("1 artifacts");
   });
 
-  it("uses plural 'sessions' when totalSessions > 1", () => {
+  it("uses plural 'artifacts' when totalArtifacts > 1", () => {
     const ctx: ArtifactContext = {
       artifactsDir: "/tmp/artifacts",
       totalArtifacts: 10,
-      totalSessions: 3,
     };
     const result = buildArtifactLayer(ctx);
-    expect(result).toContain("from 3 sessions");
+    expect(result).toContain("10 artifacts");
   });
 });
 

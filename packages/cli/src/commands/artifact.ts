@@ -1,7 +1,7 @@
 /**
  * CLI commands for the artifact system.
  *
- * ao artifact publish|publish-ref|list|show|read|update|summary|grep|stats|delete
+ * ao artifact publish|list|show|read|update|summary|grep|stats|delete
  */
 
 import { resolve } from "node:path";
@@ -68,16 +68,12 @@ function buildFilter(opts: {
   issue?: string;
   category?: string;
   status?: string;
-  last?: string;
-  includeDeleted?: boolean;
 }): ArtifactFilter {
   const filter: ArtifactFilter = {};
   if (opts.session) filter.sessionId = opts.session;
   if (opts.issue) filter.issueId = opts.issue;
   if (opts.category) filter.category = opts.category as ArtifactCategory;
   if (opts.status) filter.status = opts.status as ArtifactStatus;
-  if (opts.last) filter.lastN = parseInt(opts.last, 10);
-  if (opts.includeDeleted) filter.includeDeleted = true;
   return filter;
 }
 
@@ -151,49 +147,6 @@ export function registerArtifact(program: Command): void {
       },
     );
 
-  // ─── publish-ref ─────────────────────────────────────────────────────
-  artifact
-    .command("publish-ref")
-    .description("Register an external artifact by reference")
-    .requiredOption("--type <type>", "Reference type: pr, issue, deployment, external")
-    .requiredOption("--url <url>", "Reference URL")
-    .option("--description <text>", "Human-readable description", "")
-    .option("--session <id>", "Session ID (default: $AO_SESSION)")
-    .option("--issue <id>", "Issue ID (default: $AO_ISSUE_ID)")
-    .option("-p, --project <id>", "Project ID")
-    .action(
-      async (opts: {
-        type: string;
-        url: string;
-        description: string;
-        session?: string;
-        issue?: string;
-        project?: string;
-      }) => {
-        const sessionId = opts.session || defaultSession();
-        if (!sessionId) {
-          console.error(chalk.red("No session ID. Use --session or set AO_SESSION."));
-          process.exit(1);
-        }
-
-        const service = getService(opts);
-        await service.init();
-
-        const category = opts.type === "pr" ? "pr" : "other";
-        const entry = await service.publishReference(sessionId, {
-          referenceType: opts.type,
-          referenceUrl: opts.url,
-          category: category as ArtifactCategory,
-          description: opts.description,
-          issueId: opts.issue || defaultIssue() || undefined,
-        });
-
-        console.log(
-          `${chalk.green("OK:")} artifact:${entry.id.slice(0, 8)} (${entry.referenceType} ref) → ${entry.referenceUrl}`,
-        );
-      },
-    );
-
   // ─── list ────────────────────────────────────────────────────────────
   artifact
     .command("list")
@@ -202,8 +155,6 @@ export function registerArtifact(program: Command): void {
     .option("--issue <id>", "Filter by issue (across all sessions)")
     .option("--category <cat>", "Filter by category")
     .option("--status <status>", "Filter by status")
-    .option("--last <n>", "Only from last N sessions")
-    .option("--include-deleted", "Include tombstoned artifacts")
     .option("--format <fmt>", "Output format: table, json, paths", "table")
     .option("-p, --project <id>", "Project ID")
     .action(
@@ -212,8 +163,6 @@ export function registerArtifact(program: Command): void {
         issue?: string;
         category?: string;
         status?: string;
-        last?: string;
-        includeDeleted?: boolean;
         format: string;
         project?: string;
       }) => {
@@ -402,7 +351,6 @@ export function registerArtifact(program: Command): void {
     .option("--session <id>", "Scope to session")
     .option("--issue <id>", "Scope to issue")
     .option("--category <cat>", "Scope to category")
-    .option("--last <n>", "Scope to last N sessions")
     .option("--context <n>", "Show N surrounding lines", "2")
     .option("-p, --project <id>", "Project ID")
     .action(
@@ -412,7 +360,6 @@ export function registerArtifact(program: Command): void {
           session?: string;
           issue?: string;
           category?: string;
-          last?: string;
           context?: string;
           project?: string;
         },
@@ -423,7 +370,8 @@ export function registerArtifact(program: Command): void {
           return;
         }
 
-        const results = await service.grep(pattern, buildFilter(opts));
+        const contextLines = parseInt(opts.context ?? "2", 10);
+        const results = await service.grep(pattern, buildFilter(opts), { contextLines });
 
         if (results.length === 0) {
           console.log(chalk.dim(`No matches for "${pattern}".`));
@@ -454,9 +402,8 @@ export function registerArtifact(program: Command): void {
   artifact
     .command("stats")
     .description("Show artifact counts and sizes")
-    .option("--include-deleted", "Include tombstoned artifacts")
     .option("-p, --project <id>", "Project ID")
-    .action(async (opts: { includeDeleted?: boolean; project?: string }) => {
+    .action(async (opts: { project?: string }) => {
       const service = getService(opts);
       if (!(await service.isInitialized())) {
         console.log(chalk.dim("No artifacts yet."));

@@ -1040,7 +1040,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
 
     // Initialize artifacts if available
     const artifactsDir = getArtifactsDir(config.configPath, project.path);
-    let artifactContext: { artifactsDir: string; totalArtifacts: number; totalSessions: number } | undefined;
+    let artifactContext: { artifactsDir: string; totalArtifacts: number } | undefined;
     const artifactService = resolveArtifactService(project);
     if (artifactService) {
       try {
@@ -1048,11 +1048,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           await artifactService.init();
         }
         const allArtifacts = await artifactService.list();
-        const sessionIds = new Set(allArtifacts.map((a) => a.sessionId));
         artifactContext = {
           artifactsDir,
           totalArtifacts: allArtifacts.length,
-          totalSessions: sessionIds.size,
         };
       } catch {
         // Non-fatal: continue without artifact context

@@ -6,7 +6,6 @@ const mockArtifactService = {
   init: vi.fn().mockResolvedValue(undefined),
   isInitialized: vi.fn().mockResolvedValue(true),
   publish: vi.fn(),
-  publishReference: vi.fn(),
   list: vi.fn().mockResolvedValue([]),
   get: vi.fn().mockResolvedValue(null),
   readContent: vi.fn().mockResolvedValue(null),
@@ -207,7 +206,6 @@ describe("artifact list", () => {
       "--session", "ses-1",
       "--category", "document",
       "--status", "published",
-      "--last", "3",
     ]);
 
     expect(mockArtifactService.list).toHaveBeenCalledWith(
@@ -215,7 +213,6 @@ describe("artifact list", () => {
         sessionId: "ses-1",
         category: "document",
         status: "published",
-        lastN: 3,
       }),
     );
     log.mockRestore();
@@ -273,66 +270,6 @@ describe("artifact publish", () => {
         description: "Test document",
         tags: ["test", "doc"],
         issueId: "INT-42",
-      }),
-    );
-    log.mockRestore();
-  });
-});
-
-describe("artifact publish-ref", () => {
-  it("requires session ID", async () => {
-    delete process.env.AO_SESSION;
-    const errLog = vi.spyOn(console, "error").mockImplementation(() => {});
-    const mockExit = vi.spyOn(process, "exit").mockImplementation(() => {
-      throw new Error("exit");
-    });
-
-    const program = createProgram();
-    await expect(
-      program.parseAsync([
-        "node", "ao", "artifact", "publish-ref",
-        "--type", "pr",
-        "--url", "https://github.com/org/repo/pull/1",
-      ]),
-    ).rejects.toThrow("exit");
-
-    expect(errLog).toHaveBeenCalledWith(expect.stringContaining("No session ID"));
-    errLog.mockRestore();
-    mockExit.mockRestore();
-  });
-
-  it("publishes a reference artifact", async () => {
-    const now = new Date().toISOString();
-    mockArtifactService.publishReference.mockResolvedValueOnce({
-      id: "ref-id",
-      sessionId: "test-session-1",
-      filename: "pr-ref-id",
-      path: "test-session-1/pr-ref-id",
-      mimeType: "application/x-reference",
-      category: "pr",
-      status: "published",
-      size: 0,
-      createdAt: now,
-      updatedAt: now,
-      isReference: true,
-      referenceType: "pr",
-      referenceUrl: "https://github.com/org/repo/pull/1",
-    });
-
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    const program = createProgram();
-    await program.parseAsync([
-      "node", "ao", "artifact", "publish-ref",
-      "--type", "pr",
-      "--url", "https://github.com/org/repo/pull/1",
-    ]);
-
-    expect(mockArtifactService.publishReference).toHaveBeenCalledWith(
-      "test-session-1",
-      expect.objectContaining({
-        referenceType: "pr",
-        referenceUrl: "https://github.com/org/repo/pull/1",
-        category: "pr",
       }),
     );
     log.mockRestore();

@@ -150,27 +150,6 @@ describe("artifact-service", () => {
     });
   });
 
-  describe("publishReference", () => {
-    it("creates reference entry without file copy", async () => {
-      const service = createService();
-      await service.init();
-
-      const entry = await service.publishReference("ao-1", {
-        referenceType: "pr",
-        referenceUrl: "https://github.com/org/repo/pull/42",
-        category: "pr",
-        description: "Auth feature PR",
-      });
-
-      expect(entry.id).toBeTruthy();
-      expect(entry.isReference).toBe(true);
-      expect(entry.referenceUrl).toBe("https://github.com/org/repo/pull/42");
-      expect(entry.referenceType).toBe("pr");
-      expect(entry.category).toBe("pr");
-      expect(entry.size).toBe(0);
-    });
-  });
-
   describe("list", () => {
     it("returns all non-deleted artifacts", async () => {
       const service = createService();
@@ -242,41 +221,6 @@ describe("artifact-service", () => {
       const withDeleted = await service.list({ includeDeleted: true });
       expect(withDeleted.length).toBe(1);
     });
-
-    it("filters by lastN sessions", async () => {
-      const service = createService();
-      await service.init();
-
-      const f1 = writeTestFile("a.md", "A");
-      const f2 = writeTestFile("b.md", "B");
-      const f3 = writeTestFile("c.md", "C");
-      await service.publish("ao-1", f1, { category: "document" });
-      await service.publish("ao-2", f2, { category: "document" });
-      await service.publish("ao-3", f3, { category: "document" });
-
-      const last1 = await service.list({ lastN: 1 });
-      expect(last1.length).toBe(1);
-      expect(last1[0].sessionId).toBe("ao-3");
-    });
-
-    it("lastN uses filtered entries, not raw manifest", async () => {
-      const service = createService();
-      await service.init();
-
-      const f1 = writeTestFile("a.md", "A");
-      const f2 = writeTestFile("b.md", "B");
-      const f3 = writeTestFile("c.md", "C");
-      await service.publish("ao-1", f1, { category: "document" });
-      await service.publish("ao-2", f2, { category: "test-report" });
-      await service.publish("ao-3", f3, { category: "document" });
-
-      // lastN=1 with category filter should return the most recent session
-      // that has "document" artifacts — ao-3 (not ao-2 which is test-report)
-      const filtered = await service.list({ category: "document", lastN: 1 });
-      expect(filtered.length).toBe(1);
-      expect(filtered[0].sessionId).toBe("ao-3");
-      expect(filtered[0].category).toBe("document");
-    });
   });
 
   describe("get", () => {
@@ -291,21 +235,6 @@ describe("artifact-service", () => {
       expect(result).not.toBeNull();
       expect(result!.entry.id).toBe(entry.id);
       expect(result!.absolutePath).toBe(join(artifactsDir, entry.path));
-    });
-
-    it("returns null absolutePath for reference artifacts", async () => {
-      const service = createService();
-      await service.init();
-
-      const entry = await service.publishReference("ao-1", {
-        referenceType: "pr",
-        referenceUrl: "https://github.com/org/repo/pull/1",
-        category: "pr",
-        description: "test",
-      });
-
-      const result = await service.get(entry.id);
-      expect(result!.absolutePath).toBeNull();
     });
 
     it("returns null for non-existent id", async () => {
@@ -340,20 +269,6 @@ describe("artifact-service", () => {
       expect(content).toBeNull();
     });
 
-    it("returns null for references", async () => {
-      const service = createService();
-      await service.init();
-
-      const entry = await service.publishReference("ao-1", {
-        referenceType: "pr",
-        referenceUrl: "https://github.com/org/repo/pull/1",
-        category: "pr",
-        description: "test",
-      });
-
-      const content = await service.readContent(entry.id);
-      expect(content).toBeNull();
-    });
   });
 
   describe("grep", () => {
@@ -375,7 +290,7 @@ describe("artifact-service", () => {
       expect(allMatches.length).toBe(2);
     });
 
-    it("skips binary and reference artifacts", async () => {
+    it("skips binary artifacts", async () => {
       const service = createService();
       await service.init();
 
@@ -383,12 +298,6 @@ describe("artifact-service", () => {
       const f2 = writeTestFile("img.png", "payment in binary");
       await service.publish("ao-1", f1, { category: "document" });
       await service.publish("ao-1", f2, { category: "screenshot" });
-      await service.publishReference("ao-1", {
-        referenceType: "pr",
-        referenceUrl: "https://example.com",
-        category: "pr",
-        description: "payment PR",
-      });
 
       const results = await service.grep("payment");
       expect(results.length).toBe(1);

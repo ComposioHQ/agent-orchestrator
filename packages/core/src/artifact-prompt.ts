@@ -10,8 +10,6 @@ export interface ArtifactContext {
   artifactsDir: string;
   /** Total number of artifacts across all sessions */
   totalArtifacts: number;
-  /** Number of sessions that have published artifacts */
-  totalSessions: number;
 }
 
 /**
@@ -33,7 +31,7 @@ export function buildArtifactLayer(ctx: ArtifactContext): string {
   if (ctx.totalArtifacts > 0) {
     lines.push("");
     lines.push(
-      `There are currently ${ctx.totalArtifacts} artifacts from ${ctx.totalSessions} session${ctx.totalSessions !== 1 ? "s" : ""}. Run \`ao artifact list\` to see them.`,
+      `There are currently ${ctx.totalArtifacts} artifact${ctx.totalArtifacts !== 1 ? "s" : ""}. Run \`ao artifact list\` to see them.`,
     );
   }
 
@@ -46,14 +44,6 @@ export function buildArtifactLayer(ctx: ArtifactContext): string {
   );
   lines.push(
     "  Add --description for discoverability. Session and issue are auto-detected from environment.",
-  );
-  lines.push("");
-  lines.push("- `ao artifact publish-ref --type pr --url <url>`");
-  lines.push(
-    "  Register an external artifact by reference. Note: PR artifacts are also auto-published",
-  );
-  lines.push(
-    "  by the orchestrator when it detects a new PR, so you may not need to do this manually.",
   );
 
   lines.push("");

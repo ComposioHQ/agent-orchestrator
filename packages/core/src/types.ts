@@ -1521,8 +1521,6 @@ export interface ArtifactFilter {
   tags?: string[];
   createdAfter?: string;
   createdBefore?: string;
-  /** Only from the last N sessions */
-  lastN?: number;
   /** Include tombstoned artifacts (default: false) */
   includeDeleted?: boolean;
 }
@@ -1547,17 +1545,6 @@ export interface ArtifactService {
     filePath: string,
     meta: Partial<ArtifactEntry>,
   ): Promise<ArtifactEntry>;
-  publishReference(
-    sessionId: string,
-    meta: {
-      referenceType: string;
-      referenceUrl: string;
-      category: ArtifactCategory;
-      description: string;
-      issueId?: string;
-    },
-  ): Promise<ArtifactEntry>;
-
   // Query
   list(filter?: ArtifactFilter): Promise<ArtifactEntry[]>;
   get(
@@ -1567,6 +1554,7 @@ export interface ArtifactService {
   grep(
     pattern: string,
     filter?: ArtifactFilter,
+    options?: { contextLines?: number },
   ): Promise<ArtifactSearchResult[]>;
 
   // Lifecycle

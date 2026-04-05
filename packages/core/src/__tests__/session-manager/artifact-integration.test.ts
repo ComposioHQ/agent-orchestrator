@@ -25,7 +25,6 @@ function createMockArtifactService(
     init: vi.fn().mockResolvedValue(undefined),
     isInitialized: vi.fn().mockResolvedValue(initialized),
     publish: vi.fn(),
-    publishReference: vi.fn(),
     list: vi.fn().mockResolvedValue(entries),
     get: vi.fn().mockResolvedValue(null),
     readContent: vi.fn().mockResolvedValue(null),
@@ -231,11 +230,11 @@ describe("spawn with artifact service", () => {
 
     await sm.spawn({ projectId: "my-app" });
 
-    // The prompt should include artifact context with 3 artifacts from 2 sessions
+    // The prompt should include artifact context with 3 artifacts
     // We verify indirectly via the agent's launch command getting a prompt with artifact info
     expect(ctx.mockAgent.getLaunchCommand).toHaveBeenCalledWith(
       expect.objectContaining({
-        prompt: expect.stringContaining("3 artifacts from 2 sessions"),
+        prompt: expect.stringContaining("3 artifacts"),
       }),
     );
   });

@@ -34,12 +34,11 @@ describe("buildPrompt with artifactContext", () => {
       artifactContext: {
         artifactsDir: "/tmp/artifacts",
         totalArtifacts: 5,
-        totalSessions: 2,
       },
     });
     expect(result).toContain("## Artifacts");
     expect(result).toContain("ao artifact publish");
-    expect(result).toContain("5 artifacts from 2 sessions");
+    expect(result).toContain("5 artifacts");
   });
 
   it("omits artifact layer when artifactContext is undefined", () => {
@@ -57,7 +56,6 @@ describe("buildPrompt with artifactContext", () => {
       artifactContext: {
         artifactsDir: "/tmp/artifacts",
         totalArtifacts: 0,
-        totalSessions: 0,
       },
     });
     const baseIdx = result.indexOf("## Project Context");
@@ -73,7 +71,6 @@ describe("buildPrompt with artifactContext", () => {
       artifactContext: {
         artifactsDir: "/tmp/artifacts",
         totalArtifacts: 0,
-        totalSessions: 0,
       },
     });
     const artifactIdx = result.indexOf("## Artifacts");

@@ -174,6 +174,7 @@ export {
   getProjectBaseDir,
   getSessionsDir,
   getWorktreesDir,
+  ARTIFACTS_DIR_NAME,
   getArtifactsDir,
   getFeedbackReportsDir,
   getObservabilityBaseDir,
