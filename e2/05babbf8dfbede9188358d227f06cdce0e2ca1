@@ -1,0 +1,29 @@
+packages/cli/src/commands/start.ts
+  fb6460de0865daf6 967-969
+packages/cli/__tests__/lib/preflight.test.ts
+  fb6460de0865daf6 110-130
+packages/cli/__tests__/commands/dashboard.test.ts
+  fb6460de0865daf6 132-171
+packages/cli/src/commands/dashboard.ts
+  fb6460de0865daf6 23,126
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "e205babbf8dfbede9188358d227f06cdce0e2ca1",
+  "prompts": {
+    "fb6460de0865daf6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66c16619-f3dc-47c9-968c-c85b3c0382d5",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 66,
+      "total_deletions": 1,
+      "accepted_lines": 66,
+      "overriden_lines": 0
+    }
+  }
+}
