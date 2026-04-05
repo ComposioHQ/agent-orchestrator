@@ -778,7 +778,6 @@ async function startDashboard(
     });
   } else {
     // Production: use pre-built start-all script.
-    // Preflight already verified .next/BUILD_ID and dist-server/start-all.js exist.
     if (isMonorepo) {
       console.log(chalk.dim("  Mode: optimized (production bundles)"));
       console.log(chalk.dim("  Tip: use --dev for hot reload when editing dashboard UI\n"));
@@ -962,11 +961,14 @@ async function runStartup(
       port = newPort;
     }
     const webDir = findWebDir(); // throws with install-specific guidance if not found
+    // Dev mode (HMR) only works in the monorepo where `server/` source exists.
+    // For npm installs, --dev is silently ignored and production server runs,
+    // so preflight must still verify production artifacts exist.
+    const isMonorepo = existsSync(resolve(webDir, "server"));
+    const willUseDevServer = isMonorepo && opts?.dev === true;
     if (opts?.rebuild) {
       await rebuildDashboardProductionArtifacts(webDir);
-    } else if (!opts?.dev) {
-      // Dev mode uses `pnpm run dev` (HMR) and doesn't need production artifacts.
-      // Only check for .next/BUILD_ID and dist-server/start-all.js in production mode.
+    } else if (!willUseDevServer) {
       await preflight.checkBuilt(webDir);
     }
 
