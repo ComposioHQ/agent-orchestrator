@@ -788,4 +788,203 @@ describe("useSessionEvents", () => {
       expect(result.current.sseAttentionLevels["session-0"]).toBeUndefined();
     });
   });
+
+  describe("immediate first refresh", () => {
+    it("triggers /api/sessions fetch on first SSE snapshot even when membership matches", async () => {
+      const sessions = makeSessions(2);
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ sessions, globalPause: null }),
+      } as unknown as Response);
+
+      renderHook(() => useSessionEvents(sessions));
+
+      await act(async () => {
+        eventSourceMock!.onmessage!.call(eventSourceMock, {
+          data: JSON.stringify({
+            type: "snapshot",
+            sessions: sessions.map((s) => ({
+              id: s.id,
+              status: s.status,
+              activity: s.activity,
+              lastActivityAt: s.lastActivityAt,
+            })),
+          }),
+        } as MessageEvent);
+      });
+
+      await waitFor(() => {
+        expect(fetch).toHaveBeenCalledWith("/api/sessions", {
+          signal: expect.any(AbortSignal),
+        });
+      });
+    });
+
+    it("updates lastRefreshAtRef on fetch failure to prevent retry loops", async () => {
+      const sessions = makeSessions(1);
+      const fetchError = new Error("Network error");
+      vi.mocked(fetch)
+        .mockRejectedValueOnce(fetchError)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ sessions, globalPause: null }),
+        } as unknown as Response);
+
+      renderHook(() => useSessionEvents(sessions));
+
+      await act(async () => {
+        eventSourceMock!.onmessage!.call(eventSourceMock, {
+          data: JSON.stringify({
+            type: "snapshot",
+            sessions: sessions.map((s) => ({
+              id: s.id,
+              status: s.status,
+              activity: s.activity,
+              lastActivityAt: s.lastActivityAt,
+            })),
+          }),
+        } as MessageEvent);
+      });
+
+      await waitFor(() => {
+        expect(fetch).toHaveBeenCalledTimes(1);
+      });
+
+      await act(async () => {
+        eventSourceMock!.onmessage!.call(eventSourceMock, {
+          data: JSON.stringify({
+            type: "snapshot",
+            sessions: sessions.map((s) => ({
+              id: s.id,
+              status: s.status,
+              activity: s.activity,
+              lastActivityAt: s.lastActivityAt,
+            })),
+          }),
+        } as MessageEvent);
+      });
+
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("updates lastRefreshAtRef when fetch returns OK but no sessions data", async () => {
+      const sessions = makeSessions(1);
+      // Return OK response but with null/empty body (no sessions field)
+      vi.mocked(fetch)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ globalPause: null }),
+        } as unknown as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ sessions, globalPause: null }),
+        } as unknown as Response);
+
+      renderHook(() => useSessionEvents(sessions));
+
+      // First snapshot triggers refresh (lastRefreshAtRef = 0)
+      await act(async () => {
+        eventSourceMock!.onmessage!.call(eventSourceMock, {
+          data: JSON.stringify({
+            type: "snapshot",
+            sessions: sessions.map((s) => ({
+              id: s.id,
+              status: s.status,
+              activity: s.activity,
+              lastActivityAt: s.lastActivityAt,
+            })),
+          }),
+        } as MessageEvent);
+      });
+
+      await waitFor(() => {
+        expect(fetch).toHaveBeenCalledTimes(1);
+      });
+
+      // Second snapshot should NOT trigger another immediate refresh
+      // because lastRefreshAtRef was updated even for the empty response
+      await act(async () => {
+        eventSourceMock!.onmessage!.call(eventSourceMock, {
+          data: JSON.stringify({
+            type: "snapshot",
+            sessions: sessions.map((s) => ({
+              id: s.id,
+              status: s.status,
+              activity: s.activity,
+              lastActivityAt: s.lastActivityAt,
+            })),
+          }),
+        } as MessageEvent);
+      });
+
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("resets lastRefreshAtRef when project changes so new project gets immediate refresh", async () => {
+      const sessions = makeSessions(1);
+      vi.mocked(fetch)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ sessions, globalPause: null }),
+        } as unknown as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ sessions, globalPause: null }),
+        } as unknown as Response);
+
+      const { rerender } = renderHook(
+        ({ project }: { project?: string }) => useSessionEvents(sessions, null, project),
+        { initialProps: { project: "projectA" } },
+      );
+
+      // First snapshot on project A triggers refresh
+      await act(async () => {
+        eventSourceMock!.onmessage!.call(eventSourceMock, {
+          data: JSON.stringify({
+            type: "snapshot",
+            sessions: sessions.map((s) => ({
+              id: s.id,
+              status: s.status,
+              activity: s.activity,
+              lastActivityAt: s.lastActivityAt,
+            })),
+          }),
+        } as MessageEvent);
+      });
+
+      await waitFor(() => {
+        expect(fetch).toHaveBeenCalledTimes(1);
+        expect(fetch).toHaveBeenCalledWith(
+          "/api/sessions?project=projectA",
+          expect.objectContaining({ signal: expect.any(AbortSignal) }),
+        );
+      });
+
+      // Switch to project B — the effect reinitializes, resetting lastRefreshAtRef
+      rerender({ project: "projectB" });
+
+      // First snapshot on project B should trigger an immediate refresh
+      await act(async () => {
+        eventSourceMock!.onmessage!.call(eventSourceMock, {
+          data: JSON.stringify({
+            type: "snapshot",
+            sessions: sessions.map((s) => ({
+              id: s.id,
+              status: s.status,
+              activity: s.activity,
+              lastActivityAt: s.lastActivityAt,
+            })),
+          }),
+        } as MessageEvent);
+      });
+
+      await waitFor(() => {
+        expect(fetch).toHaveBeenCalledTimes(2);
+        expect(fetch).toHaveBeenLastCalledWith(
+          "/api/sessions?project=projectB",
+          expect.objectContaining({ signal: expect.any(AbortSignal) }),
+        );
+      });
+    });
+  });
 });

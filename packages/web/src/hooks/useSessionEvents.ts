@@ -119,7 +119,7 @@ export function useSessionEvents(
   const refreshingRef = useRef(false);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingMembershipKeyRef = useRef<string | null>(null);
-  const lastRefreshAtRef = useRef(Date.now());
+  const lastRefreshAtRef = useRef(0);
   const disconnectedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -136,6 +136,9 @@ export function useSessionEvents(
   }, [initialSessions, initialGlobalPause]);
 
   useEffect(() => {
+    // Reset so the new project gets an immediate first refresh on its first SSE snapshot
+    lastRefreshAtRef.current = 0;
+
     const url = project ? `/api/events?project=${encodeURIComponent(project)}` : "/api/events";
     const es = new EventSource(url);
     let disposed = false;
@@ -174,7 +177,13 @@ export function useSessionEvents(
           .then((res) => (res.ok ? res.json() : null))
           .then(
             (updated: { sessions?: DashboardSession[]; globalPause?: GlobalPauseState } | null) => {
-              if (disposed || refreshController.signal.aborted || !updated?.sessions) return;
+              if (disposed || refreshController.signal.aborted || !updated?.sessions) {
+                // Update timestamp even for non-OK responses to prevent retry storms
+                if (!disposed && !refreshController.signal.aborted) {
+                  lastRefreshAtRef.current = Date.now();
+                }
+                return;
+              }
 
               lastRefreshAtRef.current = Date.now();
               const sseAttentionLevels = Object.fromEntries(
@@ -191,6 +200,8 @@ export function useSessionEvents(
           .catch((err: unknown) => {
             if (err instanceof DOMException && err.name === "AbortError") return;
             console.warn("[useSessionEvents] refresh failed:", err);
+            // Update timestamp on failure to prevent retry loops on every SSE snapshot
+            lastRefreshAtRef.current = Date.now();
           })
           .finally(() => {
             if (activeRefreshController === refreshController) {

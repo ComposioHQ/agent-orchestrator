@@ -64,6 +64,7 @@ vi.mock("ora", () => ({
     stop: vi.fn().mockReturnThis(),
     succeed: vi.fn().mockReturnThis(),
     fail: vi.fn().mockReturnThis(),
+    info: vi.fn().mockReturnThis(),
     text: "",
   }),
 }));
@@ -196,6 +197,8 @@ beforeEach(() => {
   const fakeChild = { on: vi.fn(), kill: vi.fn(), emit: vi.fn(), stdout: null, stderr: null };
   mockSpawn.mockReturnValue(fakeChild);
 
+  mockSessionManager.list.mockReset();
+  mockSessionManager.list.mockResolvedValue([]);
   mockSessionManager.get.mockReset();
   mockSessionManager.spawnOrchestrator.mockReset();
   mockSessionManager.kill.mockReset();
@@ -859,6 +862,97 @@ describe("start command — orchestrator session strategy display", () => {
       expect(output).not.toContain("reused existing session");
     },
   );
+
+  it("handles existing orchestrator sessions by auto-selecting when --no-dashboard", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    // Return an existing orchestrator session
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-orchestrator",
+        projectId: "my-app",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(),
+        runtimeHandle: { id: "tmux-session-existing" },
+      },
+    ]);
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
+
+    const output = getLoggedOutput();
+    // When --no-dashboard is used, auto-selects the most recent orchestrator
+    // and shows the tmux attach command (not the dashboard selection message)
+    expect(output).toContain("tmux attach -t tmux-session-existing");
+    expect(output).not.toContain("existing sessions found — select one in the dashboard");
+
+    // Should NOT spawn a new orchestrator when existing ones exist
+    expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
+  });
+
+  it("shows dashboard selection message when existing orchestrators found with dashboard enabled", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    // Mock findWebDir
+    const { findWebDir } = await import("../../src/lib/web-dir.js");
+    vi.mocked(findWebDir).mockReturnValue(tmpDir);
+    writeFileSync(join(tmpDir, "package.json"), "{}");
+
+    const fakeDashboard = {
+      on: vi.fn(),
+      kill: vi.fn(),
+      emit: vi.fn(),
+    };
+    mockSpawn.mockReturnValue(fakeDashboard);
+
+    // Return an existing orchestrator session
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-orchestrator",
+        projectId: "my-app",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(),
+      },
+    ]);
+
+    await program.parseAsync(["node", "test", "start"]);
+
+    const output = getLoggedOutput();
+    // When dashboard is enabled, shows selection message
+    expect(output).toContain("existing sessions found — select one in the dashboard");
+
+    // Should NOT spawn a new orchestrator when existing ones exist
+    expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
+  });
+
+  it("fails and cleans up dashboard when orchestrator setup throws", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    // Mock findWebDir
+    const { findWebDir } = await import("../../src/lib/web-dir.js");
+    vi.mocked(findWebDir).mockReturnValue(tmpDir);
+    writeFileSync(join(tmpDir, "package.json"), "{}");
+
+    const fakeDashboard = {
+      on: vi.fn(),
+      kill: vi.fn(),
+      emit: vi.fn(),
+    };
+    mockSpawn.mockReturnValue(fakeDashboard);
+
+    mockSessionManager.list.mockResolvedValue([]);
+    mockSessionManager.spawnOrchestrator.mockRejectedValue(new Error("Spawn failed"));
+
+    await expect(program.parseAsync(["node", "test", "start"])).rejects.toThrow("process.exit(1)");
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(errors).toContain("Failed to setup orchestrator: Spawn failed");
+
+    // Should have killed the dashboard
+    expect(fakeDashboard.kill).toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------

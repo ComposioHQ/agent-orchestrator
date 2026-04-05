@@ -607,3 +607,46 @@ describe("AttentionZone", () => {
     expect(onRestore).toHaveBeenCalledWith("s1");
   });
 });
+
+// ── Unenriched PR shimmer ─────────────────────────────────────────────
+
+describe("Unenriched PR shimmer", () => {
+  it("SessionCard shows shimmer for unenriched PR size", () => {
+    const pr = makePR({ enriched: false });
+    const session = makeSession({ pr });
+    const { container } = render(<SessionCard session={session} />);
+    const shimmers = container.querySelectorAll(".animate-pulse");
+    expect(shimmers.length).toBeGreaterThan(0);
+  });
+
+  it("SessionCard shows actual size for enriched PR", () => {
+    const pr = makePR({ enriched: true, additions: 50, deletions: 10 });
+    const session = makeSession({ pr });
+    render(<SessionCard session={session} />);
+    expect(screen.getByText("+50 -10 S")).toBeInTheDocument();
+  });
+
+  it("SessionCard suppresses alerts for unenriched PR", () => {
+    const pr = makePR({
+      enriched: false,
+      ciStatus: "failing",
+      ciChecks: [{ name: "build", status: "failed" }],
+    });
+    const session = makeSession({ pr });
+    const { container } = render(<SessionCard session={session} />);
+    expect(container.querySelector(".session-card__alert-pill")).toBeNull();
+  });
+
+  it("PRStatus shows shimmer for unenriched PR", () => {
+    const pr = makePR({ enriched: false });
+    const { container } = render(<PRStatus pr={pr} />);
+    const shimmers = container.querySelectorAll(".animate-pulse");
+    expect(shimmers.length).toBeGreaterThan(0);
+  });
+
+  it("PRStatus shows actual data for enriched PR", () => {
+    const pr = makePR({ enriched: true, additions: 50, deletions: 10 });
+    render(<PRStatus pr={pr} />);
+    expect(screen.getByText("+50 -10 S")).toBeInTheDocument();
+  });
+});

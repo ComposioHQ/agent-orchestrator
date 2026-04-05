@@ -118,10 +118,11 @@ function basicPRToDashboard(pr: PRInfo): DashboardPR {
       ciPassing: false, // Conservative default
       approved: false,
       noConflicts: true, // Optimistic default (conflicts are rare)
-      blockers: ["Data not loaded"], // Explicit blocker
+      blockers: [],
     },
     unresolvedThreads: 0,
     unresolvedComments: [],
+    enriched: false,
   };
 }
 
@@ -152,6 +153,7 @@ export async function enrichSessionPR(
     dashboard.pr.mergeability = cached.mergeability;
     dashboard.pr.unresolvedThreads = cached.unresolvedThreads;
     dashboard.pr.unresolvedComments = cached.unresolvedComments;
+    dashboard.pr.enriched = true;
     return true;
   }
 
@@ -233,6 +235,9 @@ export async function enrichSessionPR(
       body: c.body,
     }));
   }
+
+  // Mark as enriched — we attempted SCM API calls and applied whatever succeeded
+  dashboard.pr.enriched = true;
 
   // Add rate-limit warning blocker if most requests failed
   // (but we still applied any successful results above)
@@ -358,20 +363,37 @@ export async function enrichSessionIssueTitle(
 }
 
 /**
- * Enrich dashboard sessions with metadata (issue labels, agent summaries, issue titles).
- * Orchestrates sync + async enrichment in parallel. Does NOT enrich PR data — callers
- * handle that separately since strategies differ (e.g. terminal-session cache optimization).
+ * Fast-path metadata enrichment: issue labels (sync) + agent summaries (local I/O).
+ * Does NOT call tracker API for issue titles — use enrichSessionsMetadata() for full enrichment.
  */
-export async function enrichSessionsMetadata(
+export async function enrichSessionsMetadataFast(
   coreSessions: Session[],
   dashboardSessions: DashboardSession[],
   config: OrchestratorConfig,
   registry: PluginRegistry,
 ): Promise<void> {
-  // Resolve projects once per session (avoids repeated Object.entries lookups)
+  const { summaryPromises } = prepareSessionMetadataEnrichment(
+    coreSessions,
+    dashboardSessions,
+    config,
+    registry,
+  );
+
+  await Promise.allSettled(summaryPromises);
+}
+
+function prepareSessionMetadataEnrichment(
+  coreSessions: Session[],
+  dashboardSessions: DashboardSession[],
+  config: OrchestratorConfig,
+  registry: PluginRegistry,
+): {
+  projects: Array<ProjectConfig | undefined>;
+  summaryPromises: Promise<void>[];
+} {
   const projects = coreSessions.map((core) => resolveProject(core, config.projects));
 
-  // Enrich issue labels (synchronous — must run before async title enrichment)
+  // Issue labels (synchronous string parsing, no API calls)
   projects.forEach((project, i) => {
     if (!dashboardSessions[i].issueUrl || !project?.tracker?.plugin) return;
     const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
@@ -379,7 +401,7 @@ export async function enrichSessionsMetadata(
     enrichSessionIssue(dashboardSessions[i], tracker, project);
   });
 
-  // Enrich agent summaries (reads agent's JSONL — local I/O, not an API call)
+  // Agent summaries (local disk I/O — reads agent JSONL)
   const summaryPromises = coreSessions.map((core, i) => {
     if (dashboardSessions[i].summary) return Promise.resolve();
     const agentName = projects[i]?.agent ?? config.defaults.agent;
@@ -389,7 +411,27 @@ export async function enrichSessionsMetadata(
     return enrichSessionAgentSummary(dashboardSessions[i], core, agent);
   });
 
-  // Enrich issue titles (fetches from tracker API, cached with TTL)
+  return { projects, summaryPromises };
+}
+
+/**
+ * Full metadata enrichment: issue labels, agent summaries, AND issue titles (tracker API).
+ * Used by /api/sessions for complete data. For SSR fast path, use enrichSessionsMetadataFast().
+ */
+export async function enrichSessionsMetadata(
+  coreSessions: Session[],
+  dashboardSessions: DashboardSession[],
+  config: OrchestratorConfig,
+  registry: PluginRegistry,
+): Promise<void> {
+  const { projects, summaryPromises } = prepareSessionMetadataEnrichment(
+    coreSessions,
+    dashboardSessions,
+    config,
+    registry,
+  );
+
+  // Issue-title fetches depend on labels being set, but can run in parallel with summary I/O.
   const issueTitlePromises = projects.map((project, i) => {
     if (!dashboardSessions[i].issueUrl || !dashboardSessions[i].issueLabel) {
       return Promise.resolve();

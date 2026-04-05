@@ -250,7 +250,10 @@ const OrchestratorConfigSchema = z.object({
   readyThresholdMs: z.number().nonnegative().default(300_000),
   defaults: DefaultPluginsSchema.default({}),
   plugins: z.array(InstalledPluginConfigSchema).default([]),
-  projects: z.record(ProjectConfigSchema),
+  projects: z.record(
+    z.string().regex(/^[a-zA-Z0-9_-]+$/, "Project ID must match [a-zA-Z0-9_-]+ (no dots, slashes, or special characters)"),
+    ProjectConfigSchema,
+  ),
   notifiers: z.record(NotifierConfigSchema).default({}),
   notificationRouting: z.record(z.array(z.string())).default({
     urgent: ["desktop", "composio"],

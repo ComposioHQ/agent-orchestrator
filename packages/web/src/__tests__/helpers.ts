@@ -50,6 +50,7 @@ export function makePR(overrides: Partial<DashboardPR> = {}): DashboardPR {
     },
     unresolvedThreads: 0,
     unresolvedComments: [],
+    enriched: true,
     ...overrides,
   };
 }
