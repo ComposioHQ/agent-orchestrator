@@ -1,0 +1,41 @@
+packages/web/src/lib/serialize.ts
+  cb73aca2676f2efd 112,116,147,230-232,357-358,360,368,376,386-400,402-403,414
+packages/web/src/lib/types.ts
+  cb73aca2676f2efd 102-104,175-180,219,248,259
+packages/web/src/components/SessionCard.tsx
+  cb73aca2676f2efd 8,269-271,277,480-482,486,729
+packages/web/src/hooks/useSessionEvents.ts
+  cb73aca2676f2efd 81,144-145
+packages/web/src/__tests__/helpers.ts
+  cb73aca2676f2efd 53
+packages/web/src/components/PRStatus.tsx
+  cb73aca2676f2efd 3,18,33-36,40,56-59,61,64,80-81,83,93,103-104,114,125,131-132,135,137,146,148-149,158-159,166-167,178,181-183
+packages/web/src/__tests__/components.test.tsx
+  cb73aca2676f2efd 610-652
+packages/web/src/hooks/__tests__/useSessionEvents.test.ts
+  cb73aca2676f2efd 666-750
+packages/web/src/lib/dashboard-page-data.ts
+  cb73aca2676f2efd 8,68-69,71,73-75,78-79,81-86,89
+packages/web/src/lib/__tests__/serialize.test.ts
+  cb73aca2676f2efd 207-208,1034,1039-1040
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "661e654901f6ad998327532ccb026ac626a7de46",
+  "prompts": {
+    "cb73aca2676f2efd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "53e4fdb5-e18f-4c68-8f3a-bfeb449a9b11",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 249,
+      "total_deletions": 102,
+      "accepted_lines": 247,
+      "overriden_lines": 0
+    }
+  }
+}
