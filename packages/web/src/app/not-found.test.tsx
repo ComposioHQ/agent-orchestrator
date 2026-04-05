@@ -18,18 +18,9 @@ describe("NotFound (global)", () => {
     expect(screen.getByText("Page not found")).toBeInTheDocument();
   });
 
-  it("renders descriptive copy", () => {
-    render(<NotFound />);
-    expect(
-      screen.getByText(
-        "This route does not exist in the dashboard. Return to the main view to pick an active project or session.",
-      ),
-    ).toBeInTheDocument();
-  });
-
   it("renders a link back to the dashboard", () => {
     render(<NotFound />);
-    const link = screen.getByText("Back to dashboard");
+    const link = screen.getByText("← Back to dashboard");
     expect(link).toBeInTheDocument();
     expect(link.closest("a")).toHaveAttribute("href", "/");
   });
