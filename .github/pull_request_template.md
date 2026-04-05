@@ -23,8 +23,12 @@ Closes #<!-- issue number -->
 
 **Terminal test output**:
 
+<!--
+Paste your actual test output in a fenced code block, e.g.:
 ```
-$ pnpm test
+$ pnpm test --filter my-package
+✓ all tests passed
 ```
+-->
 
 **Verdict**: <!-- replace this comment with PASS or INSUFFICIENT -->
