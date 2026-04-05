@@ -1,0 +1,57 @@
+packages/web/src/app/projects/[projectId]/page.tsx
+  6a7be1e5b3c0af2f 34,43
+packages/web/src/components/PortfolioPage.tsx
+  497edd07f701b248 10,20,31,45,102-113
+packages/web/src/lib/portfolio-page-data.ts
+  497edd07f701b248 41,47,67-70,90
+packages/web/src/hooks/useSessionEvents.ts
+  497edd07f701b248 30-31,37-38,47,54-55,89,95,121
+  6a7be1e5b3c0af2f 249-254
+packages/web/src/components/UnifiedSidebar.tsx
+  6a7be1e5b3c0af2f 138-139,142,152,304-315,363-369,371,378,382-383,454,470,627,669,680,683,689-703,706-707,715,727-758,795-802,804-813,815-818,820-835,837-843,854,921-960,1216-1233,1253-1266,1387-1396,1507,1510-1511,1515,1520-1531,1538,1558
+packages/web/src/components/Dashboard.tsx
+  497edd07f701b248 36-42,87,309,335,381,401,485
+packages/web/src/components/DashboardShell.tsx
+  6a7be1e5b3c0af2f 14,54,68
+packages/web/src/app/settings/page.tsx
+  6a7be1e5b3c0af2f 11,34,38
+packages/web/src/components/ConnectionBar.tsx
+  497edd07f701b248 3-5,8,11-26
+packages/web/src/app/page.tsx
+  497edd07f701b248 14,22
+packages/web/src/app/projects/[projectId]/sessions/[sessionId]/page.tsx
+  6a7be1e5b3c0af2f 21,29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "e6fde84a1d47c89b05a3bdffcca32add1df16f9e",
+  "prompts": {
+    "497edd07f701b248": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0f788a34-2a38-4ddc-bca8-6a1a4b36014c",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 68,
+      "overriden_lines": 0
+    },
+    "6a7be1e5b3c0af2f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a9355450-9e9f-494c-80ab-e914f4f8274b",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 245,
+      "overriden_lines": 0
+    }
+  }
+}
