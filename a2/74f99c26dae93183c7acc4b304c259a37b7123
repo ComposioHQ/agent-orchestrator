@@ -1,0 +1,53 @@
+packages/web/src/lib/dashboard-page-data.ts
+  c7642d13ddb11c10 1-2
+packages/web/src/lib/serialize.ts
+  c7642d13ddb11c10 1-2
+packages/web/src/lib/observability.ts
+  c7642d13ddb11c10 1-2
+packages/web/src/lib/scm-webhooks.ts
+  c7642d13ddb11c10 1-2
+packages/web/package.json
+  c7642d13ddb11c10 22
+packages/web/src/lib/project-name.ts
+  c7642d13ddb11c10 1-2
+packages/web/src/components/SessionDetail.tsx
+  c7642d13ddb11c10 9,13-21
+packages/web/src/lib/services.ts
+  c7642d13ddb11c10 1-2
+packages/web/src/app/dev/terminal-test/page.tsx
+  c7642d13ddb11c10 3,7-18
+packages/web/vitest.config.ts
+  c7642d13ddb11c10 21
+packages/web/src/app/test-direct/page.tsx
+  c7642d13ddb11c10 3,7-13
+packages/cli/src/commands/start.ts
+  c7642d13ddb11c10 750-767,774,778-780,782-784,787-789,796-802,819-820,936,1000,1149,1158
+packages/web/src/__tests__/server-only-mock.ts
+  c7642d13ddb11c10 1-3
+packages/web/next.config.js
+  c7642d13ddb11c10 26-31,33
+packages/web/src/lib/global-pause.ts
+  c7642d13ddb11c10 1-2
+packages/web/src/app/test-direct/page.test.tsx
+  c7642d13ddb11c10 10-21,23,26-31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "a274f99c26dae93183c7acc4b304c259a37b7123",
+  "prompts": {
+    "c7642d13ddb11c10": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e5af9095-96c8-408e-bfd6-a9fd3bb2f2e5",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 183,
+      "total_deletions": 78,
+      "accepted_lines": 129,
+      "overriden_lines": 0
+    }
+  }
+}
