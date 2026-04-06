@@ -347,6 +347,38 @@ describe("isProcessRunning", () => {
   it("returns false when handle has no pid data", async () => {
     expect(await agent.isProcessRunning(makeProcessHandle())).toBe(false);
   });
+
+  it("does not false-positive match github-copilot-language-server", async () => {
+    mockExecFileAsync.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === "tmux" && args[0] === "list-panes") {
+        return Promise.resolve({ stdout: "/dev/ttys003\n", stderr: "" });
+      }
+      if (cmd === "ps") {
+        return Promise.resolve({
+          stdout: "  PID TT ARGS\n  789 ttys003  /usr/lib/github-copilot-language-server --stdio\n",
+          stderr: "",
+        });
+      }
+      return Promise.reject(new Error(`Unexpected exec: ${cmd}`));
+    });
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
+  });
+
+  it("does not false-positive match paths containing copilot substring", async () => {
+    mockExecFileAsync.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === "tmux" && args[0] === "list-panes") {
+        return Promise.resolve({ stdout: "/dev/ttys003\n", stderr: "" });
+      }
+      if (cmd === "ps") {
+        return Promise.resolve({
+          stdout: "  PID TT ARGS\n  789 ttys003  /var/log/copilot-extension.log\n",
+          stderr: "",
+        });
+      }
+      return Promise.reject(new Error(`Unexpected exec: ${cmd}`));
+    });
+    expect(await agent.isProcessRunning(makeTmuxHandle())).toBe(false);
+  });
 });
 
 // ===========================================================================
