@@ -255,12 +255,7 @@ const OrchestratorConfigSchema = z.object({
     ProjectConfigSchema,
   ),
   notifiers: z.record(NotifierConfigSchema).default({}),
-  notificationRouting: z.record(z.array(z.string())).default({
-    urgent: [],
-    action: [],
-    warning: [],
-    info: [],
-  }),
+  notificationRouting: z.record(z.array(z.string())).default({}),
   reactions: z.record(ReactionConfigSchema).default({}),
 });
 
