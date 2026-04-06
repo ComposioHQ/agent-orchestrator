@@ -524,9 +524,55 @@ export function mergeExternalPlugins(
 /** Apply defaults to project configs */
 function applyProjectDefaults(config: OrchestratorConfig): OrchestratorConfig {
   const projects: typeof config.projects = {};
+
+  // Find basenames shared by more than one project so those projects can be
+  // disambiguated using the project ID rather than the basename.
+  // Example: /client1/app and /client2/app share basename "app"; using the
+  // project ID (config map key) for prefix generation avoids an unavoidable
+  // duplicate-prefix error that the user cannot resolve without explicit overrides.
+  const basenameCounts = new Map<string, number>();
+  for (const project of Object.values(config.projects)) {
+    const b = basename(project.path);
+    basenameCounts.set(b, (basenameCounts.get(b) ?? 0) + 1);
+  }
+
+  // Track assigned prefixes to guarantee uniqueness when the ID-derived prefix
+  // also collides (e.g. "client1-app" and "client2-app" both → "ca").
+  const assignedPrefixes = new Set<string>();
+
   for (const [id, project] of Object.entries(config.projects)) {
     const name = project.name ?? id;
-    const sessionPrefix = project.sessionPrefix || generateSessionPrefix(basename(project.path));
+    let sessionPrefix: string;
+    if (project.sessionPrefix) {
+      sessionPrefix = project.sessionPrefix;
+    } else {
+      const b = basename(project.path);
+      // Use the project ID as the prefix source only when the basename is
+      // shared — distinct-basename collisions (e.g. "integrator" / "international"
+      // both → "int") are real config errors and must still be caught by
+      // validateProjectUniqueness.
+      const sharedBasename = (basenameCounts.get(b) ?? 1) > 1;
+      if (sharedBasename) {
+        // Use the project ID as the prefix source when the basename is shared
+        // (e.g. /client1/app and /client2/app both have basename "app").
+        // If the ID-derived prefix is also taken, append an incrementing numeric
+        // suffix to guarantee uniqueness (e.g. "ca", "ca2", "ca3", …).
+        const base = generateSessionPrefix(id);
+        if (!assignedPrefixes.has(base)) {
+          sessionPrefix = base;
+        } else {
+          let n = 2;
+          while (assignedPrefixes.has(`${base}${n}`)) n++;
+          sessionPrefix = `${base}${n}`;
+        }
+      } else {
+        // Distinct basename — use the basename-derived prefix as-is.
+        // Collisions here (e.g. "integrator" / "international" both → "int")
+        // are real config errors and must be caught by validateProjectUniqueness.
+        sessionPrefix = generateSessionPrefix(b);
+      }
+    }
+    assignedPrefixes.add(sessionPrefix);
     const inferredPlugin = inferScmPlugin(project);
     const scm =
       project.scm ??

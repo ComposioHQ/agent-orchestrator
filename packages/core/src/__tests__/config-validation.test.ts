@@ -209,6 +209,28 @@ describe("Config Validation - Session Prefix Uniqueness", () => {
 
     expect(() => validateConfig(config)).toThrow(/Duplicate session prefix/);
   });
+
+  it("auto-disambiguates same-basename projects using project ID", () => {
+    // /client1/app and /client2/app share basename "app" → would both get "app".
+    // applyProjectDefaults detects the shared basename and uses the project ID
+    // (config map key) as the prefix source for all same-basename projects.
+    const config = {
+      projects: {
+        "client1-app": {
+          path: "/client1/app",
+          repo: "org/app1",
+          defaultBranch: "main",
+        },
+        "client2-app": {
+          path: "/client2/app",
+          repo: "org/app2",
+          defaultBranch: "main",
+        },
+      },
+    };
+
+    expect(() => validateConfig(config)).not.toThrow();
+  });
 });
 
 describe("Config Validation - Session Prefix Regex", () => {
