@@ -404,11 +404,11 @@ export function DirectTerminal({
           return true;
         });
 
-        // Handle window resize (works with whatever ws is current)
-        const handleResize = () => {
+        const fitAndSyncSize = () => {
+          fit.fit();
+
           const currentWs = ws.current;
-          if (fit && currentWs?.readyState === WebSocket.OPEN) {
-            fit.fit();
+          if (currentWs?.readyState === WebSocket.OPEN) {
             currentWs.send(
               JSON.stringify({
                 type: "resize",
@@ -419,7 +419,21 @@ export function DirectTerminal({
           }
         };
 
+        // Handle window resize (works with whatever ws is current)
+        const handleResize = () => {
+          fitAndSyncSize();
+        };
+
         window.addEventListener("resize", handleResize);
+
+        const resizeObserver =
+          typeof window !== "undefined" && "ResizeObserver" in window
+            ? new ResizeObserver(() => {
+                fitAndSyncSize();
+              })
+            : null;
+
+        resizeObserver?.observe(terminalRef.current);
 
         // Terminal input → current WebSocket
         inputDisposable = terminal.onData((data) => {
@@ -551,6 +565,7 @@ export function DirectTerminal({
           selectionDisposable.dispose();
           if (safetyTimer) clearTimeout(safetyTimer);
           window.removeEventListener("resize", handleResize);
+          resizeObserver?.disconnect();
           inputDisposable?.dispose();
           inputDisposable = null;
           if (reconnectTimerRef.current) {
@@ -810,15 +825,16 @@ export function DirectTerminal({
       </div>
       {/* Terminal area */}
       <div
-        ref={terminalRef}
-        className={cn("w-full p-1.5")}
+        className="w-full min-w-0 p-1.5"
         style={{
-          overflow: "hidden",
-          display: "flex",
-          flexDirection: "column",
           height: fullscreen ? "calc(100dvh - 37px)" : height,
         }}
-      />
+      >
+        <div
+          ref={terminalRef}
+          className="flex h-full w-full min-w-0 flex-col overflow-hidden"
+        />
+      </div>
     </div>
   );
 }

@@ -115,7 +115,7 @@ describe("DirectTerminal render", () => {
   });
 
   it("renders the shared accent chrome for orchestrator terminals", async () => {
-    render(<DirectTerminal sessionId="ao-orchestrator" variant="orchestrator" />);
+    const { container } = render(<DirectTerminal sessionId="ao-orchestrator" variant="orchestrator" />);
 
     await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/runtime/terminal", expect.any(Object)));
     await waitFor(() =>
@@ -125,5 +125,10 @@ describe("DirectTerminal render", () => {
     expect(screen.getByText("ao-orchestrator")).toHaveStyle({ color: "var(--color-accent)" });
     expect(screen.getByText("XDA")).toHaveStyle({ color: "var(--color-accent)" });
     expect(MockWebSocket.instances[0]?.url).toContain("/ao-terminal-ws?session=ao-orchestrator");
+
+    const terminalArea = screen.getByText("Connected").closest("div")?.nextElementSibling as HTMLElement;
+    expect(terminalArea).toHaveClass("p-1.5");
+    expect(terminalArea.firstElementChild).toHaveClass("h-full", "w-full", "min-w-0");
+    expect(container.querySelector(".p-1\\.5 > .min-w-0")).toBeTruthy();
   });
 });

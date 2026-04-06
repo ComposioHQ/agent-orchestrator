@@ -386,7 +386,7 @@ export function SessionDetail({
             />
           )}
 
-          <section className="mt-5">
+          <section className="mt-5 min-w-0">
             <div id="session-terminal-section" aria-hidden="true" />
             <div className="mb-3 flex items-center gap-2">
               <div
