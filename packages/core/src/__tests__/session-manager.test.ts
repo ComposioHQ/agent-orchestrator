@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createSessionManager } from "../session-manager.js";
-import { writeMetadata } from "../metadata.js";
+import { writeMetadata, readMetadataRaw } from "../metadata.js";
 import type { OrchestratorConfig, PluginRegistry, Agent } from "../types.js";
 import { setupTestContext, teardownTestContext, makeHandle, type TestContext } from "./test-utils.js";
 
@@ -279,5 +279,160 @@ describe("deleteSession retry loop", () => {
 
     // Verify delete was called only once - no retries for "not found" errors
     expect(deleteCallCount).toBe(1);
+  });
+});
+
+describe("prOwnership duplicate PR repair", () => {
+  it("duplicate PR dedup sets prOwnership='stale' on non-owner session", async () => {
+    const prUrl = "https://github.com/org/my-app/pull/99";
+
+    // Session app-1 has pr_open status — should be the owner
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/ws1",
+      branch: "feat/a",
+      status: "pr_open",
+      project: "my-app",
+      agent: "opencode",
+      pr: prUrl,
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    // Session app-2 has working status and same PR — should become stale
+    writeMetadata(sessionsDir, "app-2", {
+      worktree: "/tmp/ws2",
+      branch: "feat/b",
+      status: "working",
+      project: "my-app",
+      agent: "opencode",
+      pr: prUrl,
+      runtimeHandle: JSON.stringify(makeHandle("rt-2")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const sessions = await sm.list("my-app");
+
+    // The stale session (app-2) should have prOwnership='stale' in metadata
+    const staleSession = sessions.find((s) => s.id === "app-2");
+    expect(staleSession).toBeDefined();
+    expect(staleSession!.metadata["prOwnership"]).toBe("stale");
+
+    // Also verify on disk
+    const rawOnDisk = readMetadataRaw(sessionsDir, "app-2");
+    expect(rawOnDisk).not.toBeNull();
+    expect(rawOnDisk!["prOwnership"]).toBe("stale");
+
+    // The owner session (app-1) should NOT have prOwnership set
+    const ownerSession = sessions.find((s) => s.id === "app-1");
+    expect(ownerSession).toBeDefined();
+    expect(ownerSession!.metadata["prOwnership"]).toBeUndefined();
+  });
+
+  it("stale session preserves pr URL in metadata after dedup", async () => {
+    const prUrl = "https://github.com/org/my-app/pull/100";
+
+    // Session app-1 has pr_open status — owner
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/ws1",
+      branch: "feat/a",
+      status: "pr_open",
+      project: "my-app",
+      agent: "opencode",
+      pr: prUrl,
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    // Session app-2 has working status and same PR — will become stale
+    writeMetadata(sessionsDir, "app-2", {
+      worktree: "/tmp/ws2",
+      branch: "feat/b",
+      status: "working",
+      project: "my-app",
+      agent: "opencode",
+      pr: prUrl,
+      runtimeHandle: JSON.stringify(makeHandle("rt-2")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    await sm.list("my-app");
+
+    // The stale session's PR URL must be preserved (not erased)
+    const rawOnDisk = readMetadataRaw(sessionsDir, "app-2");
+    expect(rawOnDisk).not.toBeNull();
+    expect(rawOnDisk!["pr"]).toBe(prUrl);
+  });
+
+  it("sole session with prOwnership='stale' gets promoted", async () => {
+    const prUrl = "https://github.com/org/my-app/pull/101";
+
+    // A single session that has a PR URL but was previously marked stale
+    // (the original owner was killed/cleaned up)
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/ws1",
+      branch: "feat/a",
+      status: "working",
+      project: "my-app",
+      agent: "opencode",
+      pr: prUrl,
+      prOwnership: "stale",
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const sessions = await sm.list("my-app");
+
+    // The sole session should have prOwnership cleared (promoted)
+    const session = sessions.find((s) => s.id === "app-1");
+    expect(session).toBeDefined();
+    expect(session!.metadata["prOwnership"]).toBeUndefined();
+
+    // Verify on disk: prOwnership key should be removed
+    const rawOnDisk = readMetadataRaw(sessionsDir, "app-1");
+    expect(rawOnDisk).not.toBeNull();
+    expect(rawOnDisk!["prOwnership"]).toBeUndefined();
+  });
+
+  it("status reset to working for stale sessions in tracking statuses", async () => {
+    const prUrl = "https://github.com/org/my-app/pull/102";
+
+    // Session app-1 has pr_open and more recent timestamp — should be owner
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp/ws1",
+      branch: "feat/a",
+      status: "pr_open",
+      project: "my-app",
+      agent: "opencode",
+      pr: prUrl,
+      createdAt: new Date().toISOString(),
+      runtimeHandle: JSON.stringify(makeHandle("rt-1")),
+    });
+
+    // Session app-2 also has pr_open and same PR — the stale one should be
+    // reset to "working" since pr_open is a PR tracking status
+    writeMetadata(sessionsDir, "app-2", {
+      worktree: "/tmp/ws2",
+      branch: "feat/b",
+      status: "pr_open",
+      project: "my-app",
+      agent: "opencode",
+      pr: prUrl,
+      createdAt: new Date(Date.now() - 60_000).toISOString(),
+      runtimeHandle: JSON.stringify(makeHandle("rt-2")),
+    });
+
+    const sm = createSessionManager({ config, registry: mockRegistry });
+    const sessions = await sm.list("my-app");
+
+    // Find the stale session (the one with prOwnership='stale')
+    const staleSession = sessions.find((s) => s.metadata["prOwnership"] === "stale");
+    expect(staleSession).toBeDefined();
+
+    // The stale session's status should have been reset to "working"
+    expect(staleSession!.status).toBe("working");
+
+    // Verify on disk
+    const rawOnDisk = readMetadataRaw(sessionsDir, staleSession!.id);
+    expect(rawOnDisk).not.toBeNull();
+    expect(rawOnDisk!["status"]).toBe("working");
+    expect(rawOnDisk!["prOwnership"]).toBe("stale");
   });
 });

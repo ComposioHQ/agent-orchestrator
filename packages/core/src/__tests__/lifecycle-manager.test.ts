@@ -1300,6 +1300,90 @@ describe("reactions", () => {
     expect(metadata?.["lastMergeConflictDispatched"]).toBeFalsy();
   });
 
+  it("checkSession skips PR reaction dispatches for sessions with prOwnership='stale'", async () => {
+    config.reactions = {
+      "changes-requested": {
+        auto: true,
+        action: "send-to-agent",
+        message: "Handle review comments.",
+      },
+      "merge-conflicts": {
+        auto: true,
+        action: "send-to-agent",
+        message: "Resolve merge conflicts.",
+      },
+      "ci-failed": {
+        auto: true,
+        action: "send-to-agent",
+        message: "CI is failing.",
+        retries: 3,
+        escalateAfter: 3,
+      },
+    };
+
+    const mockSCM = createMockSCM({
+      getCISummary: vi.fn().mockResolvedValue("failing"),
+      getCIChecks: vi.fn().mockResolvedValue([
+        { name: "lint", status: "failed", conclusion: "FAILURE" },
+      ]),
+      getPendingComments: vi.fn().mockResolvedValue([
+        {
+          id: "c1",
+          author: "reviewer",
+          body: "Please fix this",
+          path: "src/index.ts",
+          line: 10,
+          isResolved: false,
+          createdAt: new Date(),
+          url: "https://example.com/comment/1",
+        },
+      ]),
+      getAutomatedComments: vi.fn().mockResolvedValue([]),
+      getMergeability: vi.fn().mockResolvedValue({
+        mergeable: false,
+        ciPassing: false,
+        approved: false,
+        noConflicts: false,
+        blockers: ["Merge conflicts"],
+      }),
+    });
+    const registry = createMockRegistry({
+      runtime: plugins.runtime,
+      agent: plugins.agent,
+      scm: mockSCM,
+    });
+
+    vi.mocked(mockSessionManager.send).mockResolvedValue(undefined);
+
+    // First poll without stale — establishes the pr_open state
+    const session = makeSession({ status: "pr_open", pr: makePR() });
+    const lm = setupCheck("app-1", { session, registry });
+    await lm.check("app-1");
+
+    // Transition reaction fires for the ci_failed transition, which is expected.
+    // Clear send calls so we can isolate the dispatch guard behavior.
+    vi.mocked(mockSessionManager.send).mockClear();
+
+    // Now update the session to have prOwnership='stale' and re-mock get()
+    const staleSession = makeSession({
+      status: "ci_failed",
+      pr: makePR(),
+      metadata: { prOwnership: "stale" },
+    });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(staleSession);
+
+    // Second poll: session stays ci_failed — dispatch functions would normally fire
+    // (e.g., CI failure details, review backlog, merge conflicts)
+    // but prOwnership='stale' should suppress all of them.
+    await lm.check("app-1");
+
+    // Status is still tracked correctly
+    expect(lm.getStates().get("app-1")).toBe("ci_failed");
+
+    // None of the dispatch functions should have sent messages
+    expect(mockSessionManager.send).not.toHaveBeenCalled();
+  });
+
   it("notifies humans on significant transitions without reaction config", async () => {
     const notifier = createMockNotifier();
     const mockSCM = createMockSCM({ getPRState: vi.fn().mockResolvedValue("merged") });
