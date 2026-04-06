@@ -1,0 +1,29 @@
+packages/web/src/components/__tests__/ProjectSidebar.test.tsx
+  6361f0394a4cfe72 4,79-103
+packages/web/src/components/ProjectSidebar.tsx
+  6361f0394a4cfe72 16-17,107-108,116-123,149,206,292,366,369,385
+packages/web/src/app/sessions/[id]/page.test.tsx
+  6361f0394a4cfe72 7,25-31,42,83,116-133,163-169,207-211,246-250
+packages/web/src/app/sessions/[id]/page.tsx
+  6361f0394a4cfe72 6,66-69,91-112,115-119,231,234,258-303
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "853aea0ab51463a3134926a28c9b67bbfa6155b8",
+  "prompts": {
+    "6361f0394a4cfe72": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d62f2-3252-7a61-9141-6ed46c110c9c",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 179,
+      "total_deletions": 30,
+      "accepted_lines": 179,
+      "overriden_lines": 0
+    }
+  }
+}
