@@ -461,6 +461,30 @@ describe("getActivityState", () => {
     expect(s?.state).toBe("exited");
   });
 
+  it("returns null during spawning grace period when process not yet started", async () => {
+    mockTmuxProcess(false);
+    const s = await create().getActivityState(
+      makeSession({
+        runtimeHandle: makeTmuxHandle(),
+        status: "spawning",
+        createdAt: new Date(), // just created
+      }),
+    );
+    expect(s).toBeNull();
+  });
+
+  it("returns exited after spawning grace period expires", async () => {
+    mockTmuxProcess(false);
+    const s = await create().getActivityState(
+      makeSession({
+        runtimeHandle: makeTmuxHandle(),
+        status: "spawning",
+        createdAt: new Date(Date.now() - 60_000), // 60s ago — past grace period
+      }),
+    );
+    expect(s?.state).toBe("exited");
+  });
+
   it("returns active when native JSONL shows fresh user.message", async () => {
     mockTmuxProcess(true);
     mockOneMatchingSession();

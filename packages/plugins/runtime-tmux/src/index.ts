@@ -141,9 +141,10 @@ export function create(): Runtime {
         await tmux("send-keys", "-t", handle.id, "-l", message);
       }
 
-      // Small delay to let tmux process the pasted text before pressing Enter.
-      // Without this, Enter can arrive before the text is fully rendered.
-      await sleep(300);
+      // Delay to let the TUI process the pasted text before pressing Enter.
+      // Ink-based TUIs (Copilot, Claude Code) need more time than a plain
+      // readline — 500ms covers the Ink render cycle reliably.
+      await sleep(500);
       await tmux("send-keys", "-t", handle.id, "Enter");
     },
 

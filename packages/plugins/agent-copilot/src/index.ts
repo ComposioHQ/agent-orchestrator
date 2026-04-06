@@ -372,7 +372,21 @@ function createCopilotAgent(): Agent {
       const now = new Date();
       if (!session.runtimeHandle) return { state: "exited", timestamp: now };
       const running = await this.isProcessRunning(session.runtimeHandle);
-      if (!running) return { state: "exited", timestamp: now };
+      if (!running) {
+        // Grace period: Copilot CLI takes a few seconds to boot inside the
+        // tmux pane. During the spawning phase, if the process isn't
+        // detectable yet, return null ("no data") so the lifecycle manager's
+        // default handler keeps the session in "working" rather than marking
+        // it "killed" prematurely.
+        const SPAWN_GRACE_MS = 30_000;
+        if (
+          session.status === "spawning" &&
+          Date.now() - session.createdAt.getTime() < SPAWN_GRACE_MS
+        ) {
+          return null;
+        }
+        return { state: "exited", timestamp: now };
+      }
 
       if (!session.workspacePath) return null;
 
