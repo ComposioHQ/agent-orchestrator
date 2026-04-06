@@ -250,7 +250,7 @@ async function fetchPrViewFallbackAsJson(
   if (needReviews) {
     try {
       const revRaw = await ghWithRetry(
-        ["api", `repos/${conv.repo}/pulls/${conv.prNumber}/reviews`, "--paginate"],
+        ["api", `repos/${conv.repo}/pulls/${conv.prNumber}/reviews?per_page=100`, "--paginate"],
         cwd,
       );
       reviewsPayload = JSON.parse(revRaw);
@@ -336,7 +336,7 @@ export async function ghRestFallback(args: string[]): Promise<string> {
 
   // gh api flags that take a value argument — both loops must agree on this set
   // so that flag values (e.g. ".name" for --jq .name) are not mistaken for the endpoint.
-  const GH_API_FLAGS_WITH_VALUE = new Set(["--method", "-X", "--jq", "-q", "-f", "--field", "--raw-field", "--input"]);
+  const GH_API_FLAGS_WITH_VALUE = new Set(["--method", "-X", "--jq", "-q", "-f", "-F", "--field", "--raw-field", "--input"]);
   // gh api flags that are boolean/standalone
   const GH_API_FLAGS_BOOLEAN = new Set(["--paginate", "--silent", "--include"]);
 
