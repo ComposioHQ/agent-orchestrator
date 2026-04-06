@@ -55,7 +55,14 @@ export async function ensureLifecycleWorker(
   pendingManagers.set(key, promise);
   try {
     const lifecycle = await promise;
-    lifecycle.start(30_000);
+    try {
+      lifecycle.start(30_000);
+    } catch (startErr) {
+      // start() failed — stop the manager to release any partially-initialized
+      // state (timers, connections) before propagating the error.
+      try { lifecycle.stop(); } catch { /* best effort */ }
+      throw startErr;
+    }
     activeManagers.set(key, lifecycle);
   } finally {
     pendingManagers.delete(key);
