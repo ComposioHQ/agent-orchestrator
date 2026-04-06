@@ -60,7 +60,9 @@ function mapState(
   jiraStatus: string,
   statusCategoryKey?: string,
 ): Issue["state"] {
-  const lower = jiraStatus.toLowerCase();
+  // Normalize typographic quotes (U+2018/2019) to ASCII apostrophe —
+  // Jira Cloud's built-in "Won't Do" resolution uses U+2019, not U+0027.
+  const lower = jiraStatus.toLowerCase().replace(/[\u2018\u2019]/g, "'");
   // Name-based overrides — cancelled/rejected are still "done" in Jira's
   // statusCategory but we want to surface them as "cancelled" in AO.
   if (

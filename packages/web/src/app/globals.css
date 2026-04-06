@@ -2000,6 +2000,68 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   border-radius: 2px;
 }
 
+/* ── Done / Terminated collapsible bar ────────────────────────────────── */
+
+.done-bar__toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  transition: color 0.15s ease;
+}
+
+.done-bar__toggle:hover {
+  color: var(--color-text-secondary);
+}
+
+.done-bar__chevron {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.done-bar__chevron--open {
+  transform: rotate(90deg);
+}
+
+.done-bar__count {
+  flex-shrink: 0;
+  min-width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 999px;
+  background: var(--color-border-subtle);
+  color: var(--color-text-muted);
+  padding: 0 5px;
+}
+
+.done-bar__rule {
+  flex: 1;
+  height: 1px;
+  background: var(--color-border-subtle);
+}
+
+.done-bar__cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
 /* ── Session card zone glow (hover) ──────────────────────────────────── */
 
 .kanban-column__empty {

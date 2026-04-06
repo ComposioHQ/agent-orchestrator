@@ -1,11 +1,17 @@
-import { act, render } from "@testing-library/react";
+import React, { type ReactNode } from "react";
+import { act, render, screen } from "@testing-library/react";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import type { DashboardSession } from "@/lib/types";
 
 const sessionDetailSpy = vi.fn();
+const notFoundError = new Error("NEXT_NOT_FOUND");
+const notFoundSpy = vi.fn(() => {
+  throw notFoundError;
+});
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ id: "worker-1" }),
+  notFound: notFoundSpy,
 }));
 
 vi.mock("@/components/SessionDetail", () => ({
@@ -40,10 +46,32 @@ async function flushAsyncWork(): Promise<void> {
   });
 }
 
+class TestErrorBoundary extends React.Component<
+  { children: ReactNode },
+  { error: Error | null }
+> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  render() {
+    if (this.state.error) {
+      return <div data-testid="route-error">{this.state.error.message}</div>;
+    }
+    return this.props.children;
+  }
+}
+
 describe("SessionPage project polling", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     sessionDetailSpy.mockClear();
+    vi.spyOn(console, "error").mockImplementation(() => {});
 
     const eventSourceMock = {
       addEventListener: vi.fn(),
@@ -59,6 +87,7 @@ describe("SessionPage project polling", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    notFoundSpy.mockReset();
   });
 
   it("resolves orchestrator nav once for non-orchestrator pages and skips repeated project polling", async () => {
@@ -124,5 +153,71 @@ describe("SessionPage project polling", () => {
         ([url]) => url === "/api/sessions?project=my-app&orchestratorOnly=true",
       ),
     ).toHaveLength(1);
+  });
+
+  it("routes 404 responses through notFound()", async () => {
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/projects") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ projects: [] }),
+        } as Response;
+      }
+
+      if (url === "/api/sessions/worker-1") {
+        return {
+          ok: false,
+          status: 404,
+          json: async () => ({}),
+        } as Response;
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const { default: SessionPage } = await import("./page");
+
+    render(<SessionPage />);
+    await flushAsyncWork();
+
+    expect(notFoundSpy).toHaveBeenCalled();
+    expect(screen.queryByTestId("session-detail")).not.toBeInTheDocument();
+  });
+
+  it("throws non-404 session fetch failures to the route error boundary", async () => {
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/projects") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ projects: [] }),
+        } as Response;
+      }
+
+      if (url === "/api/sessions/worker-1") {
+        return {
+          ok: false,
+          status: 500,
+          json: async () => ({}),
+        } as Response;
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const { default: SessionPage } = await import("./page");
+
+    render(
+      <TestErrorBoundary>
+        <SessionPage />
+      </TestErrorBoundary>,
+    );
+
+    await flushAsyncWork();
+
+    expect(screen.getByTestId("route-error")).toHaveTextContent("HTTP 500");
   });
 });
