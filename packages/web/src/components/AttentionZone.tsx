@@ -167,7 +167,7 @@ function AttentionZoneView({
             </div>
           ) : compactMobile ? (
             <div className="mobile-session-list">
-              <div role="status" aria-live="polite" aria-atomic="true" className="mobile-session-list__empty">{config.emptyMessage}</div>
+              <div className="mobile-session-list__empty">{config.emptyMessage}</div>
             </div>
           ) : null}
         </div>
@@ -202,7 +202,7 @@ function AttentionZoneView({
           </div>
         ) : (
           <div className="kanban-column__empty">
-            <span role="status" aria-live="polite" aria-atomic="true" className="kanban-column__empty-label">{config.emptyMessage}</span>
+            <span className="kanban-column__empty-label">{config.emptyMessage}</span>
           </div>
         )}
       </div>
