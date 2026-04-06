@@ -1,0 +1,23 @@
+packages/web/src/app/__tests__/layout.test.tsx
+  243cfaac1821c2cb 3-5,8-9,39-42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "18fda2e4574ee709454f6df5671e413c849ec0f2",
+  "prompts": {
+    "243cfaac1821c2cb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9e8a38b7-11d7-4ee2-99d6-3fa8abae882e",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 12,
+      "total_deletions": 9,
+      "accepted_lines": 10,
+      "overriden_lines": 0
+    }
+  }
+}
