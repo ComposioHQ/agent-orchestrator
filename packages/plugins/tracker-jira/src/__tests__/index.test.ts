@@ -313,6 +313,22 @@ describe("tracker-jira plugin", () => {
       expect(issue.state).toBe("cancelled");
     });
 
+    it("maps Won\u2019t Do (typographic apostrophe U+2019) to cancelled", async () => {
+      mockSprintResolution();
+      mockFetchJson({
+        ...sampleJiraIssue,
+        fields: {
+          ...sampleJiraIssue.fields,
+          status: {
+            name: "Won\u2019t Do",
+            statusCategory: { key: "done", name: "Done" },
+          },
+        },
+      });
+      const issue = await tracker.getIssue("TT-142", project);
+      expect(issue.state).toBe("cancelled");
+    });
+
     it("maps custom in-progress status via statusCategory=indeterminate", async () => {
       mockSprintResolution();
       mockFetchJson({
