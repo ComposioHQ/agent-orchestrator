@@ -4,6 +4,7 @@ import { DirectTerminal } from "../DirectTerminal";
 
 const replaceMock = vi.fn();
 let searchParams = new URLSearchParams();
+let resizeObserverCallback: ResizeObserverCallback | null = null;
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: replaceMock }),
@@ -50,7 +51,12 @@ class MockTerminal {
 }
 
 class MockFitAddon {
-  fit() {}
+  static instances: MockFitAddon[] = [];
+  fit = vi.fn();
+
+  constructor() {
+    MockFitAddon.instances.push(this);
+  }
 }
 
 function MockWebLinksAddon() {
@@ -72,7 +78,7 @@ class MockWebSocket {
     setTimeout(() => this.onopen?.(), 0);
   }
 
-  send() {}
+  send = vi.fn();
   close() {}
 }
 
@@ -93,11 +99,24 @@ describe("DirectTerminal render", () => {
     searchParams = new URLSearchParams();
     replaceMock.mockReset();
     MockWebSocket.instances = [];
+    MockFitAddon.instances = [];
+    resizeObserverCallback = null;
     Object.defineProperty(document, "fonts", {
       configurable: true,
       value: { ready: Promise.resolve() },
     });
     vi.stubGlobal("WebSocket", MockWebSocket);
+    vi.stubGlobal(
+      "ResizeObserver",
+      class MockResizeObserver {
+        observe = vi.fn();
+        disconnect = vi.fn();
+
+        constructor(callback: ResizeObserverCallback) {
+          resizeObserverCallback = callback;
+        }
+      },
+    );
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({
@@ -130,5 +149,42 @@ describe("DirectTerminal render", () => {
     expect(terminalArea).toHaveClass("p-1.5");
     expect(terminalArea.firstElementChild).toHaveClass("h-full", "w-full", "min-w-0");
     expect(container.querySelector(".p-1\\.5 > .min-w-0")).toBeTruthy();
+  });
+
+  it("re-fits and syncs the terminal size on window resize and resize observer updates", async () => {
+    render(<DirectTerminal sessionId="ao-terminal-2" />);
+
+    await waitFor(() => expect(screen.getByText("Connected")).toBeInTheDocument());
+
+    const fit = MockFitAddon.instances[0];
+    const socket = MockWebSocket.instances[0];
+
+    expect(fit).toBeDefined();
+    expect(socket).toBeDefined();
+
+    fit.fit.mockClear();
+    socket.send.mockClear();
+
+    window.dispatchEvent(new Event("resize"));
+
+    await waitFor(() => {
+      expect(fit.fit).toHaveBeenCalledTimes(1);
+      expect(socket.send).toHaveBeenCalledWith(
+        JSON.stringify({ type: "resize", cols: 80, rows: 24 }),
+      );
+    });
+
+    fit.fit.mockClear();
+    socket.send.mockClear();
+
+    expect(resizeObserverCallback).toBeTruthy();
+    resizeObserverCallback?.([], {} as ResizeObserver);
+
+    await waitFor(() => {
+      expect(fit.fit).toHaveBeenCalledTimes(1);
+      expect(socket.send).toHaveBeenCalledWith(
+        JSON.stringify({ type: "resize", cols: 80, rows: 24 }),
+      );
+    });
   });
 });
