@@ -1,0 +1,31 @@
+packages/web/src/components/__tests__/Dashboard.emptyState.test.tsx
+  0c3e602bbacb635d 29,56
+packages/web/src/components/Dashboard.tsx
+  0c3e602bbacb635d 529,640
+packages/web/src/components/PullRequestsPage.tsx
+  0c3e602bbacb635d 120
+packages/web/src/components/AttentionZone.tsx
+  0c3e602bbacb635d 57
+packages/web/src/components/Skeleton.tsx
+  0c3e602bbacb635d 24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "59a5c55adb4afe1c701f66cb1662f47eb8c68168",
+  "prompts": {
+    "0c3e602bbacb635d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "661bf643-35fc-4d37-a303-7a4bbc67f860",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 8,
+      "total_deletions": 18,
+      "accepted_lines": 7,
+      "overriden_lines": 0
+    }
+  }
+}
