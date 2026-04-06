@@ -456,6 +456,17 @@ if (fallback) return fallback;
 - Match BOTH the node wrapper name AND the actual binary name (some agents install as `.agentname` with a dot prefix — the regex must handle this)
 - Return `false` (not `null`) on error
 
+## Feature Plans
+
+Plans live in `.feature-plans/` (`pending/`, `wip/`, `done/`). See `_plan_sample_format.md` for the template.
+
+**Writing style:**
+- Bullet points only — no full sentences or prose paragraphs
+- Include file paths + line numbers for every code reference
+- Keep research findings to: file, trigger, risk level, and why
+- Approach sections: what changes, where, key behavioral difference
+- No code blocks unless showing a specific API contract or critical snippet
+
 ## Constraints
 
 - C-01: No new UI component libraries
