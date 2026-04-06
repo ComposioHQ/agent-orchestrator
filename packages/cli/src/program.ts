@@ -50,6 +50,7 @@ export function createProgram(): Command {
     .command("lifecycle-worker")
     .description("[deprecated] This command has been removed. Use `ao start` instead.")
     .allowUnknownOption()
+    .allowExcessArguments(true)
     .action(() => {
       console.error(
         "[deprecated] `ao lifecycle-worker` has been removed. " +

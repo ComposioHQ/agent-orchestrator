@@ -1526,6 +1526,7 @@ export function registerStart(program: Command): void {
                       project = reloadedProject;
                     } else {
                       // Config reload didn't surface the new entry — fall back to suffix
+                      project = { ...project, orchestratorSessionStrategy: "new" };
                       opts = { ...opts, orchestratorSuffix: String(suffix) };
                       console.log(
                         chalk.green(`\n✓ Starting orchestrator-${suffix} for "${projectId}"\n`),
@@ -1533,6 +1534,7 @@ export function registerStart(program: Command): void {
                     }
                   } else {
                     // Project not found in raw YAML (unexpected — fall back to suffix approach)
+                    project = { ...project, orchestratorSessionStrategy: "new" };
                     opts = { ...opts, orchestratorSuffix: String(suffix) };
                     console.log(
                       chalk.green(`\n✓ Starting orchestrator-${suffix} for "${projectId}"\n`),
