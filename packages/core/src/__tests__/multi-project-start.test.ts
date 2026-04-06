@@ -182,17 +182,25 @@ describe("validateAndCommitRegistration", () => {
   });
 
   it("throws on validation failure and does not commit", () => {
-    const projectDir = join(testDir, "validate-first-test");
-    mkdirSync(projectDir, { recursive: true });
+    // Use two projects with different basenames that derive the same session
+    // prefix ("int") — this collision is not auto-resolved and must fail
+    // validateProjectUniqueness so we can verify the validate-first, write-after
+    // guarantee.  (Same-basename collisions are auto-disambiguated by
+    // applyProjectDefaults and must NOT be used here.)
+    const integratorDir = join(testDir, "integrator");
+    const internationalDir = join(testDir, "international");
+    mkdirSync(integratorDir, { recursive: true });
+    mkdirSync(internationalDir, { recursive: true });
 
     const gc = setupGlobalConfig({});
 
-    // Register two projects with the same path — second causes session-prefix collision.
-    const reg1 = registerNewProject(gc, projectDir, { explicitId: "proj-a" });
+    // Register "integrator" first — gets prefix "int".
+    const reg1 = registerNewProject(gc, integratorDir, { explicitId: "proj-a" });
     validateAndCommitRegistration(reg1, findGlobalConfigPath());
 
+    // Register "international" — also derives prefix "int" → collision.
     const gc2 = loadGlobalConfig()!;
-    const reg2 = registerNewProject(gc2, projectDir, { explicitId: "proj-b" });
+    const reg2 = registerNewProject(gc2, internationalDir, { explicitId: "proj-b" });
 
     expect(() => validateAndCommitRegistration(reg2, findGlobalConfigPath())).toThrow();
 
