@@ -1,0 +1,27 @@
+packages/web/src/components/Skeleton.tsx
+  4780dcfe9330d276 3,17
+packages/web/src/components/AttentionZone.tsx
+  4780dcfe9330d276 128,136,170,205
+packages/web/src/__tests__/components.test.tsx
+  4780dcfe9330d276 581-596
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "3c45b5838699782faf12d865a815d0616648bacd",
+  "prompts": {
+    "4780dcfe9330d276": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cc2c29fd-345a-4e68-89f4-ae761d0d04fc",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 22,
+      "total_deletions": 18,
+      "accepted_lines": 22,
+      "overriden_lines": 0
+    }
+  }
+}
