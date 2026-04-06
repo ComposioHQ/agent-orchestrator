@@ -1,0 +1,42 @@
+packages/web/src/lib/format.ts
+  ea86128d27c07130 32-35,42-48,53
+packages/web/src/app/sessions/[id]/page.tsx
+  ea86128d27c07130 10,34
+packages/web/src/components/SessionDetail.tsx
+  ea86128d27c07130 9,329
+packages/web/src/lib/serialize.ts
+  12f9980a21b76117 50,52,65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "ef3925711bf6c625293cbd358dcd621878abe46a",
+  "prompts": {
+    "12f9980a21b76117": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "15694006-fcac-46a2-9918-71b528854195",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 160,
+      "overriden_lines": 0
+    },
+    "ea86128d27c07130": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d62cc-80e9-7001-9e3a-14ee6e4af460",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 51,
+      "overriden_lines": 0
+    }
+  }
+}
