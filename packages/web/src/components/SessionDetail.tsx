@@ -6,6 +6,7 @@ import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
 import { type DashboardSession, type DashboardPR, isPRMergeReady } from "@/lib/types";
 import { CI_STATUS } from "@composio/ao-core/types";
 import { cn } from "@/lib/cn";
+import { sendSessionMessage } from "@/lib/session-message-client";
 import { CICheckList } from "./CIBadge";
 import { DirectTerminal } from "./DirectTerminal";
 import { MobileBottomNav } from "./MobileBottomNav";
@@ -189,12 +190,7 @@ async function askAgentToFix(
   try {
     const { title, description } = cleanBugbotComment(comment.body);
     const message = `Please address this review comment:\n\nFile: ${comment.path}\nComment: ${title}\nDescription: ${description}\n\nComment URL: ${comment.url}\n\nAfter fixing, mark the comment as resolved at ${comment.url}`;
-    const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/message`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message }),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    await sendSessionMessage(sessionId, message);
     onSuccess();
   } catch (err) {
     console.error("Failed to send message to agent:", err);

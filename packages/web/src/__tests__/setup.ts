@@ -1,4 +1,8 @@
-import "@testing-library/jest-dom/vitest";
+import * as matchers from "@testing-library/jest-dom/matchers";
+import { cleanup } from "@testing-library/react";
+import { afterEach, expect } from "vitest";
+
+expect.extend(matchers);
 
 // jsdom does not implement window.matchMedia. Provide a minimal stub so
 // components that call useMediaQuery (e.g. Dashboard) work in unit tests.
@@ -16,4 +20,8 @@ Object.defineProperty(window, "matchMedia", {
     removeEventListener: () => {},
     dispatchEvent: () => false,
   }),
+});
+
+afterEach(() => {
+  cleanup();
 });
