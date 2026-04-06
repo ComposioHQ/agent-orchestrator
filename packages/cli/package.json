@@ -25,7 +25,7 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && cp -r src/assets dist/",
     "dev": "tsx src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",

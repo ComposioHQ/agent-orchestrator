@@ -1,15 +1,20 @@
 import { describe, it, expect } from "vitest";
-import { getAgent, getAgentByName } from "../../src/lib/plugins.js";
-import type { OrchestratorConfig } from "@composio/ao-core";
+import {
+  getAgent,
+  getAgentByName,
+  getAgentByNameFromRegistry,
+  getSCMFromRegistry,
+} from "../../src/lib/plugins.js";
+import type { Agent, OrchestratorConfig, PluginRegistry, SCM } from "@composio/ao-core";
 
 function makeConfig(
   defaultAgent: string,
-  projects?: Record<string, { agent?: string }>,
+  projects?: Record<string, { agent?: string; scm?: { plugin: string } }>,
 ): OrchestratorConfig {
   return {
-    dataDir: "/tmp",
-    worktreeDir: "/tmp/wt",
+    configPath: "/tmp/agent-orchestrator.yaml",
     port: 3000,
+    readyThresholdMs: 300_000,
     defaults: { runtime: "tmux", agent: defaultAgent, workspace: "worktree", notifiers: [] },
     projects: Object.fromEntries(
       Object.entries(projects ?? { app: {} }).map(([id, p]) => [
@@ -21,6 +26,23 @@ function makeConfig(
     notificationRouting: {},
     reactions: {},
   } as OrchestratorConfig;
+}
+
+function makeRegistry(entries: {
+  agent?: Record<string, Agent>;
+  scm?: Record<string, SCM>;
+}): PluginRegistry {
+  return {
+    register: () => {},
+    get: (slot, name) => {
+      if (slot === "agent") return (entries.agent?.[name] ?? null) as Agent | null;
+      if (slot === "scm") return (entries.scm?.[name] ?? null) as SCM | null;
+      return null;
+    },
+    list: () => [],
+    loadBuiltins: async () => {},
+    loadFromConfig: async () => {},
+  };
 }
 
 describe("getAgent", () => {
@@ -73,5 +95,59 @@ describe("getAgentByName", () => {
 
   it("throws on unknown name", () => {
     expect(() => getAgentByName("unknown")).toThrow("Unknown agent plugin: unknown");
+  });
+});
+
+describe("registry-backed resolution", () => {
+  it("returns an agent from the shared registry", () => {
+    const registry = makeRegistry({
+      agent: {
+        goose: {
+          name: "goose",
+          processName: "goose",
+          instructions: "",
+          launch: async () => {
+            throw new Error("not implemented");
+          },
+          detectActivity: () => "idle",
+          getSessionInfo: async () => null,
+        } as unknown as Agent,
+      },
+    });
+
+    expect(getAgentByNameFromRegistry(registry, "goose").name).toBe("goose");
+  });
+
+  it("returns an scm plugin from the shared registry", () => {
+    const registry = makeRegistry({
+      scm: {
+        gitlab: {
+          name: "gitlab",
+          getPR: async () => null,
+          detectPR: async () => null,
+          getPRState: async () => "open",
+          getReviewDecision: async () => null,
+          getPendingComments: async () => 0,
+          getAutomatedComments: async () => [],
+          getCIChecks: async () => [],
+          getCISummary: async () => null,
+          getReviews: async () => [],
+          getMergeability: async () => ({
+            mergeable: true,
+            ciPassing: true,
+            approved: true,
+            noConflicts: true,
+            blockers: [],
+          }),
+          mergePR: async () => {},
+          closePR: async () => {},
+        } as unknown as SCM,
+      },
+    });
+    const config = makeConfig("claude-code", {
+      myapp: { agent: "claude-code", scm: { plugin: "gitlab" } },
+    });
+
+    expect(getSCMFromRegistry(registry, config, "myapp").name).toBe("gitlab");
   });
 });

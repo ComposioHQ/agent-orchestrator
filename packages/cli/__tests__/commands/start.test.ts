@@ -44,6 +44,10 @@ const {
   mockStopLifecycleWorker: vi.fn(),
 }));
 
+const { mockDetectOpenClawInstallation } = vi.hoisted(() => ({
+  mockDetectOpenClawInstallation: vi.fn(),
+}));
+
 vi.mock("../../src/lib/shell.js", () => ({
   tmux: vi.fn(),
   exec: mockExec,
@@ -60,6 +64,7 @@ vi.mock("ora", () => ({
     stop: vi.fn().mockReturnThis(),
     succeed: vi.fn().mockReturnThis(),
     fail: vi.fn().mockReturnThis(),
+    info: vi.fn().mockReturnThis(),
     text: "",
   }),
 }));
@@ -149,6 +154,10 @@ vi.mock("../../src/lib/project-detection.js", () => ({
   formatProjectTypeForDisplay: vi.fn().mockReturnValue(""),
 }));
 
+vi.mock("../../src/lib/openclaw-probe.js", () => ({
+  detectOpenClawInstallation: (...args: unknown[]) => mockDetectOpenClawInstallation(...args),
+}));
+
 // Mock node:child_process — start.ts imports spawn for dashboard + browser open
 vi.mock("node:child_process", async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -188,6 +197,8 @@ beforeEach(() => {
   const fakeChild = { on: vi.fn(), kill: vi.fn(), emit: vi.fn(), stdout: null, stderr: null };
   mockSpawn.mockReturnValue(fakeChild);
 
+  mockSessionManager.list.mockReset();
+  mockSessionManager.list.mockResolvedValue([]);
   mockSessionManager.get.mockReset();
   mockSessionManager.spawnOrchestrator.mockReset();
   mockSessionManager.kill.mockReset();
@@ -215,6 +226,12 @@ beforeEach(() => {
   });
   mockStopLifecycleWorker.mockReset();
   mockStopLifecycleWorker.mockResolvedValue(true);
+  mockDetectOpenClawInstallation.mockReset();
+  mockDetectOpenClawInstallation.mockResolvedValue({
+    state: "missing",
+    gatewayUrl: "http://127.0.0.1:18789",
+    probe: { reachable: false, error: "not running" },
+  });
   mockSpawn.mockClear();
 });
 
@@ -364,6 +381,50 @@ describe("start command — project resolution", () => {
       .mock.calls.map((c) => c.join(" "))
       .join("\n");
     expect(errors).toContain("No projects configured");
+  });
+});
+
+describe("start command — OpenClaw preflight", () => {
+  it("warns when OpenClaw is configured but offline", async () => {
+    mockConfigRef.current = {
+      ...makeConfig({ "my-app": makeProject() }),
+      notifiers: {
+        openclaw: {
+          plugin: "openclaw",
+          url: "http://127.0.0.1:18789/hooks/agent",
+        },
+      },
+    };
+    mockDetectOpenClawInstallation.mockResolvedValue({
+      state: "installed-but-stopped",
+      gatewayUrl: "http://127.0.0.1:18789",
+      probe: { reachable: false, error: "not running" },
+    });
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]);
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("OpenClaw is configured but the gateway is not reachable");
+  });
+
+  it("suggests setup when OpenClaw is running but not configured", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+    mockDetectOpenClawInstallation.mockResolvedValue({
+      state: "running",
+      gatewayUrl: "http://127.0.0.1:18789",
+      probe: { reachable: true, httpStatus: 200 },
+    });
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard", "--no-orchestrator"]);
+
+    const output = vi
+      .mocked(console.log)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(output).toContain("ao setup openclaw");
   });
 });
 
@@ -801,6 +862,97 @@ describe("start command — orchestrator session strategy display", () => {
       expect(output).not.toContain("reused existing session");
     },
   );
+
+  it("handles existing orchestrator sessions by auto-selecting when --no-dashboard", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    // Return an existing orchestrator session
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-orchestrator",
+        projectId: "my-app",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(),
+        runtimeHandle: { id: "tmux-session-existing" },
+      },
+    ]);
+
+    await program.parseAsync(["node", "test", "start", "--no-dashboard"]);
+
+    const output = getLoggedOutput();
+    // When --no-dashboard is used, auto-selects the most recent orchestrator
+    // and shows the tmux attach command (not the dashboard selection message)
+    expect(output).toContain("tmux attach -t tmux-session-existing");
+    expect(output).not.toContain("existing sessions found — select one in the dashboard");
+
+    // Should NOT spawn a new orchestrator when existing ones exist
+    expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
+  });
+
+  it("shows dashboard selection message when existing orchestrators found with dashboard enabled", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    // Mock findWebDir
+    const { findWebDir } = await import("../../src/lib/web-dir.js");
+    vi.mocked(findWebDir).mockReturnValue(tmpDir);
+    writeFileSync(join(tmpDir, "package.json"), "{}");
+
+    const fakeDashboard = {
+      on: vi.fn(),
+      kill: vi.fn(),
+      emit: vi.fn(),
+    };
+    mockSpawn.mockReturnValue(fakeDashboard);
+
+    // Return an existing orchestrator session
+    mockSessionManager.list.mockResolvedValue([
+      {
+        id: "app-orchestrator",
+        projectId: "my-app",
+        metadata: { role: "orchestrator" },
+        lastActivityAt: new Date(),
+      },
+    ]);
+
+    await program.parseAsync(["node", "test", "start"]);
+
+    const output = getLoggedOutput();
+    // When dashboard is enabled, shows selection message
+    expect(output).toContain("existing sessions found — select one in the dashboard");
+
+    // Should NOT spawn a new orchestrator when existing ones exist
+    expect(mockSessionManager.spawnOrchestrator).not.toHaveBeenCalled();
+  });
+
+  it("fails and cleans up dashboard when orchestrator setup throws", async () => {
+    mockConfigRef.current = makeConfig({ "my-app": makeProject() });
+
+    // Mock findWebDir
+    const { findWebDir } = await import("../../src/lib/web-dir.js");
+    vi.mocked(findWebDir).mockReturnValue(tmpDir);
+    writeFileSync(join(tmpDir, "package.json"), "{}");
+
+    const fakeDashboard = {
+      on: vi.fn(),
+      kill: vi.fn(),
+      emit: vi.fn(),
+    };
+    mockSpawn.mockReturnValue(fakeDashboard);
+
+    mockSessionManager.list.mockResolvedValue([]);
+    mockSessionManager.spawnOrchestrator.mockRejectedValue(new Error("Spawn failed"));
+
+    await expect(program.parseAsync(["node", "test", "start"])).rejects.toThrow("process.exit(1)");
+
+    const errors = vi
+      .mocked(console.error)
+      .mock.calls.map((c) => c.join(" "))
+      .join("\n");
+    expect(errors).toContain("Failed to setup orchestrator: Spawn failed");
+
+    // Should have killed the dashboard
+    expect(fakeDashboard.kill).toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------

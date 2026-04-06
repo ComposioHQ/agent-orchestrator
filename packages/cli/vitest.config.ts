@@ -11,5 +11,9 @@ export default defineConfig({
         maxThreads: 8,
       },
     },
+    coverage: {
+      provider: "v8",
+      reporter: ["lcov"],
+    },
   },
 });

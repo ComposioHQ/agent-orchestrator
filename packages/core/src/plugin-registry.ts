@@ -7,28 +7,26 @@
  * 3. Local file paths specified in config
  */
 
-import { resolve, dirname } from "node:path";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import type {
+  ExternalPluginEntryRef,
+  InstalledPluginConfig,
   PluginSlot,
   PluginManifest,
   PluginModule,
   PluginRegistry,
   OrchestratorConfig,
-  TrackerConfig,
-  SCMConfig,
-  NotifierConfig,
 } from "./types.js";
-import { expandHome } from "./paths.js";
 
 /** Map from "slot:name" → plugin instance */
 type PluginMap = Map<string, { manifest: PluginManifest; instance: unknown }>;
 
+const LOCAL_PLUGIN_ENTRY_CANDIDATES = ["dist/index.js", "index.js"] as const;
+
 function makeKey(slot: PluginSlot, name: string): string {
   return `${slot}:${name}`;
-}
-
-async function importModule(specifier: string): Promise<unknown> {
-  return import(/* webpackIgnore: true */ specifier);
 }
 
 /** Built-in plugin package names, mapped to their npm package */
@@ -63,219 +61,299 @@ const BUILTIN_PLUGINS: Array<{ slot: PluginSlot; name: string; pkg: string }> = 
   { slot: "terminal", name: "web", pkg: "@composio/ao-plugin-terminal-web" },
 ];
 
-// =============================================================================
-// Shared plugin-metadata stripping
-// =============================================================================
-
-/** Keys that are plugin infrastructure metadata, not plugin-specific configuration */
-const PLUGIN_META_KEYS = new Set(["plugin", "package", "path"]);
-
-function stripPluginMeta(cfg: Record<string, unknown>): Record<string, unknown> | undefined {
-  const rest: Record<string, unknown> = {};
-  let hasKeys = false;
-  for (const [k, v] of Object.entries(cfg)) {
-    if (!PLUGIN_META_KEYS.has(k)) {
-      rest[k] = v;
-      hasKeys = true;
-    }
-  }
-  return hasKeys ? rest : undefined;
-}
-
-// =============================================================================
-// External plugin declaration collection
-// =============================================================================
-
-/** A normalized external plugin declaration collected from config */
-interface ExternalPluginDeclaration {
-  slot: PluginSlot;
-  name: string;
-  sourceType: "package" | "path";
-  sourceValue: string;
-  config?: Record<string, unknown>;
-}
-
-/** Check whether a plugin config object declares an external source */
-function hasExternalSource(cfg: { package?: string; path?: string }): boolean {
-  return !!cfg.package || !!cfg.path;
-}
-
-/**
- * Scan orchestrator config and collect all external plugin declarations.
- * Deduplicates by slot:name. Rejects conflicting sources for the same slot:name.
- *
- * For per-project slots (tracker, scm): no create() config is extracted because
- * per-project settings are passed through method parameters (e.g. `project: ProjectConfig`).
- * For top-level slots (notifier): config is extracted and passed to create().
- */
-function collectExternalDeclarations(config: OrchestratorConfig): ExternalPluginDeclaration[] {
-  const seen = new Map<string, { sourceType: string; sourceValue: string; projectId?: string }>();
-  const declarations: ExternalPluginDeclaration[] = [];
-
-  function add(
-    slot: PluginSlot,
-    name: string,
-    source: { package?: string; path?: string },
-    pluginConfig?: Record<string, unknown>,
-    projectId?: string,
-  ): void {
-    const key = `${slot}:${name}`;
-    const sourceType: "package" | "path" = source.package ? "package" : "path";
-    const sourceValue = source.package || source.path!;
-
-    const existing = seen.get(key);
-    if (existing) {
-      // Same slot:name from a different project — ensure source matches
-      if (existing.sourceType !== sourceType || existing.sourceValue !== sourceValue) {
-        const ctx = projectId ? ` (project "${projectId}")` : "";
-        const prevCtx = existing.projectId ? ` (project "${existing.projectId}")` : "";
-        throw new Error(
-          `Conflicting sources for ${slot} plugin "${name}": ` +
-            `${existing.sourceType} "${existing.sourceValue}"${prevCtx} vs ` +
-            `${sourceType} "${sourceValue}"${ctx}. ` +
-            `All projects using the same external plugin must reference the same source.`,
-        );
-      }
-      return;
-    }
-
-    seen.set(key, { sourceType, sourceValue, projectId });
-    declarations.push({
-      slot,
-      name,
-      sourceType,
-      sourceValue,
-      config: pluginConfig,
-    });
-  }
-
-  function extractNotifierConfig(
-    cfg: Record<string, unknown>,
-  ): Record<string, unknown> | undefined {
-    return stripPluginMeta(cfg);
-  }
-
-  // Collect from project tracker/scm configs.
-  // No create() config — per-project settings flow through method params.
-  for (const [projectId, project] of Object.entries(config.projects)) {
-    const tracker = project.tracker as (TrackerConfig & Record<string, unknown>) | undefined;
-    if (tracker && hasExternalSource(tracker)) {
-      add("tracker", tracker.plugin, tracker, undefined, projectId);
-    }
-
-    const scm = project.scm as (SCMConfig & Record<string, unknown>) | undefined;
-    if (scm && hasExternalSource(scm)) {
-      add("scm", scm.plugin, scm, undefined, projectId);
-    }
-  }
-
-  // Collect from top-level notifier configs.
-  // Notifiers are singletons — extract create() config from the declaration.
-  for (const notifierConfig of Object.values(config.notifiers ?? {})) {
-    const nc = notifierConfig as NotifierConfig & Record<string, unknown>;
-    if (nc && hasExternalSource(nc)) {
-      add("notifier", nc.plugin, nc, extractNotifierConfig(nc));
-    }
-  }
-
-  return declarations;
-}
-
-/**
- * Resolve the import source for an external plugin declaration.
- * - package: used as-is (npm package name)
- * - path: resolved relative to the config file directory
- */
-function resolveImportSource(decl: ExternalPluginDeclaration, configPath: string): string {
-  if (decl.sourceType === "package") {
-    return decl.sourceValue;
-  }
-  const expanded = expandHome(decl.sourceValue);
-  // Absolute paths (including expanded ~/) are used as-is;
-  // relative paths are resolved against the config file directory.
-  if (expanded.startsWith("/")) {
-    return expanded;
-  }
-  const configDir = dirname(configPath);
-  return resolve(configDir, expanded);
-}
-
-/** Validate that a loaded module's manifest matches the expected slot and name */
-function validateManifestMatch(
-  mod: PluginModule,
-  expectedSlot: PluginSlot,
-  expectedName: string,
-  source: string,
-): void {
-  if (mod.manifest.slot !== expectedSlot) {
-    throw new Error(
-      `Plugin manifest mismatch: expected slot "${expectedSlot}" but "${source}" declares slot "${mod.manifest.slot}"`,
-    );
-  }
-  if (mod.manifest.name !== expectedName) {
-    throw new Error(
-      `Plugin manifest mismatch: expected name "${expectedName}" but "${source}" declares name "${mod.manifest.name}"`,
-    );
-  }
-}
-
-// =============================================================================
-// Built-in plugin config extraction
-// =============================================================================
-
-/** Extract plugin-specific config from orchestrator config for builtins */
 function extractPluginConfig(
   slot: PluginSlot,
   name: string,
   config: OrchestratorConfig,
 ): Record<string, unknown> | undefined {
-  // Notifiers are configured under config.notifiers.<id>.
-  // Match by key (e.g. "openclaw") or explicit plugin field.
+  // 1. Handle Notifier Slot
   if (slot === "notifier") {
-    for (const [notifierName, notifierConfig] of Object.entries(config.notifiers ?? {})) {
+    for (const [notifierId, notifierConfig] of Object.entries(config.notifiers ?? {})) {
       if (!notifierConfig || typeof notifierConfig !== "object") continue;
-      const nc = notifierConfig as Record<string, unknown>;
-      const configuredPlugin = nc["plugin"];
+      const configuredPlugin = (notifierConfig as Record<string, unknown>)["plugin"];
       const hasExplicitPlugin = typeof configuredPlugin === "string" && configuredPlugin.length > 0;
-      const matches = hasExplicitPlugin ? configuredPlugin === name : notifierName === name;
+      const matches = hasExplicitPlugin ? configuredPlugin === name : notifierId === name;
+
       if (matches) {
-        // Entry declares an external source — config is for the external plugin, not this builtin
-        if (nc["package"] || nc["path"]) continue;
-        return stripPluginMeta(nc);
+        return prepareConfig(slot, name, notifierId, notifierConfig, config.configPath);
       }
     }
+  }
+
+  // 2. Handle Tracker and SCM Slots (Project-level)
+  // Tracker and SCM plugins are typically stateless singletons that receive
+  // project-specific config per-call (via ProjectConfig argument), not at create() time.
+  // This applies to BOTH built-in and external plugins to avoid order-dependent
+  // behavior when multiple projects share the same plugin but have different configs.
+  // Return undefined so plugins are initialized without project-specific config.
+  if (slot === "tracker" || slot === "scm") {
+    return undefined;
   }
 
   return undefined;
 }
 
 /**
- * Decide whether a builtin should be skipped because config declares only
- * external sources for all matching entries of the same slot:name.
+ * Internal helper to validate and strip loading metadata from a plugin configuration.
+ * Reserved fields (plugin, package, path) are used for plugin resolution and stripped.
  */
-function shouldSkipBuiltinRegistration(
-  slot: PluginSlot,
+function prepareConfig(
+  slot: string,
   name: string,
-  config: OrchestratorConfig,
-): boolean {
-  if (slot !== "notifier") return false;
-
-  let hasMatchingEntry = false;
-  for (const [notifierName, notifierConfig] of Object.entries(config.notifiers ?? {})) {
-    if (!notifierConfig || typeof notifierConfig !== "object") continue;
-    const nc = notifierConfig as Record<string, unknown>;
-    const configuredPlugin = nc["plugin"];
-    const hasExplicitPlugin = typeof configuredPlugin === "string" && configuredPlugin.length > 0;
-    const matches = hasExplicitPlugin ? configuredPlugin === name : notifierName === name;
-    if (!matches) continue;
-
-    hasMatchingEntry = true;
-    // If any matching entry is NOT external, builtin should still be registered.
-    if (!nc["package"] && !nc["path"]) return false;
+  sourceId: string,
+  rawConfig: Record<string, unknown>,
+  configPath?: string,
+): Record<string, unknown> {
+  // Explicitly check for reserved fields to prevent silent stripping/collision.
+  // 'path' is reserved for local resolution; 'package' is reserved for npm resolution.
+  if ("package" in rawConfig && "path" in rawConfig) {
+    throw new Error(
+      `In ${slot} "${sourceId}": both "package" and "path" are specified. ` +
+        `Use "package" for npm plugins or "path" for local plugins, not both.`,
+    );
   }
 
-  // Skip only when there is at least one matching entry and all were external.
-  return hasMatchingEntry;
+  // If loading via built-in name or npm package, having a 'path' field is ambiguous:
+  // it could be a local plugin path (for loading) or a plugin config value.
+  // We reject this to avoid silently stripping a config value the user intended to pass.
+  const isBuiltin = BUILTIN_PLUGINS.some((b) => b.slot === slot && b.name === name);
+  if ((rawConfig.package || isBuiltin) && "path" in rawConfig) {
+    const loadingMethod = rawConfig.package ? `npm package "${rawConfig.package}"` : `built-in plugin "${name}"`;
+    throw new Error(
+      `In ${slot} "${sourceId}": "path" field conflicts with reserved plugin loading field. ` +
+        `You're loading via ${loadingMethod}, but also have a "path" field which would be stripped. ` +
+        `Rename your configuration field to something else (e.g., "apiPath", "webhookPath").`,
+    );
+  }
+
+  // Strip loading metadata fields (plugin, package, path) from config passed to plugin.
+  const { plugin: _plugin, package: _package, path: _path, ...rest } = rawConfig;
+  return configPath ? { ...rest, configPath } : rest;
+}
+
+/**
+ * Build an index of external plugin entries by package/path for O(1) lookups.
+ * Multiple entries can share the same package/path (e.g., multiple projects using same plugin).
+ */
+function buildExternalPluginIndex(
+  externalEntries: ExternalPluginEntryRef[] | undefined,
+): Map<string, ExternalPluginEntryRef[]> {
+  const index = new Map<string, ExternalPluginEntryRef[]>();
+  if (!externalEntries) return index;
+
+  for (const entry of externalEntries) {
+    const key = entry.package ? `package:${entry.package}` : `path:${entry.path}`;
+    const existing = index.get(key);
+    if (existing) {
+      existing.push(entry);
+    } else {
+      index.set(key, [entry]);
+    }
+  }
+
+  return index;
+}
+
+/**
+ * Find ALL external plugin entries that match a given plugin config.
+ * Used for manifest.name validation when loading inline tracker/scm/notifier plugins.
+ *
+ * Returns all matching entries because multiple projects may share the same
+ * external plugin (same package/path), and all their configs need to be updated
+ * with the actual manifest.name.
+ */
+function findAllExternalPluginEntries(
+  plugin: InstalledPluginConfig,
+  externalIndex: Map<string, ExternalPluginEntryRef[]>,
+): ExternalPluginEntryRef[] {
+  if (plugin.package) {
+    return externalIndex.get(`package:${plugin.package}`) ?? [];
+  }
+  if (plugin.path) {
+    return externalIndex.get(`path:${plugin.path}`) ?? [];
+  }
+  return [];
+}
+
+/**
+ * Validate that a plugin's manifest.name matches the expected name (if specified).
+ * Throws an error if there's a mismatch.
+ */
+function validateManifestName(
+  manifest: PluginManifest,
+  entry: ExternalPluginEntryRef,
+  specifier: string,
+): void {
+  // If the user specified an explicit plugin name, validate it matches the manifest
+  if (entry.expectedPluginName && entry.expectedPluginName !== manifest.name) {
+    const specifierType = entry.package ? "package" : "path";
+    throw new Error(
+      `Plugin manifest.name mismatch at ${entry.source}: ` +
+        `expected "${entry.expectedPluginName}" but ${specifierType} "${specifier}" has manifest.name "${manifest.name}". ` +
+        `Either update the 'plugin' field to match the actual manifest.name, or remove it to auto-infer.`,
+    );
+  }
+}
+
+/**
+ * Update the config with the actual plugin name after loading an external plugin.
+ * This ensures resolvePlugins() can look up the plugin by its manifest.name.
+ *
+ * Uses structured location data to avoid ambiguity from parsing dotted strings
+ * (project/notifier keys can legally contain dots).
+ */
+function updateConfigWithManifestName(
+  manifest: PluginManifest,
+  entry: ExternalPluginEntryRef,
+  config: OrchestratorConfig,
+): void {
+  const { location, slot, source } = entry;
+
+  // Use structured location to update the config
+  if (location.kind === "project") {
+    const { projectId, configType } = location;
+    const project = config.projects[projectId];
+    if (project?.[configType]) {
+      project[configType]!.plugin = manifest.name;
+    }
+  } else if (location.kind === "notifier") {
+    const { notifierId } = location;
+    const notifierConfig = config.notifiers[notifierId];
+    if (notifierConfig) {
+      notifierConfig.plugin = manifest.name;
+    }
+  }
+
+  // Also validate slot matches
+  if (manifest.slot !== slot) {
+    process.stderr.write(
+      `[plugin-registry] Plugin at ${source} has slot "${manifest.slot}" but was configured as "${slot}". ` +
+        `The plugin will be registered under its declared slot "${manifest.slot}".\n`,
+    );
+  }
+}
+
+export function isPluginModule(value: unknown): value is PluginModule {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<PluginModule>;
+  return Boolean(candidate.manifest && typeof candidate.create === "function");
+}
+
+export function normalizeImportedPluginModule(value: unknown): PluginModule | null {
+  if (isPluginModule(value)) return value;
+
+  if (value && typeof value === "object" && "default" in value) {
+    const defaultExport = (value as { default?: unknown }).default;
+    if (isPluginModule(defaultExport)) return defaultExport;
+  }
+
+  return null;
+}
+
+function resolveConfigRelativePath(targetPath: string, configPath?: string): string {
+  if (isAbsolute(targetPath)) return targetPath;
+  const baseDir = configPath ? dirname(configPath) : process.cwd();
+  return resolve(baseDir, targetPath);
+}
+
+export function resolvePackageExportsEntry(exportsField: unknown): string | null {
+  if (typeof exportsField === "string") return exportsField;
+  if (!exportsField || typeof exportsField !== "object") return null;
+
+  const exportsRecord = exportsField as Record<string, unknown>;
+  const dotEntry = exportsRecord["."];
+
+  if (typeof dotEntry === "string") return dotEntry;
+  if (dotEntry && typeof dotEntry === "object") {
+    const importEntry = (dotEntry as Record<string, unknown>)["import"];
+    if (typeof importEntry === "string") return importEntry;
+    const defaultEntry = (dotEntry as Record<string, unknown>)["default"];
+    if (typeof defaultEntry === "string") return defaultEntry;
+  }
+
+  const importEntry = exportsRecord["import"];
+  if (typeof importEntry === "string") return importEntry;
+
+  const defaultEntry = exportsRecord["default"];
+  if (typeof defaultEntry === "string") return defaultEntry;
+
+  return null;
+}
+
+export function resolveLocalPluginEntrypoint(pluginPath: string): string | null {
+  if (!existsSync(pluginPath)) return null;
+
+  let stat;
+  try {
+    stat = statSync(pluginPath);
+  } catch {
+    return null;
+  }
+
+  if (stat.isFile()) return pluginPath;
+  if (!stat.isDirectory()) return null;
+
+  const packageJsonPath = join(pluginPath, "package.json");
+  if (existsSync(packageJsonPath)) {
+    try {
+      const raw = readFileSync(packageJsonPath, "utf-8");
+      const packageJson = JSON.parse(raw) as {
+        exports?: unknown;
+        module?: unknown;
+        main?: unknown;
+      };
+
+      const exportsEntry = resolvePackageExportsEntry(packageJson.exports);
+      if (exportsEntry) {
+        const resolvedEntry = resolve(pluginPath, exportsEntry);
+        if (existsSync(resolvedEntry)) return resolvedEntry;
+      }
+
+      if (typeof packageJson.module === "string") {
+        const moduleEntry = resolve(pluginPath, packageJson.module);
+        if (existsSync(moduleEntry)) return moduleEntry;
+      }
+
+      if (typeof packageJson.main === "string") {
+        const mainEntry = resolve(pluginPath, packageJson.main);
+        if (existsSync(mainEntry)) return mainEntry;
+      }
+    } catch {
+      // Fall through to common entrypoint guesses below.
+    }
+  }
+
+  for (const candidate of LOCAL_PLUGIN_ENTRY_CANDIDATES) {
+    const entry = join(pluginPath, candidate);
+    if (existsSync(entry)) return entry;
+  }
+
+  return null;
+}
+
+function inferPackageSpecifier(value: string | undefined): string | null {
+  if (!value) return null;
+  if (value.startsWith(".") || value.startsWith("/")) return null;
+  return value.startsWith("@") || value.includes("/") ? value : null;
+}
+
+function resolvePluginSpecifier(
+  plugin: InstalledPluginConfig,
+  config: OrchestratorConfig,
+): string | null {
+  switch (plugin.source) {
+    case "local": {
+      if (!plugin.path) return null;
+      const absolutePath = resolveConfigRelativePath(plugin.path, config.configPath);
+      const entrypoint = resolveLocalPluginEntrypoint(absolutePath);
+      return entrypoint ? pathToFileURL(entrypoint).href : null;
+    }
+    case "registry":
+    case "npm":
+      return plugin.package ?? inferPackageSpecifier(plugin.name);
+    default:
+      return null;
+  }
 }
 
 export function createPluginRegistry(): PluginRegistry {
@@ -308,25 +386,27 @@ export function createPluginRegistry(): PluginRegistry {
       orchestratorConfig?: OrchestratorConfig,
       importFn?: (pkg: string) => Promise<unknown>,
     ): Promise<void> {
-      const doImport = importFn ?? importModule;
+      const doImport = importFn ?? ((pkg: string) => import(pkg));
       for (const builtin of BUILTIN_PLUGINS) {
-        if (
-          orchestratorConfig &&
-          shouldSkipBuiltinRegistration(builtin.slot, builtin.name, orchestratorConfig)
-        ) {
+        let mod;
+        try {
+          mod = normalizeImportedPluginModule(await doImport(builtin.pkg));
+        } catch {
+          // Plugin not installed — that's fine, only load what's available
           continue;
         }
 
-        try {
-          const mod = (await doImport(builtin.pkg)) as PluginModule;
-          if (mod.manifest && typeof mod.create === "function") {
+        if (mod) {
+          try {
             const pluginConfig = orchestratorConfig
               ? extractPluginConfig(builtin.slot, builtin.name, orchestratorConfig)
               : undefined;
             this.register(mod, pluginConfig);
+          } catch (error) {
+            process.stderr.write(
+              `[plugin-registry] Failed to load built-in plugin "${builtin.name}": ${error}\n`,
+            );
           }
-        } catch {
-          // Plugin not installed — that's fine, only load what's available
         }
       }
     },
@@ -338,56 +418,52 @@ export function createPluginRegistry(): PluginRegistry {
       // Load built-ins with orchestrator config so plugins receive their settings
       await this.loadBuiltins(config, importFn);
 
-      // Then load any external plugins declared via package/path in config
-      await this.loadExternals(config, importFn);
-    },
+      const doImport = importFn ?? ((pkg: string) => import(pkg));
+      // Build index once for O(1) lookups when matching plugins to external entries
+      const externalIndex = buildExternalPluginIndex(config._externalPluginEntries);
 
-    async loadExternals(
-      config: OrchestratorConfig,
-      importFn?: (pkg: string) => Promise<unknown>,
-    ): Promise<void> {
-      const declarations = collectExternalDeclarations(config);
-      if (declarations.length === 0) return;
+      for (const plugin of config.plugins ?? []) {
+        if (plugin.enabled === false) continue;
 
-      const doImport = importFn ?? importModule;
-
-      for (const decl of declarations) {
-        const key = makeKey(decl.slot, decl.name);
-
-        // Reject if a builtin already occupies this slot:name
-        if (plugins.has(key)) {
-          const existing = plugins.get(key)!;
-          throw new Error(
-            `External plugin "${decl.sourceValue}" conflicts with already-registered ` +
-              `${decl.slot} plugin "${existing.manifest.name}". ` +
-              `Remove the package/path field to use the built-in, or use a different plugin name.`,
-          );
+        const specifier = resolvePluginSpecifier(plugin, config);
+        if (!specifier) {
+          process.stderr.write(`[plugin-registry] Could not resolve specifier for plugin "${plugin.name}" (source: ${plugin.source})\n`);
+          continue;
         }
 
-        const source = resolveImportSource(decl, config.configPath);
-
-        let mod: PluginModule;
         try {
-          mod = (await doImport(source)) as PluginModule;
-        } catch (err) {
-          const kind = decl.sourceType === "package" ? "npm package" : "local path";
-          throw new Error(
-            `Failed to load external ${decl.slot} plugin "${decl.name}" from ${kind} "${source}": ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-            { cause: err },
-          );
-        }
+          const mod = normalizeImportedPluginModule(await doImport(specifier));
+          if (!mod) continue;
 
-        if (!mod.manifest || typeof mod.create !== "function") {
-          throw new Error(
-            `External plugin "${source}" does not export a valid PluginModule ` +
-              `(must have manifest and create). See CONTRIBUTING.md for the plugin interface.`,
-          );
-        }
+          // Check if this plugin was auto-added from inline tracker/scm/notifier config.
+          // Multiple projects may share the same external plugin, so find ALL matching entries.
+          // We validate and update configs FIRST, before extracting plugin config, because
+          // extractPluginConfig looks up by manifest.name which may differ from the temp name.
+          const matchingEntries = findAllExternalPluginEntries(plugin, externalIndex);
+          for (const externalEntry of matchingEntries) {
+            try {
+              // Validate manifest.name matches expectedPluginName (if specified)
+              validateManifestName(mod.manifest, externalEntry, specifier);
+              // Update the config with the actual manifest.name
+              updateConfigWithManifestName(mod.manifest, externalEntry, config);
+            } catch (validationError) {
+              // Log validation errors but don't abort - other projects can still use the plugin.
+              // The misconfigured project will fail later when it tries to use the plugin
+              // with the wrong name, giving a clearer error at point of use.
+              process.stderr.write(
+                `[plugin-registry] Config validation failed for ${externalEntry.source}: ${validationError}\n`,
+              );
+            }
+          }
 
-        validateManifestMatch(mod, decl.slot, decl.name, source);
-        this.register(mod, decl.config);
+          // Extract plugin config AFTER updating configs with manifest.name.
+          // This ensures extractPluginConfig can find the config by manifest.name
+          // (e.g., manifest "ms-teams" after config was updated from temp "teams").
+          const pluginConfig = extractPluginConfig(mod.manifest.slot, mod.manifest.name, config);
+          this.register(mod, pluginConfig);
+        } catch (error) {
+          process.stderr.write(`[plugin-registry] Failed to load plugin "${specifier}": ${error}\n`);
+        }
       }
     },
   };

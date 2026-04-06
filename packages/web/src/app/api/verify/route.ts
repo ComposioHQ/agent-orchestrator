@@ -26,7 +26,17 @@ export async function GET() {
  */
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    const body = (await req.json().catch(() => null)) as
+      | {
+          issueId?: string;
+          projectId?: string;
+          action?: "verify" | "fail";
+          comment?: string;
+        }
+      | null;
+    if (!body) {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
     const { issueId, projectId, action, comment } = body as {
       issueId: string;
       projectId: string;
@@ -54,7 +64,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: projectErr }, { status: 404 });
     }
     const project = config.projects[projectId];
-    if (!project.tracker) {
+    if (!project.tracker?.plugin) {
       return NextResponse.json({ error: `Project ${projectId} has no tracker` }, { status: 422 });
     }
 

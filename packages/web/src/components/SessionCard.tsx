@@ -5,6 +5,7 @@ import {
   type DashboardSession,
   getAttentionLevel,
   isPRRateLimited,
+  isPRUnenriched,
   TERMINAL_STATUSES,
   TERMINAL_ACTIVITIES,
   CI_STATUS,
@@ -156,6 +157,7 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
   };
 
   const rateLimited = pr ? isPRRateLimited(pr) : false;
+  const prUnenriched = pr ? isPRUnenriched(pr) : false;
   const alerts = getAlerts(session);
   const isReadyToMerge = !rateLimited && pr?.mergeability.mergeable && pr.state === "open";
   const isTerminal =
@@ -265,13 +267,15 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
               #{pr.number}
             </a>
           )}
-          {pr && !rateLimited && (
+          {pr && !rateLimited && (prUnenriched ? (
+            <span className="inline-block h-[14px] w-16 animate-pulse rounded-full bg-[var(--color-bg-subtle)]" />
+          ) : (
             <span className="done-meta-chip font-[var(--font-mono)]">
               <span className="text-[var(--color-status-ready)]">+{pr.additions}</span>{" "}
               <span className="text-[var(--color-status-error)]">-{pr.deletions}</span>{" "}
               {getSizeLabel(pr.additions, pr.deletions)}
             </span>
-          )}
+          ))}
         </div>
 
         {/* Expandable detail panel */}
@@ -345,21 +349,33 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
                   >
                     {pr.title}
                   </a>
-                  <br />
-                  <span className="mt-1 inline-flex items-center gap-2">
-                    <span className="done-meta-chip font-[var(--font-mono)]">
-                      <span className="text-[var(--color-status-ready)]">+{pr.additions}</span>{" "}
-                      <span className="text-[var(--color-status-error)]">-{pr.deletions}</span>
-                    </span>
-                    <span className="text-[var(--color-text-muted)]">·</span>
-                    <span className="text-[10px] text-[var(--color-text-muted)]">
-                      mergeable: {pr.mergeability.mergeable ? "yes" : "no"}
-                    </span>
-                    <span className="text-[var(--color-text-muted)]">·</span>
-                    <span className="text-[10px] text-[var(--color-text-muted)]">
-                      review: {pr.reviewDecision}
-                    </span>
-                  </span>
+                  {prUnenriched ? (
+                    <>
+                      <br />
+                      <span className="mt-1 inline-flex items-center gap-2 text-[10px] text-[var(--color-text-muted)]">
+                        <span className="inline-block h-3 w-12 animate-pulse rounded bg-[var(--color-bg-subtle)]" />
+                        <span>PR details loading...</span>
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <br />
+                      <span className="mt-1 inline-flex items-center gap-2">
+                        <span className="done-meta-chip font-[var(--font-mono)]">
+                          <span className="text-[var(--color-status-ready)]">+{pr.additions}</span>{" "}
+                          <span className="text-[var(--color-status-error)]">-{pr.deletions}</span>
+                        </span>
+                        <span className="text-[var(--color-text-muted)]">·</span>
+                        <span className="text-[10px] text-[var(--color-text-muted)]">
+                          mergeable: {pr.mergeability.mergeable ? "yes" : "no"}
+                        </span>
+                        <span className="text-[var(--color-text-muted)]">·</span>
+                        <span className="text-[10px] text-[var(--color-text-muted)]">
+                          review: {pr.reviewDecision}
+                        </span>
+                      </span>
+                    </>
+                  )}
                 </p>
               </div>
             )}
@@ -474,11 +490,13 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
               #{pr.number}
             </a>
           )}
-          {pr && !rateLimited && (
+          {pr && !rateLimited && (prUnenriched ? (
+            <span className="inline-block h-[14px] w-16 animate-pulse rounded-full bg-[var(--color-bg-subtle)]" />
+          ) : (
             <span className="inline-flex items-center rounded-full bg-[var(--color-chip-bg)] px-2 py-0.5 font-[var(--font-mono)] text-[10px] font-semibold text-[var(--color-text-muted)]">
               +{pr.additions} -{pr.deletions} {getSizeLabel(pr.additions, pr.deletions)}
             </span>
-          )}
+          ))}
         </div>
 
         {secondaryText && (
@@ -537,6 +555,9 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
                       </>
                     )}
                     {alert.label}
+                    {alert.notified && (
+                      <span className="ml-1 opacity-60" title="Agent has been notified"> · notified</span>
+                    )}
                   </a>
                   {alert.actionLabel && (
                     <button
@@ -712,6 +733,7 @@ interface Alert {
   borderColor?: string;
   url: string;
   count?: number;
+  notified?: boolean;
   actionLabel?: string;
   actionMessage?: string;
   actionClassName?: string;
@@ -721,13 +743,39 @@ function getAlerts(session: DashboardSession): Alert[] {
   const pr = session.pr;
   if (!pr || pr.state !== "open") return [];
   if (isPRRateLimited(pr)) return [];
+  if (isPRUnenriched(pr)) return [];
 
+  const meta = session.metadata;
   const alerts: Alert[] = [];
 
-  if (pr.ciStatus === CI_STATUS.FAILING) {
+  // The lifecycle manager's status is the most up-to-date source of truth.
+  // PR enrichment data can be stale (5-min cache) or unavailable (rate limit/timeout).
+  // Use lifecycle status as fallback when PR data hasn't caught up yet.
+  const lifecycleStatus = meta["status"];
+
+  const ciIsFailing = pr.ciStatus === CI_STATUS.FAILING || lifecycleStatus === "ci_failed";
+  const hasChangesRequested =
+    pr.reviewDecision === "changes_requested" || lifecycleStatus === "changes_requested";
+  const hasConflicts = !pr.mergeability.noConflicts;
+
+  if (ciIsFailing) {
     const failedCheck = pr.ciChecks.find((c) => c.status === "failed");
     const failCount = pr.ciChecks.filter((c) => c.status === "failed").length;
-    if (failCount === 0) {
+    if (failCount === 0 && pr.ciStatus !== CI_STATUS.FAILING) {
+      // Lifecycle says ci_failed but PR enrichment hasn't caught up — show generic alert
+      alerts.push({
+        key: "ci-fail",
+        label: "CI failing",
+        className: "",
+        color: "var(--color-alert-ci)",
+        borderColor: "var(--color-alert-ci)",
+        url: pr.url + "/checks",
+        notified: Boolean(meta["lastCIFailureDispatchHash"]),
+        actionLabel: "ask to fix",
+        actionMessage: `Please fix the failing CI checks on ${pr.url}`,
+        actionClassName: "bg-[var(--color-alert-ci-bg)] text-white hover:brightness-110",
+      });
+    } else if (failCount === 0) {
       alerts.push({
         key: "ci-unknown",
         label: "CI unknown",
@@ -743,6 +791,7 @@ function getAlerts(session: DashboardSession): Alert[] {
         color: "var(--color-alert-ci)",
         borderColor: "var(--color-alert-ci)",
         url: failedCheck?.url ?? pr.url + "/checks",
+        notified: Boolean(meta["lastCIFailureDispatchHash"]),
         actionLabel: "ask to fix",
         actionMessage: `Please fix the failing CI checks on ${pr.url}`,
         actionClassName: "bg-[var(--color-alert-ci-bg)] text-white hover:brightness-110",
@@ -750,13 +799,14 @@ function getAlerts(session: DashboardSession): Alert[] {
     }
   }
 
-  if (pr.reviewDecision === "changes_requested") {
+  if (hasChangesRequested) {
     alerts.push({
       key: "changes",
       label: "changes requested",
       className: "",
       color: "var(--color-alert-changes)",
       url: pr.url,
+      notified: Boolean(meta["lastPendingReviewDispatchHash"]),
       actionLabel: "ask to address",
       actionMessage: `Please address the requested changes on ${pr.url}`,
       actionClassName: "bg-[var(--color-alert-changes-bg)] text-white hover:brightness-110",
@@ -774,13 +824,14 @@ function getAlerts(session: DashboardSession): Alert[] {
     });
   }
 
-  if (!pr.mergeability.noConflicts) {
+  if (hasConflicts) {
     alerts.push({
       key: "conflict",
       label: "merge conflict",
       className: "",
       color: "var(--color-alert-conflict)",
       url: pr.url,
+      notified: meta["lastMergeConflictDispatched"] === "true",
       actionLabel: "ask to fix",
       actionMessage: `Please resolve the merge conflicts on ${pr.url} by rebasing on the base branch`,
       actionClassName: "bg-[var(--color-alert-conflict-bg)] text-white hover:brightness-110",

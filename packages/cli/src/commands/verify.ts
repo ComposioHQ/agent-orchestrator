@@ -7,6 +7,7 @@ import {
   type PluginRegistry,
   loadConfig,
 } from "@composio/ao-core";
+import { importPluginModuleFromSource } from "../lib/plugin-store.js";
 
 /**
  * Resolve the target project from config.
@@ -57,8 +58,12 @@ async function getTracker(
   // directly, so we replicate the same pattern from create-session-manager.
   const { createPluginRegistry } = await import("@composio/ao-core");
   const registry = createPluginRegistry();
-  await registry.loadFromConfig(config, (pkg: string) => import(pkg));
+  await registry.loadFromConfig(config, importPluginModuleFromSource);
 
+  if (!project.tracker.plugin) {
+    console.error(chalk.red("Project tracker plugin not configured."));
+    process.exit(1);
+  }
   const tracker = registry.get<Tracker>("tracker", project.tracker.plugin);
   if (!tracker) {
     console.error(chalk.red(`Tracker plugin "${project.tracker.plugin}" not found.`));

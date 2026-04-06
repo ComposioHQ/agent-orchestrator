@@ -34,7 +34,7 @@ export function findWebhookProjects(
   pathname: string,
 ): WebhookProjectMatch[] {
   return Object.entries(config.projects).flatMap(([projectId, project]) => {
-    if (!project.scm) return [];
+    if (!project.scm?.plugin) return [];
     const webhookPath = getProjectWebhookPath(project);
     if (!webhookPath || webhookPath !== pathname) return [];
     const scm = registry.get<SCM>("scm", project.scm.plugin);

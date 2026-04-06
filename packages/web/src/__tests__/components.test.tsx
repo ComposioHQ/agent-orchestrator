@@ -520,11 +520,13 @@ describe("SessionCard", () => {
       expect(onSend).toHaveBeenCalledTimes(1);
     });
 
-    expect(screen.queryByRole("button", { name: "Sent" })).not.toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: /type a reply to the agent/i })).toHaveValue(
-      "please continue",
-    );
-    expect(screen.getByRole("textbox", { name: /type a reply to the agent/i })).not.toBeDisabled();
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Sent" })).not.toBeInTheDocument();
+      expect(screen.getByRole("textbox", { name: /type a reply to the agent/i })).toHaveValue(
+        "please continue",
+      );
+      expect(screen.getByRole("textbox", { name: /type a reply to the agent/i })).not.toBeDisabled();
+    });
   });
 
   it("shows a temporary failed state when an alert action send is rejected", async () => {
@@ -603,5 +605,48 @@ describe("AttentionZone", () => {
     render(<AttentionZone level="respond" sessions={sessions} onRestore={onRestore} />);
     fireEvent.click(screen.getByText("restore"));
     expect(onRestore).toHaveBeenCalledWith("s1");
+  });
+});
+
+// ── Unenriched PR shimmer ─────────────────────────────────────────────
+
+describe("Unenriched PR shimmer", () => {
+  it("SessionCard shows shimmer for unenriched PR size", () => {
+    const pr = makePR({ enriched: false });
+    const session = makeSession({ pr });
+    const { container } = render(<SessionCard session={session} />);
+    const shimmers = container.querySelectorAll(".animate-pulse");
+    expect(shimmers.length).toBeGreaterThan(0);
+  });
+
+  it("SessionCard shows actual size for enriched PR", () => {
+    const pr = makePR({ enriched: true, additions: 50, deletions: 10 });
+    const session = makeSession({ pr });
+    render(<SessionCard session={session} />);
+    expect(screen.getByText("+50 -10 S")).toBeInTheDocument();
+  });
+
+  it("SessionCard suppresses alerts for unenriched PR", () => {
+    const pr = makePR({
+      enriched: false,
+      ciStatus: "failing",
+      ciChecks: [{ name: "build", status: "failed" }],
+    });
+    const session = makeSession({ pr });
+    const { container } = render(<SessionCard session={session} />);
+    expect(container.querySelector(".session-card__alert-pill")).toBeNull();
+  });
+
+  it("PRStatus shows shimmer for unenriched PR", () => {
+    const pr = makePR({ enriched: false });
+    const { container } = render(<PRStatus pr={pr} />);
+    const shimmers = container.querySelectorAll(".animate-pulse");
+    expect(shimmers.length).toBeGreaterThan(0);
+  });
+
+  it("PRStatus shows actual data for enriched PR", () => {
+    const pr = makePR({ enriched: true, additions: 50, deletions: 10 });
+    render(<PRStatus pr={pr} />);
+    expect(screen.getByText("+50 -10 S")).toBeInTheDocument();
   });
 });

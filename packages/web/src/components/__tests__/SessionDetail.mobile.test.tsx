@@ -180,4 +180,29 @@ describe("SessionDetail mobile navbar", () => {
     expect(screen.getByText("lint")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ask Agent to Fix" })).toBeInTheDocument();
   });
+
+  it("shows the merged badge styling for merged PR sessions", () => {
+    render(
+      <SessionDetail
+        session={makeSession({
+          id: "worker-merged",
+          projectId: "my-app",
+          summary: "Merged session",
+          pr: makePR({
+            number: 89,
+            state: "merged",
+            title: "Preserve merged badge styling",
+          }),
+        })}
+        projectOrchestratorId="my-app-orchestrator"
+      />,
+    );
+
+    const mergedBadge = screen.getByText("Merged");
+    expect(mergedBadge).toBeInTheDocument();
+    expect(mergedBadge).toHaveStyle({
+      color: "var(--color-text-secondary)",
+      background: "var(--color-chip-bg)",
+    });
+  });
 });

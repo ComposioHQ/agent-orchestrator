@@ -188,13 +188,14 @@ vi.mock("@/lib/services", () => ({
     registry: mockRegistry,
     sessionManager: mockSessionManager,
   })),
+  getVerifyIssues: vi.fn(async () => []),
   getSCM: vi.fn(() => mockSCM),
 }));
 
 // ── Import routes after mocking ───────────────────────────────────────
 
 import { GET as sessionsGET } from "@/app/api/sessions/route";
-import { POST as orchestratorsPOST } from "@/app/api/orchestrators/route";
+import { POST as orchestratorsPOST, GET as orchestratorsGET } from "@/app/api/orchestrators/route";
 import { POST as spawnPOST } from "@/app/api/spawn/route";
 import { POST as sendPOST } from "@/app/api/sessions/[id]/send/route";
 import { POST as messagePOST } from "@/app/api/sessions/[id]/message/route";
@@ -205,6 +206,7 @@ import { POST as mergePOST } from "@/app/api/prs/[id]/merge/route";
 import { GET as eventsGET } from "@/app/api/events/route";
 import { GET as observabilityGET } from "@/app/api/observability/route";
 import { GET as runtimeTerminalGET } from "@/app/api/runtime/terminal/route";
+import { GET as verifyGET, POST as verifyPOST } from "@/app/api/verify/route";
 
 function makeRequest(url: string, init?: RequestInit): NextRequest {
   return new NextRequest(
@@ -685,6 +687,52 @@ describe("API Routes", () => {
     });
   });
 
+  describe("GET /api/orchestrators", () => {
+    it("returns orchestrators for a project", async () => {
+      const orchestrator = makeSession({
+        id: "my-app-orchestrator",
+        projectId: "my-app",
+        metadata: { role: "orchestrator" },
+      });
+      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockResolvedValueOnce([orchestrator]);
+
+      const res = await orchestratorsGET(
+        makeRequest("http://localhost:3000/api/orchestrators?project=my-app"),
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.orchestrators).toHaveLength(1);
+      expect(data.orchestrators[0].id).toBe("my-app-orchestrator");
+      expect(data.projectName).toBe("My App");
+    });
+
+    it("returns 400 when project parameter is missing", async () => {
+      const res = await orchestratorsGET(makeRequest("http://localhost:3000/api/orchestrators"));
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toMatch(/Missing project query parameter/);
+    });
+
+    it("returns 404 for unknown project", async () => {
+      const res = await orchestratorsGET(
+        makeRequest("http://localhost:3000/api/orchestrators?project=unknown-app"),
+      );
+      expect(res.status).toBe(404);
+      const data = await res.json();
+      expect(data.error).toMatch(/Unknown project/);
+    });
+
+    it("returns 500 when list fails", async () => {
+      (mockSessionManager.list as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("boom"));
+      const res = await orchestratorsGET(
+        makeRequest("http://localhost:3000/api/orchestrators?project=my-app"),
+      );
+      expect(res.status).toBe(500);
+      const data = await res.json();
+      expect(data.error).toBe("boom");
+    });
+  });
+
   // ── POST /api/sessions/:id/send ────────────────────────────────────
 
   describe("POST /api/sessions/:id/send", () => {
@@ -984,6 +1032,29 @@ describe("API Routes", () => {
       expect(data).toHaveProperty("generatedAt");
       expect(data).toHaveProperty("overallStatus");
       expect(data).toHaveProperty("projects");
+    });
+  });
+
+  describe("GET /api/verify", () => {
+    it("returns verify issues", async () => {
+      const res = await verifyGET();
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(Array.isArray(data.issues)).toBe(true);
+    });
+  });
+
+  describe("POST /api/verify", () => {
+    it("returns 400 for invalid JSON body", async () => {
+      const req = makeRequest("/api/verify", {
+        method: "POST",
+        body: "not json",
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await verifyPOST(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toMatch(/Invalid JSON body/);
     });
   });
 });

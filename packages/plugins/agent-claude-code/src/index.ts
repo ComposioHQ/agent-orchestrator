@@ -1,7 +1,9 @@
 import {
   shellEscape,
   readLastJsonlEntry,
+  normalizeAgentPermissionMode,
   DEFAULT_READY_THRESHOLD_MS,
+  DEFAULT_ACTIVE_WINDOW_MS,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
@@ -22,15 +24,6 @@ import { basename, join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-
-function normalizePermissionMode(mode: string | undefined): "permissionless" | "default" | "auto-edit" | "suggest" | undefined {
-  if (!mode) return undefined;
-  if (mode === "skip") return "permissionless";
-  if (mode === "permissionless" || mode === "default" || mode === "auto-edit" || mode === "suggest") {
-    return mode;
-  }
-  return undefined;
-}
 
 // =============================================================================
 // Metadata Updater Hook Script
@@ -661,7 +654,7 @@ function createClaudeCodeAgent(): Agent {
       // This command must be safe for both shell and execFile contexts.
       const parts: string[] = ["claude"];
 
-      const permissionMode = normalizePermissionMode(config.permissions);
+      const permissionMode = normalizeAgentPermissionMode(config.permissions);
       if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
         parts.push("--dangerously-skip-permissions");
       }
@@ -740,8 +733,9 @@ function createClaudeCodeAgent(): Agent {
 
       const sessionFile = await findLatestSessionFile(projectDir);
       if (!sessionFile) {
-        // No session file found — cannot determine activity
-        return null;
+        // No session file yet — process is running but no conversation started.
+        // Treat as idle (waiting for first task).
+        return { state: "idle", timestamp: session.createdAt };
       }
 
       const entry = await readLastJsonlEntry(sessionFile);
@@ -753,11 +747,13 @@ function createClaudeCodeAgent(): Agent {
       const ageMs = Date.now() - entry.modifiedAt.getTime();
       const timestamp = entry.modifiedAt;
 
+      const activeWindowMs = Math.min(DEFAULT_ACTIVE_WINDOW_MS, threshold);
       switch (entry.lastType) {
         case "user":
         case "tool_use":
         case "progress":
-          return { state: ageMs > threshold ? "idle" : "active", timestamp };
+          if (ageMs <= activeWindowMs) return { state: "active", timestamp };
+          return { state: ageMs > threshold ? "idle" : "ready", timestamp };
 
         case "assistant":
         case "system":
@@ -772,7 +768,8 @@ function createClaudeCodeAgent(): Agent {
           return { state: "blocked", timestamp };
 
         default:
-          return { state: ageMs > threshold ? "idle" : "active", timestamp };
+          if (ageMs <= activeWindowMs) return { state: "active", timestamp };
+          return { state: ageMs > threshold ? "idle" : "ready", timestamp };
       }
     },
 
@@ -821,7 +818,7 @@ function createClaudeCodeAgent(): Agent {
       // Build resume command
       const parts: string[] = ["claude", "--resume", shellEscape(sessionUuid)];
 
-      const permissionMode = normalizePermissionMode(project.agentConfig?.permissions);
+      const permissionMode = normalizeAgentPermissionMode(project.agentConfig?.permissions);
       if (permissionMode === "permissionless" || permissionMode === "auto-edit") {
         parts.push("--dangerously-skip-permissions");
       }

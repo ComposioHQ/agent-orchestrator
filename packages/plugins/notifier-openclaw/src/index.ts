@@ -1,6 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   type EventPriority,
   type Notifier,
@@ -8,6 +8,7 @@ import {
   type NotifyContext,
   type OrchestratorEvent,
   type PluginModule,
+  getObservabilityBaseDir,
 } from "@composio/ao-core";
 import { isRetryableHttpStatus, normalizeRetryConfig, validateUrl } from "@composio/ao-core/utils";
 
@@ -47,6 +48,73 @@ interface OpenClawWebhookPayload {
   sessionKey?: string;
   wakeMode?: WakeMode;
   deliver?: boolean;
+}
+
+interface OpenClawHealthSummary {
+  lastSuccessAt: string | null;
+  lastFailureAt: string | null;
+  lastFailureError: string | null;
+  totalSent: number;
+  totalFailed: number;
+}
+
+const DEFAULT_HEALTH_SUMMARY: OpenClawHealthSummary = {
+  lastSuccessAt: null,
+  lastFailureAt: null,
+  lastFailureError: null,
+  totalSent: 0,
+  totalFailed: 0,
+};
+
+function readHealthSummary(path: string): OpenClawHealthSummary {
+  try {
+    if (!existsSync(path)) return { ...DEFAULT_HEALTH_SUMMARY };
+    const raw = readFileSync(path, "utf-8");
+    return {
+      ...DEFAULT_HEALTH_SUMMARY,
+      ...(JSON.parse(raw) as Partial<OpenClawHealthSummary>),
+    };
+  } catch {
+    return { ...DEFAULT_HEALTH_SUMMARY };
+  }
+}
+
+function writeHealthSummary(path: string, summary: OpenClawHealthSummary): void {
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    const tempPath = `${path}.tmp.${process.pid}`;
+    writeFileSync(tempPath, JSON.stringify(summary, null, 2) + "\n");
+    renameSync(tempPath, path);
+  } catch {
+    // Health telemetry is best-effort and must never block notifications.
+  }
+}
+
+function getHealthSummaryPath(config?: Record<string, unknown>): string | null {
+  const explicitPath =
+    typeof config?.healthSummaryPath === "string" ? config.healthSummaryPath : undefined;
+  if (explicitPath) return explicitPath;
+
+  const configPath = typeof config?.configPath === "string" ? config.configPath : undefined;
+  if (!configPath) return null;
+  return join(getObservabilityBaseDir(configPath), "openclaw-health.json");
+}
+
+function recordHealthSuccess(path: string | null): void {
+  if (!path) return;
+  const summary = readHealthSummary(path);
+  summary.lastSuccessAt = new Date().toISOString();
+  summary.totalSent += 1;
+  writeHealthSummary(path, summary);
+}
+
+function recordHealthFailure(path: string | null, error: unknown): void {
+  if (!path) return;
+  const summary = readHealthSummary(path);
+  summary.lastFailureAt = new Date().toISOString();
+  summary.lastFailureError = error instanceof Error ? error.message : String(error);
+  summary.totalFailed += 1;
+  writeHealthSummary(path, summary);
 }
 
 async function postWithRetry(
@@ -181,6 +249,7 @@ export function create(config?: Record<string, unknown>): Notifier {
     typeof config?.sessionKeyPrefix === "string" ? config.sessionKeyPrefix : "hook:ao:";
   const wakeMode: WakeMode = config?.wakeMode === "next-heartbeat" ? "next-heartbeat" : "now";
   const deliver = typeof config?.deliver === "boolean" ? config.deliver : true;
+  const healthSummaryPath = getHealthSummaryPath(config);
 
   const { retries, retryDelayMs } = normalizeRetryConfig(config);
 
@@ -201,8 +270,13 @@ export function create(config?: Record<string, unknown>): Notifier {
     if (token) headers["Authorization"] = `Bearer ${token}`;
 
     const sessionId = payload.sessionKey?.slice(sessionKeyPrefix.length) ?? "default";
-
-    await postWithRetry(url, payload, headers, retries, retryDelayMs, { sessionId });
+    try {
+      await postWithRetry(url, payload, headers, retries, retryDelayMs, { sessionId });
+      recordHealthSuccess(healthSummaryPath);
+    } catch (err) {
+      recordHealthFailure(healthSummaryPath, err);
+      throw err;
+    }
   }
 
   return {

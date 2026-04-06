@@ -11,6 +11,7 @@
 Spawn parallel AI coding agents, each in its own git worktree. Agents autonomously fix CI failures, address review comments, and open PRs — you supervise from one dashboard.
 
 [![GitHub stars](https://img.shields.io/github/stars/ComposioHQ/agent-orchestrator?style=flat-square)](https://github.com/ComposioHQ/agent-orchestrator/stargazers)
+[![npm version](https://img.shields.io/npm/v/%40composio%2Fao?style=flat-square)](https://www.npmjs.com/package/@composio/ao)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![PRs merged](https://img.shields.io/badge/PRs_merged-61-brightgreen?style=flat-square)](https://github.com/ComposioHQ/agent-orchestrator/pulls?q=is%3Amerged)
 [![Tests](https://img.shields.io/badge/test_cases-3%2C288-blue?style=flat-square)](https://github.com/ComposioHQ/agent-orchestrator/releases/tag/metrics-v1)
@@ -103,6 +104,7 @@ The orchestrator agent uses the [AO CLI](docs/CLI.md) internally to manage sessi
 
 ```yaml
 # agent-orchestrator.yaml
+# Runtime data is auto-derived under ~/.agent-orchestrator/{hash}-{projectId}/
 port: 3000
 
 defaults:
@@ -138,18 +140,17 @@ See [`agent-orchestrator.yaml.example`](agent-orchestrator.yaml.example) for the
 
 ## Plugin Architecture
 
-Eight slots. Every abstraction is swappable.
+Seven plugin slots. Lifecycle stays in core.
 
 | Slot      | Default     | Alternatives             |
 | --------- | ----------- | ------------------------ |
-| Runtime   | tmux        | docker, k8s, process     |
+| Runtime   | tmux        | process                  |
 | Agent     | claude-code | codex, aider, opencode   |
 | Workspace | worktree    | clone                    |
-| Tracker   | github      | linear                   |
-| SCM       | github      | —                        |
-| Notifier  | desktop     | slack, composio, webhook |
+| Tracker   | github      | linear, gitlab           |
+| SCM       | github      | gitlab                   |
+| Notifier  | desktop     | slack, discord, composio, webhook, openclaw |
 | Terminal  | iterm2      | web                      |
-| Lifecycle | core        | —                        |
 
 All interfaces defined in [`packages/core/src/types.ts`](packages/core/src/types.ts). A plugin implements one interface and exports a `PluginModule`. That's it.
 

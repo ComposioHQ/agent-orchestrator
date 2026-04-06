@@ -66,6 +66,7 @@ vi.mock("../../src/lib/metadata.js", () => ({
 
 let tmpDir: string;
 let configPath: string;
+let cwdSpy: ReturnType<typeof vi.spyOn> | undefined;
 
 import { Command } from "commander";
 import { registerSpawn } from "../../src/commands/spawn.js";
@@ -126,6 +127,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  cwdSpy?.mockRestore();
+  cwdSpy = undefined;
   const projectBaseDir = getProjectBaseDir(configPath, join(tmpDir, "main-repo"));
   if (projectBaseDir) {
     rmSync(projectBaseDir, { recursive: true, force: true });
@@ -195,6 +198,58 @@ describe("spawn command", () => {
     expect(mockSessionManager.spawn).toHaveBeenCalledWith({
       projectId: "my-app",
       issueId: "42",
+    });
+  });
+
+  it("auto-detects the project from a nested cwd in multi-project configs", async () => {
+    (mockConfigRef.current as Record<string, unknown>).projects = {
+      frontend: {
+        name: "Frontend",
+        repo: "org/frontend",
+        path: join(tmpDir, "frontend"),
+        defaultBranch: "main",
+        sessionPrefix: "fe",
+      },
+      backend: {
+        name: "Backend",
+        repo: "org/backend",
+        path: join(tmpDir, "backend"),
+        defaultBranch: "main",
+        sessionPrefix: "be",
+      },
+    };
+
+    const backendSubdir = join(tmpDir, "backend", "packages", "api");
+    mkdirSync(backendSubdir, { recursive: true });
+    cwdSpy = vi.spyOn(process, "cwd").mockReturnValue(backendSubdir);
+
+    const fakeSession: Session = {
+      id: "be-1",
+      projectId: "backend",
+      status: "spawning",
+      activity: null,
+      branch: "feat/INT-42",
+      issueId: "INT-42",
+      pr: null,
+      workspacePath: "/tmp/wt",
+      runtimeHandle: { id: "hash-be-1", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+
+    mockSessionManager.spawn.mockResolvedValue(fakeSession);
+
+    await program.parseAsync(["node", "test", "spawn", "INT-42"]);
+
+    expect(mockEnsureLifecycleWorker).toHaveBeenCalledWith(
+      expect.objectContaining({ configPath: expect.any(String) }),
+      "backend",
+    );
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith({
+      projectId: "backend",
+      issueId: "INT-42",
     });
   });
 

@@ -10,8 +10,8 @@ import {
   loadConfig,
 } from "@composio/ao-core";
 import { exec, tmux } from "../lib/shell.js";
-import { getAgentByName } from "../lib/plugins.js";
-import { getSessionManager } from "../lib/create-session-manager.js";
+import { getAgentByName, getAgentByNameFromRegistry } from "../lib/plugins.js";
+import { getPluginRegistry, getSessionManager } from "../lib/create-session-manager.js";
 
 /**
  * Resolve session context: tmux target name and Agent plugin.
@@ -26,6 +26,7 @@ async function resolveSessionContext(sessionName: string): Promise<{
 }> {
   try {
     const config = loadConfig();
+    const registry = await getPluginRegistry(config);
     const sm = await getSessionManager(config);
     const session = await sm.get(sessionName);
     if (session) {
@@ -37,7 +38,7 @@ async function resolveSessionContext(sessionName: string): Promise<{
       return {
         tmuxTarget,
         runtimeName,
-        agent: getAgentByName(agentName),
+        agent: getAgentByNameFromRegistry(registry, agentName),
         session,
         sessionManager: sm,
       };

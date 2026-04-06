@@ -409,7 +409,7 @@ export function SessionDetail({
 
           {pr ? (
             <section id="session-pr-section" className="mt-6">
-              <SessionDetailPRCard pr={pr} sessionId={session.id} />
+              <SessionDetailPRCard pr={pr} sessionId={session.id} metadata={session.metadata} />
             </section>
           ) : null}
         </main>
@@ -430,7 +430,7 @@ export function SessionDetail({
 
 // ── Session detail PR card ────────────────────────────────────────────
 
-function SessionDetailPRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: string }) {
+function SessionDetailPRCard({ pr, sessionId, metadata }: { pr: DashboardPR; sessionId: string; metadata: Record<string, string> }) {
   const [sendingComments, setSendingComments] = useState<Set<string>>(new Set());
   const [sentComments, setSentComments] = useState<Set<string>>(new Set());
   const [errorComments, setErrorComments] = useState<Set<string>>(new Set());
@@ -538,7 +538,10 @@ function SessionDetailPRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: st
               <span className="text-[var(--color-text-tertiary)]">&middot;</span>
               <span
                 className="px-2 py-0.5 text-[10px] font-semibold"
-                style={{ color: "#a371f7", background: "rgba(163,113,247,0.12)" }}
+                style={{
+                  color: "var(--color-text-secondary)",
+                  background: "var(--color-chip-bg)",
+                }}
               >
                 Merged
               </span>
@@ -566,7 +569,7 @@ function SessionDetailPRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: st
             </span>
           </div>
         ) : (
-          <IssuesList pr={pr} />
+          <IssuesList pr={pr} metadata={metadata} />
         )}
 
         {/* CI Checks */}
@@ -631,7 +634,7 @@ function SessionDetailPRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: st
                         onClick={() => handleAskAgentToFix(c)}
                         disabled={sendingComments.has(c.url)}
                         className={cn(
-                          "mt-1.5 px-3 py-1 text-[11px] font-semibold transition-all",
+                          "mt-1.5 px-3 py-1 text-[11px] font-semibold transition-colors duration-150",
                           sentComments.has(c.url)
                             ? "bg-[var(--color-status-ready)] text-white"
                             : errorComments.has(c.url)
@@ -661,10 +664,24 @@ function SessionDetailPRCard({ pr, sessionId }: { pr: DashboardPR; sessionId: st
 
 // ── Issues list (pre-merge blockers) ─────────────────────────────────
 
-function IssuesList({ pr }: { pr: DashboardPR }) {
-  const issues: Array<{ icon: string; color: string; text: string }> = [];
+function IssuesList({ pr, metadata }: { pr: DashboardPR; metadata: Record<string, string> }) {
+  const issues: Array<{ icon: string; color: string; text: string; notified?: boolean }> = [];
 
-  if (pr.ciStatus === CI_STATUS.FAILING) {
+  const ciNotified = Boolean(metadata["lastCIFailureDispatchHash"]);
+  const conflictNotified = metadata["lastMergeConflictDispatched"] === "true";
+  const reviewNotified = Boolean(metadata["lastPendingReviewDispatchHash"]);
+
+  // The lifecycle manager's status is the most up-to-date source of truth.
+  // PR enrichment data can be stale (5-min cache) or unavailable (rate limit/timeout).
+  // Use lifecycle status as fallback when PR data hasn't caught up yet.
+  const lifecycleStatus = metadata["status"];
+
+  const ciIsFailing = pr.ciStatus === CI_STATUS.FAILING || lifecycleStatus === "ci_failed";
+  const hasChangesRequested =
+    pr.reviewDecision === "changes_requested" || lifecycleStatus === "changes_requested";
+  const hasConflicts = pr.state !== "merged" && !pr.mergeability.noConflicts;
+
+  if (ciIsFailing) {
     const failCount = pr.ciChecks.filter((c) => c.status === "failed").length;
     issues.push({
       icon: "✗",
@@ -673,13 +690,19 @@ function IssuesList({ pr }: { pr: DashboardPR }) {
         failCount > 0
           ? `CI failing — ${failCount} check${failCount !== 1 ? "s" : ""} failed`
           : "CI failing",
+      notified: ciNotified,
     });
   } else if (pr.ciStatus === CI_STATUS.PENDING) {
     issues.push({ icon: "●", color: "var(--color-status-attention)", text: "CI pending" });
   }
 
-  if (pr.reviewDecision === "changes_requested") {
-    issues.push({ icon: "✗", color: "var(--color-status-error)", text: "Changes requested" });
+  if (hasChangesRequested) {
+    issues.push({
+      icon: "✗",
+      color: "var(--color-status-error)",
+      text: "Changes requested",
+      notified: reviewNotified,
+    });
   } else if (!pr.mergeability.approved) {
     issues.push({
       icon: "○",
@@ -688,8 +711,13 @@ function IssuesList({ pr }: { pr: DashboardPR }) {
     });
   }
 
-  if (pr.state !== "merged" && !pr.mergeability.noConflicts) {
-    issues.push({ icon: "✗", color: "var(--color-status-error)", text: "Merge conflicts" });
+  if (hasConflicts) {
+    issues.push({
+      icon: "✗",
+      color: "var(--color-status-error)",
+      text: "Merge conflicts",
+      notified: conflictNotified,
+    });
   }
 
   if (!pr.mergeability.mergeable && issues.length === 0) {
@@ -721,6 +749,11 @@ function IssuesList({ pr }: { pr: DashboardPR }) {
             {issue.icon}
           </span>
           <span className="text-[var(--color-text-secondary)]">{issue.text}</span>
+          {issue.notified && (
+            <span className="text-[10px] text-[var(--color-text-tertiary)]">
+              · agent notified
+            </span>
+          )}
         </div>
       ))}
     </div>
