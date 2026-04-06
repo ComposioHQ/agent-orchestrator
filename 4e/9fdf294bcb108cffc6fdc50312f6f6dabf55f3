@@ -1,0 +1,23 @@
+packages/web/src/components/SessionCard.tsx
+  0ab4642b5b7c8c2e 822
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "4e9fdf294bcb108cffc6fdc50312f6f6dabf55f3",
+  "prompts": {
+    "0ab4642b5b7c8c2e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9d66bffa-784b-4ded-8ac5-31481e468c0f",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
