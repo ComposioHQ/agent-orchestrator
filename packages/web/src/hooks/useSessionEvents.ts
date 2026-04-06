@@ -5,7 +5,6 @@ import {
   getAttentionLevel,
   type AttentionLevel,
   type DashboardSession,
-  type GlobalPauseState,
   type SSESnapshotEvent,
 } from "@/lib/types";
 
@@ -24,14 +23,13 @@ export type SSEAttentionMap = Readonly<Record<string, AttentionLevel>>;
 
 interface State {
   sessions: DashboardSession[];
-  globalPause: GlobalPauseState | null;
   connectionStatus: ConnectionStatus;
   /** Attention levels from the latest SSE snapshot (server-computed, includes PR state). */
   sseAttentionLevels: SSEAttentionMap;
 }
 
 type Action =
-  | { type: "reset"; sessions: DashboardSession[]; globalPause: GlobalPauseState | null; sseAttentionLevels?: SSEAttentionMap }
+  | { type: "reset"; sessions: DashboardSession[]; sseAttentionLevels?: SSEAttentionMap }
   | { type: "snapshot"; patches: SSESnapshotEvent["sessions"] }
   | { type: "setConnection"; status: ConnectionStatus };
 
@@ -41,7 +39,6 @@ function reducer(state: State, action: Action): State {
       return {
         ...state,
         sessions: action.sessions,
-        globalPause: action.globalPause,
         ...(action.sseAttentionLevels !== undefined
           ? { sseAttentionLevels: action.sseAttentionLevels }
           : {}),
@@ -62,12 +59,7 @@ function reducer(state: State, action: Action): State {
           return s;
         }
         changed = true;
-        return {
-          ...s,
-          status: patch.status,
-          activity: patch.activity,
-          lastActivityAt: patch.lastActivityAt,
-        };
+        return { ...s, status: patch.status, activity: patch.activity, lastActivityAt: patch.lastActivityAt };
       });
 
       // Build attention level map from server-computed values
@@ -103,13 +95,11 @@ function createMembershipKey(
 
 export function useSessionEvents(
   initialSessions: DashboardSession[],
-  initialGlobalPause?: GlobalPauseState | null,
   project?: string,
   initialAttentionLevels?: SSEAttentionMap,
 ): State {
   const [state, dispatch] = useReducer(reducer, {
     sessions: initialSessions,
-    globalPause: initialGlobalPause ?? null,
     connectionStatus: "connected" as ConnectionStatus,
     sseAttentionLevels: initialAttentionLevels ?? ({} as SSEAttentionMap),
   });
@@ -122,6 +112,7 @@ export function useSessionEvents(
   const lastRefreshAtRef = useRef(0);
   const disconnectedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Reset state when server-rendered props change (e.g. full page refresh)
   useEffect(() => {
     sessionsRef.current = state.sessions;
   }, [state.sessions]);
@@ -130,10 +121,9 @@ export function useSessionEvents(
     dispatch({
       type: "reset",
       sessions: initialSessions,
-      globalPause: initialGlobalPause ?? null,
       sseAttentionLevels: initialAttentionLevelsRef.current ?? ({} as SSEAttentionMap),
     });
-  }, [initialSessions, initialGlobalPause]);
+  }, [initialSessions]);
 
   useEffect(() => {
     // Reset so the new project gets an immediate first refresh on its first SSE snapshot
@@ -176,7 +166,7 @@ export function useSessionEvents(
         void fetch(sessionsUrl, { signal: refreshController.signal })
           .then((res) => (res.ok ? res.json() : null))
           .then(
-            (updated: { sessions?: DashboardSession[]; globalPause?: GlobalPauseState } | null) => {
+            (updated: { sessions?: DashboardSession[] } | null) => {
               if (disposed || refreshController.signal.aborted || !updated?.sessions) {
                 // Update timestamp even for non-OK responses to prevent retry storms
                 if (!disposed && !refreshController.signal.aborted) {
@@ -192,7 +182,6 @@ export function useSessionEvents(
               dispatch({
                 type: "reset",
                 sessions: updated.sessions,
-                globalPause: updated.globalPause ?? null,
                 sseAttentionLevels,
               });
             },

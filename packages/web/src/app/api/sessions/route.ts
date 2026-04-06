@@ -9,7 +9,6 @@ import {
   listDashboardOrchestrators,
 } from "@/lib/serialize";
 import { getCorrelationId, jsonWithCorrelation, recordApiObservation } from "@/lib/observability";
-import { resolveGlobalPause } from "@/lib/global-pause";
 import { filterProjectSessions } from "@/lib/project-utils";
 import { settlesWithin } from "@/lib/async-utils";
 
@@ -58,8 +57,6 @@ export async function GET(request: Request) {
         correlationId,
       );
     }
-
-    const allSessions = requestedProjectId ? await sessionManager.list() : coreSessions;
 
     const allSessionPrefixes = Object.entries(config.projects).map(
       ([projectId, p]) => p.sessionPrefix ?? projectId,
@@ -130,7 +127,6 @@ export async function GET(request: Request) {
         stats: computeStats(dashboardSessions),
         orchestratorId,
         orchestrators,
-        globalPause: resolveGlobalPause(allSessions, config.projects),
       },
       { status: 200 },
       correlationId,

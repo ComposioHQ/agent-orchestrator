@@ -816,6 +816,8 @@ export interface PREnrichmentData {
   isBehind?: boolean;
   /** List of blockers preventing merge */
   blockers?: string[];
+  /** Individual CI check results (populated from batch enrichment when available) */
+  ciChecks?: CICheck[];
 }
 
 /**

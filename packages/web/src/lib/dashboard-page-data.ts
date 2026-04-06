@@ -10,14 +10,13 @@ import {
 } from "@/lib/serialize";
 import { getPrimaryProjectId, getProjectName, getAllProjects, type ProjectInfo } from "@/lib/project-name";
 import { filterProjectSessions, filterWorkerSessions } from "@/lib/project-utils";
-import { resolveGlobalPause, type GlobalPauseState } from "@/lib/global-pause";
 import { settlesWithin } from "@/lib/async-utils";
 
 const FAST_METADATA_ENRICH_TIMEOUT_MS = 3_000;
 
+
 interface DashboardPageData {
   sessions: DashboardSession[];
-  globalPause: GlobalPauseState | null;
   orchestrators: DashboardOrchestratorLink[];
   projectName: string;
   projects: ProjectInfo[];
@@ -49,7 +48,6 @@ export const getDashboardPageData = cache(async function getDashboardPageData(pr
   const projectFilter = resolveDashboardProjectFilter(project);
   const pageData: DashboardPageData = {
     sessions: [],
-    globalPause: null,
     orchestrators: [],
     projectName: getDashboardProjectName(projectFilter),
     projects: getAllProjects(),
@@ -59,8 +57,6 @@ export const getDashboardPageData = cache(async function getDashboardPageData(pr
   try {
     const { config, registry, sessionManager } = await getServices();
     const allSessions = await sessionManager.list();
-
-    pageData.globalPause = resolveGlobalPause(allSessions, config.projects);
 
     const visibleSessions = filterProjectSessions(allSessions, projectFilter, config.projects);
     pageData.orchestrators = listDashboardOrchestrators(visibleSessions, config.projects);
@@ -99,7 +95,6 @@ export const getDashboardPageData = cache(async function getDashboardPageData(pr
     }
   } catch {
     pageData.sessions = [];
-    pageData.globalPause = null;
     pageData.orchestrators = [];
   }
 

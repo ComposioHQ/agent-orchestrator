@@ -1387,13 +1387,12 @@ export function registerStop(program: Command): void {
   program
     .command("stop [project]")
     .description("Stop orchestrator agent and dashboard")
-    .option("--keep-session", "Keep mapped OpenCode session after stopping")
     .option("--purge-session", "Delete mapped OpenCode session when stopping")
     .option("--all", "Stop all running AO instances")
     .action(
       async (
         projectArg?: string,
-        opts: { keepSession?: boolean; purgeSession?: boolean; all?: boolean } = {},
+        opts: { purgeSession?: boolean; all?: boolean } = {},
       ) => {
         try {
           // Check running.json first
@@ -1431,7 +1430,7 @@ export function registerStop(program: Command): void {
 
           if (existing) {
             const spinner = ora("Stopping orchestrator session").start();
-            const purgeOpenCode = opts.purgeSession === true ? true : opts.keepSession !== true;
+            const purgeOpenCode = opts?.purgeSession === true;
             await sm.kill(sessionId, { purgeOpenCode });
             spinner.succeed("Orchestrator session stopped");
           } else {
@@ -1472,6 +1471,5 @@ export function registerStop(program: Command): void {
           }
           process.exit(1);
         }
-      },
-    );
+      });
 }
