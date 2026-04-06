@@ -641,9 +641,9 @@ function DashboardInner({
                 </p>
               </div>
               <div className="board-section-head__legend">
-                <BoardLegendItem label="Human action" tone="var(--color-status-error)" />
-                <BoardLegendItem label="Review queue" tone="var(--color-accent-orange)" />
-                <BoardLegendItem label="Ready to land" tone="var(--color-status-ready)" />
+                <BoardLegendItem label="Human action" tone="error" />
+                <BoardLegendItem label="Review queue" tone="orange" />
+                <BoardLegendItem label="Ready to land" tone="ready" />
               </div>
             </div>
 
@@ -874,23 +874,11 @@ function ProjectOverviewGrid({
           </div>
 
           <div className="mb-4 flex flex-wrap gap-2">
-            <ProjectMetric label="Merge" value={counts.merge} tone="var(--color-status-ready)" />
-            <ProjectMetric
-              label="Respond"
-              value={counts.respond}
-              tone="var(--color-status-error)"
-            />
-            <ProjectMetric label="Review" value={counts.review} tone="var(--color-accent-orange)" />
-            <ProjectMetric
-              label="Pending"
-              value={counts.pending}
-              tone="var(--color-status-attention)"
-            />
-            <ProjectMetric
-              label="Working"
-              value={counts.working}
-              tone="var(--color-status-working)"
-            />
+            <ProjectMetric label="Merge" value={counts.merge} tone="ready" />
+            <ProjectMetric label="Respond" value={counts.respond} tone="error" />
+            <ProjectMetric label="Review" value={counts.review} tone="orange" />
+            <ProjectMetric label="Pending" value={counts.pending} tone="attention" />
+            <ProjectMetric label="Working" value={counts.working} tone="working" />
           </div>
 
           <div className="border-t border-[var(--color-border-subtle)] pt-3">
@@ -935,7 +923,7 @@ function ProjectMetric({ label, value, tone }: { label: string; value: number; t
       <div className="text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-tertiary)]">
         {label}
       </div>
-      <div className="mt-1 text-[18px] font-semibold tabular-nums" style={{ color: tone }}>
+      <div className="project-metric__value mt-1 text-[18px] font-semibold tabular-nums" data-tone={tone}>
         {value}
       </div>
     </div>
@@ -943,22 +931,10 @@ function ProjectMetric({ label, value, tone }: { label: string; value: number; t
 }
 
 const MOBILE_ACTION_STRIP_LEVELS = [
-  {
-    level: "respond" as const,
-    label: "respond",
-    color: "var(--color-status-error)",
-  },
-  {
-    level: "merge" as const,
-    label: "merge",
-    color: "var(--color-status-ready)",
-  },
-  {
-    level: "review" as const,
-    label: "review",
-    color: "var(--color-accent-orange)",
-  },
-] satisfies Array<{ level: AttentionLevel; label: string; color: string }>;
+  { level: "respond" as const, label: "respond" },
+  { level: "merge" as const, label: "merge" },
+  { level: "review" as const, label: "review" },
+] satisfies Array<{ level: AttentionLevel; label: string }>;
 
 function MobileActionStrip({
   grouped,
@@ -981,7 +957,7 @@ function MobileActionStrip({
 
   return (
     <div className="mobile-action-strip" role="group" aria-label="Session priorities">
-      {activePills.map(({ level, label, color }) => (
+      {activePills.map(({ level, label }) => (
         <button
           key={level}
           type="button"
@@ -991,10 +967,10 @@ function MobileActionStrip({
         >
           <span
             className="mobile-action-pill__dot"
-            style={{ background: color }}
+            data-level={level}
             aria-hidden="true"
           />
-          <span className="mobile-action-pill__count" style={{ color }}>
+          <span className="mobile-action-pill__count" data-level={level}>
             {grouped[level].length}
           </span>
           <span className="mobile-action-pill__label">{label}</span>
@@ -1017,20 +993,20 @@ function StatusCards({ stats }: { stats: DashboardStats }) {
     );
   }
 
-  const parts: Array<{ value: number; label: string; meta: string; tone?: string }> = [
+  const parts: Array<{ value: number; label: string; meta: string; toneClass?: string }> = [
     { value: stats.totalSessions, label: "Fleet", meta: "Live sessions" },
     {
       value: stats.workingSessions,
       label: "Active",
       meta: "Currently moving",
-      tone: "var(--color-status-working)",
+      toneClass: stats.workingSessions > 0 ? "dashboard-stat-card__value--working" : undefined,
     },
     { value: stats.openPRs, label: "PRs", meta: "Open pull requests" },
     {
       value: stats.needsReview,
       label: "Review",
       meta: "Awaiting eyes",
-      tone: "var(--color-status-attention)",
+      toneClass: stats.needsReview > 0 ? "dashboard-stat-card__value--review" : undefined,
     },
   ];
 
@@ -1039,8 +1015,7 @@ function StatusCards({ stats }: { stats: DashboardStats }) {
       {parts.map((part) => (
         <div key={part.label} className="dashboard-stat-card">
           <span
-            className="dashboard-stat-card__value"
-            style={{ color: part.tone ?? "var(--color-text-primary)" }}
+            className={`dashboard-stat-card__value${part.toneClass ? ` ${part.toneClass}` : ""}`}
           >
             {part.value}
           </span>
@@ -1055,7 +1030,7 @@ function StatusCards({ stats }: { stats: DashboardStats }) {
 function BoardLegendItem({ label, tone }: { label: string; tone: string }) {
   return (
     <span className="board-legend-item">
-      <span className="board-legend-item__dot" style={{ background: tone }} />
+      <span className="board-legend-item__dot" data-tone={tone} />
       {label}
     </span>
   );

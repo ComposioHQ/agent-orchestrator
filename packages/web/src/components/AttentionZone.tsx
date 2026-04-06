@@ -32,44 +32,37 @@ const zoneConfig: Record<
   AttentionLevel,
   {
     label: string;
-    color: string;
     caption: string;
     emptyMessage: string;
   }
 > = {
   merge: {
     label: "Ready",
-    color: "var(--color-status-ready)",
     caption: "Cleared to land",
     emptyMessage: "Nothing cleared to land yet.",
   },
   respond: {
     label: "Respond",
-    color: "var(--color-status-error)",
     caption: "Human judgment needed",
     emptyMessage: "No agents need your input.",
   },
   review: {
     label: "Review",
-    color: "var(--color-accent-orange)",
     caption: "Code waiting on eyes",
     emptyMessage: "No code waiting for review.",
   },
   pending: {
     label: "Pending",
-    color: "var(--color-status-attention)",
     caption: "Blocked on system state",
     emptyMessage: "Nothing blocked.",
   },
   working: {
     label: "Working",
-    color: "var(--color-status-working)",
     caption: "Agents are actively moving",
     emptyMessage: "No agents running.",
   },
   done: {
     label: "Done",
-    color: "var(--color-text-tertiary)",
     caption: "Completed or exited",
     emptyMessage: "No completed sessions.",
   },
@@ -127,7 +120,7 @@ function AttentionZoneView({
           aria-expanded={!collapsed}
           aria-controls={`accordion-body-${level}`}
         >
-          <span className="accordion-header__dot" style={{ background: config.color }} />
+          <span className="accordion-header__dot" data-level={level} />
           <span className="accordion-header__label">{config.label}</span>
           <span className="accordion-header__count">{sessions.length}</span>
           <span className="accordion-header__chevron" aria-hidden="true">▶</span>
@@ -179,7 +172,7 @@ function AttentionZoneView({
     <div className="kanban-column" data-level={level}>
       <div className="kanban-column__header">
         <div className="kanban-column__title-row">
-          <div className="kanban-column__dot" style={{ background: config.color }} />
+          <div className="kanban-column__dot" data-level={level} />
           <span className="kanban-column__title">{config.label}</span>
           <span className="kanban-column__count">{sessions.length}</span>
         </div>
@@ -255,7 +248,7 @@ function MobileSessionRow({
         <div className="mobile-session-row__line">
           <span
             className="mobile-session-row__dot"
-            style={{ background: zoneConfig[level].color }}
+            data-level={level}
             aria-hidden="true"
           />
           <span className="mobile-session-row__title">{getSessionTitle(session)}</span>

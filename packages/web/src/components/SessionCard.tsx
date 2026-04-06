@@ -232,8 +232,7 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
         {/* Row 2: Title */}
         <div className="px-3.5 pb-2">
           <p
-            className="text-[13px] font-semibold leading-snug [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden"
-            style={{ color: "var(--done-title-color)" }}
+            className="session-card-done__title text-[13px] font-semibold leading-snug [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden"
           >
             {title}
           </p>
@@ -590,6 +589,62 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
           </div>
         )}
 
+        {/* Quick reply — inside card body, above footer */}
+        {level === "respond" && (
+          <div className="quick-reply" onClick={(e) => e.stopPropagation()}>
+            {session.summary && !session.summaryIsFallback && (
+              <p className="quick-reply__summary">{session.summary}</p>
+            )}
+            <div className="quick-reply__presets">
+              <button
+                className="quick-reply__preset-btn"
+                onClick={() => void handleQuickReply("continue")}
+                disabled={sendingQuickReply !== null}
+              >
+                {sendingQuickReply === "continue"
+                  ? "Sending..."
+                  : sentQuickReply === "continue"
+                    ? "Sent"
+                    : "Continue"}
+              </button>
+              <button
+                className="quick-reply__preset-btn"
+                onClick={() => void handleQuickReply("abort")}
+                disabled={sendingQuickReply !== null}
+              >
+                {sendingQuickReply === "abort"
+                  ? "Sending..."
+                  : sentQuickReply === "abort"
+                    ? "Sent"
+                    : "Abort"}
+              </button>
+              <button
+                className="quick-reply__preset-btn"
+                onClick={() => void handleQuickReply("skip")}
+                disabled={sendingQuickReply !== null}
+              >
+                {sendingQuickReply === "skip"
+                  ? "Sending..."
+                  : sentQuickReply === "skip"
+                    ? "Sent"
+                    : "Skip"}
+              </button>
+            </div>
+            <textarea
+              className="quick-reply__input"
+              placeholder={sendingQuickReply !== null ? "Sending..." : "Type a reply..."}
+              aria-label="Type a reply to the agent"
+              value={replyText}
+              onChange={(e) => setReplyText(e.target.value)}
+              onKeyDown={(e) => {
+                void handleReplyKeyDown(e);
+              }}
+              rows={1}
+              disabled={sendingQuickReply !== null}
+            />
+          </div>
+        )}
+
         <div className="session-card__footer mt-auto flex items-center justify-between gap-2 border-t border-[var(--color-border-subtle)] px-4 py-2.5">
           {session.issueUrl ? (
             <a
@@ -654,61 +709,6 @@ function SessionCardView({ session, onSend, onKill, onMerge, onRestore }: Sessio
           )}
         </div>
       </div>
-
-      {level === "respond" && (
-        <div className="quick-reply" onClick={(e) => e.stopPropagation()}>
-          {session.summary && !session.summaryIsFallback && (
-            <p className="quick-reply__summary">{session.summary}</p>
-          )}
-          <div className="quick-reply__presets">
-            <button
-              className="quick-reply__preset-btn"
-              onClick={() => void handleQuickReply("continue")}
-              disabled={sendingQuickReply !== null}
-            >
-              {sendingQuickReply === "continue"
-                ? "Sending..."
-                : sentQuickReply === "continue"
-                  ? "Sent"
-                  : "Continue"}
-            </button>
-            <button
-              className="quick-reply__preset-btn"
-              onClick={() => void handleQuickReply("abort")}
-              disabled={sendingQuickReply !== null}
-            >
-              {sendingQuickReply === "abort"
-                ? "Sending..."
-                : sentQuickReply === "abort"
-                  ? "Sent"
-                  : "Abort"}
-            </button>
-            <button
-              className="quick-reply__preset-btn"
-              onClick={() => void handleQuickReply("skip")}
-              disabled={sendingQuickReply !== null}
-            >
-              {sendingQuickReply === "skip"
-                ? "Sending..."
-                : sentQuickReply === "skip"
-                  ? "Sent"
-                  : "Skip"}
-            </button>
-          </div>
-          <textarea
-            className="quick-reply__input"
-            placeholder={sendingQuickReply !== null ? "Sending..." : "Type a reply..."}
-            aria-label="Type a reply to the agent"
-            value={replyText}
-            onChange={(e) => setReplyText(e.target.value)}
-            onKeyDown={(e) => {
-              void handleReplyKeyDown(e);
-            }}
-            rows={1}
-            disabled={sendingQuickReply !== null}
-          />
-        </div>
-      )}
     </div>
   );
 }

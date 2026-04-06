@@ -40,21 +40,6 @@ function computeProjectHealth(
   return "green";
 }
 
-const healthDotColor: Record<ProjectHealth, string> = {
-  red: "var(--color-status-error)",
-  yellow: "var(--color-status-attention)",
-  green: "var(--color-status-ready)",
-  gray: "var(--color-text-tertiary)",
-};
-
-const sessionDotColor: Record<AttentionLevel, string> = {
-  merge: "var(--color-status-ready)",
-  respond: "var(--color-status-error)",
-  review: "var(--color-accent-orange)",
-  pending: "var(--color-status-attention)",
-  working: "var(--color-status-working)",
-  done: "var(--color-text-tertiary)",
-};
 
 const sessionToneLabel: Record<AttentionLevel, string> = {
   merge: "merge",
@@ -69,10 +54,10 @@ function SessionDot({ level }: { level: AttentionLevel }) {
   return (
     <div
       className={cn(
-        "h-[7px] w-[7px] shrink-0 rounded-full",
+        "sidebar-session-dot h-[7px] w-[7px] shrink-0 rounded-full",
         level === "respond" && "animate-[activity-pulse_2s_ease-in-out_infinite]",
       )}
-      style={{ background: sessionDotColor[level] }}
+      data-level={level}
     />
   );
 }
@@ -81,10 +66,10 @@ function HealthDot({ health }: { health: ProjectHealth }) {
   return (
     <div
       className={cn(
-        "h-2 w-2 shrink-0 rounded-full",
+        "sidebar-health-dot h-2 w-2 shrink-0 rounded-full",
         health === "red" && "animate-[activity-pulse_2s_ease-in-out_infinite]",
       )}
-      style={{ background: healthDotColor[health] }}
+      data-health={health}
     />
   );
 }
@@ -205,7 +190,7 @@ function ProjectSidebarInner({
                         "project-sidebar__health-indicator",
                         health === "red" && "animate-[activity-pulse_2s_ease-in-out_infinite]",
                       )}
-                      style={{ background: healthDotColor[health] }}
+                      data-health={health}
                     />
                   )}
                 </button>
@@ -255,19 +240,13 @@ function ProjectSidebarInner({
             <span className="project-sidebar__metric-label">active</span>
           </div>
           <div className="project-sidebar__metric">
-            <span
-              className="project-sidebar__metric-value"
-              style={{ color: "var(--color-status-attention)" }}
-            >
+            <span className="project-sidebar__metric-value project-sidebar__metric-value--attention">
               {reviewLoadCount}
             </span>
             <span className="project-sidebar__metric-label">review</span>
           </div>
           <div className="project-sidebar__metric">
-            <span
-              className="project-sidebar__metric-value"
-              style={{ color: "var(--color-status-error)" }}
-            >
+            <span className="project-sidebar__metric-value project-sidebar__metric-value--error">
               {needsInputCount}
             </span>
             <span className="project-sidebar__metric-label">blocked</span>
