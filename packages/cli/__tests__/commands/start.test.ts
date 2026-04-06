@@ -6,9 +6,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { parse as parseYaml } from "yaml";
 import type { SessionManager } from "@composio/ao-core";
 
 // ---------------------------------------------------------------------------
@@ -46,6 +47,10 @@ const {
 
 const { mockDetectOpenClawInstallation } = vi.hoisted(() => ({
   mockDetectOpenClawInstallation: vi.fn(),
+}));
+
+const { mockProcessCwd } = vi.hoisted(() => ({
+  mockProcessCwd: vi.fn<[], string>(),
 }));
 
 vi.mock("../../src/lib/shell.js", () => ({
@@ -149,7 +154,7 @@ vi.mock("../../src/lib/detect-agent.js", () => ({
 }));
 
 vi.mock("../../src/lib/project-detection.js", () => ({
-  detectProjectType: vi.fn().mockReturnValue(null),
+  detectProjectType: vi.fn().mockReturnValue({ languages: [], frameworks: [] }),
   generateRulesFromTemplates: vi.fn().mockReturnValue(null),
   formatProjectTypeForDisplay: vi.fn().mockReturnValue(""),
 }));
@@ -168,12 +173,26 @@ vi.mock("node:child_process", async (importOriginal) => {
   };
 });
 
+// Mock node:process so that `import { cwd } from "node:process"` in start.ts
+// can be intercepted per-test via mockProcessCwd.
+vi.mock("node:process", async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const actual = await importOriginal<typeof import("node:process")>();
+  return {
+    ...actual,
+    cwd: () => {
+      const override = mockProcessCwd();
+      return override ?? actual.cwd();
+    },
+  };
+});
+
 // ---------------------------------------------------------------------------
 // Setup
 // ---------------------------------------------------------------------------
 
 import { Command } from "commander";
-import { registerStart, registerStop } from "../../src/commands/start.js";
+import { registerStart, registerStop, createConfigOnly } from "../../src/commands/start.js";
 
 let tmpDir: string;
 let program: Command;
@@ -233,6 +252,7 @@ beforeEach(() => {
     probe: { reachable: false, error: "not running" },
   });
   mockSpawn.mockClear();
+  mockProcessCwd.mockReset();
 });
 
 afterEach(() => {
@@ -1011,5 +1031,50 @@ describe("stop command", () => {
     expect(mockSessionManager.kill).toHaveBeenCalledWith("app-orchestrator", {
       purgeOpenCode: true,
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// autoCreateConfig — config generation defaults
+// ---------------------------------------------------------------------------
+
+describe("start command — autoCreateConfig", () => {
+  it("generates config with empty notifiers array (no desktop notifier added by default)", async () => {
+    const { detectEnvironment } = await import("../../src/lib/detect-env.js");
+    vi.mocked(detectEnvironment).mockResolvedValue({
+      isGitRepo: false,
+      gitRemote: null,
+      ownerRepo: null,
+      currentBranch: null,
+      defaultBranch: null,
+      hasTmux: true,
+      hasGh: false,
+      ghAuthed: false,
+      hasLinearKey: false,
+      hasSlackWebhook: false,
+    });
+
+    const { detectProjectType } = await import("../../src/lib/project-detection.js");
+    vi.mocked(detectProjectType).mockReturnValue({ languages: [], frameworks: [] });
+
+    const { detectAvailableAgents, detectAgentRuntime } = await import("../../src/lib/detect-agent.js");
+    vi.mocked(detectAvailableAgents).mockResolvedValue([]);
+    vi.mocked(detectAgentRuntime).mockResolvedValue("claude-code");
+
+    const { findFreePort } = await import("../../src/lib/web-dir.js");
+    vi.mocked(findFreePort).mockResolvedValue(3000);
+
+    // start.ts uses `import { cwd } from "node:process"` which is intercepted
+    // by the node:process mock defined at the top of this file.
+    mockProcessCwd.mockReturnValue(tmpDir);
+
+    await createConfigOnly();
+
+    const configPath = join(tmpDir, "agent-orchestrator.yaml");
+    expect(existsSync(configPath)).toBe(true);
+
+    const content = readFileSync(configPath, "utf-8");
+    const parsed = parseYaml(content) as { defaults?: { notifiers?: unknown[] } };
+    expect(parsed.defaults?.notifiers).toEqual([]);
   });
 });
