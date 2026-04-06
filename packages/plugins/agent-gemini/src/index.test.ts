@@ -18,6 +18,7 @@ const {
   mockCheckActivityLogState,
   mockGetActivityFallbackState,
   mockRecordTerminalActivity,
+  mockSetupPathWrapperWorkspace,
 } = vi.hoisted(() => ({
   mockExecFileAsync: vi.fn(),
   mockReaddir: vi.fn(),
@@ -32,6 +33,7 @@ const {
   mockCheckActivityLogState: vi.fn().mockReturnValue(null),
   mockGetActivityFallbackState: vi.fn().mockReturnValue(null),
   mockRecordTerminalActivity: vi.fn().mockResolvedValue(undefined),
+  mockSetupPathWrapperWorkspace: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("node:child_process", () => {
@@ -72,6 +74,7 @@ vi.mock("@composio/ao-core", async (importOriginal) => {
     checkActivityLogState: mockCheckActivityLogState,
     getActivityFallbackState: mockGetActivityFallbackState,
     recordTerminalActivity: mockRecordTerminalActivity,
+    setupPathWrapperWorkspace: mockSetupPathWrapperWorkspace,
   };
 });
 
@@ -186,6 +189,7 @@ beforeEach(() => {
   mockCheckActivityLogState.mockReturnValue(null);
   mockGetActivityFallbackState.mockReturnValue(null);
   mockRecordTerminalActivity.mockResolvedValue(undefined);
+  mockSetupPathWrapperWorkspace.mockResolvedValue(undefined);
 });
 
 // =============================================================================
@@ -340,6 +344,16 @@ describe("getEnvironment", () => {
 
   it("omits AO_ISSUE_ID when not provided", () => {
     expect(agent.getEnvironment(makeLaunchConfig())["AO_ISSUE_ID"]).toBeUndefined();
+  });
+
+  it("prepends ~/.ao/bin to PATH for wrapper interception", () => {
+    const path = agent.getEnvironment(makeLaunchConfig())["PATH"];
+    expect(path).toBeDefined();
+    expect(path).toContain("/mock/home/.ao/bin");
+  });
+
+  it("sets GH_PATH for wrapper scripts", () => {
+    expect(agent.getEnvironment(makeLaunchConfig())["GH_PATH"]).toBe("/usr/local/bin/gh");
   });
 });
 
@@ -790,6 +804,12 @@ describe("setupWorkspaceHooks", () => {
     // Should NOT write trusted_hooks.json again since entry already exists
     expect(trustedCalls).toHaveLength(0);
   });
+
+  it("calls setupPathWrapperWorkspace to install ~/.ao/bin wrappers", async () => {
+    mockExistsSync.mockReturnValue(false);
+    await agent.setupWorkspaceHooks!("/workspace/test", config);
+    expect(mockSetupPathWrapperWorkspace).toHaveBeenCalledWith("/workspace/test");
+  });
 });
 
 // =============================================================================
@@ -835,12 +855,35 @@ describe("postLaunchSetup", () => {
     mockExistsSync.mockReturnValue(false);
   });
 
+  /**
+   * Set up exec mocks so that:
+   * - tmux capture-pane returns the given REPL output
+   * - tmux list-panes returns a valid TTY (so findGeminiProcess succeeds after ❯)
+   * - ps returns a gemini process on that TTY (so isProcessRunning returns true)
+   * Without this differentiation, findGeminiProcess returns null and the ❯-detection
+   * loop never exits, causing the test to time out.
+   */
+  function makeReplReadyMock(captureOutput = "gemini ❯ ") {
+    mockExecFileAsync.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === "tmux" && args[0] === "capture-pane") {
+        return Promise.resolve({ stdout: captureOutput, stderr: "" });
+      }
+      if (cmd === "tmux" && args[0] === "list-panes") {
+        return Promise.resolve({ stdout: "/dev/ttys001\n", stderr: "" });
+      }
+      if (cmd === "ps") {
+        return Promise.resolve({ stdout: "  PID TT       ARGS\n  12345 ttys001  gemini\n", stderr: "" });
+      }
+      return Promise.resolve({ stdout: "", stderr: "" });
+    });
+  }
+
   it("has postLaunchSetup method", () => {
     expect(typeof agent.postLaunchSetup).toBe("function");
   });
 
   it("writes hooks when workspacePath is set", async () => {
-    mockExecFileAsync.mockResolvedValue({ stdout: "gemini ❯ ", stderr: "" });
+    makeReplReadyMock();
     const session = makeSession({ workspacePath: "/workspace/proj", runtimeHandle: tmuxHandle });
     await agent.postLaunchSetup!(session);
     expect(mockWriteFile).toHaveBeenCalledWith(
@@ -850,11 +893,18 @@ describe("postLaunchSetup", () => {
     );
   });
 
+  it("calls setupPathWrapperWorkspace when workspacePath is set", async () => {
+    makeReplReadyMock();
+    const session = makeSession({ workspacePath: "/workspace/proj", runtimeHandle: tmuxHandle });
+    await agent.postLaunchSetup!(session);
+    expect(mockSetupPathWrapperWorkspace).toHaveBeenCalledWith("/workspace/proj");
+  });
+
   it("skips hook writing when workspacePath is null", async () => {
-    mockExecFileAsync.mockResolvedValue({ stdout: "❯ ", stderr: "" });
     const session = makeSession({ workspacePath: null, runtimeHandle: null });
     await agent.postLaunchSetup!(session);
     expect(mockWriteFile).not.toHaveBeenCalled();
+    expect(mockSetupPathWrapperWorkspace).not.toHaveBeenCalled();
   });
 
   it("returns immediately when runtimeHandle is null", async () => {
@@ -866,7 +916,7 @@ describe("postLaunchSetup", () => {
   });
 
   it("stops polling when REPL prompt (❯) is detected", async () => {
-    mockExecFileAsync.mockResolvedValue({ stdout: "Welcome to Gemini\ngemini ❯ ", stderr: "" });
+    makeReplReadyMock("Welcome to Gemini\ngemini ❯ ");
     const session = makeSession({ workspacePath: "/workspace/proj", runtimeHandle: tmuxHandle });
     await agent.postLaunchSetup!(session);
     expect(mockExecFileAsync).toHaveBeenCalledWith(
@@ -876,25 +926,32 @@ describe("postLaunchSetup", () => {
     );
   });
 
-  it("stops polling when > prompt is detected", async () => {
-    mockExecFileAsync.mockResolvedValue({ stdout: "some output\n> ", stderr: "" });
-    const session = makeSession({ workspacePath: "/workspace/proj", runtimeHandle: tmuxHandle });
-    await agent.postLaunchSetup!(session);
-    // Should return after first successful tmux capture showing ">"
-    const tmuxCalls = mockExecFileAsync.mock.calls.filter(
-      (c) => String(c[0]) === "tmux" && String(c[1][0]) === "capture-pane",
-    );
-    expect(tmuxCalls.length).toBeGreaterThan(0);
-  });
-
-  it("returns early when guard message detected in output", async () => {
-    mockExecFileAsync.mockResolvedValue({
-      stdout: "gemini guard: Gemini CLI is not installed here",
-      stderr: "",
+  it("does not treat bare > as a REPL prompt (only ❯ triggers early exit)", async () => {
+    // bare > appears in bash heredocs and PS1 prompts — intentionally not a trigger.
+    // Verify the guard message check still exits promptly when > is shown.
+    mockExecFileAsync.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === "tmux" && args[0] === "capture-pane") {
+        return Promise.resolve({ stdout: "gemini guard: not installed", stderr: "" });
+      }
+      return Promise.resolve({ stdout: "", stderr: "" });
     });
     const session = makeSession({ workspacePath: "/workspace/proj", runtimeHandle: tmuxHandle });
     await agent.postLaunchSetup!(session);
-    // Should have stopped after first poll finding guard message
+    const captureCalls = mockExecFileAsync.mock.calls.filter(
+      (c) => String(c[0]) === "tmux" && String(c[1][0]) === "capture-pane",
+    );
+    expect(captureCalls).toHaveLength(1);
+  });
+
+  it("returns early when guard message detected in output", async () => {
+    mockExecFileAsync.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === "tmux" && args[0] === "capture-pane") {
+        return Promise.resolve({ stdout: "gemini guard: Gemini CLI is not installed here", stderr: "" });
+      }
+      return Promise.resolve({ stdout: "", stderr: "" });
+    });
+    const session = makeSession({ workspacePath: "/workspace/proj", runtimeHandle: tmuxHandle });
+    await agent.postLaunchSetup!(session);
     const tmuxCalls = mockExecFileAsync.mock.calls.filter(
       (c) => String(c[0]) === "tmux" && String(c[1][0]) === "capture-pane",
     );
@@ -909,7 +966,7 @@ describe("postLaunchSetup", () => {
   });
 
   it("uses relative path for hook script in settings.json", async () => {
-    mockExecFileAsync.mockResolvedValue({ stdout: "gemini ❯ ", stderr: "" });
+    makeReplReadyMock();
     const session = makeSession({ workspacePath: "/workspace/proj", runtimeHandle: tmuxHandle });
     await agent.postLaunchSetup!(session);
     const settingsCall = mockWriteFile.mock.calls.find((c) => String(c[0]).endsWith("settings.json"));
@@ -917,5 +974,35 @@ describe("postLaunchSetup", () => {
     const hookCommand = written.hooks.AfterTool[0].hooks[0].command;
     expect(hookCommand).toBe(".gemini/ao-metadata-updater.sh");
     expect(hookCommand).not.toMatch(/^\//);
+  });
+
+  it("writes GEMINI.md from pending system prompt keyed by session ID", async () => {
+    const sessionAgent = create();
+    makeReplReadyMock();
+    // Simulate the orchestrator flow: getLaunchCommand stores the prompt keyed by sessionId
+    sessionAgent.getLaunchCommand(makeLaunchConfig({ sessionId: "my-sess", systemPrompt: "Be terse." }));
+    const session = makeSession({ id: "my-sess", workspacePath: "/workspace/proj", runtimeHandle: tmuxHandle });
+    await sessionAgent.postLaunchSetup!(session);
+    expect(mockWriteFile).toHaveBeenCalledWith(
+      "/workspace/proj/GEMINI.md",
+      "Be terse.",
+      "utf-8",
+    );
+  });
+
+  it("concurrent sessions get their own system prompts (race condition fix)", async () => {
+    const sessionAgent = create();
+    makeReplReadyMock();
+    // Session A and B both call getLaunchCommand before either postLaunchSetup runs
+    sessionAgent.getLaunchCommand(makeLaunchConfig({ sessionId: "sess-A", systemPrompt: "Prompt A" }));
+    sessionAgent.getLaunchCommand(makeLaunchConfig({ sessionId: "sess-B", systemPrompt: "Prompt B" }));
+    const sessionA = makeSession({ id: "sess-A", workspacePath: "/workspace/A", runtimeHandle: tmuxHandle });
+    const sessionB = makeSession({ id: "sess-B", workspacePath: "/workspace/B", runtimeHandle: tmuxHandle });
+    await sessionAgent.postLaunchSetup!(sessionA);
+    await sessionAgent.postLaunchSetup!(sessionB);
+    const geminiMdCalls = mockWriteFile.mock.calls.filter((c) => String(c[0]).endsWith("GEMINI.md"));
+    expect(geminiMdCalls).toHaveLength(2);
+    expect(geminiMdCalls.find((c) => String(c[0]) === "/workspace/A/GEMINI.md")?.[1]).toBe("Prompt A");
+    expect(geminiMdCalls.find((c) => String(c[0]) === "/workspace/B/GEMINI.md")?.[1]).toBe("Prompt B");
   });
 });

@@ -7,6 +7,9 @@ import {
   checkActivityLogState,
   getActivityFallbackState,
   recordTerminalActivity,
+  buildAgentPath,
+  setupPathWrapperWorkspace,
+  PREFERRED_GH_PATH,
   type Agent,
   type AgentSessionInfo,
   type AgentLaunchConfig,
@@ -21,7 +24,7 @@ import {
 } from "@composio/ao-core";
 import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { readdir, readFile, stat, writeFile, mkdir, chmod } from "node:fs/promises";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -51,7 +54,7 @@ export const METADATA_UPDATER_SCRIPT = `#!/usr/bin/env bash
 
 set -euo pipefail
 
-AO_DATA_DIR="\${AO_DATA_DIR:-\$HOME/.ao-sessions}"
+AO_DATA_DIR="\${AO_DATA_DIR:-}"
 
 input=\$(cat)
 
@@ -604,12 +607,14 @@ function createGeminiAgent(): Agent {
   const resolvedBinary: string = resolveGeminiBinarySync();
 
   /**
-   * System prompt stored from getLaunchCommand so postLaunchSetup can write
-   * it to GEMINI.md before the REPL is ready. Gemini CLI has no --system-prompt
-   * flag — GEMINI.md is the correct way to inject system context.
+   * System prompts keyed by sessionId — stored from getLaunchCommand so
+   * postLaunchSetup can write GEMINI.md before the REPL is ready.
+   * Using a Map (instead of bare closure vars) prevents concurrent sessions
+   * from corrupting each other's pending prompts when the plugin instance is
+   * shared across sessions by the registry.
+   * Gemini CLI has no --system-prompt flag — GEMINI.md is the correct way.
    */
-  let pendingSystemPromptFile: string | null = null;
-  let pendingSystemPrompt: string | null = null;
+  const pendingPrompts = new Map<string, { file: string | null; prompt: string | null }>();
 
   return {
     name: "gemini",
@@ -638,8 +643,10 @@ function createGeminiAgent(): Agent {
 
       // Gemini CLI has no --system-prompt flag. Store for postLaunchSetup,
       // which writes the content to GEMINI.md (Gemini's system context file).
-      pendingSystemPromptFile = config.systemPromptFile ?? null;
-      pendingSystemPrompt = config.systemPrompt ?? null;
+      pendingPrompts.set(config.sessionId, {
+        file: config.systemPromptFile ?? null,
+        prompt: config.systemPrompt ?? null,
+      });
 
       // NOTE: prompt is NOT embedded here — AO sends it post-launch via
       // runtime.sendMessage() so Gemini stays in interactive REPL mode.
@@ -653,6 +660,10 @@ function createGeminiAgent(): Agent {
       if (config.issueId) {
         env["AO_ISSUE_ID"] = config.issueId;
       }
+      // Prepend ~/.ao/bin so the AO gh/git wrappers intercept commands and
+      // update session metadata (PR URLs, branch, status → dashboard).
+      env["PATH"] = buildAgentPath(process.env["PATH"]);
+      env["GH_PATH"] = PREFERRED_GH_PATH;
       return env;
     },
 
@@ -764,6 +775,7 @@ function createGeminiAgent(): Agent {
 
     async setupWorkspaceHooks(workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {
       await writeGeminiHooks(workspacePath);
+      await setupPathWrapperWorkspace(workspacePath);
     },
 
     async postLaunchSetup(session: Session): Promise<void> {
@@ -771,16 +783,21 @@ function createGeminiAgent(): Agent {
       //    yet for this worktree — mirrors what claude-code does).
       if (session.workspacePath) {
         await writeGeminiHooks(session.workspacePath);
+        await setupPathWrapperWorkspace(session.workspacePath);
       }
 
       // 2. Write system prompt to GEMINI.md if one was provided.
       //    Gemini CLI reads GEMINI.md from the project root as system context.
       //    --system-prompt is NOT a valid flag in Gemini CLI.
-      if (session.workspacePath && (pendingSystemPromptFile || pendingSystemPrompt)) {
+      //    Retrieve and remove from the Map atomically so concurrent sessions
+      //    never read each other's pending prompts.
+      const pending = pendingPrompts.get(session.id);
+      pendingPrompts.delete(session.id);
+      if (session.workspacePath && (pending?.file || pending?.prompt)) {
         try {
-          let content = pendingSystemPrompt ?? "";
-          if (pendingSystemPromptFile) {
-            content = readFileSync(pendingSystemPromptFile, "utf-8");
+          let content = pending.prompt ?? "";
+          if (pending.file) {
+            content = await readFile(pending.file, "utf-8");
           }
           if (content.trim()) {
             await writeFile(join(session.workspacePath, "GEMINI.md"), content, "utf-8");
@@ -788,8 +805,6 @@ function createGeminiAgent(): Agent {
         } catch {
           // Non-fatal — Gemini will just start without system context
         }
-        pendingSystemPromptFile = null;
-        pendingSystemPrompt = null;
       }
 
       // 2. Wait for Gemini's REPL prompt (❯) to appear so the session manager's
