@@ -550,6 +550,47 @@ describe("API Routes", () => {
       expect(res.headers.get("x-correlation-id")).toBeTruthy();
     });
 
+    it("passes a freeform prompt through to session creation", async () => {
+      const req = makeRequest("/api/spawn", {
+        method: "POST",
+        body: JSON.stringify({
+          projectId: "my-app",
+          issueId: "123",
+          prompt: "Update the login page button copy and spacing.",
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const res = await spawnPOST(req);
+
+      expect(res.status).toBe(201);
+      expect(mockSessionManager.spawn).toHaveBeenCalledWith({
+        projectId: "my-app",
+        issueId: "123",
+        prompt: "Update the login page button copy and spacing.",
+      });
+    });
+
+    it("strips control characters from prompt before spawning", async () => {
+      const req = makeRequest("/api/spawn", {
+        method: "POST",
+        body: JSON.stringify({
+          projectId: "my-app",
+          prompt: "Fix navbar\u0007 layout",
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const res = await spawnPOST(req);
+
+      expect(res.status).toBe(201);
+      expect(mockSessionManager.spawn).toHaveBeenCalledWith({
+        projectId: "my-app",
+        issueId: undefined,
+        prompt: "Fix navbar layout",
+      });
+    });
+
     it("returns 400 when projectId is missing", async () => {
       const req = makeRequest("/api/spawn", {
         method: "POST",
@@ -560,6 +601,21 @@ describe("API Routes", () => {
       expect(res.status).toBe(400);
       const data = await res.json();
       expect(data.error).toMatch(/projectId/);
+    });
+
+    it("returns 400 when prompt is empty after sanitization", async () => {
+      const req = makeRequest("/api/spawn", {
+        method: "POST",
+        body: JSON.stringify({ projectId: "my-app", prompt: "\u0007\u0008" }),
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const res = await spawnPOST(req);
+
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toMatch(/prompt must not be empty after sanitization/i);
+      expect(mockSessionManager.spawn).not.toHaveBeenCalled();
     });
 
     it("returns 404 when projectId does not exist in config", async () => {

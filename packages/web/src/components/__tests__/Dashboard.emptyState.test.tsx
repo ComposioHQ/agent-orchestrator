@@ -29,6 +29,21 @@ describe("Dashboard empty state", () => {
     expect(screen.getByText(/No sessions running/i)).toBeInTheDocument();
   });
 
+  it("shows the task composer for a configured single-project dashboard with no sessions", () => {
+    render(
+      <Dashboard
+        initialSessions={[]}
+        projectId="my-app"
+        projectName="My App"
+        projects={[{ id: "my-app", name: "My App" }]}
+      />,
+    );
+
+    expect(screen.getByText("Start a task for My App")).toBeInTheDocument();
+    expect(screen.getByLabelText("Task brief for My App")).toBeInTheDocument();
+    expect(screen.queryByText(/No sessions running/i)).not.toBeInTheDocument();
+  });
+
   it("does not show empty state when sessions exist", () => {
     const { queryByText } = render(
       <Dashboard

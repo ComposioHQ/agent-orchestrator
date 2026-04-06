@@ -3,14 +3,17 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Dashboard } from "@/components/Dashboard";
 import { makeSession } from "@/__tests__/helpers";
 
+const pushMock = vi.fn();
+
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+  useRouter: () => ({ push: pushMock, replace: vi.fn(), refresh: vi.fn() }),
   usePathname: () => "/",
   useSearchParams: () => new URLSearchParams(),
 }));
 
 describe("Dashboard project overview cards", () => {
   beforeEach(() => {
+    pushMock.mockReset();
     global.EventSource = vi.fn(
       () =>
         ({
@@ -163,5 +166,50 @@ describe("Dashboard project overview cards", () => {
       expect(screen.getByText("Project is paused")).toBeInTheDocument();
     });
     expect(screen.getAllByRole("button", { name: "Spawn Orchestrator" })).toHaveLength(2);
+  });
+
+  it("creates a freeform task from a project overview card", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        session: {
+          id: "docs-9",
+          projectId: "docs-app",
+        },
+      }),
+    } as Response);
+
+    render(
+      <Dashboard
+        initialSessions={[makeSession({ projectId: "my-app" })]}
+        projects={[
+          { id: "my-app", name: "My App" },
+          { id: "docs-app", name: "Docs App" },
+        ]}
+        orchestrators={[]}
+      />,
+    );
+
+    fireEvent.click(screen.getAllByRole("button", { name: "New Task" })[1]);
+    fireEvent.change(screen.getByLabelText("Task brief for Docs App"), {
+      target: { value: "Fix the docs sidebar spacing on mobile." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start Task" }));
+
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith("/api/spawn", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: "docs-app",
+          issueId: undefined,
+          prompt: "Fix the docs sidebar spacing on mobile.",
+        }),
+      });
+    });
+
+    await waitFor(() => {
+      expect(pushMock).toHaveBeenCalledWith("/sessions/docs-9");
+    });
   });
 });

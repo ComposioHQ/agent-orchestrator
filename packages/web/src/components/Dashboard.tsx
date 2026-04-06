@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
 import {
   type DashboardSession,
@@ -50,6 +50,11 @@ type MobileAttentionLevel = (typeof MOBILE_KANBAN_ORDER)[number];
 type MobileFilterValue = (typeof MOBILE_FILTERS)[number]["value"];
 const EMPTY_ORCHESTRATORS: DashboardOrchestratorLink[] = [];
 
+interface TaskComposerPayload {
+  issueId?: string;
+  prompt: string;
+}
+
 function mergeOrchestrators(
   current: DashboardOrchestratorLink[],
   incoming: DashboardOrchestratorLink[],
@@ -71,6 +76,7 @@ function DashboardInner({
   initialGlobalPause = null,
   orchestrators,
 }: DashboardProps) {
+  const router = useRouter();
   const orchestratorLinks = orchestrators ?? EMPTY_ORCHESTRATORS;
   const initialAttentionLevels = useMemo(() => {
     const levels: Record<string, AttentionLevel> = {};
@@ -93,6 +99,9 @@ function DashboardInner({
     useState<DashboardOrchestratorLink[]>(orchestratorLinks);
   const [spawningProjectIds, setSpawningProjectIds] = useState<string[]>([]);
   const [spawnErrors, setSpawnErrors] = useState<Record<string, string>>({});
+  const [taskComposerProjectId, setTaskComposerProjectId] = useState<string | null>(null);
+  const [creatingTaskProjectIds, setCreatingTaskProjectIds] = useState<string[]>([]);
+  const [taskErrors, setTaskErrors] = useState<Record<string, string>>({});
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
@@ -117,6 +126,15 @@ function DashboardInner({
         : null,
     [activeOrchestrators, projectId],
   );
+  const currentProjectInfo = useMemo(() => {
+    if (!projectId) return null;
+    return (
+      projects.find((project) => project.id === projectId) ?? {
+        id: projectId,
+        name: projectName ?? projectId,
+      }
+    );
+  }, [projectId, projectName, projects]);
   const dashboardHref = getProjectScopedHref("/", projectId);
   const prsHref = getProjectScopedHref("/prs", projectId);
   const orchestratorHref = currentProjectOrchestrator
@@ -459,9 +477,74 @@ function DashboardInner({
     }
   };
 
+  const handleToggleTaskComposer = useCallback((nextProjectId: string) => {
+    setTaskComposerProjectId((current) => (current === nextProjectId ? null : nextProjectId));
+    setTaskErrors(({ [nextProjectId]: _ignored, ...current }) => current);
+  }, []);
+
+  const handleClearTaskError = useCallback((nextProjectId: string) => {
+    setTaskErrors(({ [nextProjectId]: _ignored, ...current }) => current);
+  }, []);
+
+  const handleCreateTask = useCallback(
+    async (project: ProjectInfo, payload: TaskComposerPayload) => {
+      const trimmedPrompt = payload.prompt.trim();
+      const trimmedIssueId = payload.issueId?.trim() ?? "";
+
+      if (!trimmedPrompt) {
+        setTaskErrors((current) => ({
+          ...current,
+          [project.id]: "Task brief is required.",
+        }));
+        return;
+      }
+
+      setCreatingTaskProjectIds((current) =>
+        current.includes(project.id) ? current : [...current, project.id],
+      );
+      setTaskErrors(({ [project.id]: _ignored, ...current }) => current);
+
+      try {
+        const res = await fetch("/api/spawn", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            projectId: project.id,
+            issueId: trimmedIssueId || undefined,
+            prompt: trimmedPrompt,
+          }),
+        });
+
+        const data = (await res.json().catch(() => null)) as
+          | { session?: DashboardSession; error?: string }
+          | null;
+
+        if (!res.ok || !data?.session) {
+          throw new Error(data?.error ?? `Failed to create task for ${project.name}`);
+        }
+
+        showToast(`Created ${data.session.id}`, "success");
+        router.push(`/sessions/${encodeURIComponent(data.session.id)}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to create task";
+        setTaskErrors((current) => ({ ...current, [project.id]: message }));
+        showToast(message, "error");
+      } finally {
+        setCreatingTaskProjectIds((current) => current.filter((id) => id !== project.id));
+      }
+    },
+    [router, showToast],
+  );
+
   const hasAnySessions = KANBAN_LEVELS.some(
     (level) => grouped[level].length > 0,
   );
+
+  useEffect(() => {
+    if (!allProjectsView && projectId && !hasAnySessions) {
+      setTaskComposerProjectId(projectId);
+    }
+  }, [allProjectsView, hasAnySessions, projectId]);
 
   const anyRateLimited = useMemo(
     () => sessions.some((session) => session.pr && isPRRateLimited(session.pr)),
@@ -547,6 +630,25 @@ function DashboardInner({
 
             <div className="dashboard-hero__meta">
               <div className="flex items-center gap-3">
+                {!allProjectsView && currentProjectInfo ? (
+                  <button
+                    type="button"
+                    onClick={() => handleToggleTaskComposer(currentProjectInfo.id)}
+                    className="orchestrator-btn flex items-center gap-2 px-4 py-2 text-[12px] font-semibold"
+                  >
+                    <svg
+                      className="h-3.5 w-3.5 opacity-75"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                    >
+                      <path d="M12 5v14M5 12h14" />
+                    </svg>
+                    {taskComposerProjectId === currentProjectInfo.id ? "Hide Task Form" : "New Task"}
+                  </button>
+                ) : null}
                 {showDesktopPrsLink ? (
                   <a
                     href={prsHref}
@@ -679,8 +781,32 @@ function DashboardInner({
             onSpawnOrchestrator={handleSpawnOrchestrator}
             spawningProjectIds={spawningProjectIds}
             spawnErrors={spawnErrors}
+            taskComposerProjectId={taskComposerProjectId}
+            creatingTaskProjectIds={creatingTaskProjectIds}
+            taskErrors={taskErrors}
+            onToggleTaskComposer={handleToggleTaskComposer}
+            onCreateTask={handleCreateTask}
+            onClearTaskError={handleClearTaskError}
           />
         )}
+
+        {!allProjectsView && currentProjectInfo && (!hasAnySessions || taskComposerProjectId === currentProjectInfo.id) ? (
+          <TaskComposerPanel
+            project={currentProjectInfo}
+            submitting={creatingTaskProjectIds.includes(currentProjectInfo.id)}
+            error={taskErrors[currentProjectInfo.id] ?? null}
+            onSubmit={handleCreateTask}
+            onDismiss={
+              hasAnySessions
+                ? () => setTaskComposerProjectId((current) => (current === currentProjectInfo.id ? null : current))
+                : undefined
+            }
+            onClearError={() => handleClearTaskError(currentProjectInfo.id)}
+            className="mb-6"
+            prominent={!hasAnySessions}
+            autoFocus={!hasAnySessions}
+          />
+        ) : null}
 
         {!allProjectsView && hasAnySessions && (
           <div className="kanban-board-wrap">
@@ -735,7 +861,7 @@ function DashboardInner({
           </div>
         )}
 
-        {!allProjectsView && !hasAnySessions && <EmptyState />}
+        {!allProjectsView && !hasAnySessions && !currentProjectInfo && <EmptyState />}
 
       </div>
     </div>
@@ -843,11 +969,137 @@ function OrchestratorControl({ orchestrators }: { orchestrators: DashboardOrches
   );
 }
 
+function TaskComposerPanel({
+  project,
+  submitting,
+  error,
+  onSubmit,
+  onDismiss,
+  onClearError,
+  className,
+  prominent = false,
+  autoFocus = false,
+}: {
+  project: ProjectInfo;
+  submitting: boolean;
+  error: string | null;
+  onSubmit: (project: ProjectInfo, payload: TaskComposerPayload) => Promise<void>;
+  onDismiss?: () => void;
+  onClearError?: () => void;
+  className?: string;
+  prominent?: boolean;
+  autoFocus?: boolean;
+}) {
+  const [issueId, setIssueId] = useState("");
+  const [prompt, setPrompt] = useState("");
+
+  const handleSubmit = async () => {
+    await onSubmit(project, {
+      issueId: issueId.trim() || undefined,
+      prompt,
+    });
+  };
+
+  return (
+    <section
+      className={`border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] p-4 ${className ?? ""}`}
+      style={prominent ? { boxShadow: "0 12px 30px rgba(0, 0, 0, 0.08)" } : undefined}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-[14px] font-semibold text-[var(--color-text-primary)]">
+            Start a task for {project.name}
+          </h2>
+          <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+            Describe the code change, target area, and done condition. Use Ctrl+Enter to start.
+          </p>
+        </div>
+        {onDismiss ? (
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="text-[11px] font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+          >
+            Close
+          </button>
+        ) : null}
+      </div>
+
+      <div className="mt-4 grid gap-3">
+        <label className="grid gap-1.5">
+          <span className="text-[11px] font-medium text-[var(--color-text-secondary)]">
+            Issue / task key (optional)
+          </span>
+          <input
+            type="text"
+            value={issueId}
+            onChange={(event) => {
+              if (error) onClearError?.();
+              setIssueId(event.target.value);
+            }}
+            placeholder="123 or INT-42"
+            aria-label={`Issue key for ${project.name}`}
+            className="border border-[var(--color-border-default)] bg-[var(--color-bg-base)] px-3 py-2 text-[12px] text-[var(--color-text-primary)] outline-none transition-colors focus:border-[var(--color-accent)]"
+          />
+        </label>
+
+        <label className="grid gap-1.5">
+          <span className="text-[11px] font-medium text-[var(--color-text-secondary)]">
+            Task brief
+          </span>
+          <textarea
+            value={prompt}
+            onChange={(event) => {
+              if (error) onClearError?.();
+              setPrompt(event.target.value);
+            }}
+            onKeyDown={(event) => {
+              if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+                event.preventDefault();
+                void handleSubmit();
+              }
+            }}
+            placeholder={"Goal:\nWhere:\nDone when:"}
+            aria-label={`Task brief for ${project.name}`}
+            rows={prominent ? 7 : 5}
+            autoFocus={autoFocus}
+            className="resize-y border border-[var(--color-border-default)] bg-[var(--color-bg-base)] px-3 py-2 text-[12px] leading-5 text-[var(--color-text-primary)] outline-none transition-colors focus:border-[var(--color-accent)]"
+          />
+        </label>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+        {error ? (
+          <p className="text-[11px] text-[var(--color-status-error)]">{error}</p>
+        ) : (
+          <p className="text-[11px] text-[var(--color-text-muted)]">
+            This creates a worker session directly from the dashboard.
+          </p>
+        )}
+        <button
+          type="button"
+          onClick={() => void handleSubmit()}
+          disabled={submitting}
+          className="orchestrator-btn px-3 py-1.5 text-[11px] font-semibold disabled:cursor-wait disabled:opacity-70"
+        >
+          {submitting ? "Starting..." : "Start Task"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function ProjectOverviewGrid({
   overviews,
   onSpawnOrchestrator,
   spawningProjectIds,
   spawnErrors,
+  taskComposerProjectId,
+  creatingTaskProjectIds,
+  taskErrors,
+  onToggleTaskComposer,
+  onCreateTask,
+  onClearTaskError,
 }: {
   overviews: Array<{
     project: ProjectInfo;
@@ -859,6 +1111,12 @@ function ProjectOverviewGrid({
   onSpawnOrchestrator: (project: ProjectInfo) => Promise<void>;
   spawningProjectIds: string[];
   spawnErrors: Record<string, string>;
+  taskComposerProjectId: string | null;
+  creatingTaskProjectIds: string[];
+  taskErrors: Record<string, string>;
+  onToggleTaskComposer: (projectId: string) => void;
+  onCreateTask: (project: ProjectInfo, payload: TaskComposerPayload) => Promise<void>;
+  onClearTaskError: (projectId: string) => void;
 }) {
   return (
     <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -903,6 +1161,32 @@ function ProjectOverviewGrid({
               value={counts.working}
               tone="var(--color-status-working)"
             />
+          </div>
+
+          <div className="mb-4 border-t border-[var(--color-border-subtle)] pt-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-[11px] text-[var(--color-text-muted)]">
+                Start a freeform coding task without leaving the dashboard
+              </div>
+              <button
+                type="button"
+                onClick={() => onToggleTaskComposer(project.id)}
+                className="border border-[var(--color-border-default)] px-3 py-1.5 text-[11px] font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]"
+              >
+                {taskComposerProjectId === project.id ? "Hide Task Form" : "New Task"}
+              </button>
+            </div>
+            {taskComposerProjectId === project.id ? (
+              <TaskComposerPanel
+                project={project}
+                submitting={creatingTaskProjectIds.includes(project.id)}
+                error={taskErrors[project.id] ?? null}
+                onSubmit={onCreateTask}
+                onDismiss={() => onToggleTaskComposer(project.id)}
+                onClearError={() => onClearTaskError(project.id)}
+                className="mt-3"
+              />
+            ) : null}
           </div>
 
           <div className="border-t border-[var(--color-border-subtle)] pt-3">
