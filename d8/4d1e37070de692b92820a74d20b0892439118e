@@ -1,0 +1,52 @@
+packages/web/src/components/Dashboard.tsx
+  1c70601610fd2184 644-646,877-881,926,934-936,960,970,973,996,1002,1009,1018,1033
+packages/web/src/components/SessionCard.tsx
+  1c70601610fd2184 235
+  159cabfe9c834070 592-647
+packages/web/src/components/AttentionZone.tsx
+  1c70601610fd2184 123,175,251
+packages/web/src/app/layout.tsx
+  1c70601610fd2184 26-27
+packages/web/src/app/manifest.ts
+  1c70601610fd2184 12-13
+packages/web/src/app/globals.css
+  159cabfe9c834070 1360
+  1c70601610fd2184 30,33-34,41-44,50-54,57-60,64-65,67-69,73,75,78-79,82,84,86,91,94,108,110-111,115,118-119,121-122,127-133,145,149-151,154-156,168-190,194-195,197-199,203,205,208-209,212,214,216,221,224,231-233,236,238-240,243-244,246-249,252-253,255-256,261-267,270,274-276,279,282-285,288-291,303,356,359-360,364-365,369-370,372,375-376,380-381,385,600,663,783-865,880,889,910,978,1077,1580,1827,1958,2035,2081,2541-2550,2994-3005,3231,3298,3473
+packages/web/src/components/ProjectSidebar.tsx
+  1c70601610fd2184 57,60,69,72,193,243,249
+packages/web/src/components/ActivityDot.tsx
+  1c70601610fd2184 5-11,22-23,29-31,38-39,42-43,45-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "d84d1e37070de692b92820a74d20b0892439118e",
+  "prompts": {
+    "159cabfe9c834070": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c04e824e-bfc8-4fbb-b3bf-268d38afd8aa",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 57,
+      "total_deletions": 57,
+      "accepted_lines": 57,
+      "overriden_lines": 0
+    },
+    "1c70601610fd2184": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "44fdbbc2-107f-4408-843e-0be64720d760",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 319,
+      "total_deletions": 281,
+      "accepted_lines": 313,
+      "overriden_lines": 0
+    }
+  }
+}
