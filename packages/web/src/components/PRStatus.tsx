@@ -1,6 +1,6 @@
 "use client";
 
-import { type DashboardPR, isPRRateLimited } from "@/lib/types";
+import { type DashboardPR, isPRRateLimited, isPRUnenriched } from "@/lib/types";
 import { CIBadge } from "./CIBadge";
 
 export function getSizeLabel(additions: number, deletions: number): string {
@@ -15,6 +15,7 @@ interface PRStatusProps {
 export function PRStatus({ pr }: PRStatusProps) {
   const sizeLabel = getSizeLabel(pr.additions, pr.deletions);
   const rateLimited = isPRRateLimited(pr);
+  const unenriched = isPRUnenriched(pr);
 
   return (
     <div className="flex flex-wrap items-center gap-1.5">
@@ -29,12 +30,14 @@ export function PRStatus({ pr }: PRStatusProps) {
         #{pr.number}
       </a>
 
-      {/* Size — hide when rate limited (would show +0 -0 XS) */}
-      {!rateLimited && (
+      {/* Size — shimmer when unenriched, hide when rate limited */}
+      {!rateLimited && (unenriched ? (
+        <span className="inline-block h-[14px] w-16 animate-pulse rounded-full bg-[var(--color-bg-subtle)]" />
+      ) : (
         <span className="inline-flex items-center rounded-full bg-[rgba(125,133,144,0.08)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-text-muted)]">
           +{pr.additions} -{pr.deletions} {sizeLabel}
         </span>
-      )}
+      ))}
 
       {/* Merged badge */}
       {pr.state === "merged" && (
@@ -50,13 +53,15 @@ export function PRStatus({ pr }: PRStatusProps) {
         </span>
       )}
 
-      {/* CI status — only when we have real data */}
-      {pr.state === "open" && !pr.isDraft && !rateLimited && (
+      {/* CI status — shimmer when unenriched */}
+      {pr.state === "open" && !pr.isDraft && !rateLimited && (unenriched ? (
+        <span className="inline-block h-[14px] w-14 animate-pulse rounded-full bg-[var(--color-bg-subtle)]" />
+      ) : (
         <CIBadge status={pr.ciStatus} checks={pr.ciChecks} />
-      )}
+      ))}
 
       {/* Review decision (only for open PRs with real data) */}
-      {pr.state === "open" && pr.reviewDecision === "approved" && !rateLimited && (
+      {pr.state === "open" && pr.reviewDecision === "approved" && !rateLimited && !unenriched && (
         <span className="inline-flex items-center rounded-full bg-[rgba(63,185,80,0.1)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-accent-green)]">
           approved
         </span>
@@ -72,8 +77,10 @@ interface PRTableRowProps {
 export function PRTableRow({ pr }: PRTableRowProps) {
   const sizeLabel = getSizeLabel(pr.additions, pr.deletions);
   const rateLimited = isPRRateLimited(pr);
+  const unenriched = isPRUnenriched(pr);
+  const hideData = rateLimited || unenriched;
 
-  const reviewLabel = rateLimited
+  const reviewLabel = hideData
     ? "—"
     : pr.isDraft
       ? "draft"
@@ -83,7 +90,7 @@ export function PRTableRow({ pr }: PRTableRowProps) {
           ? "changes requested"
           : "needs review";
 
-  const reviewClass = rateLimited
+  const reviewClass = hideData
     ? "text-[var(--color-text-tertiary)]"
     : pr.isDraft
       ? "text-[var(--color-text-muted)]"
@@ -92,6 +99,8 @@ export function PRTableRow({ pr }: PRTableRowProps) {
         : pr.reviewDecision === "changes_requested"
           ? "text-[var(--color-accent-red)]"
           : "text-[var(--color-accent-yellow)]";
+
+  const shimmer = <span className="inline-block h-3 w-12 animate-pulse rounded bg-[var(--color-bg-subtle)]" />;
 
   return (
     <tr className="border-b border-[var(--color-border-muted)] hover:bg-[rgba(88,166,255,0.03)]">
@@ -102,7 +111,7 @@ export function PRTableRow({ pr }: PRTableRowProps) {
       </td>
       <td className="max-w-[420px] truncate px-3 py-2.5 text-sm font-medium">{pr.title}</td>
       <td className="px-3 py-2.5 text-sm">
-        {rateLimited ? (
+        {unenriched ? shimmer : rateLimited ? (
           <span className="text-[var(--color-text-tertiary)]">—</span>
         ) : (
           <>
@@ -113,17 +122,19 @@ export function PRTableRow({ pr }: PRTableRowProps) {
         )}
       </td>
       <td className="px-3 py-2.5">
-        {rateLimited ? (
+        {unenriched ? shimmer : rateLimited ? (
           <span className="text-[var(--color-text-tertiary)]">—</span>
         ) : (
           <CIBadge status={pr.ciStatus} checks={pr.ciChecks} compact />
         )}
       </td>
-      <td className={`px-3 py-2.5 text-xs font-semibold ${reviewClass}`}>{reviewLabel}</td>
+      <td className={`px-3 py-2.5 text-xs font-semibold ${reviewClass}`}>
+        {unenriched ? shimmer : reviewLabel}
+      </td>
       <td
-        className={`px-3 py-2.5 text-center text-sm font-bold ${pr.unresolvedThreads > 0 ? "text-[var(--color-accent-red)]" : "text-[var(--color-border-default)]"}`}
+        className={`px-3 py-2.5 text-center text-sm font-bold ${unenriched ? "" : pr.unresolvedThreads > 0 ? "text-[var(--color-accent-red)]" : "text-[var(--color-border-default)]"}`}
       >
-        {pr.unresolvedThreads}
+        {unenriched ? shimmer : pr.unresolvedThreads}
       </td>
     </tr>
   );
@@ -132,9 +143,10 @@ export function PRTableRow({ pr }: PRTableRowProps) {
 export function PRCard({ pr }: PRTableRowProps) {
   const sizeLabel = getSizeLabel(pr.additions, pr.deletions);
   const rateLimited = isPRRateLimited(pr);
+  const unenriched = isPRUnenriched(pr);
 
-  const reviewLabel = rateLimited
-    ? "stale"
+  const reviewLabel = rateLimited || unenriched
+    ? "—"
     : pr.isDraft
       ? "draft"
       : pr.reviewDecision === "approved"
@@ -143,13 +155,15 @@ export function PRCard({ pr }: PRTableRowProps) {
           ? "changes"
           : "review";
 
-  const ciLabel = rateLimited
-    ? "CI stale"
+  const ciLabel = rateLimited || unenriched
+    ? "—"
     : pr.ciStatus === "passing"
       ? "CI passing"
       : pr.ciStatus === "failing"
         ? "CI failing"
         : "CI pending";
+
+  const shimmer = <span className="inline-block h-3 w-10 animate-pulse rounded bg-[var(--color-bg-subtle)]" />;
 
   return (
     <a
@@ -161,12 +175,12 @@ export function PRCard({ pr }: PRTableRowProps) {
       <div className="mobile-pr-card__line">
         <span className="mobile-pr-card__number">#{pr.number}</span>
         <span className="mobile-pr-card__title">{pr.title}</span>
-        {!rateLimited ? <span className="mobile-pr-card__size">{sizeLabel}</span> : null}
+        {!rateLimited && !unenriched ? <span className="mobile-pr-card__size">{sizeLabel}</span> : null}
       </div>
       <div className="mobile-pr-card__meta">
-        <span>{ciLabel}</span>
-        <span>{reviewLabel}</span>
-        <span>{pr.unresolvedThreads} threads</span>
+        <span>{unenriched ? shimmer : ciLabel}</span>
+        <span>{unenriched ? shimmer : reviewLabel}</span>
+        <span>{unenriched ? shimmer : `${pr.unresolvedThreads} threads`}</span>
       </div>
     </a>
   );

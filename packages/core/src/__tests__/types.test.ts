@@ -4,19 +4,35 @@ import { isOrchestratorSession, isIssueNotFoundError } from "../types.js";
 describe("isOrchestratorSession", () => {
   it("detects orchestrators by explicit role metadata", () => {
     expect(
-      isOrchestratorSession({
-        id: "app-control",
-        metadata: { role: "orchestrator" },
-      }),
+      isOrchestratorSession({ id: "app-control", metadata: { role: "orchestrator" } }, "app"),
     ).toBe(true);
   });
 
   it("falls back to orchestrator naming for legacy sessions", () => {
-    expect(isOrchestratorSession({ id: "app-orchestrator", metadata: {} })).toBe(true);
+    expect(isOrchestratorSession({ id: "app-orchestrator", metadata: {} }, "app")).toBe(true);
   });
 
-  it("does not classify worker sessions as orchestrators", () => {
-    expect(isOrchestratorSession({ id: "app-7", metadata: { role: "worker" } })).toBe(false);
+  it("detects numbered worktree orchestrators by prefix pattern", () => {
+    expect(isOrchestratorSession({ id: "app-orchestrator-1", metadata: {} }, "app")).toBe(true);
+    expect(isOrchestratorSession({ id: "app-orchestrator-42", metadata: {} }, "app")).toBe(true);
+  });
+
+  it("does not false-positive on worker sessions", () => {
+    expect(isOrchestratorSession({ id: "app-7", metadata: { role: "worker" } }, "app")).toBe(false);
+  });
+
+  it("does not false-positive when prefix ends with -orchestrator", () => {
+    // my-orchestrator-1 is a worker when prefix is "my-orchestrator"
+    expect(
+      isOrchestratorSession({ id: "my-orchestrator-1", metadata: {} }, "my-orchestrator"),
+    ).toBe(false);
+    // my-orchestrator-orchestrator-1 is the real worktree orchestrator
+    expect(
+      isOrchestratorSession(
+        { id: "my-orchestrator-orchestrator-1", metadata: {} },
+        "my-orchestrator",
+      ),
+    ).toBe(true);
   });
 });
 

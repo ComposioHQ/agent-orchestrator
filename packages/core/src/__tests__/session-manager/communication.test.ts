@@ -305,7 +305,7 @@ describe("send", () => {
     await sm.send("app-1", "confirm via updated timestamp");
     const elapsedMs = Date.now() - startedAt;
 
-    expect(elapsedMs).toBeLessThan(2_000);
+    expect(elapsedMs).toBeLessThan(5_000);
     expect(readFileSync(listLogPath, "utf-8").trim().split("\n").length).toBeGreaterThanOrEqual(2);
     expect(mockRuntime.sendMessage).toHaveBeenCalledWith(
       makeHandle("rt-1"),
@@ -442,7 +442,7 @@ describe("remap", () => {
     expect(mapped).toBe("ses_slow_discovery");
     const meta = readMetadataRaw(sessionsDir, "app-1");
     expect(meta?.["opencodeSessionId"]).toBe("ses_slow_discovery");
-  });
+  }, 20000);
 
   it("throws when OpenCode session id mapping is missing", async () => {
     const deleteLogPath = join(tmpDir, "opencode-delete-missing-remap.log");

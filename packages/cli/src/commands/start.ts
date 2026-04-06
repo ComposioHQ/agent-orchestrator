@@ -28,6 +28,8 @@ import {
   generateConfigFromUrl,
   configToYaml,
   normalizeOrchestratorSessionStrategy,
+  isOrchestratorSession,
+  isTerminalSession,
   ConfigNotFoundError,
   type OrchestratorConfig,
   type ProjectConfig,
@@ -987,31 +989,86 @@ async function runStartup(
     }
   }
 
-  // Create orchestrator session (unless --no-orchestrator or already exists)
+  // Create orchestrator session (unless --no-orchestrator or existing orchestrators found)
   let tmuxTarget = sessionId;
+  let hasExistingOrchestrators = false;
+  let selectedOrchestratorId: string | null = null;
+
   if (opts?.orchestrator !== false) {
     const sm = await getSessionManager(config);
 
+    // Check for existing orchestrator sessions for this project
+    let allSessions;
     try {
-      spinner.start("Creating orchestrator session");
-      const systemPrompt = generateOrchestratorPrompt({ config, projectId, project });
-      const session = await sm.spawnOrchestrator({ projectId, systemPrompt });
-      if (session.runtimeHandle?.id) {
-        tmuxTarget = session.runtimeHandle.id;
-      }
-      reused =
-        orchestratorSessionStrategy === "reuse" &&
-        session.metadata?.["orchestratorSessionReused"] === "true";
-      spinner.succeed(reused ? "Orchestrator session reused" : "Orchestrator session created");
+      allSessions = await sm.list(projectId);
     } catch (err) {
-      spinner.fail("Orchestrator setup failed");
+      spinner.fail("Failed to list sessions");
       if (dashboardProcess) {
         dashboardProcess.kill();
       }
       throw new Error(
-        `Failed to setup orchestrator: ${err instanceof Error ? err.message : String(err)}`,
+        `Failed to list sessions: ${err instanceof Error ? err.message : String(err)}`,
         { cause: err },
       );
+    }
+    const allSessionPrefixes = Object.entries(config.projects).map(
+      ([, p]) => p.sessionPrefix ?? generateSessionPrefix(p.name ?? ""),
+    );
+    const existingOrchestrators = allSessions.filter(
+      (s) =>
+        isOrchestratorSession(s, project.sessionPrefix ?? projectId, allSessionPrefixes) &&
+        !isTerminalSession(s),
+    );
+
+    if (existingOrchestrators.length > 0) {
+      // Existing orchestrators found
+      if (opts?.dashboard === false) {
+        // No dashboard — auto-select the most recently active orchestrator
+        const sortedOrchestrators = [...existingOrchestrators].sort(
+          (a, b) => (b.lastActivityAt?.getTime() ?? 0) - (a.lastActivityAt?.getTime() ?? 0),
+        );
+        const selected = sortedOrchestrators[0];
+        selectedOrchestratorId = selected.id;
+        // Use runtimeHandle.id if available, otherwise fall back to the session ID
+        tmuxTarget = selected.runtimeHandle?.id ?? selected.id;
+        spinner.succeed(
+          `Using existing orchestrator session: ${selected.id}` +
+            (existingOrchestrators.length > 1
+              ? ` (${existingOrchestrators.length - 1} other session(s) available)`
+              : ""),
+        );
+      } else {
+        // Dashboard available — let the user select
+        hasExistingOrchestrators = true;
+        spinner.info(
+          `Found ${existingOrchestrators.length} existing orchestrator session(s). ` +
+            `Open the dashboard to select or start a new one.`,
+        );
+      }
+    } else {
+      // No existing orchestrators — spawn a new one
+      try {
+        spinner.start("Creating orchestrator session");
+        const systemPrompt = generateOrchestratorPrompt({ config, projectId, project });
+        const session = await sm.spawnOrchestrator({ projectId, systemPrompt });
+        selectedOrchestratorId = session.id;
+        if (session.runtimeHandle?.id) {
+          tmuxTarget = session.runtimeHandle.id;
+        }
+        reused =
+          orchestratorSessionStrategy === "reuse" &&
+          session.metadata?.["orchestratorSessionReused"] === "true";
+        spinner.succeed(reused ? "Orchestrator session reused" : "Orchestrator session created");
+      } catch (err) {
+        spinner.fail("Orchestrator setup failed");
+        if (dashboardProcess) {
+          dashboardProcess.kill();
+        }
+        throw new Error(
+          `Failed to setup orchestrator: ${err instanceof Error ? err.message : String(err)}`,
+          { cause: err },
+        );
+      }
     }
   }
 
@@ -1030,7 +1087,12 @@ async function runStartup(
     console.log(chalk.cyan("Lifecycle:"), lifecycleTarget);
   }
 
-  if (opts?.orchestrator !== false && !reused) {
+  if (hasExistingOrchestrators) {
+    console.log(
+      chalk.cyan("Orchestrator:"),
+      "existing sessions found — select one in the dashboard",
+    );
+  } else if (opts?.orchestrator !== false && !reused) {
     console.log(chalk.cyan("Orchestrator:"), `tmux attach -t ${tmuxTarget}`);
   } else if (reused) {
     console.log(chalk.cyan("Orchestrator:"), `reused existing session (${sessionId})`);
@@ -1038,21 +1100,26 @@ async function runStartup(
 
   console.log(chalk.dim(`Config: ${config.configPath}`));
 
-  // Show next step hint
-  const projectIds = Object.keys(config.projects);
-  if (projectIds.length > 0) {
-    console.log(chalk.bold("\nNext step:\n"));
-    console.log(`  Spawn an agent session:`);
-    console.log(chalk.cyan(`     ao spawn <issue-number>\n`));
+  // Show next step hint (only if no existing orchestrators requiring selection)
+  if (!hasExistingOrchestrators) {
+    const projectIds = Object.keys(config.projects);
+    if (projectIds.length > 0) {
+      console.log(chalk.bold("\nNext step:\n"));
+      console.log(`  Spawn an agent session:`);
+      console.log(chalk.cyan(`     ao spawn <issue-number>\n`));
+    }
   }
 
-  // Auto-open browser to orchestrator session page once the server is accepting connections.
+  // Auto-open browser to orchestrator session page (or selection page) once the server is ready.
   // Polls the port instead of using a fixed delay — deterministic and works regardless of
   // how long Next.js takes to compile. AbortController cancels polling on early exit.
   let openAbort: AbortController | undefined;
   if (opts?.dashboard !== false) {
     openAbort = new AbortController();
-    const orchestratorUrl = `http://localhost:${port}/sessions/${sessionId}`;
+    // If existing orchestrators found, open the selection page; otherwise open the session page
+    const orchestratorUrl = hasExistingOrchestrators
+      ? `http://localhost:${port}/orchestrators?project=${projectId}`
+      : `http://localhost:${port}/sessions/${selectedOrchestratorId ?? sessionId}`;
     void waitForPortAndOpen(port, orchestratorUrl, openAbort.signal);
   }
 
