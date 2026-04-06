@@ -1,39 +1,53 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { useMediaQuery, MOBILE_BREAKPOINT } from "@/hooks/useMediaQuery";
 import {
   type DashboardSession,
   type DashboardStats,
-  type DashboardPR,
   type AttentionLevel,
-  type GlobalPauseState,
   type DashboardOrchestratorLink,
   getAttentionLevel,
-  isKilledSession,
   isPRRateLimited,
-  CI_STATUS,
+  isPRMergeReady,
 } from "@/lib/types";
 import { AttentionZone } from "./AttentionZone";
-import { PRTableRow } from "./PRStatus";
-import { DynamicFavicon } from "./DynamicFavicon";
+import { SessionCard } from "./SessionCard";
+import { DynamicFavicon, countNeedingAttention } from "./DynamicFavicon";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
+import { useMuxOptional } from "@/providers/MuxProvider";
+import { ProjectSidebar } from "./ProjectSidebar";
 import { ThemeToggle } from "./ThemeToggle";
 import type { ProjectInfo } from "@/lib/project-name";
 import { EmptyState } from "./Skeleton";
-import { DashboardCompactTopBar } from "./DashboardCompactTopBar";
-import { useShowKilledSessions } from "@/hooks/useShowKilledSessions";
+import { ToastProvider, useToast } from "./Toast";
+import { BottomSheet } from "./BottomSheet";
+import { ConnectionBar } from "./ConnectionBar";
+import { MobileBottomNav } from "./MobileBottomNav";
+import { getProjectScopedHref } from "@/lib/project-utils";
 
 interface DashboardProps {
   initialSessions: DashboardSession[];
   projectId?: string;
   projectName?: string;
   projects?: ProjectInfo[];
-  initialGlobalPause?: GlobalPauseState | null;
   orchestrators?: DashboardOrchestratorLink[];
 }
 
-const KANBAN_LEVELS_BASE = ["working", "pending", "review", "respond", "merge", "done"] as const;
+const KANBAN_LEVELS = ["working", "pending", "review", "respond", "merge"] as const;
+/** Urgency-first order for the mobile accordion (reversed from desktop) */
+const MOBILE_KANBAN_ORDER = ["respond", "merge", "review", "pending", "working"] as const;
+const MOBILE_FILTERS = [
+  { value: "all", label: "All" },
+  { value: "respond", label: "Respond" },
+  { value: "merge", label: "Ready" },
+  { value: "review", label: "Review" },
+  { value: "pending", label: "Pending" },
+  { value: "working", label: "Working" },
+] as const;
+type MobileAttentionLevel = (typeof MOBILE_KANBAN_ORDER)[number];
+type MobileFilterValue = (typeof MOBILE_FILTERS)[number]["value"];
 const EMPTY_ORCHESTRATORS: DashboardOrchestratorLink[] = [];
 
 function mergeOrchestrators(
@@ -49,47 +63,140 @@ function mergeOrchestrators(
   return [...merged.values()];
 }
 
-export function Dashboard({
+function DashboardInner({
   initialSessions,
   projectId,
   projectName,
   projects = [],
-  initialGlobalPause = null,
   orchestrators,
 }: DashboardProps) {
   const orchestratorLinks = orchestrators ?? EMPTY_ORCHESTRATORS;
-  const { sessions, globalPause } = useSessionEvents(
+  const mux = useMuxOptional();
+  const initialAttentionLevels = useMemo(() => {
+    const levels: Record<string, AttentionLevel> = {};
+    for (const s of initialSessions) {
+      levels[s.id] = getAttentionLevel(s);
+    }
+    return levels;
+  }, [initialSessions]);
+  const { sessions, connectionStatus, sseAttentionLevels } = useSessionEvents(
     initialSessions,
-    initialGlobalPause,
     projectId,
+    mux?.status === "connected" ? mux.sessions : undefined,
+    initialAttentionLevels,
   );
   const searchParams = useSearchParams();
   const activeSessionId = searchParams.get("session") ?? undefined;
   const [rateLimitDismissed, setRateLimitDismissed] = useState(false);
-  const [globalPauseDismissed, setGlobalPauseDismissed] = useState(false);
   const [activeOrchestrators, setActiveOrchestrators] =
     useState<DashboardOrchestratorLink[]>(orchestratorLinks);
   const [spawningProjectIds, setSpawningProjectIds] = useState<string[]>([]);
   const [spawnErrors, setSpawnErrors] = useState<Record<string, string>>({});
-  const [showKilled, setShowKilled] = useShowKilledSessions();
-  const kanbanLevels = showKilled
-    ? ([...KANBAN_LEVELS_BASE, "killed"] as const)
-    : KANBAN_LEVELS_BASE;
-  const allProjectsView = projects.length > 1 && projectId === undefined;
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const isMobile = useMediaQuery(MOBILE_BREAKPOINT);
+  const [hasMounted, setHasMounted] = useState(false);
+  const [expandedLevel, setExpandedLevel] = useState<MobileAttentionLevel | null>(null);
+  const [mobileFilter, setMobileFilter] = useState<MobileFilterValue>("all");
+  const showSidebar = projects.length > 1;
+  const { showToast } = useToast();
+  const [sheetState, setSheetState] = useState<{
+    sessionId: string;
+    mode: "preview" | "confirm-kill";
+  } | null>(null);
+  const [sheetSessionOverride, setSheetSessionOverride] = useState<DashboardSession | null>(null);
+  const [doneExpanded, setDoneExpanded] = useState(false);
+  const sessionsRef = useRef(sessions);
+  const hasSeededMobileExpansionRef = useRef(false);
+  sessionsRef.current = sessions;
+  const allProjectsView = showSidebar && projectId === undefined;
+  const currentProjectOrchestrator = useMemo(
+    () =>
+      projectId
+        ? activeOrchestrators.find((orchestrator) => orchestrator.projectId === projectId) ?? null
+        : null,
+    [activeOrchestrators, projectId],
+  );
+  const dashboardHref = getProjectScopedHref("/", projectId);
+  const prsHref = getProjectScopedHref("/prs", projectId);
+  const orchestratorHref = currentProjectOrchestrator
+    ? `/sessions/${encodeURIComponent(currentProjectOrchestrator.id)}`
+    : null;
 
   const displaySessions = useMemo(() => {
     if (allProjectsView || !activeSessionId) return sessions;
     return sessions.filter((s) => s.id === activeSessionId);
   }, [sessions, allProjectsView, activeSessionId]);
+  const sheetSession = useMemo(
+    () => (sheetState ? sessions.find((session) => session.id === sheetState.sessionId) ?? null : null),
+    [sessions, sheetState],
+  );
+  const hydratedSheetSession = useMemo(() => {
+    if (!sheetSession) return null;
+    if (!sheetSessionOverride) return sheetSession;
+    return {
+      ...sheetSession,
+      ...sheetSessionOverride,
+      status: sheetSession.status,
+      activity: sheetSession.activity,
+      lastActivityAt: sheetSession.lastActivityAt,
+    };
+  }, [sheetSession, sheetSessionOverride]);
 
   useEffect(() => {
     setActiveOrchestrators((current) => mergeOrchestrators(current, orchestratorLinks));
   }, [orchestratorLinks]);
 
-  const boardSessions = useMemo(
-    () => displaySessions.filter((s) => showKilled || !isKilledSession(s)),
-    [displaySessions, showKilled],
-  );
+  // Update document title with live attention counts from SSE
+  useEffect(() => {
+    const needsAttention = countNeedingAttention(sseAttentionLevels);
+    const label = projectName ?? "ao";
+    document.title = needsAttention > 0 ? `${label} (${needsAttention} need attention)` : label;
+  }, [sseAttentionLevels, projectName]);
+
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (sheetState && sheetSession === null) {
+      setSheetState(null);
+    }
+  }, [sheetSession, sheetState]);
+
+  useEffect(() => {
+    if (!sheetState || sheetState.mode !== "confirm-kill" || !hydratedSheetSession) return;
+    if (getAttentionLevel(hydratedSheetSession) !== "done") return;
+    setSheetState(null);
+  }, [hydratedSheetSession, sheetState]);
+
+  useEffect(() => {
+    if (!sheetState) {
+      setSheetSessionOverride(null);
+      return;
+    }
+
+    let cancelled = false;
+    const sessionId = sheetState.sessionId;
+    const refreshSession = async () => {
+      try {
+        const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`);
+        if (!res.ok) return;
+        const data = (await res.json()) as Partial<DashboardSession> | null;
+        if (!data || data.id !== sessionId) return;
+        if (!cancelled) setSheetSessionOverride(data as DashboardSession);
+      } catch {
+        // Ignore transient failures; SSE still keeps status/activity fresh.
+      }
+    };
+
+    void refreshSession();
+    const interval = setInterval(refreshSession, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [sheetState]);
 
   const grouped = useMemo(() => {
     const zones: Record<AttentionLevel, DashboardSession[]> = {
@@ -99,17 +206,46 @@ export function Dashboard({
       pending: [],
       working: [],
       done: [],
-      killed: [],
     };
-    for (const session of boardSessions) {
-      if (isKilledSession(session)) {
-        zones.killed.push(session);
-      } else {
-        zones[getAttentionLevel(session)].push(session);
-      }
+    for (const session of displaySessions) {
+      zones[getAttentionLevel(session)].push(session);
     }
     return zones;
-  }, [boardSessions]);
+  }, [displaySessions]);
+
+  // Auto-expand the most urgent non-empty section when switching to mobile.
+  // Intentionally seeded once per mobile mode change, not on every session update.
+  useEffect(() => {
+    setHasMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!isMobile) {
+      hasSeededMobileExpansionRef.current = false;
+      return;
+    }
+    if (hasSeededMobileExpansionRef.current) return;
+
+    hasSeededMobileExpansionRef.current = true;
+    setExpandedLevel(
+      MOBILE_KANBAN_ORDER.find((level) => grouped[level].length > 0) ?? null,
+    );
+  }, [grouped, isMobile]);
+
+  useEffect(() => {
+    if (!isMobile) return;
+    if (mobileFilter !== "all") {
+      setExpandedLevel(mobileFilter);
+      return;
+    }
+    // Preserve an explicit all-collapsed state. Only auto-expand when a specific expanded
+    // section becomes empty, so SSE regrouping does not override a deliberate user collapse.
+    setExpandedLevel((current) => {
+      if (current === null) return current;
+      if (current !== null && grouped[current].length > 0) return current;
+      return MOBILE_KANBAN_ORDER.find((level) => grouped[level].length > 0) ?? null;
+    });
+  }, [grouped, isMobile, mobileFilter]);
 
   const sessionsByProject = useMemo(() => {
     const groupedSessions = new Map<string, DashboardSession[]>();
@@ -124,25 +260,11 @@ export function Dashboard({
     return groupedSessions;
   }, [sessions]);
 
-  const openPRs = useMemo(() => {
-    return displaySessions
-      .filter(
-        (session): session is DashboardSession & { pr: DashboardPR } =>
-          session.pr?.state === "open",
-      )
-      .map((session) => session.pr)
-      .sort((a, b) => mergeScore(a) - mergeScore(b));
-  }, [displaySessions]);
-
   const projectOverviews = useMemo(() => {
     if (!allProjectsView) return [];
 
     return projects.map((project) => {
-      const projectSessionsRaw = sessionsByProject.get(project.id) ?? [];
-      const projectSessions = projectSessionsRaw.filter(
-        (s) => showKilled || !isKilledSession(s),
-      );
-      const killedCount = projectSessionsRaw.filter(isKilledSession).length;
+      const projectSessions = sessionsByProject.get(project.id) ?? [];
       const counts: Record<AttentionLevel, number> = {
         merge: 0,
         respond: 0,
@@ -150,15 +272,10 @@ export function Dashboard({
         pending: 0,
         working: 0,
         done: 0,
-        killed: 0,
       };
 
       for (const session of projectSessions) {
-        if (isKilledSession(session)) {
-          counts.killed++;
-        } else {
-          counts[getAttentionLevel(session)]++;
-        }
+        counts[getAttentionLevel(session)]++;
       }
 
       return {
@@ -167,11 +284,29 @@ export function Dashboard({
           activeOrchestrators.find((orchestrator) => orchestrator.projectId === project.id) ?? null,
         sessionCount: projectSessions.length,
         openPRCount: projectSessions.filter((session) => session.pr?.state === "open").length,
-        killedCount,
         counts,
       };
     });
-  }, [activeOrchestrators, allProjectsView, projects, sessionsByProject, showKilled]);
+  }, [activeOrchestrators, allProjectsView, projects, sessionsByProject]);
+
+  const handleAccordionToggle = useCallback((level: AttentionLevel) => {
+    if (level === "done") return;
+    setExpandedLevel((current) => (current === level ? null : level));
+  }, []);
+
+  const handlePillTap = useCallback((level: AttentionLevel) => {
+    if (level === "done") return;
+    setMobileFilter(level);
+    setExpandedLevel(level);
+    const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      ? ("instant" as ScrollBehavior)
+      : "smooth";
+    document.getElementById("mobile-board")?.scrollIntoView({ behavior, block: "start" });
+  }, []);
+
+  const visibleMobileLevels =
+    mobileFilter === "all" ? MOBILE_KANBAN_ORDER : MOBILE_KANBAN_ORDER.filter((level) => level === mobileFilter);
+  const showDesktopPrsLink = hasMounted && !isMobile;
 
   const handleSend = useCallback(async (sessionId: string, message: string) => {
     try {
@@ -182,46 +317,111 @@ export function Dashboard({
       });
       if (!res.ok) {
         const text = await res.text();
-        console.error(`Failed to send message to ${sessionId}:`, text);
-        throw new Error(text || `Failed to send message to ${sessionId}`);
+        const messageText = text || "Unknown error";
+        console.error(`Failed to send message to ${sessionId}:`, messageText);
+        showToast(`Send failed: ${messageText}`, "error");
+        const errorWithToast = new Error(messageText);
+        (errorWithToast as Error & { toastShown?: boolean }).toastShown = true;
+        throw errorWithToast;
       }
     } catch (error) {
-      if (error instanceof Error) {
-        throw error;
+      const toastShown =
+        error instanceof Error &&
+        "toastShown" in error &&
+        (error as Error & { toastShown?: boolean }).toastShown;
+      if (!toastShown) {
+        console.error(`Network error sending message to ${sessionId}:`, error);
+        showToast("Network error while sending message", "error");
       }
-      console.error(`Network error sending message to ${sessionId}:`, error);
-      throw new Error("Network error while sending message", { cause: error });
+      throw error;
     }
+  }, [showToast]);
+
+  const killSession = useCallback(async (sessionId: string) => {
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/kill`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        console.error(`Failed to kill ${sessionId}:`, text);
+        showToast(`Terminate failed: ${text}`, "error");
+      } else {
+        showToast("Session terminated", "success");
+      }
+    } catch (error) {
+      console.error(`Network error killing ${sessionId}:`, error);
+      showToast("Network error while terminating session", "error");
+    }
+  }, [showToast]);
+
+  const handleKill = useCallback((sessionId: string) => {
+    const session = sessionsRef.current.find((s) => s.id === sessionId) ?? null;
+    if (!session) return;
+    if (!isMobile) {
+      const confirmed = window.confirm("Terminate this session?");
+      if (confirmed) {
+        void killSession(session.id);
+      }
+      return;
+    }
+    setSheetState({ sessionId: session.id, mode: "confirm-kill" });
+  }, [isMobile, killSession]);
+
+  const handlePreview = useCallback((session: DashboardSession) => {
+    setSheetState({ sessionId: session.id, mode: "preview" });
   }, []);
 
-  const handleKill = useCallback(async (sessionId: string) => {
-    if (!confirm(`Kill session ${sessionId}?`)) return;
-    const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/kill`, {
-      method: "POST",
-    });
-    if (!res.ok) {
-      console.error(`Failed to kill ${sessionId}:`, await res.text());
-    }
+  const handleRequestKillFromPreview = useCallback(() => {
+    setSheetState((current) =>
+      current ? { sessionId: current.sessionId, mode: "confirm-kill" } : current,
+    );
   }, []);
+
+  const handleKillConfirm = useCallback(async () => {
+    const session = hydratedSheetSession;
+    setSheetState(null);
+    if (!session) return;
+    await killSession(session.id);
+  }, [hydratedSheetSession, killSession]);
 
   const handleMerge = useCallback(async (prNumber: number) => {
-    const res = await fetch(`/api/prs/${prNumber}/merge`, { method: "POST" });
-    if (!res.ok) {
-      console.error(`Failed to merge PR #${prNumber}:`, await res.text());
+    try {
+      const res = await fetch(`/api/prs/${prNumber}/merge`, { method: "POST" });
+      if (!res.ok) {
+        const text = await res.text();
+        console.error(`Failed to merge PR #${prNumber}:`, text);
+        showToast(`Merge failed: ${text}`, "error");
+        return;
+      } else {
+        showToast(`PR #${prNumber} merged`, "success");
+        setSheetState(null);
+      }
+    } catch (error) {
+      console.error(`Network error merging PR #${prNumber}:`, error);
+      showToast("Network error while merging PR", "error");
     }
-  }, []);
+  }, [showToast]);
 
   const handleRestore = useCallback(async (sessionId: string) => {
-    if (!confirm(`Restore session ${sessionId}?`)) return;
-    const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/restore`, {
-      method: "POST",
-    });
-    if (!res.ok) {
-      console.error(`Failed to restore ${sessionId}:`, await res.text());
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/restore`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        console.error(`Failed to restore ${sessionId}:`, text);
+        showToast(`Restore failed: ${text}`, "error");
+      } else {
+        showToast("Session restored", "success");
+      }
+    } catch (error) {
+      console.error(`Network error restoring ${sessionId}:`, error);
+      showToast("Network error while restoring session", "error");
     }
-  }, []);
+  }, [showToast]);
 
-  const handleSpawnOrchestrator = useCallback(async (project: ProjectInfo) => {
+  const handleSpawnOrchestrator = async (project: ProjectInfo) => {
     setSpawningProjectIds((current) =>
       current.includes(project.id) ? current : [...current, project.id],
     );
@@ -257,9 +457,11 @@ export function Dashboard({
     } finally {
       setSpawningProjectIds((current) => current.filter((id) => id !== project.id));
     }
-  }, []);
+  };
 
-  const hasAnySessions = kanbanLevels.some((level) => grouped[level].length > 0);
+  const hasAnySessions = KANBAN_LEVELS.some(
+    (level) => grouped[level].length > 0,
+  );
 
   const anyRateLimited = useMemo(
     () => sessions.some((session) => session.pr && isPRRateLimited(session.pr)),
@@ -280,67 +482,114 @@ export function Dashboard({
     [sessions],
   );
 
-  const resumeAtLabel = useMemo(() => {
-    if (!globalPause) return null;
-    return new Date(globalPause.pausedUntil).toLocaleString();
-  }, [globalPause]);
-
-  useEffect(() => {
-    setGlobalPauseDismissed(false);
-  }, [globalPause?.pausedUntil, globalPause?.reason, globalPause?.sourceSessionId]);
-
   return (
-    <div className="dashboard-main h-screen overflow-y-auto">
-        <DynamicFavicon sessions={sessions} projectName={projectName} />
-        <DashboardCompactTopBar
-          title={projectName ?? "Orchestrator"}
-          subtitle="Live sessions, review pressure, and merge readiness."
+    <>
+    <ConnectionBar status={connectionStatus} />
+    <div className="dashboard-shell flex h-screen">
+      {showSidebar && (
+        <ProjectSidebar
           projects={projects}
-        >
-          <StatusCards stats={liveStats} />
-          {!allProjectsView && <OrchestratorControl orchestrators={activeOrchestrators} />}
-          <ThemeToggle />
-        </DashboardCompactTopBar>
-
-        <div className="px-4 pb-4 pt-5 md:px-7 md:pb-6 md:pt-6">
-        {globalPause && !globalPauseDismissed && (
-          <div className="dashboard-alert mb-6 flex items-center gap-2.5 border border-[color-mix(in_srgb,var(--color-status-error)_25%,transparent)] bg-[var(--color-tint-red)] px-3.5 py-2.5 text-[11px] text-[var(--color-status-error)]">
-            <svg
-              className="h-3.5 w-3.5 shrink-0"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              viewBox="0 0 24 24"
-            >
-              <circle cx="12" cy="12" r="10" />
-              <path d="M12 8v4M12 16h.01" />
-            </svg>
-            <span className="flex-1">
-              <strong>Orchestrator paused:</strong> {globalPause.reason}
-              {resumeAtLabel && (
-                <span className="ml-2 opacity-75">Resume after {resumeAtLabel}</span>
-              )}
-              {globalPause.sourceSessionId && (
-                <span className="ml-2 opacity-75">(Source: {globalPause.sourceSessionId})</span>
-              )}
-            </span>
-            <button
-              onClick={() => setGlobalPauseDismissed(true)}
-              className="ml-1 shrink-0 opacity-60 hover:opacity-100"
-              aria-label="Dismiss"
-            >
-              <svg
-                className="h-3.5 w-3.5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                viewBox="0 0 24 24"
+          sessions={sessions}
+          activeProjectId={projectId}
+          activeSessionId={activeSessionId}
+          collapsed={sidebarCollapsed}
+          onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
+          mobileOpen={mobileMenuOpen}
+          onMobileClose={() => setMobileMenuOpen(false)}
+        />
+      )}
+      <div className="dashboard-main flex-1 overflow-y-auto px-4 py-4 md:px-7 md:py-6">
+        <div id="mobile-dashboard-anchor" aria-hidden="true" />
+        <DynamicFavicon sseAttentionLevels={sseAttentionLevels} projectName={projectName} />
+        <section className="dashboard-hero mb-5">
+          <div className="dashboard-hero__backdrop" />
+          <div className="dashboard-hero__content">
+            {showSidebar && (
+              <button
+                type="button"
+                className="mobile-menu-toggle"
+                onClick={() => setMobileMenuOpen(true)}
+                aria-label="Open menu"
               >
-                <path d="M18 6 6 18M6 6l12 12" />
-              </svg>
-            </button>
+                <svg
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  viewBox="0 0 24 24"
+                  className="h-5 w-5"
+                >
+                  <path d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              </button>
+            )}
+            <div className="dashboard-hero__primary">
+              <div className="dashboard-hero__heading">
+                <div className="dashboard-hero__copy">
+                  <h1 className="dashboard-title">
+                    {projectName ?? "Orchestrator"}
+                  </h1>
+                  <p className="dashboard-subtitle">
+                    Live sessions, review pressure, and merge readiness.
+                  </p>
+                </div>
+              </div>
+              {!isMobile ? <StatusCards stats={liveStats} /> : null}
+            </div>
+
+            <div className="dashboard-hero__meta">
+              <div className="flex items-center gap-3">
+                {showDesktopPrsLink ? (
+                  <a
+                    href={prsHref}
+                    className="dashboard-prs-link orchestrator-btn flex items-center gap-2 px-4 py-2 text-[12px] font-semibold hover:no-underline"
+                  >
+                    <svg
+                      className="h-3.5 w-3.5 opacity-75"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                    >
+                      <path d="M4 6h16M4 12h16M4 18h10" />
+                    </svg>
+                    PRs
+                  </a>
+                ) : null}
+                {!allProjectsView && !isMobile ? (
+                  <OrchestratorControl orchestrators={activeOrchestrators} />
+                ) : null}
+                <ThemeToggle />
+              </div>
+            </div>
           </div>
-        )}
+        </section>
+
+        {isMobile ? (
+          <section className="mobile-priority-row" aria-label="Needs attention">
+            <div className="mobile-priority-row__label">Needs attention</div>
+            <MobileActionStrip
+              grouped={grouped}
+              onPillTap={handlePillTap}
+            />
+          </section>
+        ) : null}
+
+        {isMobile ? (
+          <section className="mobile-filter-row" aria-label="Dashboard filters">
+            {MOBILE_FILTERS.map((filter) => (
+              <button
+                key={filter.value}
+                type="button"
+                className="mobile-filter-chip"
+                data-active={mobileFilter === filter.value ? "true" : "false"}
+                onClick={() => setMobileFilter(filter.value)}
+              >
+                {filter.label}
+              </button>
+            ))}
+          </section>
+        ) : null}
 
         {anyRateLimited && !rateLimitDismissed && (
           <div className="dashboard-alert mb-6 flex items-center gap-2.5 border border-[color-mix(in_srgb,var(--color-status-attention)_25%,transparent)] bg-[var(--color-tint-yellow)] px-3.5 py-2.5 text-[11px] text-[var(--color-status-attention)]">
@@ -377,114 +626,142 @@ export function Dashboard({
         )}
 
         {allProjectsView && (
-          <>
-            <div className="mb-4 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setShowKilled(!showKilled)}
-                className="rounded border border-[var(--color-border-default)] px-2.5 py-1 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]"
-              >
-                {showKilled ? "Hide killed sessions" : "Show killed sessions"}
-              </button>
-            </div>
-            <ProjectOverviewGrid
-              showKilled={showKilled}
-              overviews={projectOverviews}
-              onSpawnOrchestrator={handleSpawnOrchestrator}
-              spawningProjectIds={spawningProjectIds}
-              spawnErrors={spawnErrors}
-            />
-          </>
+          <ProjectOverviewGrid
+            overviews={projectOverviews}
+            onSpawnOrchestrator={handleSpawnOrchestrator}
+            spawningProjectIds={spawningProjectIds}
+            spawnErrors={spawnErrors}
+          />
         )}
 
-        {!allProjectsView && (
-          <>
-            <div className="mb-4 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setShowKilled(!showKilled)}
-                className="rounded border border-[var(--color-border-default)] px-2.5 py-1 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]"
-              >
-                {showKilled ? "Hide killed sessions" : "Show killed sessions"}
-              </button>
+        {!allProjectsView && hasAnySessions && (
+          <div className="kanban-board-wrap">
+            <div className="board-section-head">
+              <div>
+                <h2 className="board-section-head__title">Attention Board</h2>
+                <p className="board-section-head__subtitle">
+                  Triage by required intervention, not by chronology.
+                </p>
+              </div>
+              <div className="board-section-head__legend">
+                <BoardLegendItem label="Human action" tone="var(--color-status-error)" />
+                <BoardLegendItem label="Review queue" tone="var(--color-accent-orange)" />
+                <BoardLegendItem label="Ready to land" tone="var(--color-status-ready)" />
+              </div>
             </div>
-            {hasAnySessions ? (
-              <div className="kanban-board-wrap">
-                <div className="board-section-head">
-                  <div>
-                    <h2 className="board-section-head__title">Attention Board</h2>
-                    <p className="board-section-head__subtitle">
-                      Triage by required intervention, not by chronology.
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <div className="board-section-head__legend">
-                      <BoardLegendItem label="Human action" tone="var(--color-status-error)" />
-                      <BoardLegendItem label="Review queue" tone="var(--color-accent-orange)" />
-                      <BoardLegendItem label="Ready to land" tone="var(--color-status-ready)" />
-                    </div>
-                  </div>
-                </div>
-                <div className="kanban-board">
-                  {kanbanLevels.map((level) => (
-                    <AttentionZone
-                      key={level}
-                      level={level}
-                      sessions={grouped[level]}
-                      onSend={handleSend}
-                      onKill={handleKill}
-                      onMerge={handleMerge}
-                      onRestore={handleRestore}
-                    />
-                  ))}
-                </div>
+
+            {isMobile ? (
+              <div id="mobile-board" className="accordion-board">
+                {visibleMobileLevels.map((level) => (
+                  <AttentionZone
+                    key={level}
+                    level={level}
+                    sessions={grouped[level]}
+                    onSend={handleSend}
+                    onKill={handleKill}
+                    onMerge={handleMerge}
+                    onRestore={handleRestore}
+                    collapsed={expandedLevel !== level}
+                    onToggle={handleAccordionToggle}
+                    compactMobile
+                    onPreview={handlePreview}
+                    resetKey={mobileFilter}
+                  />
+                ))}
               </div>
             ) : (
-              <EmptyState />
+              <div className="kanban-board">
+                {KANBAN_LEVELS.map((level) => (
+                  <AttentionZone
+                    key={level}
+                    level={level}
+                    sessions={grouped[level]}
+                    onSend={handleSend}
+                    onKill={handleKill}
+                    onMerge={handleMerge}
+                    onRestore={handleRestore}
+                  />
+                ))}
+              </div>
             )}
-          </>
-        )}
-
-        {openPRs.length > 0 && (
-          <div className="mx-auto max-w-[900px]">
-            <h2 className="mb-3 px-1 text-[10px] font-bold uppercase tracking-[0.10em] text-[var(--color-text-tertiary)]">
-              Pull Requests
-            </h2>
-            <div className="overflow-hidden border border-[var(--color-border-default)]">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="border-b border-[var(--color-border-muted)]">
-                    <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
-                      PR
-                    </th>
-                    <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
-                      Title
-                    </th>
-                    <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
-                      Size
-                    </th>
-                    <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
-                      CI
-                    </th>
-                    <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
-                      Review
-                    </th>
-                    <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
-                      Unresolved
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {openPRs.map((pr) => (
-                    <PRTableRow key={pr.number} pr={pr} />
-                  ))}
-                </tbody>
-              </table>
-            </div>
           </div>
         )}
-        </div>
+
+        {!allProjectsView && grouped.done.length > 0 && (
+          <div className="done-bar mt-6">
+            <button
+              type="button"
+              className="done-bar__toggle"
+              onClick={() => setDoneExpanded((v) => !v)}
+              aria-expanded={doneExpanded}
+            >
+              <svg
+                className={`done-bar__chevron${doneExpanded ? " done-bar__chevron--open" : ""}`}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path d="m9 18 6-6-6-6" />
+              </svg>
+              <span>Done / Terminated</span>
+              <span className="done-bar__count">{grouped.done.length}</span>
+              <span className="done-bar__rule" aria-hidden="true" />
+            </button>
+            {doneExpanded && (
+              <div className="done-bar__cards">
+                {grouped.done.map((session) => (
+                  <SessionCard
+                    key={session.id}
+                    session={session}
+                    onSend={handleSend}
+                    onKill={handleKill}
+                    onMerge={handleMerge}
+                    onRestore={handleRestore}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {!allProjectsView && !hasAnySessions && grouped.done.length === 0 && <EmptyState />}
+
+      </div>
     </div>
+    {isMobile ? (
+      <MobileBottomNav
+        ariaLabel="Dashboard navigation"
+        activeTab="dashboard"
+        dashboardHref={dashboardHref}
+        prsHref={prsHref}
+        showOrchestrator={!allProjectsView}
+        orchestratorHref={orchestratorHref}
+      />
+    ) : null}
+    {isMobile ? (
+    <BottomSheet
+      session={hydratedSheetSession}
+      mode={sheetState?.mode ?? "preview"}
+      onConfirm={handleKillConfirm}
+      onCancel={() => setSheetState(null)}
+      onRequestKill={handleRequestKillFromPreview}
+      onMerge={handleMerge}
+      isMergeReady={
+        hydratedSheetSession?.pr ? isPRMergeReady(hydratedSheetSession.pr) : false
+      }
+    />
+    ) : null}
+    </>
+  );
+}
+
+export function Dashboard(props: DashboardProps) {
+  return (
+    <ToastProvider>
+      <DashboardInner {...props} />
+    </ToastProvider>
   );
 }
 
@@ -558,19 +835,16 @@ function OrchestratorControl({ orchestrators }: { orchestrators: DashboardOrches
 }
 
 function ProjectOverviewGrid({
-  showKilled,
   overviews,
   onSpawnOrchestrator,
   spawningProjectIds,
   spawnErrors,
 }: {
-  showKilled: boolean;
   overviews: Array<{
     project: ProjectInfo;
     orchestrator: DashboardOrchestratorLink | null;
     sessionCount: number;
     openPRCount: number;
-    killedCount: number;
     counts: Record<AttentionLevel, number>;
   }>;
   onSpawnOrchestrator: (project: ProjectInfo) => Promise<void>;
@@ -579,7 +853,7 @@ function ProjectOverviewGrid({
 }) {
   return (
     <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-      {overviews.map(({ project, orchestrator, sessionCount, openPRCount, killedCount, counts }) => (
+      {overviews.map(({ project, orchestrator, sessionCount, openPRCount, counts }) => (
         <section
           key={project.id}
           className="border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] p-4"
@@ -620,13 +894,6 @@ function ProjectOverviewGrid({
               value={counts.working}
               tone="var(--color-status-working)"
             />
-            {showKilled ? (
-              <ProjectMetric
-                label="Killed"
-                value={killedCount}
-                tone="var(--color-status-error)"
-              />
-            ) : null}
           </div>
 
           <div className="border-t border-[var(--color-border-subtle)] pt-3">
@@ -674,6 +941,68 @@ function ProjectMetric({ label, value, tone }: { label: string; value: number; t
       <div className="mt-1 text-[18px] font-semibold tabular-nums" style={{ color: tone }}>
         {value}
       </div>
+    </div>
+  );
+}
+
+const MOBILE_ACTION_STRIP_LEVELS = [
+  {
+    level: "respond" as const,
+    label: "respond",
+    color: "var(--color-status-error)",
+  },
+  {
+    level: "merge" as const,
+    label: "merge",
+    color: "var(--color-status-ready)",
+  },
+  {
+    level: "review" as const,
+    label: "review",
+    color: "var(--color-accent-orange)",
+  },
+] satisfies Array<{ level: AttentionLevel; label: string; color: string }>;
+
+function MobileActionStrip({
+  grouped,
+  onPillTap,
+}: {
+  grouped: Record<AttentionLevel, DashboardSession[]>;
+  onPillTap: (level: AttentionLevel) => void;
+}) {
+  const activePills = MOBILE_ACTION_STRIP_LEVELS.filter(
+    ({ level }) => grouped[level].length > 0,
+  );
+
+  if (activePills.length === 0) {
+    return (
+      <div role="status" className="mobile-action-strip mobile-action-strip--all-good">
+        <span className="mobile-action-strip__all-good">All clear — agents are working</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mobile-action-strip" role="group" aria-label="Session priorities">
+      {activePills.map(({ level, label, color }) => (
+        <button
+          key={level}
+          type="button"
+          className="mobile-action-pill"
+          onClick={() => onPillTap(level)}
+          aria-label={`${grouped[level].length} ${label} — scroll to section`}
+        >
+          <span
+            className="mobile-action-pill__dot"
+            style={{ background: color }}
+            aria-hidden="true"
+          />
+          <span className="mobile-action-pill__count" style={{ color }}>
+            {grouped[level].length}
+          </span>
+          <span className="mobile-action-pill__label">{label}</span>
+        </button>
+      ))}
     </div>
   );
 }
@@ -735,15 +1064,3 @@ function BoardLegendItem({ label, tone }: { label: string; tone: string }) {
   );
 }
 
-function mergeScore(
-  pr: Pick<DashboardPR, "ciStatus" | "reviewDecision" | "mergeability" | "unresolvedThreads">,
-): number {
-  let score = 0;
-  if (!pr.mergeability.noConflicts) score += 40;
-  if (pr.ciStatus === CI_STATUS.FAILING) score += 30;
-  else if (pr.ciStatus === CI_STATUS.PENDING) score += 5;
-  if (pr.reviewDecision === "changes_requested") score += 20;
-  else if (pr.reviewDecision !== "approved") score += 10;
-  score += pr.unresolvedThreads * 5;
-  return score;
-}
