@@ -1,0 +1,23 @@
+packages/cli/__tests__/commands/start.test.ts
+  d2d7964b1f2a40db 9,12,52-55,157,176-189,195,255,1036-1080
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "30847b4de1b5262fa4d88c3f6f2c0b925168dd4b",
+  "prompts": {
+    "d2d7964b1f2a40db": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "205a3191-a43f-419c-9f60-8855fb4ffa42",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 93,
+      "total_deletions": 28,
+      "accepted_lines": 71,
+      "overriden_lines": 0
+    }
+  }
+}
