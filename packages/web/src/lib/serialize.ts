@@ -47,8 +47,9 @@ export function resolveProject(
 
 /** Convert a core Session to a DashboardSession (without PR/issue enrichment). */
 export function sessionToDashboard(session: Session): DashboardSession {
+  const pinnedSummary = session.metadata["pinnedSummary"] || null;
   const agentSummary = session.agentInfo?.summary;
-  const summary = agentSummary ?? session.metadata["summary"] ?? null;
+  const summary = pinnedSummary ?? agentSummary ?? session.metadata["summary"] ?? null;
 
   return {
     id: session.id,
@@ -61,7 +62,7 @@ export function sessionToDashboard(session: Session): DashboardSession {
     issueLabel: null, // Will be enriched by enrichSessionIssue()
     issueTitle: null, // Will be enriched by enrichSessionIssueTitle()
     summary,
-    summaryIsFallback: agentSummary ? (session.agentInfo?.summaryIsFallback ?? false) : false,
+    summaryIsFallback: pinnedSummary ? false : agentSummary ? (session.agentInfo?.summaryIsFallback ?? false) : false,
     createdAt: session.createdAt.toISOString(),
     lastActivityAt: session.lastActivityAt.toISOString(),
     pr: session.pr ? basicPRToDashboard(session.pr) : null,
