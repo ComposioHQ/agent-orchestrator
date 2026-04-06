@@ -58,8 +58,6 @@ export async function GET(request: Request) {
       );
     }
 
-    const allSessions = requestedProjectId ? await sessionManager.list() : coreSessions;
-
     const allSessionPrefixes = Object.entries(config.projects).map(
       ([projectId, p]) => p.sessionPrefix ?? projectId,
     );
