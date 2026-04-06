@@ -9,6 +9,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type {
   BatchObserver,
+  CICheck,
   CIStatus,
   PREnrichmentData,
   PRInfo,
@@ -466,6 +467,24 @@ const PR_FIELDS = `
       commit {
         statusCheckRollup {
           state
+          contexts(first: 20) {
+            nodes {
+              ... on CheckRun {
+                name
+                status
+                conclusion
+                detailsUrl
+              }
+              ... on StatusContext {
+                context
+                state
+                targetUrl
+              }
+            }
+            pageInfo {
+              hasNextPage
+            }
+          }
         }
       }
     }
@@ -575,11 +594,107 @@ async function executeBatchQuery(
 }
 
 /**
+ * Parse individual CI check contexts from statusCheckRollup.contexts.nodes.
+ * Handles both CheckRun (GitHub Actions) and StatusContext (legacy status checks).
+ */
+function parseCheckContexts(contexts: unknown): CICheck[] {
+  if (!contexts || typeof contexts !== "object") return [];
+
+  const nodes = (contexts as Record<string, unknown>)["nodes"];
+  if (!Array.isArray(nodes)) return [];
+
+  const checks: CICheck[] = [];
+  for (const node of nodes) {
+    if (!node || typeof node !== "object") continue;
+    const n = node as Record<string, unknown>;
+
+    // CheckRun node (GitHub Actions)
+    if (typeof n["name"] === "string" && typeof n["status"] === "string") {
+      const rawStatus = (n["status"] as string).toUpperCase();
+      // Uppercase conclusion to match REST getCIChecks/getCIChecksFromStatusRollup format
+      // so fingerprints are consistent regardless of which data source is used.
+      const rawConclusion =
+        typeof n["conclusion"] === "string" ? (n["conclusion"] as string).toUpperCase() : null;
+
+      let status: CICheck["status"];
+      if (rawStatus === "COMPLETED") {
+        if (rawConclusion === "SUCCESS") {
+          status = "passed";
+        } else if (
+          rawConclusion === "SKIPPED" ||
+          rawConclusion === "NEUTRAL" ||
+          rawConclusion === "STALE" ||
+          rawConclusion === "NOT_REQUIRED" ||
+          rawConclusion === "NONE"
+        ) {
+          // Mirror mapRawCheckStateToStatus() in the REST path: all non-failure
+          // terminal conclusions that are not SUCCESS map to "skipped".
+          status = "skipped";
+        } else if (
+          rawConclusion === "FAILURE" ||
+          rawConclusion === "TIMED_OUT" ||
+          rawConclusion === "CANCELLED" ||
+          rawConclusion === "ACTION_REQUIRED" ||
+          rawConclusion === "ERROR"
+        ) {
+          // Explicit failure conclusions — mirrors the failure list in mapRawCheckStateToStatus()
+          status = "failed";
+        } else {
+          // STARTUP_FAILURE and any other unrecognized conclusion → "skipped",
+          // matching mapRawCheckStateToStatus()'s default return "skipped" in the REST path.
+          status = "skipped";
+        }
+      } else if (rawStatus === "IN_PROGRESS") {
+        // Only IN_PROGRESS maps to "running" — matches mapRawCheckStateToStatus() in REST path
+        status = "running";
+      } else {
+        // QUEUED, WAITING, and any other non-COMPLETED status → "pending"
+        // (REST path maps QUEUED/WAITING to "pending", not "running")
+        status = "pending";
+      }
+
+      checks.push({
+        name: n["name"] as string,
+        status,
+        // Store the uppercased conclusion to match REST format
+        conclusion: rawConclusion ?? undefined,
+        url: typeof n["detailsUrl"] === "string" ? (n["detailsUrl"] as string) : undefined,
+      });
+      continue;
+    }
+
+    // StatusContext node (legacy commit statuses)
+    if (typeof n["context"] === "string" && typeof n["state"] === "string") {
+      const rawState = (n["state"] as string).toUpperCase();
+      let status: CICheck["status"];
+      if (rawState === "SUCCESS") {
+        status = "passed";
+      } else if (rawState === "FAILURE" || rawState === "ERROR") {
+        status = "failed";
+      } else {
+        status = "pending";
+      }
+
+      // Set conclusion to match the REST getCIChecksFromStatusRollup format
+      // (which sets conclusion = rawState.toUpperCase()) so fingerprints are
+      // consistent regardless of which data source is used.
+      checks.push({
+        name: n["context"] as string,
+        status,
+        conclusion: rawState,
+        url: typeof n["targetUrl"] === "string" ? (n["targetUrl"] as string) : undefined,
+      });
+    }
+  }
+
+  return checks;
+}
+
+/**
  * Parse raw CI state from status check rollup.
  *
- * Uses only the top-level aggregate state, which is much cheaper
- * than fetching individual check contexts. The top-level state
- * provides the same semantic information (passing/failing/pending).
+ * Uses only the top-level aggregate state to determine overall CI status.
+ * Individual check details are parsed separately via parseCheckContexts().
  */
 function parseCIState(
   statusCheckRollup: unknown,
@@ -679,13 +794,30 @@ function extractPREnrichment(
   // Extract review decision
   const reviewDecision = parseReviewDecision(pr["reviewDecision"]);
 
-  // Extract CI status from commits
+  // Extract CI status and individual checks from commits
   const commits = pr["commits"] as
-    | { nodes?: Array<{ commit?: { statusCheckRollup?: unknown } }> }
+    | { nodes?: Array<{ commit?: { statusCheckRollup?: Record<string, unknown> } }> }
     | undefined;
-  const ciStatus = commits?.nodes?.[0]?.commit?.statusCheckRollup
-    ? parseCIState(commits.nodes[0].commit.statusCheckRollup)
-    : "none";
+  const statusCheckRollup = commits?.nodes?.[0]?.commit?.statusCheckRollup;
+  const ciStatus = statusCheckRollup ? parseCIState(statusCheckRollup) : "none";
+
+  // Only include ciChecks when the list is complete (no truncation).
+  // contexts(first: 20) silently truncates PRs with >20 checks — when truncated,
+  // the failing check may be missing, so we set ciChecks to undefined to force
+  // the getCIChecks() REST fallback in maybeDispatchCIFailureDetails.
+  const contextsField = statusCheckRollup?.["contexts"] as
+    | Record<string, unknown>
+    | undefined;
+  const pageInfo = contextsField?.["pageInfo"];
+  const contextsHasNextPage =
+    pageInfo !== null &&
+    pageInfo !== undefined &&
+    typeof pageInfo === "object" &&
+    (pageInfo as Record<string, unknown>)["hasNextPage"] === true;
+  const ciChecks =
+    contextsField && !contextsHasNextPage
+      ? parseCheckContexts(contextsField)
+      : undefined;
 
   // Build blockers list
   const blockers: string[] = [];
@@ -722,6 +854,7 @@ function extractPREnrichment(
     hasConflicts,
     isBehind,
     blockers,
+    ...(ciChecks !== undefined ? { ciChecks } : {}),
   };
 
   return { data, headSha };
