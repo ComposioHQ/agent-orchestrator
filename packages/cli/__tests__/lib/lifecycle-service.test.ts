@@ -18,14 +18,8 @@ vi.mock("../../src/lib/create-session-manager.js", () => ({
 }));
 
 // ---------------------------------------------------------------------------
-// Import after mocks are set up
+// Helpers
 // ---------------------------------------------------------------------------
-
-const {
-  ensureLifecycleWorker,
-  stopLifecycleWorker,
-  getLifecycleWorkerStatus,
-} = await import("../../src/lib/lifecycle-service.js");
 
 const config = {
   configPath: "/home/user/project/agent-orchestrator.yaml",
@@ -34,9 +28,14 @@ const config = {
   },
 } as unknown as OrchestratorConfig;
 
+/** Re-import lifecycle-service with a fresh activeManagers Map each time. */
+async function freshModule() {
+  vi.resetModules();
+  return import("../../src/lib/lifecycle-service.js");
+}
+
 describe("lifecycle-service (in-process)", () => {
   beforeEach(() => {
-    vi.resetModules();
     mockLifecycleStart.mockReset();
     mockLifecycleStop.mockReset();
     mockGetLifecycleManager.mockClear();
@@ -44,6 +43,8 @@ describe("lifecycle-service (in-process)", () => {
 
   describe("ensureLifecycleWorker", () => {
     it("creates and starts a lifecycle manager on first call", async () => {
+      const { ensureLifecycleWorker } = await freshModule();
+
       const status = await ensureLifecycleWorker(config, "my-project");
 
       expect(mockGetLifecycleManager).toHaveBeenCalledWith(config, "my-project");
@@ -54,12 +55,14 @@ describe("lifecycle-service (in-process)", () => {
     });
 
     it("returns running=true, started=false if already active", async () => {
+      const { ensureLifecycleWorker } = await freshModule();
+
       // First call starts it
       await ensureLifecycleWorker(config, "my-project");
       mockGetLifecycleManager.mockClear();
       mockLifecycleStart.mockClear();
 
-      // Second call should not recreate
+      // Second call on the same module instance should not recreate
       const status = await ensureLifecycleWorker(config, "my-project");
 
       expect(mockGetLifecycleManager).not.toHaveBeenCalled();
@@ -70,6 +73,8 @@ describe("lifecycle-service (in-process)", () => {
     });
 
     it("manages separate managers for different project IDs", async () => {
+      const { ensureLifecycleWorker } = await freshModule();
+
       await ensureLifecycleWorker(config, "project-a");
       await ensureLifecycleWorker(config, "project-b");
 
@@ -81,6 +86,8 @@ describe("lifecycle-service (in-process)", () => {
 
   describe("stopLifecycleWorker", () => {
     it("stops and removes an active manager", async () => {
+      const { ensureLifecycleWorker, stopLifecycleWorker, getLifecycleWorkerStatus } = await freshModule();
+
       await ensureLifecycleWorker(config, "my-project");
 
       const stopped = await stopLifecycleWorker(config, "my-project");
@@ -94,13 +101,17 @@ describe("lifecycle-service (in-process)", () => {
     });
 
     it("returns false if no manager is running for the project", async () => {
+      const { stopLifecycleWorker } = await freshModule();
+
       const stopped = await stopLifecycleWorker(config, "nonexistent");
       expect(stopped).toBe(false);
     });
   });
 
   describe("getLifecycleWorkerStatus", () => {
-    it("returns running=false for unknown project", () => {
+    it("returns running=false for unknown project", async () => {
+      const { getLifecycleWorkerStatus } = await freshModule();
+
       const status = getLifecycleWorkerStatus(config, "unknown");
       expect(status.running).toBe(false);
       expect(status.started).toBe(false);
@@ -108,6 +119,8 @@ describe("lifecycle-service (in-process)", () => {
     });
 
     it("returns running=true with pid for active project", async () => {
+      const { ensureLifecycleWorker, getLifecycleWorkerStatus } = await freshModule();
+
       await ensureLifecycleWorker(config, "active-project");
 
       const status = getLifecycleWorkerStatus(config, "active-project");
