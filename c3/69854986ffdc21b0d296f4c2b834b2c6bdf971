@@ -1,0 +1,23 @@
+CHANGELOG.md
+  4780dcfe9330d276 1-25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "c369854986ffdc21b0d296f4c2b834b2c6bdf971",
+  "prompts": {
+    "4780dcfe9330d276": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cc2c29fd-345a-4e68-89f4-ae761d0d04fc",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 25,
+      "total_deletions": 0,
+      "accepted_lines": 25,
+      "overriden_lines": 0
+    }
+  }
+}
