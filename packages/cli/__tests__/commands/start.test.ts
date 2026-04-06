@@ -25,6 +25,15 @@ const {
   mockSpawn,
   mockEnsureLifecycleWorker,
   mockStopLifecycleWorker,
+  mockPromptSelect,
+  mockRegister,
+  mockUnregister,
+  mockIsAlreadyRunning,
+  mockGetRunning,
+  mockAddProjectToRunning,
+  mockPinLifecycleWorker,
+  mockIsHumanCaller,
+  mockGetCallerType,
 } = vi.hoisted(() => ({
   mockExec: vi.fn(),
   mockExecSilent: vi.fn(),
@@ -44,6 +53,15 @@ const {
   mockSpawn: vi.fn(),
   mockEnsureLifecycleWorker: vi.fn(),
   mockStopLifecycleWorker: vi.fn(),
+  mockPromptSelect: vi.fn(),
+  mockRegister: vi.fn(),
+  mockUnregister: vi.fn(),
+  mockIsAlreadyRunning: vi.fn().mockReturnValue(null),
+  mockGetRunning: vi.fn().mockReturnValue(null),
+  mockAddProjectToRunning: vi.fn(),
+  mockPinLifecycleWorker: vi.fn(),
+  mockIsHumanCaller: vi.fn().mockReturnValue(true),
+  mockGetCallerType: vi.fn().mockReturnValue("human"),
 }));
 
 const { mockDetectOpenClawInstallation } = vi.hoisted(() => ({
@@ -94,7 +112,12 @@ vi.mock("../../src/lib/create-session-manager.js", () => ({
 vi.mock("../../src/lib/lifecycle-service.js", () => ({
   ensureLifecycleWorker: (...args: unknown[]) => mockEnsureLifecycleWorker(...args),
   stopLifecycleWorker: (...args: unknown[]) => mockStopLifecycleWorker(...args),
-  pinLifecycleWorker: vi.fn(),
+  pinLifecycleWorker: (...args: unknown[]) => mockPinLifecycleWorker(...args),
+}));
+
+vi.mock("../../src/lib/prompts.js", () => ({
+  promptConfirm: vi.fn().mockResolvedValue(true),
+  promptSelect: (...args: unknown[]) => mockPromptSelect(...args),
 }));
 
 vi.mock("../../src/lib/web-dir.js", () => ({
@@ -120,16 +143,17 @@ vi.mock("../../src/lib/preflight.js", () => ({
 }));
 
 vi.mock("../../src/lib/running-state.js", () => ({
-  register: vi.fn(),
-  unregister: vi.fn(),
-  isAlreadyRunning: vi.fn().mockReturnValue(null),
-  getRunning: vi.fn().mockReturnValue(null),
+  register: (...args: unknown[]) => mockRegister(...args),
+  unregister: (...args: unknown[]) => mockUnregister(...args),
+  isAlreadyRunning: (...args: unknown[]) => mockIsAlreadyRunning(...args),
+  getRunning: (...args: unknown[]) => mockGetRunning(...args),
   waitForExit: vi.fn().mockReturnValue(true),
+  addProjectToRunning: (...args: unknown[]) => mockAddProjectToRunning(...args),
 }));
 
 vi.mock("../../src/lib/caller-context.js", () => ({
-  isHumanCaller: vi.fn().mockReturnValue(true),
-  getCallerType: vi.fn().mockReturnValue("human"),
+  isHumanCaller: (...args: unknown[]) => mockIsHumanCaller(...args),
+  getCallerType: (...args: unknown[]) => mockGetCallerType(...args),
 }));
 
 vi.mock("../../src/lib/detect-env.js", () => ({
@@ -241,6 +265,23 @@ beforeEach(() => {
   });
   mockStopLifecycleWorker.mockReset();
   mockStopLifecycleWorker.mockResolvedValue(true);
+  mockPromptSelect.mockReset();
+  mockPromptSelect.mockRejectedValue(new Error("promptSelect not mocked for this test"));
+  mockRegister.mockReset();
+  mockRegister.mockResolvedValue(undefined);
+  mockUnregister.mockReset();
+  mockUnregister.mockResolvedValue(undefined);
+  mockIsAlreadyRunning.mockReset();
+  mockIsAlreadyRunning.mockReturnValue(null);
+  mockGetRunning.mockReset();
+  mockGetRunning.mockResolvedValue(null);
+  mockAddProjectToRunning.mockReset();
+  mockAddProjectToRunning.mockResolvedValue(undefined);
+  mockPinLifecycleWorker.mockReset();
+  mockIsHumanCaller.mockReset();
+  mockIsHumanCaller.mockReturnValue(true);
+  mockGetCallerType.mockReset();
+  mockGetCallerType.mockReturnValue("human");
   mockDetectOpenClawInstallation.mockReset();
   mockDetectOpenClawInstallation.mockResolvedValue({
     state: "missing",
@@ -369,6 +410,7 @@ describe("start command — project resolution", () => {
   });
 
   it("errors when multiple projects and no arg", async () => {
+    mockIsHumanCaller.mockReturnValue(false);
     mockConfigRef.current = makeConfig({
       frontend: makeProject({ name: "Frontend" }),
       backend: makeProject({ name: "Backend" }),
@@ -694,8 +736,7 @@ describe("start command — non-interactive install safety", () => {
   }
 
   it("does not auto-install tmux when missing in non-interactive mode", async () => {
-    const { isHumanCaller } = await import("../../src/lib/caller-context.js");
-    vi.mocked(isHumanCaller).mockReturnValue(false);
+    mockIsHumanCaller.mockReturnValue(false);
 
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
     mockExecSilent.mockImplementation(async (cmd: string, args: string[] = []) => {
@@ -715,8 +756,7 @@ describe("start command — non-interactive install safety", () => {
   });
 
   it("does not auto-install git when missing in non-interactive URL start", async () => {
-    const { isHumanCaller } = await import("../../src/lib/caller-context.js");
-    vi.mocked(isHumanCaller).mockReturnValue(false);
+    mockIsHumanCaller.mockReturnValue(false);
 
     mockCwd(tmpDir);
     mockExecSilent.mockImplementation(async (cmd: string, args: string[] = []) => {
@@ -931,7 +971,15 @@ describe("start command — orchestrator session strategy display", () => {
       },
     ]);
 
-    await program.parseAsync(["node", "test", "start"]);
+    try {
+      await program.parseAsync(["node", "test", "start"]);
+    } catch (error) {
+      const errors = vi
+        .mocked(console.error)
+        .mock.calls.map((c) => c.join(" "))
+        .join("\n");
+      throw new Error(`${String(error)}\n${errors}`);
+    }
 
     const output = getLoggedOutput();
     // With one orchestrator, goes directly to the session page — shows tmux attach, no selection message
@@ -1015,6 +1063,39 @@ describe("start command — orchestrator session strategy display", () => {
 
     // Should have killed the dashboard
     expect(fakeDashboard.kill).toHaveBeenCalled();
+  });
+
+  it("records the attached project before pinning lifecycle worker", async () => {
+    mockConfigRef.current = {
+      ...makeConfig({ "my-app": makeProject() }),
+      globalConfigPath: join(tmpDir, "global-config.yaml"),
+    };
+
+    mockIsAlreadyRunning.mockReturnValue({
+      pid: 123,
+      configPath: join(tmpDir, "agent-orchestrator.yaml"),
+      port: 3000,
+      startedAt: new Date().toISOString(),
+      projects: [],
+    });
+    mockGetRunning.mockResolvedValue({
+      pid: 123,
+      configPath: join(tmpDir, "agent-orchestrator.yaml"),
+      port: 3000,
+      startedAt: new Date().toISOString(),
+      projects: [],
+    });
+    mockPromptSelect.mockResolvedValue("new");
+    mockSessionManager.list.mockResolvedValue([]);
+    mockSessionManager.spawnOrchestrator.mockResolvedValue({ id: "app-orchestrator-2" });
+
+    await program.parseAsync(["node", "test", "start"]);
+
+    expect(mockAddProjectToRunning).toHaveBeenCalledWith("my-app");
+    expect(mockPinLifecycleWorker).toHaveBeenCalledWith("my-app");
+    expect(mockAddProjectToRunning.mock.invocationCallOrder[0]).toBeLessThan(
+      mockPinLifecycleWorker.mock.invocationCallOrder[0],
+    );
   });
 });
 

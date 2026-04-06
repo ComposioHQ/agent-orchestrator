@@ -1120,8 +1120,7 @@ async function runStartup(
     if (existingOrchestrators.length > 0) {
       if (orchestratorSessionStrategy === "reuse") {
         // Existing orchestrators found and strategy is reuse
-        if (opts?.dashboard === false) {
-          // No dashboard — auto-select the most recently active orchestrator
+        if (opts?.dashboard === false || existingOrchestrators.length === 1) {
           const sortedOrchestrators = [...existingOrchestrators].sort(
             (a, b) => (b.lastActivityAt?.getTime() ?? 0) - (a.lastActivityAt?.getTime() ?? 0),
           );
@@ -1660,8 +1659,8 @@ export function registerStart(program: Command): void {
           if (attachToRunning) {
             const freshRunning = await getRunning();
             if (freshRunning && !freshRunning.projects.includes(projectId)) {
-              pinLifecycleWorker(projectId);
               await addProjectToRunning(projectId);
+              pinLifecycleWorker(projectId);
             }
           }
 
