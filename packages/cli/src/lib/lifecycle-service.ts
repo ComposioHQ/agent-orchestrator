@@ -19,6 +19,17 @@ export interface LifecycleWorkerStatus {
 const activeManagers = new Map<string, LifecycleManager>();
 
 /**
+ * In-flight creation promises keyed by projectId.
+ *
+ * Guards the async TOCTOU window between `activeManagers.has(key)` and
+ * `activeManagers.set(key, lifecycle)`. Without this, two concurrent calls for
+ * the same projectId can both pass the `has` guard, create two managers, and
+ * the second `set` silently overwrites the first — leaking the first manager's
+ * polling timer with no way to stop it.
+ */
+const pendingManagers = new Map<string, Promise<LifecycleManager>>();
+
+/**
  * Ensure a lifecycle manager is running for the given project.
  * Creates one in-process if not already active.
  */
@@ -33,9 +44,22 @@ export async function ensureLifecycleWorker(
     return { running: true, started: false, pid: process.pid };
   }
 
-  const lifecycle = await getLifecycleManager(config, projectId);
-  lifecycle.start(30_000);
-  activeManagers.set(key, lifecycle);
+  // If a creation is already in flight for this key, wait for it rather than
+  // starting a second manager that would overwrite the first.
+  if (pendingManagers.has(key)) {
+    await pendingManagers.get(key);
+    return { running: true, started: false, pid: process.pid };
+  }
+
+  const promise = getLifecycleManager(config, projectId);
+  pendingManagers.set(key, promise);
+  try {
+    const lifecycle = await promise;
+    lifecycle.start(30_000);
+    activeManagers.set(key, lifecycle);
+  } finally {
+    pendingManagers.delete(key);
+  }
 
   return { running: true, started: true, pid: process.pid };
 }

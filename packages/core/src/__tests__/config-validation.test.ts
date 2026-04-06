@@ -189,25 +189,29 @@ describe("Config Validation - Session Prefix Uniqueness", () => {
     expect(() => validateConfig(config)).not.toThrow();
   });
 
-  it("detects collision when explicit matches auto-generated", () => {
+  it("auto-disambiguates when explicit prefix matches auto-generated prefix", () => {
+    // proj2 explicitly sets "int". proj1 would auto-generate "int" from basename
+    // "integrator". applyProjectDefaults detects the conflict with the explicit
+    // prefix and falls back to the project ID for proj1 so both can coexist.
     const config = {
       projects: {
         proj1: {
           path: "/repos/integrator",
           repo: "org/integrator",
           defaultBranch: "main",
-          // Auto-generates: "int"
+          // Auto-generates: "int" — conflicts with proj2's explicit "int"
         },
         proj2: {
           path: "/repos/backend",
           repo: "org/backend",
           defaultBranch: "main",
-          sessionPrefix: "int", // Explicit collision with auto-generated
+          sessionPrefix: "int", // Explicit prefix takes priority
         },
       },
     };
 
-    expect(() => validateConfig(config)).toThrow(/Duplicate session prefix/);
+    // Should NOT throw — the auto-generated prefix yields to the explicit one.
+    expect(() => validateConfig(config)).not.toThrow();
   });
 
   it("auto-disambiguates same-basename projects using project ID", () => {

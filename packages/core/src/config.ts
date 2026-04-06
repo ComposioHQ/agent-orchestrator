@@ -536,9 +536,26 @@ function applyProjectDefaults(config: OrchestratorConfig): OrchestratorConfig {
     basenameCounts.set(b, (basenameCounts.get(b) ?? 0) + 1);
   }
 
-  // Track assigned prefixes to guarantee uniqueness when the ID-derived prefix
-  // also collides (e.g. "client1-app" and "client2-app" both → "ca").
+  // Collect explicitly set prefixes in a pre-pass so we can distinguish
+  // "auto-generated prefix bumps into an explicit one from another project"
+  // (auto-disambiguate) from "two auto-generated distinct-basename prefixes
+  // collide" (real config error → let validateProjectUniqueness throw).
+  const explicitPrefixes = new Set<string>();
+  for (const project of Object.values(config.projects)) {
+    if (project.sessionPrefix) explicitPrefixes.add(project.sessionPrefix);
+  }
+
+  // Track all assigned prefixes to guarantee uniqueness in the shared-basename
+  // and explicit-collision branches.
   const assignedPrefixes = new Set<string>();
+
+  // Helper: find the first unused variant of `base` (base, base2, base3, …).
+  const nextFreePrefix = (base: string): string => {
+    if (!assignedPrefixes.has(base)) return base;
+    let n = 2;
+    while (assignedPrefixes.has(`${base}${n}`)) n++;
+    return `${base}${n}`;
+  };
 
   for (const [id, project] of Object.entries(config.projects)) {
     const name = project.name ?? id;
@@ -547,29 +564,35 @@ function applyProjectDefaults(config: OrchestratorConfig): OrchestratorConfig {
       sessionPrefix = project.sessionPrefix;
     } else {
       const b = basename(project.path);
-      // Use the project ID as the prefix source only when the basename is
-      // shared — distinct-basename collisions (e.g. "integrator" / "international"
-      // both → "int") are real config errors and must still be caught by
-      // validateProjectUniqueness.
       const sharedBasename = (basenameCounts.get(b) ?? 1) > 1;
       if (sharedBasename) {
         // Use the project ID as the prefix source when the basename is shared
         // (e.g. /client1/app and /client2/app both have basename "app").
         // If the ID-derived prefix is also taken, append an incrementing numeric
         // suffix to guarantee uniqueness (e.g. "ca", "ca2", "ca3", …).
-        const base = generateSessionPrefix(id);
-        if (!assignedPrefixes.has(base)) {
-          sessionPrefix = base;
-        } else {
-          let n = 2;
-          while (assignedPrefixes.has(`${base}${n}`)) n++;
-          sessionPrefix = `${base}${n}`;
-        }
+        sessionPrefix = nextFreePrefix(generateSessionPrefix(id));
       } else {
-        // Distinct basename — use the basename-derived prefix as-is.
-        // Collisions here (e.g. "integrator" / "international" both → "int")
-        // are real config errors and must be caught by validateProjectUniqueness.
-        sessionPrefix = generateSessionPrefix(b);
+        // Distinct basename — use the basename-derived prefix.
+        // Two auto-generated distinct-basename collisions (e.g. "integrator" /
+        // "international" both → "int") are real config errors; keep them as
+        // hard errors so validateProjectUniqueness can report them.
+        // However, if the auto-generated prefix conflicts with an *explicit*
+        // prefix set by another project, auto-disambiguate using the project ID
+        // so the user doesn't hit an unavoidable error for a project they
+        // haven't configured manually.
+        const derived = generateSessionPrefix(b);
+        if (explicitPrefixes.has(derived) && !assignedPrefixes.has(derived)) {
+          // The collision is with an explicit prefix that hasn't been assigned
+          // yet (i.e. it belongs to a project later in iteration). Fall back to
+          // the project ID so both can coexist.
+          sessionPrefix = nextFreePrefix(generateSessionPrefix(id));
+        } else if (assignedPrefixes.has(derived) && explicitPrefixes.has(derived)) {
+          // An explicit prefix from an already-processed project holds this
+          // slot — fall back to the project ID.
+          sessionPrefix = nextFreePrefix(generateSessionPrefix(id));
+        } else {
+          sessionPrefix = derived;
+        }
       }
     }
     assignedPrefixes.add(sessionPrefix);
