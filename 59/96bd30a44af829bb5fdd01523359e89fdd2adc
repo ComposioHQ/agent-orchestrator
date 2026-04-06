@@ -1,0 +1,53 @@
+packages/web/src/components/Dashboard.tsx
+  780151cb06a54223 16,105,687-726,1063
+packages/web/src/components/__tests__/Dashboard.doneBar.test.tsx
+  780151cb06a54223 1-62
+packages/web/src/app/globals.css
+  780151cb06a54223 2003-2064
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "5996bd30a44af829bb5fdd01523359e89fdd2adc",
+  "prompts": {
+    "780151cb06a54223": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "87530233-f2cd-485c-9496-49d480fd9829",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 169,
+      "overriden_lines": 0
+    },
+    "c7642d13ddb11c10": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e5af9095-96c8-408e-bfd6-a9fd3bb2f2e5",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 19,
+      "overriden_lines": 0
+    },
+    "fb6460de0865daf6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66c16619-f3dc-47c9-968c-c85b3c0382d5",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Ashish Huddar",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 18,
+      "overriden_lines": 0
+    }
+  }
+}
