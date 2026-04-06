@@ -1945,9 +1945,9 @@ html.light .xterm .xterm-viewport:hover::-webkit-scrollbar-thumb:active {
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--color-text-muted);
   transition: color 0.15s ease;
