@@ -88,7 +88,11 @@ class SessionBroadcaster {
 
   private broadcast(sessions: SessionPatch[]): void {
     for (const callback of this.subscribers) {
-      callback(sessions);
+      try {
+        callback(sessions);
+      } catch (err) {
+        console.error("[MuxServer] Session broadcast subscriber threw:", err);
+      }
     }
   }
 
