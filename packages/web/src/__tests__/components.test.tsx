@@ -578,6 +578,22 @@ describe("AttentionZone", () => {
     expect(screen.getByText("No agents need your input.")).toBeInTheDocument();
   });
 
+  it("renders zone-specific empty messages for all attention zones", () => {
+    const cases: Array<[string, string]> = [
+      ["review", "No code waiting for review."],
+      ["pending", "Nothing blocked."],
+      ["working", "No agents running."],
+      ["done", "No completed sessions."],
+    ];
+    for (const [level, expectedMessage] of cases) {
+      const { unmount } = render(
+        <AttentionZone level={level as "review" | "pending" | "working" | "done"} sessions={[]} />,
+      );
+      expect(screen.getByText(expectedMessage)).toBeInTheDocument();
+      unmount();
+    }
+  });
+
   it("shows session cards when not collapsed", () => {
     const sessions = [makeSession({ id: "s1" })];
     render(<AttentionZone level="respond" sessions={sessions} />);

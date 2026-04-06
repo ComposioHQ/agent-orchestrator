@@ -125,6 +125,7 @@ function AttentionZoneView({
           className="accordion-header"
           onClick={() => onToggle(level)}
           aria-expanded={!collapsed}
+          aria-controls={`accordion-body-${level}`}
         >
           <span className="accordion-header__dot" style={{ background: config.color }} />
           <span className="accordion-header__label">{config.label}</span>
@@ -132,7 +133,7 @@ function AttentionZoneView({
           <span className="accordion-header__chevron" aria-hidden="true">▶</span>
         </button>
 
-        <div className="accordion-body">
+        <div id={`accordion-body-${level}`} className="accordion-body">
           {sessions.length > 0 ? (
             <div className={compactMobile ? "mobile-session-list" : "flex flex-col gap-2 p-3"}>
               {visibleSessions.map((session) =>
@@ -166,7 +167,7 @@ function AttentionZoneView({
             </div>
           ) : compactMobile ? (
             <div className="mobile-session-list">
-              <div className="mobile-session-list__empty">{config.emptyMessage}</div>
+              <div role="status" aria-live="polite" aria-atomic="true" className="mobile-session-list__empty">{config.emptyMessage}</div>
             </div>
           ) : null}
         </div>
@@ -201,7 +202,7 @@ function AttentionZoneView({
           </div>
         ) : (
           <div className="kanban-column__empty">
-            <span className="kanban-column__empty-label">{config.emptyMessage}</span>
+            <span role="status" aria-live="polite" aria-atomic="true" className="kanban-column__empty-label">{config.emptyMessage}</span>
           </div>
         )}
       </div>
