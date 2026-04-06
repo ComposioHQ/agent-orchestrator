@@ -1,12 +1,23 @@
 import { cache } from "react";
 import { loadConfig } from "@composio/ao-core";
 
+<<<<<<< HEAD
 export interface ProjectInfo {
   id: string;
   name: string;
   sessionPrefix?: string;
 }
 
+=======
+/**
+ * Load the primary project name from config.
+ * Falls back to "ao" if config is unavailable.
+ *
+ * Wrapped with React.cache() to deduplicate filesystem reads
+ * within a single server render pass (layout + page + icon all
+ * call this, but config is only read once per request).
+ */
+>>>>>>> parent of c7c04c14 (feat(web): Project-scoped dashboard with sidebar navigation (#381))
 export const getProjectName = cache((): string => {
   try {
     const config = loadConfig();
@@ -20,6 +31,7 @@ export const getProjectName = cache((): string => {
   }
   return "ao";
 });
+<<<<<<< HEAD
 
 export const getPrimaryProjectId = cache((): string => {
   try {
@@ -44,3 +56,5 @@ export const getAllProjects = cache((): ProjectInfo[] => {
     return [];
   }
 });
+=======
+>>>>>>> parent of c7c04c14 (feat(web): Project-scoped dashboard with sidebar navigation (#381))

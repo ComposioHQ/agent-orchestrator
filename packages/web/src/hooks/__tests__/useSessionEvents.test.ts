@@ -440,6 +440,7 @@ describe("useSessionEvents", () => {
       expect(result.current.sessions[0].activity).toBe("idle");
       expect(result.current.sessions[1].status).toBe("working");
     });
+<<<<<<< HEAD
 
     it("preserves untouched session references across snapshot patches", async () => {
       const sessions = makeSessions(2);
@@ -662,6 +663,8 @@ describe("useSessionEvents", () => {
       expect(result.current.sessions).toHaveLength(1);
       expect(result.current.sessions[0].id).toBe("session-0");
     });
+=======
+>>>>>>> parent of c7c04c14 (feat(web): Project-scoped dashboard with sidebar navigation (#381))
   });
 
   describe("sseAttentionLevels", () => {

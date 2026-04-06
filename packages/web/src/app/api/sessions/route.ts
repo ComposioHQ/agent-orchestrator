@@ -10,19 +10,43 @@ import {
 } from "@/lib/serialize";
 import { getCorrelationId, jsonWithCorrelation, recordApiObservation } from "@/lib/observability";
 import { resolveGlobalPause } from "@/lib/global-pause";
+<<<<<<< HEAD
 import { filterProjectSessions } from "@/lib/project-utils";
 import { settlesWithin } from "@/lib/async-utils";
+=======
+>>>>>>> parent of c7c04c14 (feat(web): Project-scoped dashboard with sidebar navigation (#381))
 
 const METADATA_ENRICH_TIMEOUT_MS = 3_000;
 const PR_ENRICH_TIMEOUT_MS = 4_000;
 const PER_PR_ENRICH_TIMEOUT_MS = 1_500;
 
+<<<<<<< HEAD
+=======
+async function settlesWithin(promise: Promise<unknown>, timeoutMs: number): Promise<boolean> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<boolean>((resolve) => {
+    timeoutId = setTimeout(() => resolve(false), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise.then(() => true).catch(() => true), timeoutPromise]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
+/** GET /api/sessions — List all sessions with full state
+ * Query params:
+ * - active=true: Only return non-exited sessions
+ */
+>>>>>>> parent of c7c04c14 (feat(web): Project-scoped dashboard with sidebar navigation (#381))
 export async function GET(request: Request) {
   const correlationId = getCorrelationId(request);
   const startedAt = Date.now();
   try {
     const { searchParams } = new URL(request.url);
-    const projectFilter = searchParams.get("project");
     const activeOnly = searchParams.get("active") === "true";
     const orchestratorOnly = searchParams.get("orchestratorOnly") === "true";
 
@@ -36,6 +60,7 @@ export async function GET(request: Request) {
     const orchestrators = listDashboardOrchestrators(visibleSessions, config.projects);
     const orchestratorId = orchestrators.length === 1 ? (orchestrators[0]?.id ?? null) : null;
 
+<<<<<<< HEAD
     if (orchestratorOnly) {
       recordApiObservation({
         config,
@@ -72,6 +97,15 @@ export async function GET(request: Request) {
           allSessionPrefixes,
         ),
     );
+=======
+    // Find orchestrator session ID (if running) and expose to clients
+    const orchSession = coreSessions.find((s) => s.id.endsWith("-orchestrator"));
+    const orchestratorId = orchSession ? orchSession.id : null;
+    const globalPause = resolveGlobalPause(coreSessions);
+
+    // Filter out orchestrator sessions — they get their own button, not a card
+    let workerSessions = coreSessions.filter((s) => !s.id.endsWith("-orchestrator"));
+>>>>>>> parent of c7c04c14 (feat(web): Project-scoped dashboard with sidebar navigation (#381))
 
     // Convert to dashboard format
     let dashboardSessions = workerSessions.map(sessionToDashboard);
@@ -113,6 +147,7 @@ export async function GET(request: Request) {
       }
     }
 
+<<<<<<< HEAD
     recordApiObservation({
       config,
       method: "GET",
@@ -122,6 +157,13 @@ export async function GET(request: Request) {
       outcome: "success",
       statusCode: 200,
       data: { sessionCount: dashboardSessions.length, activeOnly },
+=======
+    return NextResponse.json({
+      sessions: dashboardSessions,
+      stats: computeStats(dashboardSessions),
+      orchestratorId,
+      globalPause,
+>>>>>>> parent of c7c04c14 (feat(web): Project-scoped dashboard with sidebar navigation (#381))
     });
 
     return jsonWithCorrelation(

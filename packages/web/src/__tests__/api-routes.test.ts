@@ -190,12 +190,19 @@ vi.mock("@/lib/services", () => ({
   })),
   getVerifyIssues: vi.fn(async () => []),
   getSCM: vi.fn(() => mockSCM),
+<<<<<<< HEAD
+=======
+  startBacklogPoller: vi.fn(() => {}),
+>>>>>>> parent of c7c04c14 (feat(web): Project-scoped dashboard with sidebar navigation (#381))
 }));
 
 // ── Import routes after mocking ───────────────────────────────────────
 
 import { GET as sessionsGET } from "@/app/api/sessions/route";
+<<<<<<< HEAD
 import { POST as orchestratorsPOST, GET as orchestratorsGET } from "@/app/api/orchestrators/route";
+=======
+>>>>>>> parent of c7c04c14 (feat(web): Project-scoped dashboard with sidebar navigation (#381))
 import { POST as spawnPOST } from "@/app/api/spawn/route";
 import { POST as sendPOST } from "@/app/api/sessions/[id]/send/route";
 import { POST as messagePOST } from "@/app/api/sessions/[id]/message/route";
@@ -997,15 +1004,23 @@ describe("API Routes", () => {
 
   describe("GET /api/events", () => {
     it("returns SSE content type", async () => {
+<<<<<<< HEAD
       const req = makeRequest("/api/events", { method: "GET" });
       const res = await eventsGET(req);
+=======
+      const res = await eventsGET();
+>>>>>>> parent of c7c04c14 (feat(web): Project-scoped dashboard with sidebar navigation (#381))
       expect(res.headers.get("Content-Type")).toBe("text/event-stream");
       expect(res.headers.get("Cache-Control")).toBe("no-cache");
     });
 
     it("streams initial snapshot event", async () => {
+<<<<<<< HEAD
       const req = makeRequest("/api/events", { method: "GET" });
       const res = await eventsGET(req);
+=======
+      const res = await eventsGET();
+>>>>>>> parent of c7c04c14 (feat(web): Project-scoped dashboard with sidebar navigation (#381))
       const reader = res.body!.getReader();
       const { value } = await reader.read();
       reader.cancel();
@@ -1020,6 +1035,7 @@ describe("API Routes", () => {
       expect(event.sessions[0]).toHaveProperty("id");
       expect(event.sessions[0]).toHaveProperty("attentionLevel");
     });
+<<<<<<< HEAD
   });
 
   describe("GET /api/observability", () => {
@@ -1056,5 +1072,7 @@ describe("API Routes", () => {
       const data = await res.json();
       expect(data.error).toMatch(/Invalid JSON body/);
     });
+=======
+>>>>>>> parent of c7c04c14 (feat(web): Project-scoped dashboard with sidebar navigation (#381))
   });
 });
